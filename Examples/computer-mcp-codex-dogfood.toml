@@ -1,0 +1,42 @@
+schema_version = 1
+
+[server]
+name = "computer-mcp-codex-dogfood"
+
+[runtime]
+caller = "local-mcp"
+profile = "local-admin"
+workspace_id = "computer-mcp"
+
+[policy]
+default_timeout_ms = 30000
+max_output_bytes = 1048576
+shell_enabled = true
+
+[[workspaces]]
+id = "computer-mcp"
+display_name = "Computer MCP"
+path = ".."
+
+[[profiles]]
+id = "local-admin"
+capabilities = ["*"]
+workspaces = ["computer-mcp"]
+allowed_callers = ["local-app", "local-cli", "local-mcp"]
+full_shell_enabled = true
+
+[codex]
+enabled = true
+executable = "codex"
+app_server_enabled = true
+exec_enabled = true
+mcp_enabled = true
+experimental_api = true
+app_server_request_timeout_seconds = 30
+sandbox = "workspace-write"
+approval_policy = "never"
+max_sessions = 8
+max_events_per_session = 1024
+
+[builtin]
+enabled = ["workspace.info", "file.read", "file.write", "git.status"]

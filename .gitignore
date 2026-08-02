@@ -1,0 +1,47 @@
+# Apple and IDE state
+.DS_Store
+**/.DS_Store
+/.swiftpm/
+/DerivedData/
+/*.doccarchive/
+**/*.doccarchive/
+/.vscode/
+/.idea/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Swift build and release output
+/.build/
+**/.build/
+/dist/
+
+# Repository-local product/runtime state
+/.agent/
+/.codex/
+/.refs.yaml
+/.computer-mcp/
+/.local/
+
+# Validation scratch and generated evidence
+/Tools/Validation/Scratch/
+/Tools/Validation/Runs/
+/Tools/Validation/Reports/
+/validation-runbook.md
+*.campaign.json
+*.evidence.json
+
+# Logs, process markers, and credentials
+*.log
+*.pid
+*.token
+*.token-file
+.env
+.env.*
+*.pem
+*.p12
+*.key
+
+# Tool caches
+__pycache__/
+*.pyc

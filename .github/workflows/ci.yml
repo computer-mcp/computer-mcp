@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-gate:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install gate tooling
+        run: brew install jq ripgrep
+
+      - name: Require publishable package boundaries
+        run: |
+          Scripts/verify-swift-codex-release-gate.sh
+          Scripts/verify-package-boundary.sh
+          Scripts/verify-public-repository.sh
+
+  validate:
+    needs: dependency-gate
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install gate tooling
+        run: brew install jq ripgrep
+
+      - name: Strict format lint
+        run: |
+          xcrun swift-format lint --strict --recursive --configuration .swift-format \
+            Package.swift Sources Tests
+          xcrun swift-format lint --strict --recursive --configuration .swift-format \
+            Tools/Validation/Package.swift \
+            Tools/Validation/Sources \
+            Tools/Validation/Tests
+
+      - name: Root native build and Swift Testing
+        run: |
+          /usr/bin/swift build --build-system native
+          /usr/bin/swift test --build-system native
+
+      - name: Validation Suite and Test Case catalog
+        run: |
+          /usr/bin/swift build --build-system native \
+            --package-path Tools/Validation
+          /usr/bin/swift test --build-system native \
+            --package-path Tools/Validation
+          /usr/bin/swift run --build-system native \
+            --package-path Tools/Validation \
+            computer-mcp-validate test-case validate
+
+      - name: CLI hierarchy and public configuration
+        run: |
+          Scripts/verify-cli-interface.sh
+          /usr/bin/swift run --build-system native computer-mcp \
+            config validate --config Examples/computer-mcp.toml
+
+      - name: DocC and deterministic release metadata
+        run: |
+          Scripts/verify-release-metadata.sh
+          Scripts/verify-documentation.sh
+
+      - name: App and DMG distribution verification
+        run: |
+          Scripts/build-app.sh
+          Scripts/package-dmg.sh
+          Scripts/verify-distribution.sh
+
+      - name: Naming and public repository hygiene
+        run: |
+          Scripts/verify-naming.sh
+          Scripts/verify-public-repository.sh

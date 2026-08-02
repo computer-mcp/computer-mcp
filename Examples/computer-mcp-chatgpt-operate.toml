@@ -1,0 +1,44 @@
+schema_version = 1
+
+[server]
+name = "computer-mcp-chatgpt-operate"
+
+[runtime]
+caller = "secure-tunnel"
+profile = "chatgpt-operate"
+workspace_id = "computer-mcp"
+
+[policy]
+default_timeout_ms = 30000
+max_output_bytes = 1048576
+shell_enabled = false
+
+[[workspaces]]
+id = "computer-mcp"
+display_name = "Computer MCP"
+path = ".."
+
+[[profiles]]
+id = "chatgpt-operate"
+capabilities = [
+  "workspace.list",
+  "workspace.describe",
+  "computer.permissions",
+  "computer.displays",
+  "computer.screenshot",
+  "computer.windows",
+  "computer.pointer.move",
+  "computer.pointer.click",
+  "computer.keyboard.key",
+  "computer.keyboard.text",
+  "computer.scroll",
+  "computer.accessibility.query",
+  "computer.accessibility.action",
+  "computer.verify",
+]
+workspaces = ["computer-mcp"]
+allowed_callers = ["secure-tunnel"]
+full_shell_enabled = false
+
+[builtin]
+enabled = []

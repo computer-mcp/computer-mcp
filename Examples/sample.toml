@@ -1,0 +1,7 @@
+name = "computer-mcp sample"
+enabled = true
+tags = ["gateway", "toml"]
+created_on = 2026-07-07
+
+[limits]
+max_tools = 128

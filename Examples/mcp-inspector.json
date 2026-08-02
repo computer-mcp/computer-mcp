@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "computer-mcp-chatgpt-tunnel": {
+      "command": ".build/debug/computer-mcp",
+      "args": [
+        "serve",
+        "--config",
+        "Examples/computer-mcp-chatgpt-tunnel.toml"
+      ]
+    }
+  }
+}

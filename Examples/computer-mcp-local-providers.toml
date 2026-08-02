@@ -1,0 +1,92 @@
+schema_version = 1
+
+[server]
+name = "computer-mcp-local-providers"
+
+[runtime]
+caller = "local-mcp"
+profile = "local-admin"
+
+[policy]
+default_timeout_ms = 30000
+max_output_bytes = 1048576
+shell_enabled = false
+
+# This profile demonstrates provider bridging. The gateway does not copy these
+# tools into builtin code; it registers each local MCP-capable CLI as a
+# downstream MCP server. Use mcp.servers.status first to check which commands
+# are installed in the environment that launches computer-mcp.
+# Apple-domain workflows, including clipboard, notifications, Finder behavior,
+# application launching, and URL opening, are owned by apple-cli-mcp rather
+# than duplicated as computer-mcp builtins.
+
+[[mcp.servers]]
+id = "apple"
+transport = "stdio"
+command = "apple-cli-mcp"
+args = ["stdio"]
+# If apple-cli-mcp and apple are not installed as resolvable siblings, set:
+# env = { APPLE_CLI_BIN_DIR = "/absolute/path/to/the/directory-containing-apple" }
+exposure = "gateway"
+allow_any_tool = true
+capabilities = ["tools"]
+startup_timeout_ms = 30000
+request_timeout_ms = 180000
+
+[[mcp.servers]]
+id = "xhs"
+transport = "stdio"
+command = "xhs"
+args = ["mcp", "serve"]
+exposure = "gateway"
+allow_any_tool = true
+capabilities = ["tools"]
+startup_timeout_ms = 30000
+request_timeout_ms = 180000
+
+[[mcp.servers]]
+id = "wechat"
+transport = "stdio"
+command = "wechat"
+args = ["mcp", "serve"]
+exposure = "gateway"
+allow_any_tool = true
+capabilities = ["tools"]
+startup_timeout_ms = 30000
+request_timeout_ms = 180000
+
+[[mcp.servers]]
+id = "bilibili"
+transport = "stdio"
+command = "bili"
+args = ["mcp", "serve"]
+exposure = "gateway"
+allow_any_tool = true
+capabilities = ["tools"]
+startup_timeout_ms = 30000
+request_timeout_ms = 180000
+
+[[mcp.servers]]
+id = "youtube"
+transport = "stdio"
+command = "youtube"
+args = ["mcp", "serve"]
+exposure = "gateway"
+allow_any_tool = true
+capabilities = ["tools"]
+startup_timeout_ms = 30000
+request_timeout_ms = 180000
+
+[[mcp.servers]]
+id = "instagram"
+transport = "stdio"
+command = "ins"
+args = ["mcp", "serve"]
+exposure = "gateway"
+allow_any_tool = true
+capabilities = ["tools"]
+startup_timeout_ms = 30000
+request_timeout_ms = 180000
+
+[builtin]
+enabled = ["workspace.info"]

@@ -1,0 +1,1112 @@
+{
+  "schema_version": 1,
+  "test_cases": [
+    {
+      "id": "profile.observe_write_policy_denied",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-observe"
+      ],
+      "prerequisites": [
+        "The App and OpenAI Secure MCP Tunnel are running with the observe profile, which exposes policy.probe."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Have External Consumer call policy.probe for a representative write capability and its bounded fixture arguments."
+        }
+      ],
+      "expected_results": [
+        "The policy decision denies the target capability without invoking its provider."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Exact Secure MCP Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Gateway request identifier returned to External Consumer."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Matching audited policy.probe request and denied target decision."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "result_digest",
+          "description": "Digest of the independently captured External Consumer result."
+        }
+      ],
+      "cleanup_steps": [
+        "Confirm that no workspace content changed."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "profile.operate_generic_execution_policy_denied",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "The operate profile is active, generic execution is not granted, and policy.probe is exposed."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Have External Consumer call policy.probe for shell.run or another ungranted generic execution capability."
+        }
+      ],
+      "expected_results": [
+        "The policy decision is a deterministic denial and no subprocess starts."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Exact Secure MCP Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Denied gateway request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Matching audited policy.probe request and denied target decision."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "result_digest",
+          "description": "Independent denial result digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Verify no child process remains."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "profile.local_admin_remote_configuration_denied",
+      "category": "security",
+      "transports": [
+        "control_socket"
+      ],
+      "profiles": [
+        "local-admin"
+      ],
+      "prerequisites": [
+        "The App Control Plane is running and a disposable schema-1 manifest is available."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Use the embedded CLI to validate a manifest that binds a remote caller or remote transport to local-admin."
+        }
+      ],
+      "expected_results": [
+        "Validation rejects the manifest before any remote transport starts and records the denied control request."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "control_socket_id",
+          "description": "Owner-only App Control Socket."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Denied request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Configuration-policy denial audit."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "result_digest",
+          "description": "Independent denial result digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Delete the disposable invalid manifest; the active configuration remains unchanged."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "workspace.cross_workspace_denied",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "Two separately authorized workspaces exist."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Use one workspace authorization to target the other workspace."
+        }
+      ],
+      "expected_results": [
+        "The cross-workspace operation is denied and neither workspace changes."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Tunnel instance used by the external call."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Denied request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Workspace-boundary audit event."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "postcondition_digest",
+          "description": "Independent digest proving both workspaces are unchanged."
+        }
+      ],
+      "cleanup_steps": [
+        "Remove only fixtures created for this case."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "workspace.path_traversal_denied",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "A bounded fixture workspace is authorized."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Submit a path containing parent-directory traversal outside the workspace."
+        }
+      ],
+      "expected_results": [
+        "Path resolution is rejected before filesystem mutation."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "External transport instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Rejected request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Path-policy audit event."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "postcondition_digest",
+          "description": "Independent outside-path nonexistence proof."
+        }
+      ],
+      "cleanup_steps": [
+        "Delete the bounded fixture workspace."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "workspace.symlink_escape_denied",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "A fixture symlink points outside the authorized workspace."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Request a write through the escaping symlink."
+        }
+      ],
+      "expected_results": [
+        "Resolved-path containment blocks the operation."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "External transport instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Rejected request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Symlink containment audit event."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "postcondition_digest",
+          "description": "Independent outside-target digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Remove the fixture symlink and workspace."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "operations.ticket_single_use",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "A reviewed operation ticket can be issued for a fixture mutation."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Use one ticket successfully, then replay the same ticket."
+        }
+      ],
+      "expected_results": [
+        "The first call succeeds and replay is rejected."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Transport instance for both calls."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_ids",
+          "description": "Issue, consume, and replay request identifiers."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Ticket consumption and replay-denial audits."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "postcondition_digest",
+          "description": "Independent proof that mutation occurred once."
+        }
+      ],
+      "cleanup_steps": [
+        "Remove the fixture mutation."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "runtime.timeout_enforced",
+      "category": "lifecycle",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "A deterministic hanging fixture provider is configured."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Have External Consumer call the hanging fixture with the reviewed timeout."
+        }
+      ],
+      "expected_results": [
+        "The call terminates within the bounded timeout and the provider is recoverable."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Timed-out request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Timeout audit event."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "duration_and_recovery_digest",
+          "description": "Independent duration and recovery result."
+        }
+      ],
+      "cleanup_steps": [
+        "Stop the fixture provider."
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "id": "runtime.cancellation_propagated",
+      "category": "lifecycle",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "A cancellable deterministic fixture call is available."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Start the fixture call and cancel it from the external consumer."
+        }
+      ],
+      "expected_results": [
+        "Cancellation reaches the provider and leaves no child process."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Cancelled request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Cancellation audit event."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "provider_marker_digest",
+          "description": "Independent provider cancellation marker."
+        }
+      ],
+      "cleanup_steps": [
+        "Stop the fixture provider and remove markers."
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "id": "mcp.downstream_reconnect",
+      "category": "lifecycle",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "The deterministic downstream MCP fixture is reviewed and running."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Crash the downstream fixture, then call its reviewed catalog again through External Consumer."
+        }
+      ],
+      "expected_results": [
+        "The provider reconnects and its reviewed surface returns."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Secure Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_ids",
+          "description": "Crash and post-reconnect request identifiers."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Provider exit and reconnect audit events."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "catalog_digest",
+          "description": "Independent post-reconnect catalog digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Stop the downstream fixture and remove its marker files."
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "id": "mcp.tool_drift_denied",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "The downstream fixture can advertise an unreviewed tool after startup."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Enable tool-list drift and attempt to call the new tool through External Consumer."
+        }
+      ],
+      "expected_results": [
+        "The unreviewed tool is not exposed and direct invocation is denied."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Secure Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_ids",
+          "description": "Drift and denied-call request identifiers."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Catalog drift and denial audits."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "catalog_digest",
+          "description": "Independent exposed-catalog digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Reset and stop the downstream fixture."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "tunnel.gateway_restart_reconnect",
+      "category": "lifecycle",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-observe"
+      ],
+      "prerequisites": [
+        "External Consumer Connector and Secure MCP Tunnel are healthy."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Restart only the App gateway, wait for bridge recovery, then call a read tool from External Consumer."
+        }
+      ],
+      "expected_results": [
+        "The Connector works again without recreating the tunnel profile."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_ids",
+          "description": "Tunnel instance before and after gateway restart."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Post-recovery External Consumer request."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Post-recovery local audit."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "result_digest",
+          "description": "Independent External Consumer result digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Leave the intended App and tunnel desired state running."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "connector.openai.catalog_refresh",
+      "category": "connector",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-observe"
+      ],
+      "prerequisites": [
+        "The Connector is attached to the maintained test chat and the App catalog has a reviewed change."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Refresh the actual External Consumer Connector, verify the reviewed catalog change, and call its designated read-only sentinel tool."
+        }
+      ],
+      "expected_results": [
+        "External Consumer discovers exactly the allowed App catalog and the sentinel call is correlated to the refreshed surface."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Connector tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "sentinel_request_id",
+          "description": "External Consumer request for the reviewed sentinel tool."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Matching local sentinel-tool audit event."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "catalog_and_sentinel_digest",
+          "description": "Independent digest of the External Consumer-visible catalog and sentinel result."
+        }
+      ],
+      "cleanup_steps": [
+        "Restore the intended Connector profile if it was changed."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "computer.tcc_state_enforced",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-observe"
+      ],
+      "prerequisites": [
+        "The current App permission state is recorded locally without changing user-owned TCC settings."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Have External Consumer call computer.permissions and then a bounded Computer Use operation governed by the reported permission state."
+        }
+      ],
+      "expected_results": [
+        "A granted permission permits the bounded operation; a denied permission returns the documented deterministic error; neither path requests TCC remotely."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Secure Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Permission-state and bounded Computer Use requests."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Matching permission-state enforcement audits."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "result_digest",
+          "description": "Independent External Consumer result or deterministic error digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Leave user-owned TCC settings unchanged."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "codex.authority_override_denied",
+      "category": "security",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "Codex App Server, Exec, and MCP providers are separately configured."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Attempt to override reviewed Codex authority or lifecycle fields from an External Consumer call."
+        }
+      ],
+      "expected_results": [
+        "The override is rejected and no provider lifecycle is crossed."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Secure Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Rejected Codex request identifier."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Authority-denial audit event."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "provider_state_digest",
+          "description": "Independent provider lifecycle state digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Restore only disposable Codex fixture state."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "audit.sensitive_data_redacted",
+      "category": "security",
+      "transports": [
+        "gateway_socket",
+        "openai_secure_mcp_tunnel",
+        "cloudflare_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate",
+        "cloudflare-operate"
+      ],
+      "prerequisites": [
+        "A deterministic sentinel secret is stored only in a disposable Keychain item."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Exercise OpenAI and Cloudflare calls that reference the sentinel, then inspect bounded logs and audits."
+        }
+      ],
+      "expected_results": [
+        "No token or sentinel value appears in logs, audits, results, or exported configuration."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "transport_instance_ids",
+          "description": "Both independent transport instances."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_ids",
+          "description": "Calls made through both transports."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Matching redacted audits."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "bounded_scan_digest",
+          "description": "Independent redaction scan digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Delete the disposable Keychain sentinel and fixture output."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "skills.folded_frontmatter_consistent",
+      "category": "catalog",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-observe"
+      ],
+      "prerequisites": [
+        "A fixture skill contains folded YAML frontmatter."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Discover and read the skill through External Consumer, then compare it with local provider parsing."
+        }
+      ],
+      "expected_results": [
+        "External and local skill metadata are identical and bounded."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Secure Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_ids",
+          "description": "Skill list and read requests."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Matching skill audits."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "metadata_digest",
+          "description": "Independent normalized metadata digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Remove the fixture skill."
+      ],
+      "risk_level": "low"
+    },
+    {
+      "id": "catalog.dynamic_full_coverage",
+      "category": "catalog",
+      "transports": [
+        "gateway_socket",
+        "openai_secure_mcp_tunnel",
+        "cloudflare_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate",
+        "cloudflare-operate"
+      ],
+      "prerequisites": [
+        "The active App catalog, deterministic fixtures, OpenAI Connector, and named Cloudflare endpoint are healthy."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Generate the live catalog and invoke every applicable tool from an external consumer on its allowed transport."
+        }
+      ],
+      "expected_results": [
+        "Every live tool has an external call, one matching local execution record, and an independently verified result."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "transport_instance_id",
+          "description": "Exact transport for each catalog row."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_id",
+          "description": "Unique request for each call."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Exact local audit for each request."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "result_digest",
+          "description": "Independent result or postcondition digest for each row."
+        }
+      ],
+      "cleanup_steps": [
+        "Run fixture cleanup and preserve only sanitized summary plus hashes."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "connector.openai.round_trip",
+      "category": "connector",
+      "transports": [
+        "openai_secure_mcp_tunnel"
+      ],
+      "profiles": [
+        "chatgpt-operate"
+      ],
+      "prerequisites": [
+        "The actual External Consumer Connector is configured for the maintained Secure MCP Tunnel profile."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "From the maintained External Consumer page, discover resources/prompts/tools and perform representative read, write, provider, Codex, Process, and Computer Use calls."
+        }
+      ],
+      "expected_results": [
+        "External Consumer is the external MCP consumer for every call and the complete path is correlated locally."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "tunnel_instance_id",
+          "description": "Secure MCP Tunnel instance."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_ids",
+          "description": "Actual External Consumer call request identifiers."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Matching App/GRDB audit identifiers."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "observation_digests",
+          "description": "Independent Computer Use observations and result digests."
+        }
+      ],
+      "cleanup_steps": [
+        "Remove disposable fixtures only; external Connector cleanup remains user-owned."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "transport.cloudflare.named_tunnel",
+      "category": "transport",
+      "transports": [
+        "cloudflare_tunnel"
+      ],
+      "profiles": [
+        "cloudflare-operate"
+      ],
+      "prerequisites": [
+        "A remotely managed named tunnel, public hostname, gateway bearer, and optional Access policy are configured.",
+        "cloudflared 2025.4.0 or newer is installed because token-file is required."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Start the App-owned loopback origin and named cloudflared lifecycle, then call discovery and a bounded mutation from an external MCP client."
+        }
+      ],
+      "expected_results": [
+        "The named tunnel is healthy, bearer enforcement is active, and its capabilities cannot cross into an OpenAI profile."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "cloudflare_tunnel_instance_id",
+          "description": "Named tunnel and metrics identity."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "request_ids",
+          "description": "Unauthorized probe plus authenticated MCP calls."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Cloudflare caller/profile audits."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "result_digest",
+          "description": "Independent external MCP client result digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Stop the named tunnel and remove only its temporary 0600 token file."
+      ],
+      "risk_level": "critical"
+    },
+    {
+      "id": "transport.cloudflare.quick_tunnel_isolated",
+      "category": "transport",
+      "transports": [
+        "cloudflare_quick_tunnel"
+      ],
+      "profiles": [],
+      "prerequisites": [
+        "A disposable Validation development environment is used; no release profile or secret is involved."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Run the explicitly development-only Quick Tunnel probe and confirm it is never persisted as desired state."
+        }
+      ],
+      "expected_results": [
+        "The probe is labeled development-only and cannot enable noauth or a release profile."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "quick_tunnel_instance_id",
+          "description": "Ephemeral development transport."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "probe_request_id",
+          "description": "Bounded development probe."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_id",
+          "description": "Development-only lifecycle audit."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "cleanup_digest",
+          "description": "Independent proof that no desired state or token remained."
+        }
+      ],
+      "cleanup_steps": [
+        "Terminate cloudflared and delete all ephemeral URL, log, token, and PID files."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "installation.app_and_embedded_cli",
+      "category": "installation",
+      "transports": [
+        "control_socket"
+      ],
+      "profiles": [
+        "local-admin"
+      ],
+      "prerequisites": [
+        "A clean ad-hoc App bundle or release DMG is available."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Install the App, install the embedded CLI link into ~/.local/bin, and confirm both operate the same App control plane."
+        }
+      ],
+      "expected_results": [
+        "The symlink is owner-controlled, PATH diagnostics are actionable, and CLI/App state is identical."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "control_socket_id",
+          "description": "Single owner-only App control socket."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "cli_request_ids",
+          "description": "CLI status and bounded tool request identifiers."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Matching App control-plane audits."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "installation_digest",
+          "description": "Independent bundle, CLI, link, and state digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Uninstall only the test symlink and test App copy."
+      ],
+      "risk_level": "high"
+    },
+    {
+      "id": "release.app_cli_dmg_consistency",
+      "category": "release",
+      "transports": [
+        "control_socket"
+      ],
+      "profiles": [],
+      "prerequisites": [
+        "The final App and DMG were produced from one native SwiftPM build."
+      ],
+      "steps": [
+        {
+          "id": "1",
+          "instruction": "Verify version, signing identity, embedded CLI hash, DMG installation, launch, control socket, and public-file scans."
+        }
+      ],
+      "expected_results": [
+        "App, CLI, and DMG metadata and hashes agree; no personal path, credential, generated evidence, or oversized source artifact is present."
+      ],
+      "evidence_requirements": [
+        {
+          "kind": "transport",
+          "correlation_key": "installed_control_socket_id",
+          "description": "Installed App control-plane identity."
+        },
+        {
+          "kind": "request",
+          "correlation_key": "probe_request_ids",
+          "description": "Installed CLI/App probe requests."
+        },
+        {
+          "kind": "audit",
+          "correlation_key": "audit_event_ids",
+          "description": "Matching installed-App audit events."
+        },
+        {
+          "kind": "result",
+          "correlation_key": "release_manifest_digest",
+          "description": "Independent signed release-manifest digest."
+        }
+      ],
+      "cleanup_steps": [
+        "Remove staging and mounted DMG state; retain only final dist artifacts."
+      ],
+      "risk_level": "critical"
+    }
+  ]
+}

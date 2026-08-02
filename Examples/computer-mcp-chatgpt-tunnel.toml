@@ -1,0 +1,35 @@
+schema_version = 1
+
+[server]
+name = "computer-mcp-chatgpt-tunnel"
+
+[runtime]
+caller = "secure-tunnel"
+profile = "chatgpt-observe"
+
+# Secure MCP Tunnel owns remote transport authorization. This stdio profile
+# intentionally has no HTTP OAuth or bearer-token configuration, so tools
+# advertise no additional inner authentication inside the private
+# OpenAI-managed tunnel.
+
+[policy]
+default_timeout_ms = 30000
+max_output_bytes = 1048576
+shell_enabled = false
+
+[skills]
+enabled = true
+max_bytes_per_skill = 1048576
+
+[[skills.roots]]
+id = "workspace-skills"
+path = "../Skills"
+description = "Optional repository-local skills directory."
+
+# ChatGPT Pro-compatible tunnel profile:
+# - no CLI, process, downstream MCP, shell, or write capabilities
+# - read-only skills, file/search/system/macOS and Computer Use observation
+# - standard MCP annotations mark every exposed tool read-only
+
+[builtin]
+enabled = ["workspace.info", "workspace.status", "workspace.manifests", "workspace.recent_files", "workspace.directory_stats", "workspace.artifact_directories", "workspace.empty_directories", "workspace.file_types", "workspace.large_files", "workspace.symlinks", "workspace.executable_files", "workspace.todos", "workspace.env_files", "workspace.dependency_files", "workspace.project_roots", "workspace.documentation_files", "workspace.agent_files", "workspace.instructions", "workspace.test_files", "workspace.ci_files", "workspace.infra_files", "workspace.config_files", "workspace.ignore_files", "workspace.asset_files", "workspace.archive_files", "workspace.log_files", "workspace.data_files", "workspace.schema_files", "workspace.source_files", "workspace.outline", "workspace.commands", "workspace.governance_files", "system.info", "system.kernel", "system.software", "system.locale", "system.memory", "system.load", "system.cpu", "system.thermal", "system.time", "system.uptime", "system.user", "system.groups", "system.which", "system.path", "system.volumes", "network.proxy", "macos.user_directories", "macos.default_application", "macos.applications", "macos.screens", "macos.spotlight_search", "macos.running_applications", "macos.frontmost_application", "env.describe", "file.exists", "file.list", "file.tree", "file.stat", "file.permissions", "file.type", "file.count", "file.disk_usage", "file.volume_info", "file.find", "file.search", "file.timeline", "file.read", "file.read_files", "file.read_window", "file.read_lines", "file.read_context", "file.head", "file.outline", "markdown.links", "markdown.tables", "markdown.section", "markdown.frontmatter", "markdown.link_check", "file.tail", "file.hexdump", "file.xattrs", "file.metadata", "file.readlink", "file.resolve", "image.info", "pdf.info", "pdf.text", "media.info", "json.read", "jsonl.read", "toml.read", "yaml.read", "xml.read", "plist.read", "structured.get", "csv.read", "sqlite.schema", "file.hash", "file.diff", "file.compare_trees", "file.duplicates", "archive.list", "archive.read_file"]

@@ -1,0 +1,44 @@
+schema_version = 1
+
+# Validation development probe only. Never use this manifest for a release
+# profile, a named Cloudflare Tunnel, or an OpenAI Connector.
+
+[server]
+name = "computer-mcp"
+
+[runtime]
+caller = "local-app"
+profile = "quick-tunnel-validation"
+workspace_id = "validation"
+
+[server.http]
+host = "127.0.0.1"
+port = 8765
+path = "/mcp"
+health_path = "/health"
+public_base_url = "https://computer-mcp.example.com"
+allowed_origins = ["https://chatgpt.com", "https://chat.openai.com"]
+
+[policy]
+default_timeout_ms = 30000
+max_output_bytes = 1048576
+shell_enabled = false
+
+[[profiles]]
+id = "quick-tunnel-validation"
+capabilities = ["system.time", "system.uptime"]
+workspaces = ["validation"]
+allowed_callers = ["local-app"]
+
+[[workspaces]]
+id = "validation"
+display_name = "Quick Tunnel Validation"
+path = "."
+
+# No providers are registered in this no-auth sample. The two enabled builtins
+# expose only low-sensitivity clock and uptime observations for remote MCP
+# connectivity checks. Do not add workspace, CLI, process, or downstream MCP
+# capabilities to a public no-auth endpoint.
+
+[builtin]
+enabled = ["system.time", "system.uptime"]

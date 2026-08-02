@@ -1,0 +1,89 @@
+Computer MCP Source-Visible License 1.0
+
+Copyright (c) 2026 Xudong Xu. All rights reserved.
+
+IMPORTANT: This license is a release-candidate legal draft. The copyright
+holder must approve the final text before publishing a release.
+
+1. Definitions
+
+"Software" means the Computer MCP source code, executable releases,
+documentation, and original assets made available by the copyright holder,
+excluding Third-Party Components identified below.
+
+"Authorized Release" means an unmodified executable release distributed by
+the copyright holder through an official Computer MCP distribution channel.
+
+2. Permission to install and run
+
+Subject to this license, the copyright holder grants you a limited,
+non-exclusive, non-transferable, revocable license to download, install, and
+run an Authorized Release on devices that you own or control for personal,
+non-commercial use. You may make only the temporary and backup copies that
+are technically necessary for that installation and use.
+
+3. Permission to inspect source
+
+You may view the source code solely to evaluate the Software, understand its
+operation, and conduct good-faith security review. Source availability does
+not grant an open-source license or permission to copy, modify, create
+derivative works from, compile for distribution, or use the source code for
+any other purpose.
+
+4. Restrictions
+
+Unless the copyright holder gives you prior written permission, you may not:
+
+- copy the Software except as expressly allowed above;
+- modify, adapt, translate, or create derivative works from the Software;
+- distribute, publish, sublicense, sell, rent, lease, or transfer the
+  Software or access to it;
+- use the Software for commercial activity, paid services, hosted services,
+  or the benefit of a third party;
+- remove or alter copyright, license, attribution, or technical protection
+  notices; or
+- represent that your copy, build, or service is endorsed by the copyright
+  holder.
+
+Nothing in this license limits rights that cannot lawfully be restricted,
+including any applicable statutory right to reverse engineer solely for
+interoperability.
+
+5. Third-Party Components
+
+Third-Party Components are licensed by their respective owners under the
+terms identified in `THIRD_PARTY_NOTICES.md` and the
+`ThirdPartyNotices.txt` included with an Authorized Release. This license does
+not restrict rights granted directly by those third-party licenses.
+
+6. Ownership and trademarks
+
+The Software is licensed, not sold. The copyright holder retains all rights
+not expressly granted. This license grants no right to use the Computer MCP
+name, logos, the `@showxu` identity, or any other trademark except as needed
+to identify an unmodified Authorized Release.
+
+7. Termination
+
+This license terminates automatically if you breach its terms. On
+termination, you must stop using the Software and delete all copies in your
+possession or control, except where retention is required by law.
+
+8. Disclaimer of warranty
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SOFTWARE IS PROVIDED "AS IS" AND
+WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+NON-INFRINGEMENT.
+
+9. Limitation of liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER WILL NOT BE
+LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE
+DAMAGES, OR FOR LOSS OF DATA, PROFITS, REVENUE, OR BUSINESS, ARISING FROM OR
+RELATED TO THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+10. Separate agreement
+
+A written agreement signed by the copyright holder may grant additional
+rights and will control to the extent it conflicts with this license.

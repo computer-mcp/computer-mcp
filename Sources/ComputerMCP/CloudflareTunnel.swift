@@ -318,16 +318,16 @@ extension AppControlPlaneService {
     return profiles.map { profile in
       if let runtime = cloudflareRuntimes[profile.id] {
         let running = runtime.process?.isRunning == true
+        let exitedBeforeCleanupStarted = runtime.state == .running && !running
         return CloudflareTunnelStatus(
           profileID: profile.id,
-          state: runtime.state == .running && !running ? .failed : runtime.state,
+          state: exitedBeforeCleanupStarted ? .stopping : runtime.state,
           processID: running ? runtime.process?.processIdentifier : nil,
           originURL: "http://127.0.0.1:\(profile.localPort)/mcp",
           publicURL: profile.mcpURL?.absoluteString,
           metricsURL: "http://127.0.0.1:\(profile.metricsPort)/metrics",
           startedAt: runtime.startedAt,
-          lastError: runtime.state == .running && !running
-            ? "cloudflared exited unexpectedly" : runtime.lastError
+          lastError: runtime.lastError
         )
       }
       return CloudflareTunnelStatus(

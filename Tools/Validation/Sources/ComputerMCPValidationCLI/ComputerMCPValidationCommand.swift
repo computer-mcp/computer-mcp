@@ -1202,6 +1202,20 @@ private struct DownstreamProbeVerifyRunner {
 
   private var requestIDs: [String] = []
 
+  init(
+    session: GatewayClientSession,
+    stdioServer: String,
+    httpServer: String?,
+    stdioReexportTool: String?,
+    stdioStartMarker: URL
+  ) {
+    self.session = session
+    self.stdioServer = stdioServer
+    self.httpServer = httpServer
+    self.stdioReexportTool = stdioReexportTool
+    self.stdioStartMarker = stdioStartMarker
+  }
+
   mutating func run() async throws -> JSONValue {
     let servers = try payload(
       await call("mcp.servers.list")
@@ -1883,6 +1897,24 @@ private struct CodexProbeVerifyRunner {
 
   private var transportRequestIDs: [String] = []
   private var gatewayRequestIDs: [String] = []
+
+  init(
+    session: GatewayClientSession,
+    workspaceID: String,
+    timeout: Duration,
+    transport: String,
+    target: String,
+    database: GatewayDatabase?,
+    databasePath: String?
+  ) {
+    self.session = session
+    self.workspaceID = workspaceID
+    self.timeout = timeout
+    self.transport = transport
+    self.target = target
+    self.database = database
+    self.databasePath = databasePath
+  }
 
   mutating func run() async throws -> JSONValue {
     let app = try await exerciseAppServer()

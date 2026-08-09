@@ -7,248 +7,271 @@ import Testing
 
 final class MCPProxyClientTests {
   @Test
-  func testStdioProxyUsesLineDelimitedMCPMessages() throws {
-    let script = try fakeLineDelimitedMCPServer()
-    let server = MCPServerConfig(
-      id: "fake-line",
-      transport: .stdio,
-      command: script.path,
-      requestTimeoutMs: 5_000
-    )
-    let client = MCPProxyClient()
+  func testStdioProxyUsesLineDelimitedMCPMessages() async throws {
+    try await runBlockingTest {
+      let script = try self.fakeLineDelimitedMCPServer()
+      let server = MCPServerConfig(
+        id: "fake-line",
+        transport: .stdio,
+        command: script.path,
+        requestTimeoutMs: 5_000
+      )
+      let client = MCPProxyClient()
 
-    let tools = try client.listTools(server: server)
-    #expect((tools.map(\.name)) == (["sample"]))
-    #expect((tools.first?.title) == ("Sample Tool"))
-    #expect(
-      (tools.first?.outputSchema)
-        == (.object([
-          "type": .string("object"),
-          "properties": .object(["answer": .object(["type": .string("string")])]),
-          "required": .array([.string("answer")]),
-        ])))
-    #expect((tools.first?.annotations?.readOnlyHint) == (true))
-    #expect((tools.first?.annotations?.destructiveHint) == (false))
+      let tools = try client.listTools(server: server)
+      #expect((tools.map(\.name)) == (["sample"]))
+      #expect((tools.first?.title) == ("Sample Tool"))
+      #expect(
+        (tools.first?.outputSchema)
+          == (.object([
+            "type": .string("object"),
+            "properties": .object(["answer": .object(["type": .string("string")])]),
+            "required": .array([.string("answer")]),
+          ])))
+      #expect((tools.first?.annotations?.readOnlyHint) == (true))
+      #expect((tools.first?.annotations?.destructiveHint) == (false))
 
-    let result = try client.callTool(
-      server: server,
-      name: "sample",
-      arguments: .object(["value": .string("x")])
-    )
-    #expect(
-      (result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"])
-        == (.string("called")))
-    #expect((result.objectValue?["structuredContent"]) == (.object(["answer": .string("called")])))
-    #expect((result.objectValue?["_meta"]?.objectValue?["provider"]) == (.string("fake")))
-  }
-
-  @Test
-  func testPersistentSessionSupportsResourcesPromptsStatusAndListChangedEvents() throws {
-    let fixture = try fakePersistentMCPServer()
-    let server = MCPServerConfig(
-      id: "persistent",
-      transport: .stdio,
-      command: fixture.script.path,
-      args: [fixture.startMarker.path, fixture.cancelMarker.path],
-      requestTimeoutMs: 5_000
-    )
-    let client = MCPProxyClient()
-
-    #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
-
-    let resources = try client.listResources(server: server, cursor: nil)
-    #expect(
-      (resources.objectValue?["resources"]?.arrayValue?.first?.objectValue?["uri"])
-        == (.string("memory://sample")))
-    let templates = try client.listResourceTemplates(server: server, cursor: nil)
-    #expect(
-      (templates.objectValue?["resourceTemplates"]?.arrayValue?.first?.objectValue?[
-        "uriTemplate"
-      ]) == (.string("memory://{name}")))
-    let resource = try client.readResource(server: server, uri: "memory://sample")
-    #expect(
-      (resource.objectValue?["contents"]?.arrayValue?.first?.objectValue?["text"])
-        == (.string("resource-body")))
-
-    let prompts = try client.listPrompts(server: server, cursor: nil)
-    #expect(
-      (prompts.objectValue?["prompts"]?.arrayValue?.first?.objectValue?["name"])
-        == (.string("sample-prompt")))
-    let prompt = try client.getPrompt(
-      server: server,
-      name: "sample-prompt",
-      arguments: ["value": "x"]
-    )
-    #expect(
-      (prompt.objectValue?["messages"]?.arrayValue?.first?.objectValue?["role"])
-        == (.string("user")))
-
-    for _ in 0..<20 {
-      let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
-      if events.objectValue?["events"]?.arrayValue?.contains(where: {
-        $0.objectValue?["kind"] == .string("notifications/tools/list_changed")
-      }) == true {
-        break
-      }
-      Thread.sleep(forTimeInterval: 0.01)
+      let result = try client.callTool(
+        server: server,
+        name: "sample",
+        arguments: .object(["value": .string("x")])
+      )
+      #expect(
+        (result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"])
+          == (.string("called")))
+      #expect(
+        (result.objectValue?["structuredContent"]) == (.object(["answer": .string("called")])))
+      #expect((result.objectValue?["_meta"]?.objectValue?["provider"]) == (.string("fake")))
     }
-    let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
-    #expect(
-      events.objectValue?["events"]?.arrayValue?.contains(where: {
-        $0.objectValue?["kind"] == .string("notifications/tools/list_changed")
-      }) == true)
-
-    let status = try client.connectionStatus(server: server)
-    #expect((status.objectValue?["state"]) == (.string("connected")))
-    #expect((status.objectValue?["persistent_session"]) == (.bool(true)))
-
-    let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
-    #expect((starts) == ("started\n"))
   }
 
   @Test
-  func testTimedOutToolCallSendsDownstreamCancellation() throws {
-    let fixture = try fakePersistentMCPServer()
-    let server = MCPServerConfig(
-      id: "cancel",
-      transport: .stdio,
-      command: fixture.script.path,
-      args: [fixture.startMarker.path, fixture.cancelMarker.path],
-      requestTimeoutMs: 150
-    )
-    let client = MCPProxyClient()
+  func testPersistentSessionSupportsResourcesPromptsStatusAndListChangedEvents() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakePersistentMCPServer()
+      let server = MCPServerConfig(
+        id: "persistent",
+        transport: .stdio,
+        command: fixture.script.path,
+        args: [fixture.startMarker.path, fixture.cancelMarker.path],
+        requestTimeoutMs: 5_000
+      )
+      let client = MCPProxyClient()
 
-    expectThrows(
-      try client.callTool(
+      #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
+
+      let resources = try client.listResources(server: server, cursor: nil)
+      #expect(
+        (resources.objectValue?["resources"]?.arrayValue?.first?.objectValue?["uri"])
+          == (.string("memory://sample")))
+      let templates = try client.listResourceTemplates(server: server, cursor: nil)
+      #expect(
+        (templates.objectValue?["resourceTemplates"]?.arrayValue?.first?.objectValue?[
+          "uriTemplate"
+        ]) == (.string("memory://{name}")))
+      let resource = try client.readResource(server: server, uri: "memory://sample")
+      #expect(
+        (resource.objectValue?["contents"]?.arrayValue?.first?.objectValue?["text"])
+          == (.string("resource-body")))
+
+      let prompts = try client.listPrompts(server: server, cursor: nil)
+      #expect(
+        (prompts.objectValue?["prompts"]?.arrayValue?.first?.objectValue?["name"])
+          == (.string("sample-prompt")))
+      let prompt = try client.getPrompt(
+        server: server,
+        name: "sample-prompt",
+        arguments: ["value": "x"]
+      )
+      #expect(
+        (prompt.objectValue?["messages"]?.arrayValue?.first?.objectValue?["role"])
+          == (.string("user")))
+
+      for _ in 0..<20 {
+        let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+        if events.objectValue?["events"]?.arrayValue?.contains(where: {
+          $0.objectValue?["kind"] == .string("notifications/tools/list_changed")
+        }) == true {
+          break
+        }
+        Thread.sleep(forTimeInterval: 0.01)
+      }
+      let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+      #expect(
+        events.objectValue?["events"]?.arrayValue?.contains(where: {
+          $0.objectValue?["kind"] == .string("notifications/tools/list_changed")
+        }) == true)
+
+      let status = try client.connectionStatus(server: server)
+      #expect((status.objectValue?["state"]) == (.string("connected")))
+      #expect((status.objectValue?["persistent_session"]) == (.bool(true)))
+
+      let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
+      #expect((starts) == ("started\n"))
+    }
+  }
+
+  @Test
+  func testTimedOutToolCallSendsDownstreamCancellation() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakePersistentMCPServer()
+      let server = MCPServerConfig(
+        id: "cancel",
+        transport: .stdio,
+        command: fixture.script.path,
+        args: [fixture.startMarker.path, fixture.cancelMarker.path],
+        requestTimeoutMs: 150
+      )
+      let client = MCPProxyClient()
+
+      expectThrows(
+        try client.callTool(
+          server: server,
+          name: "hang",
+          arguments: .object([:]),
+          requestID: "cancel-me"
+        )
+      )
+
+      for _ in 0..<100 where !FileManager.default.fileExists(atPath: fixture.cancelMarker.path) {
+        Thread.sleep(forTimeInterval: 0.01)
+      }
+      #expect(
+        !(try String(contentsOf: fixture.cancelMarker, encoding: .utf8)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+          .isEmpty))
+
+      #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
+      let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
+      #expect((starts) == ("started\nstarted\n"))
+    }
+  }
+
+  @Test
+  func testStartedToolCallCanBeListedCancelledAndConnectionReused() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakePersistentMCPServer()
+      let server = MCPServerConfig(
+        id: "started-cancel",
+        transport: .stdio,
+        command: fixture.script.path,
+        args: [fixture.startMarker.path, fixture.cancelMarker.path],
+        requestTimeoutMs: 5_000
+      )
+      let client = MCPProxyClient()
+
+      let started = try client.startToolCall(
         server: server,
         name: "hang",
         arguments: .object([:]),
-        requestID: "cancel-me"
+        requestID: "started-cancel-me"
       )
-    )
+      #expect((started.objectValue?["state"]) == (.string("running")))
+      #expect((started.objectValue?["request_id"]) == (.string("started-cancel-me")))
 
-    for _ in 0..<100 where !FileManager.default.fileExists(atPath: fixture.cancelMarker.path) {
-      Thread.sleep(forTimeInterval: 0.01)
+      let active = try client.activeRequests(server: server)
+      #expect(
+        (active.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"])
+          == (.string("started-cancel-me")))
+
+      let cancelled = try client.cancelRequest(
+        server: server,
+        requestID: "started-cancel-me",
+        reason: "test cancellation"
+      )
+      #expect((cancelled.objectValue?["cancelled"]) == (.bool(true)))
+      #expect((try client.activeRequests(server: server).objectValue?["requests"]) == (.array([])))
+
+      for _ in 0..<100 where !FileManager.default.fileExists(atPath: fixture.cancelMarker.path) {
+        Thread.sleep(forTimeInterval: 0.01)
+      }
+      #expect(
+        !(try String(contentsOf: fixture.cancelMarker, encoding: .utf8)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+          .isEmpty))
+
+      let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+      let kinds = events.objectValue?["events"]?.arrayValue?.compactMap {
+        $0.objectValue?["kind"]?.stringValue
+      }
+      #expect(kinds?.contains("request.started") == true)
+      #expect(kinds?.contains("request.cancelled") == true)
+      #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
+      #expect((try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\n"))
     }
-    #expect(
-      !(try String(contentsOf: fixture.cancelMarker, encoding: .utf8)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .isEmpty))
-
-    #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
-    let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
-    #expect((starts) == ("started\nstarted\n"))
   }
 
   @Test
-  func testStartedToolCallCanBeListedCancelledAndConnectionReused() throws {
-    let fixture = try fakePersistentMCPServer()
-    let server = MCPServerConfig(
-      id: "started-cancel",
-      transport: .stdio,
-      command: fixture.script.path,
-      args: [fixture.startMarker.path, fixture.cancelMarker.path],
-      requestTimeoutMs: 5_000
-    )
-    let client = MCPProxyClient()
+  func testHTTPProxyPreservesNegotiatedSessionAcrossRequests() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakeHTTPMCPServer()
+      defer {
+        fixture.process.terminate()
+        fixture.process.waitUntilExit()
+      }
+      let server = MCPServerConfig(
+        id: "http",
+        transport: .http,
+        url: "http://127.0.0.1:\(fixture.port)/mcp",
+        requestTimeoutMs: 5_000
+      )
+      let client = MCPProxyClient()
 
-    let started = try client.startToolCall(
-      server: server,
-      name: "hang",
-      arguments: .object([:]),
-      requestID: "started-cancel-me"
-    )
-    #expect((started.objectValue?["state"]) == (.string("running")))
-    #expect((started.objectValue?["request_id"]) == (.string("started-cancel-me")))
+      #expect((try client.listTools(server: server).map(\.name)) == (["http-sample"]))
+      let result = try client.callTool(
+        server: server,
+        name: "http-sample",
+        arguments: .object([:])
+      )
+      #expect(
+        (result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"])
+          == (.string("http-called")))
 
-    let active = try client.activeRequests(server: server)
-    #expect(
-      (active.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"])
-        == (.string("started-cancel-me")))
-
-    let cancelled = try client.cancelRequest(
-      server: server,
-      requestID: "started-cancel-me",
-      reason: "test cancellation"
-    )
-    #expect((cancelled.objectValue?["cancelled"]) == (.bool(true)))
-    #expect((try client.activeRequests(server: server).objectValue?["requests"]) == (.array([])))
-
-    for _ in 0..<100 where !FileManager.default.fileExists(atPath: fixture.cancelMarker.path) {
-      Thread.sleep(forTimeInterval: 0.01)
+      let sessions = try String(contentsOf: fixture.sessionMarker, encoding: .utf8)
+        .split(separator: "\n")
+      #expect((sessions.count) >= (2))
+      #expect(sessions.allSatisfy { $0 == "session-1" })
+      #expect(
+        (try client.connectionStatus(server: server).objectValue?["state"])
+          == (.string("connected")))
     }
-    #expect(
-      !(try String(contentsOf: fixture.cancelMarker, encoding: .utf8)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .isEmpty))
-
-    let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
-    let kinds = events.objectValue?["events"]?.arrayValue?.compactMap {
-      $0.objectValue?["kind"]?.stringValue
-    }
-    #expect(kinds?.contains("request.started") == true)
-    #expect(kinds?.contains("request.cancelled") == true)
-    #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
-    #expect((try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\n"))
   }
 
   @Test
-  func testHTTPProxyPreservesNegotiatedSessionAcrossRequests() throws {
-    let fixture = try fakeHTTPMCPServer()
-    defer {
-      fixture.process.terminate()
-      fixture.process.waitUntilExit()
+  func testExitedStdioProviderCannotTerminateGatewayAndNextCallReconnects() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakeExitingMCPServer()
+      let server = MCPServerConfig(
+        id: "exiting",
+        transport: .stdio,
+        command: fixture.script.path,
+        args: [fixture.startMarker.path],
+        requestTimeoutMs: 5_000
+      )
+      let client = MCPProxyClient()
+
+      #expect((try client.listTools(server: server).map(\.name)) == (["crash"]))
+      _ = try client.callTool(
+        server: server,
+        name: "crash",
+        arguments: .object([:])
+      )
+      Thread.sleep(forTimeInterval: 0.1)
+
+      expectThrows(try client.listTools(server: server))
+      #expect((try client.listTools(server: server).map(\.name)) == (["crash"]))
+      #expect(
+        (try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\nstarted\n"))
     }
-    let server = MCPServerConfig(
-      id: "http",
-      transport: .http,
-      url: "http://127.0.0.1:\(fixture.port)/mcp",
-      requestTimeoutMs: 5_000
-    )
-    let client = MCPProxyClient()
-
-    #expect((try client.listTools(server: server).map(\.name)) == (["http-sample"]))
-    let result = try client.callTool(
-      server: server,
-      name: "http-sample",
-      arguments: .object([:])
-    )
-    #expect(
-      (result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"])
-        == (.string("http-called")))
-
-    let sessions = try String(contentsOf: fixture.sessionMarker, encoding: .utf8)
-      .split(separator: "\n")
-    #expect((sessions.count) >= (2))
-    #expect(sessions.allSatisfy { $0 == "session-1" })
-    #expect(
-      (try client.connectionStatus(server: server).objectValue?["state"]) == (.string("connected")))
   }
 
-  @Test
-  func testExitedStdioProviderCannotTerminateGatewayAndNextCallReconnects() throws {
-    let fixture = try fakeExitingMCPServer()
-    let server = MCPServerConfig(
-      id: "exiting",
-      transport: .stdio,
-      command: fixture.script.path,
-      args: [fixture.startMarker.path],
-      requestTimeoutMs: 5_000
-    )
-    let client = MCPProxyClient()
-
-    #expect((try client.listTools(server: server).map(\.name)) == (["crash"]))
-    _ = try client.callTool(
-      server: server,
-      name: "crash",
-      arguments: .object([:])
-    )
-    Thread.sleep(forTimeInterval: 0.1)
-
-    expectThrows(try client.listTools(server: server))
-    #expect((try client.listTools(server: server).map(\.name)) == (["crash"]))
-    #expect(
-      (try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\nstarted\n"))
+  private func runBlockingTest(_ operation: @escaping () throws -> Void) async throws {
+    let operation = BlockingTestOperation(operation)
+    try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(with: Result(catching: operation.run))
+      }
+    }
   }
 
   private func fakeLineDelimitedMCPServer() throws -> URL {
@@ -599,5 +622,17 @@ final class MCPProxyClientTests {
       ofItemAtPath: script.path
     )
     return (script, startMarker)
+  }
+}
+
+private final class BlockingTestOperation: @unchecked Sendable {
+  private let operation: () throws -> Void
+
+  init(_ operation: @escaping () throws -> Void) {
+    self.operation = operation
+  }
+
+  func run() throws {
+    try operation()
   }
 }

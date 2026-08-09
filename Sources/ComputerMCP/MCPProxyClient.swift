@@ -175,7 +175,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   ) throws -> T {
     let timeout = server.requestTimeoutMs ?? server.startupTimeoutMs ?? 30_000
     let box = AsyncOperationBox<T>()
-    let task = Task {
+    let task = Task.detached {
       do {
         box.complete(.success(try await operation(connection)))
       } catch {

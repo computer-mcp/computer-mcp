@@ -60,7 +60,7 @@ package enum MCPRuntimeAdapter: Sendable {
     let surface = GatewayMCPToolSurface(registry: registry)
 
     await server.withMethodHandler(MCP.ListTools.self) { _ in
-      MCP.ListTools.Result(tools: try surface.listTools().map(\.sdkTool))
+      MCP.ListTools.Result(tools: try await surface.listToolsAsync().map(\.sdkTool))
     }
 
     await server.withMethodHandler(MCP.CallTool.self) { params in

@@ -202,13 +202,7 @@ struct WorkspacesView: View {
         ScrollView {
           LazyVStack(spacing: 0) {
             ForEach(workspaces) { workspace in
-              WorkspaceRow(workspace: workspace) {
-                model.revealWorkspace(workspace)
-              } setEnabled: { enabled in
-                model.setWorkspaceEnabled(enabled, workspace: workspace)
-              } remove: {
-                model.requestWorkspaceRemoval(workspace)
-              }
+              WorkspaceRow(workspace: workspace)
               Divider()
             }
           }
@@ -252,10 +246,9 @@ struct WorkspacesView: View {
 }
 
 private struct WorkspaceRow: View {
+  @EnvironmentObject private var model: ComputerMCPAppModel
+
   let workspace: WorkspaceSummary
-  let reveal: () -> Void
-  let setEnabled: @MainActor @Sendable (Bool) -> Void
-  let remove: () -> Void
 
   var body: some View {
     HStack(spacing: 12) {
@@ -294,21 +287,27 @@ private struct WorkspaceRow: View {
         "Enabled for \(workspace.activeProfileID)",
         isOn: Binding(
           get: { workspace.isSelected },
-          set: setEnabled
+          set: { enabled in
+            model.setWorkspaceEnabled(enabled, workspace: workspace)
+          }
         )
       )
       .accessibilityIdentifier("workspace.\(workspace.id).enabled")
       .toggleStyle(.switch)
       .help("Grant this workspace to the active profile")
 
-      Button(action: reveal) {
+      Button {
+        model.revealWorkspace(workspace)
+      } label: {
         Image(systemName: "arrow.right.circle")
       }
       .buttonStyle(.borderless)
       .help("Show in Finder")
       .accessibilityLabel("Show \(workspace.displayName) in Finder")
 
-      Button(role: .destructive, action: remove) {
+      Button(role: .destructive) {
+        model.requestWorkspaceRemoval(workspace)
+      } label: {
         Image(systemName: "trash")
       }
       .buttonStyle(.borderless)

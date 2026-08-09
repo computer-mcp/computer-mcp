@@ -662,13 +662,15 @@ extension AppControlPlaneService {
     else {
       return
     }
-    runtime.state = .failed
-    runtime.lastError = "cloudflared exited unexpectedly with status \(terminationStatus)"
+    // Keep the externally visible state transitional until sensitive files and
+    // runtime resources have been released. Observers must not see `.failed`
+    // before cleanup is complete.
+    runtime.state = .stopping
     cloudflareRuntimes[profileID] = runtime
     await Self.releaseCloudflareRuntimeResources(runtime, terminateProcess: false)
     guard var current = cloudflareRuntimes[profileID],
       current.process?.processIdentifier == processID,
-      current.state == .failed
+      current.state == .stopping
     else {
       return
     }
@@ -677,13 +679,15 @@ extension AppControlPlaneService {
     current.tokenFile = nil
     current.stdoutHandle = nil
     current.stderrHandle = nil
-    cloudflareRuntimes[profileID] = current
     try? recordCloudflareLifecycle(
       profile: current.profile,
       action: "exit",
       decision: .failed,
       errorCode: "tunnel.cloudflare.process_exited"
     )
+    current.state = .failed
+    current.lastError = "cloudflared exited unexpectedly with status \(terminationStatus)"
+    cloudflareRuntimes[profileID] = current
   }
 
   private static func secureRandomToken() throws -> String {

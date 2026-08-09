@@ -10,7 +10,14 @@ internal protocol GatewayToolProvider: Sendable {
 
 extension GatewayToolProvider {
   internal func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try callTool(name: name, arguments: arguments)
+    try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(
+          with: Result {
+            try self.callTool(name: name, arguments: arguments)
+          })
+      }
+    }
   }
 }
 

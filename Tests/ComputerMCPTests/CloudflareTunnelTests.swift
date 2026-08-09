@@ -334,7 +334,7 @@ final class CloudflareTunnelTests {
 
     let started = try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
     #expect(started.state == .running)
-    for _ in 0..<30 {
+    for _ in 0..<100 {
       if await fixture.controlPlane.cloudflareTunnelStatuses().first?.state == .failed {
         break
       }

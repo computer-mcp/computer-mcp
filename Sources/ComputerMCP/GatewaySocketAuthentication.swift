@@ -262,8 +262,8 @@ enum GatewaySocketAuthenticator {
     guard lhs.count == rhs.count else {
       return false
     }
-    return lhs.withUnsafeBytes { left in
-      rhs.withUnsafeBytes { right in
+    return lhs.withUnsafeBytes { (left: UnsafeRawBufferPointer) in
+      rhs.withUnsafeBytes { (right: UnsafeRawBufferPointer) in
         var difference: UInt8 = 0
         for index in 0..<lhs.count {
           difference |= left[index] ^ right[index]

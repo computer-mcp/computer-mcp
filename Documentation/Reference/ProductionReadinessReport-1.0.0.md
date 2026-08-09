@@ -53,10 +53,10 @@ the final candidate and replaced by CI and release-artifact evidence.
 | Environment | Required coverage | Result |
 | --- | --- | --- |
 | Apple Silicon, macOS 14+ | DMG cold install, Finder launch, TCC/state/CLI lifecycle | Pending |
-| Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility smoke | Pending |
+| Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility check | Pending |
 
 A physical Intel Mac is not a 1.0.0 release gate. The Universal 2 slice checks
-and Rosetta 2 smoke cover x86_64 compatibility; the full installation and
+and Rosetta 2 checks cover x86_64 compatibility; the full installation and
 acceptance lifecycle runs natively on Apple Silicon.
 
 ## Final 23 Test Cases

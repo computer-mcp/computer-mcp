@@ -243,6 +243,22 @@ private struct GatewayVerificationRunner {
   private var schemaValidatedMutationTools = Set<String>()
   private var mutationAssertions: [String: JSONValue] = [:]
 
+  init(
+    session: GatewayClientSession,
+    fixtureDigest: String,
+    runtimeWorkspacePath: String,
+    loopbackPort: Int,
+    toolCatalog: [MCPTool],
+    observeToolNames: [String]
+  ) {
+    self.session = session
+    self.fixtureDigest = fixtureDigest
+    self.runtimeWorkspacePath = runtimeWorkspacePath
+    self.loopbackPort = loopbackPort
+    self.toolCatalog = toolCatalog
+    self.observeToolNames = observeToolNames
+  }
+
   private static let mutableBuiltinDomains = Set([
     "archive",
     "file",

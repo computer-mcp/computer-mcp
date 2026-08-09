@@ -11,8 +11,8 @@ actor MCPChildProcessTransport: MCP.Transport {
   private var isConnected = false
   private var process: Process?
   private var stdin: Pipe?
-  private var stdoutTask: Task<Void, Never>?
-  private var stderrTask: Task<Void, Never>?
+  private var stdoutReader: MCPLineDelimitedOutputReader?
+  private var stderrReader: MCPDiscardingOutputReader?
   private let stream: AsyncThrowingStream<Data, Swift.Error>
   private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
 
@@ -70,36 +70,15 @@ actor MCPChildProcessTransport: MCP.Transport {
     self.stdin = stdin
     isConnected = true
 
-    stdoutTask = Task { [handle = stdout.fileHandleForReading, continuation] in
-      var buffer = Data()
-      while !Task.isCancelled {
-        let chunk = handle.availableData
-        if chunk.isEmpty {
-          continuation.finish()
-          return
-        }
-        buffer.append(chunk)
-        while let newline = buffer.firstIndex(of: 0x0A) {
-          var line = buffer[..<newline]
-          if line.last == 0x0D {
-            line = line.dropLast()
-          }
-          buffer.removeSubrange(...newline)
-          if !line.isEmpty {
-            continuation.yield(Data(line))
-          }
-        }
-      }
-      continuation.finish()
-    }
-
-    stderrTask = Task { [handle = stderr.fileHandleForReading] in
-      while !Task.isCancelled {
-        if handle.availableData.isEmpty {
-          return
-        }
-      }
-    }
+    let stdoutReader = MCPLineDelimitedOutputReader(
+      handle: stdout.fileHandleForReading,
+      continuation: continuation
+    )
+    let stderrReader = MCPDiscardingOutputReader(handle: stderr.fileHandleForReading)
+    self.stdoutReader = stdoutReader
+    self.stderrReader = stderrReader
+    stdoutReader.start()
+    stderrReader.start()
   }
 
   func disconnect() async {
@@ -108,10 +87,10 @@ actor MCPChildProcessTransport: MCP.Transport {
     }
 
     isConnected = false
-    stdoutTask?.cancel()
-    stderrTask?.cancel()
-    stdoutTask = nil
-    stderrTask = nil
+    stdoutReader?.stop()
+    stderrReader?.stop()
+    stdoutReader = nil
+    stderrReader = nil
     try? stdin?.fileHandleForWriting.close()
     stdin = nil
     if let process, process.isRunning {
@@ -132,5 +111,88 @@ actor MCPChildProcessTransport: MCP.Transport {
 
   func receive() -> AsyncThrowingStream<Data, Swift.Error> {
     stream
+  }
+}
+
+/// Drains child-process stdout without blocking a Swift cooperative-executor thread.
+private final class MCPLineDelimitedOutputReader: @unchecked Sendable {
+  private let handle: FileHandle
+  private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
+  private let lock = NSLock()
+  private var buffer = Data()
+  private var stopped = false
+
+  init(
+    handle: FileHandle,
+    continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
+  ) {
+    self.handle = handle
+    self.continuation = continuation
+  }
+
+  func start() {
+    handle.readabilityHandler = { [weak self] handle in
+      self?.consumeAvailableData(from: handle)
+    }
+  }
+
+  func stop() {
+    lock.lock()
+    stopped = true
+    lock.unlock()
+    handle.readabilityHandler = nil
+  }
+
+  private func consumeAvailableData(from handle: FileHandle) {
+    let chunk = handle.availableData
+    lock.lock()
+    guard !stopped else {
+      lock.unlock()
+      return
+    }
+    guard !chunk.isEmpty else {
+      stopped = true
+      lock.unlock()
+      handle.readabilityHandler = nil
+      continuation.finish()
+      return
+    }
+
+    buffer.append(chunk)
+    var messages: [Data] = []
+    while let newline = buffer.firstIndex(of: 0x0A) {
+      var line = buffer[..<newline]
+      if line.last == 0x0D {
+        line = line.dropLast()
+      }
+      buffer.removeSubrange(...newline)
+      if !line.isEmpty {
+        messages.append(Data(line))
+      }
+    }
+    lock.unlock()
+
+    for message in messages {
+      continuation.yield(message)
+    }
+  }
+}
+
+/// Keeps an untrusted provider's stderr pipe drained without occupying a Swift task thread.
+private final class MCPDiscardingOutputReader: @unchecked Sendable {
+  private let handle: FileHandle
+
+  init(handle: FileHandle) {
+    self.handle = handle
+  }
+
+  func start() {
+    handle.readabilityHandler = { handle in
+      _ = handle.availableData
+    }
+  }
+
+  func stop() {
+    handle.readabilityHandler = nil
   }
 }

@@ -30,17 +30,26 @@ Scripts/verify-distribution.sh
 Scripts/verify-cli-interface.sh
 ```
 
-This creates an ad-hoc signed App and development DMG. It validates bundle
+When exactly one valid Apple Development identity is installed,
+`build-app.sh` selects it automatically so Keychain and TCC grants remain
+stable across local rebuilds. Otherwise it creates an ad-hoc signed App and
+prints a warning. Both paths create a development DMG that validates bundle
 structure and code signatures but is not a distributable notarized release.
 
 An ad-hoc App's designated requirement is its code-directory hash, which
 changes when the executable changes. If the App already owns a Tunnel API key
 in Keychain, macOS will require local user authorization again after such a
-rebuild. For iterative App and Tunnel Validation Runs, use a stable Apple Development
-identity instead:
+rebuild. If more than one identity is installed, select the intended stable
+Apple Development identity explicitly:
 
 ```sh
 SIGNING_IDENTITY="Apple Development: Example (TEAMID)" Scripts/build-app.sh
+```
+
+CI or isolated testing can explicitly request the old ad-hoc behavior:
+
+```sh
+ADHOC_SIGNING=1 Scripts/build-app.sh
 ```
 
 The first transition from an ad-hoc identity still requires one local

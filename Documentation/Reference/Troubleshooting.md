@@ -186,10 +186,19 @@ them. Revoking either grant does not stop ordinary file, system, provider, or
 non-Computer-Use paths. The grant must belong to the signed App bundle that
 performs the protected action, not Terminal, Codex, or a copied executable.
 
+For local builds, `Scripts/build-app.sh` automatically uses the only available
+Apple Development identity. This keeps the App's designated requirement stable
+across rebuilds, so its own Keychain items and TCC grants do not repeatedly ask
+for authorization. If several identities are installed, set
+`SIGNING_IDENTITY` explicitly. Use `ADHOC_SIGNING=1` only for isolated testing;
+an ad-hoc rebuild has a new identity and may require authorization again.
+
 ## Release Artifact Is Rejected
 
-Development builds are ad-hoc signed and are not notarized. For distribution,
-set `SIGNING_IDENTITY` and `NOTARY_KEYCHAIN_PROFILE`, rebuild, package, then run:
+Development builds use Apple Development signing when exactly one identity is
+available; otherwise they are ad-hoc signed. Neither path is notarized. For
+distribution, set `SIGNING_IDENTITY` and `NOTARY_KEYCHAIN_PROFILE`, rebuild,
+package, then run:
 
 ```sh
 codesign --verify --deep --strict --verbose=2 "dist/Computer MCP.app"

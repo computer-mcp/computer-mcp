@@ -12,6 +12,7 @@ INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
 LOCALIZED_INFO_ROOT="$ROOT_DIR/Resources/ComputerMCPApp"
 ENTITLEMENTS="$ROOT_DIR/Resources/ComputerMCPApp/ComputerMCP.entitlements"
 RELEASE_MODE=${RELEASE_MODE:-0}
+ADHOC_SIGNING=${ADHOC_SIGNING:-0}
 REUSE_EXISTING_SLICES=${REUSE_EXISTING_SLICES:-0}
 BUILD_ROOT=${BUILD_ROOT:-"$OUTPUT_DIR/Build"}
 ARM64_SCRATCH="$BUILD_ROOT/arm64"
@@ -27,10 +28,39 @@ fail() {
 if [[ "$RELEASE_MODE" != "0" && "$RELEASE_MODE" != "1" ]]; then
   fail "RELEASE_MODE must be 0 or 1."
 fi
+if [[ "$ADHOC_SIGNING" != "0" && "$ADHOC_SIGNING" != "1" ]]; then
+  fail "ADHOC_SIGNING must be 0 or 1."
+fi
+if [[ "$ADHOC_SIGNING" == "1" && -n ${SIGNING_IDENTITY:-} ]]; then
+  fail "ADHOC_SIGNING cannot be combined with SIGNING_IDENTITY."
+fi
 if [[ "$REUSE_EXISTING_SLICES" != "0" && "$REUSE_EXISTING_SLICES" != "1" ]]; then
   fail "REUSE_EXISTING_SLICES must be 0 or 1."
 fi
+if [[ "$RELEASE_MODE" == "0" && "$ADHOC_SIGNING" == "0" \
+  && -z ${SIGNING_IDENTITY:-} ]]
+then
+  development_identities=$(
+    /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
+      | /usr/bin/sed -n \
+        's/^[[:space:]]*[0-9][0-9]*) [0-9A-F]* "\(Apple Development:.*\)"$/\1/p'
+  )
+  development_identity_count=$(
+    print -r -- "$development_identities" \
+      | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }'
+  )
+  if [[ "$development_identity_count" == "1" ]]; then
+    SIGNING_IDENTITY=$(print -r -- "$development_identities" | /usr/bin/sed -n '1p')
+    export SIGNING_IDENTITY
+    echo "Using the only available Apple Development identity for stable local signing."
+  elif [[ "$development_identity_count" -gt 1 ]]; then
+    echo \
+      "warning: multiple Apple Development identities found; set SIGNING_IDENTITY to keep Keychain and TCC grants stable." \
+      >&2
+  fi
+fi
 if [[ "$RELEASE_MODE" == "1" ]]; then
+  [[ "$ADHOC_SIGNING" == "0" ]] || fail "Release mode cannot use ad-hoc signing."
   [[ "$REUSE_EXISTING_SLICES" == "0" ]] \
     || fail "Release mode cannot reuse existing architecture slices."
   [[ -n ${SIGNING_IDENTITY:-} ]] || fail "Release mode requires SIGNING_IDENTITY."
@@ -288,7 +318,15 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
   done
   echo "Built Developer ID signed Universal 2 app: $APP_PATH"
 else
-  echo "Built development Universal 2 app: $APP_PATH"
+  if [[ "$APP_TEAM_ID" == "adhoc" ]]; then
+    echo "Built ad-hoc development Universal 2 app: $APP_PATH"
+    echo \
+      "warning: ad-hoc rebuilds change identity and can require Keychain or TCC authorization again." \
+      >&2
+    echo "Set SIGNING_IDENTITY, or install exactly one Apple Development identity, for stable local grants."
+  else
+    echo "Built stably signed development Universal 2 app: $APP_PATH"
+  fi
   echo "Set RELEASE_MODE=1 with Developer ID and notarization variables for release."
 fi
 

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 
 @testable import ComputerMCP
@@ -78,6 +79,37 @@ final class KeychainSecretStoreTests {
 
     expectThrows(try store.value(for: reference)) { error in
       #expect((error as? KeychainSecretStoreError) == (.invalidStoredSecret))
+    }
+  }
+
+  @Test
+  func testSecurityAdapterAlwaysTargetsPrivateDataProtectionAccessGroup() {
+    let accessGroup = "A7JC3DY3PU.com.showxu.computer-mcp"
+    let adapter = SecurityKeychainAdapter(accessGroup: accessGroup)
+
+    let query = adapter.baseQuery(
+      service: "com.showxu.computer-mcp",
+      account: "tunnel.primary.openai-api-key"
+    )
+
+    #expect(query[kSecUseDataProtectionKeychain] as? Bool == true)
+    #expect(query[kSecAttrAccessGroup] as? String == accessGroup)
+    #expect(query[kSecClass] as? String == kSecClassGenericPassword as String)
+    #expect(query[kSecAttrService] as? String == "com.showxu.computer-mcp")
+    #expect(query[kSecAttrAccount] as? String == "tunnel.primary.openai-api-key")
+    #expect(query[kSecAttrAccessible] == nil)
+  }
+
+  @Test
+  func testRejectsInvalidAccessGroupBeforeAnySecurityCall() {
+    expectThrows(
+      try KeychainSecretStore(
+        service: "com.showxu.computer-mcp",
+        accessGroup: " ",
+        adapter: MemoryKeychainAdapter()
+      )
+    ) { error in
+      #expect((error as? KeychainSecretStoreError) == .invalidAccessGroup)
     }
   }
 }

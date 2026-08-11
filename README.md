@@ -153,9 +153,10 @@ grant does not transfer to Computer MCP.
   Full Shell are disabled unless policy and the selected profile both grant
   them.
 - More than one eligible workspace requires an explicit `workspace_id`.
-- API keys and tunnel tokens live in Keychain. Examples, Doctor, logs,
-  diagnostics, configuration exports, and audit rows contain only placeholders
-  or redacted summaries.
+- API keys and tunnel tokens live in the macOS Data Protection Keychain under
+  the signed App's private access group. Examples, Doctor, logs, diagnostics,
+  configuration exports, and audit rows contain only placeholders or redacted
+  summaries.
 - HTTP v1 remains loopback-bound and bearer protected; Cloudflare owns the
   public transport, not the origin authorization boundary.
 
@@ -182,6 +183,13 @@ swift-format lint --strict --recursive --configuration .swift-format Package.swi
 /usr/bin/swift build --build-system native
 /usr/bin/swift test --build-system native
 ```
+
+Local builds are development and release-rehearsal artifacts only. Official
+DMGs come exclusively from the protected GitHub Actions workflow triggered by
+an SSH-signed annotated `vMAJOR.MINOR.PATCH` tag. The workflow signs with
+Developer ID, notarizes and staples the App and DMG, verifies Gatekeeper, and
+creates a draft GitHub Release. See the
+[Release reference](Documentation/Reference/Release.md).
 
 The root package exposes only the App and CLI products. It resolves
 `swift-codex` exactly at `0.1.1`; the Validation package remains independent

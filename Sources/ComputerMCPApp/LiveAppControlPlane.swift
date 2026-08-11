@@ -14,8 +14,15 @@ final class LiveAppControlPlane: AppControlPlane {
   private var maintenanceInProgress = false
 
   init() throws {
+    let identity = try AppDistributionIdentity.bundled()
+    let directories = try AppControlPlaneServiceDirectories.standard(
+      environment: identity.environment
+    )
     let controlPlane = try AppControlPlaneService.live(
-      openAITunnelGatewayExecutablePath: Self.embeddedGatewayExecutablePath()
+      directories: directories,
+      openAITunnelGatewayExecutablePath: Self.embeddedGatewayExecutablePath(),
+      keychainService: identity.environment.keychainService,
+      keychainAccessGroup: identity.keychainAccessGroup
     )
     self.controlPlane = controlPlane
     self.gatewayService = AppGatewayService.live(

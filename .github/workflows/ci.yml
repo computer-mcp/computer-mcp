@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install gate tooling
-        run: brew install jq ripgrep
+        run: brew install actionlint jq ripgrep
 
       - name: Strict format lint
         run: |
@@ -47,7 +47,10 @@ jobs:
             Tools/Validation/Tests
 
       - name: Shell workflow syntax
-        run: zsh -n Scripts/*.sh
+        run: |
+          zsh -n Scripts/*.sh
+          actionlint .github/workflows/*.yml
+          Scripts/verify-release-record-rendering.sh
 
       - name: Root native build and Swift Testing
         run: |

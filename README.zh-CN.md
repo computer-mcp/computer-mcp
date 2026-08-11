@@ -68,8 +68,9 @@ Accessibility 和 Screen Recording 只阻塞真正使用相应 Computer Use 能�
 
 App Control Socket 与 Gateway Socket 均为当前用户独占的本地端点。远程 Profile
 不会继承本地管理权限；`shell.run`、通用 CLI、进程启动、写操作和 Full Shell 默认
-关闭。真实凭据只进入 Keychain，示例、Doctor、日志、诊断包、配置导出和审计记录
-只保留 placeholder 或脱敏摘要。
+关闭。真实凭据只进入签名 App 私有 access group 下的 macOS Data Protection
+Keychain；示例、Doctor、日志、诊断包、配置导出和审计记录只保留 placeholder 或
+脱敏摘要。
 
 ## 高级开发
 
@@ -79,6 +80,12 @@ standalone 每个进程只读取一个 TOML：
 swift run computer-mcp serve stdio --config Examples/computer-mcp.toml
 swift run computer-mcp config validate --config Examples/computer-mcp.toml
 ```
+
+本地产物只用于开发、测试和发布预演。正式 DMG 仅由受保护的 GitHub Actions
+`production` Environment 处理 SSH 签名的 `vMAJOR.MINOR.PATCH` annotated tag 后
+生成；CI 会完成 Developer ID 签名、App/DMG 公证、staple、Gatekeeper 校验并创建
+Draft GitHub Release。完整配置和验收边界见
+[发布参考](Documentation/Reference/Release.md)。
 
 standalone 不使用 App 的 bookmark、数据库或 Keychain Tunnel 凭据，不应作为第二个
 App 状态所有者同时运行。示例用途见 [Examples/README.md](Examples/README.md)；完整

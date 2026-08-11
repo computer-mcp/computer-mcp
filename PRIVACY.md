@@ -12,8 +12,12 @@ The App stores product state under:
 - `~/Library/Application Support/Computer MCP` for the active TOML manifest,
   GRDB database, tunnel-client profiles, runtime sockets, and other App state;
 - `~/Library/Logs/Computer MCP` for bounded, rotated JSONL App and tunnel logs;
-- macOS Keychain service `com.showxu.computer-mcp` for OpenAI Tunnel,
-  Cloudflare Tunnel, and Computer MCP access tokens; and
+- the macOS Data Protection Keychain service
+  `com.showxu.computer-mcp.secrets`, restricted to access group
+  `TEAM_ID.com.showxu.computer-mcp`, for OpenAI Tunnel, Cloudflare Tunnel,
+  and Computer MCP access tokens (development builds use the separate
+  `com.showxu.computer-mcp.development.secrets` service and matching access
+  group); and
 - security-scoped bookmarks in the GRDB database for workspaces selected by
   the user.
 

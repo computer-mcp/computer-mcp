@@ -25,7 +25,10 @@ package struct AppControlPlaneServiceDirectories: Codable, Equatable, Sendable {
     self.manifest = configuration.appendingPathComponent("computer-mcp.toml")
   }
 
-  package static func standard(fileManager: FileManager = .default) throws
+  package static func standard(
+    environment: AppDistributionEnvironment = .production,
+    fileManager: FileManager = .default
+  ) throws
     -> AppControlPlaneServiceDirectories
   {
     let supportRoot = try fileManager.url(
@@ -41,11 +44,14 @@ package struct AppControlPlaneServiceDirectories: Codable, Equatable, Sendable {
       create: true
     )
     return AppControlPlaneServiceDirectories(
-      applicationSupport: supportRoot.appendingPathComponent("Computer MCP", isDirectory: true),
+      applicationSupport: supportRoot.appendingPathComponent(
+        environment.applicationSupportDirectoryName,
+        isDirectory: true
+      ),
       logs:
         library
         .appendingPathComponent("Logs", isDirectory: true)
-        .appendingPathComponent("Computer MCP", isDirectory: true)
+        .appendingPathComponent(environment.applicationSupportDirectoryName, isDirectory: true)
     )
   }
 

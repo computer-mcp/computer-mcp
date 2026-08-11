@@ -42,7 +42,16 @@ App executable. Only the App and CLI are package products.
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
 
 The release scripts assemble the SwiftPM App executable and embedded CLI into a
-standard `.app`, sign both code objects, and package the bundle in a DMG.
+standard `.app`, sign both code objects, and package the bundle in a DMG. The
+only supported official release topology is a signed `v*` tag processed by the
+protected GitHub Actions `production` Environment. Local invocations exercise
+development signing and distribution structure but do not publish releases.
+
+The GitHub release job imports a password-protected Developer ID PKCS#12 file
+and provisioning profile into an ephemeral runner Keychain, authenticates
+notarization with an App Store Connect Team API key, and deletes decoded assets
+in an unconditional cleanup step. The no-secret verification job must pass
+before the protected job can start.
 
 `Tools/Validation` is not a root target and is not included in the App or DMG.
 Real external consumers and tunnels are Validation Runs, never automated tests.

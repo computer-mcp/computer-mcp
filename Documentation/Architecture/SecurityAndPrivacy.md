@@ -35,11 +35,27 @@ Remote MCP client -> Cloudflare named tunnel -> bearer-authenticated loopback HT
 ```
 
 OpenAI and Cloudflare tokens and the Computer MCP Access Token are stored in
-Keychain. The App materializes the Cloudflare token only as a temporary `0600`
-file for `cloudflared`. Consumer-owned Cloudflare Access service tokens are not
-stored by Computer MCP. Downstream CLI credentials, provider tokens, and Codex
-login state stay in their existing local stores. Secrets are not copied into
-TOML, audit records, examples, exports, or App logs.
+the macOS Data Protection Keychain. Every operation sets
+`kSecUseDataProtectionKeychain`, the provisioned private access group
+`<TeamID>.<BundleID>`, and an environment-specific service ending in
+`.secrets`. New items use `AfterFirstUnlockThisDeviceOnly` so desired tunnels
+can restore in the logged-in user context without an interactive biometric or
+password policy. The production Development and Developer ID builds use the
+same Team ID and Bundle ID, so they share the same private group without the
+file-based Keychain's per-binary ACL prompts. The opt-in development App uses a
+different Bundle ID, group, service, and Application Support directory.
+
+The App fails closed when its signed Team metadata, environment, Bundle ID,
+embedded provisioning profile, or private Keychain entitlement do not agree.
+Ad-hoc artifacts therefore validate packaging in CI but cannot open the live
+App control plane or its secrets. There is no product fallback to the older
+file-based Keychain.
+
+The App materializes the Cloudflare token only as a temporary `0600` file for
+`cloudflared`. Consumer-owned Cloudflare Access service tokens are not stored
+by Computer MCP. Downstream CLI credentials, provider tokens, and Codex login
+state stay in their existing local stores. Secrets are not copied into TOML,
+audit records, examples, exports, or App logs.
 
 The private socket validates current-user ownership and peer credentials. The
 App is the sole service owner and cleans up its socket and owned processes on
@@ -92,8 +108,8 @@ audit row rather than inferring a denial from message text alone.
 ## Persistence And Logging
 
 GRDB stores workspaces, profiles, provider health, manifest revisions,
-operation tickets, and redacted audit metadata. Keychain stores transport keys
-and access token values.
+operation tickets, and redacted audit metadata. The Data Protection Keychain
+stores transport keys and access token values.
 App logs are JSONL, mode `0600`, rotated, bounded, and redact secret-like
 fields.
 

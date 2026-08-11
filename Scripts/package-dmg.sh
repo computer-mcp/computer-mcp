@@ -4,13 +4,19 @@ set -euo pipefail
 ROOT_DIR=${0:A:h:h}
 OUTPUT_DIR=${OUTPUT_DIR:-"$ROOT_DIR/dist"}
 APP_PATH="$OUTPUT_DIR/Computer MCP.app"
-DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-1.0.0-universal.dmg"}
 METADATA_DIR="$OUTPUT_DIR/ReleaseMetadata"
+INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
+APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")
+APP_BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")
+DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$APP_VERSION-universal.dmg"}
 RELEASE_MODE=${RELEASE_MODE:-0}
 STAGING_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-dmg.XXXXXX")
-STAGING_DIR="$STAGING_PARENT/Computer MCP 1.0.0"
-APP_NOTARY_ZIP="$OUTPUT_DIR/Computer-MCP-1.0.0-app-notary.zip"
+STAGING_DIR="$STAGING_PARENT/Computer MCP $APP_VERSION"
+APP_NOTARY_ZIP="$OUTPUT_DIR/Computer-MCP-$APP_VERSION-app-notary.zip"
 CHECKSUM_PATH="$OUTPUT_DIR/SHA256SUMS"
+APP_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$APP_VERSION-AppNotary.json"
+DMG_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$APP_VERSION-DMGNotary.json"
+typeset -a NOTARY_ARGUMENTS=()
 
 cleanup() {
   /bin/rm -rf -- "$STAGING_PARENT"
@@ -23,16 +29,82 @@ fail() {
   exit 1
 }
 
+configure_notary_arguments() {
+  local api_value_count=0
+  [[ -n ${ASC_API_KEY_PATH:-} ]] && api_value_count=$((api_value_count + 1))
+  [[ -n ${ASC_API_KEY_ID:-} ]] && api_value_count=$((api_value_count + 1))
+  [[ -n ${ASC_API_ISSUER_ID:-} ]] && api_value_count=$((api_value_count + 1))
+
+  [[ "$api_value_count" == "3" ]] \
+    || fail "Release mode requires ASC_API_KEY_PATH, ASC_API_KEY_ID, and ASC_API_ISSUER_ID."
+  [[ -f "$ASC_API_KEY_PATH" ]] || fail "App Store Connect API key not found: $ASC_API_KEY_PATH"
+  [[ $(/usr/bin/stat -f '%Lp' "$ASC_API_KEY_PATH") == 600 \
+    || $(/usr/bin/stat -f '%Lp' "$ASC_API_KEY_PATH") == 400 ]] \
+    || fail "ASC_API_KEY_PATH must be owner-readable only (mode 0600 or 0400)."
+  [[ "$ASC_API_KEY_ID" =~ '^[[:alnum:]]{10,}$' ]] \
+    || fail "ASC_API_KEY_ID has an invalid format."
+  [[ "$ASC_API_ISSUER_ID" =~ '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' ]] \
+    || fail "ASC_API_ISSUER_ID must be a UUID."
+  NOTARY_ARGUMENTS=(
+    --key "$ASC_API_KEY_PATH"
+    --key-id "$ASC_API_KEY_ID"
+    --issuer "$ASC_API_ISSUER_ID"
+  )
+}
+
+submit_for_notarization() {
+  local artifact_path=$1
+  local record_path=$2
+  local artifact_name=$3
+  local status
+  local submission_id
+
+  xcrun notarytool submit \
+    "$artifact_path" \
+    "${NOTARY_ARGUMENTS[@]}" \
+    --wait \
+    --output-format json >"$record_path"
+  status=$(/usr/bin/jq -er '.status' "$record_path") \
+    || fail "$artifact_name notarization result has no status."
+  submission_id=$(/usr/bin/jq -er '.id' "$record_path") \
+    || fail "$artifact_name notarization result has no submission ID."
+  [[ "$status" == "Accepted" ]] \
+    || fail "$artifact_name notarization was not accepted: $status"
+  [[ "$submission_id" =~ \
+    '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' ]] \
+    || fail "$artifact_name notarization submission ID is invalid."
+  chmod 600 "$record_path"
+  echo "$artifact_name notarization accepted: $submission_id"
+}
+
 [[ -d "$APP_PATH" ]] || fail "Missing app bundle: $APP_PATH"
 [[ -f "$METADATA_DIR/ThirdPartyNotices.txt" ]] \
   || fail "Missing generated ThirdPartyNotices.txt. Run Scripts/build-app.sh first."
+APP_ENVIRONMENT=$(/usr/bin/plutil -extract ComputerMCPEnvironment raw -o - \
+  "$APP_PATH/Contents/Info.plist" 2>/dev/null) \
+  || fail "The App does not declare a distribution environment."
+APP_BUNDLE_ID=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
+  "$APP_PATH/Contents/Info.plist")
+BUILT_APP_VERSION=$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
+  "$APP_PATH/Contents/Info.plist")
+BUILT_APP_BUILD=$(/usr/bin/plutil -extract CFBundleVersion raw -o - \
+  "$APP_PATH/Contents/Info.plist")
+[[ "$APP_ENVIRONMENT" == "production" ]] \
+  || fail "DMG packaging requires the production App environment."
+[[ "$APP_BUNDLE_ID" == "com.showxu.computer-mcp" ]] \
+  || fail "DMG packaging requires the production Bundle ID."
+[[ "$BUILT_APP_VERSION" == "$APP_VERSION" && "$BUILT_APP_BUILD" == "$APP_BUILD" ]] \
+  || fail "The built App version does not match the repository release metadata."
 /bin/mkdir -p "$STAGING_DIR"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
+  [[ ${GITHUB_ACTIONS:-false} == "true" ]] \
+    || fail "Official release packaging is supported only by GitHub Actions."
+  [[ ${GITHUB_REF_TYPE:-} == "tag" ]] \
+    || fail "Official release packaging requires a GitHub tag ref."
   [[ -n ${SIGNING_IDENTITY:-} ]] || fail "Release mode requires SIGNING_IDENTITY."
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release mode requires EXPECTED_TEAM_ID."
-  [[ -n ${NOTARY_KEYCHAIN_PROFILE:-} ]] \
-    || fail "Release mode requires NOTARY_KEYCHAIN_PROFILE."
+  configure_notary_arguments
   if rg -q -i \
     'release-candidate legal draft|legal review (is|are )?required before publication' \
     "$ROOT_DIR/LICENSE" "$ROOT_DIR/EULA.md" "$ROOT_DIR/PRIVACY.md"
@@ -47,11 +119,9 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
     || fail "The App Team ID does not match EXPECTED_TEAM_ID."
   [[ "$signature" == *"Timestamp="* ]] || fail "The App has no secure timestamp."
 
+  /bin/mkdir -p "$METADATA_DIR"
   /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$APP_NOTARY_ZIP"
-  xcrun notarytool submit \
-    "$APP_NOTARY_ZIP" \
-    --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
-    --wait
+  submit_for_notarization "$APP_NOTARY_ZIP" "$APP_NOTARY_RECORD" "App"
   xcrun stapler staple "$APP_PATH"
   xcrun stapler validate "$APP_PATH"
 else
@@ -62,11 +132,11 @@ fi
 /bin/ln -s /Applications "$STAGING_DIR/Applications"
 /bin/cp "$METADATA_DIR/ThirdPartyNotices.txt" "$STAGING_DIR/ThirdPartyNotices.txt"
 /bin/cp \
-  "$METADATA_DIR/Computer-MCP-1.0.0-DependencyManifest.json" \
-  "$STAGING_DIR/Computer-MCP-1.0.0-DependencyManifest.json"
+  "$METADATA_DIR/Computer-MCP-$APP_VERSION-DependencyManifest.json" \
+  "$STAGING_DIR/Computer-MCP-$APP_VERSION-DependencyManifest.json"
 /bin/cp \
-  "$METADATA_DIR/Computer-MCP-1.0.0-SBOM.cdx.json" \
-  "$STAGING_DIR/Computer-MCP-1.0.0-SBOM.cdx.json"
+  "$METADATA_DIR/Computer-MCP-$APP_VERSION-SBOM.cdx.json" \
+  "$STAGING_DIR/Computer-MCP-$APP_VERSION-SBOM.cdx.json"
 /bin/cp "$ROOT_DIR/LICENSE" "$STAGING_DIR/ComputerMCPSourceVisibleLicense.txt"
 /bin/cp "$ROOT_DIR/EULA.md" "$STAGING_DIR/EULA.md"
 /bin/cp "$ROOT_DIR/PRIVACY.md" "$STAGING_DIR/PRIVACY.md"
@@ -85,10 +155,7 @@ fi
   "$DMG_PATH"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
-  xcrun notarytool submit \
-    "$DMG_PATH" \
-    --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
-    --wait
+  submit_for_notarization "$DMG_PATH" "$DMG_NOTARY_RECORD" "DMG"
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
 fi

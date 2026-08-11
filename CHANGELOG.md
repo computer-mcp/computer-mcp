@@ -7,6 +7,8 @@ All notable user-visible changes to Computer MCP are documented here.
 - Release-candidate hardening and validation continue. Do not describe the
   repository as production ready until every item in the signed release
   readiness report passes.
+- Signed-tag releases now capture accepted App and DMG notarization receipts
+  and render artifact-bound records before creating the checksummed draft.
 
 ## 1.0.0 — Pending
 

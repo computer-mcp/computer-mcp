@@ -114,14 +114,15 @@ is still diagnosed against its saved health-listener configuration so a real
 conflict is caught before launch.
 
 If a rebuilt App leaves a Tunnel in Starting while no Tunnel process appears,
-inspect its signature before changing the profile. An ad-hoc rebuild has a new
-code-directory hash, so Keychain may be waiting for local user authorization of
-the existing item. App status, Tunnel lists, Control Socket, and Gateway Socket
-remain responsive while this prompt is pending. Rebuild iterative Validation
-artifacts with a stable Apple Development identity, relaunch, and complete the
-one-time macOS password/Touch ID prompt locally. Never copy the key into TOML or
-logs as a workaround. Run Diagnostics to verify credential availability; list
-views intentionally do not query Keychain.
+inspect its signature and provisioning before changing the profile. The live
+App requires a non-ad-hoc Team ID, a matching environment/Bundle ID, an
+embedded provisioning profile, and the exact private Data Protection Keychain
+group `<TeamID>.<BundleID>`. Apple Development and Developer ID certificates
+for the same Team and production Bundle share that group and do not require a
+older file-based Keychain owner prompt. An ad-hoc build fails the App control plane closed
+rather than reading or migrating production secrets. Never copy a key into TOML
+or logs as a workaround. Run Diagnostics to verify credential availability;
+list views intentionally do not query Keychain.
 
 Use the official local admin UI and endpoints:
 
@@ -187,24 +188,48 @@ non-Computer-Use paths. The grant must belong to the signed App bundle that
 performs the protected action, not Terminal, Codex, or a copied executable.
 
 For local builds, `Scripts/build-app.sh` automatically uses the only available
-Apple Development identity. This keeps the App's designated requirement stable
-across rebuilds, so its own Keychain items and TCC grants do not repeatedly ask
-for authorization. If several identities are installed, set
-`SIGNING_IDENTITY` explicitly. Use `ADHOC_SIGNING=1` only for isolated testing;
-an ad-hoc rebuild has a new identity and may require authorization again.
+Apple Development identity and compatible provisioning profile. A stable signed
+Bundle identity matters for TCC grants. Keychain access is separate: the modern
+Data Protection Keychain uses the provisioned Team ID plus Bundle ID access
+group, so Development and Developer ID builds of the production Bundle can
+share credentials without per-build ACL prompts. If several identities or
+profiles are installed, set `SIGNING_IDENTITY` and `PROVISIONING_PROFILE`
+explicitly. Use `ADHOC_SIGNING=1` only for isolated packaging tests; the live
+App rejects ad-hoc identity before opening the control plane.
 
 ## Release Artifact Is Rejected
 
 Development builds use Apple Development signing when exactly one identity is
 available; otherwise they are ad-hoc signed. Neither path is notarized. For
-distribution, set `SIGNING_IDENTITY` and `NOTARY_KEYCHAIN_PROFILE`, rebuild,
-package, then run:
+official distribution, push a signed `vMAJOR.MINOR.PATCH` tag and inspect the
+GitHub `Release` workflow. Do not promote a local DMG. The protected release job
+must report successful Developer ID signing, App and DMG notarization, stapling,
+Gatekeeper assessment, and checksum assembly before it creates a draft Release.
+
+For a downloaded draft candidate, run:
 
 ```sh
-codesign --verify --deep --strict --verbose=2 "dist/Computer MCP.app"
-spctl --assess --type execute --verbose=2 "dist/Computer MCP.app"
-xcrun stapler validate "dist/Computer-MCP.dmg"
-Scripts/verify-distribution.sh
+shasum -a 256 -c SHA256SUMS
+spctl --assess --type open --context context:primary-signature --verbose=2 \
+  Computer-MCP-<version>-universal.dmg
+xcrun stapler validate Computer-MCP-<version>-universal.dmg
 ```
+
+Common workflow failures are intentionally fail-closed:
+
+- `Release ref verification failed` means the tag is unsigned, not annotated,
+  does not match the App version, or is not reachable from `origin/master`.
+- `Release readiness verification failed` means legal approval is incomplete
+  or a release-record template has missing, obsolete, or unexpected render
+  tokens.
+- `Missing protected release value` means the GitHub `production` Environment
+  variable or Secret set is incomplete.
+- `No provisioning profile authorizes ...` means the embedded certificate,
+  production App ID, and private Keychain group do not match the CI profile.
+- `Invalid credentials` from `notarytool` means the Team API key, key ID, or
+  issuer ID is wrong. Individual API keys cannot notarize.
+- `Unnotarized Developer ID` from `spctl` means the artifact was assessed
+  before Apple accepted and stapled the exact App/DMG, or a different artifact
+  was substituted afterward.
 
 See [Release](Release.md).

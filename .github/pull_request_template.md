@@ -8,6 +8,7 @@
 - [ ] `/usr/bin/swift test --build-system native`
 - [ ] Relevant CLI command tested, if applicable
 - [ ] App and DMG distribution verified when release behavior changed
+- [ ] Tag-release workflow and CI-only credential boundary checked when release behavior changed
 
 ## Documentation
 

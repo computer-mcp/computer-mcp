@@ -219,8 +219,9 @@ Common workflow failures are intentionally fail-closed:
 
 - `Release ref verification failed` means the tag is unsigned, not annotated,
   does not match the App version, or is not reachable from `origin/master`.
-- `Release readiness verification failed` means legal approval, release notes,
-  readiness records, changelog, or root release status is unfinished.
+- `Release readiness verification failed` means legal approval is incomplete
+  or a release-record template has missing, obsolete, or unexpected render
+  tokens.
 - `Missing protected release value` means the GitHub `production` Environment
   variable or Secret set is incomplete.
 - `No provisioning profile authorizes ...` means the embedded certificate,

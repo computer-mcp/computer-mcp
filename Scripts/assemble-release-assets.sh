@@ -14,6 +14,8 @@ DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$VERSION-universal.dmg"}
 EVIDENCE_MANIFEST=${EVIDENCE_MANIFEST:-"$OUTPUT_DIR/Computer-MCP-$VERSION-EvidenceManifest.json"}
 INCLUDE_EVIDENCE_MANIFEST=${INCLUDE_EVIDENCE_MANIFEST:-0}
 CHECKSUM_PATH="$OUTPUT_DIR/SHA256SUMS"
+APP_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$VERSION-AppNotary.json"
+DMG_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$VERSION-DMGNotary.json"
 TEMP_CHECKSUM=$(mktemp "$OUTPUT_DIR/.SHA256SUMS.XXXXXX")
 
 cleanup() {
@@ -39,7 +41,9 @@ for input_path in \
   "$DMG_PATH" \
   "$METADATA_DIR/Computer-MCP-$VERSION-DependencyManifest.json" \
   "$METADATA_DIR/Computer-MCP-$VERSION-SBOM.cdx.json" \
-  "$METADATA_DIR/ThirdPartyNotices.txt"
+  "$METADATA_DIR/ThirdPartyNotices.txt" \
+  "$APP_NOTARY_RECORD" \
+  "$DMG_NOTARY_RECORD"
 do
   [[ -e "$input_path" ]] || fail "Missing release input: $input_path"
 done
@@ -93,9 +97,43 @@ READINESS_REPORT="$OUTPUT_DIR/Computer-MCP-$VERSION-ProductionReadiness.md"
   "$DEPENDENCY_MANIFEST"
 /bin/cp "$METADATA_DIR/Computer-MCP-$VERSION-SBOM.cdx.json" "$SBOM"
 /bin/cp "$METADATA_DIR/ThirdPartyNotices.txt" "$NOTICES"
-/bin/cp "$ROOT_DIR/Documentation/Reference/ReleaseNotes-$VERSION.md" "$RELEASE_NOTES"
-/bin/cp "$ROOT_DIR/Documentation/Reference/ProductionReadinessReport-$VERSION.md" \
-  "$READINESS_REPORT"
+
+RELEASE_COMMIT=$(git -C "$ROOT_DIR" rev-parse HEAD)
+RELEASE_TAG_OBJECT=$(git -C "$ROOT_DIR" rev-parse "$TAG")
+RELEASE_DATE=$(git -C "$ROOT_DIR" for-each-ref \
+  --format='%(taggerdate:format:%Y-%m-%d)' "refs/tags/$TAG")
+APP_ARCHITECTURES=$(/usr/bin/lipo -archs "$APP_PATH/Contents/MacOS/Computer MCP")
+[[ " $APP_ARCHITECTURES " == *' arm64 '* \
+  && " $APP_ARCHITECTURES " == *' x86_64 '* ]] \
+  || fail "Release App is not Universal 2."
+APP_ARCHITECTURES="arm64 x86_64"
+EMBEDDED_CLI_SHA256=$(/usr/bin/shasum -a 256 \
+  "$APP_PATH/Contents/Resources/computer-mcp" | /usr/bin/awk '{print $1}')
+DMG_SHA256=$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')
+APP_NOTARY_SUBMISSION_ID=$(/usr/bin/jq -er '.id' "$APP_NOTARY_RECORD")
+DMG_NOTARY_SUBMISSION_ID=$(/usr/bin/jq -er '.id' "$DMG_NOTARY_RECORD")
+[[ $(/usr/bin/jq -er '.status' "$APP_NOTARY_RECORD") == "Accepted" ]] \
+  || fail "App notarization record is not accepted."
+[[ $(/usr/bin/jq -er '.status' "$DMG_NOTARY_RECORD") == "Accepted" ]] \
+  || fail "DMG notarization record is not accepted."
+[[ -n ${GITHUB_SERVER_URL:-} && -n ${GITHUB_REPOSITORY:-} \
+  && -n ${GITHUB_RUN_ID:-} ]] \
+  || fail "GitHub Actions run identity is required."
+GITHUB_RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+OUTPUT_DIR="$OUTPUT_DIR" \
+  RELEASE_DATE="$RELEASE_DATE" \
+  RELEASE_COMMIT="$RELEASE_COMMIT" \
+  RELEASE_TAG="$TAG" \
+  RELEASE_TAG_OBJECT="$RELEASE_TAG_OBJECT" \
+  EXPECTED_TEAM_ID="$EXPECTED_TEAM_ID" \
+  APP_ARCHITECTURES="$APP_ARCHITECTURES" \
+  EMBEDDED_CLI_SHA256="$EMBEDDED_CLI_SHA256" \
+  DMG_SHA256="$DMG_SHA256" \
+  APP_NOTARY_SUBMISSION_ID="$APP_NOTARY_SUBMISSION_ID" \
+  DMG_NOTARY_SUBMISSION_ID="$DMG_NOTARY_SUBMISSION_ID" \
+  GITHUB_RUN_URL="$GITHUB_RUN_URL" \
+  "$ROOT_DIR/Scripts/render-release-records.sh"
 
 assets=(
   "$DMG_PATH"
@@ -104,6 +142,8 @@ assets=(
   "$NOTICES"
   "$RELEASE_NOTES"
   "$READINESS_REPORT"
+  "$APP_NOTARY_RECORD"
+  "$DMG_NOTARY_RECORD"
 )
 if [[ "$INCLUDE_EVIDENCE_MANIFEST" == "1" ]]; then
   assets+=("$EVIDENCE_MANIFEST")

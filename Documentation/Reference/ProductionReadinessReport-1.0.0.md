@@ -1,74 +1,74 @@
 # Computer MCP 1.0.0 Production Readiness Report
 
-Status: **NOT READY — release gates remain open**.
+Status: **Notarized CI candidate; publication requires 23/23 artifact
+acceptance**.
 
-This report is bound only to the final signed App, embedded CLI, notarized DMG,
-commit, and evidence manifest recorded below. Historical 279/279, 17/17, or
-development 23-case runs are regression context and cannot satisfy this
-release record.
+This report is rendered by the protected GitHub release job only after signing,
+notarization, stapling, Gatekeeper, and checksum gates pass. It is bound to the
+signed tag, App, embedded CLI, notarized DMG, notarization receipts, and
+workflow run recorded below. Development runs are regression context and do
+not satisfy this record.
 
 ## Candidate identity
 
 | Field | Final value |
 | --- | --- |
-| Commit | Pending |
-| Signed tag | Pending |
+| Release date | __RELEASE_DATE__ |
+| Commit | `__RELEASE_COMMIT__` |
+| Signed tag | `__RELEASE_TAG__` |
+| Signed tag object | `__RELEASE_TAG_OBJECT__` |
 | App version/build | 1.0.0 (1) |
-| Architectures | Pending (`arm64`, `x86_64` required) |
-| Apple Team ID | Pending |
-| Embedded CLI SHA-256 | Pending |
+| Architectures | `__APP_ARCHITECTURES__` |
+| Apple Team ID | `__APPLE_TEAM_ID__` |
+| Embedded CLI SHA-256 | `__EMBEDDED_CLI_SHA256__` |
 | DMG | `Computer-MCP-1.0.0-universal.dmg` |
-| DMG SHA-256 | Pending |
-| Notarization submission | Pending |
-| Evidence archive SHA-256 | Pending |
+| DMG SHA-256 | `__DMG_SHA256__` |
+| App notarization submission | `__APP_NOTARY_SUBMISSION_ID__` |
+| DMG notarization submission | `__DMG_NOTARY_SUBMISSION_ID__` |
+| GitHub Actions run | __GITHUB_RUN_URL__ |
 
 ## Automated gates
 
 | Gate | Current evidence |
 | --- | --- |
-| Root strict format/lint | Passed locally on 2026-08-11 |
-| App/CLI package boundary | Passed locally on 2026-08-11 |
+| Root strict format/lint | Passed by the bound GitHub Actions run |
+| App/CLI package boundary | Passed by the bound GitHub Actions run |
 | Exact swift-codex dependency | `0.1.1` / `e2d745cdba3281c62519906c2e1b1579bf053b8f` |
-| Root native build/test | 705 tests, 41 suites, 0 failures on 2026-08-11 |
-| Validation native build/test | 50 tests, 9 suites, 0 failures on 2026-08-11 |
-| English / zh-Hans localization | 483 String Catalog entries and packaged resources passed locally on 2026-08-11 |
-| Standalone example configurations | 5/5 passed locally on 2026-08-11 |
-| Fresh remote clone | Pending for final public commit/tag |
-| Legal text approval | Pending approval by Xudong Xu and legal review |
-| Universal 2 binary gate | Development gate passed; final Developer ID gate pending |
-| Developer ID / Hardened Runtime / timestamp | Pending |
-| Notarization / staple / Gatekeeper | Pending |
-| DocC warning gate | Passed locally on 2026-08-11 |
-| Dependency / license / SBOM reproducibility | Passed locally: 13 linked, 28 resolved-only, 41 total |
-| Repository and secret hygiene | Passed locally on 2026-08-11 |
-
-The development-only Universal 2 App and DMG gate passed locally from two newly
-built architecture slices. The artifact is ad-hoc signed regression evidence
-only; it does not close any final distribution gate above and must not be
-published as the 1.0.0 release.
-
-Local results above prove the current working tree only. They will be rerun on
-the final candidate and replaced by CI and release-artifact evidence.
+| Root native build/test | Passed by the bound GitHub Actions run |
+| Validation native build/test and 23-case catalog | Passed by the bound GitHub Actions run |
+| English / zh-Hans localization | Passed by the bound GitHub Actions run |
+| Standalone example configurations | Passed by the bound GitHub Actions run |
+| Fresh canonical checkout and branch reachability | Passed for `__RELEASE_TAG__` / `__RELEASE_COMMIT__` |
+| Legal text approval gate | Approved legal files are present in the signed tag |
+| Universal 2 binary gate | Passed for `__APP_ARCHITECTURES__` |
+| Developer ID / Hardened Runtime / timestamp | Passed for Team `__APPLE_TEAM_ID__` |
+| Notarization / staple / Gatekeeper | Passed for both recorded submissions |
+| DocC warning gate | Passed by the bound GitHub Actions run |
+| Dependency / license / SBOM reproducibility | Passed: 13 linked, 28 resolved-only, 41 total |
+| Repository and secret hygiene | Passed before protected credentials were exposed |
 
 ## Installation matrix
 
 | Environment | Required coverage | Result |
 | --- | --- | --- |
-| Apple Silicon, macOS 14+ | DMG cold install, Finder launch, TCC/state/CLI lifecycle | Pending |
-| Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility check | Pending |
+| Apple Silicon, macOS 14+ | DMG cold install, Finder launch, TCC/state/CLI lifecycle | Required before draft publication |
+| Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility check | Required before draft publication |
 
 A physical Intel Mac is not a 1.0.0 release gate. The Universal 2 slice checks
 and Rosetta 2 checks cover x86_64 compatibility; the full installation and
 acceptance lifecycle runs natively on Apple Silicon.
 
-## Final 23 Test Cases
+## Publication acceptance
 
-Pending. Each PASS must bind consumer result, transport/tunnel instance,
-gateway request ID, one audit row, result digest, and cleanup digest to the
-candidate identity above. Cloudflare requires a remotely managed named tunnel
-and a public external MCP client. OpenAI requires a fresh Connector scan and a
-new ChatGPT session. Quick Tunnel evidence cannot substitute for named-tunnel
-evidence.
+The workflow creates a draft and cannot publish it. Before publication, the
+publisher must complete all 23 Test Cases against the checksummed DMG above.
+Each PASS must bind consumer result, transport/tunnel instance, gateway request
+ID, one audit row, result digest, and cleanup digest to this candidate identity.
+Cloudflare requires a remotely managed named tunnel and a public external MCP
+client. OpenAI requires a fresh Connector scan and a new ChatGPT session. Quick
+Tunnel evidence cannot substitute for named-tunnel evidence.
 
-The status may change to **1.0.0 production ready** only after every pending
-field and all 23 Test Cases pass on the same final artifact.
+Publishing the existing GitHub draft is the operator attestation that the
+installation matrix and all 23 Test Cases passed on this exact artifact. The
+publisher must not replace any checksummed asset between acceptance and
+publication.

@@ -11,14 +11,16 @@ The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
 
 1. `verify` runs without Apple or publication secrets. It verifies the signed
    annotated tag, confirms that its commit is reachable from `origin/master`,
-   checks version and changelog alignment, rejects unfinished legal/release
-   records, and runs the complete build, test, documentation, metadata, and
-   development-distribution gates.
+   checks version and changelog alignment, rejects unfinished legal records or
+   malformed release templates, and runs the complete build, test,
+   documentation, metadata, and development-distribution gates.
 2. `release` starts only after `verify` passes and GitHub authorizes the
    protected `production` Environment. It imports signing assets into a
    temporary runner Keychain, builds fresh arm64 and x86_64 slices, signs the
    App with Developer ID, notarizes and staples the App and DMG, runs Gatekeeper
-   validation, assembles checksummed assets, and creates a draft GitHub Release.
+   validation, captures both notarization receipts, renders artifact-bound
+   release records, assembles checksummed assets, and creates a draft GitHub
+   Release.
 
 Publishing the draft is a GitHub-side operator action after the notarized DMG
 has passed final installation and ChatGPT acceptance. A tag never causes a
@@ -87,8 +89,10 @@ Before tagging:
    `CFBundleShortVersionString`, and `CFBundleVersion` together;
 2. move all entries out of `CHANGELOG.md` `Unreleased` into a dated version
    section;
-3. finalize `Documentation/Reference/ReleaseNotes-<version>.md` and
-   `ProductionReadinessReport-<version>.md` without pending placeholders;
+3. finalize the static content in
+   `Documentation/Reference/ReleaseNotes-<version>.md` and
+   `ProductionReadinessReport-<version>.md` while preserving the exact
+   machine render tokens required by `verify-release-readiness.sh`;
 4. complete owner approval and legal review for `LICENSE`, `EULA.md`, and
    `PRIVACY.md` and remove only the corresponding draft markers;
 5. merge the release commit to `master` and wait for normal CI to pass;
@@ -138,9 +142,10 @@ profile and private Keychain group, and signs the embedded CLI and App with
 Hardened Runtime and a secure timestamp.
 
 `package-dmg.sh` submits a ZIP of the signed App to Apple's notary service,
-waits for `Accepted`, staples and validates the App ticket, creates
-`Computer-MCP-<version>-universal.dmg`, submits the DMG, staples and validates
-the DMG ticket, then writes `SHA256SUMS`.
+requires an `Accepted` JSON receipt, staples and validates the App ticket,
+creates `Computer-MCP-<version>-universal.dmg`, submits the DMG, staples and
+validates the DMG ticket, stores its accepted JSON receipt, then writes
+`SHA256SUMS`.
 
 `verify-distribution.sh` mounts the DMG read-only and verifies the checksum,
 volume identity, Universal 2 slices, versions, source commit, embedded CLI
@@ -148,9 +153,12 @@ digest, Developer ID chain, timestamp, entitlements, provisioning profile,
 stapled tickets, and Gatekeeper assessments. The mounted App must be byte-for-
 byte identical to the current signed App for all identity-bearing files.
 
-`assemble-release-assets.sh` copies the version-derived dependency manifest,
-CycloneDX SBOM, third-party notices, finalized release notes, and readiness
-report beside the DMG, then rewrites `SHA256SUMS` over the complete upload set.
+`assemble-release-assets.sh` binds the signed tag, commit, Team ID,
+architectures, embedded CLI and DMG digests, notarization submission IDs, and
+GitHub Actions run URL into the release-note and readiness templates. It then
+copies the dependency manifest, CycloneDX SBOM, third-party notices, rendered
+records, and notarization receipts beside the DMG and rewrites `SHA256SUMS`
+over the complete upload set.
 An independently generated summary-only Evidence Manifest can be required with
 `INCLUDE_EVIDENCE_MANIFEST=1`; private raw evidence is never uploaded.
 
@@ -167,8 +175,8 @@ xcrun stapler validate Computer-MCP-1.0.0-universal.dmg
 
 Then install the App from the DMG and run the local, ChatGPT, permission,
 Keychain, launch-at-login, and lifecycle acceptance checks against that exact
-artifact. Publish the existing draft in GitHub only after acceptance succeeds;
-do not rebuild or replace individual assets after acceptance.
+artifact. Publishing the existing draft is the operator attestation that all
+23 checks passed. Do not rebuild or replace individual assets after acceptance.
 
 ## Supported local scope
 

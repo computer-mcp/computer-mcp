@@ -14,6 +14,8 @@ STAGING_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-dmg.XXXXXX")
 STAGING_DIR="$STAGING_PARENT/Computer MCP $APP_VERSION"
 APP_NOTARY_ZIP="$OUTPUT_DIR/Computer-MCP-$APP_VERSION-app-notary.zip"
 CHECKSUM_PATH="$OUTPUT_DIR/SHA256SUMS"
+APP_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$APP_VERSION-AppNotary.json"
+DMG_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$APP_VERSION-DMGNotary.json"
 typeset -a NOTARY_ARGUMENTS=()
 
 cleanup() {
@@ -48,6 +50,31 @@ configure_notary_arguments() {
     --key-id "$ASC_API_KEY_ID"
     --issuer "$ASC_API_ISSUER_ID"
   )
+}
+
+submit_for_notarization() {
+  local artifact_path=$1
+  local record_path=$2
+  local artifact_name=$3
+  local status
+  local submission_id
+
+  xcrun notarytool submit \
+    "$artifact_path" \
+    "${NOTARY_ARGUMENTS[@]}" \
+    --wait \
+    --output-format json >"$record_path"
+  status=$(/usr/bin/jq -er '.status' "$record_path") \
+    || fail "$artifact_name notarization result has no status."
+  submission_id=$(/usr/bin/jq -er '.id' "$record_path") \
+    || fail "$artifact_name notarization result has no submission ID."
+  [[ "$status" == "Accepted" ]] \
+    || fail "$artifact_name notarization was not accepted: $status"
+  [[ "$submission_id" =~ \
+    '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' ]] \
+    || fail "$artifact_name notarization submission ID is invalid."
+  chmod 600 "$record_path"
+  echo "$artifact_name notarization accepted: $submission_id"
 }
 
 [[ -d "$APP_PATH" ]] || fail "Missing app bundle: $APP_PATH"
@@ -92,11 +119,9 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
     || fail "The App Team ID does not match EXPECTED_TEAM_ID."
   [[ "$signature" == *"Timestamp="* ]] || fail "The App has no secure timestamp."
 
+  /bin/mkdir -p "$METADATA_DIR"
   /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$APP_NOTARY_ZIP"
-  xcrun notarytool submit \
-    "$APP_NOTARY_ZIP" \
-    "${NOTARY_ARGUMENTS[@]}" \
-    --wait
+  submit_for_notarization "$APP_NOTARY_ZIP" "$APP_NOTARY_RECORD" "App"
   xcrun stapler staple "$APP_PATH"
   xcrun stapler validate "$APP_PATH"
 else
@@ -130,10 +155,7 @@ fi
   "$DMG_PATH"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
-  xcrun notarytool submit \
-    "$DMG_PATH" \
-    "${NOTARY_ARGUMENTS[@]}" \
-    --wait
+  submit_for_notarization "$DMG_PATH" "$DMG_NOTARY_RECORD" "DMG"
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
 fi

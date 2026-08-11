@@ -29,11 +29,10 @@ if rg -q -i \
 then
   fail "Legal files still contain draft or review-required markers."
 fi
-if rg -q -i \
-  'Status:[[:space:]]*\*\*(NOT READY|release candidate)|\bPending\b|intentionally blank' \
+if rg -q -i '\bPending\b|intentionally blank|NOT READY' \
   "$RELEASE_NOTES" "$READINESS_REPORT"
 then
-  fail "Release notes or readiness report still contain pending markers."
+  fail "Release record templates still contain obsolete pending markers."
 fi
 if rg -q -i \
   'public [0-9]+\.[0-9]+\.[0-9]+ release is still pending' \
@@ -47,4 +46,29 @@ rg -q "^# Computer MCP $VERSION Release Notes$" "$RELEASE_NOTES" \
 rg -q "^# Computer MCP $VERSION Production Readiness Report$" "$READINESS_REPORT" \
   || fail "Production readiness title does not match $VERSION."
 
-echo "Release readiness verification passed for $VERSION."
+expected_tokens=(
+  __APPLE_TEAM_ID__
+  __APP_ARCHITECTURES__
+  __APP_NOTARY_SUBMISSION_ID__
+  __DMG_NOTARY_SUBMISSION_ID__
+  __DMG_SHA256__
+  __EMBEDDED_CLI_SHA256__
+  __GITHUB_RUN_URL__
+  __RELEASE_COMMIT__
+  __RELEASE_DATE__
+  __RELEASE_TAG__
+  __RELEASE_TAG_OBJECT__
+)
+expected_token_set=$(printf '%s\n' $expected_tokens | LC_ALL=C /usr/bin/sort)
+for input_path in "$RELEASE_NOTES" "$READINESS_REPORT"; do
+  for token in $expected_tokens; do
+    rg -q --fixed-strings "$token" "$input_path" \
+      || fail "${input_path:t} is missing required render token $token."
+  done
+  discovered_token_set=$(rg -o '__[A-Z0-9_]+__' "$input_path" \
+    | LC_ALL=C /usr/bin/sort -u)
+  [[ "$discovered_token_set" == "$expected_token_set" ]] \
+    || fail "${input_path:t} contains an unexpected release render token."
+done
+
+echo "Release prerequisite templates passed for $VERSION."

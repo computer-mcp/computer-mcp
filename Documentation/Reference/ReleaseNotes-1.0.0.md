@@ -1,8 +1,8 @@
 # Computer MCP 1.0.0 Release Notes
 
-Status: release candidate. The release date, final commit, signatures,
-notarization record, artifact digest, and 23/23 evidence are intentionally
-blank until those checks complete.
+Status: CI-rendered notarized draft. The GitHub Release must remain a draft
+until the publisher completes the 23/23 acceptance checklist against the exact
+checksummed artifact recorded below.
 
 ## Highlights
 
@@ -53,19 +53,25 @@ and remote transmission boundaries are described in `PRIVACY.md`.
 
 ## Final release record
 
-- Release date: Pending
-- Candidate commit: Pending
-- Signed tag object: Pending
-- Apple Team ID: Pending
-- Notarization submission: Pending
-- DMG SHA-256: Pending
-- Embedded CLI SHA-256: Pending
-- Apple Silicon native installation and lifecycle: Pending
-- x86_64 compatibility under Rosetta 2: Pending
-- Final acceptance: Pending (must be 23/23)
+- Release date: __RELEASE_DATE__
+- Candidate commit: `__RELEASE_COMMIT__`
+- Signed tag: `__RELEASE_TAG__`
+- Signed tag object: `__RELEASE_TAG_OBJECT__`
+- Apple Team ID: `__APPLE_TEAM_ID__`
+- Architectures: `__APP_ARCHITECTURES__`
+- App notarization submission: `__APP_NOTARY_SUBMISSION_ID__`
+- DMG notarization submission: `__DMG_NOTARY_SUBMISSION_ID__`
+- DMG SHA-256: `__DMG_SHA256__`
+- Embedded CLI SHA-256: `__EMBEDDED_CLI_SHA256__`
+- GitHub Actions run: __GITHUB_RUN_URL__
+- Apple Silicon native installation and lifecycle: required before publishing
+  the draft
+- x86_64 compatibility under Rosetta 2: required before publishing the draft
+- Final acceptance: the publisher must record 23/23 before publishing the
+  draft
 
-The GitHub Release upload set will contain the notarized DMG, `SHA256SUMS`,
-CycloneDX SBOM, dependency manifest, third-party notices, these release notes,
-the redacted production-readiness report, and the summary-only Evidence
-Manifest. The private raw evidence archive is retained separately and is bound
-only by its SHA-256 digest.
+The GitHub Release upload set contains the notarized DMG, `SHA256SUMS`,
+CycloneDX SBOM, dependency manifest, third-party notices, these rendered
+release notes, the rendered production-readiness report, and the App and DMG
+notarization receipts. Private raw acceptance evidence is retained separately
+and is never uploaded automatically.

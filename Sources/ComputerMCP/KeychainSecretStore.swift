@@ -60,21 +60,43 @@ extension KeychainAdapter {
 
 package struct KeychainSecretStore: Sendable {
   package let service: String
+  package let accessGroup: String
   private let adapter: any KeychainAdapter
   private let operationQueue: BlockingOperationExecutor
 
   package init(
-    service: String = "com.showxu.computer-mcp",
-    adapter: any KeychainAdapter = SecurityKeychainAdapter()
+    service: String,
+    accessGroup: String
+  ) throws {
+    try self.init(
+      service: service,
+      accessGroup: accessGroup,
+      adapter: SecurityKeychainAdapter(accessGroup: accessGroup)
+    )
+  }
+
+  package init(
+    service: String = "com.showxu.computer-mcp.tests",
+    accessGroup: String = "TESTTEAMID.com.showxu.computer-mcp.tests",
+    adapter: any KeychainAdapter
   ) throws {
     let normalized = service.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalized.isEmpty, !normalized.contains("\0") else {
       throw KeychainSecretStoreError.invalidService
     }
+    let normalizedAccessGroup = accessGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+      !normalizedAccessGroup.isEmpty,
+      normalizedAccessGroup.utf8.count <= 256,
+      !normalizedAccessGroup.contains("\0")
+    else {
+      throw KeychainSecretStoreError.invalidAccessGroup
+    }
     self.service = normalized
+    self.accessGroup = normalizedAccessGroup
     self.adapter = adapter
     self.operationQueue = BlockingOperationExecutor(
-      label: "com.showxu.computer-mcp.keychain"
+      label: "\(normalized).keychain"
     )
   }
 
@@ -155,7 +177,11 @@ package struct KeychainSecretStore: Sendable {
 }
 
 package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendable {
-  package init() {}
+  private let accessGroup: String
+
+  package init(accessGroup: String) {
+    self.accessGroup = accessGroup
+  }
 
   package func set(service: String, account: String, data: Data) throws {
     let query = baseQuery(service: service, account: account)
@@ -212,7 +238,6 @@ package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendabl
   ) throws -> Bool {
     var query = baseQuery(service: service, account: account)
     apply(authenticationUI, to: &query)
-    query[kSecReturnAttributes] = true
     query[kSecMatchLimit] = kSecMatchLimitOne
     let status = SecItemCopyMatching(query as CFDictionary, nil)
     if status == errSecItemNotFound {
@@ -234,11 +259,13 @@ package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendabl
     }
   }
 
-  private func baseQuery(service: String, account: String) -> [CFString: Any] {
+  package func baseQuery(service: String, account: String) -> [CFString: Any] {
     [
       kSecClass: kSecClassGenericPassword,
       kSecAttrService: service,
       kSecAttrAccount: account,
+      kSecAttrAccessGroup: accessGroup,
+      kSecUseDataProtectionKeychain: true,
     ]
   }
 
@@ -256,6 +283,7 @@ package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendabl
 
 package enum KeychainSecretStoreError: Error, LocalizedError, Equatable {
   case invalidService
+  case invalidAccessGroup
   case invalidReference
   case invalidSecret
   case invalidStoredSecret
@@ -265,6 +293,8 @@ package enum KeychainSecretStoreError: Error, LocalizedError, Equatable {
     switch self {
     case .invalidService:
       return "The Keychain service identifier is invalid."
+    case .invalidAccessGroup:
+      return "The Keychain access group identifier is invalid."
     case .invalidReference:
       return "The Keychain secret reference is invalid."
     case .invalidSecret:

@@ -114,14 +114,15 @@ is still diagnosed against its saved health-listener configuration so a real
 conflict is caught before launch.
 
 If a rebuilt App leaves a Tunnel in Starting while no Tunnel process appears,
-inspect its signature before changing the profile. An ad-hoc rebuild has a new
-code-directory hash, so Keychain may be waiting for local user authorization of
-the existing item. App status, Tunnel lists, Control Socket, and Gateway Socket
-remain responsive while this prompt is pending. Rebuild iterative Validation
-artifacts with a stable Apple Development identity, relaunch, and complete the
-one-time macOS password/Touch ID prompt locally. Never copy the key into TOML or
-logs as a workaround. Run Diagnostics to verify credential availability; list
-views intentionally do not query Keychain.
+inspect its signature and provisioning before changing the profile. The live
+App requires a non-ad-hoc Team ID, a matching environment/Bundle ID, an
+embedded provisioning profile, and the exact private Data Protection Keychain
+group `<TeamID>.<BundleID>`. Apple Development and Developer ID certificates
+for the same Team and production Bundle share that group and do not require a
+legacy Keychain owner prompt. An ad-hoc build fails the App control plane closed
+rather than reading or migrating production secrets. Never copy a key into TOML
+or logs as a workaround. Run Diagnostics to verify credential availability;
+list views intentionally do not query Keychain.
 
 Use the official local admin UI and endpoints:
 
@@ -187,11 +188,14 @@ non-Computer-Use paths. The grant must belong to the signed App bundle that
 performs the protected action, not Terminal, Codex, or a copied executable.
 
 For local builds, `Scripts/build-app.sh` automatically uses the only available
-Apple Development identity. This keeps the App's designated requirement stable
-across rebuilds, so its own Keychain items and TCC grants do not repeatedly ask
-for authorization. If several identities are installed, set
-`SIGNING_IDENTITY` explicitly. Use `ADHOC_SIGNING=1` only for isolated testing;
-an ad-hoc rebuild has a new identity and may require authorization again.
+Apple Development identity and compatible provisioning profile. A stable signed
+Bundle identity matters for TCC grants. Keychain access is separate: the modern
+Data Protection Keychain uses the provisioned Team ID plus Bundle ID access
+group, so Development and Developer ID builds of the production Bundle can
+share credentials without per-build ACL prompts. If several identities or
+profiles are installed, set `SIGNING_IDENTITY` and `PROVISIONING_PROFILE`
+explicitly. Use `ADHOC_SIGNING=1` only for isolated packaging tests; the live
+App rejects ad-hoc identity before opening the control plane.
 
 ## Release Artifact Is Rejected
 

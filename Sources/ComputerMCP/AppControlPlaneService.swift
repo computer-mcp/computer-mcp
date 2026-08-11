@@ -80,7 +80,9 @@ package actor AppControlPlaneService {
 
   package static func live(
     directories: AppControlPlaneServiceDirectories? = nil,
-    openAITunnelGatewayExecutablePath: String = "computer-mcp"
+    openAITunnelGatewayExecutablePath: String = "computer-mcp",
+    keychainService: String,
+    keychainAccessGroup: String
   ) throws -> AppControlPlaneService {
     let resolvedDirectories = try directories ?? .standard()
     try resolvedDirectories.prepare()
@@ -90,7 +92,10 @@ package actor AppControlPlaneService {
       manifestURL: resolvedDirectories.manifest,
       database: database
     )
-    let secretStore = try KeychainSecretStore()
+    let secretStore = try KeychainSecretStore(
+      service: keychainService,
+      accessGroup: keychainAccessGroup
+    )
     let openAITunnelSupervisor = OpenAITunnelSupervisor(secretStore: secretStore)
     if !FileManager.default.fileExists(atPath: resolvedDirectories.manifest.path) {
       _ = try manifestStore.activate(manifest: defaultManifest)

@@ -26,6 +26,15 @@ fail() {
 [[ -d "$APP_PATH" ]] || fail "Missing app bundle: $APP_PATH"
 [[ -f "$METADATA_DIR/ThirdPartyNotices.txt" ]] \
   || fail "Missing generated ThirdPartyNotices.txt. Run Scripts/build-app.sh first."
+APP_ENVIRONMENT=$(/usr/bin/plutil -extract ComputerMCPEnvironment raw -o - \
+  "$APP_PATH/Contents/Info.plist" 2>/dev/null) \
+  || fail "The App does not declare a distribution environment."
+APP_BUNDLE_ID=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
+  "$APP_PATH/Contents/Info.plist")
+[[ "$APP_ENVIRONMENT" == "production" ]] \
+  || fail "DMG packaging requires the production App environment."
+[[ "$APP_BUNDLE_ID" == "com.showxu.computer-mcp" ]] \
+  || fail "DMG packaging requires the production Bundle ID."
 /bin/mkdir -p "$STAGING_DIR"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then

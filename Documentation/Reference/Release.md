@@ -8,6 +8,8 @@ Computer MCP is distributed as a manually updated, notarized DMG containing
 - macOS 14 or newer
 - Xcode command-line tools with Swift 6.2 or newer
 - Developer ID Application signing identity
+- a macOS provisioning profile that authorizes the production App ID, signing
+  certificate, and private Keychain access group
 - Apple notarization credentials stored as a `notarytool` Keychain profile
 
 Store notarization credentials once:
@@ -31,30 +33,42 @@ Scripts/verify-cli-interface.sh
 ```
 
 When exactly one valid Apple Development identity is installed,
-`build-app.sh` selects it automatically so Keychain and TCC grants remain
-stable across local rebuilds. Otherwise it creates an ad-hoc signed App and
-prints a warning. Both paths create a development DMG that validates bundle
-structure and code signatures but is not a distributable notarized release.
-
-An ad-hoc App's designated requirement is its code-directory hash, which
-changes when the executable changes. If the App already owns a Tunnel API key
-in Keychain, macOS will require local user authorization again after such a
-rebuild. If more than one identity is installed, select the intended stable
-Apple Development identity explicitly:
+`build-app.sh` selects it automatically and embeds the single compatible
+provisioning profile. This authorizes the production App ID and private Data
+Protection Keychain group. Apple Development and Developer ID builds with the
+same Team ID and production Bundle ID share that group even though their
+certificates differ; they do not use legacy per-binary Keychain ACL prompts.
+If more than one identity or compatible profile is installed, select both
+inputs explicitly:
 
 ```sh
-SIGNING_IDENTITY="Apple Development: Example (TEAMID)" Scripts/build-app.sh
+SIGNING_IDENTITY="Apple Development: Example (TEAMID)" \
+PROVISIONING_PROFILE=/absolute/path/to/profile.provisionprofile \
+Scripts/build-app.sh
 ```
 
-CI or isolated testing can explicitly request the old ad-hoc behavior:
+The normal local command intentionally builds the production environment so
+it exercises the same Bundle ID, Application Support directory, Keychain
+service, and access group as Release. To run a completely separate local
+environment, opt in explicitly:
+
+```sh
+APP_ENVIRONMENT=development Scripts/build-app.sh
+```
+
+That creates `dist/Computer MCP Development.app` with Bundle ID
+`com.showxu.computer-mcp.development` and separate runtime state and secrets.
+
+CI or isolated packaging tests can explicitly request ad-hoc signing:
 
 ```sh
 ADHOC_SIGNING=1 Scripts/build-app.sh
 ```
 
-The first transition from an ad-hoc identity still requires one local
-password/Touch ID authorization. Do not automate, log, export, or copy the
-Keychain secret to bypass that prompt.
+An ad-hoc artifact has no provisioned Team/private access group. Its App
+control plane intentionally fails closed before reading secrets; it is useful
+only for build, bundle, and DMG structure validation. It is not a local runtime
+substitute and has no legacy Keychain fallback.
 
 ## Release Artifact
 
@@ -62,6 +76,7 @@ Keychain secret to bypass that prompt.
 export SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)"
 export EXPECTED_TEAM_ID="TEAMID"
 export NOTARY_KEYCHAIN_PROFILE="computer-mcp-notary"
+export PROVISIONING_PROFILE="/absolute/path/to/developer-id.provisionprofile"
 export RELEASE_MODE=1
 
 Scripts/build-app.sh
@@ -76,10 +91,15 @@ Scripts/verify-distribution.sh
    `arm64` and `x86_64` with Xcode's Swift and `--build-system native`;
 3. combines the two architecture slices into `dist/Computer MCP.app`;
 4. signs the embedded CLI;
-5. writes the source commit, Team ID, architectures, and signed embedded CLI
+5. rejects expired or ambiguous provisioning profiles and verifies that the
+   selected profile authorizes the signing certificate, production App ID,
+   Team ID, and exact private Keychain access group;
+6. embeds the profile and signs the App with its exact application identifier
+   and Keychain group;
+7. writes the source commit, Team ID, architectures, and signed embedded CLI
    SHA-256 into the signed bundle;
-6. signs the App with Hardened Runtime and entitlements;
-7. verifies both slices and the deep signature.
+8. verifies both slices, the deep signature, environment, and signed
+   entitlements.
 
 `package-dmg.sh`:
 
@@ -95,9 +115,12 @@ Scripts/verify-distribution.sh
 
 `verify-distribution.sh` mounts the DMG read-only, verifies both executables,
 Info.plist, code signatures, CLI/App version equality, embedded CLI SHA256, and
-Gatekeeper assessment. It also compares the mounted App's Info.plist, signed
-executables, and code-signature resources byte-for-byte with the current
-`dist/Computer MCP.app`, so an older DMG cannot pass after the App is rebuilt.
+Gatekeeper assessment. A provisioned artifact must contain an unexpired profile
+that authorizes its Team, App ID, and single private Keychain group; an ad-hoc
+artifact must not contain a profile. The verifier also compares the mounted
+App's Info.plist, signed executables, provisioning profile, and code-signature
+resources byte-for-byte with the current `dist/Computer MCP.app`, so an older
+DMG cannot pass after the App is rebuilt.
 
 After final 23/23 acceptance, use the independent Validation CLI's
 `report release-manifest` command to create the public, summary-only

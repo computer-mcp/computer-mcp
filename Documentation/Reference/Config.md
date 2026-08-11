@@ -100,8 +100,9 @@ cloudflared_path = "/usr/local/bin/cloudflared"
 ```
 
 Desired running IDs remain in GRDB. OpenAI API keys, Cloudflare Tunnel Tokens,
-and generated Computer MCP Access Tokens use canonical Keychain accounts and
-never appear in TOML.
+and generated Computer MCP Access Tokens use canonical accounts in the signed
+App's environment-specific Data Protection Keychain service and never appear
+in TOML.
 
 `http_proxy` is optional. When it is absent, the App follows the active fixed
 macOS HTTPS proxy and then the fixed HTTP proxy; an explicit value takes

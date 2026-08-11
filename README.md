@@ -153,9 +153,10 @@ grant does not transfer to Computer MCP.
   Full Shell are disabled unless policy and the selected profile both grant
   them.
 - More than one eligible workspace requires an explicit `workspace_id`.
-- API keys and tunnel tokens live in Keychain. Examples, Doctor, logs,
-  diagnostics, configuration exports, and audit rows contain only placeholders
-  or redacted summaries.
+- API keys and tunnel tokens live in the macOS Data Protection Keychain under
+  the signed App's private access group. Examples, Doctor, logs, diagnostics,
+  configuration exports, and audit rows contain only placeholders or redacted
+  summaries.
 - HTTP v1 remains loopback-bound and bearer protected; Cloudflare owns the
   public transport, not the origin authorization boundary.
 

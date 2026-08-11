@@ -9,6 +9,8 @@ CHECKSUM_PATH=${CHECKSUM_PATH:-"$OUTPUT_DIR/SHA256SUMS"}
 RELEASE_MODE=${RELEASE_MODE:-0}
 MOUNT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-mount.XXXXXX")
 BUILD_INFO_FILE=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-build-info.XXXXXX")
+SIGNED_ENTITLEMENTS=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-entitlements.XXXXXX")
+DECODED_PROFILE=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-profile.XXXXXX")
 MOUNT_DEVICE=""
 
 cleanup() {
@@ -16,13 +18,23 @@ cleanup() {
     /usr/sbin/diskutil eject "$MOUNT_DEVICE" >/dev/null 2>&1 || true
   fi
   /bin/rmdir "$MOUNT_DIR" 2>/dev/null || true
-  /bin/rm -f -- "$BUILD_INFO_FILE"
+  /bin/rm -f -- "$BUILD_INFO_FILE" "$SIGNED_ENTITLEMENTS" "$DECODED_PROFILE"
 }
 trap cleanup EXIT
 
 fail() {
   echo "error: $1" >&2
   exit 1
+}
+
+identifier_is_authorized() {
+  local authorized=$1
+  local requested=$2
+  if [[ "$authorized" == *"*" ]]; then
+    [[ "$requested" == "${authorized%\*}"* ]]
+  else
+    [[ "$requested" == "$authorized" ]]
+  fi
 }
 
 [[ -f "$DMG_PATH" ]] || fail "Missing DMG: $DMG_PATH"
@@ -70,6 +82,81 @@ done
 /usr/bin/plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null
 /usr/bin/plutil -lint "$BUILD_IDENTITY" >/dev/null
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+APP_ENVIRONMENT=$(/usr/bin/plutil -extract ComputerMCPEnvironment raw -o - \
+  "$APP_PATH/Contents/Info.plist" 2>/dev/null) \
+  || fail "The App does not declare a distribution environment."
+APP_BUNDLE_ID=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
+  "$APP_PATH/Contents/Info.plist")
+[[ "$APP_ENVIRONMENT" == "production" ]] \
+  || fail "The distribution must contain the production App environment."
+[[ "$APP_BUNDLE_ID" == "com.showxu.computer-mcp" ]] \
+  || fail "The distribution has the wrong production Bundle ID."
+
+APP_SIGNATURE=$(/usr/bin/codesign -d --verbose=4 "$APP_PATH" 2>&1)
+APP_TEAM=$(print -r -- "$APP_SIGNATURE" | /usr/bin/sed -n 's/^TeamIdentifier=//p')
+if [[ -z "$APP_TEAM" || "$APP_TEAM" == "not set" ]]; then
+  APP_TEAM="adhoc"
+fi
+INFO_TEAM=$(/usr/bin/plutil -extract ComputerMCPTeamIdentifier raw -o - \
+  "$APP_PATH/Contents/Info.plist")
+[[ "$INFO_TEAM" == "$APP_TEAM" ]] \
+  || fail "Info.plist and code signature Team identifiers differ."
+
+if [[ "$APP_TEAM" != "adhoc" ]]; then
+  EMBEDDED_PROFILE="$APP_PATH/Contents/embedded.provisionprofile"
+  [[ -f "$EMBEDDED_PROFILE" ]] \
+    || fail "A provisioned App is missing embedded.provisionprofile."
+  /usr/bin/codesign -d --entitlements :- "$APP_PATH" >"$SIGNED_ENTITLEMENTS" 2>/dev/null
+  EXPECTED_APPLICATION_IDENTIFIER="$APP_TEAM.$APP_BUNDLE_ID"
+  SIGNED_APPLICATION_IDENTIFIER=$(/usr/bin/plutil \
+    -extract 'com\.apple\.application-identifier' raw -o - "$SIGNED_ENTITLEMENTS")
+  SIGNED_GROUPS=$(/usr/bin/plutil -extract keychain-access-groups json -o - \
+    "$SIGNED_ENTITLEMENTS")
+  [[ "$SIGNED_APPLICATION_IDENTIFIER" == "$EXPECTED_APPLICATION_IDENTIFIER" ]] \
+    || fail "The signed application identifier is incorrect."
+  [[ $(print -r -- "$SIGNED_GROUPS" | /usr/bin/jq 'length') == "1" ]] \
+    || fail "The App must have exactly one private Keychain access group."
+  [[ $(print -r -- "$SIGNED_GROUPS" | /usr/bin/jq -r '.[0]') \
+    == "$EXPECTED_APPLICATION_IDENTIFIER" ]] \
+    || fail "The signed private Keychain access group is incorrect."
+
+  /usr/bin/security cms -D -i "$EMBEDDED_PROFILE" >"$DECODED_PROFILE"
+  PROFILE_EXPIRATION=$(/usr/bin/plutil -extract ExpirationDate raw -o - \
+    "$DECODED_PROFILE")
+  PROFILE_EXPIRATION_EPOCH=$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
+    "$PROFILE_EXPIRATION" '+%s') \
+    || fail "The embedded provisioning profile expiration is invalid."
+  [[ "$PROFILE_EXPIRATION_EPOCH" -gt $(/bin/date -u '+%s') ]] \
+    || fail "The embedded provisioning profile has expired."
+  PROFILE_TEAM=$(/usr/bin/plutil \
+    -extract 'Entitlements.com\.apple\.developer\.team-identifier' raw -o - \
+    "$DECODED_PROFILE")
+  PROFILE_APPLICATION_IDENTIFIER=$(/usr/bin/plutil \
+    -extract 'Entitlements.com\.apple\.application-identifier' raw -o - \
+    "$DECODED_PROFILE")
+  [[ "$PROFILE_TEAM" == "$APP_TEAM" ]] \
+    || fail "The embedded provisioning profile has the wrong Team ID."
+  identifier_is_authorized \
+    "$PROFILE_APPLICATION_IDENTIFIER" \
+    "$EXPECTED_APPLICATION_IDENTIFIER" \
+    || fail "The embedded provisioning profile does not authorize the App ID."
+  PROFILE_GROUP_AUTHORIZED=0
+  while IFS= read -r authorized_group; do
+    if identifier_is_authorized "$authorized_group" "$EXPECTED_APPLICATION_IDENTIFIER"; then
+      PROFILE_GROUP_AUTHORIZED=1
+      break
+    fi
+  done < <(
+    /usr/bin/plutil -extract Entitlements.keychain-access-groups json -o - \
+      "$DECODED_PROFILE" | /usr/bin/jq -r '.[]'
+  )
+  [[ "$PROFILE_GROUP_AUTHORIZED" == "1" ]] \
+    || fail "The embedded provisioning profile does not authorize the Keychain group."
+else
+  [[ ! -e "$APP_PATH/Contents/embedded.provisionprofile" ]] \
+    || fail "An ad-hoc App must not embed a provisioning profile."
+fi
 
 verify_universal_binary() {
   local binary=$1
@@ -163,6 +250,17 @@ do
     "$APP_PATH/$relative_path" \
     || fail "DMG does not contain the current App: $relative_path differs."
 done
+if [[ -f "$CURRENT_APP_PATH/Contents/embedded.provisionprofile" \
+  || -f "$APP_PATH/Contents/embedded.provisionprofile" ]]
+then
+  [[ -f "$CURRENT_APP_PATH/Contents/embedded.provisionprofile" \
+    && -f "$APP_PATH/Contents/embedded.provisionprofile" ]] \
+    || fail "Current App and DMG provisioning profile presence differs."
+  /usr/bin/cmp -s \
+    "$CURRENT_APP_PATH/Contents/embedded.provisionprofile" \
+    "$APP_PATH/Contents/embedded.provisionprofile" \
+    || fail "DMG does not contain the current provisioning profile."
+fi
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release verification requires EXPECTED_TEAM_ID."

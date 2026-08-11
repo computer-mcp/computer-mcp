@@ -33,13 +33,15 @@ App startup brings the App Control Plane, Control Socket, and Gateway Socket to
 readiness before restoring desired remote transports in the background. Status
 and list operations do not query Keychain; credentials are verified only for an
 explicit `doctor`/`start` operation or background restoration of a transport
-whose desired state is running. A Keychain authorization dialog therefore
-cannot block local App/CLI management. Blocking Security framework operations
-run on a store-owned serial dispatch queue and resume async callers through
-continuations; they never occupy Swift's cooperative executor. Launch-at-login
-status is observed on a separate blocking executor and cached, so a delayed
-Service Management XPC response cannot hold the App Control Plane actor or its
-status UI.
+whose desired state is running. Background presence checks explicitly disable
+authentication UI. The provisioned Data Protection Keychain access group does
+not use the legacy file-based Keychain's per-application ACL dialogs, so a
+signature rebuild cannot stall local App/CLI management on an owner prompt.
+Blocking Security framework operations run on a store-owned serial dispatch
+queue and resume async callers through continuations; they never occupy
+Swift's cooperative executor. Launch-at-login status is observed on a separate
+blocking executor and cached, so a delayed Service Management XPC response
+cannot hold the App Control Plane actor or its status UI.
 
 OpenAI Tunnel definitions persist only transport identity and policy fields.
 They may include a credential-free HTTP proxy URL; when absent, the runtime

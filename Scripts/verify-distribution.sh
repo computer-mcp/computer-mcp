@@ -3,7 +3,10 @@ set -euo pipefail
 
 ROOT_DIR=${0:A:h:h}
 OUTPUT_DIR=${OUTPUT_DIR:-"$ROOT_DIR/dist"}
-DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-1.0.0-universal.dmg"}
+PRODUCT_VERSION=$(/usr/libexec/PlistBuddy \
+  -c 'Print :CFBundleShortVersionString' \
+  "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
+DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$PRODUCT_VERSION-universal.dmg"}
 CURRENT_APP_PATH=${CURRENT_APP_PATH:-"$OUTPUT_DIR/Computer MCP.app"}
 CHECKSUM_PATH=${CHECKSUM_PATH:-"$OUTPUT_DIR/SHA256SUMS"}
 RELEASE_MODE=${RELEASE_MODE:-0}
@@ -60,7 +63,8 @@ VOLUME_NAME=$(printf '%s' "$ATTACH_JSON" \
   | /usr/bin/jq -r '[."system-entities"[] | ."volume-name" // empty][0]')
 [[ -n "$MOUNT_DEVICE" ]] || fail "diskutil did not return an attached image device."
 [[ ${ACTUAL_MOUNT:A} == ${MOUNT_DIR:A} ]] || fail "DMG mounted at an unexpected path."
-[[ "$VOLUME_NAME" == "Computer MCP 1.0.0" ]] || fail "DMG volume name is incorrect."
+[[ "$VOLUME_NAME" == "Computer MCP $PRODUCT_VERSION" ]] \
+  || fail "DMG volume name is incorrect."
 APP_PATH="$MOUNT_DIR/Computer MCP.app"
 CLI_PATH="$APP_PATH/Contents/Resources/computer-mcp"
 BUILD_IDENTITY="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
@@ -181,6 +185,8 @@ APP_VERSION=$(/usr/libexec/PlistBuddy \
 APP_BUILD=$(/usr/libexec/PlistBuddy \
   -c "Print :CFBundleVersion" \
   "$APP_PATH/Contents/Info.plist")
+[[ "$APP_VERSION" == "$PRODUCT_VERSION" ]] \
+  || fail "The DMG App version does not match the repository release version."
 CLI_VERSION=$("$CLI_PATH" --version | /usr/bin/tr -d '[:space:]')
 EXPECTED_CLI_VERSION="${APP_VERSION}(${APP_BUILD})"
 [[ "$CLI_VERSION" == "$EXPECTED_CLI_VERSION" ]] \
@@ -224,8 +230,8 @@ BUILD_INFO_MATCH=$(/usr/bin/plutil -extract embedded_cli_digest_matches raw -o -
 
 for file in \
   ThirdPartyNotices.txt \
-  Computer-MCP-1.0.0-DependencyManifest.json \
-  Computer-MCP-1.0.0-SBOM.cdx.json \
+  "Computer-MCP-$APP_VERSION-DependencyManifest.json" \
+  "Computer-MCP-$APP_VERSION-SBOM.cdx.json" \
   ComputerMCPSourceVisibleLicense.txt \
   EULA.md \
   PRIVACY.md

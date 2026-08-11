@@ -81,6 +81,12 @@ swift run computer-mcp serve stdio --config Examples/computer-mcp.toml
 swift run computer-mcp config validate --config Examples/computer-mcp.toml
 ```
 
+本地产物只用于开发、测试和发布预演。正式 DMG 仅由受保护的 GitHub Actions
+`production` Environment 处理 SSH 签名的 `vMAJOR.MINOR.PATCH` annotated tag 后
+生成；CI 会完成 Developer ID 签名、App/DMG 公证、staple、Gatekeeper 校验并创建
+Draft GitHub Release。完整配置和验收边界见
+[发布参考](Documentation/Reference/Release.md)。
+
 standalone 不使用 App 的 bookmark、数据库或 Keychain Tunnel 凭据，不应作为第二个
 App 状态所有者同时运行。示例用途见 [Examples/README.md](Examples/README.md)；完整
 CLI、协议和工具参考继续以英文文档为准。

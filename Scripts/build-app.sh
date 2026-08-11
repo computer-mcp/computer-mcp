@@ -73,6 +73,10 @@ then
   fi
 fi
 if [[ "$RELEASE_MODE" == "1" ]]; then
+  [[ ${GITHUB_ACTIONS:-false} == "true" ]] \
+    || fail "Official release mode is supported only by GitHub Actions."
+  [[ ${GITHUB_REF_TYPE:-} == "tag" ]] \
+    || fail "Official release mode requires a GitHub tag ref."
   [[ "$APP_ENVIRONMENT" == "production" ]] \
     || fail "Release mode requires APP_ENVIRONMENT=production."
   [[ "$ADHOC_SIGNING" == "0" ]] || fail "Release mode cannot use ad-hoc signing."
@@ -82,8 +86,6 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]] \
     || fail "Release mode requires a Developer ID Application identity."
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release mode requires EXPECTED_TEAM_ID."
-  [[ -n ${NOTARY_KEYCHAIN_PROFILE:-} ]] \
-    || fail "Release mode requires NOTARY_KEYCHAIN_PROFILE."
   [[ -z $(git -C "$ROOT_DIR" status --porcelain) ]] \
     || fail "Release mode requires a clean Git worktree."
   if rg -q -i \
@@ -370,7 +372,9 @@ xcrun swift "$ROOT_DIR/Scripts/generate-release-metadata.swift" \
   --root "$ROOT_DIR" \
   --output "$METADATA_DIR" \
   --build-description "$DESCRIPTION_PATH" \
-  --checkout-root "$ARM64_SCRATCH/checkouts"
+  --checkout-root "$ARM64_SCRATCH/checkouts" \
+  --product-version "$APP_VERSION" \
+  --product-build "$APP_BUILD"
 
 /bin/cp "$METADATA_DIR/ThirdPartyNotices.txt" "$RESOURCES_DIR/ThirdPartyNotices.txt"
 /bin/cp "$ROOT_DIR/LICENSE" "$RESOURCES_DIR/ComputerMCPSourceVisibleLicense.txt"
@@ -506,7 +510,7 @@ else
   else
     echo "Built stably signed development Universal 2 app: $APP_PATH"
   fi
-  echo "Set RELEASE_MODE=1 with Developer ID and notarization variables for release."
+  echo "Official releases are built by the signed-tag GitHub Actions workflow."
 fi
 
 echo "Source commit: $SOURCE_COMMIT"

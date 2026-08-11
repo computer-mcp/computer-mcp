@@ -48,7 +48,7 @@ different Bundle ID, group, service, and Application Support directory.
 The App fails closed when its signed Team metadata, environment, Bundle ID,
 embedded provisioning profile, or private Keychain entitlement do not agree.
 Ad-hoc artifacts therefore validate packaging in CI but cannot open the live
-App control plane or its secrets. There is no product fallback to the legacy
+App control plane or its secrets. There is no product fallback to the older
 file-based Keychain.
 
 The App materializes the Cloudflare token only as a temporary `0600` file for

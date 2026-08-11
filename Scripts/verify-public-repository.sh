@@ -54,6 +54,7 @@ credential_files=(${(f)$(find . \
   -path './.computer-mcp' -prune -o \
   -path './.local' -prune -o \
   -type f \( -name '*.pem' -o -name '*.p12' -o -name '*.key' -o \
+    -name '*.p8' -o -name '*.provisionprofile' -o -name '*.mobileprovision' -o \
     -name '*.token' -o -name '*.token-file' -o -name '.env' -o -name '.env.*' \) \
   -print)})
 if (( ${#credential_files[@]} > 0 )); then

@@ -1,29 +1,179 @@
 # Release Reference
 
-Computer MCP is distributed as a manually updated, notarized DMG containing
-`Computer MCP.app`. This release does not use Sparkle or the App Store.
+Computer MCP is distributed outside the Mac App Store as a notarized Universal
+2 DMG. A signed `vMAJOR.MINOR.PATCH` tag in the canonical GitHub repository is
+the only supported source of an official release. Local builds are for
+development, validation, and release rehearsal only.
 
-## Prerequisites
+## Release trust boundary
 
-- macOS 14 or newer
-- Xcode command-line tools with Swift 6.2 or newer
-- Developer ID Application signing identity
-- a macOS provisioning profile that authorizes the production App ID, signing
-  certificate, and private Keychain access group
-- Apple notarization credentials stored as a `notarytool` Keychain profile
+The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
 
-Store notarization credentials once:
+1. `verify` runs without Apple or publication secrets. It verifies the signed
+   annotated tag, confirms that its commit is reachable from `origin/master`,
+   checks version and changelog alignment, rejects unfinished legal/release
+   records, and runs the complete build, test, documentation, metadata, and
+   development-distribution gates.
+2. `release` starts only after `verify` passes and GitHub authorizes the
+   protected `production` Environment. It imports signing assets into a
+   temporary runner Keychain, builds fresh arm64 and x86_64 slices, signs the
+   App with Developer ID, notarizes and staples the App and DMG, runs Gatekeeper
+   validation, assembles checksummed assets, and creates a draft GitHub Release.
+
+Publishing the draft is a GitHub-side operator action after the notarized DMG
+has passed final installation and ChatGPT acceptance. A tag never causes a
+local machine to package or upload an official artifact.
+
+## One-time GitHub configuration
+
+Create a GitHub Environment named `production`. Restrict its deployment branch
+and tag policy to the canonical repository, add a required reviewer, and do not
+allow untrusted branches to access it. The workflow grants `contents: write`
+only to the release job; all preceding jobs retain read-only repository access.
+
+Set these Environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `APPLE_TEAM_ID` | Apple Developer Team ID, for example `A7JC3DY3PU` |
+| `DEVELOPER_ID_SIGNING_IDENTITY` | Exact `Developer ID Application: ...` identity |
+
+Set these Environment secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `DEVELOPER_ID_P12_BASE64` | Developer ID certificate and private key exported as password-protected PKCS#12, then Base64 encoded |
+| `DEVELOPER_ID_P12_PASSWORD` | Password protecting the PKCS#12 export |
+| `DEVELOPER_ID_PROFILE_BASE64` | Developer ID provisioning profile authorizing the production App ID and private Keychain group |
+| `ASC_API_KEY_P8_BASE64` | App Store Connect Team API private key, Base64 encoded |
+| `ASC_API_KEY_ID` | Team API key identifier |
+| `ASC_API_ISSUER_ID` | Team API issuer UUID |
+
+The API key must be a Team key. An Individual API key cannot authenticate
+`notarytool`. Assign the lowest App Store Connect role that satisfies the
+notarization operation, retain the `.p8` only in protected secret storage, and
+revoke it immediately if exposure is suspected. Team keys apply across the
+team's apps and cannot be limited to only Computer MCP.
+
+GitHub stores binary inputs as Base64 text. Base64 is an encoding, not an
+additional encryption layer; the GitHub Environment Secret is the protection
+boundary. Never commit `.p12`, `.p8`, provisioning profiles, passwords, decoded
+secrets, or environment dumps.
+
+## Runner credential lifecycle
+
+The release job:
+
+1. decodes the PKCS#12 file, provisioning profile, and Team API key below
+   `RUNNER_TEMP` with owner-only permissions;
+2. creates a random-password temporary Keychain;
+3. imports the Developer ID identity and configures the code-sign partition
+   list without printing credential values;
+4. passes the profile path explicitly to `Scripts/build-app.sh`;
+5. passes the Team API key tuple explicitly to `notarytool` through
+   `Scripts/package-dmg.sh`;
+6. deletes the temporary Keychain and decoded files in an `always()` cleanup
+   step.
+
+The GitHub-hosted runner is ephemeral. No Apple credential is embedded in the
+App, DMG, release metadata, logs, or GitHub Release. App runtime secrets remain
+in Computer MCP's separate Data Protection Keychain namespace.
+
+## Preparing a release
+
+Before tagging:
+
+1. update `ComputerMCPCLI.version`, `ComputerMCPCLI.build`,
+   `CFBundleShortVersionString`, and `CFBundleVersion` together;
+2. move all entries out of `CHANGELOG.md` `Unreleased` into a dated version
+   section;
+3. finalize `Documentation/Reference/ReleaseNotes-<version>.md` and
+   `ProductionReadinessReport-<version>.md` without pending placeholders;
+4. complete owner approval and legal review for `LICENSE`, `EULA.md`, and
+   `PRIVACY.md` and remove only the corresponding draft markers;
+5. merge the release commit to `master` and wait for normal CI to pass;
+6. create an SSH-signed annotated tag from that exact commit and push only the
+   tag.
+
+Example after the repository version has been changed to `1.0.0`:
 
 ```sh
-xcrun notarytool store-credentials computer-mcp-notary \
-  --apple-id <apple-id> \
-  --team-id <team-id> \
-  --password <app-specific-password>
+git switch master
+git pull --ff-only origin master
+git tag -s -a v1.0.0 -m "Computer MCP 1.0.0"
+git verify-tag v1.0.0
+git push origin v1.0.0
 ```
 
-Do not place credentials in the repository or shell history.
+The tag is rejected unless it:
 
-## Development Artifact
+- has the exact `vMAJOR.MINOR.PATCH` form;
+- is an annotated tag with a valid signature listed in
+  `.github/signing-allowed-signers`;
+- points to the checked-out commit;
+- matches the App and CLI version;
+- is reachable from `origin/master`;
+- has a dated changelog section while `Unreleased` is empty.
+
+## CI release sequence
+
+`Scripts/release-ci.sh` is the CI-only orchestrator. It fails immediately when
+run outside GitHub Actions, from a non-tag ref, in a fork, or with a personal
+`notarytool` Keychain profile. In the protected release job it runs:
+
+```text
+verify-release-ref.sh
+verify-release-readiness.sh
+build-app.sh
+package-dmg.sh
+verify-distribution.sh
+assemble-release-assets.sh
+gh release create --draft
+```
+
+`build-app.sh` resolves the locked SwiftPM graph, compiles optimized arm64 and
+x86_64 slices from scratch, combines them into a Universal 2 App, generates
+version-derived notices/SBOM/dependency metadata, validates the provisioning
+profile and private Keychain group, and signs the embedded CLI and App with
+Hardened Runtime and a secure timestamp.
+
+`package-dmg.sh` submits a ZIP of the signed App to Apple's notary service,
+waits for `Accepted`, staples and validates the App ticket, creates
+`Computer-MCP-<version>-universal.dmg`, submits the DMG, staples and validates
+the DMG ticket, then writes `SHA256SUMS`.
+
+`verify-distribution.sh` mounts the DMG read-only and verifies the checksum,
+volume identity, Universal 2 slices, versions, source commit, embedded CLI
+digest, Developer ID chain, timestamp, entitlements, provisioning profile,
+stapled tickets, and Gatekeeper assessments. The mounted App must be byte-for-
+byte identical to the current signed App for all identity-bearing files.
+
+`assemble-release-assets.sh` copies the version-derived dependency manifest,
+CycloneDX SBOM, third-party notices, finalized release notes, and readiness
+report beside the DMG, then rewrites `SHA256SUMS` over the complete upload set.
+An independently generated summary-only Evidence Manifest can be required with
+`INCLUDE_EVIDENCE_MANIFEST=1`; private raw evidence is never uploaded.
+
+## Draft acceptance and publication
+
+Download every file from the draft Release and verify:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+spctl --assess --type open --context context:primary-signature --verbose=2 \
+  Computer-MCP-1.0.0-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.0-universal.dmg
+```
+
+Then install the App from the DMG and run the local, ChatGPT, permission,
+Keychain, launch-at-login, and lifecycle acceptance checks against that exact
+artifact. Publish the existing draft in GitHub only after acceptance succeeds;
+do not rebuild or replace individual assets after acceptance.
+
+## Supported local scope
+
+Local commands exercise build and package structure without producing an
+official release:
 
 ```sh
 Scripts/build-app.sh
@@ -32,206 +182,44 @@ Scripts/verify-distribution.sh
 Scripts/verify-cli-interface.sh
 ```
 
-When exactly one valid Apple Development identity is installed,
-`build-app.sh` selects it automatically and embeds the single compatible
-provisioning profile. This authorizes the production App ID and private Data
-Protection Keychain group. Apple Development and Developer ID builds with the
-same Team ID and production Bundle ID share that group even though their
-certificates differ; they do not use legacy per-binary Keychain ACL prompts.
-If more than one identity or compatible profile is installed, select both
-inputs explicitly:
+When exactly one Apple Development identity and compatible profile are
+installed, `build-app.sh` uses them for stable production-Bundle testing. This
+preserves the production Team ID, Bundle ID, Data Protection Keychain access
+group, and TCC identity while remaining an unnotarized development artifact.
 
-```sh
-SIGNING_IDENTITY="Apple Development: Example (TEAMID)" \
-PROVISIONING_PROFILE=/absolute/path/to/profile.provisionprofile \
-Scripts/build-app.sh
-```
-
-The normal local command intentionally builds the production environment so
-it exercises the same Bundle ID, Application Support directory, Keychain
-service, and access group as Release. To run a completely separate local
-environment, opt in explicitly:
+Use a separate local runtime namespace when testing migration or first-launch
+behavior:
 
 ```sh
 APP_ENVIRONMENT=development Scripts/build-app.sh
 ```
 
-That creates `dist/Computer MCP Development.app` with Bundle ID
-`com.showxu.computer-mcp.development` and separate runtime state and secrets.
-
-CI or isolated packaging tests can explicitly request ad-hoc signing:
+For isolated bundle/DMG structure checks without runtime Keychain access:
 
 ```sh
 ADHOC_SIGNING=1 Scripts/build-app.sh
-```
-
-An ad-hoc artifact has no provisioned Team/private access group. Its App
-control plane intentionally fails closed before reading secrets; it is useful
-only for build, bundle, and DMG structure validation. It is not a local runtime
-substitute and has no legacy Keychain fallback.
-
-## Release Artifact
-
-```sh
-export SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)"
-export EXPECTED_TEAM_ID="TEAMID"
-export NOTARY_KEYCHAIN_PROFILE="computer-mcp-notary"
-export PROVISIONING_PROFILE="/absolute/path/to/developer-id.provisionprofile"
-export RELEASE_MODE=1
-
-Scripts/build-app.sh
 Scripts/package-dmg.sh
 Scripts/verify-distribution.sh
 ```
 
-`build-app.sh`:
+Local `RELEASE_MODE=1`, local notarization, and local GitHub Release upload are
+not supported release paths. Both `build-app.sh` and `package-dmg.sh` reject
+official release mode outside a GitHub tag job, and CI notarization accepts only
+the protected Team API key workflow.
 
-1. resolves the locked dependency graph once;
-2. builds optimized `ComputerMCPApp` and `computer-mcp` independently for
-   `arm64` and `x86_64` with Xcode's Swift and `--build-system native`;
-3. combines the two architecture slices into `dist/Computer MCP.app`;
-4. signs the embedded CLI;
-5. rejects expired or ambiguous provisioning profiles and verifies that the
-   selected profile authorizes the signing certificate, production App ID,
-   Team ID, and exact private Keychain access group;
-6. embeds the profile and signs the App with its exact application identifier
-   and Keychain group;
-7. writes the source commit, Team ID, architectures, and signed embedded CLI
-   SHA-256 into the signed bundle;
-8. verifies both slices, the deep signature, environment, and signed
-   entitlements.
+## Failure handling
 
-`package-dmg.sh`:
+- A failed `verify` job never receives Apple or publication credentials.
+- A failed `release` job runs credential cleanup and creates no GitHub Release
+  unless every prior command has completed.
+- A rejected notarization stops before DMG publication; inspect the submission
+  log using the same Team API key outside workflow logs.
+- An existing Release for the tag causes the workflow to stop instead of
+  overwriting assets.
+- To retry before a draft exists, rerun the failed workflow job. Never move or
+  replace the signed tag.
+- If a draft exists, inspect and resolve it explicitly; the workflow will not
+  mutate it on a retry.
 
-1. submits the signed App with `notarytool --wait`, staples it, and validates
-   the App ticket;
-2. creates an APFS `dist/Computer-MCP-1.0.0-universal.dmg` with `diskutil image`
-   and includes the App, source-visible
-   terms, EULA, privacy policy, deterministic notices, dependency manifest,
-   and CycloneDX SBOM;
-3. submits the DMG with `notarytool --wait`;
-4. staples and validates the DMG ticket;
-5. writes `dist/SHA256SUMS` only after stapling.
-
-`verify-distribution.sh` mounts the DMG read-only, verifies both executables,
-Info.plist, code signatures, CLI/App version equality, embedded CLI SHA256, and
-Gatekeeper assessment. A provisioned artifact must contain an unexpired profile
-that authorizes its Team, App ID, and single private Keychain group; an ad-hoc
-artifact must not contain a profile. The verifier also compares the mounted
-App's Info.plist, signed executables, provisioning profile, and code-signature
-resources byte-for-byte with the current `dist/Computer MCP.app`, so an older
-DMG cannot pass after the App is rebuilt.
-
-After final 23/23 acceptance, use the independent Validation CLI's
-`report release-manifest` command to create the public, summary-only
-`Computer-MCP-1.0.0-EvidenceManifest.json`. It fails closed unless the readiness
-report is ready, every referenced Evidence Bundle verifies against the same
-App/CLI digests, and the local, ChatGPT, Cloudflare, Apple Silicon, and Rosetta
-verification records are all supplied. Raw evidence and credentials remain in
-the private checksummed archive.
-
-```sh
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
-  computer-mcp-validate report release-manifest \
-  --app-bundle "dist/Computer MCP.app" \
-  --dmg dist/Computer-MCP-1.0.0-universal.dmg \
-  --readiness-report <external-readiness-report.json> \
-  --evidence-archive <private-evidence-archive.tar.gz> \
-  --evidence-bundle <validation-evidence-bundle.json> \
-  --verification-record journey.local=<redacted-local-record.json> \
-  --verification-record journey.chatgpt=<redacted-chatgpt-record.json> \
-  --verification-record journey.cloudflare=<redacted-cloudflare-record.json> \
-  --verification-record \
-    platform.apple_silicon_native=<redacted-apple-silicon-record.json> \
-  --verification-record \
-    platform.rosetta_x86_64=<redacted-rosetta-record.json> \
-  --tag v1.0.0 \
-  --output dist/Computer-MCP-1.0.0-EvidenceManifest.json
-```
-
-Repeat `--evidence-bundle` for every bundle consumed by the ready report. The
-generator compares that exact set with the report and rejects development or
-mixed-artifact evidence.
-
-Before generating the public manifest, seal the external redacted evidence
-directory with `Scripts/package-validation-evidence.sh`. The packager validates
-all canonical records and writes the private archive's `.sha256` receipt; it
-will not accept a source or destination inside the repository.
-
-After creating and verifying the signed annotated Tag, assemble the exact
-GitHub Release upload set:
-
-```sh
-EXPECTED_TEAM_ID=<team-id> Scripts/assemble-release-assets.sh
-```
-
-The assembler reruns the notarized distribution gate, verifies the signed Tag
-and Evidence Manifest, rejects draft legal text and pending release records,
-copies the SBOM, dependency manifest, notices, release notes, and readiness
-report beside the DMG, and rewrites `SHA256SUMS` to cover all seven public
-assets. It never copies the private raw evidence archive into `dist`.
-
-## Distribution Validation
-
-Before publishing:
-
-```sh
-codesign -d --verbose=4 "dist/Computer MCP.app"
-codesign -d --entitlements :- "dist/Computer MCP.app"
-codesign --verify --deep --strict --verbose=2 "dist/Computer MCP.app"
-spctl --assess --type execute --verbose=2 "dist/Computer MCP.app"
-xcrun stapler validate "dist/Computer-MCP-1.0.0-universal.dmg"
-```
-
-Then:
-
-1. mount the DMG;
-2. copy the App to `/Applications`;
-3. cold-start it from Finder;
-4. confirm App-owned workspaces render;
-5. add a temporary workspace;
-6. install the CLI link and verify `app status` and `workspace list` use the
-   same App state;
-7. quit from the menu bar;
-8. confirm the private socket and owned Tunnel process stop;
-9. reopen and verify persisted state and launch-at-login status.
-
-## Versioning
-
-Keep these aligned:
-
-- `ComputerMCPCLI.version`
-- `ComputerMCPCLI.build`
-- `CFBundleShortVersionString`
-- `CFBundleVersion`
-- release notes and artifact name
-
-`computer-mcp --version` prints both values as `<version> (<build>)`. The App
-assembly script fails before compiling if either source value differs from the
-matching `Info.plist` value, and distribution verification compares the same
-pair against the embedded CLI.
-
-The embedded CLI hash stored in `ComputerMCPEmbeddedCLIHash` must match the
-signed resource exactly.
-
-Provider versions are discovered at runtime and are not the App version.
-
-## External Prerequisites
-
-The release does not bundle:
-
-- OpenAI `tunnel-client`;
-- Codex;
-- `apple-cli-mcp`;
-- browser providers.
-
-GitHub publication requires `swift-codex` to remain the exact public remote
-dependency `0.1.1`. `Scripts/verify-swift-codex-release-gate.sh` blocks CI if
-the package regresses to a local path, branch, revision, or different version.
-
-GitHub CI uses the `macos-26` hosted image so its default Xcode supplies the
-Swift 6.2-or-newer toolchain required by both package manifests.
-
-The App must remain useful without them and show deterministic Doctor guidance.
-Notarization cannot be claimed when signing identity or Apple credentials are
-unavailable; in that case label the artifact as a development DMG.
+GitHub CI uses the `macos-26` hosted image and selects Xcode 26.4 explicitly so
+the root and Validation Swift 6.2 package manifests use one known toolchain.

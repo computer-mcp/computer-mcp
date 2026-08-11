@@ -231,6 +231,8 @@ private struct Options {
   let output: URL
   let buildDescription: URL?
   let checkoutRoot: URL
+  let productVersion: String
+  let productBuild: String
 
   init(arguments: [String]) throws {
     let script = URL(fileURLWithPath: arguments.first ?? #filePath).standardizedFileURL
@@ -238,6 +240,8 @@ private struct Options {
     var output: URL?
     var buildDescription: URL?
     var checkoutRoot: URL?
+    var productVersion: String?
+    var productBuild: String?
     var index = 1
     while index < arguments.count {
       let option = arguments[index]
@@ -254,6 +258,10 @@ private struct Options {
         buildDescription = URL(fileURLWithPath: value).standardizedFileURL
       case "--checkout-root":
         checkoutRoot = URL(fileURLWithPath: value).standardizedFileURL
+      case "--product-version":
+        productVersion = value
+      case "--product-build":
+        productBuild = value
       default:
         throw MetadataError.usage("Unknown option: \(option)")
       }
@@ -264,6 +272,21 @@ private struct Options {
     self.buildDescription = buildDescription
     self.checkoutRoot =
       checkoutRoot ?? root.appendingPathComponent(".build/checkouts", isDirectory: true)
+    guard let productVersion,
+      productVersion.range(
+        of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#,
+        options: .regularExpression
+      ) != nil
+    else {
+      throw MetadataError.usage("--product-version must be a semantic version such as 1.0.0.")
+    }
+    guard let productBuild,
+      productBuild.range(of: #"^[0-9]+$"#, options: .regularExpression) != nil
+    else {
+      throw MetadataError.usage("--product-build must contain decimal digits only.")
+    }
+    self.productVersion = productVersion
+    self.productBuild = productBuild
   }
 }
 
@@ -338,14 +361,16 @@ private func linkedPackages(from descriptionURL: URL) throws -> Set<String> {
 private func makeNotices(
   pins: [Pin],
   checkoutRoot: URL,
-  resolvedHash: String
+  resolvedHash: String,
+  productVersion: String,
+  productBuild: String
 ) throws -> Data {
   let linkedNames = distributed.keys.sorted()
   let resolvedOnlyNames = pins.map(\.identity).filter { distributed[$0] == nil }.sorted()
   var text = """
     Computer MCP Third-Party Notices
-    Product: Computer MCP 1.0.0 (1)
-    Artifact: Computer-MCP-1.0.0-universal.dmg
+    Product: Computer MCP \(productVersion) (\(productBuild))
+    Artifact: Computer-MCP-\(productVersion)-universal.dmg
     Package.resolved SHA-256: \(resolvedHash)
 
     This deterministic file is generated from the locked SwiftPM checkouts.
@@ -426,16 +451,17 @@ do {
   let manifest = Manifest(
     product: Manifest.Product(
       name: "Computer MCP",
-      version: "1.0.0",
-      build: "1",
-      artifact: "Computer-MCP-1.0.0-universal.dmg"
+      version: options.productVersion,
+      build: options.productBuild,
+      artifact: "Computer-MCP-\(options.productVersion)-universal.dmg"
     ),
     packageResolvedSHA256: resolvedHash,
     linkedDistributed: manifestComponents.filter { distributed[$0.identity] != nil },
     resolvedOnly: manifestComponents.filter { distributed[$0.identity] == nil }
   )
 
-  let rootReference = "pkg:generic/computer-mcp@1.0.0?build=1"
+  let rootReference =
+    "pkg:generic/computer-mcp@\(options.productVersion)?build=\(options.productBuild)"
   let components = pins.map { pin in
     let definition = distributed[pin.identity]
     return CycloneDX.Component(
@@ -463,13 +489,13 @@ do {
         bomRef: rootReference,
         group: "computer-mcp",
         name: "Computer MCP",
-        version: "1.0.0",
+        version: options.productVersion,
         supplier: CycloneDX.Supplier(name: "Xudong Xu (@showxu)"),
         licenses: [
           CycloneDX.LicenseChoice(expression: "LicenseRef-Computer-MCP-Source-Visible-1.0")
         ],
         properties: [
-          CycloneDX.Property(name: "computer-mcp:build", value: "1"),
+          CycloneDX.Property(name: "computer-mcp:build", value: options.productBuild),
           CycloneDX.Property(name: "computer-mcp:package-resolved-sha256", value: resolvedHash),
         ]
       )
@@ -490,19 +516,23 @@ do {
   try makeNotices(
     pins: pins,
     checkoutRoot: options.checkoutRoot,
-    resolvedHash: resolvedHash
+    resolvedHash: resolvedHash,
+    productVersion: options.productVersion,
+    productBuild: options.productBuild
   ).write(
     to: options.output.appendingPathComponent("ThirdPartyNotices.txt"),
     options: .atomic
   )
   try encodedJSON(manifest).write(
     to: options.output.appendingPathComponent(
-      "Computer-MCP-1.0.0-DependencyManifest.json"
+      "Computer-MCP-\(options.productVersion)-DependencyManifest.json"
     ),
     options: .atomic
   )
   try encodedJSON(sbom).write(
-    to: options.output.appendingPathComponent("Computer-MCP-1.0.0-SBOM.cdx.json"),
+    to: options.output.appendingPathComponent(
+      "Computer-MCP-\(options.productVersion)-SBOM.cdx.json"
+    ),
     options: .atomic
   )
   print("Generated deterministic release metadata in \(options.output.path)")

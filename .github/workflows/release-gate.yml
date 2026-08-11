@@ -1,66 +1,42 @@
-name: Tag Release Gate
+name: Release
 
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+  RELEASE_BRANCH: master
 
 jobs:
   verify:
-    name: Verify release ref
+    name: Verify signed release tag
     runs-on: macos-26
+    timeout-minutes: 90
     steps:
-      - name: Checkout
+      - name: Checkout signed tag
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install gate tooling
-        run: brew install jq ripgrep
+        run: brew install actionlint jq ripgrep
 
-      - name: Verify signed annotated tag and release version
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
+      - name: Verify release ref and final records
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          REQUIRE_REMOTE_BRANCH: "1"
         run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          verification_ref="refs/release-verification/$GITHUB_REF_NAME"
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          git fetch --force --no-tags origin \
-            "refs/tags/$GITHUB_REF_NAME:$verification_ref"
-          [[ "$(git cat-file -t "$verification_ref")" == tag ]]
-          [[ "$(git rev-parse "$verification_ref^{}")" == "$GITHUB_SHA" ]]
-          git config gpg.ssh.allowedSignersFile .github/signing-allowed-signers
-          git verify-tag "$verification_ref"
-
-          source_version=$(sed -n \
-            's/^[[:space:]]*package static let version = "\([^"]*\)"[[:space:]]*$/\1/p' \
-            Sources/ComputerMCP/ComputerMCPCLI.swift)
-          app_version=$(/usr/libexec/PlistBuddy \
-            -c 'Print :CFBundleShortVersionString' \
-            Resources/ComputerMCPApp/Info.plist)
-          [[ "$version" == "$source_version" ]]
-          [[ "$version" == "$app_version" ]]
-          rg -q "^## $version — [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          lines = Path("CHANGELOG.md").read_text().splitlines()
-          start = lines.index("## Unreleased") + 1
-          end = next(
-              (index for index in range(start, len(lines)) if lines[index].startswith("## ")),
-              len(lines),
-          )
-          if any(line.strip() for line in lines[start:end]):
-              raise SystemExit("Unreleased must be empty on a release tag")
-          PY
+          Scripts/verify-release-ref.sh
+          Scripts/verify-release-readiness.sh
 
       - name: Repository, package, dependency, and schema gates
         run: |
@@ -79,7 +55,9 @@ jobs:
             Tools/Validation/Tests
 
       - name: Shell workflow syntax
-        run: zsh -n Scripts/*.sh
+        run: |
+          zsh -n Scripts/*.sh
+          actionlint .github/workflows/*.yml
 
       - name: Root build and test
         run: |
@@ -103,8 +81,164 @@ jobs:
           Scripts/verify-release-metadata.sh
           Scripts/verify-documentation.sh
 
-      - name: Development Universal 2 distribution gate
+      - name: Development distribution rehearsal
+        env:
+          ADHOC_SIGNING: "1"
         run: |
           Scripts/build-app.sh
           Scripts/package-dmg.sh
           Scripts/verify-distribution.sh
+
+  release:
+    name: Sign, notarize, and draft release
+    needs: verify
+    runs-on: macos-26
+    timeout-minutes: 120
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout signed tag
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted runner tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v rg >/dev/null
+          /usr/bin/jq --version
+          /usr/bin/security help >/dev/null
+          xcrun notarytool --version
+
+      - name: Validate protected release configuration
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_SIGNING_IDENTITY }}
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.DEVELOPER_ID_PROFILE_BASE64 }}
+          API_KEY_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for variable in \
+            APPLE_TEAM_ID \
+            SIGNING_IDENTITY \
+            P12_BASE64 \
+            P12_PASSWORD \
+            PROFILE_BASE64 \
+            API_KEY_BASE64 \
+            API_KEY_ID \
+            API_ISSUER_ID
+          do
+            [[ -n "${!variable}" ]] || {
+              echo "Missing protected release value: $variable" >&2
+              exit 1
+            }
+          done
+          [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]] || {
+            echo "DEVELOPER_ID_SIGNING_IDENTITY is not a Developer ID Application identity." >&2
+            exit 1
+          }
+
+      - name: Import ephemeral Apple signing assets
+        shell: bash
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.DEVELOPER_ID_PROFILE_BASE64 }}
+          API_KEY_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          certificate_path="$RUNNER_TEMP/computer-mcp-developer-id.p12"
+          profile_path="$RUNNER_TEMP/computer-mcp-developer-id.provisionprofile"
+          api_key_path="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
+          keychain_path="$RUNNER_TEMP/computer-mcp-signing.keychain-db"
+          keychain_password="$(/usr/bin/openssl rand -hex 32)"
+
+          printf '%s' "$P12_BASE64" | /usr/bin/base64 -D >"$certificate_path"
+          printf '%s' "$PROFILE_BASE64" | /usr/bin/base64 -D >"$profile_path"
+          printf '%s' "$API_KEY_BASE64" | /usr/bin/base64 -D >"$api_key_path"
+          chmod 600 "$certificate_path" "$profile_path" "$api_key_path"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -d user -s "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path" \
+            | grep -F "\"$SIGNING_IDENTITY\"" >/dev/null
+
+          {
+            echo "SIGNING_KEYCHAIN_PATH=$keychain_path"
+            echo "PROVISIONING_PROFILE=$profile_path"
+            echo "ASC_API_KEY_PATH=$api_key_path"
+            echo "ASC_API_KEY_ID=$API_KEY_ID"
+            echo "ASC_API_ISSUER_ID=$API_ISSUER_ID"
+          } >>"$GITHUB_ENV"
+
+      - name: Build, sign, notarize, and verify release
+        env:
+          EXPECTED_GITHUB_REPOSITORY: computer-mcp/computer-mcp
+          EXPECTED_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_SIGNING_IDENTITY }}
+        run: Scripts/release-ci.sh
+
+      - name: Create draft GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          notes="dist/Computer-MCP-${version}-ReleaseNotes.md"
+          assets=()
+          while read -r digest filename; do
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$filename" != */* && -f "dist/$filename" ]]
+            assets+=("dist/$filename")
+          done <dist/SHA256SUMS
+          [[ ${#assets[@]} -ge 6 ]]
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "A GitHub Release already exists for $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --draft \
+            --title "Computer MCP $version" \
+            --notes-file "$notes" \
+            "${assets[@]}" \
+            dist/SHA256SUMS
+
+      - name: Remove ephemeral Apple signing assets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          security delete-keychain \
+            "$RUNNER_TEMP/computer-mcp-signing.keychain-db" >/dev/null 2>&1 || true
+          rm -f \
+            "$RUNNER_TEMP/computer-mcp-developer-id.p12" \
+            "$RUNNER_TEMP/computer-mcp-developer-id.provisionprofile" \
+            "$RUNNER_TEMP"/AuthKey_*.p8

@@ -40,6 +40,9 @@
 .env.*
 *.pem
 *.p12
+*.p8
+*.provisionprofile
+*.mobileprovision
 *.key
 
 # Tool caches

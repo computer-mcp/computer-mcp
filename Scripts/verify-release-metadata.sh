@@ -24,6 +24,12 @@ fail() {
 
 cd "$ROOT_DIR"
 Scripts/verify-swift-codex-release-gate.sh
+PRODUCT_VERSION=$(/usr/libexec/PlistBuddy \
+  -c 'Print :CFBundleShortVersionString' \
+  Resources/ComputerMCPApp/Info.plist)
+PRODUCT_BUILD=$(/usr/libexec/PlistBuddy \
+  -c 'Print :CFBundleVersion' \
+  Resources/ComputerMCPApp/Info.plist)
 /usr/bin/swift build --build-system native
 BIN_DIR=$(/usr/bin/swift build --build-system native --show-bin-path)
 DESCRIPTION_PATH="$BIN_DIR/description.json"
@@ -34,14 +40,16 @@ for output in "$FIRST_OUTPUT" "$SECOND_OUTPUT"; do
     --root "$ROOT_DIR" \
     --output "$output" \
     --build-description "$DESCRIPTION_PATH" \
-    --checkout-root "$ROOT_DIR/.build/checkouts"
+    --checkout-root "$ROOT_DIR/.build/checkouts" \
+    --product-version "$PRODUCT_VERSION" \
+    --product-build "$PRODUCT_BUILD"
 done
 
 /usr/bin/diff -qr "$FIRST_OUTPUT" "$SECOND_OUTPUT" >/dev/null \
   || fail "Two consecutive generations were not byte-identical."
 
-MANIFEST="$FIRST_OUTPUT/Computer-MCP-1.0.0-DependencyManifest.json"
-SBOM="$FIRST_OUTPUT/Computer-MCP-1.0.0-SBOM.cdx.json"
+MANIFEST="$FIRST_OUTPUT/Computer-MCP-$PRODUCT_VERSION-DependencyManifest.json"
+SBOM="$FIRST_OUTPUT/Computer-MCP-$PRODUCT_VERSION-SBOM.cdx.json"
 NOTICES="$FIRST_OUTPUT/ThirdPartyNotices.txt"
 for file in "$MANIFEST" "$SBOM" "$NOTICES"; do
   [[ -s "$file" ]] || fail "Missing or empty generated file: ${file:t}"
@@ -81,6 +89,10 @@ SBOM_COMPONENT_COUNT=$(
   || fail "SBOM component count does not match Package.resolved."
 [[ $(/usr/bin/plutil -extract schema_version raw -o - "$MANIFEST") == "1" ]] \
   || fail "Dependency manifest schema_version is not 1."
+[[ $(/usr/bin/plutil -extract product.version raw -o - "$MANIFEST") \
+  == "$PRODUCT_VERSION" ]] || fail "Dependency manifest product version is incorrect."
+[[ $(/usr/bin/plutil -extract product.build raw -o - "$MANIFEST") \
+  == "$PRODUCT_BUILD" ]] || fail "Dependency manifest product build is incorrect."
 [[ $(/usr/bin/plutil -extract bomFormat raw -o - "$SBOM") == "CycloneDX" ]] \
   || fail "SBOM format is not CycloneDX."
 [[ $(/usr/bin/plutil -extract specVersion raw -o - "$SBOM") == "1.6" ]] \

@@ -26,19 +26,21 @@ release record.
 
 | Gate | Current evidence |
 | --- | --- |
-| Root strict format/lint | Passed locally on 2026-08-09 |
-| App/CLI package boundary | Passed locally on 2026-08-09 |
+| Root strict format/lint | Passed locally on 2026-08-11 |
+| App/CLI package boundary | Passed locally on 2026-08-11 |
 | Exact swift-codex dependency | `0.1.1` / `e2d745cdba3281c62519906c2e1b1579bf053b8f` |
-| Root native build/test | 687 tests, 40 suites, 0 failures on 2026-08-09 |
-| Validation native build/test | 45 tests, 8 suites, 0 failures on 2026-08-09 |
+| Root native build/test | 705 tests, 41 suites, 0 failures on 2026-08-11 |
+| Validation native build/test | 50 tests, 9 suites, 0 failures on 2026-08-11 |
+| English / zh-Hans localization | 483 String Catalog entries and packaged resources passed locally on 2026-08-11 |
+| Standalone example configurations | 5/5 passed locally on 2026-08-11 |
 | Fresh remote clone | Pending for final public commit/tag |
 | Legal text approval | Pending approval by Xudong Xu and legal review |
 | Universal 2 binary gate | Development gate passed; final Developer ID gate pending |
 | Developer ID / Hardened Runtime / timestamp | Pending |
 | Notarization / staple / Gatekeeper | Pending |
-| DocC warning gate | Passed locally on 2026-08-09 |
+| DocC warning gate | Passed locally on 2026-08-11 |
 | Dependency / license / SBOM reproducibility | Passed locally: 13 linked, 28 resolved-only, 41 total |
-| Repository and secret hygiene | Passed locally on 2026-08-09 |
+| Repository and secret hygiene | Passed locally on 2026-08-11 |
 
 The development-only Universal 2 App and DMG gate passed locally from two newly
 built architecture slices. The artifact is ad-hoc signed regression evidence

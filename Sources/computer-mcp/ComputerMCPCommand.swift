@@ -10,6 +10,7 @@ struct ComputerMCPCommand: AsyncParsableCommand {
     version: ComputerMCPCLI.releaseVersion,
     subcommands: [
       App.self,
+      Doctor.self,
       BuildInfo.self,
       Config.self,
       Workspace.self,
@@ -392,8 +393,11 @@ struct Codex: ParsableCommand {
     abstract: "Register this gateway as an external MCP server for Codex."
   )
 
-  @Option(name: .long, help: "Path to computer-mcp TOML configuration.")
-  var config: String
+  @Option(name: .long, help: "Path to a standalone computer-mcp TOML configuration.")
+  var config: String?
+
+  @Flag(name: .long, help: "Register the App-owned bridge without using a TOML manifest.")
+  var app = false
 
   @Option(name: .long, help: "MCP server name to register in Codex.")
   var name = "computer-mcp"
@@ -408,27 +412,54 @@ struct Codex: ParsableCommand {
   var dryRun = false
 
   mutating func run() throws {
-    _ = try GatewayConfiguration.load(path: config)
+    guard app != (config != nil) else {
+      throw ValidationError("Pass exactly one of --app or --config.")
+    }
     let executablePath = try serverExecutable ?? currentExecutableURL().path
     let installer = CodexMCPInstaller()
-    let invocation = try installer.plan(
-      codexCLI: codexCLI,
-      serverName: name,
-      configPath: config,
-      executablePath: executablePath
-    )
+    let invocation: CodexMCPInstallInvocation
+    if app {
+      invocation = try installer.planApp(
+        codexCLI: codexCLI,
+        serverName: name,
+        executablePath: executablePath
+      )
+    } else {
+      guard let config else {
+        throw ValidationError("--config is required outside App mode.")
+      }
+      _ = try GatewayConfiguration.load(path: config)
+      invocation = try installer.plan(
+        codexCLI: codexCLI,
+        serverName: name,
+        configPath: config,
+        executablePath: executablePath
+      )
+    }
 
     if dryRun {
       printJSON(try JSONValue.encoded(invocation))
       return
     }
 
-    let result = try installer.install(
-      codexCLI: codexCLI,
-      serverName: name,
-      configPath: config,
-      executablePath: executablePath
-    )
+    let result: CommandResult
+    if app {
+      result = try installer.installApp(
+        codexCLI: codexCLI,
+        serverName: name,
+        executablePath: executablePath
+      )
+    } else {
+      guard let config else {
+        throw ValidationError("--config is required outside App mode.")
+      }
+      result = try installer.install(
+        codexCLI: codexCLI,
+        serverName: name,
+        configPath: config,
+        executablePath: executablePath
+      )
+    }
     if !result.stdout.isEmpty {
       print(result.stdout, terminator: "")
     }

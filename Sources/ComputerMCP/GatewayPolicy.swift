@@ -42,6 +42,10 @@ package struct GatewayProfileID: RawRepresentable, Codable, Hashable, Sendable {
     .localAdmin,
   ]
 
+  package var supportsFullShell: Bool {
+    self == .chatGPTOperate || self == .localAdmin
+  }
+
   private static func isValid(_ value: String) -> Bool {
     guard !value.isEmpty, value.utf8.count <= 128 else {
       return false
@@ -212,7 +216,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     guard persisted.id == id else {
       return self
     }
-    let effectiveFullShellEnabled = persisted.fullShellEnabled && id == .localAdmin
+    let effectiveFullShellEnabled = persisted.fullShellEnabled && id.supportsFullShell
     var effectiveCapabilities = capabilityIDs
     if effectiveFullShellEnabled {
       effectiveCapabilities.formUnion(Self.fullShellCapabilities)
@@ -233,7 +237,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     if id == .chatGPTObserve && fullShellEnabled {
       throw GatewayPolicyConfigurationError.observeCannotEnableFullShell
     }
-    if fullShellEnabled && id != .localAdmin {
+    if fullShellEnabled && !id.supportsFullShell {
       throw GatewayPolicyConfigurationError.fullShellProfileNotAllowed(id)
     }
   }
@@ -323,7 +327,7 @@ package struct GatewayPolicyEvaluator: Sendable {
     if capability.risk == .fullShell && !grant.fullShellEnabled {
       return .deny(
         code: .fullShellDisabled,
-        message: "Full Shell must be enabled in the local Computer MCP app."
+        message: "Full Shell must be enabled for the active profile in Computer MCP."
       )
     }
 

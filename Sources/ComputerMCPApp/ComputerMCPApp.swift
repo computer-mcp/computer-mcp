@@ -39,7 +39,10 @@ struct ComputerMCPApp: App {
       controlPlane = try LiveAppControlPlane()
     } catch {
       controlPlane = UnavailableControlPlane(
-        reason: "Computer MCP could not initialize: \(error.localizedDescription)"
+        reason: AppLocalization.formatted(
+          "Computer MCP could not initialize: %@",
+          AppLocalization.errorDescription(error)
+        )
       )
     }
     _model = StateObject(
@@ -65,6 +68,13 @@ struct ComputerMCPApp: App {
     }
     .defaultSize(width: 1120, height: 760)
     .windowResizability(.contentMinSize)
+    .commands {
+      CommandGroup(after: .appInfo) {
+        Button("Show Welcome") {
+          model.showWelcome()
+        }
+      }
+    }
 
     MenuBarExtra("Computer MCP", systemImage: model.menuBarSystemImage) {
       MenuBarStatusView()
@@ -79,7 +89,12 @@ private struct MenuBarStatusView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
 
   var body: some View {
-    Text("Computer MCP: \(model.menuBarStatusText)")
+    AppLocalization.verbatimText(
+      AppLocalization.formatted(
+        "Computer MCP: %@",
+        model.menuBarStatusText
+      )
+    )
 
     Divider()
 

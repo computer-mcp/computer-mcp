@@ -20,6 +20,7 @@ replace a regular file or an unrelated valid link. Add that directory to
 
 ```text
 computer-mcp app status
+computer-mcp doctor [--journey local|chatgpt|cloudflare] [--json]
 
 computer-mcp config path
 computer-mcp config show
@@ -35,6 +36,7 @@ computer-mcp workspace enable <id> --profile <profile> [--no-enabled]
 computer-mcp profile list
 computer-mcp profile show <id>
 computer-mcp profile grant <id> --workspace <workspace-id> [--no-enabled]
+computer-mcp profile shell <id> [--no-enabled]
 
 computer-mcp tunnel openai list|doctor|start|stop|logs [<id>]
 computer-mcp tunnel cloudflare list|doctor|start|stop|logs [<id>]
@@ -45,7 +47,7 @@ computer-mcp tools call <name> --arguments-json '{}'
 
 computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
-computer-mcp install codex [options]
+computer-mcp install codex (--app | --config <path>) [--dry-run] [options]
 
 computer-mcp serve stdio|http --config <path> [options]
 computer-mcp bridge [options]
@@ -54,6 +56,36 @@ computer-mcp bridge [options]
 Use `--help` on any command for the authoritative options and exit behavior.
 Structured inspection and mutation results are JSON; configuration display and
 export are TOML.
+
+## `doctor`
+
+`doctor` reads the App-owned readiness engine. The default journey is `local`.
+It exits 0 only when the selected journey is `ready` or `verified`; all other
+states exit 1.
+
+`--json` emits `schema_version: 1` with an ISO-8601 `generated_at`, journey,
+status, checks, an optional redacted next action, and an optional redacted
+verified request. If the App or owner-only Control Socket is unavailable, the
+same parseable contract reports a blocked `app.control_socket` check. Internal
+errors and credential values are not copied into the fallback result.
+
+## Codex consumer registration
+
+App mode registers the installed or embedded CLI bridge and does not use TOML:
+
+```sh
+computer-mcp install codex --app --dry-run
+computer-mcp install codex --app
+```
+
+Standalone registration remains explicit:
+
+```sh
+computer-mcp install codex --config Examples/computer-mcp.toml --dry-run
+```
+
+`--app` and `--config` are mutually exclusive and exactly one is required. A
+dry run prints the complete secret-free invocation without changing Codex.
 
 ## App-owned operation
 

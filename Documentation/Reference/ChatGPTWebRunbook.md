@@ -45,13 +45,11 @@ reuse an administrator key.
 
 ## 3. Configure Computer MCP.app
 
-Open the App:
+Open **ChatGPT** under Get Started. The page shows dependency, account,
+configuration, credential, runtime, and real-request checks together:
 
-1. On a fresh installation, open **Diagnostics**, select **Load Built-in
-   Defaults**, review the generated manifest, validate it, and
-   activate it. Loading the defaults into the editor does not activate them.
-2. **Profiles**: activate `chatgpt-observe` for the initial connection.
-3. **Workspaces**: add the folders ChatGPT may inspect or operate, then turn on
+1. Select **Add Connection** and use `chatgpt-observe` for the initial connection.
+2. **Workspaces**: add the folders ChatGPT may inspect or operate, then turn on
    **Enabled for chatgpt-observe** for each folder. Registration creates the
    persistent bookmark; the per-profile switch grants access. These are
    separate operations.
@@ -59,7 +57,7 @@ Open the App:
    Accessibility or Screen Recording to `Computer MCP.app` only when the
    corresponding Computer Use endpoints are intended to be available. A grant
    held by Terminal, Codex, or another app does not apply to Computer MCP.
-5. **OpenAI Tunnel**: add a profile with:
+4. Enter:
    - local profile name;
    - Tunnel ID;
    - gateway profile `chatgpt-observe`;
@@ -67,10 +65,10 @@ Open the App:
    - optional HTTP proxy; leave blank to follow the fixed macOS HTTPS/HTTP
      proxy;
    - runtime API key.
-6. Save the profile. The key is stored in Keychain.
-7. Select **Provision**, then **Doctor**.
-8. Do not start until Doctor succeeds.
-9. Select **Start** and keep the App running.
+5. Save the profile. The key is stored in Keychain.
+6. Run Diagnostics. Do not start until required checks succeed.
+7. Select **Start** and keep the App running. The page reports Ready before an
+   external request and Verified only after a matching current request.
 
 When migrating from a standalone Tunnel, stop that Tunnel before activating
 the App manifest or changing workspace grants. Each manifest/profile/workspace
@@ -223,7 +221,7 @@ swift run computer-mcp tools list \
 ```
 
 [apps]: https://chatgpt.com/plugins
-[developer-mode]: https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta
+[developer-mode]: https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt
 [secure-tunnel]: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
 [tunnel-client]: https://github.com/openai/tunnel-client/releases/latest
 [tunnels]: https://platform.openai.com/settings/organization/tunnels

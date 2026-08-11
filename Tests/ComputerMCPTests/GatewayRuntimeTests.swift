@@ -126,6 +126,36 @@ final class GatewayRuntimeTests {
   }
 
   @Test
+  func testChatGPTOperateCanUseExplicitlyEnabledFullShell() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let gateway = try makeGateway(
+      capabilities: ["shell.run"],
+      workspaceIDs: ["root"],
+      builtin: [],
+      database: GatewayDatabase(inMemory: ()),
+      workspaces: [workspace(id: "root", root: root)],
+      shellEnabled: true,
+      fullShellEnabled: true,
+      caller: .secureTunnel,
+      profileID: .chatGPTOperate
+    )
+
+    #expect(try gateway.listTools().contains { $0.name == "shell.run" })
+    let result = try gateway.callTool(
+      name: "shell.run",
+      arguments: .object([
+        "workspace_id": .string("root"),
+        "command": .string("printf chatgpt-shell"),
+      ])
+    )
+    #expect(
+      try payload(result).objectValue?["stdout"]?.objectValue?["text"]
+        == .string("chatgpt-shell")
+    )
+  }
+
+  @Test
   func testDestructiveToolRequiresSingleUseBoundOperationTicket() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

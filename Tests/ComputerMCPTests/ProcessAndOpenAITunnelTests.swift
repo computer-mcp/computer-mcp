@@ -352,6 +352,26 @@ final class ProcessAndOpenAITunnelTests {
   }
 
   @Test
+  func testCodexAppInstallPlanUsesTheAppOwnedBridgeWithoutAConfigPath() throws {
+    let invocation = try CodexMCPInstaller().planApp(
+      codexCLI: "/bin/echo",
+      serverName: "computer-mcp",
+      executablePath: "/bin/cat"
+    )
+
+    #expect(
+      invocation.arguments == [
+        "mcp", "add", "computer-mcp", "--", "/bin/cat", "bridge", "--client-identity",
+        "local-mcp",
+      ])
+    #expect(
+      invocation.mcpCommand == [
+        "/bin/cat", "bridge", "--client-identity", "local-mcp",
+      ])
+    #expect(invocation.arguments.contains("--config") == false)
+  }
+
+  @Test
   func testMissingTunnelClientReportsActionableError() {
     let launcher = OpenAITunnelLauncher()
 

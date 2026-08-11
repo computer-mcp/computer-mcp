@@ -4,6 +4,7 @@ This directory contains detailed operational reference material.
 
 ## Documents
 
+- [Quick Start](QuickStart.md): release installation, first launch, and local MCP.
 - [CLI](CLI.md): command-line modes and exit behavior.
 - [Config](Config.md): TOML source and policy configuration.
 - [ChatGPT Web Runbook](ChatGPTWebRunbook.md): App-managed Secure MCP Tunnel setup.
@@ -17,6 +18,7 @@ This directory contains detailed operational reference material.
 - [Tools](Tools.md): MCP gateway tools and result contracts.
 - [Release](Release.md): signing, notarization, DMG, and install acceptance.
 - [Troubleshooting](Troubleshooting.md): common failures and checks.
+- [简体中文](zh-CN/README.md): mirrored onboarding and recovery guides.
 
 Keep current architecture truth in `Documentation/Architecture/`. Keep
 accepted rationale in `Documentation/Decisions/`.

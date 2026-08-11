@@ -2,7 +2,9 @@ import ComputerMCP
 import Foundation
 
 enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
-  case status
+  case home
+  case chatgpt
+  case cloudflare
   case workspaces
   case profiles
   case providers
@@ -14,21 +16,27 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
   var id: Self { self }
 
   var title: String {
-    switch self {
-    case .status: "Status"
-    case .workspaces: "Workspaces"
-    case .profiles: "Profiles"
-    case .providers: "Providers"
-    case .tunnels: "Tunnels"
-    case .permissions: "Permissions"
-    case .audit: "Audit"
-    case .diagnostics: "Diagnostics"
-    }
+    let key =
+      switch self {
+      case .home: "Home"
+      case .chatgpt: "ChatGPT"
+      case .cloudflare: "Cloudflare"
+      case .workspaces: "Workspaces"
+      case .profiles: "Profiles"
+      case .providers: "Providers"
+      case .tunnels: "Tunnels"
+      case .permissions: "Permissions"
+      case .audit: "Audit"
+      case .diagnostics: "Diagnostics"
+      }
+    return AppLocalization.string(key)
   }
 
   var systemImage: String {
     switch self {
-    case .status: "gauge.with.dots.needle.33percent"
+    case .home: "house"
+    case .chatgpt: "bubble.left.and.text.bubble.right"
+    case .cloudflare: "cloud"
     case .workspaces: "folder"
     case .profiles: "person.badge.key"
     case .providers: "shippingbox"
@@ -37,6 +45,35 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
     case .audit: "list.bullet.rectangle"
     case .diagnostics: "stethoscope"
     }
+  }
+
+  var group: AppWorkspaceGroup {
+    switch self {
+    case .home, .chatgpt, .cloudflare: .getStarted
+    case .workspaces, .profiles, .providers, .tunnels, .permissions: .configure
+    case .audit: .activity
+    case .diagnostics: .support
+    }
+  }
+}
+
+enum AppWorkspaceGroup: String, CaseIterable, Identifiable, Sendable {
+  case getStarted
+  case configure
+  case activity
+  case support
+
+  var id: Self { self }
+
+  var title: String {
+    let key =
+      switch self {
+      case .getStarted: "Get Started"
+      case .configure: "Configure"
+      case .activity: "Activity"
+      case .support: "Support"
+      }
+    return AppLocalization.string(key)
   }
 }
 
@@ -49,7 +86,16 @@ enum ServiceState: String, Sendable {
   case failed
 
   var label: String {
-    rawValue.capitalized
+    let key =
+      switch self {
+      case .stopped: "Stopped"
+      case .starting: "Starting"
+      case .running: "Running"
+      case .stopping: "Stopping"
+      case .degraded: "Degraded"
+      case .failed: "Failed"
+      }
+    return AppLocalization.string(key)
   }
 }
 
@@ -59,7 +105,7 @@ enum RiskLevel: String, Sendable {
   case high
 
   var label: String {
-    rawValue.capitalized
+    AppLocalization.string(rawValue.capitalized)
   }
 }
 
@@ -85,12 +131,14 @@ enum LoginItemState: String, Sendable {
   case unavailable
 
   var label: String {
-    switch self {
-    case .disabled: "Disabled"
-    case .enabled: "Enabled"
-    case .requiresApproval: "Requires approval"
-    case .unavailable: "Unavailable"
-    }
+    let key =
+      switch self {
+      case .disabled: "Disabled"
+      case .enabled: "Enabled"
+      case .requiresApproval: "Requires approval"
+      case .unavailable: "Unavailable"
+      }
+    return AppLocalization.string(key)
   }
 }
 
@@ -100,11 +148,13 @@ enum WorkspaceHealth: String, Sendable {
   case missing
 
   var label: String {
-    switch self {
-    case .available: "Available"
-    case .bookmarkStale: "Bookmark stale"
-    case .missing: "Missing"
-    }
+    let key =
+      switch self {
+      case .available: "Available"
+      case .bookmarkStale: "Bookmark stale"
+      case .missing: "Missing"
+      }
+    return AppLocalization.string(key)
   }
 }
 
@@ -140,14 +190,16 @@ enum ProviderKind: String, Sendable {
   case external
 
   var label: String {
-    switch self {
-    case .builtin: "Builtin"
-    case .cli: "CLI"
-    case .mcp: "MCP"
-    case .codex: "Codex"
-    case .computerUse: "Computer Use"
-    case .external: "External"
-    }
+    let key =
+      switch self {
+      case .builtin: "Builtin"
+      case .cli: "CLI"
+      case .mcp: "MCP"
+      case .codex: "Codex"
+      case .computerUse: "Computer Use"
+      case .external: "External"
+      }
+    return AppLocalization.string(key)
   }
 }
 
@@ -204,7 +256,29 @@ struct CloudflareTunnelSummary: Identifiable, Sendable {
   var localPort: Int
   var metricsPort: Int
   var processIdentifier: Int32?
+  var connectedAt: Date?
   var lastError: String?
+}
+
+struct LocalMCPConnectionSummary: Sendable {
+  var command: String
+  var arguments: [String]
+  var cliInstallation: EmbeddedCLIInstallationStatus
+
+  var displayCommand: String {
+    ([command] + arguments).map(Self.shellToken).joined(separator: " ")
+  }
+
+  private static func shellToken(_ value: String) -> String {
+    guard !value.isEmpty,
+      value.unicodeScalars.allSatisfy({
+        CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._/:")).contains($0)
+      })
+    else {
+      return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+    return value
+  }
 }
 
 struct CloudflareTunnelConfigurationDraft: Identifiable, Sendable {
@@ -234,13 +308,15 @@ enum PermissionState: String, Sendable {
   case unavailable
 
   var label: String {
-    switch self {
-    case .granted: "Granted"
-    case .denied: "Denied"
-    case .notGranted: "Not granted"
-    case .notDetermined: "Not determined"
-    case .unavailable: "Unavailable"
-    }
+    let key =
+      switch self {
+      case .granted: "Granted"
+      case .denied: "Denied"
+      case .notGranted: "Not granted"
+      case .notDetermined: "Not determined"
+      case .unavailable: "Unavailable"
+      }
+    return AppLocalization.string(key)
   }
 }
 
@@ -267,7 +343,7 @@ enum AuditDecision: String, Sendable {
   case failed
 
   var label: String {
-    rawValue.capitalized
+    AppLocalization.string(rawValue.capitalized)
   }
 }
 
@@ -327,6 +403,7 @@ protocol AppControlPlane: AnyObject {
   func stopApplication() async
 
   func fetchStatus() async throws -> AppStatusSnapshot
+  func fetchReadiness() async throws -> [ProductReadinessSnapshot]
   func fetchWorkspaces() async throws -> [WorkspaceSummary]
   func fetchProfiles() async throws -> [ProfileSummary]
   func fetchProviders() async throws -> [ProviderSummary]
@@ -376,6 +453,9 @@ protocol AppControlPlane: AnyObject {
 
   func installCommandLineTool() async throws -> EmbeddedCLIInstallationStatus
   func commandLineToolStatus() async throws -> EmbeddedCLIInstallationStatus
+  func localMCPConnection() async throws -> LocalMCPConnectionSummary
+  func previewCodexRegistration() async throws -> CodexMCPInstallInvocation
+  func installCodexRegistration() async throws -> CommandResult
 
   func saveManifest(_ content: String) async throws
   func rollbackManifest(to revisionID: String) async throws
@@ -408,6 +488,7 @@ final class UnavailableControlPlane: AppControlPlane {
   func maintainApplication() async {}
   func stopApplication() async {}
   func fetchStatus() async throws -> AppStatusSnapshot { throw unavailable() }
+  func fetchReadiness() async throws -> [ProductReadinessSnapshot] { throw unavailable() }
   func fetchWorkspaces() async throws -> [WorkspaceSummary] { throw unavailable() }
   func fetchProfiles() async throws -> [ProfileSummary] { throw unavailable() }
   func fetchProviders() async throws -> [ProviderSummary] { throw unavailable() }
@@ -467,6 +548,11 @@ final class UnavailableControlPlane: AppControlPlane {
   func commandLineToolStatus() async throws -> EmbeddedCLIInstallationStatus {
     throw unavailable()
   }
+  func localMCPConnection() async throws -> LocalMCPConnectionSummary { throw unavailable() }
+  func previewCodexRegistration() async throws -> CodexMCPInstallInvocation {
+    throw unavailable()
+  }
+  func installCodexRegistration() async throws -> CommandResult { throw unavailable() }
   func saveManifest(_ content: String) async throws { throw unavailable() }
   func rollbackManifest(to revisionID: String) async throws { throw unavailable() }
   func exportDiagnostics(to destination: URL) async throws { throw unavailable() }

@@ -76,7 +76,8 @@ Scripts/verify-distribution.sh
 
 1. submits the signed App with `notarytool --wait`, staples it, and validates
    the App ticket;
-2. creates `dist/Computer-MCP-1.0.0-universal.dmg` with the App, source-visible
+2. creates an APFS `dist/Computer-MCP-1.0.0-universal.dmg` with `diskutil image`
+   and includes the App, source-visible
    terms, EULA, privacy policy, deterministic notices, dependency manifest,
    and CycloneDX SBOM;
 3. submits the DMG with `notarytool --wait`;
@@ -88,6 +89,55 @@ Info.plist, code signatures, CLI/App version equality, embedded CLI SHA256, and
 Gatekeeper assessment. It also compares the mounted App's Info.plist, signed
 executables, and code-signature resources byte-for-byte with the current
 `dist/Computer MCP.app`, so an older DMG cannot pass after the App is rebuilt.
+
+After final 23/23 acceptance, use the independent Validation CLI's
+`report release-manifest` command to create the public, summary-only
+`Computer-MCP-1.0.0-EvidenceManifest.json`. It fails closed unless the readiness
+report is ready, every referenced Evidence Bundle verifies against the same
+App/CLI digests, and the local, ChatGPT, Cloudflare, Apple Silicon, and Rosetta
+verification records are all supplied. Raw evidence and credentials remain in
+the private checksummed archive.
+
+```sh
+/usr/bin/swift run --package-path Tools/Validation --build-system native \
+  computer-mcp-validate report release-manifest \
+  --app-bundle "dist/Computer MCP.app" \
+  --dmg dist/Computer-MCP-1.0.0-universal.dmg \
+  --readiness-report <external-readiness-report.json> \
+  --evidence-archive <private-evidence-archive.tar.gz> \
+  --evidence-bundle <validation-evidence-bundle.json> \
+  --verification-record journey.local=<redacted-local-record.json> \
+  --verification-record journey.chatgpt=<redacted-chatgpt-record.json> \
+  --verification-record journey.cloudflare=<redacted-cloudflare-record.json> \
+  --verification-record \
+    platform.apple_silicon_native=<redacted-apple-silicon-record.json> \
+  --verification-record \
+    platform.rosetta_x86_64=<redacted-rosetta-record.json> \
+  --tag v1.0.0 \
+  --output dist/Computer-MCP-1.0.0-EvidenceManifest.json
+```
+
+Repeat `--evidence-bundle` for every bundle consumed by the ready report. The
+generator compares that exact set with the report and rejects development or
+mixed-artifact evidence.
+
+Before generating the public manifest, seal the external redacted evidence
+directory with `Scripts/package-validation-evidence.sh`. The packager validates
+all canonical records and writes the private archive's `.sha256` receipt; it
+will not accept a source or destination inside the repository.
+
+After creating and verifying the signed annotated Tag, assemble the exact
+GitHub Release upload set:
+
+```sh
+EXPECTED_TEAM_ID=<team-id> Scripts/assemble-release-assets.sh
+```
+
+The assembler reruns the notarized distribution gate, verifies the signed Tag
+and Evidence Manifest, rejects draft legal text and pending release records,
+copies the SBOM, dependency manifest, notices, release notes, and readiness
+report beside the DMG, and rewrites `SHA256SUMS` to cover all seven public
+assets. It never copies the private raw evidence archive into `dist`.
 
 ## Distribution Validation
 

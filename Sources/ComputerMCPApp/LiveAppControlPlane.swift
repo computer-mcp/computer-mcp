@@ -24,6 +24,7 @@ final class LiveAppControlPlane: AppControlPlane {
     )
     self.controlSocketService = ControlSocketService(
       controlPlane: controlPlane,
+      gatewayService: gatewayService,
       socketURL: controlPlane.directories.controlSocket
     )
     self.fileLogger = try AppFileLogger(directory: controlPlane.directories.logs)
@@ -118,6 +119,22 @@ final class LiveAppControlPlane: AppControlPlane {
     )
   }
 
+  func fetchReadiness() async throws -> [ProductReadinessSnapshot] {
+    let gateway = await gatewayService.snapshot()
+    let cliInstallation = try? EmbeddedCLIInstaller().status()
+    var snapshots = [ProductReadinessSnapshot]()
+    for journey in ProductJourney.allCases {
+      snapshots.append(
+        try await controlPlane.readinessSnapshot(
+          journey: journey,
+          gateway: gateway,
+          cliInstallation: cliInstallation
+        )
+      )
+    }
+    return snapshots
+  }
+
   func fetchWorkspaces() async throws -> [WorkspaceSummary] {
     let activeProfile = try await controlPlane.activeGatewayProfile()
     let grant = try await controlPlane.profileGrants().first { $0.id == activeProfile }
@@ -160,7 +177,7 @@ final class LiveAppControlPlane: AppControlPlane {
         isEnabled: grant.id != .localAdmin,
         riskLevel: grant.id.riskLevel,
         permitsRemoteAccess: grant.allowedCallers.contains(where: \.isRemote),
-        supportsFullShell: grant.id == .localAdmin,
+        supportsFullShell: grant.id.supportsFullShell,
         fullShellEnabled: grant.fullShellEnabled
       )
     }
@@ -219,6 +236,7 @@ final class LiveAppControlPlane: AppControlPlane {
           localPort: profile.localPort,
           metricsPort: profile.metricsPort,
           processIdentifier: status?.processID,
+          connectedAt: status?.startedAt,
           lastError: status?.lastError
         ))
     }
@@ -281,9 +299,9 @@ final class LiveAppControlPlane: AppControlPlane {
       if let errorCode = event.errorCode {
         summary = errorCode
       } else if let duration = event.durationMilliseconds {
-        summary = "Completed in \(duration) ms"
+        summary = AppLocalization.formatted("Completed in %@ ms", String(duration))
       } else {
-        summary = "Capability decision recorded"
+        summary = AppLocalization.string("Capability decision recorded")
       }
       return AuditEntrySummary(
         id: event.id,
@@ -309,7 +327,7 @@ final class LiveAppControlPlane: AppControlPlane {
       DiagnosticItem(
         id: "gateway",
         title: "Gateway",
-        value: service.state.rawValue,
+        value: AppLocalization.string(service.state.rawValue.capitalized),
         detail: service.lastError,
         level: service.state == .failed ? .error : .information
       ),
@@ -317,7 +335,10 @@ final class LiveAppControlPlane: AppControlPlane {
         id: "socket",
         title: "Local socket",
         value: service.socketPath,
-        detail: "\(service.connectionCount) active connection(s)",
+        detail: AppLocalization.formatted(
+          "%@ active connection(s)",
+          String(service.connectionCount)
+        ),
         level: .information
       ),
       DiagnosticItem(
@@ -330,7 +351,10 @@ final class LiveAppControlPlane: AppControlPlane {
       DiagnosticItem(
         id: "database",
         title: "Database",
-        value: "\(snapshot.configurationRevisionCount) revision(s)",
+        value: AppLocalization.formatted(
+          "%@ revision(s)",
+          String(snapshot.configurationRevisionCount)
+        ),
         detail: controlPlane.directories.database.path,
         level: .information
       ),
@@ -340,7 +364,7 @@ final class LiveAppControlPlane: AppControlPlane {
         DiagnosticItem(
           id: "provider:\($0.id)",
           title: $0.displayName,
-          value: "failed",
+          value: AppLocalization.string("Failed"),
           detail: $0.lastError ?? $0.lastDoctorMessage,
           level: .error
         )
@@ -420,7 +444,9 @@ final class LiveAppControlPlane: AppControlPlane {
     profileID: String
   ) async throws {
     guard let profile = GatewayProfileID(rawValue: profileID) else {
-      throw AppControlPlaneError.unavailable("Unknown gateway profile: \(profileID)")
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown gateway profile: %@", profileID)
+      )
     }
     _ = try await controlPlane.setWorkspaceEnabled(
       enabled,
@@ -443,7 +469,9 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func activateProfile(id: String) async throws {
     guard let profile = GatewayProfileID(rawValue: id) else {
-      throw AppControlPlaneError.unavailable("Unknown gateway profile: \(id)")
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown gateway profile: %@", id)
+      )
     }
     let previousProfile = try await controlPlane.activeGatewayProfile()
     try await validateDesiredTunnelProfileAlignment(with: profile)
@@ -468,7 +496,9 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func setFullShellEnabled(_ enabled: Bool, profileID: String) async throws {
     guard let profile = GatewayProfileID(rawValue: profileID) else {
-      throw AppControlPlaneError.unavailable("Unknown gateway profile: \(profileID)")
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown gateway profile: %@", profileID)
+      )
     }
     _ = try await controlPlane.setFullShellEnabled(enabled, profileID: profile)
     fileLogger.append(
@@ -484,13 +514,19 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func startProvider(id: String) async throws {
     throw AppControlPlaneError.unavailable(
-      "Provider '\(id)' is configuration-driven and starts on demand with the gateway."
+      AppLocalization.formatted(
+        "Provider '%@' is configuration-driven and starts on demand with the gateway.",
+        id
+      )
     )
   }
 
   func stopProvider(id: String) async throws {
     throw AppControlPlaneError.unavailable(
-      "Provider '\(id)' is configuration-driven. Disable it in the active manifest."
+      AppLocalization.formatted(
+        "Provider '%@' is configuration-driven. Disable it in the active manifest.",
+        id
+      )
     )
   }
 
@@ -498,7 +534,7 @@ final class LiveAppControlPlane: AppControlPlane {
     let states = try await controlPlane.refreshProviders()
     guard states.contains(where: { $0.id == id }) else {
       throw AppControlPlaneError.unavailable(
-        "Provider '\(id)' has no independent doctor contract."
+        AppLocalization.formatted("Provider '%@' has no independent doctor contract.", id)
       )
     }
   }
@@ -734,6 +770,52 @@ final class LiveAppControlPlane: AppControlPlane {
     try EmbeddedCLIInstaller().status()
   }
 
+  func localMCPConnection() async throws -> LocalMCPConnectionSummary {
+    let installation = try EmbeddedCLIInstaller().status()
+    let executable: String
+    if installation.state == .installed {
+      executable = installation.destination
+    } else {
+      executable = try Self.embeddedGatewayExecutablePath()
+    }
+    return LocalMCPConnectionSummary(
+      command: executable,
+      arguments: ["bridge", "--client-identity", "local-mcp"],
+      cliInstallation: installation
+    )
+  }
+
+  func previewCodexRegistration() async throws -> CodexMCPInstallInvocation {
+    let connection = try await localMCPConnection()
+    return try await Task.detached {
+      try CodexMCPInstaller().planApp(
+        codexCLI: nil,
+        serverName: "computer-mcp",
+        executablePath: connection.command
+      )
+    }.value
+  }
+
+  func installCodexRegistration() async throws -> CommandResult {
+    let connection = try await localMCPConnection()
+    let result = try await Task.detached {
+      try CodexMCPInstaller().installApp(
+        codexCLI: nil,
+        serverName: "computer-mcp",
+        executablePath: connection.command
+      )
+    }.value
+    guard result.exitCode == 0 else {
+      let message =
+        [result.stderr, result.stdout]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty }
+        ?? "Codex MCP registration exited without a diagnostic message."
+      throw AppControlPlaneError.unavailable(message)
+    }
+    return result
+  }
+
   func saveManifest(_ content: String) async throws {
     let previous = try String(
       contentsOf: controlPlane.directories.manifest,
@@ -820,9 +902,12 @@ final class LiveAppControlPlane: AppControlPlane {
       $0.id != excludingTunnelID && $0.gatewayProfile != profile
     }) {
       throw AppControlPlaneError.unavailable(
-        "Tunnel '\(conflicting.id)' is configured to stay running with profile "
-          + "\(conflicting.gatewayProfile.rawValue). Stop it before activating "
-          + "\(profile.rawValue)."
+        AppLocalization.formatted(
+          "Tunnel '%@' is configured to stay running with profile %@. Stop it before activating %@.",
+          conflicting.id,
+          conflicting.gatewayProfile.rawValue,
+          profile.rawValue
+        )
       )
     }
   }
@@ -832,7 +917,10 @@ final class LiveAppControlPlane: AppControlPlane {
   ) async {
     for profile in profiles {
       do {
-        _ = try await controlPlane.reconnectOpenAITunnel(profileID: profile.id)
+        _ = try await controlPlane.reconnectOpenAITunnel(
+          profileID: profile.id,
+          allowKeychainAuthenticationUI: false
+        )
         reconnectAttempts[profile.id] = 0
         nextReconnectAt[profile.id] = nil
       } catch {
@@ -852,7 +940,9 @@ final class LiveAppControlPlane: AppControlPlane {
       let profile = try await controlPlane.openAITunnelConfigurations().first(where: { $0.id == id }
       )
     else {
-      throw AppControlPlaneError.unavailable("Unknown Tunnel profile: \(id)")
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown Tunnel profile: %@", id)
+      )
     }
     return profile
   }
@@ -868,7 +958,12 @@ final class LiveAppControlPlane: AppControlPlane {
       }.first { $0.gatewayProfile != profile.gatewayProfile }
       if let conflicting {
         throw AppControlPlaneError.unavailable(
-          "Tunnel '\(conflicting.id)' is already running with profile \(conflicting.gatewayProfile.rawValue). Stop it before starting \(profile.gatewayProfile.rawValue)."
+          AppLocalization.formatted(
+            "Tunnel '%@' is already running with profile %@. Stop it before starting %@.",
+            conflicting.id,
+            conflicting.gatewayProfile.rawValue,
+            profile.gatewayProfile.rawValue
+          )
         )
       }
     }
@@ -990,7 +1085,10 @@ final class LiveAppControlPlane: AppControlPlane {
       )
       do {
         try await ensureGateway(for: profile)
-        _ = try await controlPlane.reconnectOpenAITunnel(profileID: profile.id)
+        _ = try await controlPlane.reconnectOpenAITunnel(
+          profileID: profile.id,
+          allowKeychainAuthenticationUI: false
+        )
         reconnectAttempts[profile.id] = 0
         nextReconnectAt[profile.id] = nil
         fileLogger.append(
@@ -1061,7 +1159,9 @@ final class LiveAppControlPlane: AppControlPlane {
   private static func requiredField(_ value: String, label: String) throws -> String {
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalized.isEmpty, !normalized.contains("\0") else {
-      throw AppControlPlaneError.unavailable("\(label) must not be empty.")
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("%@ must not be empty.", AppLocalization.string(label))
+      )
     }
     return normalized
   }
@@ -1104,7 +1204,10 @@ final class LiveAppControlPlane: AppControlPlane {
           version: nil,
           executablePath: nil,
           toolCount: 6,
-          lastDoctorMessage: "\(configuration.skills.roots.count) registered root(s).",
+          lastDoctorMessage: AppLocalization.formatted(
+            "%@ registered root(s)",
+            String(configuration.skills.roots.count)
+          ),
           lastError: nil,
           lifecycleManaged: false
         )

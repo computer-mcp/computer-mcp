@@ -34,7 +34,9 @@ other external providers.
 
 ## Security defaults
 
-- `shell.run` and general Full Shell access are off by default and local-only.
+- `shell.run` and general Full Shell access are off by default. They can be
+  enabled only for `chatgpt-operate` or `local-admin` through explicit local
+  policy and profile grants.
 - Bearer authentication is checked before request bodies are accumulated.
 - HTTP v1 limits are 16 KiB headers, 8 MiB bodies, 128 active sessions, and a
   15-minute idle expiry.
@@ -61,3 +63,9 @@ and remote transmission boundaries are described in `PRIVACY.md`.
 - Apple Silicon native installation and lifecycle: Pending
 - x86_64 compatibility under Rosetta 2: Pending
 - Final acceptance: Pending (must be 23/23)
+
+The GitHub Release upload set will contain the notarized DMG, `SHA256SUMS`,
+CycloneDX SBOM, dependency manifest, third-party notices, these release notes,
+the redacted production-readiness report, and the summary-only Evidence
+Manifest. The private raw evidence archive is retained separately and is bound
+only by its SHA-256 digest.

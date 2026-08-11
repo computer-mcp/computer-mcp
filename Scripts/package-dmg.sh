@@ -7,12 +7,13 @@ APP_PATH="$OUTPUT_DIR/Computer MCP.app"
 DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-1.0.0-universal.dmg"}
 METADATA_DIR="$OUTPUT_DIR/ReleaseMetadata"
 RELEASE_MODE=${RELEASE_MODE:-0}
-STAGING_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-dmg.XXXXXX")
+STAGING_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-dmg.XXXXXX")
+STAGING_DIR="$STAGING_PARENT/Computer MCP 1.0.0"
 APP_NOTARY_ZIP="$OUTPUT_DIR/Computer-MCP-1.0.0-app-notary.zip"
 CHECKSUM_PATH="$OUTPUT_DIR/SHA256SUMS"
 
 cleanup() {
-  /bin/rm -rf -- "$STAGING_DIR"
+  /bin/rm -rf -- "$STAGING_PARENT"
   /bin/rm -f -- "$APP_NOTARY_ZIP"
 }
 trap cleanup EXIT
@@ -25,12 +26,19 @@ fail() {
 [[ -d "$APP_PATH" ]] || fail "Missing app bundle: $APP_PATH"
 [[ -f "$METADATA_DIR/ThirdPartyNotices.txt" ]] \
   || fail "Missing generated ThirdPartyNotices.txt. Run Scripts/build-app.sh first."
+/bin/mkdir -p "$STAGING_DIR"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ -n ${SIGNING_IDENTITY:-} ]] || fail "Release mode requires SIGNING_IDENTITY."
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release mode requires EXPECTED_TEAM_ID."
   [[ -n ${NOTARY_KEYCHAIN_PROFILE:-} ]] \
     || fail "Release mode requires NOTARY_KEYCHAIN_PROFILE."
+  if rg -q -i \
+    'release-candidate legal draft|legal review (is|are )?required before publication' \
+    "$ROOT_DIR/LICENSE" "$ROOT_DIR/EULA.md" "$ROOT_DIR/PRIVACY.md"
+  then
+    fail "Release mode requires approved legal files without draft markers."
+  fi
   /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
   signature=$(/usr/bin/codesign -d --verbose=4 "$APP_PATH" 2>&1)
   [[ "$signature" == *"Authority=Developer ID Application:"* ]] \
@@ -71,11 +79,9 @@ fi
 if [[ -e "$DMG_PATH" ]]; then
   /bin/rm -f -- "$DMG_PATH"
 fi
-/usr/bin/hdiutil create \
-  -volname "Computer MCP 1.0.0" \
-  -srcfolder "$STAGING_DIR" \
-  -format UDZO \
-  -ov \
+/usr/sbin/diskutil image create from \
+  --format UDZO \
+  "$STAGING_DIR" \
   "$DMG_PATH"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then

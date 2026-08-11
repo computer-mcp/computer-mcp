@@ -126,7 +126,13 @@ struct ReportCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "report",
     abstract: "Generate a fail-closed Production Readiness Report.",
-    subcommands: [ReportGenerate.self]
+    subcommands: [
+      ReportGenerate.self,
+      ReportVerify.self,
+      VerificationRecordCommand.self,
+      ReleaseManifestGenerate.self,
+      ReleaseManifestVerify.self,
+    ]
   )
 }
 
@@ -427,6 +433,287 @@ struct ReportGenerate: ParsableCommand {
     )
     try data.write(to: destination, options: .atomic)
   }
+}
+
+struct ReportVerify: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "verify",
+    abstract: "Verify a canonical ready Production Readiness Report."
+  )
+
+  @Option(name: .long, help: "Production Readiness Report JSON path.")
+  var report: String
+
+  func run() throws {
+    let value = try ProductionReadinessReport.decodeJSON(
+      Data(contentsOf: URL(fileURLWithPath: report).standardizedFileURL)
+    )
+    print(
+      "Production Readiness Report verified: "
+        + "\(value.summary.testCasePassedCount)/\(value.summary.testCaseCount), "
+        + "\(value.summary.issueCount) issues."
+    )
+    guard value.isReady else { throw ExitCode.failure }
+  }
+}
+
+struct VerificationRecordCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "verification-record",
+    abstract: "Generate or verify a digest-only journey or platform record.",
+    subcommands: [VerificationRecordGenerate.self, VerificationRecordVerify.self]
+  )
+}
+
+struct VerificationRecordGenerate: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "generate",
+    abstract: "Seal one digest-only release verification record."
+  )
+
+  @Option(name: .customLong("app-bundle"), help: "Final Computer MCP.app bundle path.")
+  var appBundle: String
+
+  @Option(name: .long, help: "Final notarized DMG path.")
+  var dmg: String
+
+  @Option(name: .long, help: "One required journey.* or platform.* record ID.")
+  var id: String
+
+  @Option(name: .long, help: "Redacted procedure record to hash.")
+  var procedure: String
+
+  @Option(name: .long, help: "Redacted result record to hash.")
+  var result: String
+
+  @Option(name: .long, help: "Redacted cleanup record to hash.")
+  var cleanup: String
+
+  @Option(name: .customLong("generated-at"), help: "Optional stable ISO-8601 timestamp.")
+  var generatedAt: String?
+
+  @Option(name: .long, help: "Destination for the canonical record JSON.")
+  var output: String
+
+  func run() throws {
+    let record = try ReleaseVerificationRecordDocument.sealed(
+      id: id,
+      generatedAt: generatedAt ?? ValidationTimestamp.now(),
+      candidate: try resolveReleaseCandidate(appBundle: appBundle, dmg: dmg),
+      procedureSHA256: try releaseFileDigest(URL(fileURLWithPath: procedure)),
+      resultSHA256: try releaseFileDigest(URL(fileURLWithPath: result)),
+      cleanupSHA256: try releaseFileDigest(URL(fileURLWithPath: cleanup))
+    )
+    let destination = URL(fileURLWithPath: output).standardizedFileURL
+    try FileManager.default.createDirectory(
+      at: destination.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try record.canonicalJSON().write(to: destination, options: .atomic)
+    print("Release Verification Record \(record.id): digest \(record.contentDigest).")
+  }
+}
+
+struct VerificationRecordVerify: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "verify",
+    abstract: "Verify one canonical digest-only release record."
+  )
+
+  @Option(name: .long, help: "Release Verification Record JSON path.")
+  var record: String
+
+  func run() throws {
+    let value = try ReleaseVerificationRecordDocument.decodeCanonicalJSON(
+      Data(contentsOf: URL(fileURLWithPath: record).standardizedFileURL)
+    )
+    print("Release Verification Record \(value.id) verified: digest \(value.contentDigest).")
+  }
+}
+
+struct ReleaseManifestGenerate: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "release-manifest",
+    abstract: "Generate the redacted public manifest for a verified release."
+  )
+
+  @Option(name: .customLong("app-bundle"), help: "Final Computer MCP.app bundle path.")
+  var appBundle: String
+
+  @Option(name: .long, help: "Final notarized DMG path.")
+  var dmg: String
+
+  @Option(name: .customLong("readiness-report"), help: "Ready report JSON path.")
+  var readinessReport: String
+
+  @Option(name: .customLong("evidence-archive"), help: "Private evidence archive path.")
+  var evidenceArchive: String
+
+  @Option(
+    name: .customLong("evidence-bundle"),
+    help: "Verified Evidence Bundle path. Repeat for every bundle used by the report."
+  )
+  var evidenceBundles: [String] = []
+
+  @Option(
+    name: .customLong("verification-record"),
+    help: "Redacted journey or platform record as id=path. Repeat for all five required IDs."
+  )
+  var verificationRecords: [String] = []
+
+  @Option(name: .long, help: "Signed release tag, for example v1.0.0.")
+  var tag: String
+
+  @Option(name: .customLong("generated-at"), help: "Optional stable ISO-8601 timestamp.")
+  var generatedAt: String?
+
+  @Option(name: .long, help: "Destination for the canonical public manifest JSON.")
+  var output: String
+
+  mutating func run() throws {
+    let candidate = try resolveReleaseCandidate(appBundle: appBundle, dmg: dmg)
+    let reportURL = URL(fileURLWithPath: readinessReport).standardizedFileURL
+    let report = try ProductionReadinessReport.decodeJSON(Data(contentsOf: reportURL))
+    let bundleInputs = try evidenceBundles.map { path in
+      let url = URL(fileURLWithPath: path).standardizedFileURL
+      return (
+        sha256: try releaseFileDigest(url),
+        bundle: try ValidationEvidenceBundle.decodeCanonicalJSON(Data(contentsOf: url))
+      )
+    }
+    let identity = ReleaseArtifactIdentity(
+      version: candidate.version,
+      build: candidate.build,
+      tag: tag,
+      commit: candidate.commit,
+      teamID: candidate.teamID,
+      appExecutableSHA256: candidate.appExecutableSHA256,
+      embeddedCLISHA256: candidate.embeddedCLISHA256,
+      dmgSHA256: candidate.dmgSHA256,
+      readinessReportSHA256: try releaseFileDigest(reportURL),
+      evidenceArchiveSHA256: try releaseFileDigest(
+        URL(fileURLWithPath: evidenceArchive).standardizedFileURL
+      )
+    )
+    let records = try verificationRecords.map {
+      try parseVerificationRecord($0, release: identity)
+    }
+    let manifest = try ReleaseEvidenceManifestBuilder.build(
+      generatedAt: generatedAt ?? ValidationTimestamp.now(),
+      release: identity,
+      readinessReport: report,
+      evidenceBundles: bundleInputs,
+      verificationRecords: records
+    )
+    let destination = URL(fileURLWithPath: output).standardizedFileURL
+    try FileManager.default.createDirectory(
+      at: destination.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try manifest.canonicalJSON().write(to: destination, options: .atomic)
+    print(
+      "Release Evidence Manifest: 23/23 Test Cases, "
+        + "\(bundleInputs.count) Evidence Bundles, digest \(manifest.contentDigest)."
+    )
+  }
+
+  private func parseVerificationRecord(
+    _ value: String,
+    release: ReleaseArtifactIdentity
+  ) throws -> ReleaseVerificationRecord {
+    guard let separator = value.firstIndex(of: "=") else {
+      throw ValidationError("verification-record must use id=path.")
+    }
+    let id = String(value[..<separator])
+    let path = String(value[value.index(after: separator)...])
+    guard !id.isEmpty, !path.isEmpty else {
+      throw ValidationError("verification-record must use non-empty id=path values.")
+    }
+    let url = URL(fileURLWithPath: path).standardizedFileURL
+    let document = try ReleaseVerificationRecordDocument.decodeCanonicalJSON(
+      Data(contentsOf: url)
+    )
+    let expectedCandidate = ReleaseCandidateIdentity(
+      version: release.version,
+      build: release.build,
+      commit: release.commit,
+      teamID: release.teamID,
+      appExecutableSHA256: release.appExecutableSHA256,
+      embeddedCLISHA256: release.embeddedCLISHA256,
+      dmgSHA256: release.dmgSHA256
+    )
+    guard document.id == id, document.candidate == expectedCandidate else {
+      throw ValidationError(
+        "verification-record '\(id)' does not match its ID or release candidate."
+      )
+    }
+    return ReleaseVerificationRecord(
+      id: id,
+      sha256: try releaseFileDigest(url)
+    )
+  }
+}
+
+struct ReleaseManifestVerify: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "verify-release-manifest",
+    abstract: "Verify a canonical redacted Release Evidence Manifest."
+  )
+
+  @Option(name: .long, help: "Release Evidence Manifest JSON path.")
+  var manifest: String
+
+  func run() throws {
+    let value = try ReleaseEvidenceManifest.decodeCanonicalJSON(
+      Data(contentsOf: URL(fileURLWithPath: manifest).standardizedFileURL)
+    )
+    print(
+      "Release Evidence Manifest verified: "
+        + "\(value.acceptance.testCasePassedCount)/\(value.acceptance.testCaseCount), "
+        + "\(value.evidenceBundles.count) Evidence Bundles, digest \(value.contentDigest)."
+    )
+  }
+}
+
+private func resolveReleaseCandidate(
+  appBundle: String,
+  dmg: String
+) throws -> ReleaseCandidateIdentity {
+  let appURL = URL(fileURLWithPath: appBundle, isDirectory: true).standardizedFileURL
+  let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
+  let appExecutable = appURL.appendingPathComponent("Contents/MacOS/Computer MCP")
+  let embeddedCLI = appURL.appendingPathComponent("Contents/Resources/computer-mcp")
+  let infoData = try Data(contentsOf: infoURL)
+  guard
+    let info = try PropertyListSerialization.propertyList(from: infoData, format: nil)
+      as? [String: Any],
+    let version = info["CFBundleShortVersionString"] as? String,
+    let build = info["CFBundleVersion"] as? String,
+    let commit = info["ComputerMCPSourceCommit"] as? String,
+    let teamID = info["ComputerMCPTeamIdentifier"] as? String,
+    let expectedCLIHash = info["ComputerMCPEmbeddedCLIHash"] as? String
+  else {
+    throw ValidationError("App Info.plist is missing the signed release identity.")
+  }
+  let appHash = try releaseFileDigest(appExecutable)
+  let cliHash = try releaseFileDigest(embeddedCLI)
+  guard cliHash == expectedCLIHash else {
+    throw ValidationError("Embedded CLI digest does not match the signed App identity.")
+  }
+  return ReleaseCandidateIdentity(
+    version: version,
+    build: build,
+    commit: commit,
+    teamID: teamID,
+    appExecutableSHA256: appHash,
+    embeddedCLISHA256: cliHash,
+    dmgSHA256: try releaseFileDigest(URL(fileURLWithPath: dmg).standardizedFileURL)
+  )
+}
+
+private func releaseFileDigest(_ url: URL) throws -> String {
+  let data = try Data(contentsOf: url.standardizedFileURL, options: [.mappedIfSafe])
+  return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 struct GatewaySocketIdentityOptions: ParsableArguments {

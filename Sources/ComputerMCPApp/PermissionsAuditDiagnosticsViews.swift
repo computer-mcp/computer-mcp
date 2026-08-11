@@ -59,18 +59,23 @@ private struct PermissionRow: View {
 
       VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 8) {
-          Text(permission.displayName)
+          Text(verbatim: AppLocalization.string(permission.displayName))
             .fontWeight(.medium)
           StateBadge(
             text: permission.state.label,
             color: permission.state.color
           )
         }
-        Text(permission.detail)
+        Text(verbatim: AppLocalization.string(permission.detail))
           .foregroundStyle(.secondary)
-        Text("Checked \(permission.checkedAt.formatted(.relative(presentation: .named)))")
-          .font(.caption)
-          .foregroundStyle(.tertiary)
+        AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "Checked %@",
+            permission.checkedAt.formatted(.relative(presentation: .named))
+          )
+        )
+        .font(.caption)
+        .foregroundStyle(.tertiary)
       }
 
       Spacer()
@@ -92,7 +97,10 @@ private struct PermissionRow: View {
           Image(systemName: "gear")
         }
         .help("Open System Settings")
-        .accessibilityLabel("Open \(permission.displayName) settings")
+        .accessibilityLabel(
+          AppLocalization.formatted(
+            "Open %@ settings", AppLocalization.string(permission.displayName))
+        )
         .accessibilityIdentifier("permission.\(permission.id).settings")
       }
     }
@@ -193,22 +201,32 @@ private struct AuditRow: View {
             .foregroundStyle(.secondary)
         }
 
-        Text(entry.summary)
+        Text(verbatim: AppLocalization.string(entry.summary))
           .lineLimit(2)
 
         HStack(spacing: 12) {
           Text(DateFormatter.computerMCPDateTime.string(from: entry.timestamp))
-          Text("Request \(entry.requestID.prefix(12))")
-            .textSelection(.enabled)
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Request %@",
+              String(entry.requestID.prefix(12))
+            )
+          )
+          .textSelection(.enabled)
           if let workspaceName = entry.workspaceName {
             Label(workspaceName, systemImage: "folder")
           }
           if let outputByteCount = entry.outputByteCount {
-            Text("\(outputByteCount) B")
+            AppLocalization.verbatimText(AppLocalization.formatted("%@ B", String(outputByteCount)))
           }
           if let inputDigest = entry.inputDigest {
-            Text("Input \(inputDigest.prefix(12))")
-              .textSelection(.enabled)
+            AppLocalization.verbatimText(
+              AppLocalization.formatted(
+                "Input %@",
+                String(inputDigest.prefix(12))
+              )
+            )
+            .textSelection(.enabled)
           }
         }
         .font(.caption)
@@ -264,8 +282,11 @@ struct DiagnosticsView: View {
     .alert(item: $pendingRollback) { revision in
       Alert(
         title: Text("Roll back configuration?"),
-        message: Text(
-          "Revision \(revision.digest.prefix(12)) will be validated and activated atomically. The running gateway will restart."
+        message: AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "Revision %@ will be validated and activated atomically. The running gateway will restart.",
+            String(revision.digest.prefix(12))
+          )
         ),
         primaryButton: .destructive(Text("Roll Back")) {
           model.rollbackManifest(to: revision.id)
@@ -313,8 +334,13 @@ struct DiagnosticsView: View {
         }
 
         HStack {
-          Text("\(snapshot.manifest.revisions.count) retained revision(s)")
-            .foregroundStyle(.secondary)
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "%@ retained revision(s)",
+              String(snapshot.manifest.revisions.count)
+            )
+          )
+          .foregroundStyle(.secondary)
           Spacer()
           Button {
             manifestEditor = ManifestEditorPresentation(content: snapshot.manifest.content)
@@ -377,15 +403,15 @@ struct DiagnosticsView: View {
 
               VStack(alignment: .leading, spacing: 3) {
                 HStack {
-                  Text(item.title)
+                  Text(verbatim: AppLocalization.string(item.title))
                     .fontWeight(.medium)
                   Spacer()
-                  Text(item.value)
+                  Text(verbatim: AppLocalization.string(item.value))
                     .foregroundStyle(item.level.color)
                     .textSelection(.enabled)
                 }
                 if let detail = item.detail {
-                  Text(detail)
+                  Text(verbatim: AppLocalization.string(detail))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -411,8 +437,8 @@ struct DiagnosticsView: View {
 
   private func chooseExportDestination() {
     let panel = NSSavePanel()
-    panel.title = "Export Diagnostics"
-    panel.prompt = "Export"
+    panel.title = AppLocalization.string("Export Diagnostics")
+    panel.prompt = AppLocalization.string("Export")
     panel.nameFieldStringValue = "Computer-MCP-Diagnostics.zip"
     panel.canCreateDirectories = true
 

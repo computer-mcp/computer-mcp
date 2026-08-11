@@ -24,6 +24,8 @@
   <string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
+  <key>LSMultipleInstancesProhibited</key>
+  <true/>
   <key>NSAccessibilityUsageDescription</key>
   <string>Computer MCP uses Accessibility only when you explicitly enable Computer Use actions.</string>
   <key>NSScreenCaptureUsageDescription</key>

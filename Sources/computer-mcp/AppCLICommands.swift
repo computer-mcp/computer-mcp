@@ -12,7 +12,12 @@ struct App: AsyncParsableCommand {
   struct Status: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "status")
     func run() async throws {
-      printJSON(try await AppControlPlaneServiceClient.live().call("app.status"))
+      printJSON(
+        try await AppControlPlaneServiceClient.live().call(
+          "app.status",
+          timeout: .seconds(5)
+        )
+      )
     }
   }
 }
@@ -142,7 +147,7 @@ struct WorkspaceEnable: AsyncParsableCommand {
 struct Profile: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "profile",
-    subcommands: [ProfileList.self, ProfileShow.self, ProfileGrant.self]
+    subcommands: [ProfileList.self, ProfileShow.self, ProfileGrant.self, ProfileShell.self]
   )
 }
 
@@ -177,6 +182,27 @@ struct ProfileGrant: AsyncParsableCommand {
         arguments: .object([
           "profile": .string(id), "workspace_id": .string(workspace),
           "enabled": .bool(enabled),
+        ])
+      )
+    )
+  }
+}
+
+struct ProfileShell: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "shell",
+    abstract: "Enable or disable Full Shell for an eligible profile."
+  )
+
+  @Argument var id: String
+  @Flag(name: .long, inversion: .prefixedNo) var enabled = true
+
+  func run() async throws {
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "profile.shell",
+        arguments: .object([
+          "profile": .string(id), "enabled": .bool(enabled),
         ])
       )
     )

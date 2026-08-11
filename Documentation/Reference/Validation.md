@@ -41,7 +41,9 @@ computer-mcp-validate probe downstream verify
 computer-mcp-validate probe gateway verify
 computer-mcp-validate probe codex verify
 computer-mcp-validate evidence correlate|verify
-computer-mcp-validate report generate
+computer-mcp-validate report generate|verify
+computer-mcp-validate report verification-record generate|verify
+computer-mcp-validate report release-manifest|verify-release-manifest
 ```
 
 Use `--help` at every level for authoritative arguments.
@@ -155,3 +157,56 @@ Generate both report formats:
 ```
 
 The command exits unsuccessfully when the report is not ready.
+
+After the same final App, embedded CLI, notarized DMG, private evidence archive,
+and all five redacted journey/platform verification records pass, generate the
+public summary-only manifest with `report release-manifest`. The command accepts
+every Evidence Bundle used by the ready report, verifies that each bundle is
+bound to the final App and CLI digests, requires 23/23 Test Cases, and emits
+`Computer-MCP-1.0.0-EvidenceManifest.json`. It publishes hashes, Test Case IDs,
+transports, and profiles only; request IDs, audit IDs, consumer result IDs,
+credentials, raw inputs/outputs, and local paths remain in the private archive.
+
+The five required `--verification-record id=path` IDs are:
+
+- `journey.local`
+- `journey.chatgpt`
+- `journey.cloudflare`
+- `platform.apple_silicon_native`
+- `platform.rosetta_x86_64`
+
+Create each record with `report verification-record generate`. The command
+hashes separate redacted procedure, result, and cleanup records, binds those
+hashes to the final App executable, embedded CLI, DMG, version, build, commit,
+and Team ID, and writes a sealed schema-1 document. It never copies the source
+records into its JSON or terminal output. Use `report verification-record
+verify` before packaging private evidence; arbitrary files are not accepted by
+`report release-manifest` as verification records.
+
+Keep the final redacted evidence directory outside the repository with this
+layout:
+
+```text
+production-readiness-report.json
+evidence-bundles/*.json
+verification-records/journey.local.json
+verification-records/journey.chatgpt.json
+verification-records/journey.cloudflare.json
+verification-records/platform.apple_silicon_native.json
+verification-records/platform.rosetta_x86_64.json
+```
+
+Additional redacted supporting records may sit below the same directory. Seal
+the directory without copying it into the repository:
+
+```sh
+Scripts/package-validation-evidence.sh \
+  --source <external-redacted-evidence-directory> \
+  --output <external-private-evidence-archive.tar.gz>
+```
+
+The packager verifies the ready report, every Evidence Bundle, the exact five
+verification records, candidate consistency, report-to-bundle membership, and
+secret/path redaction. It rejects symlinks, special files, empty files, and
+credential-like filenames, then writes a separate `.sha256` receipt. The
+resulting private archive is the file passed to `report release-manifest`.

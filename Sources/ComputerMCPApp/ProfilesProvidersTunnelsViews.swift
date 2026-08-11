@@ -47,7 +47,12 @@ struct ProfilesView: View {
       switch confirmation.kind {
       case .activate:
         Alert(
-          title: Text("Activate \(confirmation.profile.displayName)?"),
+          title: AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Activate %@?",
+              confirmation.profile.displayName
+            )
+          ),
           message: Text(
             "This profile expands the capabilities available to its configured callers. The change is local and takes effect immediately."
           ),
@@ -74,7 +79,7 @@ struct ProfilesView: View {
   private func profileRow(_ profile: ProfileSummary) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline, spacing: 10) {
-        Text(profile.displayName)
+        Text(verbatim: AppLocalization.string(profile.displayName))
           .font(.headline)
 
         if profile.isActive {
@@ -98,14 +103,19 @@ struct ProfilesView: View {
         }
       }
 
-      Text(profile.summary)
+      Text(verbatim: AppLocalization.string(profile.summary))
         .foregroundStyle(.secondary)
 
       HStack(spacing: 18) {
-        Label(
-          profile.permitsRemoteAccess ? "Tunnel eligible" : "Local only",
-          systemImage: profile.permitsRemoteAccess ? "network" : "lock.fill"
-        )
+        Label {
+          Text(
+            verbatim: AppLocalization.string(
+              profile.permitsRemoteAccess ? "Tunnel eligible" : "Local only"
+            )
+          )
+        } icon: {
+          Image(systemName: profile.permitsRemoteAccess ? "network" : "lock.fill")
+        }
         .foregroundStyle(.secondary)
 
         if profile.supportsFullShell {
@@ -121,9 +131,11 @@ struct ProfilesView: View {
           .toggleStyle(.switch)
           .disabled(model.isActionRunning("profile.shell.\(profile.id)"))
           .help(
-            profile.permitsRemoteAccess
-              ? "Arbitrary shell execution for authorized remote callers"
-              : "Arbitrary shell execution for this local profile"
+            AppLocalization.string(
+              profile.permitsRemoteAccess
+                ? "Arbitrary shell execution for authorized remote callers"
+                : "Arbitrary shell execution for this local profile"
+            )
           )
         }
       }
@@ -191,14 +203,14 @@ private struct ProviderRow: View {
 
       VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 8) {
-          Text(provider.displayName)
+          Text(verbatim: AppLocalization.string(provider.displayName))
             .fontWeight(.medium)
           StateBadge(
             text: provider.state.label,
             color: provider.state.color,
             systemImage: provider.state.systemImage
           )
-          Text(provider.kind.label)
+          Text(verbatim: AppLocalization.string(provider.kind.label))
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -206,17 +218,21 @@ private struct ProviderRow: View {
         providerDetail
 
         if let doctor = provider.lastDoctorMessage {
-          Text(doctor)
+          Text(verbatim: AppLocalization.string(doctor))
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }
 
         if let lastError = provider.lastError {
-          Label(lastError, systemImage: "exclamationmark.triangle")
-            .font(.caption)
-            .foregroundStyle(.red)
-            .lineLimit(2)
+          Label {
+            Text(verbatim: AppLocalization.errorDescription(lastError))
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
+          .font(.caption)
+          .foregroundStyle(.red)
+          .lineLimit(2)
         }
       }
 
@@ -258,10 +274,10 @@ private struct ProviderRow: View {
   private var providerDetail: some View {
     HStack(spacing: 12) {
       if let version = provider.version {
-        Text("Version \(version)")
+        AppLocalization.verbatimText(AppLocalization.formatted("Version %@", version))
       }
       if let toolCount = provider.toolCount {
-        Text("\(toolCount) tools")
+        AppLocalization.verbatimText(AppLocalization.formatted("%@ tools", String(toolCount)))
       }
       if let executablePath = provider.executablePath {
         Text(executablePath)
@@ -357,7 +373,9 @@ struct TunnelsView: View {
     }
     .alert(item: $pendingDeletion) { tunnel in
       Alert(
-        title: Text("Delete \(tunnel.displayName)?"),
+        title: AppLocalization.verbatimText(
+          AppLocalization.formatted("Delete %@?", tunnel.displayName)
+        ),
         message: Text(
           "The local Tunnel profile and its Keychain API key will be removed. The OpenAI Tunnel registration is not deleted."
         ),
@@ -367,7 +385,9 @@ struct TunnelsView: View {
     }
     .alert(item: $pendingCloudflareDeletion) { tunnel in
       Alert(
-        title: Text("Delete \(tunnel.tunnelName)?"),
+        title: AppLocalization.verbatimText(
+          AppLocalization.formatted("Delete %@?", tunnel.tunnelName)
+        ),
         message: Text(
           "The local named-tunnel profile and its Keychain secrets will be removed. The Cloudflare account tunnel remains user-owned."
         ),
@@ -499,28 +519,43 @@ private struct CloudflareTunnelRow: View {
         Button(role: .destructive, action: onDelete) { Image(systemName: "trash") }
           .disabled(tunnel.state == .running || tunnel.state == .starting)
       }
-      Text("https://\(tunnel.publicHostname)/mcp")
+      Text(verbatim: "https://" + tunnel.publicHostname + "/mcp")
         .font(.system(.caption, design: .monospaced))
         .textSelection(.enabled)
-      Text(
-        "Loopback origin 127.0.0.1:\(tunnel.localPort) · metrics 127.0.0.1:\(tunnel.metricsPort)"
+      AppLocalization.verbatimText(
+        AppLocalization.formatted(
+          "Loopback origin 127.0.0.1:%@ · metrics 127.0.0.1:%@",
+          String(tunnel.localPort),
+          String(tunnel.metricsPort)
+        )
       )
       .font(.caption)
       .foregroundStyle(.secondary)
       if let processIdentifier = tunnel.processIdentifier {
-        Text("cloudflared PID \(processIdentifier)").font(.caption).foregroundStyle(.secondary)
+        AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "cloudflared PID %@",
+            String(processIdentifier)
+          )
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
       if let lastError = tunnel.lastError {
-        Label(lastError, systemImage: "exclamationmark.triangle")
-          .font(.caption)
-          .foregroundStyle(.red)
+        Label {
+          Text(verbatim: AppLocalization.errorDescription(lastError))
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+        }
+        .font(.caption)
+        .foregroundStyle(.red)
       }
     }
     .padding(.vertical, 8)
   }
 }
 
-private struct CloudflareEditorPresentation: Identifiable {
+struct CloudflareEditorPresentation: Identifiable {
   let id = UUID()
   var draft: CloudflareTunnelConfigurationDraft
   var isEditing: Bool
@@ -560,7 +595,7 @@ private struct CloudflareEditorPresentation: Identifiable {
   }
 }
 
-private struct CloudflareTunnelEditorView: View {
+struct CloudflareTunnelEditorView: View {
   @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var model: ComputerMCPAppModel
   @State private var draft: CloudflareTunnelConfigurationDraft
@@ -575,8 +610,10 @@ private struct CloudflareTunnelEditorView: View {
     VStack(spacing: 0) {
       HStack {
         VStack(alignment: .leading, spacing: 3) {
-          Text(isEditing ? "Edit Cloudflare Tunnel" : "Add Cloudflare Tunnel")
-            .font(.title2.weight(.semibold))
+          Text(
+            AppLocalization.string(isEditing ? "Edit Cloudflare Tunnel" : "Add Cloudflare Tunnel")
+          )
+          .font(.title2.weight(.semibold))
           Text(
             "Remotely managed named tunnels only. The App owns the access-token-protected loopback origin."
           )
@@ -597,7 +634,9 @@ private struct CloudflareTunnelEditorView: View {
           Text("Cloudflare Operate").tag(GatewayProfileID.cloudflareOperate.rawValue)
         }
         SecureField(
-          isEditing ? "Replace named-tunnel token" : "Named-tunnel token",
+          AppLocalization.string(
+            isEditing ? "Replace named-tunnel token" : "Named-tunnel token"
+          ),
           text: Binding(
             get: { draft.tunnelToken ?? "" },
             set: { draft.tunnelToken = $0 }
@@ -628,9 +667,11 @@ private struct CloudflareTunnelEditorView: View {
       HStack {
         Spacer()
         Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-        Button(isEditing ? "Save" : "Add") {
+        Button {
           model.saveCloudflareTunnelConfiguration(draft)
           dismiss()
+        } label: {
+          Text(verbatim: AppLocalization.string(isEditing ? "Save" : "Add"))
         }
         .keyboardShortcut(.defaultAction)
         .disabled(
@@ -682,9 +723,9 @@ private struct CloudflareTunnelLogsView: View {
 
   private func cloudflareLogSection(_ title: String, _ text: String) -> some View {
     VStack(alignment: .leading) {
-      Text(title).font(.headline)
+      Text(verbatim: AppLocalization.string(title)).font(.headline)
       ScrollView {
-        Text(text.isEmpty ? "No output." : text)
+        Text(text.isEmpty ? AppLocalization.string("No output.") : text)
           .font(.system(.caption, design: .monospaced))
           .textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -694,7 +735,7 @@ private struct CloudflareTunnelLogsView: View {
   }
 }
 
-private struct GeneratedAccessTokenView: View {
+struct GeneratedAccessTokenView: View {
   let token: String
   let dismiss: () -> Void
 
@@ -829,20 +870,34 @@ private struct OpenAITunnelRow: View {
             .help(endpoint)
         }
         if let connectedAt = tunnel.connectedAt {
-          Text("Connected \(connectedAt.formatted(.relative(presentation: .named)))")
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Connected %@",
+              connectedAt.formatted(.relative(presentation: .named))
+            )
+          )
         }
         if tunnel.reconnectAttempt > 0 {
-          Text("Reconnect attempt \(tunnel.reconnectAttempt)")
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Reconnect attempt %@",
+              String(tunnel.reconnectAttempt)
+            )
+          )
         }
       }
       .font(.caption)
       .foregroundStyle(.secondary)
 
       if let lastError = tunnel.lastError {
-        Label(lastError, systemImage: "exclamationmark.triangle")
-          .font(.caption)
-          .foregroundStyle(.red)
-          .textSelection(.enabled)
+        Label {
+          Text(verbatim: AppLocalization.errorDescription(lastError))
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+        }
+        .font(.caption)
+        .foregroundStyle(.red)
+        .textSelection(.enabled)
       }
     }
     .padding(.vertical, 8)
@@ -908,10 +963,10 @@ private struct OpenAITunnelLogsView: View {
 
   private func logSection(title: String, text: String) -> some View {
     VStack(alignment: .leading, spacing: 5) {
-      Text(title)
+      Text(verbatim: AppLocalization.string(title))
         .font(.headline)
       ScrollView {
-        Text(text.isEmpty ? "No output." : text)
+        Text(text.isEmpty ? AppLocalization.string("No output.") : text)
           .font(.system(.caption, design: .monospaced))
           .textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -927,7 +982,7 @@ private struct OpenAITunnelLogsView: View {
   }
 }
 
-private struct OpenAITunnelEditorPresentation: Identifiable {
+struct OpenAITunnelEditorPresentation: Identifiable {
   let id = UUID()
   var draft: OpenAITunnelConfigurationDraft
   var isEditing: Bool
@@ -963,7 +1018,7 @@ private struct OpenAITunnelEditorPresentation: Identifiable {
   }
 }
 
-private struct OpenAITunnelEditorView: View {
+struct OpenAITunnelEditorView: View {
   @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var model: ComputerMCPAppModel
   @State private var draft: OpenAITunnelConfigurationDraft
@@ -978,7 +1033,7 @@ private struct OpenAITunnelEditorView: View {
     VStack(spacing: 0) {
       HStack {
         VStack(alignment: .leading, spacing: 3) {
-          Text(isEditing ? "Edit Tunnel" : "Add Tunnel")
+          Text(verbatim: AppLocalization.string(isEditing ? "Edit Tunnel" : "Add Tunnel"))
             .font(.title2.weight(.semibold))
           Text("The App owns the gateway process; tunnel-client connects through its local bridge.")
             .font(.callout)
@@ -1005,7 +1060,7 @@ private struct OpenAITunnelEditorView: View {
         }
 
         SecureField(
-          isEditing ? "Replace OpenAI API key" : "OpenAI API key",
+          AppLocalization.string(isEditing ? "Replace OpenAI API key" : "OpenAI API key"),
           text: Binding(
             get: { draft.apiKey ?? "" },
             set: { draft.apiKey = $0 }
@@ -1054,9 +1109,11 @@ private struct OpenAITunnelEditorView: View {
         }
         .keyboardShortcut(.cancelAction)
 
-        Button(isEditing ? "Save" : "Add") {
+        Button {
           model.saveOpenAITunnelConfiguration(draft)
           dismiss()
+        } label: {
+          Text(verbatim: AppLocalization.string(isEditing ? "Save" : "Add"))
         }
         .keyboardShortcut(.defaultAction)
         .disabled(

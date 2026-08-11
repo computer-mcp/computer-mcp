@@ -8,6 +8,22 @@ enum LoadState<Value> {
   case loading
   case loaded(Value)
   case failed(String)
+
+  mutating func beginRefresh() {
+    switch self {
+    case .idle, .failed:
+      self = .loading
+    case .loading, .loaded:
+      break
+    }
+  }
+
+  mutating func failRefresh(with message: String) {
+    guard case .loaded = self else {
+      self = .failed(message)
+      return
+    }
+  }
 }
 
 struct PresentedAppError: Identifiable {
@@ -27,18 +43,26 @@ struct ProfileConfirmation: Identifiable {
   let id = UUID()
 }
 
+struct CodexRegistrationPresentation: Identifiable {
+  let id = UUID()
+  let invocation: CodexMCPInstallInvocation
+}
+
 @MainActor
 final class ComputerMCPAppModel: ObservableObject {
   static let profileActivationRefresh: Set<AppWorkspace> = [
-    .profiles, .workspaces, .status, .providers, .tunnels,
+    .profiles, .workspaces, .home, .providers, .tunnels,
   ]
 
-  @Published var selectedWorkspace: AppWorkspace? = .status
+  @Published var selectedWorkspace: AppWorkspace? = .home
+  @Published private(set) var isPresentingWelcome: Bool
   @Published var pendingWorkspaceRemoval: WorkspaceSummary?
   @Published var pendingProfileConfirmation: ProfileConfirmation?
   @Published var auditQuery = ""
 
   @Published private(set) var status: LoadState<AppStatusSnapshot> = .idle
+  @Published private(set) var readiness: LoadState<[ProductReadinessSnapshot]> = .idle
+  @Published private(set) var localMCPConnection: LoadState<LocalMCPConnectionSummary> = .idle
   @Published private(set) var workspaces: LoadState<[WorkspaceSummary]> = .idle
   @Published private(set) var profiles: LoadState<[ProfileSummary]> = .idle
   @Published private(set) var providers: LoadState<[ProviderSummary]> = .idle
@@ -52,19 +76,38 @@ final class ComputerMCPAppModel: ObservableObject {
     [String: LoadState<CloudflareTunnelLogSnapshot>] = [:]
   @Published private(set) var cliInstallationStatus: EmbeddedCLIInstallationStatus?
   @Published var generatedAccessToken: String?
+  @Published var codexRegistrationPresentation: CodexRegistrationPresentation?
+  @Published private(set) var codexRegistrationMessage: String?
 
   @Published private(set) var runningActions: Set<String> = []
   @Published var presentedError: PresentedAppError?
   @Published private(set) var exportedDiagnosticsURL: URL?
 
   private let controlPlane: any AppControlPlane
+  private let onboardingPreferences: any OnboardingPreferenceStoring
   private let permissionCoach = PermissionCoachWindowController()
   private var didStart = false
   private var maintenanceTask: Task<Void, Never>?
   private var permissionPollingTasks: [String: Task<Void, Never>] = [:]
 
-  init(controlPlane: any AppControlPlane) {
+  init(
+    controlPlane: any AppControlPlane,
+    onboardingPreferences: any OnboardingPreferenceStoring = UserDefaultsOnboardingPreferences()
+  ) {
     self.controlPlane = controlPlane
+    self.onboardingPreferences = onboardingPreferences
+    self.isPresentingWelcome =
+      onboardingPreferences.completedVersion < UserDefaultsOnboardingPreferences.currentVersion
+  }
+
+  func finishWelcome(selecting workspace: AppWorkspace = .home) {
+    onboardingPreferences.markCompleted(version: UserDefaultsOnboardingPreferences.currentVersion)
+    selectedWorkspace = workspace
+    isPresentingWelcome = false
+  }
+
+  func showWelcome() {
+    isPresentingWelcome = true
   }
 
   var currentServiceState: ServiceState? {
@@ -86,10 +129,10 @@ final class ComputerMCPAppModel: ObservableObject {
 
   var menuBarStatusText: String {
     switch status {
-    case .idle: "Not loaded"
-    case .loading: "Refreshing"
+    case .idle: AppLocalization.string("Not loaded")
+    case .loading: AppLocalization.string("Refreshing")
     case .loaded(let snapshot): snapshot.serviceState.label
-    case .failed: "Unavailable"
+    case .failed: AppLocalization.string("Unavailable")
     }
   }
 
@@ -107,7 +150,7 @@ final class ComputerMCPAppModel: ObservableObject {
       } catch {
         presentedError = PresentedAppError(
           title: "Unable to start Computer MCP",
-          message: error.localizedDescription
+          message: AppLocalization.errorDescription(error)
         )
       }
       refreshAll()
@@ -118,7 +161,7 @@ final class ComputerMCPAppModel: ObservableObject {
           return
         }
         await controlPlane.maintainApplication()
-        refresh(.status)
+        refresh(.home)
         refresh(.tunnels)
       }
     }
@@ -145,8 +188,19 @@ final class ComputerMCPAppModel: ObservableObject {
 
   func refresh(_ workspace: AppWorkspace) {
     switch workspace {
-    case .status:
-      Task { await loadStatus() }
+    case .home:
+      Task {
+        await loadStatus()
+        await loadReadiness()
+        await loadLocalMCPConnection()
+      }
+    case .chatgpt, .cloudflare:
+      Task {
+        await loadReadiness()
+        await loadProviders()
+        await loadOpenAITunnels()
+        await loadCloudflareTunnels()
+      }
     case .workspaces:
       Task { await loadWorkspaces() }
     case .profiles:
@@ -172,13 +226,13 @@ final class ComputerMCPAppModel: ObservableObject {
   }
 
   func startGateway() {
-    performAction(key: "gateway.start", title: "Unable to start gateway", refresh: [.status]) {
+    performAction(key: "gateway.start", title: "Unable to start gateway", refresh: [.home]) {
       try await self.controlPlane.startGateway()
     }
   }
 
   func stopGateway() {
-    performAction(key: "gateway.stop", title: "Unable to stop gateway", refresh: [.status]) {
+    performAction(key: "gateway.stop", title: "Unable to stop gateway", refresh: [.home]) {
       try await self.controlPlane.stopGateway()
     }
   }
@@ -187,7 +241,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "launch-at-login",
       title: "Unable to update launch at login",
-      refresh: [.status, .diagnostics]
+      refresh: [.home, .diagnostics]
     ) {
       try await self.controlPlane.setLaunchAtLoginEnabled(enabled)
     }
@@ -197,7 +251,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "workspace.add",
       title: "Unable to register workspace",
-      refresh: [.workspaces, .status]
+      refresh: [.workspaces, .home]
     ) {
       try await self.controlPlane.registerWorkspace(at: url)
     }
@@ -211,7 +265,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "workspace.remove.\(id)",
       title: "Unable to remove workspace",
-      refresh: [.workspaces, .status]
+      refresh: [.workspaces, .home]
     ) {
       try await self.controlPlane.removeWorkspace(id: id)
     }
@@ -221,7 +275,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "workspace.grant.\(workspace.id)",
       title: "Unable to update workspace access",
-      refresh: [.workspaces, .status]
+      refresh: [.workspaces, .home]
     ) {
       try await self.controlPlane.setWorkspaceEnabled(
         enabled,
@@ -264,7 +318,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "profile.shell.\(profileID)",
       title: "Unable to update Full Shell",
-      refresh: [.profiles, .status]
+      refresh: [.profiles, .home]
     ) {
       try await self.controlPlane.setFullShellEnabled(enabled, profileID: profileID)
     }
@@ -274,7 +328,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "provider.start.\(id)",
       title: "Unable to start provider",
-      refresh: [.providers, .status]
+      refresh: [.providers, .home]
     ) {
       try await self.controlPlane.startProvider(id: id)
     }
@@ -284,7 +338,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "provider.stop.\(id)",
       title: "Unable to stop provider",
-      refresh: [.providers, .status]
+      refresh: [.providers, .home]
     ) {
       try await self.controlPlane.stopProvider(id: id)
     }
@@ -304,7 +358,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "tunnel.start.\(id)",
       title: "Unable to start tunnel",
-      refresh: [.tunnels, .status]
+      refresh: [.tunnels, .home, .chatgpt]
     ) {
       try await self.controlPlane.startOpenAITunnel(id: id)
     }
@@ -314,7 +368,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "tunnel.stop.\(id)",
       title: "Unable to stop tunnel",
-      refresh: [.tunnels, .status]
+      refresh: [.tunnels, .home, .chatgpt]
     ) {
       try await self.controlPlane.stopOpenAITunnel(id: id)
     }
@@ -324,7 +378,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "tunnel.reconnect.\(id)",
       title: "Unable to reconnect tunnel",
-      refresh: [.tunnels, .status]
+      refresh: [.tunnels, .home, .chatgpt]
     ) {
       try await self.controlPlane.reconnectOpenAITunnel(id: id)
     }
@@ -336,7 +390,7 @@ final class ComputerMCPAppModel: ObservableObject {
       do {
         openAITunnelLogs[id] = .loaded(try await controlPlane.fetchOpenAITunnelLogs(id: id))
       } catch {
-        openAITunnelLogs[id] = .failed(error.localizedDescription)
+        openAITunnelLogs[id] = .failed(AppLocalization.errorDescription(error))
       }
     }
   }
@@ -375,7 +429,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "tunnel.delete.\(id)",
       title: "Unable to delete tunnel",
-      refresh: [.tunnels, .status, .diagnostics]
+      refresh: [.tunnels, .home, .chatgpt, .diagnostics]
     ) {
       try await self.controlPlane.deleteOpenAITunnel(id: id)
     }
@@ -385,7 +439,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "cloudflare.start.\(id)",
       title: "Unable to start Cloudflare Tunnel",
-      refresh: [.tunnels, .status]
+      refresh: [.tunnels, .home, .cloudflare]
     ) {
       try await self.controlPlane.startCloudflareTunnel(id: id)
     }
@@ -395,7 +449,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "cloudflare.stop.\(id)",
       title: "Unable to stop Cloudflare Tunnel",
-      refresh: [.tunnels, .status]
+      refresh: [.tunnels, .home, .cloudflare]
     ) {
       try await self.controlPlane.stopCloudflareTunnel(id: id)
     }
@@ -419,7 +473,7 @@ final class ComputerMCPAppModel: ObservableObject {
           try await controlPlane.fetchCloudflareTunnelLogs(id: id)
         )
       } catch {
-        cloudflareTunnelLogs[id] = .failed(error.localizedDescription)
+        cloudflareTunnelLogs[id] = .failed(AppLocalization.errorDescription(error))
       }
     }
   }
@@ -439,7 +493,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "cloudflare.delete.\(id)",
       title: "Unable to delete Cloudflare Tunnel",
-      refresh: [.tunnels, .status, .diagnostics]
+      refresh: [.tunnels, .home, .cloudflare, .diagnostics]
     ) {
       try await self.controlPlane.deleteCloudflareTunnel(id: id)
     }
@@ -449,17 +503,59 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "cli.install",
       title: "Unable to install command line tool",
-      refresh: [.status]
+      refresh: [.home]
     ) {
       self.cliInstallationStatus = try await self.controlPlane.installCommandLineTool()
     }
+  }
+
+  func previewCodexRegistration() {
+    let actionKey = "codex.preview"
+    guard !runningActions.contains(actionKey) else {
+      return
+    }
+    runningActions.insert(actionKey)
+    codexRegistrationMessage = nil
+    Task {
+      defer {
+        runningActions.remove(actionKey)
+      }
+      do {
+        codexRegistrationPresentation = CodexRegistrationPresentation(
+          invocation: try await controlPlane.previewCodexRegistration()
+        )
+      } catch {
+        presentedError = PresentedAppError(
+          title: "Unable to prepare Codex registration",
+          message: AppLocalization.errorDescription(error)
+        )
+      }
+    }
+  }
+
+  func installCodexRegistration() {
+    codexRegistrationPresentation = nil
+    codexRegistrationMessage = nil
+    performAction(
+      key: "codex.install",
+      title: "Unable to register Computer MCP with Codex",
+      refresh: [.home]
+    ) {
+      _ = try await self.controlPlane.installCodexRegistration()
+      self.codexRegistrationMessage =
+        "Computer MCP is registered with Codex. Start a new Codex session to use it."
+    }
+  }
+
+  func dismissCodexRegistrationMessage() {
+    codexRegistrationMessage = nil
   }
 
   func saveManifest(_ content: String) {
     performAction(
       key: "manifest.save",
       title: "Unable to activate manifest",
-      refresh: [.diagnostics, .status, .profiles, .providers, .tunnels]
+      refresh: [.diagnostics, .home, .profiles, .providers, .tunnels]
     ) {
       try await self.controlPlane.saveManifest(content)
     }
@@ -469,7 +565,7 @@ final class ComputerMCPAppModel: ObservableObject {
     performAction(
       key: "manifest.rollback.\(revisionID)",
       title: "Unable to roll back manifest",
-      refresh: [.diagnostics, .status, .profiles, .providers, .tunnels]
+      refresh: [.diagnostics, .home, .profiles, .providers, .tunnels]
     ) {
       try await self.controlPlane.rollbackManifest(to: revisionID)
     }
@@ -529,8 +625,11 @@ final class ComputerMCPAppModel: ObservableObject {
         startPermissionPolling(permissionID: permission.id)
       } catch {
         presentedError = PresentedAppError(
-          title: "Unable to request \(permission.displayName)",
-          message: error.localizedDescription
+          title: AppLocalization.formatted(
+            "Unable to request %@",
+            AppLocalization.string(permission.displayName)
+          ),
+          message: AppLocalization.errorDescription(error)
         )
       }
     }
@@ -541,66 +640,84 @@ final class ComputerMCPAppModel: ObservableObject {
   }
 
   private func loadStatus() async {
-    status = .loading
+    status.beginRefresh()
     do {
       status = .loaded(try await controlPlane.fetchStatus())
       cliInstallationStatus = try? await controlPlane.commandLineToolStatus()
     } catch {
-      status = .failed(error.localizedDescription)
+      status.failRefresh(with: AppLocalization.errorDescription(error))
+    }
+  }
+
+  private func loadReadiness() async {
+    readiness.beginRefresh()
+    do {
+      readiness = .loaded(try await controlPlane.fetchReadiness())
+    } catch {
+      readiness.failRefresh(with: AppLocalization.errorDescription(error))
+    }
+  }
+
+  private func loadLocalMCPConnection() async {
+    localMCPConnection.beginRefresh()
+    do {
+      localMCPConnection = .loaded(try await controlPlane.localMCPConnection())
+    } catch {
+      localMCPConnection.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
   private func loadWorkspaces() async {
-    workspaces = .loading
+    workspaces.beginRefresh()
     do {
       workspaces = .loaded(try await controlPlane.fetchWorkspaces())
     } catch {
-      workspaces = .failed(error.localizedDescription)
+      workspaces.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
   private func loadProfiles() async {
-    profiles = .loading
+    profiles.beginRefresh()
     do {
       profiles = .loaded(try await controlPlane.fetchProfiles())
     } catch {
-      profiles = .failed(error.localizedDescription)
+      profiles.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
   private func loadProviders() async {
-    providers = .loading
+    providers.beginRefresh()
     do {
       providers = .loaded(try await controlPlane.fetchProviders())
     } catch {
-      providers = .failed(error.localizedDescription)
+      providers.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
   private func loadOpenAITunnels() async {
-    openAITunnels = .loading
+    openAITunnels.beginRefresh()
     do {
       openAITunnels = .loaded(try await controlPlane.fetchOpenAITunnels())
     } catch {
-      openAITunnels = .failed(error.localizedDescription)
+      openAITunnels.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
   private func loadCloudflareTunnels() async {
-    cloudflareTunnels = .loading
+    cloudflareTunnels.beginRefresh()
     do {
       cloudflareTunnels = .loaded(try await controlPlane.fetchCloudflareTunnels())
     } catch {
-      cloudflareTunnels = .failed(error.localizedDescription)
+      cloudflareTunnels.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
   private func loadPermissions() async {
-    permissions = .loading
+    permissions.beginRefresh()
     do {
       permissions = .loaded(try await controlPlane.fetchPermissions())
     } catch {
-      permissions = .failed(error.localizedDescription)
+      permissions.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
@@ -639,20 +756,20 @@ final class ComputerMCPAppModel: ObservableObject {
   }
 
   private func loadAudit() async {
-    audit = .loading
+    audit.beginRefresh()
     do {
       audit = .loaded(try await controlPlane.fetchAudit())
     } catch {
-      audit = .failed(error.localizedDescription)
+      audit.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
   private func loadDiagnostics() async {
-    diagnostics = .loading
+    diagnostics.beginRefresh()
     do {
       diagnostics = .loaded(try await controlPlane.fetchDiagnostics())
     } catch {
-      diagnostics = .failed(error.localizedDescription)
+      diagnostics.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
@@ -676,7 +793,8 @@ final class ComputerMCPAppModel: ObservableObject {
           refresh(workspace)
         }
       } catch {
-        presentedError = PresentedAppError(title: title, message: error.localizedDescription)
+        presentedError = PresentedAppError(
+          title: title, message: AppLocalization.errorDescription(error))
       }
     }
   }

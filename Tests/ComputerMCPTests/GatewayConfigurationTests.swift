@@ -951,7 +951,7 @@ final class GatewayConfigurationTests {
   }
 
   @Test
-  func testSchemaV1RejectsShellForRemoteProfilesAndRemoteLocalAdmin() throws {
+  func testSchemaV1AllowsExplicitOperateShellAndRejectsOtherRemoteProfiles() throws {
     let observeShell = try writeConfig(
       """
       schema_version = 1
@@ -970,14 +970,32 @@ final class GatewayConfigurationTests {
       """
       schema_version = 1
 
+      [policy]
+      shell_enabled = true
+
       [[profiles]]
       id = "chatgpt-operate"
       capabilities = ["shell.run"]
       full_shell_enabled = true
       """
     )
-    expectThrows(try GatewayConfiguration.load(path: operateShell)) { error in
-      #expect(error.localizedDescription.contains("chatgpt-operate"))
+    let operateConfig = try GatewayConfiguration.load(path: operateShell)
+    #expect(operateConfig.policy.shellEnabled)
+    #expect(operateConfig.profileGrant(for: .chatGPTOperate).fullShellEnabled)
+    #expect(operateConfig.profileGrant(for: .chatGPTOperate).capabilityIDs.contains("shell.run"))
+
+    let cloudflareShell = try writeConfig(
+      """
+      schema_version = 1
+
+      [[profiles]]
+      id = "cloudflare-operate"
+      capabilities = ["shell.run"]
+      full_shell_enabled = true
+      """
+    )
+    expectThrows(try GatewayConfiguration.load(path: cloudflareShell)) { error in
+      #expect(error.localizedDescription.contains("cloudflare-operate"))
     }
 
     let remoteAdmin = try writeConfig(

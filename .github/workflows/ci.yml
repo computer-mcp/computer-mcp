@@ -46,6 +46,9 @@ jobs:
             Tools/Validation/Sources \
             Tools/Validation/Tests
 
+      - name: Shell workflow syntax
+        run: zsh -n Scripts/*.sh
+
       - name: Root native build and Swift Testing
         run: |
           /usr/bin/swift build --build-system native
@@ -62,11 +65,11 @@ jobs:
             --package-path Tools/Validation \
             computer-mcp-validate test-case validate
 
-      - name: CLI hierarchy and public configuration
+      - name: CLI hierarchy, examples, and localization
         run: |
           Scripts/verify-cli-interface.sh
-          /usr/bin/swift run --build-system native computer-mcp \
-            config validate --config Examples/computer-mcp.toml
+          Scripts/verify-examples.sh
+          Scripts/verify-localization.sh
 
       - name: DocC and deterministic release metadata
         run: |

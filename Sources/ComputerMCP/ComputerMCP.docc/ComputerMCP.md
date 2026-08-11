@@ -31,8 +31,9 @@ private socket. `computer-mcp bridge` is a transport adapter; it does not start
 a second gateway. Workspace bookmarks and secrets are App-managed state and do
 not belong in TOML.
 
-Tunnel profiles expose explicit typed capabilities only. Generic CLI execution,
-process spawning, and Full Shell remain local to `local-admin`.
+Tunnel profiles expose explicit capabilities only. Generic CLI execution,
+process spawning, and Full Shell remain off by default; only
+`chatgpt-operate` can receive them through an explicit local opt-in.
 
 ### Configuration And Policy
 

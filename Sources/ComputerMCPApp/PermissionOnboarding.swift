@@ -8,7 +8,7 @@ enum PermissionOnboardingError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .unknownPermission(let id):
-      "Unknown macOS permission: \(id)"
+      AppLocalization.formatted("Unknown macOS permission: %@", id)
     }
   }
 }

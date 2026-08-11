@@ -9,9 +9,12 @@ CHECKSUM_PATH=${CHECKSUM_PATH:-"$OUTPUT_DIR/SHA256SUMS"}
 RELEASE_MODE=${RELEASE_MODE:-0}
 MOUNT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-mount.XXXXXX")
 BUILD_INFO_FILE=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-build-info.XXXXXX")
+MOUNT_DEVICE=""
 
 cleanup() {
-  /usr/bin/hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
+  if [[ -n "$MOUNT_DEVICE" ]]; then
+    /usr/sbin/diskutil eject "$MOUNT_DEVICE" >/dev/null 2>&1 || true
+  fi
   /bin/rmdir "$MOUNT_DIR" 2>/dev/null || true
   /bin/rm -f -- "$BUILD_INFO_FILE"
 }
@@ -31,7 +34,21 @@ ACTUAL_HASH=$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')
 [[ -n "$EXPECTED_HASH" && "$EXPECTED_HASH" == "$ACTUAL_HASH" ]] \
   || fail "DMG SHA-256 does not match SHA256SUMS."
 
-/usr/bin/hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_DIR" -nobrowse -readonly -quiet
+ATTACH_PLIST=$(/usr/sbin/diskutil image --plist attach \
+  --readOnly \
+  --nobrowse \
+  --mountPoint "$MOUNT_DIR" \
+  "$DMG_PATH")
+ATTACH_JSON=$(printf '%s' "$ATTACH_PLIST" | /usr/bin/plutil -convert json -o - -)
+MOUNT_DEVICE=$(printf '%s' "$ATTACH_JSON" \
+  | /usr/bin/jq -r '."system-entities"[0]."dev-entry" // empty')
+ACTUAL_MOUNT=$(printf '%s' "$ATTACH_JSON" \
+  | /usr/bin/jq -r '[."system-entities"[] | ."mount-point" // empty][0]')
+VOLUME_NAME=$(printf '%s' "$ATTACH_JSON" \
+  | /usr/bin/jq -r '[."system-entities"[] | ."volume-name" // empty][0]')
+[[ -n "$MOUNT_DEVICE" ]] || fail "diskutil did not return an attached image device."
+[[ ${ACTUAL_MOUNT:A} == ${MOUNT_DIR:A} ]] || fail "DMG mounted at an unexpected path."
+[[ "$VOLUME_NAME" == "Computer MCP 1.0.0" ]] || fail "DMG volume name is incorrect."
 APP_PATH="$MOUNT_DIR/Computer MCP.app"
 CLI_PATH="$APP_PATH/Contents/Resources/computer-mcp"
 BUILD_IDENTITY="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
@@ -39,6 +56,17 @@ BUILD_IDENTITY="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
 [[ -x "$APP_PATH/Contents/MacOS/Computer MCP" ]] || fail "Missing App executable."
 [[ -x "$CLI_PATH" ]] || fail "Missing embedded CLI."
 [[ -f "$BUILD_IDENTITY" ]] || fail "Missing signed build identity."
+APP_RESOURCE_BUNDLE=$(/usr/bin/find "$APP_PATH/Contents/Resources" -maxdepth 1 \
+  -type d -name '*ComputerMCPApp*.bundle' -print -quit)
+[[ -n "$APP_RESOURCE_BUNDLE" ]] || fail "Missing ComputerMCPApp localization bundle."
+for locale in en zh-Hans; do
+  [[ -f "$APP_RESOURCE_BUNDLE/$locale.lproj/Localizable.strings" ]] \
+    || fail "Missing $locale Localizable.strings."
+  [[ -f "$APP_PATH/Contents/Resources/$locale.lproj/Localizable.strings" ]] \
+    || fail "Missing main-bundle $locale Localizable.strings."
+  [[ -f "$APP_PATH/Contents/Resources/$locale.lproj/InfoPlist.strings" ]] \
+    || fail "Missing $locale InfoPlist.strings."
+done
 /usr/bin/plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null
 /usr/bin/plutil -lint "$BUILD_IDENTITY" >/dev/null
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"

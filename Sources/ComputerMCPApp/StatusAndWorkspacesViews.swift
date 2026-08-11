@@ -1,20 +1,21 @@
 import AppKit
 import ComputerMCP
 import SwiftUI
+import UniformTypeIdentifiers
 
-struct StatusView: View {
+struct HomeView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
 
   var body: some View {
     VStack(spacing: 0) {
       WorkspaceHeader(
-        "Status",
+        "Home",
         subtitle: "Gateway runtime and local data plane"
       ) {
         HStack {
           gatewayAction
           RefreshButton {
-            model.refresh(.status)
+            model.refresh(.home)
           }
         }
       }
@@ -26,11 +27,26 @@ struct StatusView: View {
         LoadingWorkspaceView(title: "Loading gateway status")
       case .failed(let message):
         FailedWorkspaceView(message: message) {
-          model.refresh(.status)
+          model.refresh(.home)
         }
       case .loaded(let snapshot):
         statusContent(snapshot)
       }
+    }
+    .sheet(item: $model.codexRegistrationPresentation) { presentation in
+      CodexRegistrationConfirmation(presentation: presentation)
+        .environmentObject(model)
+    }
+    .alert(
+      "Codex registration complete",
+      isPresented: Binding(
+        get: { model.codexRegistrationMessage != nil },
+        set: { if !$0 { model.dismissCodexRegistrationMessage() } }
+      )
+    ) {
+      Button("OK") { model.dismissCodexRegistrationMessage() }
+    } message: {
+      Text(verbatim: AppLocalization.string(model.codexRegistrationMessage ?? ""))
     }
   }
 
@@ -60,6 +76,26 @@ struct StatusView: View {
 
   private func statusContent(_ snapshot: AppStatusSnapshot) -> some View {
     Form {
+      Section("Next step") {
+        if let recommendation = nextRecommendation {
+          HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 3) {
+              Text(verbatim: AppLocalization.string(recommendation.title)).font(.headline)
+              Text(verbatim: AppLocalization.string(recommendation.detail))
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(
+              AppLocalization.string(recommendation.buttonLabel),
+              action: recommendation.action
+            )
+          }
+        } else {
+          Label("All configured connections are healthy.", systemImage: "checkmark.seal.fill")
+            .foregroundStyle(.green)
+        }
+      }
+
       Section("Gateway") {
         LabeledContent("State") {
           StateBadge(
@@ -72,7 +108,9 @@ struct StatusView: View {
         LabeledContent("Version", value: snapshot.version)
 
         if let profile = snapshot.activeProfileName {
-          LabeledContent("Active profile", value: profile)
+          LabeledContent("Active profile") {
+            Text(verbatim: AppLocalization.string(profile))
+          }
         }
 
         if let startedAt = snapshot.startedAt {
@@ -91,7 +129,7 @@ struct StatusView: View {
             if snapshot.launchAtLogin == .requiresApproval
               || snapshot.launchAtLogin == .unavailable
             {
-              Text(snapshot.launchAtLogin.label)
+              Text(verbatim: AppLocalization.string(snapshot.launchAtLogin.label))
                 .font(.caption)
                 .foregroundStyle(
                   snapshot.launchAtLogin == .requiresApproval ? Color.orange : Color.secondary
@@ -117,7 +155,11 @@ struct StatusView: View {
         LabeledContent("Workspaces", value: String(snapshot.activeWorkspaceCount))
         LabeledContent(
           "Providers",
-          value: "\(snapshot.runningProviderCount) of \(snapshot.providerCount) running"
+          value: AppLocalization.formatted(
+            "%@ of %@ running",
+            String(snapshot.runningProviderCount),
+            String(snapshot.providerCount)
+          )
         )
         LabeledContent("Tunnels", value: String(snapshot.runningTunnelCount))
 
@@ -132,7 +174,7 @@ struct StatusView: View {
 
       Section("Command line tool") {
         if let cli = model.cliInstallationStatus {
-          LabeledContent("~/.local/bin/computer-mcp", value: cli.state.rawValue)
+          LabeledContent("~/.local/bin/computer-mcp", value: cli.state.localizedLabel)
           if !cli.destinationDirectoryIsOnPath {
             Label(
               "Add ~/.local/bin to PATH to invoke computer-mcp by name.",
@@ -149,20 +191,239 @@ struct StatusView: View {
         .disabled(model.isActionRunning("cli.install"))
       }
 
+      Section("Connect a local MCP client") {
+        LabeledContent("App") {
+          StateBadge(text: "Running", color: .green, systemImage: "checkmark.circle.fill")
+        }
+        LabeledContent("Gateway") {
+          StateBadge(
+            text: snapshot.serviceState.label,
+            color: snapshot.serviceState.color,
+            systemImage: snapshot.serviceState.systemImage
+          )
+        }
+
+        switch model.localMCPConnection {
+        case .idle, .loading:
+          ProgressView().accessibilityLabel("Preparing local MCP command")
+        case .failed(let message):
+          Label(AppLocalization.string(message), systemImage: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+          Button("Retry") { model.refresh(.home) }
+        case .loaded(let connection):
+          LabeledContent("CLI") {
+            Text(verbatim: connection.cliInstallation.state.localizedLabel)
+          }
+          LabeledContent("Command") {
+            Text(connection.command)
+              .font(.system(.caption, design: .monospaced))
+              .textSelection(.enabled)
+              .lineLimit(2)
+              .truncationMode(.middle)
+          }
+          LabeledContent("Arguments") {
+            Text(connection.arguments.joined(separator: " "))
+              .font(.system(.caption, design: .monospaced))
+              .textSelection(.enabled)
+          }
+          HStack {
+            Button {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(connection.displayCommand, forType: .string)
+            } label: {
+              Label("Copy stdio Command", systemImage: "doc.on.doc")
+            }
+            Button {
+              model.previewCodexRegistration()
+            } label: {
+              Label("Register with Codex", systemImage: "chevron.left.forwardslash.chevron.right")
+            }
+            .disabled(
+              model.isActionRunning("codex.preview")
+                || model.isActionRunning("codex.install")
+            )
+          }
+        }
+
+        Text(
+          "The Codex consumer registration uses the App-owned bridge. Internal Codex providers are configured separately under Providers."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      Section("Remote connections") {
+        readinessLink(.chatgpt, workspace: .chatgpt)
+        readinessLink(.cloudflare, workspace: .cloudflare)
+      }
+
       if let lastError = snapshot.lastError {
         Section("Last error") {
-          Label(lastError, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(.red)
-            .textSelection(.enabled)
+          Label {
+            Text(verbatim: AppLocalization.errorDescription(lastError))
+          } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+          }
+          .foregroundStyle(.red)
+          .textSelection(.enabled)
         }
       }
     }
     .formStyle(.grouped)
   }
+
+  @ViewBuilder
+  private func readinessLink(_ journey: ProductJourney, workspace: AppWorkspace) -> some View {
+    HStack {
+      Label(
+        journey == .chatgpt ? "ChatGPT" : "Cloudflare",
+        systemImage: workspace.systemImage
+      )
+      Spacer()
+      if case .loaded(let snapshots) = model.readiness,
+        let snapshot = snapshots.first(where: { $0.journey == journey })
+      {
+        StateBadge(
+          text: snapshot.status.label,
+          color: snapshot.status.color,
+          systemImage: snapshot.status.systemImage
+        )
+      } else {
+        ProgressView().controlSize(.small)
+      }
+      Button("Open") { model.selectedWorkspace = workspace }
+    }
+  }
+
+  private var nextRecommendation: HomeRecommendation? {
+    guard case .loaded(let snapshots) = model.readiness else {
+      return HomeRecommendation(
+        title: "Check connection health",
+        detail: "Refresh the App, gateway, and configured transports.",
+        buttonLabel: "Refresh",
+        action: { model.refresh(.home) }
+      )
+    }
+
+    if let local = snapshots.first(where: { $0.journey == .local }),
+      local.status != .ready,
+      local.status != .verified
+    {
+      if local.checks.contains(where: { $0.id == "gateway.running" && $0.status == .fail }) {
+        return HomeRecommendation(
+          title: "Start the gateway",
+          detail: "The local MCP bridge and remote transports depend on the App-owned gateway.",
+          buttonLabel: "Start",
+          action: { model.startGateway() }
+        )
+      }
+      if local.checks.contains(where: { $0.id == "local.cli" && $0.status == .fail }) {
+        return HomeRecommendation(
+          title: "Install the App-owned CLI",
+          detail: "Install the signed embedded bridge before registering a local MCP client.",
+          buttonLabel: "Install",
+          action: { model.installCommandLineTool() }
+        )
+      }
+      return HomeRecommendation(
+        title: local.nextAction?.label ?? "Finish local MCP setup",
+        detail: "Prepare the App-owned CLI bridge for local MCP clients.",
+        buttonLabel: "Review",
+        action: { model.refresh(.home) }
+      )
+    }
+
+    if let remote = snapshots.first(where: {
+      $0.journey != .local && $0.status != .verified && $0.status != .notConfigured
+    }) {
+      let target: AppWorkspace = remote.journey == .chatgpt ? .chatgpt : .cloudflare
+      return HomeRecommendation(
+        title: remote.nextAction?.label ?? "Verify the remote connection",
+        detail: AppLocalization.formatted(
+          "Continue the %@ connection from its dedicated setup page.",
+          target.title
+        ),
+        buttonLabel: "Continue",
+        action: { model.selectedWorkspace = target }
+      )
+    }
+
+    if snapshots.contains(where: { $0.journey != .local && $0.status == .notConfigured }) {
+      return HomeRecommendation(
+        title: "Choose a remote connection when you need one",
+        detail: "ChatGPT and Cloudflare each have a complete guided setup page.",
+        buttonLabel: "Connect ChatGPT",
+        action: { model.selectedWorkspace = .chatgpt }
+      )
+    }
+    return nil
+  }
+}
+
+private struct HomeRecommendation {
+  let title: String
+  let detail: String
+  let buttonLabel: String
+  let action: () -> Void
+}
+
+private struct CodexRegistrationConfirmation: View {
+  @Environment(\.dismiss) private var dismiss
+  @EnvironmentObject private var model: ComputerMCPAppModel
+
+  let presentation: CodexRegistrationPresentation
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Register Computer MCP with Codex?")
+        .font(.title2.weight(.semibold))
+      Text("Review the exact command before Computer MCP changes your Codex MCP registration.")
+        .foregroundStyle(.secondary)
+      Text(displayCommand)
+        .font(.system(.callout, design: .monospaced))
+        .textSelection(.enabled)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+      Text("No API keys, tunnel tokens, or TOML paths are included.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      HStack {
+        Spacer()
+        Button("Cancel") { dismiss() }
+          .keyboardShortcut(.cancelAction)
+        Button("Register") {
+          model.installCodexRegistration()
+          dismiss()
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(22)
+    .frame(width: 640)
+  }
+
+  private var displayCommand: String {
+    ([presentation.invocation.codexCLI] + presentation.invocation.arguments)
+      .map(shellToken)
+      .joined(separator: " ")
+  }
+
+  private func shellToken(_ value: String) -> String {
+    guard !value.isEmpty,
+      value.unicodeScalars.allSatisfy({
+        CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._/:")).contains($0)
+      })
+    else {
+      return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+    return value
+  }
 }
 
 struct WorkspacesView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
+  @State private var isWorkspaceImporterPresented = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -171,7 +432,9 @@ struct WorkspacesView: View {
         subtitle: "Folder grants and persistent bookmark health"
       ) {
         HStack {
-          Button(action: chooseWorkspaceFolder) {
+          Button {
+            isWorkspaceImporterPresented = true
+          } label: {
             Label("Add", systemImage: "plus")
           }
           .accessibilityIdentifier("workspace.add")
@@ -212,7 +475,9 @@ struct WorkspacesView: View {
     }
     .alert(item: $model.pendingWorkspaceRemoval) { workspace in
       Alert(
-        title: Text("Remove \(workspace.displayName)?"),
+        title: AppLocalization.verbatimText(
+          AppLocalization.formatted("Remove %@?", workspace.displayName)
+        ),
         message: Text(
           "This removes the local workspace grant. It does not delete the folder or its contents."
         ),
@@ -222,24 +487,27 @@ struct WorkspacesView: View {
         secondaryButton: .cancel()
       )
     }
-  }
-
-  private func chooseWorkspaceFolder() {
-    let panel = NSOpenPanel()
-    panel.title = "Add Workspace"
-    panel.prompt = "Add Workspace"
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.canCreateDirectories = true
-    panel.resolvesAliases = true
-
-    panel.begin { response in
-      guard response == .OK, let url = panel.url else {
-        return
-      }
-      Task { @MainActor in
+    .fileImporter(
+      isPresented: $isWorkspaceImporterPresented,
+      allowedContentTypes: [.folder],
+      allowsMultipleSelection: false
+    ) { result in
+      switch result {
+      case .success(let urls):
+        guard let url = urls.first else {
+          return
+        }
         model.addWorkspace(at: url)
+      case .failure(let error):
+        let cocoaError = error as NSError
+        guard cocoaError.domain != NSCocoaErrorDomain || cocoaError.code != NSUserCancelledError
+        else {
+          return
+        }
+        model.presentedError = PresentedAppError(
+          title: "Unable to select workspace",
+          message: AppLocalization.errorDescription(error)
+        )
       }
     }
   }
@@ -275,23 +543,34 @@ private struct WorkspaceRow: View {
           .help(workspace.path)
 
         if let lastResolvedAt = workspace.lastResolvedAt {
-          Text("Resolved \(lastResolvedAt.formatted(.relative(presentation: .named)))")
-            .font(.caption)
-            .foregroundStyle(.tertiary)
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Resolved %@",
+              lastResolvedAt.formatted(.relative(presentation: .named))
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.tertiary)
         }
       }
 
       Spacer()
 
       Toggle(
-        "Enabled for \(workspace.activeProfileID)",
         isOn: Binding(
           get: { workspace.isSelected },
           set: { enabled in
             model.setWorkspaceEnabled(enabled, workspace: workspace)
           }
         )
-      )
+      ) {
+        AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "Enabled for %@",
+            workspace.activeProfileID
+          )
+        )
+      }
       .accessibilityIdentifier("workspace.\(workspace.id).enabled")
       .toggleStyle(.switch)
       .help("Grant this workspace to the active profile")

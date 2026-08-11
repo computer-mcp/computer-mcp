@@ -4924,8 +4924,8 @@ filtering occurs before truncation.
 ## Full Shell
 
 `shell.run`, `shell.spawn`, `shell.list`, `shell.read`, `shell.write`, and
-`shell.cancel` are available only when the manifest enables Shell and the local
-profile grant enables Full Shell.
+`shell.cancel` are available only when the manifest enables Shell and the
+eligible `chatgpt-operate` or `local-admin` profile grant enables Full Shell.
 
 The plane supports explicit argv or shell-script mode, selected environment,
 workspace/cwd binding, stdin, separate stdout/stderr cursors, timeout,
@@ -4935,3 +4935,7 @@ cleanup.
 Full Shell gives the caller the current macOS user's effective terminal
 authority. Prefer typed tools or registered CLI argv execution when that
 authority is unnecessary.
+
+For App-managed profiles, use `computer-mcp profile shell chatgpt-operate` to
+enable the persisted grant after activating a manifest with
+`policy.shell_enabled = true`. Use `--no-enabled` to disable it again.

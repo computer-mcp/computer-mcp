@@ -23,7 +23,7 @@ final class GatewayPolicyTests {
   }
 
   @Test
-  func testOperateCannotEnableFullShell() {
+  func testOperateCanEnableFullShell() throws {
     let grant = ProfileGrant(
       id: .chatGPTOperate,
       capabilityIDs: ["shell.run"],
@@ -31,15 +31,11 @@ final class GatewayPolicyTests {
       fullShellEnabled: true
     )
 
-    expectThrows(try grant.validate()) { error in
-      #expect(
-        (error as? GatewayPolicyConfigurationError)
-          == (.fullShellProfileNotAllowed(.chatGPTOperate)))
-    }
+    try grant.validate()
   }
 
   @Test
-  func testPersistedRemoteFullShellStateIsDroppedDuringManifestOverlay() {
+  func testPersistedOperateFullShellStateSurvivesManifestOverlay() {
     let manifest = ProfileGrant(
       id: .chatGPTOperate,
       capabilityIDs: ["file.write"],
@@ -56,9 +52,12 @@ final class GatewayPolicyTests {
 
     let effective = manifest.applyingPersistedRuntimeState(persisted)
 
-    #expect((effective.capabilityIDs) == (["file.write"]))
+    #expect(
+      effective.capabilityIDs
+        == Set(["file.write"]).union(ProfileGrant.fullShellCapabilities)
+    )
     #expect((effective.workspaceIDs) == (["primary"]))
-    #expect(!(effective.fullShellEnabled))
+    #expect(effective.fullShellEnabled)
   }
 
   @Test
@@ -117,7 +116,7 @@ final class GatewayPolicyTests {
   }
 
   @Test
-  func testFullShellRequiresLocalEnablement() {
+  func testFullShellRequiresProfileEnablement() {
     let capability = CapabilityDescriptor(id: "shell.run", risk: .fullShell)
     let context = ExecutionContext(caller: .localMCP, profileID: .localAdmin)
     let disabled = ProfileGrant(
@@ -135,7 +134,7 @@ final class GatewayPolicyTests {
       ))
         == (.deny(
           code: .fullShellDisabled,
-          message: "Full Shell must be enabled in the local Computer MCP app."
+          message: "Full Shell must be enabled for the active profile in Computer MCP."
         )))
 
     var enabled = disabled

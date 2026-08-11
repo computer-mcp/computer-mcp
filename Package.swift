@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
   name: "computer-mcp",
+  defaultLocalization: "en",
   platforms: [
     .macOS(.v14)
   ],
@@ -60,7 +61,10 @@ let package = Package(
     ),
     .executableTarget(
       name: "ComputerMCPApp",
-      dependencies: ["ComputerMCP"]
+      dependencies: ["ComputerMCP"],
+      resources: [
+        .process("Resources")
+      ]
     ),
     .testTarget(
       name: "ComputerMCPTests",

@@ -196,7 +196,9 @@ private final class PermissionCoachPanel: NSPanel {
 private final class PermissionCoachDraggableAppView: NSView, NSDraggingSource {
   private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "Computer MCP.app")
-  private let instructionLabel = NSTextField(labelWithString: "Drag into the app list")
+  private let instructionLabel = NSTextField(
+    labelWithString: AppLocalization.string("Drag into the app list")
+  )
   private var appBundleURL: URL
 
   init(appBundleURL: URL) {
@@ -238,9 +240,11 @@ private final class PermissionCoachDraggableAppView: NSView, NSDraggingSource {
 
     setAccessibilityElement(true)
     setAccessibilityRole(.button)
-    setAccessibilityLabel("Drag Computer MCP.app into the app list")
+    setAccessibilityLabel(AppLocalization.string("Drag Computer MCP.app into the app list"))
     setAccessibilityHelp(
-      "Drag this app into the Screen & System Audio Recording list, then turn it on."
+      AppLocalization.string(
+        "Drag this app into the Screen & System Audio Recording list, then turn it on."
+      )
     )
   }
 
@@ -450,11 +454,14 @@ private struct PermissionCoachView: View {
   private var instruction: String {
     switch permission.id {
     case "accessibility":
-      "Turn on Computer MCP under Accessibility."
+      AppLocalization.string("Turn on Computer MCP under Accessibility.")
     case "screen-recording":
-      "Turn on Computer MCP under Screen & System Audio Recording."
+      AppLocalization.string("Turn on Computer MCP under Screen & System Audio Recording.")
     default:
-      "Turn on Computer MCP for \(permission.displayName)."
+      String(
+        format: AppLocalization.string("Turn on Computer MCP for %@."),
+        permission.displayName
+      )
     }
   }
 }

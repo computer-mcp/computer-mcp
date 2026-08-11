@@ -23,7 +23,7 @@ run token.
 
 ## App onboarding
 
-In **Cloudflare Tunnel**, enter:
+Open **Cloudflare** under Get Started and select **Add Connection**. Enter:
 
 - a local profile id;
 - the named tunnel name;
@@ -33,13 +33,18 @@ In **Cloudflare Tunnel**, enter:
 - optional absolute `cloudflared` path;
 - the named-tunnel token.
 
-The App generates a separate Computer MCP Access Token. Copy it once into the external
-consumer's secret store. Both values are stored in Keychain and omitted from
-the schema 1 manifest and configuration export.
+The App generates a separate Computer MCP Access Token. Copy it once into the
+external consumer's secret store. Closing the one-time view permanently hides
+the value; regenerate it if it is lost. Both values are stored in Keychain and
+omitted from the schema 1 manifest and configuration export.
 
-Run `doctor` before `start`. The diagnostic verifies `cloudflared`, both Keychain entries,
+Run Diagnostics before Start. The diagnostic verifies `cloudflared`, both Keychain entries,
 caller/profile alignment, named-tunnel mode, and—when running—the local
 metrics endpoint.
+
+The page reports Ready when the transport is healthy. Select **Check for
+Request** after the public consumer calls a tool; Verified requires a matching
+current tunnel, caller, profile, start boundary, and allowed audit decision.
 
 ## Consumer authentication
 

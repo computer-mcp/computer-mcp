@@ -1,3 +1,4 @@
+import ComputerMCP
 import SwiftUI
 
 struct WorkspaceHeader<Actions: View>: View {
@@ -18,9 +19,9 @@ struct WorkspaceHeader<Actions: View>: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 16) {
       VStack(alignment: .leading, spacing: 4) {
-        Text(title)
+        Text(verbatim: AppLocalization.string(title))
           .font(.title2.weight(.semibold))
-        Text(subtitle)
+        Text(verbatim: AppLocalization.string(subtitle))
           .foregroundStyle(.secondary)
       }
 
@@ -52,7 +53,7 @@ struct LoadingWorkspaceView: View {
     VStack(spacing: 10) {
       ProgressView()
         .controlSize(.regular)
-      Text(title)
+      Text(verbatim: AppLocalization.string(title))
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -66,9 +67,9 @@ struct EmptyWorkspaceView: View {
 
   var body: some View {
     ContentUnavailableView(
-      title,
+      AppLocalization.string(title),
       systemImage: systemImage,
-      description: Text(detail)
+      description: Text(verbatim: AppLocalization.string(detail))
     )
   }
 }
@@ -81,7 +82,7 @@ struct FailedWorkspaceView: View {
     ContentUnavailableView {
       Label("Control plane unavailable", systemImage: "exclamationmark.triangle")
     } description: {
-      Text(message)
+      Text(verbatim: AppLocalization.string(message))
     } actions: {
       Button("Retry", action: retry)
     }
@@ -98,7 +99,7 @@ struct StateBadge: View {
       if let systemImage {
         Image(systemName: systemImage)
       }
-      Text(text)
+      Text(verbatim: AppLocalization.string(text))
     }
     .font(.caption.weight(.medium))
     .foregroundStyle(color)
@@ -149,6 +150,85 @@ extension RiskLevel {
     case .elevated: .orange
     case .high: .red
     }
+  }
+}
+
+extension ProductReadinessStatus {
+  var label: String {
+    let key =
+      switch self {
+      case .notConfigured: "Not configured"
+      case .blocked: "Blocked"
+      case .needsAttention: "Needs attention"
+      case .ready: "Ready"
+      case .verified: "Verified"
+      }
+    return AppLocalization.string(key)
+  }
+
+  var color: Color {
+    switch self {
+    case .notConfigured: .secondary
+    case .blocked: .red
+    case .needsAttention: .orange
+    case .ready: .blue
+    case .verified: .green
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .notConfigured: "circle.dotted"
+    case .blocked: "xmark.octagon.fill"
+    case .needsAttention: "exclamationmark.triangle.fill"
+    case .ready: "checkmark.circle"
+    case .verified: "checkmark.seal.fill"
+    }
+  }
+}
+
+extension ProductReadinessCheckStatus {
+  var localizedLabel: String {
+    let key =
+      switch self {
+      case .pass: "Pass"
+      case .warning: "Warning"
+      case .fail: "Fail"
+      case .notApplicable: "Not applicable"
+      }
+    return AppLocalization.string(key)
+  }
+
+  var color: Color {
+    switch self {
+    case .pass: .green
+    case .warning: .orange
+    case .fail: .red
+    case .notApplicable: .secondary
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .pass: "checkmark.circle.fill"
+    case .warning: "exclamationmark.triangle.fill"
+    case .fail: "xmark.octagon.fill"
+    case .notApplicable: "minus.circle"
+    }
+  }
+}
+
+extension EmbeddedCLIInstallationState {
+  var localizedLabel: String {
+    let key =
+      switch self {
+      case .notInstalled: "Not installed"
+      case .installed: "Installed"
+      case .brokenLink: "Broken link"
+      case .wrongTarget: "Wrong target"
+      case .occupied: "Installation location occupied"
+      }
+    return AppLocalization.string(key)
   }
 }
 

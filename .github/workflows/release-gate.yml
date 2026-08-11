@@ -78,6 +78,9 @@ jobs:
             Tools/Validation/Sources \
             Tools/Validation/Tests
 
+      - name: Shell workflow syntax
+        run: zsh -n Scripts/*.sh
+
       - name: Root build and test
         run: |
           /usr/bin/swift build --build-system native
@@ -92,9 +95,11 @@ jobs:
             --package-path Tools/Validation \
             computer-mcp-validate test-case validate
 
-      - name: CLI, DocC, and release metadata gates
+      - name: CLI, examples, localization, DocC, and release metadata gates
         run: |
           Scripts/verify-cli-interface.sh
+          Scripts/verify-examples.sh
+          Scripts/verify-localization.sh
           Scripts/verify-release-metadata.sh
           Scripts/verify-documentation.sh
 

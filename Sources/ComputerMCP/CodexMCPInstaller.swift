@@ -45,25 +45,25 @@ package struct CodexMCPInstaller: Sendable {
     configPath: String,
     executablePath: String
   ) throws -> CodexMCPInstallInvocation {
-    let resolvedCodexCLI = try resolveExecutable(
-      codexCLI ?? "codex",
-      missing: { .missingCodexCLI($0) }
-    )
-    let resolvedExecutablePath: String
-    if executablePath.contains("/") {
-      resolvedExecutablePath = absolutePath(executablePath)
-    } else {
-      resolvedExecutablePath = try resolveExecutable(
-        executablePath,
-        missing: { .missingServerExecutable($0) }
-      )
-    }
     let resolvedConfigPath = absolutePath(configPath)
-    let mcpCommand = [resolvedExecutablePath, "serve", "--config", resolvedConfigPath]
-    return CodexMCPInstallInvocation(
-      codexCLI: resolvedCodexCLI,
-      arguments: ["mcp", "add", serverName, "--"] + mcpCommand,
-      mcpCommand: mcpCommand
+    return try makeInvocation(
+      codexCLI: codexCLI,
+      serverName: serverName,
+      executablePath: executablePath,
+      serverArguments: ["serve", "--config", resolvedConfigPath]
+    )
+  }
+
+  package func planApp(
+    codexCLI: String?,
+    serverName: String,
+    executablePath: String
+  ) throws -> CodexMCPInstallInvocation {
+    try makeInvocation(
+      codexCLI: codexCLI,
+      serverName: serverName,
+      executablePath: executablePath,
+      serverArguments: ["bridge", "--client-identity", "local-mcp"]
     )
   }
 
@@ -80,6 +80,61 @@ package struct CodexMCPInstaller: Sendable {
       executablePath: executablePath
     )
     return try commandRunner.run(
+      executable: invocation.codexCLI,
+      arguments: invocation.arguments,
+      workingDirectory: nil,
+      environment: [:],
+      timeoutMilliseconds: 30_000,
+      maxOutputBytes: 1_048_576
+    )
+  }
+
+  package func installApp(
+    codexCLI: String?,
+    serverName: String,
+    executablePath: String
+  ) throws -> CommandResult {
+    let invocation = try planApp(
+      codexCLI: codexCLI,
+      serverName: serverName,
+      executablePath: executablePath
+    )
+    return try run(invocation)
+  }
+
+  private func makeInvocation(
+    codexCLI: String?,
+    serverName: String,
+    executablePath: String,
+    serverArguments: [String]
+  ) throws -> CodexMCPInstallInvocation {
+    let resolvedCodexCLI = try resolveExecutable(
+      codexCLI ?? "codex",
+      missing: { .missingCodexCLI($0) }
+    )
+    let resolvedExecutablePath: String
+    if executablePath.contains("/") {
+      let absolute = absolutePath(executablePath)
+      guard FileManager.default.isExecutableFile(atPath: absolute) else {
+        throw CodexMCPInstallerError.missingServerExecutable(executablePath)
+      }
+      resolvedExecutablePath = absolute
+    } else {
+      resolvedExecutablePath = try resolveExecutable(
+        executablePath,
+        missing: { .missingServerExecutable($0) }
+      )
+    }
+    let mcpCommand = [resolvedExecutablePath] + serverArguments
+    return CodexMCPInstallInvocation(
+      codexCLI: resolvedCodexCLI,
+      arguments: ["mcp", "add", serverName, "--"] + mcpCommand,
+      mcpCommand: mcpCommand
+    )
+  }
+
+  private func run(_ invocation: CodexMCPInstallInvocation) throws -> CommandResult {
+    try commandRunner.run(
       executable: invocation.codexCLI,
       arguments: invocation.arguments,
       workingDirectory: nil,

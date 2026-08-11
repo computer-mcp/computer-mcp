@@ -8,9 +8,9 @@ authority, not sandboxing an arbitrary remote shell.
 
 - `chatgpt-observe` is read-only and cannot use Codex, writes, CLI execution, or
   Shell.
-- `chatgpt-operate` receives only locally configured typed capabilities and
-  workspaces. It cannot enable generic CLI execution, process spawning, or
-  Full Shell.
+- `chatgpt-operate` receives only locally configured capabilities and
+  workspaces. Its local operator may explicitly enable Full Shell for the
+  profile; the manifest policy and persisted profile grant must both opt in.
 - `cloudflare-observe` and `cloudflare-operate` use separate caller grants and
   never inherit ChatGPT authority.
 - `local-admin` is local-only and rejected for remote callers.
@@ -21,8 +21,9 @@ authority, not sandboxing an arbitrary remote shell.
 - ChatGPT cannot request or wait for a permission expansion.
 
 Full Shell is equivalent to the current user's effective terminal authority.
-It is available only to `local-admin`. If enabled, workspace bookmarks are
-routing and audit context, not containment.
+It is available only to `chatgpt-operate` and `local-admin`, remains off by
+default, and can be enabled only through the local control plane. If enabled,
+workspace bookmarks are routing and audit context, not containment.
 
 ## Transport And Secrets
 
@@ -110,6 +111,7 @@ data while in transit and must be treated accordingly by the MCP client.
   configured remote surface.
 - Provider output may itself contain secrets despite audit redaction.
 
-Minimize enabled capabilities, use `chatgpt-observe` first, keep Full Shell off,
+Minimize enabled capabilities, use `chatgpt-observe` first, keep Full Shell off
+unless the target ChatGPT workspace is trusted for terminal-equivalent access,
 review Tunnel tool snapshots after metadata changes, and remove sensitive data
 from diagnostics before sharing it.

@@ -1,5 +1,17 @@
 # Troubleshooting
 
+Start with the journey-specific readiness result:
+
+```sh
+computer-mcp doctor --journey local
+computer-mcp doctor --journey chatgpt
+computer-mcp doctor --journey cloudflare
+computer-mcp doctor --journey chatgpt --json
+```
+
+The command exits 0 only for Ready or Verified. A blocked App connection still
+returns parseable, redacted schema-1 JSON.
+
 ## App Does Not Start
 
 Run the bundled executable directly to capture startup diagnostics:
@@ -168,6 +180,11 @@ Open **Permissions**. Grant Accessibility or Screen Recording to the signed
 highlighted step in System Settings, then relaunch if macOS requires it. The
 App automatically rechecks the permission while the guide is visible. Remote
 calls never trigger TCC prompts.
+
+Accessibility and Screen Recording block only enabled capabilities that need
+them. Revoking either grant does not stop ordinary file, system, provider, or
+non-Computer-Use paths. The grant must belong to the signed App bundle that
+performs the protected action, not Terminal, Codex, or a copied executable.
 
 ## Release Artifact Is Rejected
 

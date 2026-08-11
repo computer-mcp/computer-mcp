@@ -31,8 +31,9 @@ are visible and executable for each caller and workspace.
 
 - Tokens and downstream credentials remain in Keychain or the owning consumer;
   they never enter the manifest.
-- `shell.run`, generic CLI execution, and managed process spawning remain
-  disabled for remote built-in profiles.
+- `shell.run`, generic CLI execution, and managed process spawning remain off
+  by default. `chatgpt-operate` can receive them only through explicit manifest
+  policy and a local persisted Full Shell grant.
 - Downstream MCP tools preserve their reviewed exposure and prefix boundaries.
 - Codex App Server, Exec, and MCP remain separate provider lifecycles supplied
   by `swift-codex`.

@@ -295,7 +295,7 @@ package actor AppControlPlaneService {
     _ enabled: Bool,
     profileID: GatewayProfileID
   ) throws -> ProfileGrant {
-    guard profileID == .localAdmin else {
+    guard profileID.supportsFullShell else {
       throw AppControlPlaneServiceError.fullShellProfileNotAllowed(profileID.rawValue)
     }
     let configuration = try manifestStore.activeConfiguration()
@@ -561,12 +561,16 @@ package actor AppControlPlaneService {
     )
   }
 
-  package func startOpenAITunnel(profileID: String) async throws -> OpenAITunnelStatus {
+  package func startOpenAITunnel(
+    profileID: String,
+    allowKeychainAuthenticationUI: Bool = true
+  ) async throws -> OpenAITunnelStatus {
     let profile = try requireOpenAITunnelConfiguration(profileID)
     try validateOpenAITunnelSurface(profile)
     let status = try await openAITunnelSupervisor.start(
       profile,
-      configuration: manifestStore.activeConfiguration()
+      configuration: manifestStore.activeConfiguration(),
+      authenticationUI: allowKeychainAuthenticationUI ? .allow : .fail
     )
     do {
       try setOpenAITunnelDesiredRunning(true, profileID: profileID)
@@ -577,12 +581,16 @@ package actor AppControlPlaneService {
     return status
   }
 
-  package func reconnectOpenAITunnel(profileID: String) async throws -> OpenAITunnelStatus {
+  package func reconnectOpenAITunnel(
+    profileID: String,
+    allowKeychainAuthenticationUI: Bool = true
+  ) async throws -> OpenAITunnelStatus {
     let profile = try requireOpenAITunnelConfiguration(profileID)
     try validateOpenAITunnelSurface(profile)
     let status = try await openAITunnelSupervisor.reconnect(
       profile,
-      configuration: manifestStore.activeConfiguration()
+      configuration: manifestStore.activeConfiguration(),
+      authenticationUI: allowKeychainAuthenticationUI ? .allow : .fail
     )
     do {
       try setOpenAITunnelDesiredRunning(true, profileID: profileID)

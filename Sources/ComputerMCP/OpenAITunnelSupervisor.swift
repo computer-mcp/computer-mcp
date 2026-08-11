@@ -440,7 +440,8 @@ internal actor OpenAITunnelSupervisor {
   @discardableResult
   internal func start(
     _ profile: OpenAITunnelConfiguration,
-    configuration: GatewayConfiguration
+    configuration: GatewayConfiguration,
+    authenticationUI: KeychainAuthenticationUI = .allow
   ) async throws -> OpenAITunnelStatus {
     try profile.validate()
     if let current = statuses[profile.id], current.state == .running || current.state == .starting {
@@ -456,7 +457,8 @@ internal actor OpenAITunnelSupervisor {
       let context = try await executionContext(
         profile: profile,
         configuration: configuration,
-        force: false
+        force: false,
+        authenticationUI: authenticationUI
       )
       try requireActiveStartup(profileID: profile.id, token: startupToken)
       secretForRedaction = context.secret
@@ -548,10 +550,15 @@ internal actor OpenAITunnelSupervisor {
   @discardableResult
   internal func reconnect(
     _ profile: OpenAITunnelConfiguration,
-    configuration: GatewayConfiguration
+    configuration: GatewayConfiguration,
+    authenticationUI: KeychainAuthenticationUI = .allow
   ) async throws -> OpenAITunnelStatus {
     try stop(profileID: profile.id)
-    return try await start(profile, configuration: configuration)
+    return try await start(
+      profile,
+      configuration: configuration,
+      authenticationUI: authenticationUI
+    )
   }
 
   @discardableResult
@@ -672,13 +679,17 @@ internal actor OpenAITunnelSupervisor {
   private func executionContext(
     profile: OpenAITunnelConfiguration,
     configuration: GatewayConfiguration,
-    force: Bool
+    force: Bool,
+    authenticationUI: KeychainAuthenticationUI = .allow
   ) async throws -> TunnelExecutionContext {
     let tunnelClientPath = try resolver.resolve(
       requestedPath: profile.tunnelClientPath,
       configuration: configuration
     )
-    let secret = try await secretValue(for: profile.apiKeyReference)
+    let secret = try await secretValue(
+      for: profile.apiKeyReference,
+      authenticationUI: authenticationUI
+    )
     if profile.apiKeyReference != nil, secret == nil {
       throw OpenAITunnelSupervisorError.secretMissing
     }
@@ -702,11 +713,17 @@ internal actor OpenAITunnelSupervisor {
     return TunnelExecutionContext(plan: plan, environment: environment, secret: secret)
   }
 
-  private func secretValue(for reference: SecretReference?) async throws -> String? {
+  private func secretValue(
+    for reference: SecretReference?,
+    authenticationUI: KeychainAuthenticationUI = .allow
+  ) async throws -> String? {
     guard let reference else {
       return nil
     }
-    return try await secretStore.valueAsynchronously(for: reference)
+    return try await secretStore.valueAsynchronously(
+      for: reference,
+      authenticationUI: authenticationUI
+    )
   }
 
   private func runControl(

@@ -42,6 +42,7 @@ verify_help() {
 verify_help "$ROOT_CLI"
 verify_help "$ROOT_CLI" app
 verify_help "$ROOT_CLI" app status
+verify_help "$ROOT_CLI" doctor
 verify_help "$ROOT_CLI" config
 verify_help "$ROOT_CLI" config path
 verify_help "$ROOT_CLI" config show
@@ -110,11 +111,19 @@ verify_help "$VALIDATION_CLI" evidence correlate
 verify_help "$VALIDATION_CLI" evidence verify
 verify_help "$VALIDATION_CLI" report
 verify_help "$VALIDATION_CLI" report generate
+verify_help "$VALIDATION_CLI" report verify
+verify_help "$VALIDATION_CLI" report verification-record
+verify_help "$VALIDATION_CLI" report verification-record generate
+verify_help "$VALIDATION_CLI" report verification-record verify
+verify_help "$VALIDATION_CLI" report release-manifest
+verify_help "$VALIDATION_CLI" report verify-release-manifest
 
 OUTSIDE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-cli.XXXXXX")
 FIXTURE_MANIFEST="$OUTSIDE_DIR/validation-fixture.toml"
 FIXTURE_MARKER="$OUTSIDE_DIR/provider-starts.log"
-trap 'rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
+DOCTOR_JSON="$OUTSIDE_DIR/doctor.json"
+CODEX_APP_PLAN="$OUTSIDE_DIR/codex-app-plan.json"
+trap 'rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
 (
   cd "$OUTSIDE_DIR"
   verify_help "$ROOT_CLI"
@@ -131,6 +140,45 @@ rg '^exposure = "reexport"$' "$FIXTURE_MANIFEST" >/dev/null
 rg '^prefix = "fixture_stdio"$' "$FIXTURE_MANIFEST" >/dev/null
 if rg 'downstream-fixture' "$FIXTURE_MANIFEST" >/dev/null; then
   echo "CLI interface verification failed: generated manifest contains an obsolete command." >&2
+  exit 1
+fi
+
+doctor_exit=0
+"$ROOT_CLI" doctor --journey local --json >"$DOCTOR_JSON" || doctor_exit=$?
+if [[ "$doctor_exit" != "0" && "$doctor_exit" != "1" ]]; then
+  echo "CLI interface verification failed: doctor returned $doctor_exit." >&2
+  exit 1
+fi
+/usr/bin/plutil -convert xml1 -o /dev/null "$DOCTOR_JSON"
+[[ $(/usr/bin/plutil -extract schema_version raw -o - "$DOCTOR_JSON") == "1" ]] \
+  || { echo "CLI interface verification failed: doctor schema changed." >&2; exit 1; }
+rg '"generated_at"[[:space:]]*:[[:space:]]*"[0-9]{4}-' "$DOCTOR_JSON" >/dev/null
+if rg -i 'bearer [a-z0-9._-]{12}|api[_ -]?key[[:space:]]*[:=][[:space:]]*[^" ]+' \
+  "$DOCTOR_JSON" >/dev/null
+then
+  echo "CLI interface verification failed: doctor output may contain a secret." >&2
+  exit 1
+fi
+
+"$ROOT_CLI" install codex \
+  --app \
+  --codex-cli /bin/echo \
+  --server-executable "$ROOT_CLI" \
+  --dry-run >"$CODEX_APP_PLAN"
+rg '"bridge"' "$CODEX_APP_PLAN" >/dev/null
+rg '"local-mcp"' "$CODEX_APP_PLAN" >/dev/null
+if rg '"--config"' "$CODEX_APP_PLAN" >/dev/null; then
+  echo "CLI interface verification failed: App Codex plan contains --config." >&2
+  exit 1
+fi
+if "$ROOT_CLI" install codex \
+  --app \
+  --config "$FIXTURE_MANIFEST" \
+  --codex-cli /bin/echo \
+  --server-executable "$ROOT_CLI" \
+  --dry-run >/dev/null 2>&1
+then
+  echo "CLI interface verification failed: --app and --config were accepted together." >&2
   exit 1
 fi
 

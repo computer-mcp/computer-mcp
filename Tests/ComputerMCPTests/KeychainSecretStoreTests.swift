@@ -41,6 +41,19 @@ final class KeychainSecretStoreTests {
     #expect(try store.contains(reference))
     #expect(adapter.getCount == 0)
     #expect(adapter.containsCount == 1)
+    #expect(adapter.authenticationUI == .fail)
+  }
+
+  @Test
+  func testBackgroundValueReadDisablesAuthenticationUI() throws {
+    let adapter = MetadataKeychainAdapter()
+    let store = try KeychainSecretStore(adapter: adapter)
+    let reference = try SecretReference(account: "present")
+
+    #expect(
+      (try store.value(for: reference, authenticationUI: .fail)) == "secret"
+    )
+    #expect(adapter.authenticationUI == .fail)
   }
 
   @Test
@@ -102,6 +115,7 @@ private final class MetadataKeychainAdapter: KeychainAdapter, @unchecked Sendabl
   private let lock = NSLock()
   private var reads = 0
   private var metadataChecks = 0
+  private var lastAuthenticationUI: KeychainAuthenticationUI?
 
   var getCount: Int {
     lock.lock()
@@ -115,6 +129,12 @@ private final class MetadataKeychainAdapter: KeychainAdapter, @unchecked Sendabl
     return metadataChecks
   }
 
+  var authenticationUI: KeychainAuthenticationUI? {
+    lock.lock()
+    defer { lock.unlock() }
+    return lastAuthenticationUI
+  }
+
   func set(service: String, account: String, data: Data) throws {}
 
   func get(service: String, account: String) throws -> Data? {
@@ -124,9 +144,33 @@ private final class MetadataKeychainAdapter: KeychainAdapter, @unchecked Sendabl
     return Data("secret".utf8)
   }
 
+  func get(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Data? {
+    lock.lock()
+    reads += 1
+    lastAuthenticationUI = authenticationUI
+    lock.unlock()
+    return Data("secret".utf8)
+  }
+
   func contains(service: String, account: String) throws -> Bool {
     lock.lock()
     metadataChecks += 1
+    lock.unlock()
+    return true
+  }
+
+  func contains(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Bool {
+    lock.lock()
+    metadataChecks += 1
+    lastAuthenticationUI = authenticationUI
     lock.unlock()
     return true
   }

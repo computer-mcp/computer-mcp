@@ -27,7 +27,10 @@ fi
 fail_if_match() {
   local description=$1
   local pattern=$2
-  if "${RG[@]}" "$pattern" $PUBLIC_PATHS; then
+  local matches
+  matches=$("${RG[@]}" -l "$pattern" $PUBLIC_PATHS || true)
+  if [[ -n "$matches" ]]; then
+    print -l -- ${(f)matches} >&2
     echo "Public repository verification failed: $description" >&2
     exit 1
   fi
@@ -35,7 +38,7 @@ fail_if_match() {
 
 fail_if_match "personal absolute macOS paths" '/Users/xudongxu/'
 fail_if_match "known secret formats" \
-  '(sk-[[:alnum:]_-]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)'
+  '(sk-(proj-|svcacct-)?[[:alnum:]_-]{20,}|gh[pousr]_[[:alnum:]]{30,}|github_pat_[[:alnum:]_]{40,}|AKIA[0-9A-Z]{16}|xox[baprs]-[[:alnum:]-]{20,}|eyJ[[:alnum:]_-]{100,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)'
 
 if rg -n 'XCTest|import XCTest' Tests Tools/Validation/Tests; then
   echo "Public repository verification failed: XCTest remains in test targets." >&2

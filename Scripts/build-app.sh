@@ -9,6 +9,7 @@ CONTENTS="$APP_PATH/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
 INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
+LOCALIZED_INFO_ROOT="$ROOT_DIR/Resources/ComputerMCPApp"
 ENTITLEMENTS="$ROOT_DIR/Resources/ComputerMCPApp/ComputerMCP.entitlements"
 RELEASE_MODE=${RELEASE_MODE:-0}
 REUSE_EXISTING_SLICES=${REUSE_EXISTING_SLICES:-0}
@@ -40,7 +41,15 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
     || fail "Release mode requires NOTARY_KEYCHAIN_PROFILE."
   [[ -z $(git -C "$ROOT_DIR" status --porcelain) ]] \
     || fail "Release mode requires a clean Git worktree."
+  if rg -q -i \
+    'release-candidate legal draft|legal review (is|are )?required before publication' \
+    "$ROOT_DIR/LICENSE" "$ROOT_DIR/EULA.md" "$ROOT_DIR/PRIVACY.md"
+  then
+    fail "Release mode requires approved legal files without draft markers."
+  fi
 fi
+
+"$ROOT_DIR/Scripts/verify-localization.sh"
 
 APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFO_PLIST")
 APP_BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFO_PLIST")
@@ -65,10 +74,14 @@ SWIFT_BUILD_ARGUMENTS=(
   --build-system "$SWIFT_BUILD_SYSTEM"
   --package-path "$ROOT_DIR"
   --configuration "$CONFIGURATION"
+  --only-use-versions-from-resolved-file
 )
 
 "$SWIFT_EXECUTABLE" --version
-"$SWIFT_EXECUTABLE" package --package-path "$ROOT_DIR" resolve
+"$SWIFT_EXECUTABLE" package \
+  --package-path "$ROOT_DIR" \
+  --only-use-versions-from-resolved-file \
+  resolve
 
 prepare_slice_scratch() {
   local scratch=$1
@@ -134,6 +147,33 @@ fi
   -output "$RESOURCES_DIR/computer-mcp"
 /bin/cp "$INFO_PLIST" "$CONTENTS/Info.plist"
 /bin/chmod 755 "$MACOS_DIR/Computer MCP" "$RESOURCES_DIR/computer-mcp"
+
+APP_RESOURCE_BUNDLE=$(/usr/bin/find "$ARM64_BIN_DIR" -maxdepth 1 -type d \
+  -name '*ComputerMCPApp*.bundle' -print -quit)
+[[ -n "$APP_RESOURCE_BUNDLE" && -d "$APP_RESOURCE_BUNDLE" ]] \
+  || fail "Missing ComputerMCPApp SwiftPM resource bundle."
+/usr/bin/ditto "$APP_RESOURCE_BUNDLE" "$RESOURCES_DIR/${APP_RESOURCE_BUNDLE:t}"
+LOCALIZATION_BUNDLE="$RESOURCES_DIR/${APP_RESOURCE_BUNDLE:t}"
+xcrun xcstringstool compile \
+  "$ROOT_DIR/Sources/ComputerMCPApp/Resources/Localizable.xcstrings" \
+  --output-directory "$LOCALIZATION_BUNDLE" \
+  --serialization-format binary
+/bin/rm -f -- "$LOCALIZATION_BUNDLE/Localizable.xcstrings"
+
+for locale in en zh-Hans; do
+  localized_info="$LOCALIZED_INFO_ROOT/$locale.lproj/InfoPlist.strings"
+  [[ -f "$localized_info" ]] || fail "Missing $locale InfoPlist.strings."
+  /bin/mkdir -p "$RESOURCES_DIR/$locale.lproj"
+  /bin/cp "$localized_info" "$RESOURCES_DIR/$locale.lproj/InfoPlist.strings"
+  /usr/bin/plutil -lint "$RESOURCES_DIR/$locale.lproj/InfoPlist.strings" >/dev/null
+done
+
+for locale in en zh-Hans; do
+  [[ -f "$LOCALIZATION_BUNDLE/$locale.lproj/Localizable.strings" ]] \
+    || fail "Missing compiled $locale Localizable.strings in the App resource bundle."
+  /bin/cp "$LOCALIZATION_BUNDLE/$locale.lproj/Localizable.strings" \
+    "$RESOURCES_DIR/$locale.lproj/Localizable.strings"
+done
 
 verify_universal_binary() {
   local binary=$1

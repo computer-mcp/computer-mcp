@@ -28875,7 +28875,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
           MCPTool(
             name: "shell.run",
             description:
-              "Run one Full Shell command synchronously through this MCP gateway. Supports shell-script or explicit argv mode, cwd, environment, bounded stdout/stderr, timeout, and process-group cancellation. This grants the caller the effective authority of the current macOS user and is exposed only when the local profile enables Full Shell.",
+              "Run one Full Shell command synchronously through this MCP gateway. Supports shell-script or explicit argv mode, cwd, environment, bounded stdout/stderr, timeout, and process-group cancellation. This grants the caller the effective authority of the current macOS user and is exposed only when the active profile enables Full Shell.",
             inputSchema: shellLaunchSchema(includeTimeout: true, includeStandardInput: true),
             meta: toolMeta
           ),

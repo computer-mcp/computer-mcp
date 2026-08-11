@@ -470,6 +470,25 @@ final class GatewaySocketTests {
 
     await server.stop()
   }
+
+  @Test
+  func testControlClientTimesOutWhenOwnedSocketNeverResponds() async throws {
+    let fixture = try SocketFixture(createDirectory: true)
+    let server = try UnresponsiveUnixSocketServer(path: fixture.configuration.socketURL.path)
+    defer { server.close() }
+    let client = AppControlPlaneServiceClient(socketURL: fixture.configuration.socketURL)
+    let clock = ContinuousClock()
+    let startedAt = clock.now
+
+    do {
+      _ = try await client.call("readiness", timeout: .milliseconds(100))
+      Issue.record("Expected an unresponsive control socket to time out.")
+    } catch let error as ControlSocketCallError {
+      #expect(error.code == "control.timeout")
+    }
+
+    #expect(startedAt.duration(to: clock.now) < .seconds(1))
+  }
 }
 
 private actor CancellationProbe {
@@ -669,6 +688,50 @@ private final class RawUnixSocket: @unchecked Sendable {
       result.append(contentsOf: buffer.prefix(bytesRead))
     }
     return result
+  }
+}
+
+private final class UnresponsiveUnixSocketServer: @unchecked Sendable {
+  private let descriptor: CInt
+  private let path: String
+  private let lock = NSLock()
+  private var isClosed = false
+
+  init(path: String) throws {
+    self.path = path
+    descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else {
+      throw GatewaySocketError.ioError(operation: "socket", code: errno)
+    }
+
+    var address = try unixSocketAddress(path: path)
+    let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + path.utf8.count + 1)
+    let bindResult = withUnsafePointer(to: &address) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        Darwin.bind(descriptor, $0, addressLength)
+      }
+    }
+    guard bindResult == 0, chmod(path, 0o600) == 0, listen(descriptor, 1) == 0 else {
+      let code = errno
+      _ = Darwin.close(descriptor)
+      throw GatewaySocketError.ioError(operation: "listen(\(path))", code: code)
+    }
+  }
+
+  deinit {
+    close()
+  }
+
+  func close() {
+    lock.lock()
+    guard !isClosed else {
+      lock.unlock()
+      return
+    }
+    isClosed = true
+    lock.unlock()
+    _ = Darwin.close(descriptor)
+    _ = Darwin.unlink(path)
   }
 }
 

@@ -13,8 +13,13 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(DefaultGatewayConfiguration.manifest)
+    let gatewayService = AppGatewayService.live(
+      controlPlane: fixture.controlPlane,
+      directories: fixture.directories
+    )
     let service = ControlSocketService(
       controlPlane: fixture.controlPlane,
+      gatewayService: gatewayService,
       socketURL: fixture.directories.controlSocket
     )
     try await service.start()
@@ -29,6 +34,26 @@ final class AppControlPlaneServiceTests {
       #expect(try permissions(at: fixture.directories.controlSocket) == 0o600)
       #expect(status.objectValue?["provider_count"] == .number(8))
       #expect(status.objectValue?["launch_at_login"] == .string("unavailable"))
+
+      let readiness = try await client.call(
+        "readiness",
+        arguments: .object(["journey": .string("local")])
+      )
+      #expect(readiness.objectValue?["schema_version"] == .number(1))
+      #expect(readiness.objectValue?["journey"] == .string("local"))
+      #expect(readiness.objectValue?["status"]?.stringValue?.isEmpty == false)
+      #expect(readiness.objectValue?["checks"]?.arrayValue?.isEmpty == false)
+      #expect(String(describing: readiness).contains("api_key") == false)
+
+      await expectThrowsAsync(
+        try await client.call(
+          "readiness",
+          arguments: .object(["journey": .string("unsupported")])
+        )
+      ) { error in
+        #expect(error.localizedDescription.contains("local, chatgpt, or cloudflare"))
+      }
+
       let statusAudit = try #require(
         fixture.database.auditEvents(limit: 10).first { $0.capabilityID == "app.status" }
       )
@@ -514,9 +539,9 @@ final class AppControlPlaneServiceTests {
         true,
         profileID: .chatGPTOperate
       )
-      Issue.record("Expected remote-profile Full Shell denial.")
+      Issue.record("Expected manifest-level Full Shell denial.")
     } catch let error as AppControlPlaneServiceError {
-      #expect((error) == (.fullShellProfileNotAllowed("chatgpt-operate")))
+      #expect((error) == (.fullShellManifestDisabled))
     }
 
     _ = try await fixture.controlPlane.activateManifest(
@@ -532,10 +557,17 @@ final class AppControlPlaneServiceTests {
     )
     let grant = try await fixture.controlPlane.setFullShellEnabled(
       true,
-      profileID: .localAdmin
+      profileID: .chatGPTOperate
     )
     #expect(grant.fullShellEnabled)
     #expect(grant.capabilityIDs.contains("shell.run"))
+
+    let localGrant = try await fixture.controlPlane.setFullShellEnabled(
+      true,
+      profileID: .localAdmin
+    )
+    #expect(localGrant.fullShellEnabled)
+    #expect(localGrant.capabilityIDs.contains("shell.run"))
 
     do {
       try await fixture.controlPlane.setActiveGatewayProfile(.localAdmin)

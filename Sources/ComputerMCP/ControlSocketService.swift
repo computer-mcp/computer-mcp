@@ -23,10 +23,31 @@ package struct ControlSocketCallError: Error, LocalizedError, Sendable {
   package var errorDescription: String? { "\(code): \(message)" }
 }
 
+private final class ControlSocketCallCompletion: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<JSONValue, any Error>?
+
+  init(_ continuation: CheckedContinuation<JSONValue, any Error>) {
+    self.continuation = continuation
+  }
+
+  func resume(with result: Result<JSONValue, any Error>) {
+    lock.lock()
+    guard let continuation else {
+      lock.unlock()
+      return
+    }
+    self.continuation = nil
+    lock.unlock()
+    continuation.resume(with: result)
+  }
+}
+
 package actor ControlSocketService {
   package nonisolated let socketConfiguration: GatewaySocketConfiguration
 
   private let controlPlane: AppControlPlaneService
+  private let gatewayService: AppGatewayService
   private var server: GatewaySocketServer?
   private var state: AppGatewayServiceState = .stopped
   private var startedAt: Date?
@@ -34,9 +55,11 @@ package actor ControlSocketService {
 
   package init(
     controlPlane: AppControlPlaneService,
+    gatewayService: AppGatewayService,
     socketURL: URL
   ) {
     self.controlPlane = controlPlane
+    self.gatewayService = gatewayService
     self.socketConfiguration = GatewaySocketConfiguration(
       socketURL: socketURL,
       clientIdentity: .localCLI
@@ -49,6 +72,7 @@ package actor ControlSocketService {
     lastError = nil
     do {
       let controlPlane = controlPlane
+      let gatewayService = gatewayService
       let server = GatewaySocketServer(
         configuration: socketConfiguration,
         responseObserver: { data, identity in
@@ -60,7 +84,11 @@ package actor ControlSocketService {
               "the control socket accepts only the embedded CLI"
             )
           }
-          let registry = ControlToolRegistry(controlPlane: controlPlane, identity: identity)
+          let registry = ControlToolRegistry(
+            controlPlane: controlPlane,
+            gatewayService: gatewayService,
+            identity: identity
+          )
           return await MCPRuntimeAdapter.makeGatewayServer(
             configuration: GatewayConfiguration(
               server: ServerConfig(name: "computer-mcp-control")
@@ -119,7 +147,40 @@ package actor AppControlPlaneServiceClient {
 
   package func call(
     _ toolName: String,
-    arguments: JSONValue = .object([:])
+    arguments: JSONValue = .object([:]),
+    timeout: Duration? = nil
+  ) async throws -> JSONValue {
+    guard let timeout else {
+      return try await performCall(toolName, arguments: arguments)
+    }
+    return try await withCheckedThrowingContinuation { continuation in
+      let completion = ControlSocketCallCompletion(continuation)
+      Task {
+        do {
+          completion.resume(
+            with: .success(try await self.performCall(toolName, arguments: arguments))
+          )
+        } catch {
+          completion.resume(with: .failure(error))
+        }
+      }
+      Task {
+        try? await Task.sleep(for: timeout)
+        completion.resume(
+          with: .failure(
+            ControlSocketCallError(
+              code: "control.timeout",
+              message: "The App control operation timed out."
+            )
+          )
+        )
+      }
+    }
+  }
+
+  private func performCall(
+    _ toolName: String,
+    arguments: JSONValue
   ) async throws -> JSONValue {
     let session = try await GatewayClientSession.connectSocket(
       configuration: GatewaySocketConfiguration(
@@ -270,13 +331,16 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
   }
 
   private let controlPlane: AppControlPlaneService
+  private let gatewayService: AppGatewayService
   private let identity: GatewaySocketConnectionIdentity
 
   init(
     controlPlane: AppControlPlaneService,
+    gatewayService: AppGatewayService,
     identity: GatewaySocketConnectionIdentity
   ) {
     self.controlPlane = controlPlane
+    self.gatewayService = gatewayService
     self.identity = identity
   }
 
@@ -331,6 +395,19 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           "openai_tunnel_count": .number(Double(snapshot.openAITunnelConfigurations.count)),
           "cloudflare_tunnel_count": .number(Double(snapshot.cloudflareProfiles.count)),
         ])
+      case "readiness":
+        let rawJourney = try requiredString("journey", in: object)
+        guard let journey = ProductJourney(rawValue: rawJourney) else {
+          throw GatewayToolError.invalidArguments(
+            "Invalid journey '\(rawJourney)'; expected local, chatgpt, or cloudflare."
+          )
+        }
+        payload = try encodedPayload(
+          try await controlPlane.readinessSnapshot(
+            journey: journey,
+            gateway: gatewayService.snapshot()
+          )
+        )
       case "config.path":
         payload = .object(["path": .string(controlPlane.directories.manifest.path)])
       case "config.show", "config.export":
@@ -371,6 +448,17 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         let profile = try requiredProfile(in: object)
         guard let grant = try await controlPlane.profileGrants().first(where: { $0.id == profile })
         else { throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue) }
+        payload = try encodedPayload(grant)
+      case "profile.shell":
+        let profile = try requiredProfile(in: object)
+        let grant = try await controlPlane.setFullShellEnabled(
+          object["enabled"]?.boolValue ?? true,
+          profileID: profile
+        )
+        let gateway = await gatewayService.snapshot()
+        if gateway.state == .running, gateway.profileID == profile {
+          try await gatewayService.restart(profile: profile)
+        }
         payload = try encodedPayload(grant)
       case "tools.list":
         let tools = try await controlPlane.localAdminTools(
@@ -702,6 +790,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
 
   private static let toolContracts: [ControlToolContract] = [
     ControlToolContract("app.status", readOnly: true),
+    ControlToolContract(
+      "readiness",
+      arguments: ["journey": .string],
+      required: ["journey"],
+      readOnly: true
+    ),
     ControlToolContract("config.path", readOnly: true),
     ControlToolContract("config.show", readOnly: true),
     ControlToolContract(
@@ -750,6 +844,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       "profile.grant",
       arguments: ["profile": .string, "workspace_id": .string, "enabled": .boolean],
       required: ["profile", "workspace_id"],
+      readOnly: false
+    ),
+    ControlToolContract(
+      "profile.shell",
+      arguments: ["profile": .string, "enabled": .boolean],
+      required: ["profile"],
       readOnly: false
     ),
     ControlToolContract("tools.list", readOnly: true),

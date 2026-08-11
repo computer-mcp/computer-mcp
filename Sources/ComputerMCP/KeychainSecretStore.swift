@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 package struct SecretReference: Codable, Equatable, Hashable, Sendable {
@@ -13,16 +14,47 @@ package struct SecretReference: Codable, Equatable, Hashable, Sendable {
   }
 }
 
+package enum KeychainAuthenticationUI: Equatable, Sendable {
+  case allow
+  case fail
+}
+
 package protocol KeychainAdapter: Sendable {
   func set(service: String, account: String, data: Data) throws
   func get(service: String, account: String) throws -> Data?
+  func get(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Data?
   func contains(service: String, account: String) throws -> Bool
+  func contains(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Bool
   func delete(service: String, account: String) throws
 }
 
 extension KeychainAdapter {
+  package func get(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Data? {
+    try get(service: service, account: account)
+  }
+
   package func contains(service: String, account: String) throws -> Bool {
     try get(service: service, account: account) != nil
+  }
+
+  package func contains(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Bool {
+    try contains(service: service, account: account)
   }
 }
 
@@ -57,8 +89,17 @@ package struct KeychainSecretStore: Sendable {
     )
   }
 
-  package func value(for reference: SecretReference) throws -> String? {
-    guard let data = try adapter.get(service: service, account: reference.account) else {
+  package func value(
+    for reference: SecretReference,
+    authenticationUI: KeychainAuthenticationUI = .allow
+  ) throws -> String? {
+    guard
+      let data = try adapter.get(
+        service: service,
+        account: reference.account,
+        authenticationUI: authenticationUI
+      )
+    else {
       return nil
     }
     guard let value = String(data: data, encoding: .utf8) else {
@@ -67,8 +108,15 @@ package struct KeychainSecretStore: Sendable {
     return value
   }
 
-  package func contains(_ reference: SecretReference) throws -> Bool {
-    try adapter.contains(service: service, account: reference.account)
+  package func contains(
+    _ reference: SecretReference,
+    authenticationUI: KeychainAuthenticationUI = .fail
+  ) throws -> Bool {
+    try adapter.contains(
+      service: service,
+      account: reference.account,
+      authenticationUI: authenticationUI
+    )
   }
 
   package func delete(_ reference: SecretReference) throws {
@@ -81,15 +129,21 @@ package struct KeychainSecretStore: Sendable {
     }
   }
 
-  func valueAsynchronously(for reference: SecretReference) async throws -> String? {
+  func valueAsynchronously(
+    for reference: SecretReference,
+    authenticationUI: KeychainAuthenticationUI = .allow
+  ) async throws -> String? {
     try await operationQueue.perform {
-      try value(for: reference)
+      try value(for: reference, authenticationUI: authenticationUI)
     }
   }
 
-  func containsAsynchronously(_ reference: SecretReference) async throws -> Bool {
+  func containsAsynchronously(
+    _ reference: SecretReference,
+    authenticationUI: KeychainAuthenticationUI = .fail
+  ) async throws -> Bool {
     try await operationQueue.perform {
-      try contains(reference)
+      try contains(reference, authenticationUI: authenticationUI)
     }
   }
 
@@ -124,7 +178,16 @@ package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendabl
   }
 
   package func get(service: String, account: String) throws -> Data? {
+    try get(service: service, account: account, authenticationUI: .allow)
+  }
+
+  package func get(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Data? {
     var query = baseQuery(service: service, account: account)
+    apply(authenticationUI, to: &query)
     query[kSecReturnData] = true
     query[kSecMatchLimit] = kSecMatchLimitOne
     var result: CFTypeRef?
@@ -139,12 +202,24 @@ package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendabl
   }
 
   package func contains(service: String, account: String) throws -> Bool {
+    try contains(service: service, account: account, authenticationUI: .allow)
+  }
+
+  package func contains(
+    service: String,
+    account: String,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws -> Bool {
     var query = baseQuery(service: service, account: account)
+    apply(authenticationUI, to: &query)
     query[kSecReturnAttributes] = true
     query[kSecMatchLimit] = kSecMatchLimitOne
     let status = SecItemCopyMatching(query as CFDictionary, nil)
     if status == errSecItemNotFound {
       return false
+    }
+    if authenticationUI == .fail, status == errSecInteractionNotAllowed {
+      return true
     }
     guard status == errSecSuccess else {
       throw KeychainSecretStoreError.securityStatus(status)
@@ -165,6 +240,17 @@ package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendabl
       kSecAttrService: service,
       kSecAttrAccount: account,
     ]
+  }
+
+  private func apply(
+    _ authenticationUI: KeychainAuthenticationUI,
+    to query: inout [CFString: Any]
+  ) {
+    if authenticationUI == .fail {
+      let context = LAContext()
+      context.interactionNotAllowed = true
+      query[kSecUseAuthenticationContext] = context
+    }
   }
 }
 

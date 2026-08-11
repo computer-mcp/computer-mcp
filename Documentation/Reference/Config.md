@@ -71,8 +71,9 @@ allowed_callers = ["cloudflare-tunnel"]
 full_shell_enabled = false
 ```
 
-`local-admin` rejects remote callers. Full Shell requires both static policy
-and an eligible local profile grant.
+`local-admin` rejects remote callers. Full Shell is eligible only for
+`chatgpt-operate` and `local-admin`, and requires both static
+`policy.shell_enabled = true` and an explicit local profile grant.
 
 ## Transport definitions
 

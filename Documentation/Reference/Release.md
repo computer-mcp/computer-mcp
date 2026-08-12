@@ -10,7 +10,8 @@ development, validation, and release rehearsal only.
 The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
 
 1. `verify` runs without Apple or publication secrets. It verifies the signed
-   annotated tag, confirms that its commit is reachable from `origin/master`,
+   annotated tag restored from the canonical remote after checkout, confirms
+   that its commit is reachable from `origin/master`,
    checks version and changelog alignment, rejects unfinished legal records or
    malformed release templates, and runs the complete build, test,
    documentation, metadata, and development-distribution gates.
@@ -93,20 +94,22 @@ Before tagging:
    `Documentation/Reference/ReleaseNotes-<version>.md` and
    `ProductionReadinessReport-<version>.md` while preserving the exact
    machine render tokens required by `verify-release-readiness.sh`;
-4. complete owner approval and legal review for `LICENSE`, `EULA.md`, and
-   `PRIVACY.md` and remove only the corresponding draft markers;
+4. obtain the publisher's explicit approval for `LICENSE`, `EULA.md`, and
+   `PRIVACY.md`, record the approved file digests, and remove only the
+   corresponding draft markers; any additional external legal review follows
+   the publisher's release policy and is not a technical release gate;
 5. merge the release commit to `master` and wait for normal CI to pass;
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.0`:
+Example after the repository version has been changed to `1.0.1`:
 
 ```sh
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.0 -m "Computer MCP 1.0.0"
-git verify-tag v1.0.0
-git push origin v1.0.0
+git tag -s -a v1.0.1 -m "Computer MCP 1.0.1"
+git verify-tag v1.0.1
+git push origin v1.0.1
 ```
 
 The tag is rejected unless it:
@@ -169,8 +172,8 @@ Download every file from the draft Release and verify:
 ```sh
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.0-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.0-universal.dmg
+  Computer-MCP-1.0.1-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.1-universal.dmg
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,
@@ -224,8 +227,12 @@ the protected Team API key workflow.
   log using the same Team API key outside workflow logs.
 - An existing Release for the tag causes the workflow to stop instead of
   overwriting assets.
-- To retry before a draft exists, rerun the failed workflow job. Never move or
-  replace the signed tag.
+- A failed immutable tag remains an audit record. After correcting a workflow
+  or source defect, increment the patch version and create a new signed tag;
+  never move, replace, or force-push the failed tag.
+- A transient runner or external-service failure may be retried for the same
+  immutable tag only when the source and workflow need no correction and no
+  draft already exists.
 - If a draft exists, inspect and resolve it explicitly; the workflow will not
   mutate it on a retry.
 

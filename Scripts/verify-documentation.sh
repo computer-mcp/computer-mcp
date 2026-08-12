@@ -9,6 +9,9 @@ ALL_SYMBOLS="$TEMP_ROOT/all-symbols"
 MODULE_SYMBOLS="$TEMP_ROOT/module-symbols"
 ARCHIVE_PATH="$TEMP_ROOT/ComputerMCP.doccarchive"
 BUILD_LOG="$TEMP_ROOT/swift-build.log"
+DOC_VERSION=$(/usr/libexec/PlistBuddy \
+  -c 'Print :CFBundleShortVersionString' \
+  "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
 
 cleanup() {
   case "$TEMP_ROOT" in
@@ -52,7 +55,7 @@ xcrun docc convert \
   --additional-symbol-graph-dir "$MODULE_SYMBOLS" \
   --fallback-display-name "ComputerMCP" \
   --fallback-bundle-identifier "com.showxu.computer-mcp.documentation" \
-  --fallback-bundle-version "1.0.0" \
+  --fallback-bundle-version "$DOC_VERSION" \
   --output-path "$ARCHIVE_PATH" \
   --warnings-as-errors
 

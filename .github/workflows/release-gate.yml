@@ -27,6 +27,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Restore annotated tag object
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: Scripts/restore-release-tag.sh
+
       - name: Install gate tooling
         run: brew install actionlint jq ripgrep
 
@@ -58,6 +63,7 @@ jobs:
         run: |
           zsh -n Scripts/*.sh
           actionlint .github/workflows/*.yml
+          Scripts/verify-release-tag-restoration.sh
           Scripts/verify-release-record-rendering.sh
 
       - name: Root build and test
@@ -104,6 +110,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Restore annotated tag object
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: Scripts/restore-release-tag.sh
 
       - name: Verify trusted runner tooling
         shell: bash

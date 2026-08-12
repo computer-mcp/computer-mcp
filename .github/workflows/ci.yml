@@ -50,6 +50,7 @@ jobs:
         run: |
           zsh -n Scripts/*.sh
           actionlint .github/workflows/*.yml
+          Scripts/verify-release-tag-restoration.sh
           Scripts/verify-release-record-rendering.sh
 
       - name: Root native build and Swift Testing

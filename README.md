@@ -22,9 +22,9 @@ Computer MCP requires macOS 14 or later.
 4. Optionally choose **Install Command Line Tool** on Home. This creates
    `~/.local/bin/computer-mcp` without `sudo`.
 
-The public 1.0.0 release is still pending Developer ID signing, notarization,
-and final external acceptance. Source-built and ad-hoc-signed artifacts are
-development builds, not release candidates.
+Official release artifacts are Developer ID signed, notarized, and published
+with checksums through GitHub Releases. Source-built and ad-hoc-signed
+artifacts are development builds, not official releases.
 
 ## First launch
 

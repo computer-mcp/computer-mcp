@@ -102,14 +102,14 @@ Before tagging:
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.1`:
+Example after the repository version has been changed to `1.0.2`:
 
 ```sh
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.1 -m "Computer MCP 1.0.1"
-git verify-tag v1.0.1
-git push origin v1.0.1
+git tag -s -a v1.0.2 -m "Computer MCP 1.0.2"
+git verify-tag v1.0.2
+git push origin v1.0.2
 ```
 
 The tag is rejected unless it:
@@ -172,8 +172,8 @@ Download every file from the draft Release and verify:
 ```sh
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.1-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.1-universal.dmg
+  Computer-MCP-1.0.2-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.2-universal.dmg
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,

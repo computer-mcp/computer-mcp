@@ -1,4 +1,4 @@
-# Computer MCP 1.0.1 Production Readiness Report
+# Computer MCP 1.0.2 Production Readiness Report
 
 Status: **Notarized CI candidate; publication requires 23/23 artifact
 acceptance**.
@@ -17,11 +17,11 @@ not satisfy this record.
 | Commit | `__RELEASE_COMMIT__` |
 | Signed tag | `__RELEASE_TAG__` |
 | Signed tag object | `__RELEASE_TAG_OBJECT__` |
-| App version/build | 1.0.1 (2) |
+| App version/build | 1.0.2 (3) |
 | Architectures | `__APP_ARCHITECTURES__` |
 | Apple Team ID | `__APPLE_TEAM_ID__` |
 | Embedded CLI SHA-256 | `__EMBEDDED_CLI_SHA256__` |
-| DMG | `Computer-MCP-1.0.1-universal.dmg` |
+| DMG | `Computer-MCP-1.0.2-universal.dmg` |
 | DMG SHA-256 | `__DMG_SHA256__` |
 | App notarization submission | `__APP_NOTARY_SUBMISSION_ID__` |
 | DMG notarization submission | `__DMG_NOTARY_SUBMISSION_ID__` |
@@ -56,7 +56,7 @@ not satisfy this record.
 | Apple Silicon, macOS 14+ | DMG cold install, Finder launch, TCC/state/CLI lifecycle | Required before draft publication |
 | Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility check | Required before draft publication |
 
-A physical Intel Mac is not a 1.0.1 release gate. The Universal 2 slice checks
+A physical Intel Mac is not a 1.0.2 release gate. The Universal 2 slice checks
 and Rosetta 2 checks cover x86_64 compatibility; the full installation and
 acceptance lifecycle runs natively on Apple Silicon.
 

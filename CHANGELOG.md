@@ -4,11 +4,20 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.2 — 2026-08-12
+
+- Make `git.branch` deterministic across Git configurations by explicitly
+  disabling paging, color, and column output and requesting list semantics.
+- Verify that the reusable `fixture-base` branch exists when generating the
+  Validation Git fixture. The immutable `v1.0.1` attempt stopped in the
+  no-secret Validation job and produced no GitHub Release or production
+  artifact.
+
 ## 1.0.1 — 2026-08-12
 
 - Preserve and verify the remote SSH-signed annotated tag object after GitHub
   Actions checkout before any protected production credential is available.
-- First official notarized Universal 2 DMG release candidate. The immutable
+- Notarized Universal 2 DMG release candidate. The immutable
   `v1.0.0` attempt stopped in the no-secret verification job and produced no
   GitHub Release or production artifact.
 

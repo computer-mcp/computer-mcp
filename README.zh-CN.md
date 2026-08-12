@@ -20,8 +20,8 @@ Computer MCP 要求 macOS 14 或更高版本。
 4. 如需 CLI，可在 Home 选择 **Install Command Line Tool**，无需 `sudo`，会创建
    `~/.local/bin/computer-mcp`。
 
-1.0.0 公共发行仍等待 Developer ID 签名、公证和最终外部验收；源码构建或 ad-hoc
-签名产物属于开发版。
+正式发行产物会经过 Developer ID 签名和 Apple 公证，并随校验和发布到 GitHub
+Releases；源码构建或 ad-hoc 签名产物属于开发版，不是正式发行版。
 
 ## 首次启动
 

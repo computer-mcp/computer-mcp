@@ -1,8 +1,5 @@
 # Computer MCP End-User License Agreement
 
-Release-candidate legal draft — approval by Xudong Xu and legal review are
-required before publication.
-
 This End-User License Agreement applies to an unmodified Computer MCP
 executable release distributed by Xudong Xu through an official Computer MCP
 channel. By installing or running the Software, you agree to this agreement.

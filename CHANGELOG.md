@@ -4,13 +4,9 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
-- Release-candidate hardening and validation continue. Do not describe the
-  repository as production ready until every item in the signed release
-  readiness report passes.
-- Signed-tag releases now capture accepted App and DMG notarization receipts
-  and render artifact-bound records before creating the checksummed draft.
+No unreleased changes.
 
-## 1.0.0 — Pending
+## 1.0.0 — 2026-08-12
 
 - First App/CLI release for macOS 14+ as a Universal 2 DMG.
 - Policy-enforced local and remote MCP gateway with explicit caller, profile,
@@ -21,6 +17,5 @@ All notable user-visible changes to Computer MCP are documented here.
   capability families.
 - App-owned configuration, GRDB state, Keychain secrets, security-scoped
   workspaces, Control Socket, embedded CLI, and launch-at-login lifecycle.
-
-The release date remains pending until the final notarized artifact and 23/23
-acceptance evidence are complete.
+- Signed-tag releases capture accepted App and DMG notarization receipts and
+  render artifact-bound records before creating the checksummed draft.

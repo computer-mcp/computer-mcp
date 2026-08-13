@@ -88,7 +88,7 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release mode requires EXPECTED_TEAM_ID."
   [[ -z $(git -C "$ROOT_DIR" status --porcelain) ]] \
     || fail "Release mode requires a clean Git worktree."
-  if rg -q -i \
+  if /usr/bin/grep -Eiq \
     'release-candidate legal draft|legal review (is|are )?required before publication' \
     "$ROOT_DIR/LICENSE" "$ROOT_DIR/EULA.md" "$ROOT_DIR/PRIVACY.md"
   then

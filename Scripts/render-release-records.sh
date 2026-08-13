@@ -108,18 +108,22 @@ for record_path in "$RELEASE_NOTES" "$READINESS_REPORT"; do
   for index in {1..${#tokens}}; do
     token=${tokens[$index]}
     value=${values[$index]}
-    rg -q --fixed-strings "$token" "$record_path" \
+    /usr/bin/grep -Fq "$token" "$record_path" \
       || fail "Template ${record_path:t} is missing $token."
     replace_token "$record_path" "$token" "$value"
   done
-  if rg -q '__[A-Z0-9_]+__|\bPending\b|intentionally blank|NOT READY' "$record_path"; then
+  if /usr/bin/grep -Eq \
+    '__[A-Z0-9_]+__|(^|[^[:alnum:]_])Pending([^[:alnum:]_]|$)|intentionally blank|NOT READY' \
+    "$record_path"
+  then
     fail "Rendered release record still contains an unfinished marker: ${record_path:t}"
   fi
 done
 
-rg -q "^# Computer MCP $VERSION Release Notes$" "$RELEASE_NOTES" \
+/usr/bin/grep -Eq "^# Computer MCP $VERSION Release Notes$" "$RELEASE_NOTES" \
   || fail "Rendered release notes title does not match $VERSION."
-rg -q "^# Computer MCP $VERSION Production Readiness Report$" "$READINESS_REPORT" \
+/usr/bin/grep -Eq \
+  "^# Computer MCP $VERSION Production Readiness Report$" "$READINESS_REPORT" \
   || fail "Rendered readiness title does not match $VERSION."
 
 echo "Rendered release records for $RELEASE_TAG."

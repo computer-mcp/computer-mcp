@@ -1,4 +1,4 @@
-# Computer MCP 1.0.3 Release Notes
+# Computer MCP 1.0.4 Release Notes
 
 Status: CI-rendered notarized draft. The GitHub Release must remain a draft
 until the publisher completes the 23/23 acceptance checklist against the exact
@@ -6,6 +6,8 @@ checksummed artifact recorded below.
 
 ## Highlights
 
+- Fail-closed, regression-tested Apple notarization response parsing that
+  validates both the accepted status and submission ID before stapling.
 - Self-contained protected release execution using only macOS and Xcode tools
   after production credentials become available, enforced by a negative
   dependency-boundary regression.
@@ -25,7 +27,7 @@ checksummed artifact recorded below.
 
 ## Install
 
-1. Download `Computer-MCP-1.0.3-universal.dmg` and `SHA256SUMS` from the same
+1. Download `Computer-MCP-1.0.4-universal.dmg` and `SHA256SUMS` from the same
    GitHub Release.
 2. Verify the SHA-256 digest.
 3. Open the DMG and drag `Computer MCP.app` to `/Applications`.

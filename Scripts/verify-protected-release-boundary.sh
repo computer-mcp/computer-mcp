@@ -32,6 +32,7 @@ protected_scripts=(
   Scripts/build-app.sh
   Scripts/verify-localization.sh
   Scripts/package-dmg.sh
+  Scripts/verify-notarization-record.sh
   Scripts/verify-distribution.sh
   Scripts/assemble-release-assets.sh
   Scripts/render-release-records.sh

@@ -136,14 +136,14 @@ Before tagging:
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.3`:
+Example after the repository version has been changed to `1.0.4`:
 
 ```sh
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.3 -m "Computer MCP 1.0.3"
-git verify-tag v1.0.3
-git push origin v1.0.3
+git tag -s -a v1.0.4 -m "Computer MCP 1.0.4"
+git verify-tag v1.0.4
+git push origin v1.0.4
 ```
 
 The tag is rejected unless it:
@@ -179,7 +179,9 @@ profile and private Keychain group, and signs the embedded CLI and App with
 Hardened Runtime and a secure timestamp.
 
 `package-dmg.sh` submits a ZIP of the signed App to Apple's notary service,
-requires an `Accepted` JSON receipt, staples and validates the App ticket,
+passes the returned JSON through a separately regression-tested fail-closed
+verifier, requires an `Accepted` receipt and UUID submission ID, staples and
+validates the App ticket,
 creates `Computer-MCP-<version>-universal.dmg`, submits the DMG, staples and
 validates the DMG ticket, stores its accepted JSON receipt, then writes
 `SHA256SUMS`.
@@ -206,8 +208,8 @@ Download every file from the draft Release and verify:
 ```sh
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.3-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.3-universal.dmg
+  Computer-MCP-1.0.4-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.4-universal.dmg
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,
@@ -259,6 +261,12 @@ the protected Team API key workflow.
   unless every prior command has completed.
 - A rejected notarization stops before DMG publication; inspect the submission
   log using the same Team API key outside workflow logs.
+- A script failure after `notarytool submit --wait` returns is distinct from an
+  authentication or Apple rejection. The immutable run remains the audit
+  record, credential cleanup still runs, and a source correction requires a new
+  patch version. The pre-secret notarization-record regression prevents zsh
+  special-parameter and malformed-response parsing defects from reaching this
+  boundary.
 - An existing Release for the tag causes the workflow to stop instead of
   overwriting assets.
 - A failed immutable tag remains an audit record. After correcting a workflow

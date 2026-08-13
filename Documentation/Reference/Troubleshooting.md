@@ -234,6 +234,13 @@ Common workflow failures are intentionally fail-closed:
   production App ID, and private Keychain group do not match the CI profile.
 - `Invalid credentials` from `notarytool` means the Team API key, key ID, or
   issuer ID is wrong. Individual API keys cannot notarize.
+- `read-only variable: status` after `notarytool submit --wait` is a zsh script
+  defect, not a password or Apple authorization failure: `status` is a reserved
+  read-only zsh parameter. Current releases parse the receipt with
+  `verify-notarization-record.sh`, and its regression covers accepted,
+  rejected, missing, malformed, and invalid-ID results before any production
+  Secret is available. Do not move the failed tag; fix the source and increment
+  the patch version.
 - `Unnotarized Developer ID` from `spctl` means the artifact was assessed
   before Apple accepted and stapled the exact App/DMG, or a different artifact
   was substituted afterward.

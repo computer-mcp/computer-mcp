@@ -56,7 +56,6 @@ submit_for_notarization() {
   local artifact_path=$1
   local record_path=$2
   local artifact_name=$3
-  local status
   local submission_id
 
   xcrun notarytool submit \
@@ -64,15 +63,8 @@ submit_for_notarization() {
     "${NOTARY_ARGUMENTS[@]}" \
     --wait \
     --output-format json >"$record_path"
-  status=$(/usr/bin/jq -er '.status' "$record_path") \
-    || fail "$artifact_name notarization result has no status."
-  submission_id=$(/usr/bin/jq -er '.id' "$record_path") \
-    || fail "$artifact_name notarization result has no submission ID."
-  [[ "$status" == "Accepted" ]] \
-    || fail "$artifact_name notarization was not accepted: $status"
-  [[ "$submission_id" =~ \
-    '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' ]] \
-    || fail "$artifact_name notarization submission ID is invalid."
+  submission_id=$("$ROOT_DIR/Scripts/verify-notarization-record.sh" \
+    "$record_path" "$artifact_name")
   chmod 600 "$record_path"
   echo "$artifact_name notarization accepted: $submission_id"
 }

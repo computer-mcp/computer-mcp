@@ -4,6 +4,19 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.4 — 2026-08-13
+
+- Parse Apple notarization responses through a dedicated fail-closed verifier
+  that avoids zsh special parameters and validates the accepted status and UUID
+  submission ID before stapling.
+- Exercise accepted, rejected, missing, malformed, and invalid-ID notarization
+  records before production credentials become available. The immutable
+  `v1.0.3` attempt successfully built and Developer ID signed the Universal 2
+  App, then stopped after the App notarization command returned because the
+  packaging script declared zsh's read-only `status` parameter. Its ephemeral
+  credentials were removed and it produced no GitHub Release or distributable
+  artifact.
+
 ## 1.0.3 — 2026-08-13
 
 - Make the protected release job self-contained by limiting its formal

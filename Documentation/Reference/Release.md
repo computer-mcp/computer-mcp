@@ -98,6 +98,9 @@ GitHub does not reveal Secret values after they are saved.
 
 The release job:
 
+0. verifies that the protected job and its complete script closure have no
+   Homebrew or ripgrep dependency; GitHub jobs use isolated filesystems, so a
+   tool installed by the preceding no-secret job is intentionally unavailable;
 1. decodes the PKCS#12 file, provisioning profile, and Team API key below
    `RUNNER_TEMP` with owner-only permissions;
 2. creates a random-password temporary Keychain;
@@ -133,14 +136,14 @@ Before tagging:
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.2`:
+Example after the repository version has been changed to `1.0.3`:
 
 ```sh
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.2 -m "Computer MCP 1.0.2"
-git verify-tag v1.0.2
-git push origin v1.0.2
+git tag -s -a v1.0.3 -m "Computer MCP 1.0.3"
+git verify-tag v1.0.3
+git push origin v1.0.3
 ```
 
 The tag is rejected unless it:
@@ -203,8 +206,8 @@ Download every file from the draft Release and verify:
 ```sh
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.2-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.2-universal.dmg
+  Computer-MCP-1.0.3-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.3-universal.dmg
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,

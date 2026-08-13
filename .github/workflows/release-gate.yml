@@ -63,6 +63,8 @@ jobs:
         run: |
           zsh -n Scripts/*.sh
           actionlint .github/workflows/*.yml
+          Scripts/verify-protected-release-boundary.sh
+          Scripts/verify-protected-release-boundary-regression.sh
           Scripts/verify-release-tag-restoration.sh
           Scripts/verify-release-record-rendering.sh
 
@@ -120,7 +122,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v rg >/dev/null
+          test -x /usr/bin/grep
           /usr/bin/jq --version
           /usr/bin/security help >/dev/null
           xcrun notarytool --version

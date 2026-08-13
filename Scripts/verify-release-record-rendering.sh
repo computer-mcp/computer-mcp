@@ -35,10 +35,12 @@ RELEASE_NOTES="$TEMP_ROOT/Computer-MCP-$VERSION-ReleaseNotes.md"
 READINESS_REPORT="$TEMP_ROOT/Computer-MCP-$VERSION-ProductionReadiness.md"
 for output in "$RELEASE_NOTES" "$READINESS_REPORT"; do
   [[ -s "$output" ]]
-  ! rg -q '__[A-Z0-9_]+__|\bPending\b|intentionally blank|NOT READY' "$output"
-  rg -q --fixed-strings \
+  ! /usr/bin/grep -Eq \
+    '__[A-Z0-9_]+__|(^|[^[:alnum:]_])Pending([^[:alnum:]_]|$)|intentionally blank|NOT READY' \
+    "$output"
+  /usr/bin/grep -Fq \
     '11111111-2222-3333-4444-555555555555' "$output"
-  rg -q --fixed-strings \
+  /usr/bin/grep -Fq \
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$output"
 done
 

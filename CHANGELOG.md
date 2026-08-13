@@ -4,6 +4,17 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.3 — 2026-08-13
+
+- Make the protected release job self-contained by limiting its formal
+  build/sign/notarize path to macOS and Xcode tools instead of relying on a
+  Homebrew tool installed in the preceding job.
+- Add positive and negative release-boundary gates that reject Homebrew or
+  ripgrep dependencies after production credentials become available. The
+  immutable `v1.0.2` attempt stopped at the first production tooling preflight,
+  before protected credentials were validated or used, and produced no GitHub
+  Release or production artifact.
+
 ## 1.0.2 — 2026-08-12
 
 - Make `git.branch` deterministic across Git configurations by explicitly

@@ -105,7 +105,7 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ -n ${SIGNING_IDENTITY:-} ]] || fail "Release mode requires SIGNING_IDENTITY."
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release mode requires EXPECTED_TEAM_ID."
   configure_notary_arguments
-  if rg -q -i \
+  if /usr/bin/grep -Eiq \
     'release-candidate legal draft|legal review (is|are )?required before publication' \
     "$ROOT_DIR/LICENSE" "$ROOT_DIR/EULA.md" "$ROOT_DIR/PRIVACY.md"
   then

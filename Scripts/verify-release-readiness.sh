@@ -23,27 +23,29 @@ do
   [[ -s "$input_path" ]] || fail "Missing or empty release input: $input_path"
 done
 
-if rg -q -i \
+if /usr/bin/grep -Eiq \
   'release-candidate legal draft|legal review (is|are )?required before publication' \
   "$ROOT_DIR/LICENSE" "$ROOT_DIR/EULA.md" "$ROOT_DIR/PRIVACY.md"
 then
   fail "Legal files still contain draft or review-required markers."
 fi
-if rg -q -i '\bPending\b|intentionally blank|NOT READY' \
+if /usr/bin/grep -Eiq \
+  '(^|[^[:alnum:]_])Pending([^[:alnum:]_]|$)|intentionally blank|NOT READY' \
   "$RELEASE_NOTES" "$READINESS_REPORT"
 then
   fail "Release record templates still contain obsolete pending markers."
 fi
-if rg -q -i \
+if /usr/bin/grep -Eiq \
   'public [0-9]+\.[0-9]+\.[0-9]+ release is still pending' \
   "$ROOT_DIR/README.md" "$ROOT_DIR/README.zh-CN.md"
 then
   fail "Root README files still describe the release as pending."
 fi
 
-rg -q "^# Computer MCP $VERSION Release Notes$" "$RELEASE_NOTES" \
+/usr/bin/grep -Eq "^# Computer MCP $VERSION Release Notes$" "$RELEASE_NOTES" \
   || fail "Release notes title does not match $VERSION."
-rg -q "^# Computer MCP $VERSION Production Readiness Report$" "$READINESS_REPORT" \
+/usr/bin/grep -Eq \
+  "^# Computer MCP $VERSION Production Readiness Report$" "$READINESS_REPORT" \
   || fail "Production readiness title does not match $VERSION."
 
 expected_tokens=(
@@ -62,10 +64,10 @@ expected_tokens=(
 expected_token_set=$(printf '%s\n' $expected_tokens | LC_ALL=C /usr/bin/sort)
 for input_path in "$RELEASE_NOTES" "$READINESS_REPORT"; do
   for token in $expected_tokens; do
-    rg -q --fixed-strings "$token" "$input_path" \
+    /usr/bin/grep -Fq "$token" "$input_path" \
       || fail "${input_path:t} is missing required render token $token."
   done
-  discovered_token_set=$(rg -o '__[A-Z0-9_]+__' "$input_path" \
+  discovered_token_set=$(/usr/bin/grep -Eo '__[A-Z0-9_]+__' "$input_path" \
     | LC_ALL=C /usr/bin/sort -u)
   [[ "$discovered_token_set" == "$expected_token_set" ]] \
     || fail "${input_path:t} contains an unexpected release render token."

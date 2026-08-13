@@ -40,7 +40,8 @@ if [[ "$REQUIRE_REMOTE_BRANCH" == "1" ]]; then
     || fail "$TAG is not reachable from origin/$RELEASE_BRANCH."
 fi
 
-rg -q "^## $VERSION — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT_DIR/CHANGELOG.md" \
+/usr/bin/grep -Eq "^## $VERSION — [0-9]{4}-[0-9]{2}-[0-9]{2}$" \
+  "$ROOT_DIR/CHANGELOG.md" \
   || fail "CHANGELOG.md has no dated $VERSION section."
 UNRELEASED_CONTENT=$(/usr/bin/awk '
   /^## Unreleased$/ { in_unreleased = 1; next }

@@ -217,6 +217,12 @@ xcrun stapler validate Computer-MCP-<version>-universal.dmg
 
 Common workflow failures are intentionally fail-closed:
 
+- A failure in `Verify trusted runner tooling` means the protected job cannot
+  prove its system/Xcode tool boundary. GitHub jobs have isolated filesystems:
+  a Homebrew tool installed by `verify` is not available to `release`. The
+  formal build/sign/notarize path must remain free of Homebrew and ripgrep;
+  `verify-protected-release-boundary.sh` and its negative regression enforce
+  this before tagging.
 - `Release ref verification failed` means the tag is unsigned, not annotated,
   does not match the App version, or is not reachable from `origin/master`.
 - `Release readiness verification failed` means legal approval is incomplete

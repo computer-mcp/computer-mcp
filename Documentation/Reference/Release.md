@@ -63,6 +63,37 @@ additional encryption layer; the GitHub Environment Secret is the protection
 boundary. Never commit `.p12`, `.p8`, provisioning profiles, passwords, decoded
 secrets, or environment dumps.
 
+### Credential map for release operators
+
+The release flow intentionally separates human account access, Git signing,
+Apple code signing, notarization, and App runtime credentials. They are not one
+shared password and must not be reused across boundaries.
+
+| Credential or approval | Purpose | Storage and operator responsibility |
+| --- | --- | --- |
+| Mac login password / Touch ID | Local administrator and Keychain authorization only | Remains on the Mac; never add it to GitHub or a release command |
+| Apple Account password and two-factor authentication | Sign in to Apple Developer and App Store Connect | Human portal access only; never store it in GitHub Actions |
+| SSH signing private key | Sign the release commit and annotated `v*` tag | Keep in the local SSH agent/Keychain and retain a secure recovery copy |
+| Developer ID `.p12` and its export password | Import the certificate and private key used by `codesign` | Keep a recoverable encrypted backup; GitHub stores the encoded file and password as separate `production` Secrets |
+| Developer ID provisioning profile | Authorize the production App ID, entitlements, and Keychain group | GitHub `production` Secret; no per-release input |
+| App Store Connect Team API `.p8`, Key ID, and Issuer ID | Authenticate `notarytool` submissions | Preserve the one-time-download private key in secure backup and GitHub `production` Secrets; revoke and replace it if exposed |
+| GitHub Environment approval | Permit this signed-tag run to read protected Apple credentials | A per-run reviewer decision, not a password |
+| Temporary runner Keychain password | Unlock only the ephemeral CI signing Keychain | Generated randomly inside the job and destroyed with the runner; nobody records or enters it |
+| GitHub `GITHUB_TOKEN` | Create the checksummed draft Release | Issued automatically to the job with scoped permissions; no personal access token is required |
+
+Apple App-Specific Passwords are not used by this repository. They belong to
+the older Apple-ID notarization credential flow and can be revoked without
+affecting this Team API key workflow. Cloudflare tunnel tokens and OpenAI tunnel
+keys are App runtime credentials in the production App's Data Protection
+Keychain; they are never inputs to the release workflow.
+
+An operator needs to understand these roles, but does not need to memorize
+secret values or type a release password for each tag. The normal human actions
+are to merge a verified release PR, create the SSH-signed annotated tag, and
+approve the protected `production` job. Store the original `.p12`, its export
+password, and the original `.p8` in a recovery-capable secrets manager because
+GitHub does not reveal Secret values after they are saved.
+
 ## Runner credential lifecycle
 
 The release job:

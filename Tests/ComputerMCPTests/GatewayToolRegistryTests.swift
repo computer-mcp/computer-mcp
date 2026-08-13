@@ -19784,7 +19784,11 @@ final class GatewayToolRegistryTests {
       ])
     )
 
-    #expect((runner.calls[0].arguments) == (["branch", "--all", "--verbose"]))
+    #expect(
+      (runner.calls[0].arguments)
+        == ([
+          "--no-pager", "branch", "--list", "--no-color", "--no-column", "--all", "--verbose",
+        ]))
     #expect(
       (runner.calls[1].arguments)
         == ([

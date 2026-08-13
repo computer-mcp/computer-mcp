@@ -20337,7 +20337,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   private func gitBranch(arguments object: [String: JSONValue]) throws -> JSONValue {
     let all = try optionalBool("all", in: object) ?? false
     let verbose = try optionalBool("verbose", in: object) ?? false
-    var args = ["branch"]
+    var args = ["--no-pager", "branch", "--list", "--no-color", "--no-column"]
     if all {
       args.append("--all")
     }

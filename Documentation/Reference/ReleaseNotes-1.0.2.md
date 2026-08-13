@@ -1,4 +1,4 @@
-# Computer MCP 1.0.1 Release Notes
+# Computer MCP 1.0.2 Release Notes
 
 Status: CI-rendered notarized draft. The GitHub Release must remain a draft
 until the publisher completes the 23/23 acceptance checklist against the exact
@@ -6,6 +6,8 @@ checksummed artifact recorded below.
 
 ## Highlights
 
+- Deterministic Git branch inventory across developer and CI Git
+  configurations, with an explicit reusable fixture-branch integrity check.
 - Native macOS App and embedded CLI with a single App-owned control plane.
 - Universal 2 support for Apple Silicon and Intel Macs running macOS 14 or
   newer.
@@ -20,7 +22,7 @@ checksummed artifact recorded below.
 
 ## Install
 
-1. Download `Computer-MCP-1.0.1-universal.dmg` and `SHA256SUMS` from the same
+1. Download `Computer-MCP-1.0.2-universal.dmg` and `SHA256SUMS` from the same
    GitHub Release.
 2. Verify the SHA-256 digest.
 3. Open the DMG and drag `Computer MCP.app` to `/Applications`.

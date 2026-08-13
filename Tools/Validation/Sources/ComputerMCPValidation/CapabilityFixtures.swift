@@ -594,6 +594,11 @@ public struct CapabilityFixtureGenerator {
       arguments: ["branch", "fixture-base"],
       workingDirectory: repository
     )
+    try run(
+      executable: "/usr/bin/git",
+      arguments: ["show-ref", "--verify", "--quiet", "refs/heads/fixture-base"],
+      workingDirectory: repository
+    )
     try write(
       "# Fixture Repository\n\nSecond committed revision.\n",
       to: repository.appendingPathComponent("README.md")

@@ -84,6 +84,13 @@ Computer MCP.app/Contents/Resources/computer-mcp bridge --socket <private-socket
 
 It does not launch a second standalone TOML gateway.
 
+Every Tunnel start refreshes the App-managed Tunnel Client profile before
+running diagnostics. This replaces stale embedded-CLI and socket paths after an
+App update or move, then fails closed if the managed profile cannot be written.
+`computer-mcp tunnel openai doctor <profile-id>` must report the embedded CLI
+inside the currently running App; a bridge process from an older App path is
+not an accepted ready state.
+
 The App passes the resolved proxy to `tunnel-client` itself. This matters when
 Safari can reach ChatGPT through the macOS proxy but an App-launched child
 process would otherwise connect directly. Proxy URLs containing credentials

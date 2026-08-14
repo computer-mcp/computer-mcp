@@ -34,7 +34,7 @@ should review diagnostics before sharing them.
 
 Audit records and configuration revisions currently remain until the user
 removes the App data; there is no time-based automatic deletion policy in
-version 1.0.7.
+version 1.0.8.
 
 ## Keychain and temporary credentials
 

@@ -457,11 +457,22 @@ internal actor OpenAITunnelSupervisor {
       let context = try await executionContext(
         profile: profile,
         configuration: configuration,
-        force: false,
+        force: true,
         authenticationUI: authenticationUI
       )
       try requireActiveStartup(profileID: profile.id, token: startupToken)
       secretForRedaction = context.secret
+      if let initInvocation = context.plan.initInvocation {
+        let initResult = try runControl(
+          initInvocation,
+          environment: context.environment
+        )
+        guard initResult.exitCode == 0, !initResult.timedOut else {
+          throw OpenAITunnelSupervisorError.provisionFailed(
+            stableProcessFailure(initResult, secret: context.secret)
+          )
+        }
+      }
       let doctorResult = try runControl(
         context.plan.doctorInvocation,
         environment: context.environment

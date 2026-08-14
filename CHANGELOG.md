@@ -4,6 +4,21 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.8 — 2026-08-14
+
+- Refresh the App-managed OpenAI `tunnel-client` profile with the current
+  embedded CLI, gateway socket, gateway profile, and Tunnel identity before
+  every start. This automatically migrates an existing connection when the App
+  is updated or moved, then runs doctor before launching the tunnel process.
+- Add fail-closed regressions for the required `init --force`, doctor, and run
+  ordering and for a profile-refresh failure that must prevent process launch.
+  The immutable `v1.0.7` attempt completed Developer ID signing, App and DMG
+  notarization, Gatekeeper, checksums, credential cleanup, draft creation, exact
+  DMG installation, and installed-CLI binary verification successfully. Exact
+  ChatGPT acceptance then found that the existing Tunnel Client YAML still
+  launched a bridge from the old development App path; its draft remains
+  unpublished and no public GitHub Release was created.
+
 ## 1.0.7 — 2026-08-14
 
 - Update a user-owned `~/.local/bin/computer-mcp` symlink from an older

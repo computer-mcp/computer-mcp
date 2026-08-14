@@ -241,6 +241,14 @@ Common workflow failures are intentionally fail-closed:
   rejected, missing, malformed, and invalid-ID results before any production
   Secret is available. Do not move the failed tag; fix the source and increment
   the patch version.
+- `source=no usable signature` for a DMG means the disk-image container was not
+  Developer ID signed, even if Apple accepted and stapled its notarization
+  ticket and the App inside is valid. The formal order is: create DMG, sign the
+  exact DMG with `Developer ID Application` plus a secure timestamp, verify its
+  authority, unique signing identifier, and Team ID, notarize, staple, then
+  assess with Gatekeeper. Never repair a published candidate by signing it
+  afterward; increment the patch version and reproduce the artifact through
+  the signed-tag workflow.
 - `Unnotarized Developer ID` from `spctl` means the artifact was assessed
   before Apple accepted and stapled the exact App/DMG, or a different artifact
   was substituted afterward.

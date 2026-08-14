@@ -77,6 +77,7 @@ APP_ENVIRONMENT=$(/usr/bin/plutil -extract ComputerMCPEnvironment raw -o - \
   || fail "The App does not declare a distribution environment."
 APP_BUNDLE_ID=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
   "$APP_PATH/Contents/Info.plist")
+DMG_SIGNING_IDENTIFIER="$APP_BUNDLE_ID.dmg"
 BUILT_APP_VERSION=$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
   "$APP_PATH/Contents/Info.plist")
 BUILT_APP_BUILD=$(/usr/bin/plutil -extract CFBundleVersion raw -o - \
@@ -105,11 +106,9 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
   fi
   /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
   signature=$(/usr/bin/codesign -d --verbose=4 "$APP_PATH" 2>&1)
-  [[ "$signature" == *"Authority=Developer ID Application:"* ]] \
-    || fail "The App is not signed with Developer ID Application."
-  [[ "$signature" == *"TeamIdentifier=$EXPECTED_TEAM_ID"* ]] \
-    || fail "The App Team ID does not match EXPECTED_TEAM_ID."
-  [[ "$signature" == *"Timestamp="* ]] || fail "The App has no secure timestamp."
+  print -r -- "$signature" \
+    | "$ROOT_DIR/Scripts/verify-developer-id-signature-record.sh" \
+      "$EXPECTED_TEAM_ID" "App"
 
   /bin/mkdir -p "$METADATA_DIR"
   /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$APP_NOTARY_ZIP"
@@ -120,7 +119,7 @@ else
   echo "Creating a development DMG; notarization is disabled." >&2
 fi
 
-/bin/cp -R "$APP_PATH" "$STAGING_DIR/"
+/usr/bin/ditto "$APP_PATH" "$STAGING_DIR/Computer MCP.app"
 /bin/ln -s /Applications "$STAGING_DIR/Applications"
 /bin/cp "$METADATA_DIR/ThirdPartyNotices.txt" "$STAGING_DIR/ThirdPartyNotices.txt"
 /bin/cp \
@@ -147,6 +146,10 @@ fi
   "$DMG_PATH"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
+  /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp --identifier "$DMG_SIGNING_IDENTIFIER" "$DMG_PATH"
+  /usr/bin/codesign --verify --strict --verbose=2 "$DMG_PATH"
+  DMG_SIGNATURE=$(/usr/bin/codesign -d --verbose=4 "$DMG_PATH" 2>&1)
+  print -r -- "$DMG_SIGNATURE" | "$ROOT_DIR/Scripts/verify-developer-id-signature-record.sh" "$EXPECTED_TEAM_ID" "DMG" "$DMG_SIGNING_IDENTIFIER"
   submit_for_notarization "$DMG_PATH" "$DMG_NOTARY_RECORD" "DMG"
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"

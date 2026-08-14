@@ -1,4 +1,4 @@
-# Computer MCP 1.0.4 Production Readiness Report
+# Computer MCP 1.0.5 Production Readiness Report
 
 Status: **Notarized CI candidate; publication requires 23/23 artifact
 acceptance**.
@@ -17,11 +17,11 @@ not satisfy this record.
 | Commit | `__RELEASE_COMMIT__` |
 | Signed tag | `__RELEASE_TAG__` |
 | Signed tag object | `__RELEASE_TAG_OBJECT__` |
-| App version/build | 1.0.4 (5) |
+| App version/build | 1.0.5 (6) |
 | Architectures | `__APP_ARCHITECTURES__` |
 | Apple Team ID | `__APPLE_TEAM_ID__` |
 | Embedded CLI SHA-256 | `__EMBEDDED_CLI_SHA256__` |
-| DMG | `Computer-MCP-1.0.4-universal.dmg` |
+| DMG | `Computer-MCP-1.0.5-universal.dmg` |
 | DMG SHA-256 | `__DMG_SHA256__` |
 | App notarization submission | `__APP_NOTARY_SUBMISSION_ID__` |
 | DMG notarization submission | `__DMG_NOTARY_SUBMISSION_ID__` |
@@ -40,12 +40,15 @@ not satisfy this record.
 | Standalone example configurations | Passed by the bound GitHub Actions run |
 | Fresh canonical checkout and branch reachability | Passed for `__RELEASE_TAG__` / `__RELEASE_COMMIT__` |
 | Protected runner tool boundary | Passed: formal release path uses no Homebrew or ripgrep dependency |
+| DMG signing order | Passed create/sign/verify/notarize ordering and negative fixtures before protected credentials |
+| Developer ID signature records | Passed authority/Team/identifier/timestamp positive and negative fixtures before protected credentials |
 | Notarization response parsing | Passed accepted/rejected/missing/malformed/invalid-ID fixtures before protected credentials |
 | Legal text approval gate | Publisher-approved legal files are present in the signed tag |
 | `LICENSE` SHA-256 | `35f08f36a403bfdd958723e1fc32166400f607ac22521f6d5f86c4a173ab53f3` |
 | `EULA.md` SHA-256 | `de5f383b73fd5a3f43c4708c33abd30e80a28650979c671b38345cc4e49f8941` |
 | Universal 2 binary gate | Passed for `__APP_ARCHITECTURES__` |
-| Developer ID / Hardened Runtime / timestamp | Passed for Team `__APPLE_TEAM_ID__` |
+| App Developer ID / Hardened Runtime / timestamp | Passed for Team `__APPLE_TEAM_ID__` |
+| DMG Developer ID / timestamp | Passed for Team `__APPLE_TEAM_ID__` |
 | Notarization / staple / Gatekeeper | Passed for both recorded submissions |
 | DocC warning gate | Passed by the bound GitHub Actions run |
 | Dependency / license / SBOM reproducibility | Passed: 13 linked, 28 resolved-only, 41 total |
@@ -58,7 +61,7 @@ not satisfy this record.
 | Apple Silicon, macOS 14+ | DMG cold install, Finder launch, TCC/state/CLI lifecycle | Required before draft publication |
 | Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility check | Required before draft publication |
 
-A physical Intel Mac is not a 1.0.4 release gate. The Universal 2 slice checks
+A physical Intel Mac is not a 1.0.5 release gate. The Universal 2 slice checks
 and Rosetta 2 checks cover x86_64 compatibility; the full installation and
 acceptance lifecycle runs natively on Apple Silicon.
 

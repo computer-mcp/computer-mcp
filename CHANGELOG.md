@@ -4,6 +4,19 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.5 — 2026-08-14
+
+- Developer ID sign the final DMG container with a secure timestamp before
+  submitting it to Apple, then independently verify its signature, Team ID,
+  notarization ticket, Gatekeeper result, and checksum.
+- Add no-secret signature-record and packaging-order regressions that reject a
+  missing Developer ID authority, Team ID, timestamp, container signature, or
+  a DMG signed only after notarization. The immutable `v1.0.4` attempt
+  successfully signed and notarized the App, notarized and stapled the DMG,
+  and passed mounted-App Gatekeeper assessment. It then stopped because the
+  unsigned DMG container produced `source=no usable signature`; credential
+  cleanup succeeded and no GitHub Release was created.
+
 ## 1.0.4 — 2026-08-13
 
 - Parse Apple notarization responses through a dedicated fail-closed verifier

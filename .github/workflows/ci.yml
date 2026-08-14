@@ -52,6 +52,8 @@ jobs:
           actionlint .github/workflows/*.yml
           Scripts/verify-protected-release-boundary.sh
           Scripts/verify-protected-release-boundary-regression.sh
+          Scripts/verify-dmg-signing-boundary-regression.sh
+          Scripts/verify-developer-id-signature-record-regression.sh
           Scripts/verify-notarization-record-regression.sh
           Scripts/verify-release-tag-restoration.sh
           Scripts/verify-release-record-rendering.sh

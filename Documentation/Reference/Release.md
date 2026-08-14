@@ -18,8 +18,9 @@ The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
 2. `release` starts only after `verify` passes and GitHub authorizes the
    protected `production` Environment. It imports signing assets into a
    temporary runner Keychain, builds fresh arm64 and x86_64 slices, signs the
-   App with Developer ID, notarizes and staples the App and DMG, runs Gatekeeper
-   validation, captures both notarization receipts, renders artifact-bound
+   App with Developer ID, Developer ID signs the DMG container, notarizes and
+   staples the App and DMG, runs Gatekeeper validation, captures both
+   notarization receipts, renders artifact-bound
    release records, assembles checksummed assets, and creates a draft GitHub
    Release.
 
@@ -136,14 +137,14 @@ Before tagging:
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.4`:
+Example after the repository version has been changed to `1.0.5`:
 
 ```sh
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.4 -m "Computer MCP 1.0.4"
-git verify-tag v1.0.4
-git push origin v1.0.4
+git tag -s -a v1.0.5 -m "Computer MCP 1.0.5"
+git verify-tag v1.0.5
+git push origin v1.0.5
 ```
 
 The tag is rejected unless it:
@@ -181,15 +182,19 @@ Hardened Runtime and a secure timestamp.
 `package-dmg.sh` submits a ZIP of the signed App to Apple's notary service,
 passes the returned JSON through a separately regression-tested fail-closed
 verifier, requires an `Accepted` receipt and UUID submission ID, staples and
-validates the App ticket,
-creates `Computer-MCP-<version>-universal.dmg`, submits the DMG, staples and
-validates the DMG ticket, stores its accepted JSON receipt, then writes
-`SHA256SUMS`.
+validates the App ticket, and creates
+`Computer-MCP-<version>-universal.dmg`. Before submitting that exact DMG, the
+script signs the container with the configured Developer ID Application
+identity, the unique `com.showxu.computer-mcp.dmg` signing identifier, and a
+secure timestamp; verifies its signature record, identifier, and Team ID; then
+submits, staples, and validates its ticket. Only after those mutations finish
+does it write `SHA256SUMS`.
 
 `verify-distribution.sh` mounts the DMG read-only and verifies the checksum,
 volume identity, Universal 2 slices, versions, source commit, embedded CLI
-digest, Developer ID chain, timestamp, entitlements, provisioning profile,
-stapled tickets, and Gatekeeper assessments. The mounted App must be byte-for-
+digest, App and DMG Developer ID chains and timestamps, entitlements,
+provisioning profile, stapled tickets, and Gatekeeper assessments. The mounted
+App must be byte-for-
 byte identical to the current signed App for all identity-bearing files.
 
 `assemble-release-assets.sh` binds the signed tag, commit, Team ID,
@@ -208,8 +213,8 @@ Download every file from the draft Release and verify:
 ```sh
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.4-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.4-universal.dmg
+  Computer-MCP-1.0.5-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.5-universal.dmg
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,
@@ -267,6 +272,13 @@ the protected Team API key workflow.
   patch version. The pre-secret notarization-record regression prevents zsh
   special-parameter and malformed-response parsing defects from reaching this
   boundary.
+- `source=no usable signature` during the DMG Gatekeeper assessment means the
+  container itself lacks a usable Developer ID signature even when its
+  contents and notarization ticket are valid. Do not publish or re-sign that
+  artifact after notarization. The release path creates the DMG, signs it with
+  Developer ID and a secure timestamp, verifies the signature record, and only
+  then submits that exact container. The no-secret signing-boundary regression
+  rejects a missing or reordered step before production credentials are read.
 - An existing Release for the tag causes the workflow to stop instead of
   overwriting assets.
 - A failed immutable tag remains an audit record. After correcting a workflow

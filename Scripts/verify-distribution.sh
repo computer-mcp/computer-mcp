@@ -96,6 +96,7 @@ APP_BUNDLE_ID=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
   || fail "The distribution must contain the production App environment."
 [[ "$APP_BUNDLE_ID" == "com.showxu.computer-mcp" ]] \
   || fail "The distribution has the wrong production Bundle ID."
+DMG_SIGNING_IDENTIFIER="$APP_BUNDLE_ID.dmg"
 
 APP_SIGNATURE=$(/usr/bin/codesign -d --verbose=4 "$APP_PATH" 2>&1)
 APP_TEAM=$(print -r -- "$APP_SIGNATURE" | /usr/bin/sed -n 's/^TeamIdentifier=//p')
@@ -272,12 +273,15 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release verification requires EXPECTED_TEAM_ID."
   for signed_path in "$CLI_PATH" "$APP_PATH"; do
     signature=$(/usr/bin/codesign -d --verbose=4 "$signed_path" 2>&1)
-    [[ "$signature" == *"Authority=Developer ID Application:"* ]] \
-      || fail "Missing Developer ID authority: $signed_path"
-    [[ "$signature" == *"TeamIdentifier=$EXPECTED_TEAM_ID"* ]] \
-      || fail "Unexpected Team ID: $signed_path"
-    [[ "$signature" == *"Timestamp="* ]] || fail "Missing timestamp: $signed_path"
+    print -r -- "$signature" \
+      | "$ROOT_DIR/Scripts/verify-developer-id-signature-record.sh" \
+        "$EXPECTED_TEAM_ID" "$signed_path"
   done
+  /usr/bin/codesign --verify --strict --verbose=2 "$DMG_PATH"
+  DMG_SIGNATURE=$(/usr/bin/codesign -d --verbose=4 "$DMG_PATH" 2>&1)
+  print -r -- "$DMG_SIGNATURE" \
+    | "$ROOT_DIR/Scripts/verify-developer-id-signature-record.sh" \
+      "$EXPECTED_TEAM_ID" "DMG" "$DMG_SIGNING_IDENTIFIER"
   [[ "$IDENTITY_TEAM" == "$EXPECTED_TEAM_ID" ]] \
     || fail "Signed identity resource has the wrong Team ID."
   xcrun stapler validate "$APP_PATH"

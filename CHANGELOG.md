@@ -4,6 +4,20 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.6 — 2026-08-14
+
+- Copy accepted App and DMG notarization receipts into the root release-asset
+  directory before generating `SHA256SUMS`, so every checksummed basename is
+  also an uploadable root-level file.
+- Add fail-closed, regression-tested asset-layout and checksum assembly gates
+  that reject nested, external, missing, duplicate, symlinked, or misplaced
+  release inputs before production credentials are available. The immutable
+  `v1.0.5` attempt successfully Developer ID signed, notarized, stapled, and
+  passed Gatekeeper for both the App and DMG, then stopped while assembling
+  checksums because the two accepted receipt files had not been copied out of
+  `ReleaseMetadata`. Credential cleanup succeeded and no GitHub Release was
+  created.
+
 ## 1.0.5 — 2026-08-14
 
 - Developer ID sign the final DMG container with a secure timestamp before

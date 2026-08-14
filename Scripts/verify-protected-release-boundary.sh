@@ -36,6 +36,7 @@ protected_scripts=(
   Scripts/verify-notarization-record.sh
   Scripts/verify-distribution.sh
   Scripts/assemble-release-assets.sh
+  Scripts/write-release-checksums.sh
   Scripts/render-release-records.sh
   Scripts/generate-release-metadata.swift
 )

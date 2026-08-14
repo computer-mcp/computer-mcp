@@ -249,6 +249,12 @@ Common workflow failures are intentionally fail-closed:
   assess with Gatekeeper. Never repair a published candidate by signing it
   afterward; increment the patch version and reproduce the artifact through
   the signed-tag workflow.
+- `SHA256SUMS` reports `No such file or directory` for an App or DMG
+  notarization JSON when a nested receipt was listed by basename but was not
+  copied into the root upload set. An accepted Apple receipt does not excuse an
+  incomplete Release. The root-level asset-layout gate and checksum assembler
+  now reject nested, external, missing, duplicate, or symlinked inputs and
+  verify the complete checksum file before draft creation.
 - `Unnotarized Developer ID` from `spctl` means the artifact was assessed
   before Apple accepted and stapled the exact App/DMG, or a different artifact
   was substituted afterward.

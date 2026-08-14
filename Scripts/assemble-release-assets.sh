@@ -16,12 +16,8 @@ INCLUDE_EVIDENCE_MANIFEST=${INCLUDE_EVIDENCE_MANIFEST:-0}
 CHECKSUM_PATH="$OUTPUT_DIR/SHA256SUMS"
 APP_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$VERSION-AppNotary.json"
 DMG_NOTARY_RECORD="$METADATA_DIR/Computer-MCP-$VERSION-DMGNotary.json"
-TEMP_CHECKSUM=$(mktemp "$OUTPUT_DIR/.SHA256SUMS.XXXXXX")
-
-cleanup() {
-  /bin/rm -f -- "$TEMP_CHECKSUM"
-}
-trap cleanup EXIT
+APP_NOTARY_ASSET="$OUTPUT_DIR/Computer-MCP-$VERSION-AppNotary.json"
+DMG_NOTARY_ASSET="$OUTPUT_DIR/Computer-MCP-$VERSION-DMGNotary.json"
 
 fail() {
   echo "error: $1" >&2
@@ -97,6 +93,8 @@ READINESS_REPORT="$OUTPUT_DIR/Computer-MCP-$VERSION-ProductionReadiness.md"
   "$DEPENDENCY_MANIFEST"
 /bin/cp "$METADATA_DIR/Computer-MCP-$VERSION-SBOM.cdx.json" "$SBOM"
 /bin/cp "$METADATA_DIR/ThirdPartyNotices.txt" "$NOTICES"
+/bin/cp "$APP_NOTARY_RECORD" "$APP_NOTARY_ASSET"
+/bin/cp "$DMG_NOTARY_RECORD" "$DMG_NOTARY_ASSET"
 
 RELEASE_COMMIT=$(git -C "$ROOT_DIR" rev-parse HEAD)
 RELEASE_TAG_OBJECT=$(git -C "$ROOT_DIR" rev-parse "$TAG")
@@ -142,22 +140,16 @@ assets=(
   "$NOTICES"
   "$RELEASE_NOTES"
   "$READINESS_REPORT"
-  "$APP_NOTARY_RECORD"
-  "$DMG_NOTARY_RECORD"
+  "$APP_NOTARY_ASSET"
+  "$DMG_NOTARY_ASSET"
 )
 if [[ "$INCLUDE_EVIDENCE_MANIFEST" == "1" ]]; then
   assets+=("$EVIDENCE_MANIFEST")
 fi
-: >"$TEMP_CHECKSUM"
-for asset in ${(on)assets}; do
-  digest=$(/usr/bin/shasum -a 256 "$asset" | /usr/bin/awk '{print $1}')
-  /usr/bin/printf '%s  %s\n' "$digest" "${asset:t}" >>"$TEMP_CHECKSUM"
-done
-/bin/mv -f "$TEMP_CHECKSUM" "$CHECKSUM_PATH"
-(
-  cd "$OUTPUT_DIR"
-  /usr/bin/shasum -a 256 -c "${CHECKSUM_PATH:t}"
-)
+"$ROOT_DIR/Scripts/write-release-checksums.sh" \
+  "$OUTPUT_DIR" \
+  "$CHECKSUM_PATH" \
+  "${assets[@]}"
 
 echo "Final release assets assembled in $OUTPUT_DIR."
 echo "Release asset count: ${#assets[@]}"

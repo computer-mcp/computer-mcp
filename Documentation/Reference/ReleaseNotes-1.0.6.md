@@ -1,4 +1,4 @@
-# Computer MCP 1.0.5 Release Notes
+# Computer MCP 1.0.6 Release Notes
 
 Status: CI-rendered notarized draft. The GitHub Release must remain a draft
 until the publisher completes the 23/23 acceptance checklist against the exact
@@ -8,6 +8,8 @@ checksummed artifact recorded below.
 
 - Developer ID signed DMG container with a secure timestamp, independently
   verified before Apple notarization and again before Gatekeeper assessment.
+- Root-level, checksummed App and DMG notarization receipts with fail-closed
+  asset-layout and checksum assembly regressions.
 - No-secret negative regressions for DMG signing order and Developer ID
   signature records, in addition to fail-closed notarization receipt parsing.
 - Self-contained protected release execution using only macOS and Xcode tools
@@ -29,7 +31,7 @@ checksummed artifact recorded below.
 
 ## Install
 
-1. Download `Computer-MCP-1.0.5-universal.dmg` and `SHA256SUMS` from the same
+1. Download `Computer-MCP-1.0.6-universal.dmg` and `SHA256SUMS` from the same
    GitHub Release.
 2. Verify the SHA-256 digest.
 3. Open the DMG and drag `Computer MCP.app` to `/Applications`.

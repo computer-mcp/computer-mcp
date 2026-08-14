@@ -137,14 +137,14 @@ Before tagging:
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.5`:
+Example after the repository version has been changed to `1.0.6`:
 
 ```sh
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.5 -m "Computer MCP 1.0.5"
-git verify-tag v1.0.5
-git push origin v1.0.5
+git tag -s -a v1.0.6 -m "Computer MCP 1.0.6"
+git verify-tag v1.0.6
+git push origin v1.0.6
 ```
 
 The tag is rejected unless it:
@@ -213,8 +213,8 @@ Download every file from the draft Release and verify:
 ```sh
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.5-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.5-universal.dmg
+  Computer-MCP-1.0.6-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.6-universal.dmg
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,
@@ -279,6 +279,13 @@ the protected Team API key workflow.
   Developer ID and a secure timestamp, verifies the signature record, and only
   then submits that exact container. The no-secret signing-boundary regression
   rejects a missing or reordered step before production credentials are read.
+- A `SHA256SUMS` open/read failure for an accepted notarization receipt means
+  the receipt was checksummed by basename without first being copied into the
+  root upload directory. Do not publish a partial asset set. The assembler now
+  copies both receipts beside the DMG, requires every asset and `SHA256SUMS` to
+  share that root, and verifies the complete checksum file before draft
+  creation. Positive and negative layout regressions run without production
+  credentials.
 - An existing Release for the tag causes the workflow to stop instead of
   overwriting assets.
 - A failed immutable tag remains an audit record. After correcting a workflow

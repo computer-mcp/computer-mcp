@@ -4,6 +4,19 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.7 — 2026-08-14
+
+- Update a user-owned `~/.local/bin/computer-mcp` symlink from an older
+  Computer MCP App bundle to the newly installed App automatically. Regular
+  files, non-App targets, and links not owned by the user remain protected.
+- Add a regression that performs the exact old-App-to-new-App CLI link
+  migration required by the installation acceptance Test Case. The immutable
+  `v1.0.6` attempt completed Developer ID signing, App and DMG notarization,
+  Gatekeeper, checksums, credential cleanup, and draft creation successfully.
+  Exact installation acceptance then found the old valid App-owned CLI link
+  was classified as installed but refused migration; its draft remains
+  unpublished and no public GitHub Release was created.
+
 ## 1.0.6 — 2026-08-14
 
 - Copy accepted App and DMG notarization receipts into the root release-asset

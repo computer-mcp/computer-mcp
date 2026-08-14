@@ -40,6 +40,38 @@ final class EmbeddedCLIInstallerTests {
   }
 
   @Test
+  func testUpdatesUserOwnedLinkFromAnOlderAppBundle() throws {
+    let temporaryDirectory = try ScopedTemporaryDirectory()
+    let oldCLI = temporaryDirectory.url
+      .appendingPathComponent("Old Computer MCP.app/Contents/Resources/computer-mcp")
+    let newCLI = temporaryDirectory.url
+      .appendingPathComponent("Computer MCP.app/Contents/Resources/computer-mcp")
+    for cli in [oldCLI, newCLI] {
+      try FileManager.default.createDirectory(
+        at: cli.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: cli)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: NSNumber(value: Int16(0o755))],
+        ofItemAtPath: cli.path
+      )
+    }
+    let destination = temporaryDirectory.url.appendingPathComponent("home/.local/bin/computer-mcp")
+    let installer = EmbeddedCLIInstaller()
+
+    let oldInstallation = try installer.install(source: oldCLI, destination: destination)
+    #expect(oldInstallation.state == .installed)
+    #expect(oldInstallation.target == oldCLI.path)
+
+    let updatedInstallation = try installer.install(source: newCLI, destination: destination)
+    #expect(updatedInstallation.state == .installed)
+    #expect(updatedInstallation.target == newCLI.path)
+    #expect(
+      try FileManager.default.destinationOfSymbolicLink(atPath: destination.path) == newCLI.path)
+  }
+
+  @Test
   func testRefusesToReplaceRegularFileOrNonAppExecutable() throws {
     let temporaryDirectory = try ScopedTemporaryDirectory()
     let destination = temporaryDirectory.url.appendingPathComponent("bin/computer-mcp")

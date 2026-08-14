@@ -131,7 +131,10 @@ package struct EmbeddedCLIInstaller {
       }
       try fileManager.removeItem(at: destination)
     case .installed:
-      throw EmbeddedCLIInstallerError.destinationConflict(destination.path)
+      // A user-owned link to another Computer MCP app bundle is the normal
+      // state during an app update. Replace that app-owned link without
+      // requiring the broader invalid-link override.
+      try fileManager.removeItem(at: destination)
     case .occupied:
       throw EmbeddedCLIInstallerError.destinationOccupied(destination.path)
     }

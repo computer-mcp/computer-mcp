@@ -22,6 +22,11 @@ Computer MCP 只检测依赖，不自动下载，也不会自动操作 OpenAI �
 4. 如需工作区内容，在 **Workspaces** 添加文件夹并授权给相同 Profile。
 5. 运行 Diagnostics，修复必要检查后启动 Tunnel，等待状态进入 Ready。
 
+每次启动 Tunnel 前，App 都会先用当前 App 内嵌 CLI、Gateway Socket、Profile 和
+Tunnel ID 强制刷新自己管理的 Tunnel Client 配置，再运行 Diagnostics。这样更新或
+移动 App 后不会继续调用旧路径；刷新失败时会阻止 Tunnel 启动。Diagnostics 中的
+`mcp_command_executable` 必须位于当前正在运行的 `Computer MCP.app` 内。
+
 ## ChatGPT 端与验证
 
 1. 在 ChatGPT Web 启用 Developer mode，创建或更新自定义 MCP App。

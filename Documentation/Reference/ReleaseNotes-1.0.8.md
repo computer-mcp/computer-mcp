@@ -1,4 +1,4 @@
-# Computer MCP 1.0.7 Release Notes
+# Computer MCP 1.0.8 Release Notes
 
 Status: CI-rendered notarized draft. The GitHub Release must remain a draft
 until the publisher completes the 23/23 acceptance checklist against the exact
@@ -12,6 +12,11 @@ checksummed artifact recorded below.
   asset-layout and checksum assembly regressions.
 - Safe migration of a user-owned CLI symlink from an older Computer MCP App
   bundle to the newly installed `/Applications/Computer MCP.app`.
+- Automatic refresh of the App-managed OpenAI Tunnel Client profile before
+  every start, so its bridge always launches the current App's embedded CLI
+  after an update or App-path change.
+- Fail-closed launch ordering that stops before doctor or process launch when
+  the managed Tunnel Client profile cannot be refreshed.
 - No-secret negative regressions for DMG signing order and Developer ID
   signature records, in addition to fail-closed notarization receipt parsing.
 - Self-contained protected release execution using only macOS and Xcode tools
@@ -33,7 +38,7 @@ checksummed artifact recorded below.
 
 ## Install
 
-1. Download `Computer-MCP-1.0.7-universal.dmg` and `SHA256SUMS` from the same
+1. Download `Computer-MCP-1.0.8-universal.dmg` and `SHA256SUMS` from the same
    GitHub Release.
 2. Verify the SHA-256 digest.
 3. Open the DMG and drag `Computer MCP.app` to `/Applications`.

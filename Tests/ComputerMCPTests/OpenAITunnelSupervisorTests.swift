@@ -108,9 +108,73 @@ final class OpenAITunnelSupervisorTests {
   }
 
   @Test
+  func testStartRefreshesManagedProfileBeforeDoctorAndLaunch() async throws {
+    let commandRunner = OpenAITunnelCommandRunner()
+    let process = TestOpenAITunnelProcessManager()
+    let supervisor = OpenAITunnelSupervisor(
+      secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
+      resolver: FixedOpenAITunnelClientResolver(),
+      planBuilder: FixedOpenAITunnelPlanBuilder(),
+      commandRunner: commandRunner,
+      processManager: process,
+      startupStabilityMilliseconds: 0
+    )
+
+    _ = try await supervisor.start(
+      tunnelProfile(reference: nil),
+      configuration: GatewayConfiguration()
+    )
+
+    #expect(
+      commandRunner.allArguments == [
+        ["init", "--tunnel-id", "tunnel_123", "--force"],
+        ["doctor", "--profile", "computer-mcp"],
+      ]
+    )
+    #expect(process.spawnCount == 1)
+  }
+
+  @Test
+  func testManagedProfileRefreshFailurePreventsDoctorAndLaunch() async throws {
+    let commandRunner = OpenAITunnelCommandRunner(
+      output: "stale profile could not be replaced",
+      exitCodesByCommand: ["init": 2]
+    )
+    let process = TestOpenAITunnelProcessManager()
+    let supervisor = OpenAITunnelSupervisor(
+      secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
+      resolver: FixedOpenAITunnelClientResolver(),
+      planBuilder: FixedOpenAITunnelPlanBuilder(),
+      commandRunner: commandRunner,
+      processManager: process
+    )
+
+    do {
+      _ = try await supervisor.start(
+        tunnelProfile(reference: nil),
+        configuration: GatewayConfiguration()
+      )
+      Issue.record("Expected managed profile refresh failure.")
+    } catch let error as OpenAITunnelSupervisorError {
+      guard case .startFailed(let detail) = error else {
+        Issue.record("Unexpected error: \(error)")
+        return
+      }
+      #expect(detail.contains("provisioning failed"))
+    }
+
+    #expect(commandRunner.allArguments.count == 1)
+    #expect(commandRunner.allArguments.first?.first == "init")
+    #expect(process.spawnCount == 0)
+  }
+
+  @Test
   func testDoctorFailurePreventsProcessLaunch() async throws {
     let secretStore = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
-    let commandRunner = OpenAITunnelCommandRunner(output: "invalid profile", exitCode: 2)
+    let commandRunner = OpenAITunnelCommandRunner(
+      output: "invalid profile",
+      exitCodesByCommand: ["doctor": 2]
+    )
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
@@ -356,13 +420,20 @@ struct FixedOpenAITunnelPlanBuilder: OpenAITunnelPlanBuilding {
 final class OpenAITunnelCommandRunner: CommandRunning, @unchecked Sendable {
   private let output: String
   private let exitCode: Int32
+  private let exitCodesByCommand: [String: Int32]
   private let lock = NSLock()
   private var environment: [String: String] = [:]
   private var arguments: [String] = []
+  private var argumentsHistory: [[String]] = []
 
-  init(output: String = "ok", exitCode: Int32 = 0) {
+  init(
+    output: String = "ok",
+    exitCode: Int32 = 0,
+    exitCodesByCommand: [String: Int32] = [:]
+  ) {
     self.output = output
     self.exitCode = exitCode
+    self.exitCodesByCommand = exitCodesByCommand
   }
 
   var lastEnvironment: [String: String] {
@@ -377,6 +448,12 @@ final class OpenAITunnelCommandRunner: CommandRunning, @unchecked Sendable {
     return arguments
   }
 
+  var allArguments: [[String]] {
+    lock.lock()
+    defer { lock.unlock() }
+    return argumentsHistory
+  }
+
   func run(
     executable: String,
     arguments: [String],
@@ -388,11 +465,13 @@ final class OpenAITunnelCommandRunner: CommandRunning, @unchecked Sendable {
     lock.lock()
     self.environment = environment
     self.arguments = arguments
+    argumentsHistory.append(arguments)
     lock.unlock()
+    let effectiveExitCode = arguments.first.flatMap { exitCodesByCommand[$0] } ?? exitCode
     return CommandResult(
       executable: executable,
       arguments: arguments,
-      exitCode: exitCode,
+      exitCode: effectiveExitCode,
       timedOut: false,
       stdout: output,
       stderr: "",

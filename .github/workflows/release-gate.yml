@@ -68,6 +68,8 @@ jobs:
           Scripts/verify-dmg-signing-boundary-regression.sh
           Scripts/verify-developer-id-signature-record-regression.sh
           Scripts/verify-notarization-record-regression.sh
+          Scripts/verify-release-asset-boundary-regression.sh
+          Scripts/write-release-checksums-regression.sh
           Scripts/verify-release-tag-restoration.sh
           Scripts/verify-release-record-rendering.sh
 

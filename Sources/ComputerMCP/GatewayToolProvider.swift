@@ -6,6 +6,7 @@ internal protocol GatewayToolProvider: Sendable {
   func capability(for tool: MCPTool) -> CapabilityDescriptor
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue
   func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue
+  func shutdown() async
 }
 
 extension GatewayToolProvider {
@@ -19,6 +20,8 @@ extension GatewayToolProvider {
       }
     }
   }
+
+  internal func shutdown() async {}
 }
 
 internal struct GatewayCapabilityCatalog: Sendable {
@@ -217,6 +220,12 @@ internal final class GatewayProviderRouter: GatewayToolServing, @unchecked Senda
       return try await provider.callToolAsync(name: name, arguments: arguments)
     }
     throw GatewayToolError.unknownTool(name)
+  }
+
+  internal func shutdown() async {
+    for provider in providers {
+      await provider.shutdown()
+    }
   }
 }
 

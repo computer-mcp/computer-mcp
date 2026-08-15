@@ -8,6 +8,11 @@ protocol CodexExecRuntimeProtocol: Sendable {
   func events(sessionID: String, afterCursor: Int, maxResults: Int) async throws -> JSONValue
   func result(sessionID: String) async throws -> JSONValue
   func cancel(sessionID: String) async throws -> JSONValue
+  func shutdown() async
+}
+
+extension CodexExecRuntimeProtocol {
+  func shutdown() async {}
 }
 
 struct CodexExecRuntimeError: Error, LocalizedError, Equatable, Sendable {
@@ -255,6 +260,26 @@ actor LiveCodexExecRuntime: CodexExecRuntimeProtocol {
       "state": .string(State.cancelled.rawValue),
       "cancelled": .bool(true),
     ])
+  }
+
+  func shutdown() async {
+    for id in sessions.keys.sorted() {
+      guard var session = sessions[id] else { continue }
+      session.streamTask?.cancel()
+      session.waitTask?.cancel()
+      session.streamTask = nil
+      session.waitTask = nil
+      if !session.state.isTerminal {
+        session.state = .cancelled
+        session.updatedAt = Date()
+        session.failure = CodexExecRuntimeError(
+          code: "codex.exec.shutdown",
+          message: "Exec session was cancelled because the gateway connection closed."
+        )
+      }
+      sessions[id] = session
+    }
+    pendingLaunches = 0
   }
 
   private func register(

@@ -317,6 +317,111 @@ private struct AppFullCatalogProbeReport: Encodable {
   }
 }
 
+@MainActor
+private final class ComputerUseValidationApplicationDelegate: NSObject,
+  NSApplicationDelegate
+{
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    false
+  }
+
+}
+
+@MainActor
+private final class ComputerUseValidationWindow {
+  nonisolated static let windowTitle = "Computer MCP Validation Surface"
+  nonisolated static let fieldIdentifier = "cmcp-validation-input"
+  nonisolated static let typedMarker = "CMCP-COMPUTER-USE-OK"
+
+  private let applicationDelegate: ComputerUseValidationApplicationDelegate
+  private let window: NSPanel
+
+  init() {
+    let application = NSApplication.shared
+    applicationDelegate = ComputerUseValidationApplicationDelegate()
+    application.delegate = applicationDelegate
+    application.setActivationPolicy(.accessory)
+    application.finishLaunching()
+
+    window = NSPanel(
+      contentRect: NSRect(x: 0, y: 0, width: 480, height: 170),
+      styleMask: [.titled, .closable],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = Self.windowTitle
+    window.isReleasedWhenClosed = false
+    window.level = .floating
+
+    let label = NSTextField(labelWithString: "Isolated production acceptance input")
+    label.frame = NSRect(x: 24, y: 105, width: 432, height: 24)
+
+    let textField = NSTextField(frame: NSRect(x: 24, y: 50, width: 432, height: 32))
+    textField.stringValue = ""
+    textField.placeholderString = "Computer Use validation target"
+    textField.setAccessibilityIdentifier(Self.fieldIdentifier)
+
+    let content = NSView(frame: window.contentView?.bounds ?? .zero)
+    content.addSubview(label)
+    content.addSubview(textField)
+    window.contentView = content
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    window.makeFirstResponder(textField)
+    application.activate(ignoringOtherApps: true)
+  }
+
+  func run() {
+    NSApplication.shared.run()
+  }
+}
+
+struct AppComputerUseSurfaceProbe: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "computer-use-surface",
+    abstract: "Run the isolated AppKit surface used by Computer Use acceptance.",
+    shouldDisplay: false
+  )
+
+  @MainActor
+  mutating func run() async throws {
+    let surface = ComputerUseValidationWindow()
+    withExtendedLifetime(surface) {
+      surface.run()
+    }
+  }
+}
+
+private final class ComputerUseValidationSurfaceProcess: @unchecked Sendable {
+  let processID: Int32
+
+  private let process: Process
+  private let previousApplication: NSRunningApplication?
+
+  @MainActor
+  init() throws {
+    previousApplication = NSWorkspace.shared.frontmostApplication
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+    process.arguments = ["probe", "app", "computer-use-surface"]
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    self.process = process
+    processID = process.processIdentifier
+  }
+
+  @MainActor
+  func close() {
+    if process.isRunning {
+      process.terminate()
+      process.waitUntilExit()
+    }
+    previousApplication?.activate(options: [])
+  }
+}
+
 private struct AppFullCatalogProbeRunner {
   let session: GatewayClientSession
   let database: GatewayDatabase
@@ -364,7 +469,13 @@ private struct AppFullCatalogProbeRunner {
     let workspaceList = await call("workspace.list", invocation: workspaceListInvocation)
     results.append(workspaceList.result)
 
-    var lifecycleResults = await callCodexAppLifecycle(enabledTools: catalogSet)
+    var lifecycleResults = await callComputerUseLifecycle(enabledTools: catalogSet)
+    lifecycleResults.merge(await callExecutionLifecycle(enabledTools: catalogSet)) { current, _ in
+      current
+    }
+    lifecycleResults.merge(await callCodexAppLifecycle(enabledTools: catalogSet)) { current, _ in
+      current
+    }
     lifecycleResults.merge(await callCodexExecLifecycle(enabledTools: catalogSet)) { current, _ in
       current
     }
@@ -541,7 +652,8 @@ private struct AppFullCatalogProbeRunner {
           detail:
             status == "passed"
             ? nil
-            : semantic.detail
+            : (isError ? providerErrorMessage(from: report) : nil)
+              ?? semantic.detail
               ?? "Tool result, structured content, or allowed audit correlation was incomplete."
         ),
         report
@@ -563,6 +675,51 @@ private struct AppFullCatalogProbeRunner {
           detail: stableSocketProbeError(error)
         ),
         nil
+      )
+    }
+  }
+
+  private func callExpectedProviderFailure(
+    _ tool: String,
+    invocation: CapabilityFixtureInvocation,
+    expectedMarker: String
+  ) async -> AppFullCatalogProbeToolResult {
+    do {
+      let report = try await session.call(
+        toolName: tool,
+        arguments: .object(invocation.arguments)
+      )
+      let gatewayRequestID = executionRequestID(from: report)
+      let audit = gatewayRequestID.flatMap(auditEvent(requestID:))
+      let isError = report.result.objectValue?["isError"]?.boolValue == true
+      let structured = report.result.objectValue?["structuredContent"] != nil
+      let markerMatched = encoded(report.result).contains(expectedMarker)
+      let resultData = try? sortedJSON(report.result)
+      let status =
+        isError && structured && markerMatched && audit?.decision == .failed
+        ? "passed"
+        : "failed"
+      return AppFullCatalogProbeToolResult(
+        toolName: tool,
+        status: status,
+        transportRequestID: report.requestID,
+        gatewayRequestID: gatewayRequestID,
+        auditEventID: audit?.id,
+        auditDecision: audit?.decision.rawValue,
+        structuredContent: structured,
+        semanticValidated: isError && markerMatched,
+        outputByteCount: resultData?.count,
+        resultDigest: resultData.map(digest),
+        auditEvent: audit,
+        detail: status == "passed"
+          ? nil
+          : providerErrorMessage(from: report)
+            ?? "The environment-gated provider call did not return the expected audited failure '\(expectedMarker)'."
+      )
+    } catch {
+      return lifecycleFailure(
+        tool: tool,
+        detail: stableSocketProbeError(error)
       )
     }
   }
@@ -747,7 +904,7 @@ private struct AppFullCatalogProbeRunner {
     let started = await call(
       "codex.app.thread.start",
       invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging(["ephemeral": .bool(true)]) { current, _ in
+        arguments: workspaceArgument.merging(["ephemeral": .bool(false)]) { current, _ in
           current
         },
         expectedMarker: "thread"
@@ -762,6 +919,52 @@ private struct AppFullCatalogProbeRunner {
         results,
         tools: requiredTools,
         detail: "codex.app.thread.start did not return a workspace-bound thread id."
+      )
+    }
+
+    results["codex.app.requests.respond"] = await callExpectedProviderFailure(
+      "codex.app.requests.respond",
+      invocation: CapabilityFixtureInvocation(
+        arguments: workspaceArgument.merging([
+          "request_id": .string("validation-no-active-request"),
+          "response": .object([:]),
+        ]) { current, _ in current }
+      ),
+      expectedMarker: "codex.app.request_unknown"
+    )
+
+    let interruptSetup = await call(
+      "codex.app.turn.start",
+      invocation: CapabilityFixtureInvocation(
+        arguments: workspaceArgument.merging([
+          "thread_id": .string(threadID),
+          "prompt": .string(
+            "Wait before replying so cancellation can be verified. Do not modify files."
+          ),
+          "model": .string("gpt-5.6-sol"),
+          "effort": .string("low"),
+        ]) { current, _ in current }
+      )
+    )
+    results["codex.app.turn.start"] = interruptSetup.result
+    if interruptSetup.result.status == "passed", let report = interruptSetup.report,
+      let turnID = structuredResult(from: report)?.objectValue?["turn"]?.objectValue?["id"]?
+        .stringValue
+    {
+      let interrupted = await call(
+        "codex.app.turn.interrupt",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArgument.merging([
+            "thread_id": .string(threadID),
+            "turn_id": .string(turnID),
+          ]) { current, _ in current }
+        )
+      )
+      results["codex.app.turn.interrupt"] = interrupted.result
+    } else {
+      results["codex.app.turn.interrupt"] = lifecycleFailure(
+        tool: "codex.app.turn.interrupt",
+        detail: "The interrupt fixture could not start an active Codex App turn."
       )
     }
 
@@ -784,103 +987,10 @@ private struct AppFullCatalogProbeRunner {
           "thread_id": .string(threadID),
           "ephemeral": .bool(true),
         ]) { current, _ in current },
-        expectedMarker: threadID
+        expectedMarker: "thread"
       )
     )
     results["codex.app.thread.fork"] = forked.result
-
-    let questionTurn = await call(
-      "codex.app.turn.start",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging([
-          "thread_id": .string(threadID),
-          "prompt": .string(
-            "Use request_user_input exactly once. Ask a single question with id validation_choice and choices Ready and Stop. Do not call any other tool or modify files."
-          ),
-          "model": .string("gpt-5.6-sol"),
-          "effort": .string("low"),
-          "collaboration_mode": .string("plan"),
-        ]) { current, _ in current },
-        expectedMarker: "turn"
-      )
-    )
-    results["codex.app.turn.start"] = questionTurn.result
-
-    var pendingRequestID: String?
-    if questionTurn.result.status == "passed" {
-      for _ in 0..<240 {
-        let pending = await call(
-          "codex.app.requests.list",
-          invocation: CapabilityFixtureInvocation(arguments: workspaceArgument)
-        )
-        if let report = pending.report,
-          let requests = structuredResult(from: report)?.objectValue?["requests"]?.arrayValue,
-          let requestID = requests.first?.objectValue?["request_id"]?.stringValue
-        {
-          pendingRequestID = requestID
-          break
-        }
-        try? await Task.sleep(for: .milliseconds(250))
-      }
-    }
-    if let pendingRequestID {
-      let responded = await call(
-        "codex.app.requests.respond",
-        invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArgument.merging([
-            "request_id": .string(pendingRequestID),
-            "response": .object([
-              "answers": .object([
-                "validation_choice": .object([
-                  "answers": .array([.string("Ready")])
-                ])
-              ])
-            ]),
-          ]) { current, _ in current },
-          expectedMarker: "resolved"
-        )
-      )
-      results["codex.app.requests.respond"] = responded.result
-    } else {
-      results["codex.app.requests.respond"] = lifecycleFailure(
-        tool: "codex.app.requests.respond",
-        detail: "The bounded plan turn did not produce an ordinary user-input request."
-      )
-    }
-
-    let interruptSetup = await call(
-      "codex.app.turn.start",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging([
-          "thread_id": .string(threadID),
-          "prompt": .string(
-            "Wait before replying so cancellation can be verified. Do not modify files."
-          ),
-          "model": .string("gpt-5.6-sol"),
-          "effort": .string("low"),
-        ]) { current, _ in current }
-      )
-    )
-    if interruptSetup.result.status == "passed", let report = interruptSetup.report,
-      let turnID = structuredResult(from: report)?.objectValue?["turn"]?.objectValue?["id"]?
-        .stringValue
-    {
-      let interrupted = await call(
-        "codex.app.turn.interrupt",
-        invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArgument.merging([
-            "thread_id": .string(threadID),
-            "turn_id": .string(turnID),
-          ]) { current, _ in current }
-        )
-      )
-      results["codex.app.turn.interrupt"] = interrupted.result
-    } else {
-      results["codex.app.turn.interrupt"] = lifecycleFailure(
-        tool: "codex.app.turn.interrupt",
-        detail: "The interrupt fixture could not start an active Codex App turn."
-      )
-    }
 
     let review = await call(
       "codex.app.review.start",
@@ -898,6 +1008,394 @@ private struct AppFullCatalogProbeRunner {
       tools: requiredTools,
       detail: "The Codex App lifecycle fixture did not reach this capability."
     )
+  }
+
+  private func callExecutionLifecycle(
+    enabledTools: Set<String>
+  ) async -> [String: AppFullCatalogProbeToolResult] {
+    let lifecycleTools: Set<String> = [
+      "cli.exec",
+      "process.spawn",
+      "shell.cancel",
+      "shell.list",
+      "shell.read",
+      "shell.run",
+      "shell.spawn",
+      "shell.write",
+    ]
+    let requiredTools = lifecycleTools.intersection(enabledTools)
+    guard !requiredTools.isEmpty else {
+      return [:]
+    }
+
+    let workspaceArguments: [String: JSONValue] = [
+      "workspace_id": .string(fixturePlan.workspaceID)
+    ]
+    var results: [String: AppFullCatalogProbeToolResult] = [:]
+
+    if requiredTools.contains("cli.exec") {
+      results["cli.exec"] = await call(
+        "cli.exec",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArguments.merging([
+            "id": .string("git"),
+            "argv": .array([.string("--version")]),
+          ]) { current, _ in current },
+          expectedMarker: "git version"
+        )
+      ).result
+    }
+
+    if requiredTools.contains("process.spawn") {
+      results["process.spawn"] = await call(
+        "process.spawn",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArguments.merging([
+            "id": .string("git"),
+            "argv": .array([.string("--version")]),
+          ]) { current, _ in current },
+          expectedMarker: "process_id"
+        )
+      ).result
+    }
+
+    if requiredTools.contains("shell.run") {
+      results["shell.run"] = await call(
+        "shell.run",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArguments.merging([
+            "mode": .string("argv"),
+            "executable": .string("/bin/echo"),
+            "argv": .array([.string("CMCP_FULL_CATALOG_SHELL_RUN")]),
+          ]) { current, _ in current },
+          expectedMarker: "CMCP_FULL_CATALOG_SHELL_RUN"
+        )
+      ).result
+    }
+
+    let sessionTools: Set<String> = [
+      "shell.cancel", "shell.list", "shell.read", "shell.spawn", "shell.write",
+    ]
+    guard !requiredTools.intersection(sessionTools).isEmpty else {
+      return completingLifecycleFailures(
+        results,
+        tools: requiredTools,
+        detail: "The Full Shell lifecycle fixture did not reach this capability."
+      )
+    }
+
+    let spawned = await call(
+      "shell.spawn",
+      invocation: CapabilityFixtureInvocation(
+        arguments: workspaceArguments.merging([
+          "mode": .string("argv"),
+          "executable": .string("/bin/sh"),
+          "argv": .array([
+            .string("-c"),
+            .string(
+              "read line; printf 'CMCP_FULL_CATALOG_STDIN:%s\\n' \"$line\"; sleep 30"
+            ),
+          ]),
+        ]) { current, _ in current },
+        expectedMarker: "session_id"
+      )
+    )
+    if requiredTools.contains("shell.spawn") {
+      results["shell.spawn"] = spawned.result
+    }
+    guard spawned.result.status == "passed", let report = spawned.report,
+      let sessionID = structuredResult(from: report)?.objectValue?["session_id"]?.stringValue
+    else {
+      return completingLifecycleFailures(
+        results,
+        tools: requiredTools,
+        detail: "shell.spawn did not return a gateway-owned session id."
+      )
+    }
+
+    if requiredTools.contains("shell.list") {
+      results["shell.list"] = await call(
+        "shell.list",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArguments,
+          expectedMarker: sessionID
+        )
+      ).result
+    }
+
+    if requiredTools.contains("shell.write") {
+      results["shell.write"] = await call(
+        "shell.write",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArguments.merging([
+            "session_id": .string(sessionID),
+            "text": .string("validation-input\n"),
+          ]) { current, _ in current }
+        )
+      ).result
+    }
+
+    if requiredTools.contains("shell.read") {
+      var readResult = lifecycleFailure(
+        tool: "shell.read",
+        detail: "The Full Shell session did not emit its bounded stdin marker."
+      )
+      for _ in 0..<100 {
+        let current = await call(
+          "shell.read",
+          invocation: CapabilityFixtureInvocation(
+            arguments: workspaceArguments.merging([
+              "session_id": .string(sessionID)
+            ]) { current, _ in current },
+            expectedMarker: "CMCP_FULL_CATALOG_STDIN:validation-input"
+          )
+        )
+        readResult = current.result
+        if current.result.status == "passed" {
+          break
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+      }
+      results["shell.read"] = readResult
+    }
+
+    if requiredTools.contains("shell.cancel") {
+      results["shell.cancel"] = await call(
+        "shell.cancel",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArguments.merging([
+            "session_id": .string(sessionID)
+          ]) { current, _ in current }
+        )
+      ).result
+    }
+
+    return completingLifecycleFailures(
+      results,
+      tools: requiredTools,
+      detail: "The Full Shell lifecycle fixture did not reach this capability."
+    )
+  }
+
+  private func callComputerUseLifecycle(
+    enabledTools: Set<String>
+  ) async -> [String: AppFullCatalogProbeToolResult] {
+    let lifecycleTools: Set<String> = [
+      "computer.accessibility.action",
+      "computer.accessibility.query",
+      "computer.keyboard.key",
+      "computer.keyboard.text",
+      "computer.pointer.click",
+      "computer.pointer.move",
+      "computer.scroll",
+    ]
+    let requiredTools = lifecycleTools.intersection(enabledTools)
+    guard !requiredTools.isEmpty else {
+      return [:]
+    }
+
+    var results: [String: AppFullCatalogProbeToolResult] = [:]
+    let surface: ComputerUseValidationSurfaceProcess
+    do {
+      surface = try await ComputerUseValidationSurfaceProcess()
+    } catch {
+      return completingLifecycleFailures(
+        results,
+        tools: requiredTools,
+        detail: "The isolated Computer Use helper could not start: \(stableSocketProbeError(error))"
+      )
+    }
+    try? await Task.sleep(for: .milliseconds(500))
+
+    let originalPointer = await call(
+      "computer.pointer.position",
+      invocation: CapabilityFixtureInvocation(arguments: [:])
+    )
+    let originalPoint = originalPointer.report.flatMap(extractedPointerPosition(from:))
+
+    let windowQuery = await call(
+      "computer.accessibility.query",
+      invocation: CapabilityFixtureInvocation(
+        arguments: [
+          "process_id": .number(Double(surface.processID)),
+          "role": .string("AXWindow"),
+          "title_contains": .string(ComputerUseValidationWindow.windowTitle),
+          "max_depth": .number(2),
+          "max_results": .number(10),
+          "max_scanned_elements": .number(200),
+        ],
+        expectedMarker: ComputerUseValidationWindow.windowTitle
+      )
+    )
+    let windowObservation = windowQuery.report.flatMap { report in
+      objectValue(
+        containing: "title",
+        equalTo: ComputerUseValidationWindow.windowTitle,
+        in: structuredResult(from: report)
+      )
+    }
+
+    let fieldQuery = await call(
+      "computer.accessibility.query",
+      invocation: CapabilityFixtureInvocation(
+        arguments: [
+          "process_id": .number(Double(surface.processID)),
+          "role": .string("AXTextField"),
+          "identifier": .string(ComputerUseValidationWindow.fieldIdentifier),
+          "max_depth": .number(4),
+          "max_results": .number(10),
+          "max_scanned_elements": .number(300),
+        ],
+        expectedMarker: ComputerUseValidationWindow.fieldIdentifier
+      )
+    )
+    let fieldObservation = fieldQuery.report.flatMap { report in
+      objectValue(
+        containing: "identifier",
+        equalTo: ComputerUseValidationWindow.fieldIdentifier,
+        in: structuredResult(from: report)
+      )
+    }
+    let fieldPoint = fieldObservation.flatMap { centerPoint(of: $0["frame"]) }
+    if requiredTools.contains("computer.accessibility.query") {
+      results["computer.accessibility.query"] = fieldQuery.result
+    }
+
+    if requiredTools.contains("computer.accessibility.action"),
+      let reference = windowObservation?["reference"]
+    {
+      results["computer.accessibility.action"] = await call(
+        "computer.accessibility.action",
+        invocation: CapabilityFixtureInvocation(arguments: [
+          "action": .string("AXRaise"),
+          "reference": reference,
+        ])
+      ).result
+    }
+
+    if let fieldPoint {
+      let pointValue: JSONValue = .object([
+        "x": .number(fieldPoint.x),
+        "y": .number(fieldPoint.y),
+      ])
+      _ = await call(
+        "computer.pointer.move",
+        invocation: CapabilityFixtureInvocation(arguments: [
+          "point": pointValue
+        ])
+      )
+
+      if requiredTools.contains("computer.pointer.click") {
+        results["computer.pointer.click"] = await call(
+          "computer.pointer.click",
+          invocation: CapabilityFixtureInvocation(arguments: [
+            "button": .string("left"),
+            "point": pointValue,
+            "click_count": .number(1),
+          ])
+        ).result
+      }
+
+      if requiredTools.contains("computer.keyboard.key") {
+        results["computer.keyboard.key"] = await call(
+          "computer.keyboard.key",
+          invocation: CapabilityFixtureInvocation(arguments: [
+            "key_code": .number(56),
+            "repeat_count": .number(1),
+          ])
+        ).result
+      }
+
+      if requiredTools.contains("computer.keyboard.text") {
+        results["computer.keyboard.text"] = await call(
+          "computer.keyboard.text",
+          invocation: CapabilityFixtureInvocation(arguments: [
+            "text": .string(ComputerUseValidationWindow.typedMarker)
+          ])
+        ).result
+      }
+
+      if requiredTools.contains("computer.scroll") {
+        results["computer.scroll"] = await call(
+          "computer.scroll",
+          invocation: CapabilityFixtureInvocation(arguments: [
+            "delta_x": .number(0),
+            "delta_y": .number(1),
+            "unit": .string("pixel"),
+            "point": pointValue,
+          ])
+        ).result
+      }
+
+      if requiredTools.contains("computer.accessibility.query") {
+        results["computer.accessibility.query"] = await call(
+          "computer.accessibility.query",
+          invocation: CapabilityFixtureInvocation(
+            arguments: [
+              "process_id": .number(Double(surface.processID)),
+              "role": .string("AXTextField"),
+              "identifier": .string(ComputerUseValidationWindow.fieldIdentifier),
+              "value_contains": .string(ComputerUseValidationWindow.typedMarker),
+              "max_depth": .number(4),
+              "max_results": .number(10),
+              "max_scanned_elements": .number(300),
+            ],
+            expectedMarker: ComputerUseValidationWindow.typedMarker
+          )
+        ).result
+      }
+    }
+
+    if requiredTools.contains("computer.pointer.move"), let originalPoint {
+      results["computer.pointer.move"] = await call(
+        "computer.pointer.move",
+        invocation: CapabilityFixtureInvocation(arguments: [
+          "point": .object([
+            "x": .number(originalPoint.x),
+            "y": .number(originalPoint.y),
+          ]),
+          "verification": .object([
+            "type": .string("pointer-position"),
+            "point": .object([
+              "x": .number(originalPoint.x),
+              "y": .number(originalPoint.y),
+            ]),
+            "tolerance": .number(1),
+          ]),
+          "verification_policy": .object([
+            "timeout_milliseconds": .number(500),
+            "poll_interval_milliseconds": .number(20),
+          ]),
+        ])
+      ).result
+    }
+
+    await surface.close()
+    return completingLifecycleFailures(
+      results,
+      tools: requiredTools,
+      detail:
+        fieldQuery.result.detail
+        ?? windowQuery.result.detail
+        ?? "The isolated Computer Use validation surface did not reach this capability."
+    )
+  }
+
+  private func centerPoint(of value: JSONValue?) -> (x: Double, y: Double)? {
+    guard
+      let frame = value?.objectValue,
+      let origin = frame["origin"]?.objectValue,
+      let size = frame["size"]?.objectValue,
+      let x = origin["x"]?.numberValue,
+      let y = origin["y"]?.numberValue,
+      let width = size["width"]?.numberValue,
+      let height = size["height"]?.numberValue,
+      width > 0,
+      height > 0
+    else {
+      return nil
+    }
+    return (x + width / 2, y + height / 2)
   }
 
   private func callCodexExecLifecycle(
@@ -1040,6 +1538,7 @@ private struct AppFullCatalogProbeRunner {
     enabledTools: Set<String>
   ) async -> [String: AppFullCatalogProbeToolResult] {
     let lifecycleTools: Set<String> = [
+      "codex.mcp.approval.respond",
       "codex.mcp.approvals.list",
       "codex.mcp.cancel",
       "codex.mcp.events",
@@ -1156,6 +1655,20 @@ private struct AppFullCatalogProbeRunner {
         )
         results["codex.mcp.cancel"] = cancelled.result
       }
+    }
+
+    if requiredTools.contains("codex.mcp.approval.respond") {
+      results["codex.mcp.approval.respond"] = await callExpectedProviderFailure(
+        "codex.mcp.approval.respond",
+        invocation: CapabilityFixtureInvocation(
+          arguments: workspaceArguments.merging([
+            "call_id": .string("validation-no-active-call"),
+            "approval_id": .string("validation-no-active-approval"),
+            "decision": .string("deny"),
+          ]) { current, _ in current }
+        ),
+        expectedMarker: "codex.mcp.call_unknown"
+      )
     }
 
     return completingLifecycleFailures(
@@ -1429,6 +1942,21 @@ private struct AppFullCatalogProbeRunner {
       return ""
     }
     return String(decoding: data, as: UTF8.self)
+  }
+
+  private func providerErrorMessage(from report: GatewayCallReport) -> String? {
+    if let message = report.result.objectValue?["structuredContent"]?.objectValue?["error"]?
+      .objectValue?["message"]?.stringValue
+    {
+      return String(message.prefix(1_024))
+    }
+    guard
+      let content = report.result.objectValue?["content"]?.arrayValue,
+      let message = content.compactMap({ $0.objectValue?["text"]?.stringValue }).first
+    else {
+      return nil
+    }
+    return String(message.prefix(1_024))
   }
 }
 

@@ -2,6 +2,35 @@ import ComputerMCPValidation
 import Foundation
 import MCP
 
+private struct GatewayClientCallTimeoutError: Error, LocalizedError, Sendable {
+  let toolName: String
+  let seconds: Int
+
+  var errorDescription: String? {
+    "Gateway tool '\(toolName)' exceeded the validation deadline of \(seconds) seconds; the session was disconnected."
+  }
+}
+
+private final class GatewayClientCallCompletion<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Value, any Error>?
+
+  init(_ continuation: CheckedContinuation<Value, any Error>) {
+    self.continuation = continuation
+  }
+
+  @discardableResult
+  func resume(with result: Result<Value, any Error>) -> Bool {
+    let continuation = lock.withLock { () -> CheckedContinuation<Value, any Error>? in
+      defer { self.continuation = nil }
+      return self.continuation
+    }
+    guard let continuation else { return false }
+    continuation.resume(with: result)
+    return true
+  }
+}
+
 extension JSONValue {
   fileprivate var sdkValue: MCP.Value {
     switch self {
@@ -192,7 +221,53 @@ actor GatewayClientSession {
   func call(
     toolName: String,
     arguments: JSONValue = .object([:]),
-    generatedAt: Date = Date()
+    generatedAt: Date = Date(),
+    timeoutSeconds: Int = 90
+  ) async throws -> GatewayCallReport {
+    guard timeoutSeconds > 0 else {
+      throw ValidationProcessError.launchFailed("Gateway call timeout must be positive.")
+    }
+    return try await withCheckedThrowingContinuation { continuation in
+      let completion = GatewayClientCallCompletion(continuation)
+      let timeoutTask = Task {
+        try? await Task.sleep(for: .seconds(timeoutSeconds))
+        guard !Task.isCancelled else { return }
+        let timedOut = completion.resume(
+          with: .failure(
+            GatewayClientCallTimeoutError(toolName: toolName, seconds: timeoutSeconds)
+          )
+        )
+        if timedOut {
+          await self.disconnect()
+        }
+      }
+      Task {
+        do {
+          let completed = completion.resume(
+            with: .success(
+              try await self.performCall(
+                toolName: toolName,
+                arguments: arguments,
+                generatedAt: generatedAt
+              )
+            )
+          )
+          if completed {
+            timeoutTask.cancel()
+          }
+        } catch {
+          if completion.resume(with: .failure(error)) {
+            timeoutTask.cancel()
+          }
+        }
+      }
+    }
+  }
+
+  private func performCall(
+    toolName: String,
+    arguments: JSONValue,
+    generatedAt: Date
   ) async throws -> GatewayCallReport {
     guard let initialization else {
       throw ValidationProcessError.launchFailed("MCP session is not connected.")

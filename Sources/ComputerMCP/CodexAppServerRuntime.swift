@@ -181,6 +181,11 @@ protocol CodexAppServerRuntimeProtocol: Sendable {
   func events(afterCursor: Int, maxResults: Int) async -> JSONValue
   func pendingRequests() async -> JSONValue
   func respond(requestID: String, response: JSONValue) async throws -> JSONValue
+  func shutdown() async
+}
+
+extension CodexAppServerRuntimeProtocol {
+  func shutdown() async {}
 }
 
 actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
@@ -257,22 +262,19 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
       params: normalized,
       connection: connection
     )
-    let result: CodexAppServerProtocol.Stable.JSONValue
+    let response: JSONValue
     do {
-      let stableParams = try Self.stableJSON(normalized ?? .object([:]))
-      result = try await Self.boundedRequest(
+      response = try await Self.boundedRequest(
         timeoutSeconds: configuration.appServerRequestTimeoutSeconds,
         onTimeout: {
           await connection.close()
         },
         operation: {
-          if descriptor.takesParams {
-            return try await connection.sendRawRequest(
-              method: method,
-              params: stableParams
-            )
-          }
-          return try await connection.sendRawRequest(method: method)
+          try await Self.sendReviewedRequest(
+            method: method,
+            params: normalized,
+            connection: connection
+          )
         }
       )
     } catch {
@@ -280,7 +282,6 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
         "codex.app.request_failed: \(Self.errorDescription(error))"
       )
     }
-    let response = try Self.gatewayJSON(result)
     try rememberWorkspaceScopedThreads(
       method: method,
       response: response
@@ -327,6 +328,20 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
       payload: .object(["request_id": .string(requestID)])
     )
     return .object(["resolved": .bool(true), "request_id": .string(requestID)])
+  }
+
+  func shutdown() async {
+    notificationTask?.cancel()
+    requestTask?.cancel()
+    notificationTask = nil
+    requestTask = nil
+    let activeConnection = connection
+    connection = nil
+    pendingUserInputRequests.removeAll()
+    workspaceScopedThreadIDs.removeAll()
+    connectionState = "stopped"
+    lastError = nil
+    await activeConnection?.close()
   }
 
   private func ensureConnection() async throws -> CodexAppServerConnection {
@@ -585,15 +600,17 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
       return
     }
 
-    let raw: CodexAppServerProtocol.Stable.JSONValue
+    let response: JSONValue
     do {
-      raw = try await connection.sendRawRequest(
-        method: "thread/read",
-        params: try Self.stableJSON(
-          .object([
-            "threadId": .string(threadID),
-            "includeTurns": .bool(false),
-          ])
+      response = try Self.gatewayJSON(
+        try await connection.threadRead(
+          try Self.decodeStableParams(
+            Stable.ThreadReadParams.self,
+            from: .object([
+              "threadId": .string(threadID),
+              "includeTurns": .bool(false),
+            ])
+          )
         )
       )
     } catch {
@@ -601,7 +618,6 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
         "codex.app.thread_scope_lookup_failed: \(Self.errorDescription(error))"
       )
     }
-    let response = try Self.gatewayJSON(raw)
     try Self.validateThreadWorkspace(
       threadID: threadID,
       response: response,
@@ -787,11 +803,178 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     ])
   }
 
-  private static func gatewayJSON(
-    _ value: CodexAppServerProtocol.Stable.JSONValue
-  ) throws -> JSONValue {
+  private static func gatewayJSON<Value: Encodable>(_ value: Value) throws -> JSONValue {
     let data = try JSONEncoder().encode(value)
     return try JSONDecoder().decode(JSONValue.self, from: data)
+  }
+
+  private static func decodeStableParams<Params: Decodable>(
+    _ type: Params.Type,
+    from value: JSONValue?
+  ) throws -> Params {
+    let data = try JSONEncoder().encode(value ?? .object([:]))
+    return try JSONDecoder().decode(type, from: data)
+  }
+
+  private static func sendReviewedRequest(
+    method: String,
+    params: JSONValue?,
+    connection: CodexAppServerConnection
+  ) async throws -> JSONValue {
+    switch method {
+    case "account/rateLimits/read":
+      return try gatewayJSON(try await connection.accountRateLimitsRead())
+    case "account/read":
+      return try gatewayJSON(
+        try await connection.accountRead(
+          try decodeStableParams(Stable.GetAccountParams.self, from: params)
+        )
+      )
+    case "account/usage/read":
+      return try gatewayJSON(try await connection.accountUsageRead())
+    case "app/list":
+      return try gatewayJSON(
+        try await connection.appList(
+          try decodeStableParams(Stable.AppsListParams.self, from: params)
+        )
+      )
+    case "experimentalFeature/list":
+      return try gatewayJSON(
+        try await connection.experimentalFeatureList(
+          try decodeStableParams(Stable.ExperimentalFeatureListParams.self, from: params)
+        )
+      )
+    case "model/list":
+      return try gatewayJSON(
+        try await connection.modelList(
+          try decodeStableParams(Stable.ModelListParams.self, from: params)
+        )
+      )
+    case "plugin/list":
+      return try gatewayJSON(
+        try await connection.pluginList(
+          try decodeStableParams(Stable.PluginListParams.self, from: params)
+        )
+      )
+    case "plugin/read":
+      return try gatewayJSON(
+        try await connection.pluginRead(
+          try decodeStableParams(Stable.PluginReadParams.self, from: params)
+        )
+      )
+    case "skills/list":
+      return try gatewayJSON(
+        try await connection.skillsList(
+          try decodeStableParams(Stable.SkillsListParams.self, from: params)
+        )
+      )
+    case "thread/list":
+      return try gatewayJSON(
+        try await connection.threadList(
+          try decodeStableParams(Stable.ThreadListParams.self, from: params)
+        )
+      )
+    case "thread/read":
+      return try gatewayJSON(
+        try await connection.threadRead(
+          try decodeStableParams(Stable.ThreadReadParams.self, from: params)
+        )
+      )
+    case "thread/start":
+      return try gatewayJSON(
+        try await connection.threadStart(
+          try decodeStableParams(Stable.ThreadStartParams.self, from: params)
+        )
+      )
+    case "thread/resume":
+      return try gatewayJSON(
+        try await connection.threadResume(
+          try decodeStableParams(Stable.ThreadResumeParams.self, from: params)
+        )
+      )
+    case "thread/fork":
+      return try gatewayJSON(
+        try await connection.threadFork(
+          try decodeStableParams(Stable.ThreadForkParams.self, from: params)
+        )
+      )
+    case "thread/compact/start":
+      return try gatewayJSON(
+        try await connection.threadCompactStart(
+          try decodeStableParams(Stable.ThreadCompactStartParams.self, from: params)
+        )
+      )
+    case "thread/inject_items":
+      return try gatewayJSON(
+        try await connection.threadInjectItems(
+          try decodeStableParams(Stable.ThreadInjectItemsParams.self, from: params)
+        )
+      )
+    case "thread/metadata/update":
+      return try gatewayJSON(
+        try await connection.threadMetadataUpdate(
+          try decodeStableParams(Stable.ThreadMetadataUpdateParams.self, from: params)
+        )
+      )
+    case "thread/name/set":
+      return try gatewayJSON(
+        try await connection.threadNameSet(
+          try decodeStableParams(Stable.ThreadSetNameParams.self, from: params)
+        )
+      )
+    case "thread/rollback":
+      return try gatewayJSON(
+        try await connection.threadRollback(
+          try decodeStableParams(Stable.ThreadRollbackParams.self, from: params)
+        )
+      )
+    case "thread/archive":
+      return try gatewayJSON(
+        try await connection.threadArchive(
+          try decodeStableParams(Stable.ThreadArchiveParams.self, from: params)
+        )
+      )
+    case "thread/unarchive":
+      return try gatewayJSON(
+        try await connection.threadUnarchive(
+          try decodeStableParams(Stable.ThreadUnarchiveParams.self, from: params)
+        )
+      )
+    case "thread/unsubscribe":
+      return try gatewayJSON(
+        try await connection.threadUnsubscribe(
+          try decodeStableParams(Stable.ThreadUnsubscribeParams.self, from: params)
+        )
+      )
+    case "turn/start":
+      return try gatewayJSON(
+        try await connection.turnStart(
+          try decodeStableParams(Stable.TurnStartParams.self, from: params)
+        )
+      )
+    case "turn/steer":
+      return try gatewayJSON(
+        try await connection.turnSteer(
+          try decodeStableParams(Stable.TurnSteerParams.self, from: params)
+        )
+      )
+    case "turn/interrupt":
+      return try gatewayJSON(
+        try await connection.turnInterrupt(
+          try decodeStableParams(Stable.TurnInterruptParams.self, from: params)
+        )
+      )
+    case "review/start":
+      return try gatewayJSON(
+        try await connection.reviewStart(
+          try decodeStableParams(Stable.ReviewStartParams.self, from: params)
+        )
+      )
+    default:
+      throw GatewayToolError.disabled(
+        "codex.app.typed_method_unavailable: App Server method '\(method)' has no reviewed swift-codex binding."
+      )
+    }
   }
 
   private static func requestIDString(

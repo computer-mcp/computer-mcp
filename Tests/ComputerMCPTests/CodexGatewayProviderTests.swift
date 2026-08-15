@@ -37,6 +37,21 @@ final class CodexGatewayProviderTests {
   }
 
   @Test
+  func testShutdownClosesEnabledRuntimes() async {
+    let probe = CodexProviderShutdownProbe()
+    let provider = CodexGatewayProvider(
+      configuration: CodexConfig(enabled: true, execEnabled: false, mcpEnabled: false),
+      appServer: FakeAppServerRuntime(shutdownProbe: probe),
+      exec: nil,
+      mcp: nil
+    )
+
+    await provider.shutdown()
+
+    #expect((await probe.count) == 1)
+  }
+
+  @Test
   func testCapabilitiesRequireWorkspaceAndSeparateReadFromWrite() throws {
     let provider = makeProvider()
     let tools = try provider.listTools()
@@ -284,6 +299,12 @@ final class CodexGatewayProviderTests {
 }
 
 private struct FakeAppServerRuntime: CodexAppServerRuntimeProtocol {
+  let shutdownProbe: CodexProviderShutdownProbe?
+
+  init(shutdownProbe: CodexProviderShutdownProbe? = nil) {
+    self.shutdownProbe = shutdownProbe
+  }
+
   func status() async -> JSONValue {
     .object(["path": .string("app")])
   }
@@ -309,6 +330,18 @@ private struct FakeAppServerRuntime: CodexAppServerRuntimeProtocol {
 
   func respond(requestID: String, response: JSONValue) async throws -> JSONValue {
     .object(["request_id": .string(requestID), "response": response])
+  }
+
+  func shutdown() async {
+    await shutdownProbe?.record()
+  }
+}
+
+private actor CodexProviderShutdownProbe {
+  private(set) var count = 0
+
+  func record() {
+    count += 1
   }
 }
 

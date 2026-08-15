@@ -75,7 +75,10 @@ struct ProbeCommand: ParsableCommand {
 struct AppProbeCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "app",
-    subcommands: [AppCatalogProbe.self, AppCallProbe.self, AppFullCatalogProbe.self]
+    subcommands: [
+      AppCatalogProbe.self, AppCallProbe.self, AppFullCatalogProbe.self,
+      AppComputerUseSurfaceProbe.self,
+    ]
   )
 }
 

@@ -16,6 +16,11 @@ protocol CodexMCPRuntimeProtocol: Sendable {
     decision: String
   ) async throws -> JSONValue
   func cancel(callID: String) async throws -> JSONValue
+  func shutdown() async
+}
+
+extension CodexMCPRuntimeProtocol {
+  func shutdown() async {}
 }
 
 struct CodexMCPRuntimeError: Error, LocalizedError, Equatable, Sendable {
@@ -540,6 +545,25 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
       "state": .string(state.state.rawValue),
       "cancellation_requested": .bool(requested),
     ])
+  }
+
+  func shutdown() async {
+    for id in callsByID.keys.sorted() {
+      guard var state = callsByID[id] else { continue }
+      if !state.state.isTerminal {
+        _ = try? await state.handle.cancel()
+        state.state = .cancelled
+        state.error = CodexMCPRuntimeError(
+          code: "codex.mcp.shutdown",
+          message: "Call was cancelled because the gateway connection closed."
+        )
+        state.pendingApprovals.removeAll()
+        callsByID[id] = state
+      }
+    }
+    try? await client.stop()
+    pendingLaunches = 0
+    reconnectRequired = true
   }
 
   private func ensureClient() async throws -> any CodexMCPClientAdapter {

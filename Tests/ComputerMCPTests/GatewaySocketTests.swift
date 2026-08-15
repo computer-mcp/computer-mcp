@@ -68,6 +68,38 @@ final class GatewaySocketTests {
   }
 
   @Test
+  func testConnectionShutdownRunsExactlyOnceAfterClientDisconnects() async throws {
+    let fixture = try SocketFixture()
+    let shutdownProbe = SocketShutdownProbe()
+    let server = GatewaySocketServer(
+      configuration: fixture.configuration,
+      sessionFactory: { _ in
+        GatewaySocketServerSession(
+          server: Server(name: "socket-fixture", version: "1"),
+          shutdown: { await shutdownProbe.record() }
+        )
+      }
+    )
+    try await server.start()
+
+    do {
+      let client = Client(name: "socket-test", version: "1")
+      try await client.connect(
+        transport: GatewaySocketTransport(configuration: fixture.configuration)
+      )
+      await client.disconnect()
+      try await waitUntil { await shutdownProbe.count == 1 }
+      #expect((await shutdownProbe.count) == 1)
+    } catch {
+      await server.stop()
+      throw error
+    }
+
+    await server.stop()
+    #expect((await shutdownProbe.count) == 1)
+  }
+
+  @Test
   func testAuthenticatesSecureTunnelSeparatelyFromOrdinarySameUserClients() async throws {
     let fixture = try SocketFixture()
     let credentialURL = fixture.rootURL.appendingPathComponent("tunnel-auth")
@@ -496,6 +528,14 @@ private actor CancellationProbe {
 
   func markCancelled() {
     wasCancelled = true
+  }
+}
+
+private actor SocketShutdownProbe {
+  private(set) var count = 0
+
+  func record() {
+    count += 1
   }
 }
 

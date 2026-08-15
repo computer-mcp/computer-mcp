@@ -11,6 +11,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let workspaceOrder: [String]
   private let workspaceAccesses: [String: ResolvedWorkspaceAccess]
   private let providerRouters: [String: GatewayProviderRouter]
+  private let shutdownState = GatewayRuntimeShutdownState()
 
   package init(
     configuration: GatewayConfiguration,
@@ -125,6 +126,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   deinit {
+    for access in workspaceAccesses.values {
+      access.close()
+    }
+  }
+
+  package func shutdown() async {
+    guard shutdownState.begin() else { return }
+    for workspaceID in workspaceOrder {
+      await providerRouters[workspaceID]?.shutdown()
+    }
     for access in workspaceAccesses.values {
       access.close()
     }
@@ -1509,6 +1520,19 @@ private struct RoutedCall {
   var arguments: [String: JSONValue]
   var context: ExecutionContext
   var registryWorkspaceID: String?
+}
+
+private final class GatewayRuntimeShutdownState: @unchecked Sendable {
+  private let lock = NSLock()
+  private var started = false
+
+  func begin() -> Bool {
+    lock.withLock {
+      guard !started else { return false }
+      started = true
+      return true
+    }
+  }
 }
 
 package enum GatewayRuntimeError: Error, LocalizedError, Equatable {

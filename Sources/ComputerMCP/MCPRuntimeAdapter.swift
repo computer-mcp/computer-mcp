@@ -30,8 +30,14 @@ package enum MCPRuntimeAdapter: Sendable {
   ) async throws {
     let server = await makeGatewayServer(configuration: configuration, registry: registry)
     let transport = MCPInitializeNormalizationTransport(wrapping: StdioTransport())
-    try await server.start(transport: transport)
-    await server.waitUntilCompleted()
+    do {
+      try await server.start(transport: transport)
+      await server.waitUntilCompleted()
+      await registry.shutdown()
+    } catch {
+      await registry.shutdown()
+      throw error
+    }
   }
 
   package static func runHTTPGateway(

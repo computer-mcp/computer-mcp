@@ -96,8 +96,8 @@ package actor AppGatewayService {
         responseObserver: { data, identity in
           try? await controlPlane.correlateMCPResponse(data, identity: identity)
         },
-        serverFactory: { identity in
-          try await controlPlane.makeGatewayServer(
+        sessionFactory: { identity in
+          try await controlPlane.makeGatewaySocketSession(
             caller: identity.caller,
             profileID: selectedProfile,
             transportTrace: identity.transportTrace

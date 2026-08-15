@@ -89,10 +89,12 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
 
   internal func waitUntilClosed() async {
     await app.waitUntilClosed()
+    await registry.shutdown()
   }
 
   internal func stop() async {
     await app.stop()
+    await registry.shutdown()
   }
 
   internal func activeSessionCount() async -> Int {

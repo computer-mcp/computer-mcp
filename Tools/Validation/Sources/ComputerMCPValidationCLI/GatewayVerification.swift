@@ -63,17 +63,23 @@ struct GatewayProbeVerify: AsyncParsableCommand {
     let configURL = URL(fileURLWithPath: config).standardizedFileURL
     let product = try ValidationProductCommand(executableURL: executableURL)
     let defaultManifest = try product.run(["config", "defaults"])
+    let defaultConfigURL = configURL.deletingLastPathComponent()
+      .appendingPathComponent("core-product-defaults.toml")
+    try writeCoreData(defaultManifest, destination: defaultConfigURL)
+    defer {
+      try? FileManager.default.removeItem(at: defaultConfigURL)
+    }
+    let observeToolNames = try productInventoryToolNames(
+      product: product,
+      configURL: defaultConfigURL,
+      caller: .secureTunnel,
+      profileID: .chatGPTObserve
+    )
     try writeCoreGatewayManifest(
       fixtureRoot: runtimeURL,
       port: port,
       builtins: try defaultBuiltinCapabilities(in: defaultManifest),
       to: configURL
-    )
-    let observeToolNames = try productInventoryToolNames(
-      product: product,
-      configURL: configURL,
-      caller: .secureTunnel,
-      profileID: .chatGPTObserve
     )
     let logURL = URL(fileURLWithPath: log).standardizedFileURL
     let host = try TemporaryGatewayHost.start(

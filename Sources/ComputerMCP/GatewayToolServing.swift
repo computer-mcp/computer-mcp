@@ -5,6 +5,7 @@ package protocol GatewayToolServing: Sendable {
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue
   func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue
   func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue
+  func shutdown() async
 }
 
 extension GatewayToolServing {
@@ -25,6 +26,8 @@ extension GatewayToolServing {
   ) async throws -> JSONValue {
     try await callToolAsync(name: name, arguments: arguments)
   }
+
+  package func shutdown() async {}
 }
 
 extension GatewayToolRegistry: GatewayToolServing {}

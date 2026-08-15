@@ -163,7 +163,7 @@ and all five redacted journey/platform verification records pass, generate the
 public summary-only manifest with `report release-manifest`. The command accepts
 every Evidence Bundle used by the ready report, verifies that each bundle is
 bound to the final App and CLI digests, requires 23/23 Test Cases, and emits
-`Computer-MCP-1.0.8-EvidenceManifest.json`. It publishes hashes, Test Case IDs,
+`Computer-MCP-<version>-EvidenceManifest.json`. It publishes hashes, Test Case IDs,
 transports, and profiles only; request IDs, audit IDs, consumer result IDs,
 credentials, raw inputs/outputs, and local paths remain in the private archive.
 

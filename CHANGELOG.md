@@ -4,6 +4,24 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.9 — 2026-08-15
+
+- Close every App Server, Exec, MCP, HTTP, stdio, and Gateway provider runtime
+  when its owning client session disconnects or the gateway stops. Repeated
+  ChatGPT and Full Shell connections no longer leave Codex child processes
+  behind or eventually stall later tool calls.
+- Route the reviewed Codex App Server method surface through typed
+  `swift-codex` requests, retain the existing per-method policy checks, and
+  add explicit runtime shutdown contracts with disconnect regressions.
+- Make the independent full-catalog acceptance probe fail within a bounded
+  timeout instead of hanging, exercise real Full Shell and Computer Use
+  lifecycles in an isolated helper process, and validate expected provider
+  failures together with their structured result and failed audit decision.
+- Complete a development-candidate runtime rehearsal covering 287/287
+  advertised tools with 287/287 semantic results and 287/287 correlated audit
+  rows. The same fail-closed suite remains required against the exact
+  checksummed notarized 1.0.9 artifact before its draft Release is published.
+
 ## 1.0.8 — 2026-08-14
 
 - Refresh the App-managed OpenAI `tunnel-client` profile with the current
@@ -17,7 +35,9 @@ All notable user-visible changes to Computer MCP are documented here.
   DMG installation, and installed-CLI binary verification successfully. Exact
   ChatGPT acceptance then found that the existing Tunnel Client YAML still
   launched a bridge from the old development App path; its draft remains
-  unpublished and no public GitHub Release was created.
+  unpublished and no public GitHub Release was created. Subsequent exhaustive
+  catalog acceptance also exposed provider runtimes surviving disconnected
+  gateway sessions, so the immutable 1.0.8 candidate was not promoted.
 
 ## 1.0.7 — 2026-08-14
 

@@ -8,12 +8,14 @@ import MCP
 package final class GatewaySocketServer: @unchecked Sendable {
   package typealias ServerFactory =
     @Sendable (GatewaySocketConnectionIdentity) async throws -> MCP.Server
+  package typealias SessionFactory =
+    @Sendable (GatewaySocketConnectionIdentity) async throws -> GatewaySocketServerSession
   package typealias ResponseObserver =
     @Sendable (Data, GatewaySocketConnectionIdentity) async -> Void
 
   private let configuration: GatewaySocketConfiguration
   private let logger: Logger
-  private let serverFactory: ServerFactory
+  private let sessionFactory: SessionFactory
   private let responseObserver: ResponseObserver?
   private let state = GatewaySocketServerState()
 
@@ -26,7 +28,21 @@ package final class GatewaySocketServer: @unchecked Sendable {
     self.configuration = configuration
     self.logger = logger
     self.responseObserver = responseObserver
-    self.serverFactory = serverFactory
+    self.sessionFactory = { identity in
+      GatewaySocketServerSession(server: try await serverFactory(identity))
+    }
+  }
+
+  package init(
+    configuration: GatewaySocketConfiguration,
+    logger: Logger = Logger(label: "computer-mcp.gateway-socket.server"),
+    responseObserver: ResponseObserver? = nil,
+    sessionFactory: @escaping SessionFactory
+  ) {
+    self.configuration = configuration
+    self.logger = logger
+    self.responseObserver = responseObserver
+    self.sessionFactory = sessionFactory
   }
 
   package func start() async throws {
@@ -122,6 +138,7 @@ package final class GatewaySocketServer: @unchecked Sendable {
         try? await session.channel.close()
       }
       await session.server.stop()
+      await session.shutdown()
     }
     try? await snapshot.eventLoopGroup.shutdownGracefully()
     GatewaySocketServerSecurity.removeSocketIfOwned(
@@ -142,7 +159,8 @@ package final class GatewaySocketServer: @unchecked Sendable {
     let identifier = UUID()
     do {
       let identity = try await connectionIdentity(from: handler)
-      let server = try await serverFactory(identity)
+      let session = try await sessionFactory(identity)
+      let server = session.server
       let transport = GatewaySocketTransport(
         acceptedChannel: channel,
         frameHandler: handler,
@@ -160,11 +178,12 @@ package final class GatewaySocketServer: @unchecked Sendable {
       guard
         await state.register(
           identifier: identifier,
-          server: server,
+          session: session,
           channel: channel
         )
       else {
         await transport.disconnect()
+        await session.shutdown()
         return
       }
 
@@ -178,6 +197,9 @@ package final class GatewaySocketServer: @unchecked Sendable {
         )
       }
       await server.stop()
+      if let removed = await state.remove(identifier: identifier) {
+        await removed.shutdown()
+      }
     } catch {
       handler.finish(throwing: error)
     }
@@ -185,7 +207,6 @@ package final class GatewaySocketServer: @unchecked Sendable {
     if channel.isActive {
       try? await channel.close()
     }
-    await state.remove(identifier: identifier)
   }
 
   private func connectionIdentity(
@@ -218,10 +239,28 @@ package final class GatewaySocketServer: @unchecked Sendable {
   }
 }
 
+package struct GatewaySocketServerSession: Sendable {
+  package let server: MCP.Server
+  private let shutdownHandler: @Sendable () async -> Void
+
+  package init(
+    server: MCP.Server,
+    shutdown: @escaping @Sendable () async -> Void = {}
+  ) {
+    self.server = server
+    self.shutdownHandler = shutdown
+  }
+
+  package func shutdown() async {
+    await shutdownHandler()
+  }
+}
+
 private actor GatewaySocketServerState {
   struct Session: Sendable {
     let server: MCP.Server
     let channel: Channel
+    let shutdown: @Sendable () async -> Void
   }
 
   struct StopSnapshot: Sendable {
@@ -281,15 +320,23 @@ private actor GatewaySocketServerState {
     listenerChannel
   }
 
-  func register(identifier: UUID, server: MCP.Server, channel: Channel) -> Bool {
+  func register(
+    identifier: UUID,
+    session: GatewaySocketServerSession,
+    channel: Channel
+  ) -> Bool {
     guard lifecycle == .starting || lifecycle == .running else {
       return false
     }
-    sessions[identifier] = Session(server: server, channel: channel)
+    sessions[identifier] = Session(
+      server: session.server,
+      channel: channel,
+      shutdown: session.shutdown
+    )
     return true
   }
 
-  func remove(identifier: UUID) {
+  func remove(identifier: UUID) -> Session? {
     sessions.removeValue(forKey: identifier)
   }
 

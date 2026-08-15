@@ -347,15 +347,14 @@ package actor AppControlPlaneService {
     ComputerUseService().permissionSnapshot()
   }
 
-  package func makeGatewayServer(
+  package func makeGatewaySocketSession(
     caller: GatewayCallerKind,
     profileID: GatewayProfileID,
     transportTrace: GatewayTransportTrace? = nil
-  ) async throws -> MCP.Server {
+  ) async throws -> GatewaySocketServerSession {
     if caller.isRemote && profileID == .localAdmin {
       throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
     }
-    let registeredWorkspaces = try database.workspaces()
     let configuration = try manifestStore.activeConfiguration()
     let gateway = try GatewayRuntime(
       configuration: configuration,
@@ -365,13 +364,16 @@ package actor AppControlPlaneService {
         transportTrace: transportTrace
       ),
       database: database,
-      registeredWorkspaces: registeredWorkspaces,
+      registeredWorkspaces: try database.workspaces(),
       bookmarkService: bookmarkService
     )
-    return await MCPRuntimeAdapter.makeGatewayServer(
+    let server = await MCPRuntimeAdapter.makeGatewayServer(
       configuration: configuration,
       registry: gateway
     )
+    return GatewaySocketServerSession(server: server) {
+      await gateway.shutdown()
+    }
   }
 
   func localAdminTools(
@@ -385,10 +387,15 @@ package actor AppControlPlaneService {
     arguments: JSONValue?,
     transportTrace: GatewayTransportTrace
   ) async throws -> JSONValue {
-    try await makeLocalAdminGateway(transportTrace: transportTrace).callToolForMCPAsync(
-      name: name,
-      arguments: arguments
-    )
+    let gateway = try makeLocalAdminGateway(transportTrace: transportTrace)
+    do {
+      let result = try await gateway.callToolForMCPAsync(name: name, arguments: arguments)
+      await gateway.shutdown()
+      return result
+    } catch {
+      await gateway.shutdown()
+      throw error
+    }
   }
 
   private func makeLocalAdminGateway(

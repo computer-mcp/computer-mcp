@@ -252,6 +252,12 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     return try Self.resultEnvelope(result)
   }
 
+  func shutdown() async {
+    await appServer?.shutdown()
+    await exec?.shutdown()
+    await mcp?.shutdown()
+  }
+
   private func tryAppServer() throws -> any CodexAppServerRuntimeProtocol {
     guard let appServer else {
       throw GatewayToolError.disabled(

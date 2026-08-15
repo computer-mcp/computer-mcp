@@ -89,15 +89,26 @@ public struct GatewayDatabase: Sendable {
       return store.workspaces()
     case .product:
       let data = try ValidationProductCommand().run(["workspace", "list"])
-      let value = try ValidationCanonicalJSONCoding.decoder().decode(JSONValue.self, from: data)
-      guard let rows = value.objectValue?["workspaces"]?.arrayValue else { return [] }
-      return try rows.map { row in
-        let data = try ValidationCanonicalJSONCoding.encoder().encode(row)
-        return try ValidationCanonicalJSONCoding.decoder().decode(
-          RegisteredWorkspace.self,
-          from: data
-        )
-      }
+      return try Self.decodeWorkspaceListResponse(data)
+    }
+  }
+
+  static func decodeWorkspaceListResponse(_ data: Data) throws -> [RegisteredWorkspace] {
+    let value = try ValidationCanonicalJSONCoding.decoder().decode(JSONValue.self, from: data)
+    guard
+      let rows = value.objectValue?["result"]?.arrayValue
+        ?? value.objectValue?["workspaces"]?.arrayValue
+    else {
+      throw ValidationProcessError.launchFailed(
+        "The shipped workspace list response has no workspace collection."
+      )
+    }
+    return try rows.map { row in
+      let data = try ValidationCanonicalJSONCoding.encoder().encode(row)
+      return try ValidationCanonicalJSONCoding.decoder().decode(
+        RegisteredWorkspace.self,
+        from: data
+      )
     }
   }
 

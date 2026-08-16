@@ -29,7 +29,7 @@ let package = Package(
     .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
     .package(
       url: "https://github.com/swift-library/swift-codex.git",
-      exact: "0.1.1"
+      exact: "0.1.2"
     ),
   ],
   targets: [

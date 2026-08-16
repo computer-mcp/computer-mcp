@@ -174,6 +174,12 @@ Non-Git registered workspaces are supported. The gateway supplies
 `--skip-git-repo-check` to Exec while retaining its registered workspace and
 sandbox policy.
 
+Computer MCP also supplies the official `--ignore-user-config` flag to Exec.
+The user's existing Codex login is still used, but a broken or slow MCP server
+in the user's global Codex configuration is intentionally not started for a
+Gateway call. Diagnose those global integrations in interactive Codex; do not
+copy their credentials or configuration into Computer MCP.
+
 ## Computer Use Is Denied
 
 Open **Permissions**. Grant Accessibility or Screen Recording to the signed

@@ -490,6 +490,7 @@ actor LiveCodexExecRuntime: CodexExecRuntimeProtocol {
       colorMode: "never",
       dangerouslyBypassApprovalsAndSandbox: false,
       ephemeral: false,
+      ignoreUserConfig: true,
       fullAuto: false,
       profile: nil,
       sandboxMode: configuration.sandbox.rawValue,

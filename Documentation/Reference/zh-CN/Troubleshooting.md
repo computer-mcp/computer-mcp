@@ -28,6 +28,11 @@ cloudflared --version
 
 App 只检测依赖，不会自动安装。使用任务页提供的官方入口安装后重试。
 
+Computer MCP 的 `codex.exec.*` 会保留当前用户已有的 Codex 登录，但通过官方
+`--ignore-user-config` 模式隔离全局 `config.toml`。因此交互式 Codex 中失效或缓慢的
+MCP server、model、hook、profile 不会被 Gateway 的 Exec 调用启动；请在交互式
+Codex 中单独修复这些用户配置，不要向 Computer MCP 复制凭据。
+
 ## 权限拒绝或撤销
 
 1. 在 **Permissions** 重新预检。

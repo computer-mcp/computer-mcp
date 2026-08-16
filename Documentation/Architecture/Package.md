@@ -24,7 +24,7 @@ App executable. Only the App and CLI are package products.
 | swift-subprocess | Process, Shell, and streaming lifecycle |
 | GRDB | Transactional App metadata and redacted audit |
 | swift-log | Runtime logging integration |
-| `swift-codex` 0.1.1 (exact remote version) | Codex App Server, Exec, and MCP clients |
+| `swift-codex` 0.1.2 (exact remote version) | Codex App Server, Exec, and MCP clients |
 
 ## Structure
 
@@ -67,5 +67,5 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
 - Keep public behavior aligned across README, reference docs, DocC, and tests.
 
 The root package resolves `swift-codex` from its public repository at exact
-version `0.1.1`. `Scripts/verify-swift-codex-release-gate.sh` prevents a local
+version `0.1.2`. `Scripts/verify-swift-codex-release-gate.sh` prevents a local
 path, branch, revision, or different version from entering a release.

@@ -4,6 +4,21 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.10 — 2026-08-17
+
+- Run the embedded Codex Exec lifecycle with the official
+  `--ignore-user-config` boundary. User authentication remains in the user's
+  existing `CODEX_HOME`, while global MCP servers, models, hooks, profiles,
+  and other `config.toml` settings can no longer delay or alter a Gateway
+  request.
+- Pin `swift-codex` 0.1.2 and regression-test the typed isolation option for
+  both new and resumed Exec sessions.
+- The immutable 1.0.9 candidate passed signing, notarization, packaging, and
+  286/287 exact-artifact catalog calls, but final acceptance exposed a stale
+  user-global MCP server adding a 30-second startup timeout to Codex Exec. Its
+  draft remains unpublished; 1.0.10 repeats the complete production workflow
+  and exact-artifact acceptance with the isolated lifecycle.
+
 ## 1.0.9 — 2026-08-15
 
 - Close every App Server, Exec, MCP, HTTP, stdio, and Gateway provider runtime

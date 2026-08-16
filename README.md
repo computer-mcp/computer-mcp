@@ -14,7 +14,7 @@ MCP consumers connect to that same App-owned gateway.
 
 Computer MCP requires macOS 14 or later.
 
-1. Download `Computer-MCP-1.0.9-universal.dmg` and `SHA256SUMS` from the
+1. Download `Computer-MCP-1.0.10-universal.dmg` and `SHA256SUMS` from the
    release that supplied your build.
 2. Verify the DMG digest, open it, and drag **Computer MCP** to Applications.
 3. Open the installed App from Finder. Do not run a copied executable outside
@@ -192,7 +192,7 @@ creates a draft GitHub Release. See the
 [Release reference](Documentation/Reference/Release.md).
 
 The root package exposes only the App and CLI products. It resolves
-`swift-codex` exactly at `0.1.1`; the Validation package remains independent
+`swift-codex` exactly at `0.1.2`; the Validation package remains independent
 under `Tools/Validation`.
 
 [openai-apps]: https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt

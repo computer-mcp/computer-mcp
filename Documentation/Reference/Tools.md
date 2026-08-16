@@ -382,6 +382,12 @@ bounds, and audit context. Raw argv, arbitrary Codex configuration,
 `danger-full-access`, login/token mutation, marketplace mutation, and remote
 pairing are not part of this tool surface.
 
+`codex.exec.*` invokes the upstream official `--ignore-user-config` mode. It
+still uses the local user's existing Codex authentication, but does not load
+user-global MCP servers, models, hooks, profiles, or other `config.toml`
+settings. This makes the embedded Exec result depend on the reviewed Gateway
+request instead of unrelated interactive Codex customization.
+
 ## Skills Gateway Contract
 
 `skills.*` belongs to the main gateway, independently of Codex. When

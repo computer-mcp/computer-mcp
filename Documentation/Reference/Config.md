@@ -183,6 +183,13 @@ receive only exact granted tool IDs and cannot supply arbitrary Codex argv or
 configuration overrides. App Server RPCs have a bounded deadline; a timeout
 closes the failed App Server connection so the next call starts a clean one.
 
+Exec requests deliberately ignore the user's global Codex `config.toml` while
+continuing to use that user's `CODEX_HOME` authentication. This prevents global
+MCP servers, models, hooks, profiles, or defaults from changing an embedded
+Gateway request. Computer MCP supplies the registered workspace, sandbox, and
+approval policy explicitly. App Server and MCP remain independent provider
+lifecycles and keep their own upstream configuration contracts.
+
 ## Standalone HTTP
 
 Explicit development mode may configure loopback Streamable HTTP:

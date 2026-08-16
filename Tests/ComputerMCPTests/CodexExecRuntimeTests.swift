@@ -39,6 +39,7 @@ final class CodexExecRuntimeTests {
     #expect((request.options.model) == ("gpt-5"))
     #expect((request.options.additionalWritableDirectories) == ([]))
     #expect((request.options.configOverrides) == ([#"approval_policy="never""#]))
+    #expect(request.options.ignoreUserConfig)
     #expect(!(request.options.dangerouslyBypassApprovalsAndSandbox))
     #expect(!(request.options.fullAuto))
     #expect(!(request.options.useOSS))
@@ -87,6 +88,7 @@ final class CodexExecRuntimeTests {
     #expect((request.options.sandboxMode) == ("read-only"))
     #expect((request.options.additionalWritableDirectories) == ([]))
     #expect((request.options.configOverrides) == ([#"approval_policy="on-request""#]))
+    #expect(request.options.ignoreUserConfig)
     #expect(!(request.options.dangerouslyBypassApprovalsAndSandbox))
     #expect(request.options.skipGitRepoCheck)
   }

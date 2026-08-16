@@ -258,14 +258,17 @@ private struct AppFullCatalogProbeReport: Encodable {
         "Runtime observations require a passing probe, --run-id, and --fixtures-json."
       )
     }
-    let socketConnectionIDs = Set(
-      tools.compactMap { $0.auditEvent?.socketConnectionID }
-    )
-    guard socketConnectionIDs.count == 1, let socketConnectionID = socketConnectionIDs.first else {
-      throw ValidationError(
-        "Runtime observations require one authenticated Gateway Socket connection."
-      )
+    let auditEvents = try tools.map { tool in
+      guard let auditEvent = tool.auditEvent else {
+        throw ValidationError(
+          "Runtime observation is missing an audit event for tool '\(tool.toolName)'."
+        )
+      }
+      return auditEvent
     }
+    let transport = try ValidationTransportProvenance.authenticatedGatewaySocket(
+      auditEvents: auditEvents
+    )
     let observations = try tools.map { tool -> ValidationObservation in
       guard tool.status == "passed", tool.semanticValidated,
         let transportRequestID = tool.transportRequestID,
@@ -304,10 +307,7 @@ private struct AppFullCatalogProbeReport: Encodable {
     return ValidationObservationBundle(
       generatedAt: generatedAt,
       layer: .runtime,
-      transport: ValidationTransportProvenance(
-        transport: .gatewaySocket,
-        socketConnectionID: socketConnectionID
-      ),
+      transport: transport,
       observations: observations
     )
   }

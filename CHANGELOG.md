@@ -4,6 +4,22 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.11 — 2026-08-17
+
+- Derive full-catalog observation provenance from the correlated audit rows,
+  preserve the authenticated OpenAI Secure MCP Tunnel instance and profile
+  identifiers, and reject missing, mixed, or incomplete identities instead of
+  silently relabeling a remote run as a local Gateway Socket run.
+- Make `config.export` project the effective App-owned workspace grants,
+  profile capabilities, and persisted Full Shell state into a validated,
+  replayable TOML document while `config.show` continues to expose the
+  unchanged source manifest.
+- The immutable 1.0.10 candidate passed signing, notarization, installation,
+  real ChatGPT Full Shell, and 287/287 exact-artifact runtime calls. Final
+  evidence correlation exposed the two fail-closed validation defects above;
+  its draft remains unpublished and 1.0.11 repeats the complete production
+  workflow and exact-artifact acceptance.
+
 ## 1.0.10 — 2026-08-17
 
 - Run the embedded Codex Exec lifecycle with the official

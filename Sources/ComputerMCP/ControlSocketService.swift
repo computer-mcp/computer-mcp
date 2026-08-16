@@ -410,11 +410,17 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
       case "config.path":
         payload = .object(["path": .string(controlPlane.directories.manifest.path)])
-      case "config.show", "config.export":
+      case "config.show":
         payload = .object([
           "path": .string(controlPlane.directories.manifest.path),
           "schema_version": .number(1),
           "toml": .string(try await controlPlane.activeConfiguration().exportedTOML()),
+        ])
+      case "config.export":
+        payload = .object([
+          "path": .string(controlPlane.directories.manifest.path),
+          "schema_version": .number(1),
+          "toml": .string(try await controlPlane.effectiveConfigurationForExport().exportedTOML()),
         ])
       case "config.validate", "config.import":
         payload = try await configurationOperation(name: name, arguments: object)

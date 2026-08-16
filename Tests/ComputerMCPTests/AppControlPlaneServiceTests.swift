@@ -314,6 +314,93 @@ final class AppControlPlaneServiceTests {
   }
 
   @Test
+  func testConfigExportProjectsPersistedWorkspaceAndFullShellRuntimeState() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(
+      """
+      schema_version = 1
+
+      [server]
+      name = "computer-mcp-export-test"
+
+      [policy]
+      shell_enabled = true
+      """
+    )
+    let workspaceURL = fixture.root.appendingPathComponent("Exported Workspace")
+    try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+    let workspace = try await fixture.controlPlane.registerWorkspace(
+      at: workspaceURL,
+      displayName: "Exported Workspace"
+    )
+    _ = try await fixture.controlPlane.setWorkspaceEnabled(
+      true,
+      workspaceID: workspace.id,
+      profileID: .chatGPTOperate
+    )
+    _ = try await fixture.controlPlane.setFullShellEnabled(
+      true,
+      profileID: .chatGPTOperate
+    )
+
+    let gatewayService = AppGatewayService.live(
+      controlPlane: fixture.controlPlane,
+      directories: fixture.directories
+    )
+    let service = ControlSocketService(
+      controlPlane: fixture.controlPlane,
+      gatewayService: gatewayService,
+      socketURL: fixture.directories.controlSocket
+    )
+    try await service.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      let shown = try await client.call("config.show")
+      let shownTOML = try #require(shown.objectValue?["toml"]?.stringValue)
+      let shownConfiguration = try GatewayConfiguration.load(
+        text: shownTOML,
+        baseURL: fixture.directories.configuration
+      )
+      #expect(shownConfiguration.workspaces.isEmpty)
+      #expect(shownConfiguration.profiles.isEmpty)
+
+      let exported = try await client.call("config.export")
+      let exportedTOML = try #require(exported.objectValue?["toml"]?.stringValue)
+      let exportedConfiguration = try GatewayConfiguration.load(
+        text: exportedTOML,
+        baseURL: fixture.directories.configuration
+      )
+      let exportedWorkspace = try #require(
+        exportedConfiguration.workspaces.first { $0.id == workspace.id }
+      )
+      #expect(exportedWorkspace.displayName == "Exported Workspace")
+      #expect(exportedWorkspace.path == workspaceURL.standardizedFileURL.path)
+      let exportedGrant = try #require(
+        exportedConfiguration.profiles.first { $0.id == .chatGPTOperate }
+      )
+      #expect(exportedGrant.fullShellEnabled)
+      #expect(exportedGrant.workspaces == [workspace.id])
+      #expect(
+        Set(exportedGrant.capabilities).isSuperset(of: ProfileGrant.fullShellCapabilities)
+      )
+
+      let preview = try await client.call(
+        "config.import",
+        arguments: .object([
+          "toml": .string(exportedTOML),
+          "apply": .bool(false),
+        ])
+      )
+      #expect(preview.objectValue?["ok"] == .bool(true))
+      await service.stop()
+    } catch {
+      await service.stop()
+      throw error
+    }
+  }
+
+  @Test
   func testDirectoriesProfilesProvidersAndLaunchAtLoginComposeThroughFacade() async throws {
     let fixture = try AppControlPlaneServiceFixture(
       openAITunnelGatewayExecutablePath:

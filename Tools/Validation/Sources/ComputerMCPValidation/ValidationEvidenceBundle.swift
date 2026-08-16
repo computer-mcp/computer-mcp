@@ -60,6 +60,85 @@ public struct ValidationTransportProvenance: Codable, Equatable, Sendable {
   }
 }
 
+public enum ValidationTransportProvenanceError: Error, LocalizedError, Equatable, Sendable {
+  case missingAuditEvents
+  case inconsistentSocketConnection
+  case mixedCallerKinds
+  case unsupportedGatewaySocketCaller(GatewayCallerKind)
+  case incompleteSecureTunnelIdentity
+
+  public var errorDescription: String? {
+    switch self {
+    case .missingAuditEvents:
+      "Gateway Socket provenance requires at least one audit event."
+    case .inconsistentSocketConnection:
+      "Gateway Socket provenance requires one nonempty socket connection identifier."
+    case .mixedCallerKinds:
+      "Gateway Socket provenance cannot combine multiple caller identities."
+    case .unsupportedGatewaySocketCaller(let caller):
+      "Gateway Socket provenance does not support caller '\(caller.rawValue)'."
+    case .incompleteSecureTunnelIdentity:
+      "Secure Tunnel provenance requires one nonempty Tunnel instance and profile identifier."
+    }
+  }
+}
+
+extension ValidationTransportProvenance {
+  public static func authenticatedGatewaySocket(
+    auditEvents: [AuditEvent]
+  ) throws -> ValidationTransportProvenance {
+    guard !auditEvents.isEmpty else {
+      throw ValidationTransportProvenanceError.missingAuditEvents
+    }
+    let socketConnectionIDs = auditEvents.compactMap { nonempty($0.socketConnectionID) }
+    guard socketConnectionIDs.count == auditEvents.count,
+      Set(socketConnectionIDs).count == 1,
+      let socketConnectionID = socketConnectionIDs.first
+    else {
+      throw ValidationTransportProvenanceError.inconsistentSocketConnection
+    }
+    let callers = Set(auditEvents.map(\.caller))
+    guard callers.count == 1, let caller = callers.first else {
+      throw ValidationTransportProvenanceError.mixedCallerKinds
+    }
+
+    switch caller {
+    case .localMCP:
+      return ValidationTransportProvenance(
+        transport: .gatewaySocket,
+        socketConnectionID: socketConnectionID
+      )
+    case .secureTunnel:
+      let tunnelInstanceIDs = auditEvents.compactMap { nonempty($0.tunnelInstanceID) }
+      let tunnelProfileIDs = auditEvents.compactMap { nonempty($0.tunnelProfileID) }
+      guard tunnelInstanceIDs.count == auditEvents.count,
+        tunnelProfileIDs.count == auditEvents.count,
+        Set(tunnelInstanceIDs).count == 1,
+        Set(tunnelProfileIDs).count == 1,
+        let tunnelInstanceID = tunnelInstanceIDs.first,
+        let tunnelProfileID = tunnelProfileIDs.first
+      else {
+        throw ValidationTransportProvenanceError.incompleteSecureTunnelIdentity
+      }
+      return ValidationTransportProvenance(
+        transport: .openAISecureMCPTunnel,
+        tunnelInstanceID: tunnelInstanceID,
+        tunnelProfileID: tunnelProfileID,
+        socketConnectionID: socketConnectionID
+      )
+    case .cloudflareTunnel, .localApp, .localCLI:
+      throw ValidationTransportProvenanceError.unsupportedGatewaySocketCaller(caller)
+    }
+  }
+
+  private static func nonempty(_ value: String?) -> String? {
+    guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+      return nil
+    }
+    return value
+  }
+}
+
 public struct ValidationConsumer: Codable, Equatable, Sendable {
   public let kind: String
 

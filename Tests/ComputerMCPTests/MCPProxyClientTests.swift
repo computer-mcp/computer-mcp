@@ -133,11 +133,8 @@ final class MCPProxyClientTests {
         )
       )
 
-      for _ in 0..<100 where !FileManager.default.fileExists(atPath: fixture.cancelMarker.path) {
-        Thread.sleep(forTimeInterval: 0.01)
-      }
       #expect(
-        !(try String(contentsOf: fixture.cancelMarker, encoding: .utf8)
+        !(try self.waitForNonemptyFile(at: fixture.cancelMarker)
           .trimmingCharacters(in: .whitespacesAndNewlines)
           .isEmpty))
 
@@ -182,11 +179,8 @@ final class MCPProxyClientTests {
       #expect((cancelled.objectValue?["cancelled"]) == (.bool(true)))
       #expect((try client.activeRequests(server: server).objectValue?["requests"]) == (.array([])))
 
-      for _ in 0..<100 where !FileManager.default.fileExists(atPath: fixture.cancelMarker.path) {
-        Thread.sleep(forTimeInterval: 0.01)
-      }
       #expect(
-        !(try String(contentsOf: fixture.cancelMarker, encoding: .utf8)
+        !(try self.waitForNonemptyFile(at: fixture.cancelMarker)
           .trimmingCharacters(in: .whitespacesAndNewlines)
           .isEmpty))
 
@@ -454,6 +448,22 @@ final class MCPProxyClientTests {
       ofItemAtPath: script.path
     )
     return (script, startMarker, cancelMarker)
+  }
+
+  private func waitForNonemptyFile(
+    at url: URL,
+    timeout: TimeInterval = 1
+  ) throws -> String {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if let contents = try? String(contentsOf: url, encoding: .utf8),
+        !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      {
+        return contents
+      }
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    return try String(contentsOf: url, encoding: .utf8)
   }
 
   private func fakeHTTPMCPServer() throws -> (

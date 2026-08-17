@@ -21429,15 +21429,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       return
     }
 
-    let children = try FileManager.default.contentsOfDirectory(
-      at: directory,
-      includingPropertiesForKeys: nil,
-      options: []
-    )
-    .filter { includeHidden || !$0.lastPathComponent.hasPrefix(".") }
-    .sorted {
-      $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
-    }
+    let children = try sortedDirectoryChildren(directory, includeHidden: includeHidden)
 
     for child in children {
       if entries.count >= maxEntries {
@@ -21445,12 +21437,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         return
       }
 
-      let resolved = try resolvedWorkspaceURL(child.path)
+      let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
       let info = try fileInfo(url: resolved)
       entries.append(
         ListedFile(
           name: child.lastPathComponent,
-          relativePath: workspaceRelativePath(resolved),
+          relativePath: info.workspaceRelativePath,
           info: info
         ))
 
@@ -21499,7 +21491,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
           break
         }
 
-        let resolved = try resolvedWorkspaceURL(child.path)
+        let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
         let childInfo = try fileInfo(url: resolved)
         if directoriesOnly && childInfo.type != "directory" {
           continue
@@ -21737,7 +21729,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       }
       visited += 1
 
-      let resolved = try resolvedWorkspaceURL(child.path)
+      let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
       let info = try fileInfo(url: resolved)
       if fileName(
         child.lastPathComponent, matches: query, mode: matchMode, caseSensitive: caseSensitive)
@@ -21858,7 +21850,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         return
       }
 
-      let resolved = try resolvedWorkspaceURL(child.path)
+      let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
       let info = try fileInfo(url: resolved)
       if info.type == "directory" && !info.isSymlink {
         if currentDepth < maxDepth {
@@ -22021,7 +22013,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         return
       }
 
-      let resolved = try resolvedWorkspaceURL(child.path)
+      let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
       let info = try fileInfo(url: resolved)
       if info.type == "directory" && !info.isSymlink {
         if currentDepth < maxDepth {
@@ -22248,7 +22240,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       }
       scannedEntries += 1
 
-      let resolved = try resolvedWorkspaceURL(child.path)
+      let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
       let info = try fileInfo(url: resolved)
       if info.type == "directory" && !info.isSymlink {
         guard currentDepth < maxDepth else {
@@ -25480,15 +25472,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func sortedDirectoryChildren(_ directory: URL, includeHidden: Bool) throws -> [URL] {
-    try FileManager.default.contentsOfDirectory(
-      at: directory,
-      includingPropertiesForKeys: nil,
-      options: []
-    )
-    .filter { includeHidden || !$0.lastPathComponent.hasPrefix(".") }
-    .sorted {
-      $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
-    }
+    try FileManager.default.contentsOfDirectory(atPath: directory.path)
+      .filter { includeHidden || !$0.hasPrefix(".") }
+      .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+      .map { directory.appendingPathComponent($0) }
   }
 
   private func macOSApplicationRoots(includeSystem: Bool, includeUser: Bool) -> [URL] {
@@ -26636,10 +26623,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     let type = fileType(attributes[.type])
     let symlinkDestination = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+    let relativePath =
+      symlinkDestination == nil
+      ? workspaceRelativePath(url) : workspaceRelativePathPreservingSymlinks(url)
 
     return FileInfo(
       path: url.path,
-      workspaceRelativePath: workspaceRelativePath(url),
+      workspaceRelativePath: relativePath,
       type: symlinkDestination == nil ? type : "symlink",
       size: (attributes[.size] as? NSNumber)?.int64Value,
       createdAt: attributes[.creationDate] as? Date,

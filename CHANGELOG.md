@@ -4,6 +4,22 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.15 — 2026-08-18
+
+- Preserve the final symlink entry during recursive read-only workspace scans.
+  `file.list`, `file.tree`, `file.find`, `file.search`, `workspace.todos`, and
+  `workspace.env_files` report or skip symlinks without following their
+  targets, so a dangling link or a link outside the workspace cannot abort an
+  otherwise safe scan or expose target content.
+- Build directory children from lexical names and retain each symlink's
+  workspace-relative identity while explicit reads, writes, operation tickets,
+  and symlink destinations continue to enforce canonical containment.
+- The immutable 1.0.14 candidate passed signing, notarization, installation,
+  real ChatGPT Full Shell, and the escaping-symlink write denial. Its
+  exact-artifact catalog run then found that a safe dangling link caused two
+  recursive read-only tools to fail, so its draft remains unpublished and
+  1.0.15 repeats the complete workflow.
+
 ## 1.0.14 — 2026-08-18
 
 - Resolve workspace paths through the deepest existing ancestor before

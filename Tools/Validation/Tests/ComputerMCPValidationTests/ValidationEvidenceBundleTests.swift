@@ -34,7 +34,7 @@ struct ValidationEvidenceBundleTests {
       profileID: .cloudflareOperate,
       caller: .cloudflareTunnel,
       auditTransport: "cloudflare_tunnel",
-      testCaseID: "transport.cloudflare.named_tunnel",
+      testCaseID: "audit.sensitive_data_redacted",
       socketConnectionID: nil
     )
 
@@ -116,7 +116,7 @@ struct ValidationEvidenceBundleTests {
       profileID: .cloudflareOperate,
       caller: .cloudflareTunnel,
       auditTransport: "cloudflare_tunnel",
-      testCaseID: "transport.cloudflare.named_tunnel",
+      testCaseID: "audit.sensitive_data_redacted",
       socketConnectionID: nil
     )
 

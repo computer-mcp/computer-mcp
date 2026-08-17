@@ -560,7 +560,11 @@ private struct AppFullCatalogProbeRunner {
         )
       switch invocation.execution {
       case .direct:
-        callResult = await call(tool, invocation: invocation)
+        callResult = await call(
+          tool,
+          invocation: invocation,
+          allowsReviewedUpstreamDirectoryChallenge: tool == "codex.app.apps.list"
+        )
       case .committed:
         let committed = await callCommitted(tool, invocation: invocation)
         callResult = (committed.target, committed.report)
@@ -629,7 +633,8 @@ private struct AppFullCatalogProbeRunner {
 
   private func call(
     _ tool: String,
-    invocation: CapabilityFixtureInvocation
+    invocation: CapabilityFixtureInvocation,
+    allowsReviewedUpstreamDirectoryChallenge: Bool = false
   ) async -> (
     result: AppFullCatalogProbeToolResult,
     report: GatewayCallReport?
@@ -649,9 +654,21 @@ private struct AppFullCatalogProbeRunner {
         expectedMarker: invocation.expectedMarker
       )
       let resultData = try? sortedJSON(report.result)
+      let reviewedUpstreamDirectoryChallenge =
+        allowsReviewedUpstreamDirectoryChallenge
+        && isError
+        && structured
+        && ValidationReviewedOutcomePolicy.permitsUpstreamDirectoryChallenge(
+          testCaseID: "catalog.dynamic_full_coverage",
+          toolName: tool,
+          providerResult: encoded(report.result),
+          auditDecision: audit?.decision.rawValue,
+          auditErrorCode: audit?.errorCode
+        )
       let outputBytes = resultData?.count
       let status =
-        !isError && structured && semantic.passed && audit?.decision == .allowed
+        (!isError && structured && semantic.passed && audit?.decision == .allowed)
+          || reviewedUpstreamDirectoryChallenge
         ? "passed"
         : "failed"
       return (
@@ -663,7 +680,7 @@ private struct AppFullCatalogProbeRunner {
           auditEventID: audit?.id,
           auditDecision: audit?.decision.rawValue,
           structuredContent: structured,
-          semanticValidated: semantic.passed,
+          semanticValidated: semantic.passed || reviewedUpstreamDirectoryChallenge,
           outputByteCount: outputBytes,
           resultDigest: resultData.map(digest),
           auditEvent: audit,

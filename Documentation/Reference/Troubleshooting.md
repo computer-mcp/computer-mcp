@@ -188,6 +188,14 @@ otherwise maps the current fixed macOS settings to conventional upper- and
 lowercase child variables with loopback in `NO_PROXY`. It does not persist or
 log the derived values and does not evaluate PAC scripts.
 
+If the structured error contains `codex.app.request_failed`, `403 Forbidden`,
+and a correlated failed audit with `gateway.execution_failed`, the request was
+rejected by the upstream ChatGPT connector-directory endpoint. It is not a
+Computer MCP anti-scraping decision and does not mean the local App, loopback
+traffic, workspace content, or Shell was identified as hostile. The release
+validator accepts only that exact fail-closed directory challenge as a reviewed
+expected outcome; all other provider and network failures still fail closed.
+
 ## Computer Use Is Denied
 
 Open **Permissions**. Grant Accessibility or Screen Recording to the signed

@@ -5,8 +5,14 @@ import Testing
 
 @Suite("Validation observation correlation")
 struct ValidationObservationTests {
-  @Test("Reviewed expected failures stay scoped to fail-closed lifecycle capabilities")
+  @Test("Reviewed expected failures stay scoped to explicit fail-closed capabilities")
   func reviewedExpectedFailurePolicy() {
+    #expect(
+      ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "codex.app.apps.list"
+      )
+    )
     #expect(
       ValidationReviewedOutcomePolicy.permitsExpectedFailure(
         testCaseID: "catalog.dynamic_full_coverage",
@@ -27,8 +33,50 @@ struct ValidationObservationTests {
     )
     #expect(
       !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
-        testCaseID: "transport.cloudflare.named_tunnel",
+        testCaseID: "transport.cloudflare.quick_tunnel_isolated",
         toolName: "codex.app.requests.respond"
+      )
+    )
+  }
+
+  @Test("Only the audited Codex App directory 403 is a reviewed upstream challenge")
+  func reviewedUpstreamDirectoryChallenge() {
+    let providerResult =
+      "codex.app.request_failed: failed to list apps: Request failed with status 403 Forbidden"
+    #expect(
+      ValidationReviewedOutcomePolicy.permitsUpstreamDirectoryChallenge(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "codex.app.apps.list",
+        providerResult: providerResult,
+        auditDecision: "failed",
+        auditErrorCode: "gateway.execution_failed"
+      )
+    )
+    #expect(
+      !ValidationReviewedOutcomePolicy.permitsUpstreamDirectoryChallenge(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "codex.app.apps.list",
+        providerResult: providerResult.replacingOccurrences(of: "403", with: "500"),
+        auditDecision: "failed",
+        auditErrorCode: "gateway.execution_failed"
+      )
+    )
+    #expect(
+      !ValidationReviewedOutcomePolicy.permitsUpstreamDirectoryChallenge(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "codex.app.apps.list",
+        providerResult: providerResult,
+        auditDecision: "failed",
+        auditErrorCode: nil
+      )
+    )
+    #expect(
+      !ValidationReviewedOutcomePolicy.permitsUpstreamDirectoryChallenge(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "system.time",
+        providerResult: providerResult,
+        auditDecision: "failed",
+        auditErrorCode: "gateway.execution_failed"
       )
     )
   }

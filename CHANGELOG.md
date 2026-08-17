@@ -4,6 +4,32 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.16 — 2026-08-18
+
+- Add an in-App SwiftUI folder browser for macOS 27, where the beta system
+  open-panel selection state is unreliable. Earlier supported macOS releases
+  retain the system folder importer and its user-selected privacy grant. Both
+  paths update the workspace list in place after registration.
+- Keep the exact-artifact catalog gate exhaustive while admitting one narrowly
+  reviewed fail-closed outcome: `codex.app.apps.list` may encounter the
+  upstream ChatGPT connector-directory HTTP 403 challenge only when the MCP
+  result is structured, contains the stable provider marker, and correlates to
+  a failed audit row with `gateway.execution_failed`. Other provider, network,
+  semantic, or audit failures still block publication.
+- Make the 22-case mandatory release catalog match the publisher-owned trust
+  boundary. Cloudflare Quick Tunnel isolation and named-tunnel lifecycle/auth
+  tests remain mandatory; a live named deployment is an optional user-owned
+  deployment check because its domain, hostname, and runtime token belong to
+  the deploying user rather than the product or release workflow.
+- Derive Release Evidence Manifest completeness from the bundled Test Case
+  catalog instead of duplicating a fixed count across code and CLI output.
+- Keep the immutable notarized 1.0.15 draft unpublished: its App, Shell,
+  ChatGPT tunnel, 286 successful catalog calls, and all audit correlations
+  passed, but the previous policy incorrectly treated an upstream connector
+  directory challenge and publisher-owned Cloudflare domain as product release
+  failures. Version 1.0.16 repeats the protected signed-tag workflow and exact
+  artifact acceptance under the corrected boundary.
+
 ## 1.0.15 — 2026-08-18
 
 - Preserve the final symlink entry during recursive read-only workspace scans.

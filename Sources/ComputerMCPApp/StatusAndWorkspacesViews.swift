@@ -424,6 +424,7 @@ private struct CodexRegistrationConfirmation: View {
 struct WorkspacesView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
   @State private var isWorkspaceImporterPresented = false
+  @State private var isWorkspacePickerPresented = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -433,7 +434,7 @@ struct WorkspacesView: View {
       ) {
         HStack {
           Button {
-            isWorkspaceImporterPresented = true
+            presentWorkspacePicker()
           } label: {
             Label("Add", systemImage: "plus")
           }
@@ -492,24 +493,199 @@ struct WorkspacesView: View {
       allowedContentTypes: [.folder],
       allowsMultipleSelection: false
     ) { result in
-      switch result {
-      case .success(let urls):
-        guard let url = urls.first else {
-          return
-        }
+      handleWorkspaceImport(result)
+    }
+    .sheet(isPresented: $isWorkspacePickerPresented) {
+      WorkspaceDirectoryPicker { url in
         model.addWorkspace(at: url)
-      case .failure(let error):
-        let cocoaError = error as NSError
-        guard cocoaError.domain != NSCocoaErrorDomain || cocoaError.code != NSUserCancelledError
-        else {
-          return
-        }
-        model.presentedError = PresentedAppError(
-          title: "Unable to select workspace",
-          message: AppLocalization.errorDescription(error)
-        )
       }
     }
+  }
+
+  private func presentWorkspacePicker() {
+    if #available(macOS 27.0, *) {
+      isWorkspacePickerPresented = true
+    } else {
+      isWorkspaceImporterPresented = true
+    }
+  }
+
+  private func handleWorkspaceImport(_ result: Result<[URL], Error>) {
+    switch result {
+    case .success(let urls):
+      guard let url = urls.first else {
+        return
+      }
+      model.addWorkspace(at: url)
+    case .failure(let error):
+      let cocoaError = error as NSError
+      guard cocoaError.domain != NSCocoaErrorDomain || cocoaError.code != NSUserCancelledError
+      else {
+        return
+      }
+      model.presentedError = PresentedAppError(
+        title: "Unable to select workspace",
+        message: AppLocalization.errorDescription(error)
+      )
+    }
+  }
+}
+
+private struct WorkspaceDirectoryPicker: View {
+  @Environment(\.dismiss) private var dismiss
+
+  let onSelect: (URL) -> Void
+
+  @State private var currentDirectory = FileManager.default.homeDirectoryForCurrentUser
+  @State private var directories: [URL] = []
+  @State private var errorMessage: String?
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(alignment: .top, spacing: 16) {
+        VStack(alignment: .leading, spacing: 5) {
+          Text("Add Workspace")
+            .font(.title2.weight(.semibold))
+          Text("Add a folder to create a persistent local workspace grant.")
+            .foregroundStyle(.secondary)
+        }
+
+        Spacer()
+
+        Button {
+          navigate(to: FileManager.default.homeDirectoryForCurrentUser)
+        } label: {
+          Label("Home", systemImage: "house")
+        }
+
+        Button {
+          navigate(to: parentDirectory)
+        } label: {
+          Label("Up One Level", systemImage: "arrow.up")
+        }
+        .disabled(currentDirectory.path == "/")
+      }
+      .padding(20)
+
+      Divider()
+
+      HStack(spacing: 9) {
+        Image(systemName: "folder.fill")
+          .foregroundStyle(Color.accentColor)
+        Text(verbatim: currentDirectory.path)
+          .font(.system(.callout, design: .monospaced))
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .textSelection(.enabled)
+        Spacer()
+      }
+      .padding(.horizontal, 20)
+      .padding(.vertical, 12)
+
+      Divider()
+
+      Group {
+        if let errorMessage {
+          ContentUnavailableView(
+            "Unable to read this folder",
+            systemImage: "exclamationmark.triangle",
+            description: Text(verbatim: errorMessage)
+          )
+        } else if directories.isEmpty {
+          ContentUnavailableView("No subfolders", systemImage: "folder")
+        } else {
+          List(directories, id: \.path) { directory in
+            Button {
+              navigate(to: directory)
+            } label: {
+              HStack(spacing: 12) {
+                Image(systemName: "folder")
+                  .foregroundStyle(Color.accentColor)
+                  .frame(width: 20)
+                Text(verbatim: FileManager.default.displayName(atPath: directory.path))
+                  .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.forward")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.tertiary)
+              }
+              .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+          }
+          .listStyle(.inset)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+      Divider()
+
+      HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Current folder")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(verbatim: displayName(for: currentDirectory))
+            .fontWeight(.medium)
+        }
+
+        Spacer()
+
+        Button("Cancel") {
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+
+        Button("Add") {
+          let selectedDirectory = currentDirectory
+          dismiss()
+          onSelect(selectedDirectory)
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+      .padding(20)
+    }
+    .frame(minWidth: 680, idealWidth: 760, minHeight: 480, idealHeight: 560)
+    .task(id: currentDirectory) {
+      loadCurrentDirectory()
+    }
+  }
+
+  private var parentDirectory: URL {
+    currentDirectory.deletingLastPathComponent().standardizedFileURL
+  }
+
+  private func navigate(to url: URL) {
+    currentDirectory = url.standardizedFileURL
+    directories = []
+    errorMessage = nil
+  }
+
+  private func loadCurrentDirectory() {
+    do {
+      let urls = try FileManager.default.contentsOfDirectory(
+        at: currentDirectory,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+      )
+      directories = urls.filter { url in
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+      }
+      .sorted {
+        FileManager.default.displayName(atPath: $0.path).localizedStandardCompare(
+          FileManager.default.displayName(atPath: $1.path)
+        ) == .orderedAscending
+      }
+      errorMessage = nil
+    } catch {
+      directories = []
+      errorMessage = AppLocalization.errorDescription(error)
+    }
+  }
+
+  private func displayName(for url: URL) -> String {
+    let displayName = FileManager.default.displayName(atPath: url.path)
+    return displayName.isEmpty ? url.path : displayName
   }
 }
 

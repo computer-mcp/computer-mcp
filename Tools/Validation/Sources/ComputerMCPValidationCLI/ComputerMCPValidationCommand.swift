@@ -615,7 +615,8 @@ struct ReleaseManifestGenerate: ParsableCommand {
     )
     try manifest.canonicalJSON().write(to: destination, options: .atomic)
     print(
-      "Release Evidence Manifest: 23/23 Test Cases, "
+      "Release Evidence Manifest: \(report.summary.testCasePassedCount)/"
+        + "\(report.summary.testCaseCount) Test Cases, "
         + "\(bundleInputs.count) Evidence Bundles, digest \(manifest.contentDigest)."
     )
   }

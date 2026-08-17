@@ -4,6 +4,23 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.14 — 2026-08-18
+
+- Resolve workspace paths through the deepest existing ancestor before
+  authorizing reads, writes, links, or operation tickets. A write whose missing
+  destination sits below a symlink that leaves the registered workspace is now
+  denied before preparation and cannot create content outside the grant.
+- Reuse the same canonical containment rule for built-in tools and
+  `operations.prepare`, classify state-path escape audits as denied, and add
+  regressions for direct writes, symlink destinations, and ticket preparation.
+- Preserve the authenticated OpenAI Secure MCP Tunnel identity in runtime
+  validation observations and add repeatable evidence for downstream drift
+  denial, cancellation propagation, and provider reconnection.
+- The immutable 1.0.13 candidate passed signing, notarization, installation,
+  ChatGPT Full Shell, and 287/287 runtime calls. Exact-artifact acceptance then
+  reproduced a missing-target write through an escaping workspace symlink, so
+  its draft remains unpublished and 1.0.14 repeats the complete workflow.
+
 ## 1.0.13 — 2026-08-17
 
 - Resolve the active fixed macOS HTTP, HTTPS, and SOCKS proxies for every

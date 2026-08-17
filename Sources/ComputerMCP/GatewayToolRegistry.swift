@@ -21087,19 +21087,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func resolvedWorkspaceURL(_ path: String) throws -> URL {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
-    let target =
-      path.hasPrefix("/")
-      ? URL(fileURLWithPath: path)
-      : base.appendingPathComponent(path)
-    let resolved = target.standardizedFileURL.resolvingSymlinksInPath()
-    let basePath = base.path
-    let basePrefix = basePath.hasSuffix("/") ? basePath : "\(basePath)/"
-    guard resolved.path == basePath || resolved.path.hasPrefix(basePrefix) else {
+    do {
+      return try WorkspacePathResolver.resolve(
+        path,
+        relativeTo: configuration.workspaceDirectory
+      )
+    } catch {
       throw GatewayToolError.invalidArguments(
         "[policy.workspace_denied] Path escapes workspace: \(path)")
     }
-    return resolved
   }
 
   private func lexicalWorkspaceURL(_ path: String) throws -> URL {
@@ -21162,23 +21158,40 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func resolvedWorkspaceURLPreservingFinalSymlink(_ path: String) throws -> URL {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
+    let lexicalBase = WorkspacePathResolver.lexicallyNormalized(configuration.workspaceDirectory)
+    let canonicalBase: URL
+    let base: URL
+    do {
+      canonicalBase = try WorkspacePathResolver.canonicalWorkspace(lexicalBase)
+      base = try WorkspacePathResolver.resolve(".", relativeTo: lexicalBase)
+    } catch {
+      throw GatewayToolError.invalidArguments(
+        "[policy.workspace_denied] Unable to resolve workspace root: \(lexicalBase.path)")
+    }
+    let isAbsolute = path.hasPrefix("/")
     let target =
-      path.hasPrefix("/")
+      isAbsolute
       ? URL(fileURLWithPath: path)
       : base.appendingPathComponent(path)
-    let standardized = target.standardizedFileURL
-    let basePath = base.path
-    let basePrefix = basePath.hasSuffix("/") ? basePath : "\(basePath)/"
-    let lexicalPathIsContained =
-      standardized.path == basePath || standardized.path.hasPrefix(basePrefix)
-    let parent = standardized.deletingLastPathComponent().resolvingSymlinksInPath()
-    let parentPathIsContained = parent.path == basePath || parent.path.hasPrefix(basePrefix)
-    guard lexicalPathIsContained || parentPathIsContained else {
+    let standardized = WorkspacePathResolver.lexicallyNormalized(target)
+    guard
+      WorkspacePathResolver.contains(standardized, in: base)
+        || (isAbsolute && WorkspacePathResolver.contains(standardized, in: lexicalBase))
+        || (isAbsolute && WorkspacePathResolver.contains(standardized, in: canonicalBase))
+    else {
       throw GatewayToolError.invalidArguments(
         "[policy.workspace_denied] Path escapes workspace: \(path)")
     }
-    guard parentPathIsContained else {
+    guard standardized.path != base.path else {
+      return base
+    }
+    let parent: URL
+    do {
+      parent = try WorkspacePathResolver.resolve(
+        standardized.deletingLastPathComponent().path,
+        relativeTo: base
+      )
+    } catch {
       throw GatewayToolError.invalidArguments(
         "[policy.workspace_denied] Path escapes workspace through parent symlink: \(path)")
     }
@@ -21186,10 +21199,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func isWorkspaceContained(_ url: URL) -> Bool {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath().path
-    let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-    let basePrefix = base.hasSuffix("/") ? base : "\(base)/"
-    return path == base || path.hasPrefix(basePrefix)
+    (try? WorkspacePathResolver.resolve(
+      url.path,
+      relativeTo: configuration.workspaceDirectory
+    )) != nil
   }
 
   private func workspaceRelativePath(_ url: URL) -> String {

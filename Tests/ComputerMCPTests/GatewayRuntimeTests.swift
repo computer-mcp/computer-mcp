@@ -319,6 +319,53 @@ final class GatewayRuntimeTests {
   }
 
   @Test
+  func testOperationPreparationRejectsEscapingSymlinkTarget() throws {
+    let container = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: container) }
+    let root = container.appendingPathComponent("workspace", isDirectory: true)
+    let outside = container.appendingPathComponent("outside", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      at: root.appendingPathComponent("escape"),
+      withDestinationURL: outside
+    )
+    let database = try GatewayDatabase(inMemory: ())
+    let gateway = try makeGateway(
+      capabilities: ["operations.prepare", "operations.commit", "file.write"],
+      workspaceIDs: ["root"],
+      builtin: ["file.write"],
+      database: database,
+      workspaces: [workspace(id: "root", root: root)],
+      caller: .secureTunnel,
+      profileID: .chatGPTOperate
+    )
+
+    expectThrows(
+      try gateway.callTool(
+        name: "operations.prepare",
+        arguments: .object([
+          "workspace_id": .string("root"),
+          "tool": .string("file.write"),
+          "arguments": .object([
+            "path": .string("escape/written.txt"),
+            "content": .string("must not escape"),
+          ]),
+        ])
+      )
+    ) { error in
+      #expect(error.localizedDescription.contains("operations.state_path_escape"))
+    }
+    #expect(
+      !FileManager.default.fileExists(atPath: outside.appendingPathComponent("written.txt").path))
+    let audit = try #require(
+      try database.auditEvents().first { $0.capabilityID == "operations.prepare" }
+    )
+    #expect(audit.decision == .denied)
+    #expect(audit.errorCode == "operations.state_path_escape")
+  }
+
+  @Test
   func testOperationTicketFailsClosedWhenTargetStateDrifts() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

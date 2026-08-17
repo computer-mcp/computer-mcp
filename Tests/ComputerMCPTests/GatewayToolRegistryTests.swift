@@ -3433,6 +3433,88 @@ final class GatewayToolRegistryTests {
   }
 
   @Test
+  func testWorkspacePathResolverAcceptsEquivalentCanonicalAbsolutePath() throws {
+    let workspace = try temporaryDirectory()
+    let canonicalWorkspace = try WorkspacePathResolver.canonicalWorkspace(workspace)
+    let canonicalTarget = canonicalWorkspace.appendingPathComponent("future/file.txt")
+
+    let resolved = try WorkspacePathResolver.resolve(
+      canonicalTarget.path,
+      relativeTo: workspace
+    )
+
+    #expect(resolved.path == workspace.appendingPathComponent("future/file.txt").path)
+  }
+
+  @Test
+  func testFileWriteRejectsNonexistentTargetThroughEscapingSymlink() throws {
+    let container = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: container) }
+    let workspace = container.appendingPathComponent("workspace", isDirectory: true)
+    let outside = container.appendingPathComponent("outside", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      at: workspace.appendingPathComponent("escape"),
+      withDestinationURL: outside
+    )
+    let outsideTarget = outside.appendingPathComponent("written.txt")
+    let registry = GatewayToolRegistry(
+      configuration: GatewayConfiguration(
+        builtin: BuiltinConfig(enabled: ["file.write"]),
+        workspaceDirectory: workspace
+      )
+    )
+
+    expectThrows(
+      try registry.callTool(
+        name: "file.write",
+        arguments: .object([
+          "path": .string("escape/written.txt"),
+          "content": .string("must not escape"),
+        ])
+      )
+    ) { error in
+      #expect(error.localizedDescription.contains("policy.workspace_denied"))
+    }
+    #expect(!FileManager.default.fileExists(atPath: outsideTarget.path))
+  }
+
+  @Test
+  func testFileSymlinkRejectsDestinationThroughEscapingSymlink() throws {
+    let container = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: container) }
+    let workspace = container.appendingPathComponent("workspace", isDirectory: true)
+    let outside = container.appendingPathComponent("outside", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      at: workspace.appendingPathComponent("escape"),
+      withDestinationURL: outside
+    )
+    let link = workspace.appendingPathComponent("new-link")
+    let registry = GatewayToolRegistry(
+      configuration: GatewayConfiguration(
+        builtin: BuiltinConfig(enabled: ["file.symlink"]),
+        workspaceDirectory: workspace
+      )
+    )
+
+    expectThrows(
+      try registry.callTool(
+        name: "file.symlink",
+        arguments: .object([
+          "path": .string("new-link"),
+          "destination": .string("escape/future.txt"),
+        ])
+      )
+    ) { error in
+      #expect(error.localizedDescription.contains("policy.workspace_denied"))
+    }
+    #expect(!FileManager.default.fileExists(atPath: link.path))
+  }
+
+  @Test
   func testFileWriteFilesDryRunAndConfirmedWrite() throws {
     let directory = try temporaryDirectory()
     let first = directory.appendingPathComponent("notes/one.txt")

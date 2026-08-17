@@ -8,13 +8,18 @@ package enum WorkspacePathResolutionError: Error, Equatable, Sendable {
 
 package enum WorkspacePathResolver {
   package static func resolve(_ path: String, relativeTo workspaceURL: URL) throws -> URL {
-    let workspace = try canonicalExistingURL(workspaceURL.standardizedFileURL)
+    let lexicalWorkspace = lexicallyNormalized(workspaceURL)
+    let workspace = try canonicalWorkspace(lexicalWorkspace)
+    let isAbsolute = path.hasPrefix("/")
     let target =
-      path.hasPrefix("/")
-      ? URL(fileURLWithPath: path).standardizedFileURL
-      : workspace.appendingPathComponent(path).standardizedFileURL
+      isAbsolute
+      ? lexicallyNormalized(URL(fileURLWithPath: path))
+      : lexicallyNormalized(workspace.appendingPathComponent(path))
 
-    guard contains(target, in: workspace) else {
+    guard
+      contains(target, in: workspace)
+        || (isAbsolute && contains(target, in: lexicalWorkspace))
+    else {
       throw WorkspacePathResolutionError.escapesWorkspace
     }
 
@@ -47,16 +52,47 @@ package enum WorkspacePathResolver {
     for component in missingComponents {
       resolved.appendPathComponent(component)
     }
-    resolved = resolved.standardizedFileURL
+    resolved = lexicallyNormalized(resolved)
     guard contains(resolved, in: workspace) else {
       throw WorkspacePathResolutionError.escapesWorkspace
     }
-    return resolved
+
+    let systemNormalizedWorkspace = workspace.standardizedFileURL
+    guard systemNormalizedWorkspace.path == lexicalWorkspace.path else {
+      return resolved
+    }
+    let workspacePrefix = workspace.path.hasSuffix("/") ? workspace.path : "\(workspace.path)/"
+    guard resolved.path.hasPrefix(workspacePrefix) else {
+      return lexicalWorkspace
+    }
+    let relativePath = String(resolved.path.dropFirst(workspacePrefix.count))
+    return lexicallyNormalized(lexicalWorkspace.appendingPathComponent(relativePath))
+  }
+
+  package static func canonicalWorkspace(_ workspaceURL: URL) throws -> URL {
+    try canonicalExistingURL(lexicallyNormalized(workspaceURL))
+  }
+
+  package static func lexicallyNormalized(_ url: URL) -> URL {
+    var components: [Substring] = []
+    for component in url.path.split(separator: "/", omittingEmptySubsequences: true) {
+      switch component {
+      case ".":
+        continue
+      case "..":
+        if !components.isEmpty {
+          components.removeLast()
+        }
+      default:
+        components.append(component)
+      }
+    }
+    return URL(fileURLWithPath: "/" + components.joined(separator: "/"))
   }
 
   package static func contains(_ candidate: URL, in workspace: URL) -> Bool {
-    let rootPath = workspace.standardizedFileURL.path
-    let candidatePath = candidate.standardizedFileURL.path
+    let rootPath = lexicallyNormalized(workspace).path
+    let candidatePath = lexicallyNormalized(candidate).path
     let prefix = rootPath.hasSuffix("/") ? rootPath : "\(rootPath)/"
     return candidatePath == rootPath || candidatePath.hasPrefix(prefix)
   }
@@ -70,6 +106,6 @@ package enum WorkspacePathResolver {
       )
     }
     defer { free(resolvedPath) }
-    return URL(fileURLWithPath: String(cString: resolvedPath)).standardizedFileURL
+    return URL(fileURLWithPath: String(cString: resolvedPath))
   }
 }

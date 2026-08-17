@@ -3433,6 +3433,20 @@ final class GatewayToolRegistryTests {
   }
 
   @Test
+  func testWorkspacePathResolverAcceptsEquivalentCanonicalAbsolutePath() throws {
+    let workspace = try temporaryDirectory()
+    let canonicalWorkspace = try WorkspacePathResolver.canonicalWorkspace(workspace)
+    let canonicalTarget = canonicalWorkspace.appendingPathComponent("future/file.txt")
+
+    let resolved = try WorkspacePathResolver.resolve(
+      canonicalTarget.path,
+      relativeTo: workspace
+    )
+
+    #expect(resolved.path == workspace.appendingPathComponent("future/file.txt").path)
+  }
+
+  @Test
   func testFileWriteRejectsNonexistentTargetThroughEscapingSymlink() throws {
     let container = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: container) }

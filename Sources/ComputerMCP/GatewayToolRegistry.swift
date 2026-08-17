@@ -21158,13 +21158,27 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func resolvedWorkspaceURLPreservingFinalSymlink(_ path: String) throws -> URL {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
+    let lexicalBase = WorkspacePathResolver.lexicallyNormalized(configuration.workspaceDirectory)
+    let canonicalBase: URL
+    let base: URL
+    do {
+      canonicalBase = try WorkspacePathResolver.canonicalWorkspace(lexicalBase)
+      base = try WorkspacePathResolver.resolve(".", relativeTo: lexicalBase)
+    } catch {
+      throw GatewayToolError.invalidArguments(
+        "[policy.workspace_denied] Unable to resolve workspace root: \(lexicalBase.path)")
+    }
+    let isAbsolute = path.hasPrefix("/")
     let target =
-      path.hasPrefix("/")
+      isAbsolute
       ? URL(fileURLWithPath: path)
       : base.appendingPathComponent(path)
-    let standardized = target.standardizedFileURL
-    guard WorkspacePathResolver.contains(standardized, in: base) else {
+    let standardized = WorkspacePathResolver.lexicallyNormalized(target)
+    guard
+      WorkspacePathResolver.contains(standardized, in: base)
+        || (isAbsolute && WorkspacePathResolver.contains(standardized, in: lexicalBase))
+        || (isAbsolute && WorkspacePathResolver.contains(standardized, in: canonicalBase))
+    else {
       throw GatewayToolError.invalidArguments(
         "[policy.workspace_denied] Path escapes workspace: \(path)")
     }

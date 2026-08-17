@@ -4,6 +4,26 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.12 — 2026-08-17
+
+- Accept runtime observations over the OpenAI Secure MCP Tunnel only when the
+  audit-derived Tunnel instance, Tunnel profile, and Gateway Socket connection
+  are complete. These probes remain consumer-free runtime evidence and cannot
+  claim a ChatGPT result.
+- Add a full collector regression that correlates an authenticated Secure
+  Tunnel runtime request through its exact audit row and verifies the sealed
+  Evidence Bundle.
+- Upgrade Validation Observation and Evidence Bundles to schema 2. Reviewed
+  fail-closed execution paths now use `expected_failure`, require an exact
+  failed audit row with a stable error code, and remain distinct from policy
+  denial and unexpected failure. Only the two reviewed no-active-request
+  lifecycle response tools may use this outcome.
+- The immutable 1.0.11 candidate passed CI, Developer ID signing, Apple
+  notarization, installation, effective configuration export, and 287/287
+  exact-artifact calls. Final evidence sealing exposed the remaining runtime
+  layer contract mismatch; its draft remains unpublished and 1.0.12 repeats
+  the complete production workflow and exact-artifact acceptance.
+
 ## 1.0.11 — 2026-08-17
 
 - Derive full-catalog observation provenance from the correlated audit rows,

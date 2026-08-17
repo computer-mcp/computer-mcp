@@ -5,6 +5,82 @@ import Testing
 
 @Suite("Validation observation correlation")
 struct ValidationObservationTests {
+  @Test("Reviewed expected failures stay scoped to fail-closed lifecycle capabilities")
+  func reviewedExpectedFailurePolicy() {
+    #expect(
+      ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "codex.app.requests.respond"
+      )
+    )
+    #expect(
+      ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "codex.mcp.approval.respond"
+      )
+    )
+    #expect(
+      !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+        testCaseID: "catalog.dynamic_full_coverage",
+        toolName: "system.time"
+      )
+    )
+    #expect(
+      !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+        testCaseID: "transport.cloudflare.named_tunnel",
+        toolName: "codex.app.requests.respond"
+      )
+    )
+  }
+
+  @Test("Observation collector rejects an unreviewed expected failure")
+  func unreviewedExpectedFailureObservation() throws {
+    let observations = ValidationObservationBundle(
+      generatedAt: timestamp,
+      layer: .runtime,
+      transport: ValidationTransportProvenance(
+        transport: .gatewaySocket,
+        socketConnectionID: "socket-unreviewed-failure-1"
+      ),
+      observations: [
+        ValidationObservation(
+          id: "unreviewed-failure-observation-1",
+          testCaseID: "catalog.dynamic_full_coverage",
+          generatedAt: timestamp,
+          toolName: "system.time",
+          transportRequestID: "client-unreviewed-failure-1",
+          gatewayRequestID: "gateway-unreviewed-failure-1",
+          passed: true,
+          observationDigest: digest,
+          assertionIDs: ["step.1", "expected_result.1"],
+          expectedOutcome: .expectedFailure,
+          independentPostconditions: [
+            ValidationPostcondition(
+              id: "cleanup.1",
+              passed: true,
+              observer: "fixture_semantic_validator",
+              observationDigest: digest
+            )
+          ]
+        )
+      ]
+    )
+
+    expectThrows(
+      try ValidationObservationCollector(database: GatewayDatabase(inMemory: ())).collect(
+        observations: observations,
+        runID: "run-unreviewed-failure-001",
+        environment: makeEnvironment(profileID: .chatGPTOperate)
+      )
+    ) { error in
+      guard case ValidationObservationCollectorError.invalidObservation(let detail) = error else {
+        Issue.record("Expected invalidObservation; received \(error)")
+        return
+      }
+      #expect(detail.contains("expected_failure"))
+    }
+  }
+
   @Test("OpenAI consumer result correlates to one audit row")
   func openAICorrelation() throws {
     let database = try GatewayDatabase(inMemory: ())
@@ -71,7 +147,7 @@ struct ValidationObservationTests {
       from: makeObservations().encodedJSON()
     )
     var object = try #require(current.objectValue)
-    object["schema_version"] = .number(2)
+    object["schema_version"] = .number(3)
 
     expectThrows(
       try ValidationObservationBundle.decodeJSON(
@@ -82,8 +158,8 @@ struct ValidationObservationTests {
         error as? ValidationArtifactError
           == ValidationArtifactError.unsupportedSchema(
             artifact: "Validation Observation Bundle",
-            expected: 1,
-            actual: 2
+            expected: 2,
+            actual: 3
           )
       )
     }
@@ -171,6 +247,192 @@ struct ValidationObservationTests {
     #expect(bundle.runs[0].consumer == nil)
     #expect(bundle.runs[0].attempts[0].consumerResultID == nil)
     #expect(ValidationEvidenceBundleVerifier().verify(bundle, database: database).isVerified)
+  }
+
+  @Test("Authenticated OpenAI runtime result preserves Tunnel provenance")
+  func authenticatedOpenAIRuntimeCorrelation() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let runtimeAudit = AuditEvent(
+      id: "audit-openai-runtime-1",
+      requestID: "gateway-openai-runtime-1",
+      mcpRequestID: "client-openai-runtime-1",
+      caller: .secureTunnel,
+      transport: "gateway_socket",
+      socketConnectionID: "socket-openai-runtime-1",
+      tunnelInstanceID: "tunnel-openai-runtime-1",
+      tunnelProfileID: "computer-mcp",
+      profileID: .chatGPTOperate,
+      capabilityID: "system.time",
+      decision: .allowed,
+      inputDigest: digest,
+      outputDigest: outputDigest,
+      outputByteCount: 64,
+      outputTruncated: false
+    )
+    try database.recordAudit(runtimeAudit)
+    let observations = ValidationObservationBundle(
+      generatedAt: timestamp,
+      layer: .runtime,
+      transport: ValidationTransportProvenance(
+        transport: .openAISecureMCPTunnel,
+        tunnelInstanceID: "tunnel-openai-runtime-1",
+        tunnelProfileID: "computer-mcp",
+        socketConnectionID: "socket-openai-runtime-1"
+      ),
+      observations: [
+        ValidationObservation(
+          id: "openai-runtime-observation-1",
+          testCaseID: "catalog.dynamic_full_coverage",
+          generatedAt: timestamp,
+          toolName: "system.time",
+          transportRequestID: "client-openai-runtime-1",
+          gatewayRequestID: "gateway-openai-runtime-1",
+          passed: true,
+          observationDigest: digest,
+          assertionIDs: ["step.1", "expected_result.1"],
+          independentPostconditions: [
+            ValidationPostcondition(
+              id: "cleanup.1",
+              passed: true,
+              observer: "fixture_inspector",
+              observationDigest: digest
+            )
+          ]
+        )
+      ]
+    )
+
+    let bundle = try ValidationObservationCollector(database: database).collect(
+      observations: observations,
+      runID: "run-openai-runtime-001",
+      environment: makeEnvironment(profileID: .chatGPTOperate)
+    )
+
+    #expect(bundle.runs[0].layer == .runtime)
+    #expect(bundle.runs[0].consumer == nil)
+    #expect(bundle.runs[0].transport.transport == .openAISecureMCPTunnel)
+    #expect(bundle.runs[0].transport.tunnelInstanceID == "tunnel-openai-runtime-1")
+    #expect(bundle.runs[0].transport.tunnelProfileID == "computer-mcp")
+    #expect(ValidationEvidenceBundleVerifier().verify(bundle, database: database).isVerified)
+  }
+
+  @Test("Authenticated runtime can prove a reviewed expected execution failure")
+  func authenticatedRuntimeExpectedFailureCorrelation() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let runtimeAudit = AuditEvent(
+      id: "audit-openai-expected-failure-1",
+      requestID: "gateway-openai-expected-failure-1",
+      mcpRequestID: "client-openai-expected-failure-1",
+      caller: .secureTunnel,
+      transport: "gateway_socket",
+      socketConnectionID: "socket-openai-expected-failure-1",
+      tunnelInstanceID: "tunnel-openai-expected-failure-1",
+      tunnelProfileID: "computer-mcp",
+      profileID: .chatGPTOperate,
+      capabilityID: "codex.app.requests.respond",
+      decision: .failed,
+      errorCode: "gateway.invalid_arguments",
+      inputDigest: digest,
+      outputDigest: outputDigest,
+      outputByteCount: 64,
+      outputTruncated: false
+    )
+    try database.recordAudit(runtimeAudit)
+    let observations = ValidationObservationBundle(
+      generatedAt: timestamp,
+      layer: .runtime,
+      transport: ValidationTransportProvenance(
+        transport: .openAISecureMCPTunnel,
+        tunnelInstanceID: "tunnel-openai-expected-failure-1",
+        tunnelProfileID: "computer-mcp",
+        socketConnectionID: "socket-openai-expected-failure-1"
+      ),
+      observations: [
+        ValidationObservation(
+          id: "openai-expected-failure-observation-1",
+          testCaseID: "catalog.dynamic_full_coverage",
+          generatedAt: timestamp,
+          toolName: "codex.app.requests.respond",
+          transportRequestID: "client-openai-expected-failure-1",
+          gatewayRequestID: "gateway-openai-expected-failure-1",
+          passed: true,
+          observationDigest: digest,
+          assertionIDs: ["step.1", "expected_result.1"],
+          expectedOutcome: .expectedFailure,
+          independentPostconditions: [
+            ValidationPostcondition(
+              id: "cleanup.1",
+              passed: true,
+              observer: "fixture_semantic_validator",
+              observationDigest: digest
+            )
+          ]
+        )
+      ]
+    )
+
+    let bundle = try ValidationObservationCollector(database: database).collect(
+      observations: observations,
+      runID: "run-openai-expected-failure-001",
+      environment: makeEnvironment(profileID: .chatGPTOperate)
+    )
+    let verification = ValidationEvidenceBundleVerifier().verify(bundle, database: database)
+    let coverage = try ValidationEvidenceBundleVerifier().verifiedCoverageEvidence(from: bundle)
+
+    #expect(verification.isVerified, Comment(rawValue: String(describing: verification.issues)))
+    #expect(bundle.schemaVersion == 2)
+    #expect(bundle.runs[0].attempts[0].outcome == .expectedFailure)
+    #expect(coverage.rows.count == 1)
+    #expect(coverage.rows[0].status == .passed)
+  }
+
+  @Test("Authenticated OpenAI runtime rejects incomplete Tunnel provenance")
+  func authenticatedOpenAIRuntimeRequiresCompleteProvenance() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let observations = ValidationObservationBundle(
+      generatedAt: timestamp,
+      layer: .runtime,
+      transport: ValidationTransportProvenance(
+        transport: .openAISecureMCPTunnel,
+        tunnelInstanceID: "tunnel-openai-runtime-1",
+        socketConnectionID: "socket-openai-runtime-1"
+      ),
+      observations: [
+        ValidationObservation(
+          id: "openai-runtime-observation-1",
+          testCaseID: "catalog.dynamic_full_coverage",
+          generatedAt: timestamp,
+          toolName: "system.time",
+          transportRequestID: "client-openai-runtime-1",
+          gatewayRequestID: "gateway-openai-runtime-1",
+          passed: true,
+          observationDigest: digest,
+          assertionIDs: ["step.1", "expected_result.1"],
+          independentPostconditions: [
+            ValidationPostcondition(
+              id: "cleanup.1",
+              passed: true,
+              observer: "fixture_inspector",
+              observationDigest: digest
+            )
+          ]
+        )
+      ]
+    )
+
+    expectThrows(
+      try ValidationObservationCollector(database: database).collect(
+        observations: observations,
+        runID: "run-openai-runtime-incomplete-001",
+        environment: makeEnvironment(profileID: .chatGPTOperate)
+      )
+    ) { error in
+      guard case ValidationObservationCollectorError.invalidObservation(let detail) = error else {
+        Issue.record("Expected invalidObservation; received \(error)")
+        return
+      }
+      #expect(detail.contains("authenticated Tunnel provenance"))
+    }
   }
 
   @Test("A development Quick Tunnel keeps outer provenance separate from the HTTP audit")

@@ -88,10 +88,10 @@ become automated Swift tests.
 
 ## Evidence contract
 
-Validation Evidence Bundle schema 1 uses three layers:
+Validation Evidence Bundle schema 2 uses three layers:
 
 - `contract`: static inventory and schema identity;
-- `runtime`: local request, execution, audit, and independent result;
+- `runtime`: transport request, execution, audit, and independent result;
 - `external_consumer`: consumer result correlated across its transport to the
   same gateway request, audit record, and result.
 
@@ -99,15 +99,27 @@ The consumer is represented by `consumer.kind` and `transport`, so the schema
 supports ChatGPT, a standard MCP client behind Cloudflare, and future external
 consumers without consumer-specific evidence fields.
 
-Correlation starts from a strict schema-1 **Validation Observation Bundle**.
+Correlation starts from a strict schema-2 **Validation Observation Bundle**.
 Every observation supplies the Test Case, explicit assertion IDs, the Gateway
 request ID returned by Computer MCP, and independently observed cleanup/result
 digests. External-consumer observations additionally supply
 `consumer_result_id`, such as a stable result item in the maintained ChatGPT
-response. `transport_request_id` is required for local runtime observations and
+response. `transport_request_id` is required for runtime observations and
 optional for an external consumer whose UI does not expose its MCP JSON-RPC ID.
 The local audit must still contain the transport request when that transport
 can observe it. No local value is presented as if ChatGPT supplied it.
+
+Schema 2 records the reviewed result class explicitly. `passed` requires one
+exact `allowed` audit row without an error. `expected_denial` requires one exact
+policy `denied` row with a stable error code. `expected_failure` is reserved for
+a deliberately exercised fail-closed execution path whose independent semantic
+check passed; it requires one exact `failed` row with a stable error code. A raw
+`failed` outcome never proves acceptance. This keeps lifecycle tools that have
+no outstanding request distinguishable from authorization denials and from
+unexpected failures. The schema-2 validator permits `expected_failure` only for
+the reviewed no-active-request paths of `codex.app.requests.respond` and
+`codex.mcp.approval.respond` in `catalog.dynamic_full_coverage`; every other
+capability fails closed.
 
 The lifecycle is:
 
@@ -128,11 +140,14 @@ captured `cleanup.*` postcondition. It does not invent a transport request ID
 that Safari does not expose.
 
 Local Control Socket and Gateway Socket calls can produce observations through
-`probe app call --observations ...`. Named and development-only Cloudflare HTTP
-calls can use `probe http call --observations ...`; the selected outer transport
-remains distinct from the inner loopback `streamable_http` audit. `evidence
-correlate` then queries exactly one audit row for every Gateway request and
-seals the canonical Evidence Bundle.
+`probe app call --observations ...`. An authenticated full-catalog runtime probe
+may use the OpenAI Secure MCP Tunnel identity only when the audit-derived Tunnel
+instance, Tunnel profile, and Gateway Socket connection are all present; it
+remains runtime evidence and cannot claim a ChatGPT consumer result. Named and
+development-only Cloudflare HTTP calls can use `probe http call --observations
+...`; the selected outer transport remains distinct from the inner loopback
+`streamable_http` audit. `evidence correlate` then queries exactly one audit row
+for every Gateway request and seals the canonical Evidence Bundle.
 
 PASS fails closed unless every applicable Test Case, capability, profile,
 transport, request, audit record, and independent result correlation is

@@ -920,55 +920,6 @@
       "risk_level": "critical"
     },
     {
-      "id": "transport.cloudflare.named_tunnel",
-      "category": "transport",
-      "transports": [
-        "cloudflare_tunnel"
-      ],
-      "profiles": [
-        "cloudflare-operate"
-      ],
-      "prerequisites": [
-        "A remotely managed named tunnel, public hostname, gateway bearer, and optional Access policy are configured.",
-        "cloudflared 2025.4.0 or newer is installed because token-file is required."
-      ],
-      "steps": [
-        {
-          "id": "1",
-          "instruction": "Start the App-owned loopback origin and named cloudflared lifecycle, then call discovery and a bounded mutation from an external MCP client."
-        }
-      ],
-      "expected_results": [
-        "The named tunnel is healthy, bearer enforcement is active, and its capabilities cannot cross into an OpenAI profile."
-      ],
-      "evidence_requirements": [
-        {
-          "kind": "transport",
-          "correlation_key": "cloudflare_tunnel_instance_id",
-          "description": "Named tunnel and metrics identity."
-        },
-        {
-          "kind": "request",
-          "correlation_key": "request_ids",
-          "description": "Unauthorized probe plus authenticated MCP calls."
-        },
-        {
-          "kind": "audit",
-          "correlation_key": "audit_event_ids",
-          "description": "Cloudflare caller/profile audits."
-        },
-        {
-          "kind": "result",
-          "correlation_key": "result_digest",
-          "description": "Independent external MCP client result digest."
-        }
-      ],
-      "cleanup_steps": [
-        "Stop the named tunnel and remove only its temporary 0600 token file."
-      ],
-      "risk_level": "critical"
-    },
-    {
       "id": "transport.cloudflare.quick_tunnel_isolated",
       "category": "transport",
       "transports": [

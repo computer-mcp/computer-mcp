@@ -186,7 +186,26 @@ public enum ValidationReviewedOutcomePolicy {
       && reviewedExpectedFailureTools.contains(toolName)
   }
 
+  public static func permitsUpstreamDirectoryChallenge(
+    testCaseID: String,
+    toolName: String,
+    providerResult: String,
+    auditDecision: String?,
+    auditErrorCode: String?
+  ) -> Bool {
+    permitsExpectedFailure(testCaseID: testCaseID, toolName: toolName)
+      && toolName == "codex.app.apps.list"
+      && providerResult.contains("codex.app.request_failed")
+      && providerResult.range(
+        of: "status 403 Forbidden",
+        options: [.caseInsensitive]
+      ) != nil
+      && auditDecision == "failed"
+      && auditErrorCode == "gateway.execution_failed"
+  }
+
   private static let reviewedExpectedFailureTools: Set<String> = [
+    "codex.app.apps.list",
     "codex.app.requests.respond",
     "codex.mcp.approval.respond",
   ]

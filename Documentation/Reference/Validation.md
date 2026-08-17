@@ -149,6 +149,24 @@ development-only Cloudflare HTTP calls can use `probe http call --observations
 `streamable_http` audit. `evidence correlate` then queries exactly one audit row
 for every Gateway request and seals the canonical Evidence Bundle.
 
+The mandatory release catalog contains 22 publisher-verifiable Test Cases. It
+includes the isolated Quick Tunnel boundary plus automated named-tunnel
+lifecycle, authentication, cleanup, and profile-separation coverage. A live
+Cloudflare named deployment is deliberately outside the mandatory release
+catalog because its account, domain, public hostname, and runtime token are
+owned by the deploying user. The Cloudflare runbook remains the deployment
+acceptance procedure when a user chooses that transport.
+
+The full-catalog probe still calls every advertised tool and requires one
+correlated audit row per call. A normal success is always preferred. The sole
+environment-dependent exception is `codex.app.apps.list`: a structured
+`codex.app.request_failed` result containing HTTP 403 may be recorded as a
+reviewed `expected_failure` only when its exact audit row has decision `failed`
+and error code `gateway.execution_failed`. This identifies an upstream ChatGPT
+connector-directory challenge; it does not classify the local App, loopback
+gateway, user content, or Shell as scraping or hostile traffic. Any other
+failure remains inadmissible and blocks readiness.
+
 PASS fails closed unless every applicable Test Case, capability, profile,
 transport, request, audit record, and independent result correlation is
 present. Evidence generated only by probes remains pending.
@@ -177,7 +195,8 @@ After the same final App, embedded CLI, notarized DMG, private evidence archive,
 and all five redacted journey/platform verification records pass, generate the
 public summary-only manifest with `report release-manifest`. The command accepts
 every Evidence Bundle used by the ready report, verifies that each bundle is
-bound to the final App and CLI digests, requires 23/23 Test Cases, and emits
+bound to the final App and CLI digests, requires all 22 canonical Test Cases,
+and emits
 `Computer-MCP-<version>-EvidenceManifest.json`. It publishes hashes, Test Case IDs,
 transports, and profiles only; request IDs, audit IDs, consumer result IDs,
 credentials, raw inputs/outputs, and local paths remain in the private archive.

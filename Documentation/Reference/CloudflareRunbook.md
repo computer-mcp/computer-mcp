@@ -87,7 +87,16 @@ computer-mcp tunnel cloudflare stop <profile-id>
 Verify the external consumer can initialize MCP, list the expected profile
 surface, and call a read-only tool. Correlate its result with the Cloudflare
 transport instance, gateway request id, caller/profile audit row, and
-independent result evidence using the maintained Validation Test Case.
+independent result evidence. This is a deployment acceptance check for the
+user-owned account, domain, hostname, and runtime token. It is supported and
+recommended before relying on a named deployment, but it is not a publisher
+release gate and never requires Computer MCP CI to own a Cloudflare domain or
+production credential.
+
+The canonical release suite separately verifies the development-only Quick
+Tunnel isolation boundary and the named-tunnel lifecycle, bearer
+authentication, temporary-token cleanup, and caller/profile separation with
+automated tests. Quick Tunnel remains prohibited for production deployment.
 
 Stopping removes the temporary owner-only token file and stops both
 `cloudflared` and the loopback origin. It does not delete the Cloudflare account

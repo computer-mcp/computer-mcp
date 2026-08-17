@@ -455,8 +455,9 @@ public struct ReleaseEvidenceManifest: Codable, Equatable, Sendable {
     ] where !isHexDigest(digest, length: 64) {
       throw ReleaseEvidenceManifestError.invalidDigest
     }
+    let catalogIDs = Set(try ValidationTestCaseCatalog.bundled().testCases.map(\.id))
     guard acceptance.status == "passed",
-      acceptance.testCaseCount == 23,
+      acceptance.testCaseCount == catalogIDs.count,
       acceptance.testCasePassedCount == acceptance.testCaseCount
     else {
       throw ReleaseEvidenceManifestError.acceptanceIncomplete
@@ -488,9 +489,8 @@ public struct ReleaseEvidenceManifest: Codable, Equatable, Sendable {
     else {
       throw ReleaseEvidenceManifestError.invalidEvidenceBundleSummary
     }
-    let catalogIDs = Set(try ValidationTestCaseCatalog.bundled().testCases.map(\.id))
     let manifestIDs = Set(evidenceBundles.flatMap(\.testCaseIDs))
-    guard catalogIDs.count == 23, manifestIDs == catalogIDs else {
+    guard manifestIDs == catalogIDs else {
       throw ReleaseEvidenceManifestError.acceptanceIncomplete
     }
   }
@@ -516,9 +516,11 @@ public enum ReleaseEvidenceManifestBuilder {
     evidenceBundles: [(sha256: String, bundle: ValidationEvidenceBundle)],
     verificationRecords: [ReleaseVerificationRecord]
   ) throws -> ReleaseEvidenceManifest {
+    let catalogIDs = Set(try ValidationTestCaseCatalog.bundled().testCases.map(\.id))
     guard readinessReport.isReady,
-      readinessReport.summary.testCaseCount == 23,
-      readinessReport.summary.testCasePassedCount == 23,
+      readinessReport.summary.testCaseCount == catalogIDs.count,
+      readinessReport.summary.testCasePassedCount == catalogIDs.count,
+      Set(readinessReport.testCases.map(\.id)) == catalogIDs,
       readinessReport.testCases.allSatisfy({ $0.status == .passed })
     else {
       throw ReleaseEvidenceManifestError.acceptanceIncomplete
@@ -595,7 +597,7 @@ public enum ReleaseEvidenceManifestError: Error, LocalizedError, Equatable, Send
     case .invalidDigest:
       return "Release Evidence Manifest contains an invalid digest."
     case .acceptanceIncomplete:
-      return "Release Evidence Manifest requires a ready 23/23 acceptance report."
+      return "Release Evidence Manifest requires every canonical Test Case to pass."
     case .verificationRecordsIncomplete:
       return "Release Evidence Manifest requires all journey and platform verification records."
     case .evidenceBundlesMissing:

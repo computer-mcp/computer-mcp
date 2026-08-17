@@ -56,7 +56,7 @@ struct ReleaseEvidenceManifestTests {
 
     #expect(try ReleaseEvidenceManifest.decodeCanonicalJSON(encoded) == manifest)
     #expect(text.contains("\"schema_version\":1"))
-    #expect(text.contains("\"test_case_passed_count\":23"))
+    #expect(text.contains("\"test_case_passed_count\":22"))
     #expect(!text.contains("consumer-result-secret"))
     #expect(!text.contains("/Users/"))
   }
@@ -67,8 +67,8 @@ struct ReleaseEvidenceManifestTests {
     let tampered = Data(
       String(decoding: try manifest.canonicalJSON(), as: UTF8.self)
         .replacingOccurrences(
-          of: "\"test_case_passed_count\":23",
-          with: "\"test_case_passed_count\":22"
+          of: "\"test_case_passed_count\":22",
+          with: "\"test_case_passed_count\":21"
         )
         .utf8
     )
@@ -85,8 +85,8 @@ struct ReleaseEvidenceManifestTests {
         release: identity(digest: digest),
         acceptance: ReleaseAcceptanceSummary(
           status: "pending",
-          testCaseCount: 23,
-          testCasePassedCount: 22,
+          testCaseCount: 22,
+          testCasePassedCount: 21,
           verificationRecords: []
         ),
         evidenceBundles: []
@@ -101,8 +101,8 @@ struct ReleaseEvidenceManifestTests {
       release: identity(digest: digest),
       acceptance: ReleaseAcceptanceSummary(
         status: "passed",
-        testCaseCount: 23,
-        testCasePassedCount: 23,
+        testCaseCount: 22,
+        testCasePassedCount: 22,
         verificationRecords: ReleaseEvidenceManifest.requiredVerificationRecordIDs.map {
           ReleaseVerificationRecord(id: $0, sha256: digest)
         }
@@ -112,7 +112,7 @@ struct ReleaseEvidenceManifestTests {
           sha256: digest,
           contentDigest: digest,
           runCount: 3,
-          attemptCount: 23,
+          attemptCount: 22,
           testCaseIDs: try ValidationTestCaseCatalog.bundled().testCases.map(\.id),
           transports: ["openai_secure_mcp_tunnel"],
           profiles: ["chatgpt-observe"]

@@ -44,7 +44,7 @@ public struct ValidationObservation: Codable, Equatable, Sendable {
 }
 
 public struct ValidationObservationBundle: Codable, Equatable, Sendable {
-  public static let currentSchemaVersion = 1
+  public static let currentSchemaVersion = 2
 
   public let schemaVersion: Int
   public let generatedAt: String
@@ -231,15 +231,20 @@ public struct ValidationObservationCollector: Sendable {
           "runtime observations cannot identify an external consumer"
         )
       }
-      guard
-        bundle.transport.transport != .openAISecureMCPTunnel,
-        bundle.transport.transport != .cloudflareTunnel
-      else {
+      switch bundle.transport.transport {
+      case .openAISecureMCPTunnel:
+        guard bundle.transport.tunnelInstanceID?.isEmpty == false,
+          bundle.transport.tunnelProfileID?.isEmpty == false
+        else {
+          throw ValidationObservationCollectorError.invalidObservation(
+            "OpenAI Secure MCP Tunnel runtime observations require authenticated Tunnel provenance"
+          )
+        }
+      case .cloudflareTunnel:
         throw ValidationObservationCollectorError.invalidObservation(
-          "runtime observations require a local transport without Tunnel provenance"
+          "named Cloudflare Tunnel observations require an external consumer"
         )
-      }
-      if bundle.transport.transport == .cloudflareQuickTunnel {
+      case .cloudflareQuickTunnel:
         guard bundle.transport.tunnelInstanceID?.isEmpty == false,
           bundle.transport.tunnelProfileID == nil
         else {
@@ -247,12 +252,14 @@ public struct ValidationObservationCollector: Sendable {
             "Quick Tunnel observations require one ephemeral instance and no release profile"
           )
         }
-      } else if bundle.transport.tunnelInstanceID != nil
-        || bundle.transport.tunnelProfileID != nil
-      {
-        throw ValidationObservationCollectorError.invalidObservation(
-          "local runtime observations cannot claim Tunnel provenance"
-        )
+      case .gatewaySocket, .controlSocket:
+        guard bundle.transport.tunnelInstanceID == nil,
+          bundle.transport.tunnelProfileID == nil
+        else {
+          throw ValidationObservationCollectorError.invalidObservation(
+            "local runtime observations cannot claim Tunnel provenance"
+          )
+        }
       }
       guard
         bundle.observations.allSatisfy({
@@ -324,6 +331,16 @@ public struct ValidationObservationCollector: Sendable {
         "independent postconditions must pass and contain non-Gateway SHA-256 digests"
       )
     }
+    if observation.expectedOutcome == .expectedFailure,
+      !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+        testCaseID: observation.testCaseID,
+        toolName: observation.toolName
+      )
+    {
+      throw ValidationObservationCollectorError.invalidObservation(
+        "expected_failure is limited to reviewed fail-closed lifecycle capabilities"
+      )
+    }
   }
 
   private func validate(
@@ -339,6 +356,9 @@ public struct ValidationObservationCollector: Sendable {
         audit.decision == .allowed && audit.errorCode == nil
       case .expectedDenial:
         audit.decision == .denied
+          && audit.errorCode?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+      case .expectedFailure:
+        audit.decision == .failed
           && audit.errorCode?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
       case .failed:
         false

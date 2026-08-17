@@ -150,7 +150,23 @@ public struct ValidationConsumer: Codable, Equatable, Sendable {
 public enum ValidationAttemptOutcome: String, Codable, Sendable {
   case passed
   case expectedDenial = "expected_denial"
+  case expectedFailure = "expected_failure"
   case failed
+}
+
+public enum ValidationReviewedOutcomePolicy {
+  public static func permitsExpectedFailure(
+    testCaseID: String,
+    toolName: String
+  ) -> Bool {
+    testCaseID == "catalog.dynamic_full_coverage"
+      && reviewedExpectedFailureTools.contains(toolName)
+  }
+
+  private static let reviewedExpectedFailureTools: Set<String> = [
+    "codex.app.requests.respond",
+    "codex.mcp.approval.respond",
+  ]
 }
 
 public struct ValidationResultDigest: Codable, Equatable, Sendable {
@@ -280,7 +296,7 @@ public struct ValidationRun: Codable, Equatable, Sendable {
 }
 
 public struct ValidationEvidenceBundle: Codable, Equatable, Sendable {
-  public static let currentSchemaVersion = 1
+  public static let currentSchemaVersion = 2
 
   public let schemaVersion: Int
   public let id: String
@@ -673,7 +689,9 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
     for run in evidenceBundle.runs {
       let socketConnectionID = run.transport.socketConnectionID ?? ""
       for attempt in run.attempts
-      where attempt.outcome == .passed || attempt.outcome == .expectedDenial {
+      where attempt.outcome == .passed || attempt.outcome == .expectedDenial
+        || attempt.outcome == .expectedFailure
+      {
         let evidenceID = "\(evidenceBundle.id)/\(run.id)/\(attempt.id)"
         let transport = run.transport.transport.rawValue
         let detail =
@@ -774,12 +792,12 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
     }
 
     switch run.layer {
-    case .contract, .runtime:
+    case .contract:
       if run.consumer != nil {
         issue(
           "consumer.unexpected",
           "\(path).consumer",
-          "Contract and runtime evidence cannot claim an external consumer."
+          "Contract evidence cannot claim an external consumer."
         )
       }
       if run.transport.transport == .openAISecureMCPTunnel
@@ -788,7 +806,7 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
         issue(
           "transport.runtime_mismatch",
           "\(path).transport.transport",
-          "Contract and runtime evidence cannot claim a remote Tunnel transport."
+          "Contract evidence cannot claim a remote Tunnel transport."
         )
       }
       if run.transport.transport == .cloudflareQuickTunnel {
@@ -809,8 +827,59 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
         issue(
           "transport.runtime_tunnel_claim",
           "\(path).transport",
-          "Local runtime evidence cannot claim Secure MCP Tunnel provenance."
+          "Contract evidence cannot claim Secure MCP Tunnel provenance."
         )
+      }
+    case .runtime:
+      if run.consumer != nil {
+        issue(
+          "consumer.unexpected",
+          "\(path).consumer",
+          "Runtime evidence cannot claim an external consumer."
+        )
+      }
+      switch run.transport.transport {
+      case .openAISecureMCPTunnel:
+        validateOptionalIdentifier(
+          run.transport.tunnelInstanceID,
+          code: "transport.tunnel_instance_missing",
+          path: "\(path).transport.tunnelInstanceID",
+          issue: issue
+        )
+        validateOptionalIdentifier(
+          run.transport.tunnelProfileID,
+          code: "transport.tunnel_profile_missing",
+          path: "\(path).transport.tunnelProfileID",
+          issue: issue
+        )
+      case .cloudflareTunnel:
+        issue(
+          "transport.runtime_mismatch",
+          "\(path).transport.transport",
+          "Named Cloudflare Tunnel evidence requires an external consumer."
+        )
+      case .cloudflareQuickTunnel:
+        validateOptionalIdentifier(
+          run.transport.tunnelInstanceID,
+          code: "transport.quick_tunnel_instance_missing",
+          path: "\(path).transport.tunnelInstanceID",
+          issue: issue
+        )
+        if run.transport.tunnelProfileID != nil {
+          issue(
+            "transport.quick_tunnel_profile_claim",
+            "\(path).transport.tunnelProfileID",
+            "A development Quick Tunnel cannot claim a release Tunnel profile."
+          )
+        }
+      case .gatewaySocket, .controlSocket:
+        if run.transport.tunnelInstanceID != nil || run.transport.tunnelProfileID != nil {
+          issue(
+            "transport.runtime_tunnel_claim",
+            "\(path).transport",
+            "A local runtime transport cannot claim Secure MCP Tunnel provenance."
+          )
+        }
       }
     case .externalConsumer:
       if run.consumer?.kind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
@@ -925,6 +994,18 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
         "Failed attempts cannot prove acceptance."
       )
     }
+    if attempt.outcome == .expectedFailure,
+      !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+        testCaseID: attempt.testCaseID,
+        toolName: attempt.toolName
+      )
+    {
+      issue(
+        "attempt.expected_failure_unreviewed",
+        "\(path).outcome",
+        "Expected failure is limited to reviewed fail-closed lifecycle capabilities."
+      )
+    }
 
     validateChecks(attempt.assertions, path: "\(path).assertions", issue: issue)
     validatePostconditions(
@@ -944,7 +1025,7 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
       issue(
         "attempt.runtime_consumer_claim",
         "\(path).consumer_result_id",
-        "Local runtime attempts cannot claim an external consumer result."
+        "Contract and runtime attempts cannot claim an external consumer result."
       )
     } else {
       validateOptionalIdentifier(
@@ -1039,6 +1120,16 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
           "An expected-denial attempt requires one exact denied audit event with a stable error code."
         )
       }
+    case .expectedFailure:
+      if audit.decision != .failed
+        || audit.errorCode?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+      {
+        issue(
+          "audit.exact_failure_missing",
+          "\(path).auditEvent",
+          "An expected-failure attempt requires one exact failed audit event with a stable error code."
+        )
+      }
     case .failed:
       break
     }
@@ -1072,12 +1163,12 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
           "The local audit and observed transport request do not match."
         )
       }
-    case .contract, .runtime:
+    case .contract:
       if audit.caller.isRemote {
         issue(
           "audit.local_caller_missing",
           "\(path).auditEvent.caller",
-          "Contract and runtime evidence cannot reuse remote caller provenance."
+          "Contract evidence cannot reuse remote caller provenance."
         )
       }
       if run.transport.transport != .cloudflareQuickTunnel,
@@ -1087,6 +1178,40 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
           "audit.transport_request_mismatch",
           "\(path).auditEvent.mcpRequestID",
           "Runtime evidence must match the exact local MCP JSON-RPC request."
+        )
+      } else if run.transport.transport == .cloudflareQuickTunnel,
+        let auditedRequestID = audit.mcpRequestID,
+        auditedRequestID != attempt.transportRequestID
+      {
+        issue(
+          "audit.transport_request_mismatch",
+          "\(path).auditEvent.mcpRequestID",
+          "When present, the HTTP audit request must match the observed transport request."
+        )
+      }
+    case .runtime:
+      let expectedCaller: GatewayCallerKind =
+        switch run.transport.transport {
+        case .openAISecureMCPTunnel: .secureTunnel
+        case .cloudflareTunnel: .cloudflareTunnel
+        case .cloudflareQuickTunnel: .localApp
+        case .controlSocket: .localCLI
+        case .gatewaySocket: .localMCP
+        }
+      if audit.caller != expectedCaller {
+        issue(
+          "audit.runtime_caller_mismatch",
+          "\(path).auditEvent.caller",
+          "Runtime evidence requires the audited caller for its transport."
+        )
+      }
+      if run.transport.transport != .cloudflareQuickTunnel,
+        audit.mcpRequestID != attempt.transportRequestID
+      {
+        issue(
+          "audit.transport_request_mismatch",
+          "\(path).auditEvent.mcpRequestID",
+          "Runtime evidence must match the exact MCP JSON-RPC request."
         )
       } else if run.transport.transport == .cloudflareQuickTunnel,
         let auditedRequestID = audit.mcpRequestID,

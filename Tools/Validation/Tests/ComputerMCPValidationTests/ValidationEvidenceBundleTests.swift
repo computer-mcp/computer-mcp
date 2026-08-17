@@ -64,6 +64,27 @@ struct ValidationEvidenceBundleTests {
     #expect(report.issues.contains { $0.code == "attempt.test_case_unknown" })
   }
 
+  @Test("Unreviewed expected failures cannot prove coverage")
+  func unreviewedExpectedFailure() throws {
+    let bundle = try makeBundle(
+      transport: .openAISecureMCPTunnel,
+      profileID: .chatGPTOperate,
+      caller: .secureTunnel,
+      auditTransport: "gateway_socket",
+      testCaseID: "catalog.dynamic_full_coverage",
+      socketConnectionID: "socket-openai",
+      outcome: .expectedFailure,
+      auditDecision: .failed,
+      auditErrorCode: "gateway.execution_failed",
+      toolNameOverride: "system.time"
+    )
+
+    let report = ValidationEvidenceBundleVerifier().verify(bundle)
+
+    #expect(!report.isVerified)
+    #expect(report.issues.contains { $0.code == "attempt.expected_failure_unreviewed" })
+  }
+
   @Test("Digest tampering is rejected")
   func digestTampering() throws {
     let valid = try makeBundle(
@@ -101,7 +122,7 @@ struct ValidationEvidenceBundleTests {
 
     let encoded = String(decoding: try bundle.canonicalJSON(), as: UTF8.self)
 
-    #expect(encoded.contains("\"schema_version\":1"))
+    #expect(encoded.contains("\"schema_version\":2"))
     #expect(encoded.contains("\"external_consumer\""))
     #expect(encoded.contains("\"test_case_id\""))
     #expect(!encoded.contains(["back", "end"].joined()))
@@ -158,7 +179,11 @@ struct ValidationEvidenceBundleTests {
     auditTransport: String,
     testCaseID: String,
     socketConnectionID: String?,
-    occurredAt: Date = Date(timeIntervalSince1970: 1_754_092_800)
+    occurredAt: Date = Date(timeIntervalSince1970: 1_754_092_800),
+    outcome: ValidationAttemptOutcome = .passed,
+    auditDecision: AuditDecision = .allowed,
+    auditErrorCode: String? = nil,
+    toolNameOverride: String? = nil
   ) throws -> ValidationEvidenceBundle {
     let digest = String(repeating: "a", count: 64)
     let outputDigest = String(repeating: "b", count: 64)
@@ -177,7 +202,7 @@ struct ValidationEvidenceBundleTests {
       fixtureDigest: digest
     )
     let isPolicyProbe = testCaseID == "profile.observe_write_policy_denied"
-    let toolName = isPolicyProbe ? "policy.probe" : "system.time"
+    let toolName = toolNameOverride ?? (isPolicyProbe ? "policy.probe" : "system.time")
     let audit = AuditEvent(
       id: "audit-\(transport.rawValue)",
       occurredAt: occurredAt,
@@ -190,7 +215,8 @@ struct ValidationEvidenceBundleTests {
       tunnelProfileID: "tunnel-configuration",
       profileID: profileID,
       capabilityID: toolName,
-      decision: .allowed,
+      decision: auditDecision,
+      errorCode: auditErrorCode,
       inputDigest: digest,
       outputDigest: outputDigest,
       outputByteCount: 128,
@@ -209,7 +235,7 @@ struct ValidationEvidenceBundleTests {
       gatewayRequestID: audit.requestID,
       auditEvent: audit,
       result: ValidationResultDigest(digest: outputDigest, byteCount: 128),
-      outcome: .passed,
+      outcome: outcome,
       assertions: [
         ValidationAssertion(id: "step.1", passed: true, observationDigest: digest),
         ValidationAssertion(id: "expected_result.1", passed: true, observationDigest: digest),

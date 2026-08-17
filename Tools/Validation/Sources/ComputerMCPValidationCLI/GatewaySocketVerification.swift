@@ -274,10 +274,27 @@ private struct AppFullCatalogProbeReport: Encodable {
         let transportRequestID = tool.transportRequestID,
         let gatewayRequestID = tool.gatewayRequestID,
         let resultDigest = tool.resultDigest,
-        tool.auditEvent != nil
+        let auditEvent = tool.auditEvent
       else {
         throw ValidationError(
           "Runtime observation is incomplete for tool '\(tool.toolName)'."
+        )
+      }
+      let expectedOutcome: ValidationAttemptOutcome =
+        switch auditEvent.decision {
+        case .allowed: .passed
+        case .denied: .expectedDenial
+        case .failed: .expectedFailure
+        }
+      guard
+        expectedOutcome != .expectedFailure
+          || ValidationReviewedOutcomePolicy.permitsExpectedFailure(
+            testCaseID: "catalog.dynamic_full_coverage",
+            toolName: tool.toolName
+          )
+      else {
+        throw ValidationError(
+          "Runtime observation contains an unreviewed expected failure for tool '\(tool.toolName)'."
         )
       }
       return ValidationObservation(
@@ -289,9 +306,10 @@ private struct AppFullCatalogProbeReport: Encodable {
         gatewayRequestID: gatewayRequestID,
         passed: true,
         observationDigest: Self.digest(
-          "semantic_result_v1\n\(tool.toolName)\n\(resultDigest)\ntrue"
+          "semantic_result_v2\n\(tool.toolName)\n\(resultDigest)\n\(expectedOutcome.rawValue)\ntrue"
         ),
         assertionIDs: ["step.1", "expected_result.1"],
+        expectedOutcome: expectedOutcome,
         independentPostconditions: [
           ValidationPostcondition(
             id: "cleanup.1",

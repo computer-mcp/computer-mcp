@@ -180,6 +180,14 @@ in the user's global Codex configuration is intentionally not started for a
 Gateway call. Diagnose those global integrations in interactive Codex; do not
 copy their credentials or configuration into Computer MCP.
 
+If `codex.app.apps.list` returns HTTP 403 while Safari and interactive Codex
+work, confirm that a fixed macOS HTTP, HTTPS, or SOCKS proxy is enabled, then
+restart Computer MCP so all three Codex provider lifecycles resolve it at
+launch. Computer MCP preserves an explicitly inherited proxy environment,
+otherwise maps the current fixed macOS settings to conventional upper- and
+lowercase child variables with loopback in `NO_PROXY`. It does not persist or
+log the derived values and does not evaluate PAC scripts.
+
 ## Computer Use Is Denied
 
 Open **Permissions**. Grant Accessibility or Screen Recording to the signed

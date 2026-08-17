@@ -96,6 +96,12 @@ Safari can reach ChatGPT through the macOS proxy but an App-launched child
 process would otherwise connect directly. Proxy URLs containing credentials
 are intentionally unsupported.
 
+The separate Codex App Server, Exec, and MCP provider lifecycles also map the
+active fixed macOS HTTP, HTTPS, and SOCKS proxies into their child process
+environments. An explicitly inherited proxy environment takes precedence,
+loopback remains direct, and no resolved proxy is persisted or logged. Proxy
+auto-configuration scripts are not evaluated.
+
 ## 4. Verify Local Runtime
 
 The Tunnels view must report Running. Open the loopback admin UI reported by

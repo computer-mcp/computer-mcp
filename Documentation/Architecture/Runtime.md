@@ -47,6 +47,11 @@ OpenAI Tunnel definitions persist only transport identity and policy fields.
 They may include a credential-free HTTP proxy URL; when absent, the runtime
 resolves the active fixed macOS HTTPS/HTTP proxy at launch. Proxy credentials
 remain outside the product configuration contract.
+The Codex App Server, Exec, and MCP lifecycles independently map the active
+fixed macOS HTTP, HTTPS, and SOCKS proxies into their child process
+environments, while preserving an explicitly inherited proxy environment and
+direct loopback access. This derived environment is never persisted or logged,
+and Computer MCP does not evaluate proxy auto-configuration scripts.
 At launch, the App injects the absolute path of its signed embedded CLI into
 the Control Plane's runtime view; that derived bundle path is never written to
 the manifest. Provisioning, Doctor, App actions, and CLI actions therefore use

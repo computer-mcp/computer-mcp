@@ -85,6 +85,39 @@ public enum ValidationTransportProvenanceError: Error, LocalizedError, Equatable
 
 extension ValidationTransportProvenance {
   public static func authenticatedGatewaySocket(
+    caller: GatewayCallerKind,
+    socketConnectionID: String,
+    tunnelInstanceID: String? = nil,
+    tunnelProfileID: String? = nil
+  ) throws -> ValidationTransportProvenance {
+    guard let socketConnectionID = nonempty(socketConnectionID) else {
+      throw ValidationTransportProvenanceError.inconsistentSocketConnection
+    }
+
+    switch caller {
+    case .localMCP:
+      return ValidationTransportProvenance(
+        transport: .gatewaySocket,
+        socketConnectionID: socketConnectionID
+      )
+    case .secureTunnel:
+      guard let tunnelInstanceID = nonempty(tunnelInstanceID),
+        let tunnelProfileID = nonempty(tunnelProfileID)
+      else {
+        throw ValidationTransportProvenanceError.incompleteSecureTunnelIdentity
+      }
+      return ValidationTransportProvenance(
+        transport: .openAISecureMCPTunnel,
+        tunnelInstanceID: tunnelInstanceID,
+        tunnelProfileID: tunnelProfileID,
+        socketConnectionID: socketConnectionID
+      )
+    case .cloudflareTunnel, .localApp, .localCLI:
+      throw ValidationTransportProvenanceError.unsupportedGatewaySocketCaller(caller)
+    }
+  }
+
+  public static func authenticatedGatewaySocket(
     auditEvents: [AuditEvent]
   ) throws -> ValidationTransportProvenance {
     guard !auditEvents.isEmpty else {
@@ -102,33 +135,23 @@ extension ValidationTransportProvenance {
       throw ValidationTransportProvenanceError.mixedCallerKinds
     }
 
-    switch caller {
-    case .localMCP:
-      return ValidationTransportProvenance(
-        transport: .gatewaySocket,
-        socketConnectionID: socketConnectionID
-      )
-    case .secureTunnel:
-      let tunnelInstanceIDs = auditEvents.compactMap { nonempty($0.tunnelInstanceID) }
-      let tunnelProfileIDs = auditEvents.compactMap { nonempty($0.tunnelProfileID) }
+    let tunnelInstanceIDs = auditEvents.compactMap { nonempty($0.tunnelInstanceID) }
+    let tunnelProfileIDs = auditEvents.compactMap { nonempty($0.tunnelProfileID) }
+    if caller == .secureTunnel {
       guard tunnelInstanceIDs.count == auditEvents.count,
         tunnelProfileIDs.count == auditEvents.count,
         Set(tunnelInstanceIDs).count == 1,
-        Set(tunnelProfileIDs).count == 1,
-        let tunnelInstanceID = tunnelInstanceIDs.first,
-        let tunnelProfileID = tunnelProfileIDs.first
+        Set(tunnelProfileIDs).count == 1
       else {
         throw ValidationTransportProvenanceError.incompleteSecureTunnelIdentity
       }
-      return ValidationTransportProvenance(
-        transport: .openAISecureMCPTunnel,
-        tunnelInstanceID: tunnelInstanceID,
-        tunnelProfileID: tunnelProfileID,
-        socketConnectionID: socketConnectionID
-      )
-    case .cloudflareTunnel, .localApp, .localCLI:
-      throw ValidationTransportProvenanceError.unsupportedGatewaySocketCaller(caller)
     }
+    return try authenticatedGatewaySocket(
+      caller: caller,
+      socketConnectionID: socketConnectionID,
+      tunnelInstanceID: tunnelInstanceIDs.first,
+      tunnelProfileID: tunnelProfileIDs.first
+    )
   }
 
   private static func nonempty(_ value: String?) -> String? {

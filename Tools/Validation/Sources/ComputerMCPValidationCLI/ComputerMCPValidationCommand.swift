@@ -913,8 +913,9 @@ struct AppCallProbe: AsyncParsableCommand {
       postconditionObserver != "gateway_result",
       let postconditionDigest, isSHA256(postconditionDigest),
       let gatewayRequestID = report.gatewayRequestID,
-      let socketConnectionID = report.result.objectValue?["structuredContent"]?
-        .objectValue?["gateway_execution"]?.objectValue?["socket_connection_id"]?.stringValue
+      let gatewayExecution = report.result.objectValue?["structuredContent"]?
+        .objectValue?["gateway_execution"]?.objectValue,
+      let socketConnectionID = gatewayExecution["socket_connection_id"]?.stringValue
     else {
       throw ValidationError(
         "Observations require --run-id, --test-case, --assertion-id, all postcondition fields, and correlated Gateway metadata."
@@ -949,13 +950,31 @@ struct AppCallProbe: AsyncParsableCommand {
         )
       ]
     )
+    let transport: ValidationTransportProvenance
+    if controlSocket {
+      transport = ValidationTransportProvenance(
+        transport: .controlSocket,
+        socketConnectionID: socketConnectionID
+      )
+    } else {
+      guard let callerValue = gatewayExecution["caller"]?.stringValue,
+        let caller = GatewayCallerKind(rawValue: callerValue)
+      else {
+        throw ValidationError(
+          "Gateway observations require a recognized authenticated caller."
+        )
+      }
+      transport = try ValidationTransportProvenance.authenticatedGatewaySocket(
+        caller: caller,
+        socketConnectionID: socketConnectionID,
+        tunnelInstanceID: gatewayExecution["tunnel_instance_id"]?.stringValue,
+        tunnelProfileID: gatewayExecution["tunnel_profile_id"]?.stringValue
+      )
+    }
     let bundle = ValidationObservationBundle(
       generatedAt: report.generatedAt,
       layer: .runtime,
-      transport: ValidationTransportProvenance(
-        transport: controlSocket ? .controlSocket : .gatewaySocket,
-        socketConnectionID: socketConnectionID
-      ),
+      transport: transport,
       observations: [observation]
     )
     let destinationURL = URL(fileURLWithPath: destination).standardizedFileURL
@@ -1423,6 +1442,15 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
   @Option(name: .long, help: "Destination for the bounded JSON report.")
   var json: String
 
+  @Option(name: .customLong("run-id"), help: "Validation Run identifier for observations.")
+  var runID: String?
+
+  @Option(
+    name: .long,
+    help: "Optional destination for lifecycle and drift Validation observations."
+  )
+  var observations: String?
+
   mutating func run() async throws {
     guard (endpoint == nil) != (socket == nil) else {
       throw ValidationError("Provide exactly one of --endpoint or --socket.")
@@ -1476,6 +1504,18 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
       let report = try await runner.run()
       await session.disconnect()
       try writeJSONValue(report, destination: json)
+      if let observations {
+        guard let runID, !runID.isEmpty else {
+          throw ValidationError("--observations requires --run-id.")
+        }
+        let bundle = try runner.observationBundle(runID: runID, report: report)
+        let destination = URL(fileURLWithPath: observations).standardizedFileURL
+        try FileManager.default.createDirectory(
+          at: destination.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        try bundle.encodedJSON().write(to: destination, options: .atomic)
+      }
     } catch {
       await session.disconnect()
       throw error
@@ -1491,6 +1531,7 @@ private struct DownstreamProbeVerifyRunner {
   let stdioStartMarker: URL
 
   private var requestIDs: [String] = []
+  private var callReports: [GatewayCallReport] = []
 
   init(
     session: GatewayClientSession,
@@ -1531,6 +1572,166 @@ private struct DownstreamProbeVerifyRunner {
       "stdio": stdio,
       "http": http,
     ])
+  }
+
+  func observationBundle(
+    runID: String,
+    report: JSONValue
+  ) throws -> ValidationObservationBundle {
+    let drift = try requiredReport(
+      label: "tool drift denial",
+      where: { errorCode($0) == "mcp.tool_not_approved" }
+    )
+    let cancellation = try requiredReport(
+      label: "downstream cancellation",
+      where: { targetCapability($0) == "mcp.requests.cancel" && !isError($0) }
+    )
+    let reconnect = try requiredReport(
+      label: "post-crash reconnect",
+      where: { $0.toolName == "mcp.tools.list" && !isError($0) },
+      last: true
+    )
+    let selected = [drift, cancellation, reconnect]
+    let transport = try socketTransportProvenance(reports: selected)
+    let postconditionDigest = try downstreamPostconditionDigest(report: report)
+
+    return ValidationObservationBundle(
+      generatedAt: report.objectValue?["generated_at"]?.stringValue ?? ValidationTimestamp.now(),
+      layer: .runtime,
+      transport: transport,
+      observations: [
+        try observation(
+          report: drift,
+          runID: runID,
+          testCaseID: "mcp.tool_drift_denied",
+          expectedOutcome: .expectedDenial,
+          postconditionDigest: postconditionDigest
+        ),
+        try observation(
+          report: cancellation,
+          runID: runID,
+          testCaseID: "runtime.cancellation_propagated",
+          expectedOutcome: .passed,
+          postconditionDigest: postconditionDigest
+        ),
+        try observation(
+          report: reconnect,
+          runID: runID,
+          testCaseID: "mcp.downstream_reconnect",
+          expectedOutcome: .passed,
+          postconditionDigest: postconditionDigest
+        ),
+      ]
+    )
+  }
+
+  private func observation(
+    report: GatewayCallReport,
+    runID: String,
+    testCaseID: String,
+    expectedOutcome: ValidationAttemptOutcome,
+    postconditionDigest: String
+  ) throws -> ValidationObservation {
+    guard let gatewayRequestID = report.gatewayRequestID else {
+      throw ValidationError("Downstream observation is missing Gateway request metadata.")
+    }
+    return ValidationObservation(
+      id: "\(runID).\(testCaseID)",
+      testCaseID: testCaseID,
+      generatedAt: report.generatedAt,
+      toolName: report.toolName,
+      transportRequestID: report.requestID,
+      gatewayRequestID: gatewayRequestID,
+      passed: true,
+      observationDigest: sha256(try report.encodedJSON(prettyPrinted: false)),
+      assertionIDs: ["step.1", "expected_result.1"],
+      expectedOutcome: expectedOutcome,
+      independentPostconditions: [
+        ValidationPostcondition(
+          id: "cleanup.1",
+          passed: true,
+          observer: "downstream_fixture_report_and_start_marker",
+          observationDigest: postconditionDigest
+        )
+      ]
+    )
+  }
+
+  private func requiredReport(
+    label: String,
+    where predicate: (GatewayCallReport) -> Bool,
+    last: Bool = false
+  ) throws -> GatewayCallReport {
+    let report =
+      last
+      ? callReports.last(where: predicate)
+      : callReports.first(where: predicate)
+    guard let report else {
+      throw ValidationError("Downstream probe did not capture the \(label) request.")
+    }
+    return report
+  }
+
+  private func socketTransportProvenance(
+    reports: [GatewayCallReport]
+  ) throws -> ValidationTransportProvenance {
+    let executions = try reports.map { report -> [String: JSONValue] in
+      guard
+        let execution = report.result.objectValue?["structuredContent"]?
+          .objectValue?["gateway_execution"]?.objectValue
+      else {
+        throw ValidationError("Downstream observation is missing Gateway execution metadata.")
+      }
+      return execution
+    }
+    let callers = Set(executions.compactMap { $0["caller"]?.stringValue })
+    let socketConnectionIDs = Set(
+      executions.compactMap { $0["socket_connection_id"]?.stringValue }
+    )
+    guard callers.count == 1, let callerValue = callers.first,
+      let caller = GatewayCallerKind(rawValue: callerValue),
+      socketConnectionIDs.count == 1, let socketConnectionID = socketConnectionIDs.first
+    else {
+      throw ValidationError("Downstream observations do not share one authenticated socket.")
+    }
+    let tunnelInstanceIDs = Set(
+      executions.compactMap { $0["tunnel_instance_id"]?.stringValue }
+    )
+    let tunnelProfileIDs = Set(
+      executions.compactMap { $0["tunnel_profile_id"]?.stringValue }
+    )
+    return try ValidationTransportProvenance.authenticatedGatewaySocket(
+      caller: caller,
+      socketConnectionID: socketConnectionID,
+      tunnelInstanceID: tunnelInstanceIDs.count == 1 ? tunnelInstanceIDs.first : nil,
+      tunnelProfileID: tunnelProfileIDs.count == 1 ? tunnelProfileIDs.first : nil
+    )
+  }
+
+  private func downstreamPostconditionDigest(report: JSONValue) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    var data = try encoder.encode(report)
+    data.append(try Data(contentsOf: stdioStartMarker))
+    return sha256(data)
+  }
+
+  private func targetCapability(_ report: GatewayCallReport) -> String? {
+    report.result.objectValue?["structuredContent"]?.objectValue?["target_execution"]?
+      .objectValue?["capability_id"]?.stringValue
+  }
+
+  private func errorCode(_ report: GatewayCallReport) -> String? {
+    report.result.objectValue?["structuredContent"]?.objectValue?["error"]?
+      .objectValue?["code"]?.stringValue
+  }
+
+  private func isError(_ report: GatewayCallReport) -> Bool {
+    report.result.objectValue?["isError"]?.boolValue == true
+  }
+
+  private func sha256(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
   private mutating func exerciseStdio() async throws -> JSONValue {
@@ -1951,6 +2152,7 @@ private struct DownstreamProbeVerifyRunner {
       arguments: .object(arguments)
     )
     requestIDs.append(report.requestID)
+    callReports.append(report)
     guard report.result.objectValue?["isError"]?.boolValue != true else {
       throw ValidationError("Tool \(tool) returned an MCP error result.")
     }

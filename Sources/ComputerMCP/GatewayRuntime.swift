@@ -1216,18 +1216,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private static func operationStateURL(path: String, rootURL: URL) throws -> URL {
-    let candidate =
-      path.hasPrefix("/")
-      ? URL(fileURLWithPath: path).standardizedFileURL
-      : rootURL.appendingPathComponent(path).standardizedFileURL
-    let rootPath = rootURL.path
-    guard candidate.path == rootPath || candidate.path.hasPrefix(rootPath + "/") else {
+    do {
+      return try WorkspacePathResolver.resolve(path, relativeTo: rootURL)
+    } catch {
       throw invalid(
         code: "operations.state_path_escape",
         message: "Cannot bind operation state outside the registered workspace."
       )
     }
-    return candidate
   }
 
   private static func operationStateRecords(url: URL, rootURL: URL) throws -> [JSONValue] {
@@ -1424,6 +1420,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     let deniedPrefixes = [
       "[policy.",
+      "[operations.state_path_escape]",
       "[operations.ticket_",
       "[codex.app.override_denied]",
       "[codex.app.danger_full_access_denied]",

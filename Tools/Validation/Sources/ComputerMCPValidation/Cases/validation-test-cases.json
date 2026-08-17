@@ -59,16 +59,16 @@
         "chatgpt-operate"
       ],
       "prerequisites": [
-        "The operate profile is active, generic execution is not granted, and policy.probe is exposed."
+        "The operate profile is active, at least one generic execution or process-control capability is not granted, and policy.probe is exposed."
       ],
       "steps": [
         {
           "id": "1",
-          "instruction": "Have External Consumer call policy.probe for shell.run or another ungranted generic execution capability."
+          "instruction": "Have External Consumer call policy.probe for an ungranted generic execution or process-control capability such as process.cancel."
         }
       ],
       "expected_results": [
-        "The policy decision is a deterministic denial and no subprocess starts."
+        "The policy decision is a deterministic denial and no subprocess or process-control action starts."
       ],
       "evidence_requirements": [
         {

@@ -29,6 +29,34 @@ struct ValidationTransportProvenanceTests {
     #expect(provenance.tunnelProfileID == "computer-mcp")
   }
 
+  @Test("Observed Secure Tunnel execution identity is preserved")
+  func observedSecureTunnelIdentity() throws {
+    let provenance = try ValidationTransportProvenance.authenticatedGatewaySocket(
+      caller: .secureTunnel,
+      socketConnectionID: "socket-1",
+      tunnelInstanceID: "tunnel-instance-1",
+      tunnelProfileID: "computer-mcp"
+    )
+
+    #expect(provenance.transport == .openAISecureMCPTunnel)
+    #expect(provenance.socketConnectionID == "socket-1")
+    #expect(provenance.tunnelInstanceID == "tunnel-instance-1")
+    #expect(provenance.tunnelProfileID == "computer-mcp")
+  }
+
+  @Test("Observed local MCP execution remains a Gateway Socket run")
+  func observedLocalMCPIdentity() throws {
+    let provenance = try ValidationTransportProvenance.authenticatedGatewaySocket(
+      caller: .localMCP,
+      socketConnectionID: "socket-1"
+    )
+
+    #expect(provenance.transport == .gatewaySocket)
+    #expect(provenance.socketConnectionID == "socket-1")
+    #expect(provenance.tunnelInstanceID == nil)
+    #expect(provenance.tunnelProfileID == nil)
+  }
+
   @Test("Local MCP audit identity remains a Gateway Socket run")
   func localMCPIdentity() throws {
     let provenance = try ValidationTransportProvenance.authenticatedGatewaySocket(

@@ -214,7 +214,8 @@ private struct LiveCodexMCPClientAdapterFactory: CodexMCPClientAdapterFactory {
         ),
         launchOptions: .init(
           executableURL: configuration.executableURL,
-          currentDirectoryURL: workspaceURL.standardizedFileURL
+          currentDirectoryURL: workspaceURL.standardizedFileURL,
+          environment: CodexProcessEnvironment.resolved()
         )
       )
     )

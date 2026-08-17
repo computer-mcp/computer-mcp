@@ -354,6 +354,7 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
       let stdioConfiguration = CodexAppServerStdioConfiguration(
         executableURL: configuration.executableURL,
         executableName: configuration.executableURL == nil ? configuration.executable : "codex",
+        environment: CodexProcessEnvironment.resolved(),
         workingDirectoryURL: workspaceURL
       )
       let client = CodexAppServerClient(

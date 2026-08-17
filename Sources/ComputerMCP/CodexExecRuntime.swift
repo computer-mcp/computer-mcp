@@ -107,6 +107,7 @@ actor LiveCodexExecRuntime: CodexExecRuntimeProtocol {
       client: CodexExecClient(
         configuration: CodexExecLaunchConfiguration(
           executableURL: configuration.executableURL,
+          environmentOverride: CodexProcessEnvironment.resolved(),
           defaultWorkingDirectory: standardizedWorkspace
         )
       )

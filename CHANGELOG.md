@@ -4,6 +4,23 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.13 — 2026-08-17
+
+- Resolve the active fixed macOS HTTP, HTTPS, and SOCKS proxies for every
+  Codex App Server, Exec, and MCP child lifecycle. Finder-launched production
+  Apps now reach the same Codex control plane as Safari without requiring
+  proxy variables in the App launch environment.
+- Preserve an explicitly inherited proxy environment, mirror conventional
+  uppercase and lowercase variables for runtime compatibility, and keep
+  loopback plus macOS bypass hosts in `NO_PROXY`. Resolved fixed proxies are
+  child-process-only state: Computer MCP does not persist or log them, and
+  does not evaluate proxy auto-configuration scripts.
+- The immutable 1.0.12 candidate passed CI, Developer ID signing, Apple
+  notarization, installation, and real ChatGPT Full Shell acceptance. Its
+  exact-artifact catalog run then proved that a normal GUI launch omitted the
+  system proxy from Codex App Server and returned HTTP 403 from `apps/list`;
+  its draft remains unpublished and 1.0.13 repeats the full workflow.
+
 ## 1.0.12 — 2026-08-17
 
 - Accept runtime observations over the OpenAI Secure MCP Tunnel only when the

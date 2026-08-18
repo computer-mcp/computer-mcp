@@ -12,7 +12,7 @@ MCP 客户端、ChatGPT 和公网 MCP 消费者连接的都是同一个 App-owne
 
 Computer MCP 要求 macOS 14 或更高版本。
 
-1. 从提供当前构建的 Release 下载 `Computer-MCP-1.0.16-universal.dmg` 和
+1. 从提供当前构建的 Release 下载 `Computer-MCP-1.0.17-universal.dmg` 和
    `SHA256SUMS`。
 2. 校验 DMG 摘要，打开后将 **Computer MCP** 拖入“应用程序”。
 3. 从 Finder 启动安装后的 App。不要脱离 App bundle 单独运行可执行文件；macOS

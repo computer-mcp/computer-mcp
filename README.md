@@ -14,7 +14,7 @@ MCP consumers connect to that same App-owned gateway.
 
 Computer MCP requires macOS 14 or later.
 
-1. Download `Computer-MCP-1.0.16-universal.dmg` and `SHA256SUMS` from the
+1. Download `Computer-MCP-1.0.17-universal.dmg` and `SHA256SUMS` from the
    release that supplied your build.
 2. Verify the DMG digest, open it, and drag **Computer MCP** to Applications.
 3. Open the installed App from Finder. Do not run a copied executable outside

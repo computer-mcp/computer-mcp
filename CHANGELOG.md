@@ -4,6 +4,26 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.17 — 2026-08-18
+
+- Replace the macOS 27 in-App directory browser with the native AppKit
+  `NSOpenPanel` on every supported macOS release. **Workspaces > Add** now
+  always opens the system folder-selection UI, registers the selected URL
+  through the existing persistent-bookmark path, and refreshes Workspaces and
+  Home in place without replacing the page.
+- Keep folder selection local and user initiated. Neither the folder panel nor
+  local workspace registration depends on a website, network-security
+  classification, anti-scraping decision, Shell policy, or provider runtime.
+- Keep the narrowly reviewed `codex.app.apps.list` upstream ChatGPT
+  connector-directory HTTP 403 outcome isolated to that provider request. It
+  does not classify the local App, loopback gateway, workspace, or Shell as
+  hostile and cannot interrupt ordinary local operation.
+- Keep the immutable signed `v1.0.16` candidate unpublished. Its release run
+  was canceled before draft creation after exact macOS 27 UI acceptance found
+  that the separate in-App browser could not complete workspace registration;
+  no 1.0.16 GitHub Release was created. Version 1.0.17 repeats the protected
+  signed-tag workflow with the native panel fix.
+
 ## 1.0.16 — 2026-08-18
 
 - Add an in-App SwiftUI folder browser for macOS 27, where the beta system

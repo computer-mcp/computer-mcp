@@ -137,14 +137,14 @@ Before tagging:
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.16`:
+Example after the repository version has been changed to `1.0.17`:
 
 ```sh
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.16 -m "Computer MCP 1.0.16"
-git verify-tag v1.0.16
-git push origin v1.0.16
+git tag -s -a v1.0.17 -m "Computer MCP 1.0.17"
+git verify-tag v1.0.17
+git push origin v1.0.17
 ```
 
 The tag is rejected unless it:
@@ -213,8 +213,8 @@ Download every file from the draft Release and verify:
 ```sh
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.16-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.16-universal.dmg
+  Computer-MCP-1.0.17-universal.dmg
+xcrun stapler validate Computer-MCP-1.0.17-universal.dmg
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,
@@ -223,6 +223,12 @@ artifact. Publishing the existing draft is the operator attestation that all
 22 canonical checks passed. A live Cloudflare named deployment is a
 user-owned deployment check, not a publisher credential or release gate. Do
 not rebuild or replace individual assets after acceptance.
+
+Workspace acceptance is local and independent of network providers. In the
+installed candidate, **Workspaces > Add** must open the native macOS directory
+panel, register a new fixture directory with a non-stale bookmark, and refresh
+the existing page in place. A website challenge, provider response, or Shell
+policy cannot be used to classify or interrupt this check.
 
 The exhaustive tool run still calls every advertised catalog entry and
 requires exact audit correlation. Only a structured

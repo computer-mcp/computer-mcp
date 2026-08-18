@@ -53,6 +53,12 @@ A fresh App intentionally exposes only onboarding-safe tools until a workspace
 is registered. Add a folder in **Workspaces**, verify its bookmark is
 Available, and retry `workspace.list`.
 
+**Add** opens the native macOS folder panel on every supported release. Select
+the folder itself, choose **Add**, and the existing Workspaces page refreshes
+in place. If the panel is already inside the desired folder, go to its parent
+first so the folder can be selected. A panel that does not appear is an App UI
+presentation problem, not a network, anti-scraping, Shell, or Keychain denial.
+
 When multiple workspaces are granted, include `workspace_id`; Computer MCP does
 not maintain a global current workspace.
 

@@ -76,9 +76,12 @@ struct ComputerMCPApp: App {
       }
     }
 
-    MenuBarExtra("Computer MCP", systemImage: model.menuBarSystemImage) {
+    MenuBarExtra {
       MenuBarStatusView()
         .environmentObject(model)
+    } label: {
+      Label("Computer MCP", systemImage: model.menuBarSystemImage)
+        .labelStyle(.titleAndIcon)
     }
     .menuBarExtraStyle(.menu)
   }

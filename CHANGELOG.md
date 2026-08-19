@@ -4,6 +4,21 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.18 — 2026-08-19
+
+- Render the macOS menu-bar item with an explicit `Computer MCP` title and the
+  existing live service-state icon. The App remains identifiable when several
+  computers or menu-bar tools are active instead of exposing an unlabeled
+  glyph.
+- Keep the menu-bar item available after the main window closes. Its menu still
+  reports service state and reopens the existing Computer MCP control center
+  without restarting the gateway or managed tunnels.
+- Preserve the production Bundle ID, Developer ID identity, private Keychain
+  access group, TCC identity, ChatGPT connector, Secure MCP Tunnel profile,
+  workspaces, active `chatgpt-operate` profile, and Full Shell policy. This is
+  a presentation-only release and requires no credential or remote connector
+  migration.
+
 ## 1.0.17 — 2026-08-18
 
 - Replace the macOS 27 in-App directory browser with the native AppKit

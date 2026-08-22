@@ -21,3 +21,7 @@ lives with the Swift target in `Sources/ComputerMCP/ComputerMCP.docc/`.
 - Active alternatives belong in `Documentation/Proposals/`.
 - Retired non-current material belongs in `Documentation/Archive/`.
 - GitHub templates and CODEOWNERS belong in `.github/`.
+
+Normative documents describe the current product contract. Versioned release
+records, accepted decision records, migrations, and archived documents own
+history when that history remains relevant to their role.

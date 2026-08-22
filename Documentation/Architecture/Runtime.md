@@ -35,8 +35,9 @@ and list operations do not query Keychain; credentials are verified only for an
 explicit `doctor`/`start` operation or background restoration of a transport
 whose desired state is running. Background presence checks explicitly disable
 authentication UI. The provisioned Data Protection Keychain access group does
-not use the older file-based Keychain's per-application ACL dialogs, so a
-signature rebuild cannot stall local App/CLI management on an owner prompt.
+not bind credentials to an individual App binary, so routine builds with the
+stable signed identity do not stall local App/CLI management on an owner
+prompt.
 Blocking Security framework operations run on a store-owned serial dispatch
 queue and resume async callers through continuations; they never occupy
 Swift's cooperative executor. Launch-at-login status is observed on a separate

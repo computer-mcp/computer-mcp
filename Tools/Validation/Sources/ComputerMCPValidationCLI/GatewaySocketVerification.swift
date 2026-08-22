@@ -449,8 +449,28 @@ private struct AppFullCatalogProbeRunner {
   let inventoryProfile: CapabilityInventoryProfile?
   let fixtureReport: CapabilityFixtureReport?
   let runID: String?
+  private var codexThreadsToArchive: Set<String> = []
+  private let codexArchiveAttempts = 4
 
   mutating func run() async throws -> AppFullCatalogProbeReport {
+    do {
+      let report = try await runCatalog()
+      try await archiveValidationCodexThreads()
+      return report
+    } catch let executionError {
+      do {
+        try await archiveValidationCodexThreads()
+      } catch let cleanupError {
+        throw ValidationError(
+          "The App catalog probe failed and Codex validation cleanup also failed. "
+            + "Probe: \(executionError) Cleanup: \(cleanupError)"
+        )
+      }
+      throw executionError
+    }
+  }
+
+  private mutating func runCatalog() async throws -> AppFullCatalogProbeReport {
     let catalogTools = try await session.listTools()
     let catalog = catalogTools.map(\.name)
     let expectedTools = inventoryProfile?.toolNames.sorted() ?? catalog
@@ -916,7 +936,7 @@ private struct AppFullCatalogProbeRunner {
     )
   }
 
-  private func callCodexAppLifecycle(
+  private mutating func callCodexAppLifecycle(
     enabledTools: Set<String>
   ) async -> [String: AppFullCatalogProbeToolResult] {
     let lifecycleTools: Set<String> = [
@@ -939,9 +959,9 @@ private struct AppFullCatalogProbeRunner {
     let started = await call(
       "codex.app.thread.start",
       invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging(["ephemeral": .bool(false)]) { current, _ in
-          current
-        },
+        arguments: workspaceArgument.merging([
+          "ephemeral": .bool(true)
+        ]) { current, _ in current },
         expectedMarker: "thread"
       )
     )
@@ -1033,7 +1053,7 @@ private struct AppFullCatalogProbeRunner {
         arguments: workspaceArgument.merging([
           "thread_id": .string(threadID),
           "target": .object(["type": .string("uncommittedChanges")]),
-          "delivery": .string("detached"),
+          "delivery": .string("inline"),
         ]) { current, _ in current }
       )
     )
@@ -1433,7 +1453,7 @@ private struct AppFullCatalogProbeRunner {
     return (x + width / 2, y + height / 2)
   }
 
-  private func callCodexExecLifecycle(
+  private mutating func callCodexExecLifecycle(
     enabledTools: Set<String>
   ) async -> [String: AppFullCatalogProbeToolResult] {
     let lifecycleTools: Set<String> = [
@@ -1485,7 +1505,9 @@ private struct AppFullCatalogProbeRunner {
     )
     results["codex.exec.events"] = events.result
 
-    var upstreamSessionID: String?
+    var upstreamSessionID = events.report.flatMap {
+      firstStringValue(named: "thread_id", in: structuredResult(from: $0) ?? .null)
+    }
     var terminal = false
     for _ in 0..<240 {
       let listed = await call(
@@ -1562,6 +1584,10 @@ private struct AppFullCatalogProbeRunner {
       }
     }
 
+    if let upstreamSessionID {
+      codexThreadsToArchive.insert(upstreamSessionID)
+    }
+
     return completingLifecycleFailures(
       results,
       tools: requiredTools,
@@ -1569,7 +1595,7 @@ private struct AppFullCatalogProbeRunner {
     )
   }
 
-  private func callCodexMCPLifecycle(
+  private mutating func callCodexMCPLifecycle(
     enabledTools: Set<String>
   ) async -> [String: AppFullCatalogProbeToolResult] {
     let lifecycleTools: Set<String> = [
@@ -1638,7 +1664,9 @@ private struct AppFullCatalogProbeRunner {
         result: AppFullCatalogProbeToolResult,
         report: GatewayCallReport?
       )?
-    var threadID: String?
+    var threadID = events.report.flatMap {
+      firstStringValue(named: "thread_id", in: structuredResult(from: $0) ?? .null)
+    }
     for _ in 0..<240 {
       let current = await call(
         "codex.mcp.result",
@@ -1692,6 +1720,10 @@ private struct AppFullCatalogProbeRunner {
       }
     }
 
+    if let threadID {
+      codexThreadsToArchive.insert(threadID)
+    }
+
     if requiredTools.contains("codex.mcp.approval.respond") {
       results["codex.mcp.approval.respond"] = await callExpectedProviderFailure(
         "codex.mcp.approval.respond",
@@ -1711,6 +1743,37 @@ private struct AppFullCatalogProbeRunner {
       tools: requiredTools,
       detail: "The Codex MCP lifecycle fixture did not reach this capability."
     )
+  }
+
+  private mutating func archiveValidationCodexThreads() async throws {
+    for threadID in codexThreadsToArchive.sorted() {
+      var archived = false
+      var lastDetail: String?
+      for _ in 0..<codexArchiveAttempts {
+        let result = await call(
+          "codex.app.methods.call",
+          invocation: CapabilityFixtureInvocation(
+            arguments: [
+              "method": .string("thread/archive"),
+              "params": .object(["threadId": .string(threadID)]),
+            ]
+          )
+        ).result
+        if result.status == "passed" {
+          archived = true
+          break
+        }
+        lastDetail = result.detail
+        try? await Task.sleep(for: .milliseconds(250))
+      }
+      guard archived else {
+        throw ValidationError(
+          "Codex validation cleanup could not archive thread '\(threadID)': "
+            + (lastDetail ?? "unknown failure")
+        )
+      }
+      codexThreadsToArchive.remove(threadID)
+    }
   }
 
   private func completingLifecycleFailures(

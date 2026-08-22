@@ -82,11 +82,10 @@ shared password and must not be reused across boundaries.
 | Temporary runner Keychain password | Unlock only the ephemeral CI signing Keychain | Generated randomly inside the job and destroyed with the runner; nobody records or enters it |
 | GitHub `GITHUB_TOKEN` | Create the checksummed draft Release | Issued automatically to the job with scoped permissions; no personal access token is required |
 
-Apple App-Specific Passwords are not used by this repository. They belong to
-the older Apple-ID notarization credential flow and can be revoked without
-affecting this Team API key workflow. Cloudflare tunnel tokens and OpenAI tunnel
-keys are App runtime credentials in the production App's Data Protection
-Keychain; they are never inputs to the release workflow.
+Apple App-Specific Passwords are not used by this repository and can be revoked
+without affecting the Team API key workflow. Cloudflare tunnel tokens and
+OpenAI tunnel keys are App runtime credentials in the production App's Data
+Protection Keychain; they are never inputs to the release workflow.
 
 An operator needs to understand these roles, but does not need to memorize
 secret values or type a release password for each tag. The normal human actions
@@ -255,8 +254,8 @@ installed, `build-app.sh` uses them for stable production-Bundle testing. This
 preserves the production Team ID, Bundle ID, Data Protection Keychain access
 group, and TCC identity while remaining an unnotarized development artifact.
 
-Use a separate local runtime namespace when testing migration or first-launch
-behavior:
+Use a separate local runtime namespace when testing first-launch behavior and
+environment isolation:
 
 ```sh
 APP_ENVIRONMENT=development Scripts/build-app.sh
@@ -285,9 +284,8 @@ the protected Team API key workflow.
 - A script failure after `notarytool submit --wait` returns is distinct from an
   authentication or Apple rejection. The immutable run remains the audit
   record, credential cleanup still runs, and a source correction requires a new
-  patch version. The pre-secret notarization-record regression prevents zsh
-  special-parameter and malformed-response parsing defects from reaching this
-  boundary.
+  patch version. The pre-secret notarization-record gate accepts only a valid
+  response with the expected submission identity and terminal status.
 - `source=no usable signature` during the DMG Gatekeeper assessment means the
   container itself lacks a usable Developer ID signature even when its
   contents and notarization ticket are valid. Do not publish or re-sign that
@@ -295,13 +293,10 @@ the protected Team API key workflow.
   Developer ID and a secure timestamp, verifies the signature record, and only
   then submits that exact container. The no-secret signing-boundary regression
   rejects a missing or reordered step before production credentials are read.
-- A `SHA256SUMS` open/read failure for an accepted notarization receipt means
-  the receipt was checksummed by basename without first being copied into the
-  root upload directory. Do not publish a partial asset set. The assembler now
-  copies both receipts beside the DMG, requires every asset and `SHA256SUMS` to
-  share that root, and verifies the complete checksum file before draft
-  creation. Positive and negative layout regressions run without production
-  credentials.
+- A `SHA256SUMS` open/read failure for a notarization receipt means the release
+  asset root is incomplete or inconsistent. Do not publish a partial asset set.
+  Both receipts, the DMG, and `SHA256SUMS` must share the verified root upload
+  directory, and the complete checksum file must pass before draft creation.
 - An existing Release for the tag causes the workflow to stop instead of
   overwriting assets.
 - A failed immutable tag remains an audit record. After correcting a workflow

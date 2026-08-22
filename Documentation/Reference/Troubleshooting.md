@@ -124,11 +124,12 @@ inspect its signature and provisioning before changing the profile. The live
 App requires a non-ad-hoc Team ID, a matching environment/Bundle ID, an
 embedded provisioning profile, and the exact private Data Protection Keychain
 group `<TeamID>.<BundleID>`. Apple Development and Developer ID certificates
-for the same Team and production Bundle share that group and do not require a
-older file-based Keychain owner prompt. An ad-hoc build fails the App control plane closed
-rather than reading or migrating production secrets. Never copy a key into TOML
-or logs as a workaround. Run Diagnostics to verify credential availability;
-list views intentionally do not query Keychain.
+for the same Team and production Bundle share that group. The credential is not
+owned by an individual App binary, so routine builds with the stable signed
+identity do not require an owner prompt. An ad-hoc build fails the App control
+plane closed rather than reading production secrets. Never copy a key into TOML
+or logs. Run Diagnostics to verify credential availability; list views
+intentionally do not query Keychain.
 
 Use the official local admin UI and endpoints:
 
@@ -262,13 +263,10 @@ Common workflow failures are intentionally fail-closed:
   production App ID, and private Keychain group do not match the CI profile.
 - `Invalid credentials` from `notarytool` means the Team API key, key ID, or
   issuer ID is wrong. Individual API keys cannot notarize.
-- `read-only variable: status` after `notarytool submit --wait` is a zsh script
-  defect, not a password or Apple authorization failure: `status` is a reserved
-  read-only zsh parameter. Current releases parse the receipt with
-  `verify-notarization-record.sh`, and its regression covers accepted,
-  rejected, missing, malformed, and invalid-ID results before any production
-  Secret is available. Do not move the failed tag; fix the source and increment
-  the patch version.
+- `Notarization record verification failed` means the receipt is rejected,
+  missing, malformed, or bound to a different submission. This check runs
+  before any production Secret is available. Do not move the failed tag; fix
+  the source and increment the patch version.
 - `source=no usable signature` for a DMG means the disk-image container was not
   Developer ID signed, even if Apple accepted and stapled its notarization
   ticket and the App inside is valid. The formal order is: create DMG, sign the
@@ -278,11 +276,11 @@ Common workflow failures are intentionally fail-closed:
   afterward; increment the patch version and reproduce the artifact through
   the signed-tag workflow.
 - `SHA256SUMS` reports `No such file or directory` for an App or DMG
-  notarization JSON when a nested receipt was listed by basename but was not
-  copied into the root upload set. An accepted Apple receipt does not excuse an
-  incomplete Release. The root-level asset-layout gate and checksum assembler
-  now reject nested, external, missing, duplicate, or symlinked inputs and
-  verify the complete checksum file before draft creation.
+  notarization JSON when the release asset root is incomplete or inconsistent.
+  An accepted Apple receipt does not excuse an incomplete Release. The
+  root-level asset-layout gate rejects nested, external, missing, duplicate, or
+  symlinked inputs and verifies the complete checksum file before draft
+  creation.
 - `Unnotarized Developer ID` from `spctl` means the artifact was assessed
   before Apple accepted and stapled the exact App/DMG, or a different artifact
   was substituted afterward.

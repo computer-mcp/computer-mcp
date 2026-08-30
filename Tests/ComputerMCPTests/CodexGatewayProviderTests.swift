@@ -128,28 +128,6 @@ final class CodexGatewayProviderTests {
       (turnParams?["input"]?.arrayValue?.first?.objectValue)
         == (["type": .string("text"), "text": .string("Review the implementation.")]))
 
-    let planTurn = try await provider.callToolAsync(
-      name: "codex.app.turn.start",
-      arguments: .object([
-        "thread_id": .string("thread-1"),
-        "prompt": .string("Ask one bounded question."),
-        "model": .string("gpt-5.6-sol"),
-        "effort": .string("xhigh"),
-        "collaboration_mode": .string("plan"),
-      ])
-    )
-    let planTurnParams = planTurn.objectValue?["structuredContent"]?.objectValue?["result"]?
-      .objectValue?["params"]?.objectValue
-    #expect(
-      (planTurnParams?["collaborationMode"])
-        == (.object([
-          "mode": .string("plan"),
-          "settings": .object([
-            "model": .string("gpt-5.6-sol"),
-            "reasoning_effort": .string("xhigh"),
-          ]),
-        ])))
-
     let review = try await provider.callToolAsync(
       name: "codex.app.review.start",
       arguments: .object([
@@ -197,9 +175,6 @@ final class CodexGatewayProviderTests {
     #expect(
       (turn.inputSchema.objectValue?["required"])
         == (.array([.string("thread_id"), .string("prompt")])))
-    #expect(
-      (turn.inputSchema.objectValue?["properties"]?.objectValue?["collaboration_mode"]?
-        .objectValue?["enum"]) == (.array([.string("default"), .string("plan")])))
     #expect((start.outputSchema) != nil)
     #expect((turn.outputSchema) != nil)
     #expect(
@@ -208,31 +183,6 @@ final class CodexGatewayProviderTests {
     #expect(
       (review.inputSchema.objectValue?["properties"]?.objectValue?["delivery"]?
         .objectValue?["enum"]) == (.array([.string("inline"), .string("detached")])))
-  }
-
-  @Test
-  func testTurnStartCollaborationModeRequiresModelAndRejectsUnknownMode() async {
-    await assertThrowsErrorAsync(
-      try await makeProvider().callToolAsync(
-        name: "codex.app.turn.start",
-        arguments: .object([
-          "thread_id": .string("thread-1"),
-          "prompt": .string("Ask a question."),
-          "collaboration_mode": .string("plan"),
-        ])
-      )
-    )
-    await assertThrowsErrorAsync(
-      try await makeProvider().callToolAsync(
-        name: "codex.app.turn.start",
-        arguments: .object([
-          "thread_id": .string("thread-1"),
-          "prompt": .string("Ask a question."),
-          "model": .string("gpt-5.6-sol"),
-          "collaboration_mode": .string("unsupported"),
-        ])
-      )
-    )
   }
 
   @Test

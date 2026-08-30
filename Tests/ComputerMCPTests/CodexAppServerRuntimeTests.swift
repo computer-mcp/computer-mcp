@@ -29,6 +29,40 @@ final class CodexAppServerRuntimeTests {
   }
 
   @Test
+  func testOnlyTimedOutReadOnlyRequestsReceiveOneRetry() {
+    let timeout = LiveCodexAppServerRuntime.RequestTimeoutError(seconds: 30)
+
+    #expect(
+      LiveCodexAppServerRuntime.shouldRetryRequest(
+        timeout,
+        risk: .readOnly,
+        attempt: 0,
+        maximumAttempts: 2
+      ))
+    #expect(
+      !LiveCodexAppServerRuntime.shouldRetryRequest(
+        timeout,
+        risk: .readOnly,
+        attempt: 1,
+        maximumAttempts: 2
+      ))
+    #expect(
+      !LiveCodexAppServerRuntime.shouldRetryRequest(
+        timeout,
+        risk: .workspaceWrite,
+        attempt: 0,
+        maximumAttempts: 2
+      ))
+    #expect(
+      !LiveCodexAppServerRuntime.shouldRetryRequest(
+        CocoaError(.fileNoSuchFile),
+        risk: .readOnly,
+        attempt: 0,
+        maximumAttempts: 2
+      ))
+  }
+
+  @Test
   func testNormalizePinsThreadListAndSkillsToBoundWorkspace() async throws {
     let workspace = URL(fileURLWithPath: "/tmp/computer-mcp-workspace")
     let runtime = LiveCodexAppServerRuntime(
@@ -95,6 +129,23 @@ final class CodexAppServerRuntimeTests {
       ),
       expectedCode: "codex.app.danger_full_access_denied"
     )
+  }
+
+  @Test
+  func testTimedOutReadOnlyRequestRunsExactlyOneFreshAttempt() async throws {
+    let probe = CodexAppServerRetryProbe()
+
+    let result = try await LiveCodexAppServerRuntime.withRequestRetry(risk: .readOnly) {
+      attempt in
+      await probe.record(attempt: attempt)
+      if attempt == 0 {
+        throw LiveCodexAppServerRuntime.RequestTimeoutError(seconds: 30)
+      }
+      return "recovered"
+    }
+
+    #expect(result == "recovered")
+    #expect(await probe.attempts == [0, 1])
   }
 
   @Test
@@ -197,6 +248,14 @@ private actor CodexAppServerTimeoutProbe {
 
   func recordTimeout() {
     didTimeOut = true
+  }
+}
+
+private actor CodexAppServerRetryProbe {
+  private(set) var attempts: [Int] = []
+
+  func record(attempt: Int) {
+    attempts.append(attempt)
   }
 }
 

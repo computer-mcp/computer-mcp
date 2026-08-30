@@ -205,7 +205,7 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     case timedOut
   }
 
-  private struct RequestTimeoutError: Error, LocalizedError, Sendable {
+  struct RequestTimeoutError: Error, LocalizedError, Sendable {
     let seconds: Int
 
     var errorDescription: String? {
@@ -255,28 +255,30 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
         "codex.app.method_not_allowed: App Server method '\(method)' is not in the reviewed allowlist."
       )
     }
-    let connection = try await ensureConnection()
     let normalized = try normalize(params: params, for: descriptor)
-    try await validateWorkspaceScope(
-      method: method,
-      params: normalized,
-      connection: connection
-    )
     let response: JSONValue
     do {
-      response = try await Self.boundedRequest(
-        timeoutSeconds: configuration.appServerRequestTimeoutSeconds,
-        onTimeout: {
-          await connection.close()
-        },
-        operation: {
-          try await Self.sendReviewedRequest(
-            method: method,
-            params: normalized,
-            connection: connection
-          )
-        }
-      )
+      response = try await Self.withRequestRetry(risk: descriptor.risk) { _ in
+        let connection = try await self.ensureConnection()
+        try await self.validateWorkspaceScope(
+          method: method,
+          params: normalized,
+          connection: connection
+        )
+        return try await Self.boundedRequest(
+          timeoutSeconds: self.configuration.appServerRequestTimeoutSeconds,
+          onTimeout: {
+            await self.closeTimedOutConnection(connection)
+          },
+          operation: {
+            try await Self.sendReviewedRequest(
+              method: method,
+              params: normalized,
+              connection: connection
+            )
+          }
+        )
+      }
     } catch {
       throw GatewayToolError.executionFailed(
         "codex.app.request_failed: \(Self.errorDescription(error))"
@@ -287,6 +289,42 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
       response: response
     )
     return outputBounds.json(response)
+  }
+
+  static func withRequestRetry<Value: Sendable>(
+    risk: CapabilityRisk,
+    operation: @escaping @Sendable (_ attempt: Int) async throws -> Value
+  ) async throws -> Value {
+    let maximumAttempts = risk == .readOnly ? 2 : 1
+    var attempt = 0
+    while true {
+      do {
+        return try await operation(attempt)
+      } catch {
+        guard
+          shouldRetryRequest(
+            error,
+            risk: risk,
+            attempt: attempt,
+            maximumAttempts: maximumAttempts
+          )
+        else {
+          throw error
+        }
+        attempt += 1
+      }
+    }
+  }
+
+  static func shouldRetryRequest(
+    _ error: any Error,
+    risk: CapabilityRisk,
+    attempt: Int,
+    maximumAttempts: Int
+  ) -> Bool {
+    risk == .readOnly
+      && error is RequestTimeoutError
+      && attempt + 1 < maximumAttempts
   }
 
   func events(afterCursor: Int, maxResults: Int) async -> JSONValue {
@@ -514,6 +552,16 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     await eventBuffer.append(
       kind: "connection_ended",
       payload: .object(["message": message.map(JSONValue.string) ?? .null])
+    )
+  }
+
+  private func closeTimedOutConnection(
+    _ timedOutConnection: CodexAppServerConnection
+  ) async {
+    await timedOutConnection.close()
+    await connectionEnded(
+      timedOutConnection,
+      message: "App Server request deadline exceeded."
     )
   }
 

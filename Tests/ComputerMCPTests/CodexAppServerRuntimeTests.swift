@@ -29,6 +29,35 @@ final class CodexAppServerRuntimeTests {
   }
 
   @Test
+  func testBoundedRequestDoesNotWaitForNonCooperativeOperation() async {
+    let probe = CodexAppServerNonCooperativeProbe()
+    let safetyRelease = Task {
+      try? await Task.sleep(for: .seconds(5))
+      await probe.release()
+    }
+    let clock = ContinuousClock()
+    let started = clock.now
+
+    do {
+      _ = try await LiveCodexAppServerRuntime.boundedRequest(
+        timeoutSeconds: 1,
+        onTimeout: {},
+        operation: {
+          await probe.wait()
+        }
+      )
+      Issue.record("Expected the non-cooperative request to time out.")
+    } catch {
+      #expect(error.localizedDescription.contains("1-second deadline"))
+    }
+
+    let elapsed = started.duration(to: clock.now)
+    #expect(elapsed < .seconds(3))
+    await probe.release()
+    safetyRelease.cancel()
+  }
+
+  @Test
   func testOnlyTimedOutReadOnlyRequestsReceiveOneRetry() {
     let timeout = LiveCodexAppServerRuntime.RequestTimeoutError(seconds: 30)
 
@@ -256,6 +285,32 @@ private actor CodexAppServerRetryProbe {
 
   func record(attempt: Int) {
     attempts.append(attempt)
+  }
+}
+
+private actor CodexAppServerNonCooperativeProbe {
+  private var continuation: CheckedContinuation<String, Never>?
+  private var released = false
+
+  func wait() async -> String {
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        if released {
+          continuation.resume(returning: "released")
+        } else {
+          self.continuation = continuation
+        }
+      }
+    } onCancel: {
+      // This fixture deliberately ignores cancellation to model an RPC that is
+      // still blocked while its transport is being retired.
+    }
+  }
+
+  func release() {
+    released = true
+    continuation?.resume(returning: "released")
+    continuation = nil
   }
 }
 

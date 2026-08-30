@@ -4,6 +4,18 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.22 — 2026-08-31
+
+- Enforce the Codex App Server deadline even when the underlying RPC ignores
+  task cancellation. The timeout race returns without waiting for the losing
+  request task to finish.
+- Retire a timed-out App Server connection before resuming the caller and
+  close its transport asynchronously. A read-only retry therefore uses a
+  fresh connection without making transport shutdown part of the deadline.
+- Add a non-cooperative RPC regression that fails the previous structured
+  timeout implementation and proves the bounded return independently of
+  transport cleanup.
+
 ## 1.0.21 — 2026-08-30
 
 - Make exact-catalog Codex lifecycle acceptance deterministic: wait for the
@@ -15,6 +27,10 @@ All notable user-visible changes to Computer MCP are documented here.
   timeout still fail immediately and visibly.
 - Keep the public turn-start schema aligned with the stable `swift-codex`
   transport by exposing only fields the typed stable request preserves.
+- Keep the immutable signed 1.0.21 candidate unpublished after exact-artifact
+  acceptance showed that its structured timeout race still waited for the
+  canceled request and connection close. Version 1.0.22 retires the connection
+  synchronously and leaves non-cooperative cleanup outside the request bound.
 
 ## 1.0.20 — 2026-08-30
 

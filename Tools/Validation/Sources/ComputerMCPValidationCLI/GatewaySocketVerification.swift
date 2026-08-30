@@ -1772,12 +1772,7 @@ private struct AppFullCatalogProbeRunner {
       for _ in 0..<codexArchiveAttempts {
         let result = await call(
           "codex.app.methods.call",
-          invocation: CapabilityFixtureInvocation(
-            arguments: [
-              "method": .string("thread/archive"),
-              "params": .object(["threadId": .string(threadID)]),
-            ]
-          )
+          invocation: fixturePlan.codexThreadArchiveInvocation(threadID: threadID)
         ).result
         if result.status == "passed" {
           archived = true

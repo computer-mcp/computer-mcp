@@ -4,6 +4,13 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.20 — 2026-08-30
+
+- Bind validation-owned Codex thread cleanup to the selected fixture workspace
+  so exact-catalog acceptance remains deterministic when more than one
+  workspace is registered. Temporary validation threads are archived through
+  their owning workspace before the run can pass.
+
 ## 1.0.19 — 2026-08-30
 
 - Keep **Launch at login** registerable on a fresh installation when macOS has
@@ -17,6 +24,10 @@ All notable user-visible changes to Computer MCP are documented here.
 - Export effective workspace and profile state from the current persisted
   control plane so transient manifest or acceptance inputs cannot remain in a
   replayable configuration after their owning state is gone.
+- Keep the immutable signed 1.0.19 candidate unpublished after exact-artifact
+  acceptance found that validation-owned Codex thread cleanup was ambiguous
+  when multiple workspaces were registered. Version 1.0.20 repeats the
+  protected workflow with cleanup bound to its fixture workspace.
 
 ## 1.0.18 — 2026-08-19
 

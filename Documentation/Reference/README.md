@@ -12,10 +12,12 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
-- [1.0.19 Production Readiness Report](ProductionReadinessReport-1.0.19.md):
+- [1.0.20 Production Readiness Report](ProductionReadinessReport-1.0.20.md):
   version-bound CI render template for artifact identity, automated gates, and
   publication acceptance; its source placeholders are not current runtime
   status.
+- [1.0.19 Production Readiness Report](ProductionReadinessReport-1.0.19.md):
+  historical unpublished candidate record.
 - [1.0.18 Production Readiness Report](ProductionReadinessReport-1.0.18.md):
   historical release record.
 - [1.0.17 Production Readiness Report](ProductionReadinessReport-1.0.17.md):

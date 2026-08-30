@@ -188,6 +188,78 @@ extension CodexAppServerRuntimeProtocol {
   func shutdown() async {}
 }
 
+private final class CodexTimedRequestCompletion<Value: Sendable>: @unchecked Sendable {
+  enum Participant {
+    case operation
+    case timeout
+    case cancellation
+  }
+
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Value, any Error>?
+  private var operationTask: Task<Void, Never>?
+  private var timeoutTask: Task<Void, Never>?
+  private var resolved = false
+
+  func install(_ continuation: CheckedContinuation<Value, any Error>) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !resolved else {
+      return false
+    }
+    self.continuation = continuation
+    return true
+  }
+
+  func installTasks(
+    operation: Task<Void, Never>,
+    timeout: Task<Void, Never>
+  ) {
+    lock.lock()
+    operationTask = operation
+    timeoutTask = timeout
+    let shouldCancel = resolved
+    lock.unlock()
+    if shouldCancel {
+      operation.cancel()
+      timeout.cancel()
+    }
+  }
+
+  func claim(_ participant: Participant) -> CheckedContinuation<Value, any Error>? {
+    lock.lock()
+    guard !resolved else {
+      lock.unlock()
+      return nil
+    }
+    resolved = true
+    let continuation = continuation
+    self.continuation = nil
+    let operationTask = operationTask
+    let timeoutTask = timeoutTask
+    lock.unlock()
+
+    switch participant {
+    case .operation:
+      timeoutTask?.cancel()
+    case .timeout:
+      operationTask?.cancel()
+    case .cancellation:
+      operationTask?.cancel()
+      timeoutTask?.cancel()
+    }
+    return continuation
+  }
+
+  func resumeOperation(with result: Result<Value, any Error>) {
+    claim(.operation)?.resume(with: result)
+  }
+
+  func cancel() {
+    claim(.cancellation)?.resume(throwing: CancellationError())
+  }
+}
+
 actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
   private typealias Stable = CodexAppServerProtocol.Stable
   private typealias UserInputRequestHandle = CodexAppServerServerRequestHandle<
@@ -198,11 +270,6 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
   private struct PendingUserInputRequest: Sendable {
     let handle: UserInputRequestHandle
     let payload: JSONValue
-  }
-
-  private enum TimedRequestResult<Value: Sendable>: Sendable {
-    case value(Value)
-    case timedOut
   }
 
   struct RequestTimeoutError: Error, LocalizedError, Sendable {
@@ -268,7 +335,7 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
         return try await Self.boundedRequest(
           timeoutSeconds: self.configuration.appServerRequestTimeoutSeconds,
           onTimeout: {
-            await self.closeTimedOutConnection(connection)
+            await self.retireTimedOutConnection(connection)
           },
           operation: {
             try await Self.sendReviewedRequest(
@@ -555,14 +622,27 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     )
   }
 
-  private func closeTimedOutConnection(
+  private func retireTimedOutConnection(
     _ timedOutConnection: CodexAppServerConnection
   ) async {
-    await timedOutConnection.close()
-    await connectionEnded(
-      timedOutConnection,
-      message: "App Server request deadline exceeded."
-    )
+    if connection === timedOutConnection {
+      connection = nil
+      notificationTask?.cancel()
+      notificationTask = nil
+      requestTask?.cancel()
+      requestTask = nil
+      pendingUserInputRequests.removeAll()
+      workspaceScopedThreadIDs.removeAll()
+      connectionState = "failed"
+      lastError = "App Server request deadline exceeded."
+      await eventBuffer.append(
+        kind: "connection_ended",
+        payload: .object(["message": .string("App Server request deadline exceeded.")])
+      )
+    }
+    Task {
+      await timedOutConnection.close()
+    }
   }
 
   static func boundedRequest<Value: Sendable>(
@@ -570,26 +650,36 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     onTimeout: @escaping @Sendable () async -> Void,
     operation: @escaping @Sendable () async throws -> Value
   ) async throws -> Value {
-    try await withThrowingTaskGroup(of: TimedRequestResult<Value>.self) { group in
-      group.addTask {
-        .value(try await operation())
+    let completion = CodexTimedRequestCompletion<Value>()
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        guard completion.install(continuation) else {
+          continuation.resume(throwing: CancellationError())
+          return
+        }
+        let operationTask = Task {
+          do {
+            completion.resumeOperation(with: .success(try await operation()))
+          } catch {
+            completion.resumeOperation(with: .failure(error))
+          }
+        }
+        let timeoutTask = Task {
+          do {
+            try await Task.sleep(for: .seconds(timeoutSeconds))
+          } catch {
+            return
+          }
+          guard let continuation = completion.claim(.timeout) else {
+            return
+          }
+          await onTimeout()
+          continuation.resume(throwing: RequestTimeoutError(seconds: timeoutSeconds))
+        }
+        completion.installTasks(operation: operationTask, timeout: timeoutTask)
       }
-      group.addTask {
-        try await Task.sleep(for: .seconds(timeoutSeconds))
-        return .timedOut
-      }
-      guard let first = try await group.next() else {
-        throw RequestTimeoutError(seconds: timeoutSeconds)
-      }
-      switch first {
-      case .value(let value):
-        group.cancelAll()
-        return value
-      case .timedOut:
-        await onTimeout()
-        group.cancelAll()
-        throw RequestTimeoutError(seconds: timeoutSeconds)
-      }
+    } onCancel: {
+      completion.cancel()
     }
   }
 

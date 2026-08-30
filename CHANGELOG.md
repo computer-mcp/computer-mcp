@@ -4,6 +4,20 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.19 — 2026-08-30
+
+- Keep **Launch at login** registerable on a fresh installation when macOS has
+  no background-task record for the main App. The official Service Management
+  registration call now determines bundle eligibility instead of an absent
+  record disabling the control before registration can occur.
+- Preserve an existing enabled login item across the update. The production
+  Bundle ID, Developer ID identity, private Keychain access group, TCC identity,
+  Secure MCP Tunnel profile, credentials, workspaces, and policy are unchanged;
+  no migration or remote connector re-registration is required.
+- Export effective workspace and profile state from the current persisted
+  control plane so transient manifest or acceptance inputs cannot remain in a
+  replayable configuration after their owning state is gone.
+
 ## 1.0.18 — 2026-08-19
 
 - Render the macOS menu-bar item with an explicit `Computer MCP` title and the

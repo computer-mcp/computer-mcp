@@ -1176,6 +1176,13 @@ public struct CapabilityFixturePlan: Sendable {
     }
   }
 
+  public func codexThreadArchiveInvocation(threadID: String) -> CapabilityFixtureInvocation {
+    primary([
+      "method": .string("thread/archive"),
+      "params": .object(["threadId": .string(threadID)]),
+    ])
+  }
+
   private func workspaceScan(
     _ tool: String,
     path: String,

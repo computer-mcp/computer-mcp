@@ -116,4 +116,22 @@ final class CapabilityFixturePlanTests {
 
     #expect((supported.filter { plan.invocation(for: $0) == nil }) == ([]))
   }
+
+  @Test
+  func testCodexThreadCleanupIsBoundToTheFixtureWorkspace() {
+    let plan = CapabilityFixturePlan(
+      workspaceID: "fixture",
+      repositoryWorkspaceID: "repository",
+      accessibilityProcessID: 123
+    )
+
+    let invocation = plan.codexThreadArchiveInvocation(threadID: "thread-123")
+
+    #expect(invocation.arguments["workspace_id"] == .string("fixture"))
+    #expect(invocation.arguments["method"] == .string("thread/archive"))
+    #expect(
+      invocation.arguments["params"]
+        == .object(["threadId": .string("thread-123")])
+    )
+  }
 }

@@ -452,6 +452,26 @@ private struct AppFullCatalogProbeRunner {
   private var codexThreadsToArchive: Set<String> = []
   private let codexArchiveAttempts = 4
 
+  init(
+    session: GatewayClientSession,
+    database: GatewayDatabase,
+    socketPath: String,
+    databasePath: String,
+    fixturePlan: CapabilityFixturePlan,
+    inventoryProfile: CapabilityInventoryProfile?,
+    fixtureReport: CapabilityFixtureReport?,
+    runID: String?
+  ) {
+    self.session = session
+    self.database = database
+    self.socketPath = socketPath
+    self.databasePath = databasePath
+    self.fixturePlan = fixturePlan
+    self.inventoryProfile = inventoryProfile
+    self.fixtureReport = fixtureReport
+    self.runID = runID
+  }
+
   mutating func run() async throws -> AppFullCatalogProbeReport {
     do {
       let report = try await runCatalog()

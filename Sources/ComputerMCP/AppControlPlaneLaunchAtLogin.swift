@@ -17,7 +17,11 @@ package struct SMAppServiceLaunchAtLoginController: LaunchAtLoginControlling {
   package init() {}
 
   package func state() -> LaunchAtLoginState {
-    switch SMAppService.mainApp.status {
+    Self.state(for: SMAppService.mainApp.status)
+  }
+
+  package static func state(for status: SMAppService.Status) -> LaunchAtLoginState {
+    switch status {
     case .enabled:
       return .enabled
     case .notRegistered:
@@ -25,7 +29,9 @@ package struct SMAppServiceLaunchAtLoginController: LaunchAtLoginControlling {
     case .requiresApproval:
       return .requiresApproval
     case .notFound:
-      return .unavailable
+      // The main app remains registerable when no background-task record exists.
+      // Registration is authoritative for reporting an ineligible app bundle.
+      return .disabled
     @unknown default:
       return .unavailable
     }

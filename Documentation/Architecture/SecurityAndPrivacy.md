@@ -41,15 +41,17 @@ the macOS Data Protection Keychain. Every operation sets
 `.secrets`. New items use `AfterFirstUnlockThisDeviceOnly` so desired tunnels
 can restore in the logged-in user context without an interactive biometric or
 password policy. The production Development and Developer ID builds use the
-same Team ID and Bundle ID, so they share the same private group without the
-file-based Keychain's per-binary ACL prompts. The opt-in development App uses a
-different Bundle ID, group, service, and Application Support directory.
+same Team ID and Bundle ID and therefore share the same private access group.
+This group-based Data Protection Keychain contract does not attach credentials
+to an individual App binary, so routine builds with the stable signed identity
+do not require an owner prompt. The opt-in development App uses a different
+Bundle ID, group, service, and Application Support directory.
 
 The App fails closed when its signed Team metadata, environment, Bundle ID,
 embedded provisioning profile, or private Keychain entitlement do not agree.
 Ad-hoc artifacts therefore validate packaging in CI but cannot open the live
-App control plane or its secrets. There is no product fallback to the older
-file-based Keychain.
+App control plane or its secrets. Data Protection Keychain with the provisioned
+private access group is the sole App secret store.
 
 The App materializes the Cloudflare token only as a temporary `0600` file for
 `cloudflared`. Consumer-owned Cloudflare Access service tokens are not stored

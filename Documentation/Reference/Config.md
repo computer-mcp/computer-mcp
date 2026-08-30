@@ -125,7 +125,9 @@ computer-mcp config import --input candidate.toml \
 Export is secret-free. Import accepts only the current schema, validates the
 candidate, and returns a structural diff before applying. Apply uses the
 current digest to prevent races and never changes the desired state of a
-transport.
+transport. `config show` preserves the active static manifest. `config export`
+constructs its workspace and profile sections from the current App-managed
+registrations and grants.
 
 ## Provider examples
 

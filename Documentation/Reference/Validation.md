@@ -86,6 +86,14 @@ Real ChatGPT, Safari, OpenAI Secure MCP Tunnel, Cloudflare Tunnel, installed
 App, and external provider actions belong only in Validation Runs. They never
 become automated Swift tests.
 
+Automated fixtures use repository-local ignored build storage or a uniquely
+created temporary directory. They never use Desktop, Documents, iCloud Drive,
+or another user-content directory. Codex App lifecycle fixtures create
+ephemeral threads and run reviews inline. Exec and MCP checks that require a
+persisted upstream session archive every created thread before the run can
+pass. Cleanup failure fails the Validation Run instead of leaving an active test
+task in the user's Codex task list.
+
 ## Evidence contract
 
 Validation Evidence Bundle schema 2 uses three layers:

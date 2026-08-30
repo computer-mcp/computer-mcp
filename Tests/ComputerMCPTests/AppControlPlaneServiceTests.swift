@@ -326,6 +326,11 @@ final class AppControlPlaneServiceTests {
 
       [policy]
       shell_enabled = true
+
+      [[workspaces]]
+      id = "manifest-workspace"
+      display_name = "Manifest Workspace"
+      path = "Manifest Workspace"
       """
     )
     let workspaceURL = fixture.root.appendingPathComponent("Exported Workspace")
@@ -362,7 +367,7 @@ final class AppControlPlaneServiceTests {
         text: shownTOML,
         baseURL: fixture.directories.configuration
       )
-      #expect(shownConfiguration.workspaces.isEmpty)
+      #expect(shownConfiguration.workspaces.map(\.id) == ["manifest-workspace"])
       #expect(shownConfiguration.profiles.isEmpty)
 
       let exported = try await client.call("config.export")
@@ -374,6 +379,7 @@ final class AppControlPlaneServiceTests {
       let exportedWorkspace = try #require(
         exportedConfiguration.workspaces.first { $0.id == workspace.id }
       )
+      #expect(exportedConfiguration.workspaces.map(\.id) == [workspace.id])
       #expect(exportedWorkspace.displayName == "Exported Workspace")
       #expect(exportedWorkspace.path == workspaceURL.standardizedFileURL.path)
       let exportedGrant = try #require(

@@ -158,17 +158,13 @@ package actor AppControlPlaneService {
 
   package func effectiveConfigurationForExport() throws -> GatewayConfiguration {
     var configuration = try manifestStore.activeConfiguration()
-    var exportedWorkspaces = Dictionary(
-      uniqueKeysWithValues: configuration.workspaces.map { ($0.id, $0) }
-    )
-    for workspace in try workspaces() {
-      exportedWorkspaces[workspace.id] = WorkspaceManifestConfig(
+    configuration.workspaces = try workspaces().map { workspace in
+      WorkspaceManifestConfig(
         id: workspace.id,
         displayName: workspace.displayName,
         path: workspace.rootPath
       )
-    }
-    configuration.workspaces = exportedWorkspaces.values.sorted { $0.id < $1.id }
+    }.sorted { $0.id < $1.id }
     configuration.profiles = try profileGrants().map { grant in
       ProfileGrantConfig(
         id: grant.id,

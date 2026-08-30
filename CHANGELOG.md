@@ -4,12 +4,30 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.21 — 2026-08-30
+
+- Make exact-catalog Codex lifecycle acceptance deterministic: wait for the
+  bounded turn's persisted terminal state, interrupt the active outer review
+  turn, close the owning provider session, and archive validation threads from
+  a fresh authenticated session bound to their fixture workspace.
+- Retry a timed-out read-only Codex App Server request once on a fresh
+  connection. Write requests, policy denials, provider errors, and a second
+  timeout still fail immediately and visibly.
+- Keep the public turn-start schema aligned with the stable `swift-codex`
+  transport by exposing only fields the typed stable request preserves.
+
 ## 1.0.20 — 2026-08-30
 
 - Bind validation-owned Codex thread cleanup to the selected fixture workspace
   so exact-catalog acceptance remains deterministic when more than one
   workspace is registered. Temporary validation threads are archived through
   their owning workspace before the run can pass.
+- Keep the immutable signed 1.0.20 candidate unpublished after exact-artifact
+  acceptance found that asynchronous Codex writers could outlive the
+  validation connection and that a read-only App directory request could
+  encounter a transient deadline. Version 1.0.21 repeats the protected
+  workflow with explicit provider shutdown, fresh-session cleanup, and bounded
+  read-only retry.
 
 ## 1.0.19 — 2026-08-30
 

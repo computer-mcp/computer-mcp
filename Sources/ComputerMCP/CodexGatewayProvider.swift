@@ -399,7 +399,7 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       in: object,
       allowed: [
         "thread_id", "prompt", "model", "effort", "personality", "service_tier", "summary",
-        "output_schema", "collaboration_mode",
+        "output_schema",
       ]
     )
     var params: [String: JSONValue] = [
@@ -417,28 +417,6 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     try Self.copyOptionalString("service_tier", to: "serviceTier", from: object, into: &params)
     try Self.copyOptionalString("summary", to: "summary", from: object, into: &params)
     try Self.copyOptionalObject("output_schema", to: "outputSchema", from: object, into: &params)
-
-    if let mode = try Self.optionalString("collaboration_mode", in: object) {
-      guard configuration.experimentalAPI else {
-        throw GatewayToolError.invalidArguments(
-          "codex.app.collaboration_mode_unavailable: experimental_api must be enabled."
-        )
-      }
-      guard ["default", "plan"].contains(mode) else {
-        throw GatewayToolError.invalidArguments(
-          "codex.argument_invalid: 'collaboration_mode' must be 'default' or 'plan'."
-        )
-      }
-      let model = try Self.requiredString("model", in: object)
-      var settings: [String: JSONValue] = ["model": .string(model)]
-      if let effort = try Self.optionalString("effort", in: object) {
-        settings["reasoning_effort"] = .string(effort)
-      }
-      params["collaborationMode"] = .object([
-        "mode": .string(mode),
-        "settings": .object(settings),
-      ])
-    }
     return .object(params)
   }
 
@@ -793,13 +771,6 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
           "service_tier": stringSchema(),
           "summary": stringSchema(),
           "output_schema": freeObjectSchema(),
-          "collaboration_mode": .object([
-            "type": .string("string"),
-            "enum": .array([.string("default"), .string("plan")]),
-            "description": .string(
-              "Optional App Server collaboration mode. Plan mode enables ordinary user-input requests; model must also be supplied."
-            ),
-          ]),
         ],
         required: ["thread_id", "prompt"]
       ), write: true),

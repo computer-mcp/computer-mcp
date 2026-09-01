@@ -3,15 +3,12 @@ set -euo pipefail
 
 ROOT_DIR=${0:A:h:h}
 SWIFT_EXECUTABLE=${SWIFT_EXECUTABLE:-/usr/bin/swift}
-SWIFT_BUILD_SYSTEM=${SWIFT_BUILD_SYSTEM:-native}
 
 ROOT_BIN_DIR=$("$SWIFT_EXECUTABLE" build \
   --package-path "$ROOT_DIR" \
-  --build-system "$SWIFT_BUILD_SYSTEM" \
   --show-bin-path)
 VALIDATION_BIN_DIR=$("$SWIFT_EXECUTABLE" build \
   --package-path "$ROOT_DIR/Tools/Validation" \
-  --build-system "$SWIFT_BUILD_SYSTEM" \
   --show-bin-path)
 
 ROOT_CLI="$ROOT_BIN_DIR/computer-mcp"

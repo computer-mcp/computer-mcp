@@ -75,16 +75,15 @@ jobs:
 
       - name: Root build and test
         run: |
-          /usr/bin/swift build --build-system native
-          /usr/bin/swift test --build-system native --no-parallel
+          /usr/bin/swift build
+          /usr/bin/swift test --no-parallel
 
       - name: Validation build, test, and catalog
         run: |
-          /usr/bin/swift build --build-system native --package-path Tools/Validation
-          /usr/bin/swift test --build-system native --package-path Tools/Validation \
+          /usr/bin/swift build --package-path Tools/Validation
+          /usr/bin/swift test --package-path Tools/Validation \
             --no-parallel
-          /usr/bin/swift run --build-system native \
-            --package-path Tools/Validation \
+          /usr/bin/swift run --package-path Tools/Validation \
             computer-mcp-validate test-case validate
 
       - name: CLI, examples, localization, DocC, and release metadata gates

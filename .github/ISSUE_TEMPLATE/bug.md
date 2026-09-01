@@ -30,8 +30,8 @@ labels: bug
 
 ## Validation Already Run
 
-- [ ] `/usr/bin/swift build --build-system native`
-- [ ] `/usr/bin/swift test --build-system native`
+- [ ] `/usr/bin/swift build`
+- [ ] `/usr/bin/swift test`
 - [ ] `swift run computer-mcp config validate --config <path>`
 - [ ] `swift run computer-mcp tools list --config <path>`
 

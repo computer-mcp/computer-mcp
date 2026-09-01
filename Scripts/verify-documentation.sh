@@ -31,7 +31,6 @@ fail() {
 
 if ! /usr/bin/swift build \
   --package-path "$ROOT_DIR" \
-  --build-system native \
   --target ComputerMCP \
   -Xswiftc -emit-symbol-graph \
   -Xswiftc -emit-symbol-graph-dir \

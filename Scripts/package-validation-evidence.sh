@@ -103,7 +103,6 @@ scan_files_only "credential-like content must be redacted." \
 
 VALIDATION_BIN_DIR=$(/usr/bin/swift build \
   --package-path "$ROOT_DIR/Tools/Validation" \
-  --build-system native \
   --show-bin-path)
 VALIDATION_CLI="$VALIDATION_BIN_DIR/computer-mcp-validate"
 [[ -x "$VALIDATION_CLI" ]] || fail "Validation CLI is unavailable."

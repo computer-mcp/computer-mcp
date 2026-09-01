@@ -6,8 +6,8 @@ Capability Coverage, and Production Readiness Report generation. It is not part
 of the root package, `Computer MCP.app`, embedded CLI, or DMG.
 
 ```sh
-swift build --build-system native
-swift test --build-system native
+swift build
+swift test
 swift run computer-mcp-validate --help
 swift run computer-mcp-validate test-case validate
 swift run computer-mcp-validate test-case list

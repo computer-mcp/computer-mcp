@@ -17,6 +17,10 @@ All notable user-visible changes to Computer MCP are documented here.
   cancellation, and official Codex `app/list` regressions. The same Codex
   0.147.0 call that exceeded the 90-second external validation deadline now
   fails closed within its configured call budget plus bounded teardown.
+- Move repository, CI, documentation, and release builds to SwiftPM's supported
+  default build engine. Deterministic dependency metadata now validates the
+  actual App and CLI closure from `manifest.pif`, while DocC remains an explicit
+  warnings-as-errors documentation input instead of an unhandled compile input.
 - Keep the immutable signed `v1.0.23` candidate unpublished. Exact-artifact
   acceptance found that its per-attempt deadline, unbounded startup, and
   repeated transport close could amplify one read-only request beyond the

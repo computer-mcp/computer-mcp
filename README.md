@@ -261,8 +261,8 @@ Build and test from the repository root:
 
 ```sh
 swift-format lint --strict --recursive --configuration .swift-format Package.swift Sources Tests
-/usr/bin/swift build --build-system native
-/usr/bin/swift test --build-system native
+/usr/bin/swift build
+/usr/bin/swift test
 ```
 
 For standalone development, use one explicit TOML file per process:

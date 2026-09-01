@@ -3,8 +3,8 @@
 Build and test the root package:
 
 ```sh
-/usr/bin/swift build --build-system native
-/usr/bin/swift test --build-system native
+/usr/bin/swift build
+/usr/bin/swift test
 Scripts/build-app.sh
 open "dist/Computer MCP.app"
 ```
@@ -71,10 +71,10 @@ Real Apps, tunnels, external CLIs, ChatGPT, and browsers are maintained in the
 independent Computer MCP Validation Suite:
 
 ```sh
-/usr/bin/swift test --package-path Tools/Validation --build-system native
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift test --package-path Tools/Validation
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate test-case validate
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate runbook generate --output validation-runbook.md
 ```
 

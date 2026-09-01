@@ -321,13 +321,14 @@ private func encodedJSON<T: Encodable>(_ value: T) throws -> Data {
   return data
 }
 
-private func linkedPackages(from descriptionURL: URL) throws -> Set<String> {
-  let object = try JSONSerialization.jsonObject(with: Data(contentsOf: descriptionURL))
-  guard let description = object as? [String: Any],
-    let dependencyMap = description["targetDependencyMap"] as? [String: [String]],
+private func linkedPackagesFromNativeDescription(
+  _ description: [String: Any],
+  sourceURL: URL
+) throws -> Set<String> {
+  guard let dependencyMap = description["targetDependencyMap"] as? [String: [String]],
     let commands = description["swiftCommands"] as? [String: [String: Any]]
   else {
-    throw MetadataError.usage("Malformed SwiftPM build description: \(descriptionURL.path)")
+    throw MetadataError.usage("Malformed SwiftPM build description: \(sourceURL.path)")
   }
 
   let targetNames = Set(
@@ -356,6 +357,94 @@ private func linkedPackages(from descriptionURL: URL) throws -> Set<String> {
       let suffix = source[range.upperBound...]
       return suffix.split(separator: "/").first.map(String.init)?.lowercased()
     })
+}
+
+private struct PIFTarget {
+  let name: String
+  let packageIdentity: String?
+  let dependencies: [String]
+}
+
+private func checkoutIdentity(from projectDirectory: String) -> String? {
+  guard let range = projectDirectory.range(of: "/checkouts/") else { return nil }
+  let suffix = projectDirectory[range.upperBound...]
+  return suffix.split(separator: "/").first.map { String($0).lowercased() }
+}
+
+private func linkedPackagesFromPIF(
+  _ records: [[String: Any]],
+  sourceURL: URL
+) throws -> Set<String> {
+  var targetContentsBySignature: [String: [String: Any]] = [:]
+  for record in records where record["type"] as? String == "target" {
+    guard let signature = record["signature"] as? String,
+      let contents = record["contents"] as? [String: Any]
+    else {
+      throw MetadataError.usage("Malformed SwiftPM PIF target: \(sourceURL.path)")
+    }
+    targetContentsBySignature[signature] = contents
+  }
+
+  var targetsByGUID: [String: PIFTarget] = [:]
+  for record in records where record["type"] as? String == "project" {
+    guard let contents = record["contents"] as? [String: Any],
+      let projectDirectory = contents["projectDirectory"] as? String,
+      let targetSignatures = contents["targets"] as? [String]
+    else {
+      throw MetadataError.usage("Malformed SwiftPM PIF project: \(sourceURL.path)")
+    }
+    let packageIdentity = checkoutIdentity(from: projectDirectory)
+    for signature in targetSignatures {
+      guard let targetContents = targetContentsBySignature[signature],
+        let guid = targetContents["guid"] as? String,
+        let name = targetContents["name"] as? String
+      else {
+        throw MetadataError.usage("Malformed SwiftPM PIF project target: \(sourceURL.path)")
+      }
+      let dependencies = (targetContents["dependencies"] as? [[String: Any]] ?? [])
+        .compactMap { $0["guid"] as? String }
+      targetsByGUID[guid] = PIFTarget(
+        name: name,
+        packageIdentity: packageIdentity,
+        dependencies: dependencies
+      )
+    }
+  }
+
+  let roots: [String] = targetsByGUID.compactMap { guid, target in
+    guard target.packageIdentity == nil,
+      target.name == "ComputerMCPApp-product" || target.name == "computer-mcp-product"
+    else {
+      return nil
+    }
+    return guid
+  }
+  guard roots.count == 2 else {
+    throw MetadataError.usage("SwiftPM PIF is missing the App or CLI product: \(sourceURL.path)")
+  }
+
+  var pending = roots
+  var visited: Set<String> = []
+  var linked: Set<String> = []
+  while let guid = pending.popLast() {
+    guard visited.insert(guid).inserted, let target = targetsByGUID[guid] else { continue }
+    if let packageIdentity = target.packageIdentity {
+      linked.insert(packageIdentity)
+    }
+    pending.append(contentsOf: target.dependencies)
+  }
+  return linked
+}
+
+private func linkedPackages(from descriptionURL: URL) throws -> Set<String> {
+  let object = try JSONSerialization.jsonObject(with: Data(contentsOf: descriptionURL))
+  if let description = object as? [String: Any] {
+    return try linkedPackagesFromNativeDescription(description, sourceURL: descriptionURL)
+  }
+  if let records = object as? [[String: Any]] {
+    return try linkedPackagesFromPIF(records, sourceURL: descriptionURL)
+  }
+  throw MetadataError.usage("Malformed SwiftPM build graph: \(descriptionURL.path)")
 }
 
 private func makeNotices(
@@ -436,6 +525,7 @@ do {
         actual: actual.sorted()
       )
     }
+
   }
 
   let resolvedHash = sha256(resolvedData)

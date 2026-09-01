@@ -19,9 +19,9 @@ A probe is an auxiliary observation. It cannot independently produce PASS.
 ## Build and test
 
 ```sh
-/usr/bin/swift build --package-path Tools/Validation --build-system native
-/usr/bin/swift test --package-path Tools/Validation --build-system native
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift build --package-path Tools/Validation
+/usr/bin/swift test --package-path Tools/Validation
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate --help
 ```
 
@@ -76,9 +76,9 @@ risk_level
 Generate a reviewable runbook from the catalog:
 
 ```sh
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate test-case validate
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate runbook generate --output validation-runbook.md
 ```
 
@@ -188,7 +188,7 @@ its external Validation Evidence Bundles.
 Generate both report formats:
 
 ```sh
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate report generate \
   --inventory capability-inventory.json \
   --fixture capability-fixture.json \

@@ -229,8 +229,8 @@ Thread。
 
 ```sh
 swift-format lint --strict --recursive --configuration .swift-format Package.swift Sources Tests
-/usr/bin/swift build --build-system native
-/usr/bin/swift test --build-system native
+/usr/bin/swift build
+/usr/bin/swift test
 ```
 
 Standalone 开发模式每个进程只使用一个显式 TOML：

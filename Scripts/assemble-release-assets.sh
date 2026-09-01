@@ -56,7 +56,6 @@ RELEASE_MODE=1 \
 if [[ "$INCLUDE_EVIDENCE_MANIFEST" == "1" ]]; then
   VALIDATION_BIN_DIR=$(/usr/bin/swift build \
     --package-path "$ROOT_DIR/Tools/Validation" \
-    --build-system native \
     --show-bin-path)
   VALIDATION_CLI="$VALIDATION_BIN_DIR/computer-mcp-validate"
   [[ -x "$VALIDATION_CLI" ]] || fail "Validation CLI is unavailable."

@@ -166,11 +166,11 @@ Validation tooling is intentionally absent from the root package. From the
 repository root:
 
 ```sh
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate test-case validate
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate test-case list
-/usr/bin/swift run --package-path Tools/Validation --build-system native \
+/usr/bin/swift run --package-path Tools/Validation \
   computer-mcp-validate runbook generate --output validation-runbook.md
 ```
 

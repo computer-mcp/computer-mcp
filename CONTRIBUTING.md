@@ -6,8 +6,8 @@ focused, buildable, and covered by tests when behavior changes.
 ## Development Setup
 
 ```sh
-/usr/bin/swift build --build-system native
-/usr/bin/swift test --build-system native
+/usr/bin/swift build
+/usr/bin/swift test
 swift run computer-mcp --help
 swift run computer-mcp serve http --help
 Scripts/build-app.sh
@@ -38,8 +38,8 @@ Before opening a pull request, run:
 ```sh
 swift-format format --in-place --recursive --configuration .swift-format Package.swift Sources Tests
 swift-format lint --strict --recursive --configuration .swift-format Package.swift Sources Tests
-/usr/bin/swift build --build-system native
-/usr/bin/swift test --build-system native
+/usr/bin/swift build
+/usr/bin/swift test
 swift run computer-mcp config validate --config Examples/computer-mcp.toml
 ```
 

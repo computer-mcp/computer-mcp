@@ -21,8 +21,9 @@ never becomes a root target or distribution payload.
 
 ## Consequences
 
-- `swift build --build-system native` and
-  `swift test --build-system native` are the canonical component checks.
+- `swift build` and `swift test` are the canonical component checks. They use
+  SwiftPM's supported default build system rather than pinning a deprecated
+  implementation flag.
 - The App and CLI remain thin entry points over the internal `ComputerMCP`
   target and the same App Control Plane.
 - `Scripts/build-app.sh` assembles and signs the App and embedded CLI;

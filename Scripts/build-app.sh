@@ -238,9 +238,7 @@ SOURCE_COMMIT=${SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
 [[ "$SOURCE_COMMIT" =~ '^[0-9a-f]{40}$' ]] || fail "Unable to resolve the source commit."
 
 SWIFT_EXECUTABLE=${SWIFT_EXECUTABLE:-"$(xcrun --find swift)"}
-SWIFT_BUILD_SYSTEM=${SWIFT_BUILD_SYSTEM:-native}
 SWIFT_BUILD_ARGUMENTS=(
-  --build-system "$SWIFT_BUILD_SYSTEM"
   --package-path "$ROOT_DIR"
   --configuration "$CONFIGURATION"
   --only-use-versions-from-resolved-file
@@ -366,12 +364,12 @@ verify_universal_binary() {
 verify_universal_binary "$MACOS_DIR/Computer MCP"
 verify_universal_binary "$RESOURCES_DIR/computer-mcp"
 
-DESCRIPTION_PATH="$ARM64_BIN_DIR/description.json"
-[[ -f "$DESCRIPTION_PATH" ]] || fail "Missing SwiftPM build description: $DESCRIPTION_PATH"
+BUILD_GRAPH="$ARM64_SCRATCH/manifest.pif"
+[[ -f "$BUILD_GRAPH" ]] || fail "Missing SwiftPM build graph: $BUILD_GRAPH"
 xcrun swift "$ROOT_DIR/Scripts/generate-release-metadata.swift" \
   --root "$ROOT_DIR" \
   --output "$METADATA_DIR" \
-  --build-description "$DESCRIPTION_PATH" \
+  --build-description "$BUILD_GRAPH" \
   --checkout-root "$ARM64_SCRATCH/checkouts" \
   --product-version "$APP_VERSION" \
   --product-build "$APP_BUILD"

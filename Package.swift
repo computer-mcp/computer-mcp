@@ -50,7 +50,8 @@ let package = Package(
         .product(name: "CodexAppServerRuntime", package: "swift-codex"),
         .product(name: "CodexExec", package: "swift-codex"),
         .product(name: "CodexMCP", package: "swift-codex"),
-      ]
+      ],
+      exclude: ["ComputerMCP.docc"]
     ),
     .executableTarget(
       name: "computer-mcp",

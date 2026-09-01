@@ -13,8 +13,8 @@ vulnerability reporting, not a public issue, for security reports.
 Run:
 
 ```sh
-/usr/bin/swift build --build-system native
-/usr/bin/swift test --build-system native
+/usr/bin/swift build
+/usr/bin/swift test
 swift run computer-mcp config validate --config Examples/computer-mcp.toml
 swift run computer-mcp tools list --config Examples/computer-mcp.toml
 swift run computer-mcp serve http --help

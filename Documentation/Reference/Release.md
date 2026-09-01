@@ -136,14 +136,18 @@ Before tagging:
 6. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
-Example after the repository version has been changed to `1.0.22`:
+Resolve the tag from the repository version so the example cannot drift from
+the candidate:
 
 ```sh
+release_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+  Resources/ComputerMCPApp/Info.plist)
+release_tag="v${release_version}"
 git switch master
 git pull --ff-only origin master
-git tag -s -a v1.0.22 -m "Computer MCP 1.0.22"
-git verify-tag v1.0.22
-git push origin v1.0.22
+git tag -s -a "$release_tag" -m "Computer MCP ${release_version}"
+git verify-tag "$release_tag"
+git push origin "$release_tag"
 ```
 
 The tag is rejected unless it:
@@ -210,10 +214,13 @@ An independently generated summary-only Evidence Manifest can be required with
 Download every file from the draft Release and verify:
 
 ```sh
+release_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+  Resources/ComputerMCPApp/Info.plist)
+release_dmg="Computer-MCP-${release_version}-universal.dmg"
 shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Computer-MCP-1.0.22-universal.dmg
-xcrun stapler validate Computer-MCP-1.0.22-universal.dmg
+  "$release_dmg"
+xcrun stapler validate "$release_dmg"
 ```
 
 Then install the App from the DMG and run the local, ChatGPT, permission,

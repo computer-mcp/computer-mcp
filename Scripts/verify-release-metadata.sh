@@ -30,16 +30,15 @@ PRODUCT_VERSION=$(/usr/libexec/PlistBuddy \
 PRODUCT_BUILD=$(/usr/libexec/PlistBuddy \
   -c 'Print :CFBundleVersion' \
   Resources/ComputerMCPApp/Info.plist)
-/usr/bin/swift build --build-system native
-BIN_DIR=$(/usr/bin/swift build --build-system native --show-bin-path)
-DESCRIPTION_PATH="$BIN_DIR/description.json"
-[[ -f "$DESCRIPTION_PATH" ]] || fail "Missing SwiftPM build description."
+/usr/bin/swift build
+BUILD_GRAPH="$ROOT_DIR/.build/manifest.pif"
+[[ -f "$BUILD_GRAPH" ]] || fail "Missing SwiftPM build graph."
 
 for output in "$FIRST_OUTPUT" "$SECOND_OUTPUT"; do
   xcrun swift Scripts/generate-release-metadata.swift \
     --root "$ROOT_DIR" \
     --output "$output" \
-    --build-description "$DESCRIPTION_PATH" \
+    --build-description "$BUILD_GRAPH" \
     --checkout-root "$ROOT_DIR/.build/checkouts" \
     --product-version "$PRODUCT_VERSION" \
     --product-build "$PRODUCT_BUILD"

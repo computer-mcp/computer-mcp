@@ -60,20 +60,17 @@ jobs:
           Scripts/verify-release-tag-restoration.sh
           Scripts/verify-release-record-rendering.sh
 
-      - name: Root native build and Swift Testing
+      - name: Root build and Swift Testing
         run: |
-          /usr/bin/swift build --build-system native
-          /usr/bin/swift test --build-system native --no-parallel
+          /usr/bin/swift build
+          /usr/bin/swift test --no-parallel
 
       - name: Validation Suite and Test Case catalog
         run: |
-          /usr/bin/swift build --build-system native \
-            --package-path Tools/Validation
-          /usr/bin/swift test --build-system native \
-            --package-path Tools/Validation \
+          /usr/bin/swift build --package-path Tools/Validation
+          /usr/bin/swift test --package-path Tools/Validation \
             --no-parallel
-          /usr/bin/swift run --build-system native \
-            --package-path Tools/Validation \
+          /usr/bin/swift run --package-path Tools/Validation \
             computer-mcp-validate test-case validate
 
       - name: CLI hierarchy, examples, and localization

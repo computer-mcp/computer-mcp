@@ -74,8 +74,8 @@ Before finishing code changes, run:
 ```sh
 swift-format format --in-place --recursive --configuration .swift-format Package.swift Sources Tests
 swift-format lint --strict --recursive --configuration .swift-format Package.swift Sources Tests
-/usr/bin/swift build --build-system native
-/usr/bin/swift test --build-system native
+/usr/bin/swift build
+/usr/bin/swift test
 ```
 
 For user-facing CLI behavior, also run the relevant command directly, such as:

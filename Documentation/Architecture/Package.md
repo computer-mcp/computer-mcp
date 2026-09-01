@@ -8,8 +8,8 @@ App executable. Only the App and CLI are package products.
 
 - Swift tools 6.2 and macOS 14 or newer.
 - SwiftPM is the build and test entry point.
-- Build, test, and release scripts consistently use SwiftPM's
-  `--build-system native` implementation so one cache layout is produced.
+- Build, test, and release scripts consistently use SwiftPM's default build
+  system so one cache layout is produced without relying on a deprecated flag.
 - The release is a current-user App with Hardened Runtime and no App Sandbox.
 - Generated `.doccarchive` output is not committed.
 

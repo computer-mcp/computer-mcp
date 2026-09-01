@@ -1,5 +1,9 @@
 # Reference
 
+- [Production Productization Acceptance Contract](ProductizationAcceptance.md):
+  normative scope, evidence requirements, and coordinated two-repository
+  release gates for the current production productization batch.
+
 This directory contains detailed operational reference material.
 
 ## Documents
@@ -12,9 +16,11 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
+- [1.0.23 Production Readiness Report](ProductionReadinessReport-1.0.23.md):
+  version-bound CI render template for the coordinated productization release,
+  artifact identity, automated gates, and publication acceptance.
 - [1.0.22 Production Readiness Report](ProductionReadinessReport-1.0.22.md):
-  version-bound CI render template for artifact identity, automated gates, and
-  publication acceptance; its source placeholders are not current runtime
+  historical release record; source placeholders are not current runtime
   status.
 - [1.0.21 Production Readiness Report](ProductionReadinessReport-1.0.21.md):
   historical unpublished candidate record.

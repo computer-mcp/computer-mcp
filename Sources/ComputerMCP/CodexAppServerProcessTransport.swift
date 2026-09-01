@@ -211,14 +211,24 @@ final class ManagedCodexAppServerTransport: CodexAppServerLinePeer, @unchecked S
       let executable: Executable = .path(FilePath("/bin/sh"))
       var platformOptions = PlatformOptions()
       platformOptions.processGroupID = 0
+      let standardOutput = try FileDescriptor.pipe()
+      let outputReader = ManagedCodexAppServerOutputReader(
+        readEnd: standardOutput.readEnd,
+        state: state
+      )
+      outputReader.start()
+      defer { outputReader.stop() }
       let outcome = try await Subprocess.run(
         executable,
         arguments: Arguments(supervisor.arguments),
         environment: .custom(environment),
         workingDirectory: FilePath(configuration.workingDirectory.path),
         platformOptions: platformOptions,
-        preferredBufferSize: 1
-      ) { execution, inputWriter, stdout, stderr in
+        output: FileDescriptorOutput.fileDescriptor(
+          standardOutput.writeEnd,
+          closeAfterSpawningProcess: true
+        )
+      ) { execution, inputWriter, stderr in
         let stopImmediately = await state.attach(
           execution: execution,
           inputWriter: inputWriter
@@ -234,23 +244,10 @@ final class ManagedCodexAppServerTransport: CodexAppServerLinePeer, @unchecked S
           try? await inputWriter.finish()
           try? execution.send(signal: .terminate, toProcessGroup: true)
         }
-        await withTaskGroup(of: Void.self) { group in
-          group.addTask {
-            do {
-              for try await buffer in stdout {
-                try await state.appendStandardOutput(data(from: buffer))
-              }
-            } catch {
-              await state.recordStreamError(error)
-            }
-          }
-          group.addTask {
-            do {
-              for try await _ in stderr {}
-            } catch {
-              await state.recordStreamError(error)
-            }
-          }
+        do {
+          for try await _ in stderr {}
+        } catch {
+          await state.recordStreamError(error)
         }
       }
       await state.finish(status: outcome.terminationStatus)
@@ -353,8 +350,62 @@ final class ManagedCodexAppServerTransport: CodexAppServerLinePeer, @unchecked S
     return nil
   }
 
-  private static func data(from buffer: AsyncBufferSequence.Buffer) -> Data {
-    buffer.withUnsafeBytes { Data($0) }
+}
+
+/// Reads partial stdout chunks so newline-delimited responses do not wait for EOF.
+private final class ManagedCodexAppServerOutputReader: @unchecked Sendable {
+  private let handle: FileHandle
+  private let state: ManagedCodexAppServerProcessState
+  private let lock = NSLock()
+  private var stopped = false
+
+  init(
+    readEnd: FileDescriptor,
+    state: ManagedCodexAppServerProcessState
+  ) {
+    self.handle = FileHandle(fileDescriptor: readEnd.rawValue, closeOnDealloc: true)
+    self.state = state
+  }
+
+  func start() {
+    arm()
+  }
+
+  func stop() {
+    let shouldClose = lock.withLock { () -> Bool in
+      guard !stopped else { return false }
+      stopped = true
+      return true
+    }
+    guard shouldClose else { return }
+    handle.readabilityHandler = nil
+    try? handle.close()
+  }
+
+  private func arm() {
+    let shouldArm = lock.withLock { !stopped }
+    guard shouldArm else { return }
+    handle.readabilityHandler = { [weak self] handle in
+      guard let self else { return }
+      handle.readabilityHandler = nil
+      let data = handle.availableData
+      Task { await self.consume(data) }
+    }
+  }
+
+  private func consume(_ data: Data) async {
+    guard lock.withLock({ !stopped }) else { return }
+    guard !data.isEmpty else {
+      stop()
+      return
+    }
+    do {
+      try await state.appendStandardOutput(data)
+      arm()
+    } catch {
+      await state.recordStreamError(error)
+      stop()
+    }
   }
 }
 

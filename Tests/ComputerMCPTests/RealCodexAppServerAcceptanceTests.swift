@@ -11,6 +11,56 @@ final class RealCodexAppServerAcceptanceTests {
       if: ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_ACCEPTANCE"] == "1"
     )
   )
+  func testSkillsListCompletesWithinTheOfficialRequestDeadline() async throws {
+    let workspace = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let executable =
+      ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_EXECUTABLE"] ?? "codex"
+    let runtime = LiveCodexAppServerRuntime(
+      configuration: CodexConfig(
+        enabled: true,
+        executable: executable,
+        execEnabled: false,
+        mcpEnabled: false,
+        appServerRequestTimeoutSeconds: 30,
+        appServerTerminationGraceMilliseconds: 1_000,
+        appServerKillGraceMilliseconds: 2_000,
+        approvalPolicy: .never
+      ),
+      workspaceURL: workspace
+    )
+    let clock = ContinuousClock()
+    let started = clock.now
+
+    let response: JSONValue
+    do {
+      response = try await runtime.call(
+        method: "skills/list",
+        params: .object(["forceReload": .bool(false)])
+      )
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
+
+    #expect(started.duration(to: clock.now) < .seconds(30))
+    let entries = try #require(response.objectValue?["data"]?.arrayValue)
+    #expect(entries.count == 1)
+    #expect(entries.first?.objectValue?["cwd"] == .string(workspace.path))
+    let ownedProcessID = await processID(runtime)
+    await runtime.shutdown()
+    if let ownedProcessID {
+      #expect(await waitForExit(ownedProcessID))
+    }
+  }
+
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_ACCEPTANCE"] == "1"
+    )
+  )
   func testAppListHonorsEndToEndDeadlineAgainstOfficialAppServer() async throws {
     let workspace = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

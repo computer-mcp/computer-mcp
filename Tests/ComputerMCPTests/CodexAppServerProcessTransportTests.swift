@@ -139,6 +139,51 @@ struct CodexAppServerProcessTransportTests {
     await transport.close()
   }
 
+  @Test
+  func largeProtocolLineArrivesWithinTheRequestBudget() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let expected = String(repeating: "x", count: 256 * 1_024)
+    let response = directory.appendingPathComponent("large-response.jsonl")
+    try Data((expected + "\n").utf8).write(to: response)
+    let script = directory.appendingPathComponent("large-response-app-server.sh")
+    try Data(
+      """
+      #!/bin/sh
+      /bin/cat "$RESPONSE_FILE"
+      while :; do /bin/sleep 1; done
+      """.utf8
+    ).write(to: script)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: NSNumber(value: Int16(0o700))],
+      ofItemAtPath: script.path
+    )
+    var environment = ProcessInfo.processInfo.environment
+    environment["RESPONSE_FILE"] = response.path
+    let transport = ManagedCodexAppServerTransport(
+      configuration: .init(
+        executable: script.path,
+        arguments: [],
+        environment: environment,
+        workingDirectory: directory,
+        terminationGraceMilliseconds: 500,
+        killGraceMilliseconds: 1_000
+      )
+    )
+    _ = try await waitForRunning(transport)
+    let clock = ContinuousClock()
+    let started = clock.now
+    var iterator = transport.inboundLines.makeAsyncIterator()
+    let received = try #require(try await iterator.next())
+
+    #expect(received == expected)
+    #expect(started.duration(to: clock.now) < .seconds(3))
+    await transport.close()
+  }
+
   @Test(arguments: 0..<5)
   func ownerProcessDeathTerminatesTheEntireAppServerGroup(iteration: Int) async throws {
     let directory = FileManager.default.temporaryDirectory

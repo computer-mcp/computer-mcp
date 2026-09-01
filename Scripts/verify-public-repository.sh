@@ -5,6 +5,7 @@ ROOT_DIR=${0:A:h:h}
 cd "$ROOT_DIR"
 
 RG=(rg -n --hidden \
+  --glob '!.git' \
   --glob '!.git/**' \
   --glob '!.build/**' \
   --glob '!**/.build/**' \

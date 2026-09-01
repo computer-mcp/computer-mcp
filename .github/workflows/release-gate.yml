@@ -72,6 +72,7 @@ jobs:
           Scripts/write-release-checksums-regression.sh
           Scripts/verify-release-tag-restoration.sh
           Scripts/verify-release-record-rendering.sh
+          Scripts/verify-public-repository-worktree-regression.sh
 
       - name: Root build and test
         run: |

@@ -7,9 +7,9 @@ All notable user-visible changes to Computer MCP are documented here.
 ## 1.0.25 — 2026-09-02
 
 - Drain Codex App Server stdout in available chunks instead of requesting and
-  processing one byte per actor hop. Large newline-delimited responses now
-  preserve interactive framing without exhausting the end-to-end request
-  budget.
+  processing one byte per actor hop. Chunk consumption is serialized and
+  awaited before the protocol stream finishes, so large long-lived responses
+  remain interactive and a short-lived process cannot lose its final line.
 - Add a deterministic 256 KiB long-lived protocol-response regression and a
   gated official Codex 0.147.0 `skills/list` acceptance test. The 233 KiB
   workspace Skill catalog now completes in under one second in the real

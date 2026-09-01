@@ -217,40 +217,45 @@ final class ManagedCodexAppServerTransport: CodexAppServerLinePeer, @unchecked S
         state: state
       )
       outputReader.start()
-      defer { outputReader.stop() }
-      let outcome = try await Subprocess.run(
-        executable,
-        arguments: Arguments(supervisor.arguments),
-        environment: .custom(environment),
-        workingDirectory: FilePath(configuration.workingDirectory.path),
-        platformOptions: platformOptions,
-        output: FileDescriptorOutput.fileDescriptor(
-          standardOutput.writeEnd,
-          closeAfterSpawningProcess: true
-        )
-      ) { execution, inputWriter, stderr in
-        let stopImmediately = await state.attach(
-          execution: execution,
-          inputWriter: inputWriter
-        )
-        guard let processID = await waitForProcessID(at: supervisor.processIDFile) else {
-          try? execution.send(signal: .kill, toProcessGroup: true)
-          throw CodexAppServerProcessTransportError.launchFailed(
-            "The process supervisor did not report the App Server PID."
+      do {
+        let outcome = try await Subprocess.run(
+          executable,
+          arguments: Arguments(supervisor.arguments),
+          environment: .custom(environment),
+          workingDirectory: FilePath(configuration.workingDirectory.path),
+          platformOptions: platformOptions,
+          output: FileDescriptorOutput.fileDescriptor(
+            standardOutput.writeEnd,
+            closeAfterSpawningProcess: true
           )
+        ) { execution, inputWriter, stderr in
+          let stopImmediately = await state.attach(
+            execution: execution,
+            inputWriter: inputWriter
+          )
+          guard let processID = await waitForProcessID(at: supervisor.processIDFile) else {
+            try? execution.send(signal: .kill, toProcessGroup: true)
+            throw CodexAppServerProcessTransportError.launchFailed(
+              "The process supervisor did not report the App Server PID."
+            )
+          }
+          await state.attachAppServer(processID: processID)
+          if stopImmediately {
+            try? await inputWriter.finish()
+            try? execution.send(signal: .terminate, toProcessGroup: true)
+          }
+          do {
+            for try await _ in stderr {}
+          } catch {
+            await state.recordStreamError(error)
+          }
         }
-        await state.attachAppServer(processID: processID)
-        if stopImmediately {
-          try? await inputWriter.finish()
-          try? execution.send(signal: .terminate, toProcessGroup: true)
-        }
-        do {
-          for try await _ in stderr {}
-        } catch {
-          await state.recordStreamError(error)
-        }
+        await outputReader.stop(drainRemainingOutput: true)
+        await state.finish(status: outcome.terminationStatus)
+      } catch {
+        await outputReader.stop(drainRemainingOutput: false)
+        throw error
       }
-      await state.finish(status: outcome.terminationStatus)
     } catch {
       await state.failLaunch(error)
     }
@@ -358,6 +363,7 @@ private final class ManagedCodexAppServerOutputReader: @unchecked Sendable {
   private let state: ManagedCodexAppServerProcessState
   private let lock = NSLock()
   private var stopped = false
+  private var consumptionTask: Task<Void, Never>?
 
   init(
     readEnd: FileDescriptor,
@@ -371,40 +377,68 @@ private final class ManagedCodexAppServerOutputReader: @unchecked Sendable {
     arm()
   }
 
-  func stop() {
-    let shouldClose = lock.withLock { () -> Bool in
-      guard !stopped else { return false }
-      stopped = true
-      return true
+  func stop(drainRemainingOutput: Bool) async {
+    let task = lock.withLock { () -> Task<Void, Never>? in
+      if !stopped {
+        stopped = true
+        handle.readabilityHandler = nil
+        if drainRemainingOutput {
+          while true {
+            let data = handle.availableData
+            guard !data.isEmpty else { break }
+            enqueueLocked(data)
+          }
+        }
+        try? handle.close()
+      }
+      return consumptionTask
     }
-    guard shouldClose else { return }
-    handle.readabilityHandler = nil
-    try? handle.close()
+    await task?.value
   }
 
   private func arm() {
-    let shouldArm = lock.withLock { !stopped }
-    guard shouldArm else { return }
-    handle.readabilityHandler = { [weak self] handle in
-      guard let self else { return }
-      handle.readabilityHandler = nil
-      let data = handle.availableData
-      Task { await self.consume(data) }
+    lock.withLock {
+      guard !stopped else { return }
+      handle.readabilityHandler = { [weak self] handle in
+        self?.consumeAvailableData(from: handle)
+      }
     }
   }
 
-  private func consume(_ data: Data) async {
-    guard lock.withLock({ !stopped }) else { return }
-    guard !data.isEmpty else {
-      stop()
-      return
+  private func consumeAvailableData(from handle: FileHandle) {
+    lock.withLock {
+      guard !stopped else { return }
+      handle.readabilityHandler = nil
+      let data = handle.availableData
+      guard !data.isEmpty else {
+        stopped = true
+        try? handle.close()
+        return
+      }
+      enqueueLocked(data)
     }
-    do {
-      try await state.appendStandardOutput(data)
-      arm()
-    } catch {
-      await state.recordStreamError(error)
-      stop()
+  }
+
+  private func enqueueLocked(_ data: Data) {
+    let previous = consumptionTask
+    consumptionTask = Task { [weak self, state] in
+      await previous?.value
+      do {
+        try await state.appendStandardOutput(data)
+        self?.arm()
+      } catch {
+        await state.recordStreamError(error)
+        self?.stopProducing()
+      }
+    }
+  }
+
+  private func stopProducing() {
+    lock.withLock {
+      guard !stopped else { return }
+      stopped = true
+      handle.readabilityHandler = nil
+      try? handle.close()
     }
   }
 }

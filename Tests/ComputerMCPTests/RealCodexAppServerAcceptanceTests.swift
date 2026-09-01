@@ -34,25 +34,24 @@ final class RealCodexAppServerAcceptanceTests {
     let clock = ContinuousClock()
     let started = clock.now
 
-    let response: JSONValue
     do {
-      response = try await runtime.call(
+      let response = try await runtime.call(
         method: "skills/list",
         params: .object(["forceReload": .bool(false)])
       )
+
+      #expect(started.duration(to: clock.now) < .seconds(30))
+      let entries = try #require(response.objectValue?["data"]?.arrayValue)
+      #expect(entries.count == 1)
+      #expect(entries.first?.objectValue?["cwd"] == .string(workspace.path))
+      let ownedProcessID = await processID(runtime)
+      await runtime.shutdown()
+      if let ownedProcessID {
+        #expect(await waitForExit(ownedProcessID))
+      }
     } catch {
       await runtime.shutdown()
       throw error
-    }
-
-    #expect(started.duration(to: clock.now) < .seconds(30))
-    let entries = try #require(response.objectValue?["data"]?.arrayValue)
-    #expect(entries.count == 1)
-    #expect(entries.first?.objectValue?["cwd"] == .string(workspace.path))
-    let ownedProcessID = await processID(runtime)
-    await runtime.shutdown()
-    if let ownedProcessID {
-      #expect(await waitForExit(ownedProcessID))
     }
   }
 

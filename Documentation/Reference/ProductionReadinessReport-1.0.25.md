@@ -37,7 +37,7 @@ not satisfy this record.
 | Validation canonical catalog | 22 publisher-verifiable Test Cases with exact ID equality |
 | Production productization contract | All 182 O/A–J/T/R/W/Q/CS criteria resolved with implementation, test, documentation, website, or release evidence |
 | End-to-end App Server deadline | Connection startup, workspace validation, reviewed RPC, and sole read-only retry share one configured call budget; official Codex `app/list` regression passes |
-| Large App Server responses | A 256 KiB long-lived protocol response and official Codex `skills/list` complete within the same request budget without waiting for EOF or crossing one actor boundary per byte |
+| Large App Server responses | A 256 KiB long-lived protocol response and official Codex `skills/list` complete within the same request budget without waiting for EOF or crossing one actor boundary per byte; tracked draining also preserves the final line from a short-lived process |
 | Codex process lifecycle | Owned process-group identity and bounded EOF/TERM/KILL/reap across close, replacement, timeout, shutdown, parent death, stubborn descendants, and back-pressured stdin |
 | Close idempotence | Concurrent and repeated teardown paths share one retirement task and do not multiply grace intervals or process signals |
 | Real official-client handoff | First owned client completes a turn and is reaped; a second official client resumes and archives the durable thread, then is reaped |

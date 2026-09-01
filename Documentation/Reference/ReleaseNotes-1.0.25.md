@@ -7,8 +7,9 @@ coordinated `computer-mcp.github.io` publication from its reviewed commit.
 ## Highlights
 
 - Codex App Server stdout is drained in available chunks instead of crossing a
-  concurrency boundary for every byte. Large newline-delimited responses keep
-  interactive framing without exhausting the end-to-end request budget.
+  concurrency boundary for every byte. Chunk consumption is serialized and
+  awaited before the protocol stream finishes, preserving both interactive
+  long-lived responses and the final line from a short-lived process.
 - A deterministic 256 KiB long-lived response regression accompanies a real
   official Codex 0.147.0 `skills/list` acceptance test. The 233 KiB workspace
   Skill catalog completes normally and its owned process is reaped.

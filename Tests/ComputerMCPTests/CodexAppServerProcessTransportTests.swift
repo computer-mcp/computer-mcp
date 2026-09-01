@@ -184,6 +184,32 @@ struct CodexAppServerProcessTransportTests {
     await transport.close()
   }
 
+  @Test(arguments: 0..<20)
+  func shortLivedProcessDeliversItsFinalProtocolLine(iteration: Int) async throws {
+    let expected = "response-\(iteration)"
+    let transport = ManagedCodexAppServerTransport(
+      configuration: .init(
+        executable: "/usr/bin/printf",
+        arguments: ["%s\\n", expected],
+        workingDirectory: FileManager.default.temporaryDirectory,
+        terminationGraceMilliseconds: 500,
+        killGraceMilliseconds: 1_000
+      )
+    )
+    var iterator = transport.inboundLines.makeAsyncIterator()
+
+    let received: String?
+    do {
+      received = try await iterator.next()
+    } catch {
+      await transport.close()
+      throw error
+    }
+    await transport.close()
+
+    #expect(received == expected)
+  }
+
   @Test(arguments: 0..<5)
   func ownerProcessDeathTerminatesTheEntireAppServerGroup(iteration: Int) async throws {
     let directory = FileManager.default.temporaryDirectory

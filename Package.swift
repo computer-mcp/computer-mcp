@@ -47,7 +47,7 @@ let package = Package(
         .product(name: "Yams", package: "Yams"),
         .product(name: "CodexAppServerClient", package: "swift-codex"),
         .product(name: "CodexAppServerProtocol", package: "swift-codex"),
-        .product(name: "CodexAppServerStdio", package: "swift-codex"),
+        .product(name: "CodexAppServerRuntime", package: "swift-codex"),
         .product(name: "CodexExec", package: "swift-codex"),
         .product(name: "CodexMCP", package: "swift-codex"),
       ]

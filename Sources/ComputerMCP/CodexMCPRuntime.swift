@@ -1,4 +1,5 @@
 import CodexMCP
+import CryptoKit
 import Foundation
 
 protocol CodexMCPRuntimeProtocol: Sendable {
@@ -899,15 +900,24 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
         message: "prompt must not contain NUL."
       )
     }
+    guard value.utf8.count <= 1_048_576 else {
+      throw CodexMCPRuntimeError(
+        code: "codex.mcp.prompt_invalid",
+        message: "prompt must not exceed 1048576 UTF-8 bytes."
+      )
+    }
     return value
   }
 
   private static func validatedThreadID(_ threadID: String) throws -> String {
     let value = threadID.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !value.isEmpty, !value.contains("\0") else {
+    guard !value.isEmpty, value.utf8.count <= 1_024,
+      value.rangeOfCharacter(from: .controlCharacters) == nil,
+      CodexApprovalRedactor.redactString(value, maximumCharacters: 8_192) == value
+    else {
       throw CodexMCPRuntimeError(
         code: "codex.mcp.thread_id_required",
-        message: "thread_id must not be empty or contain NUL."
+        message: "thread_id must be a bounded opaque identifier."
       )
     }
     return value
@@ -916,10 +926,12 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
   private static func validatedModel(_ model: String?) throws -> String? {
     guard let model else { return nil }
     let value = model.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !value.isEmpty, !value.contains("\0") else {
+    guard !value.isEmpty, value.utf8.count <= 256,
+      value.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
       throw CodexMCPRuntimeError(
         code: "codex.mcp.model_invalid",
-        message: "model must not be empty or contain NUL."
+        message: "model must contain at most 256 UTF-8 bytes without control characters."
       )
     }
     return value
@@ -997,9 +1009,10 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
     approvalID: String,
     approval: CodexMCPRuntimeApproval
   ) -> JSONValue {
+    let value: JSONValue
     switch approval {
     case .exec(let request):
-      return .object([
+      value = .object([
         "approval_id": .string(approvalID),
         "kind": .string("exec"),
         "thread_id": .string(request.threadID),
@@ -1008,7 +1021,7 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
         "cwd": .string(request.cwd),
       ])
     case .patch(let request):
-      return .object([
+      value = .object([
         "approval_id": .string(approvalID),
         "kind": .string("patch"),
         "thread_id": .string(request.threadID),
@@ -1018,6 +1031,7 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
         "paths": .array(request.changes.keys.sorted().map(JSONValue.string)),
       ])
     }
+    return CodexApprovalRedactor.redact(value)
   }
 
   private static func errorJSON(_ error: CodexMCPRuntimeError) -> JSONValue {
@@ -1036,8 +1050,21 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
   private static func requestIDString(_ id: CodexMCPRequestID) -> String {
     switch id {
     case .integer(let value): "n:\(value)"
-    case .string(let value): "s:\(value)"
+    case .string(let value): opaqueProtocolID(prefix: "s", value: value)
     }
+  }
+
+  private static func opaqueProtocolID(prefix: String, value: String) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty, trimmed == value, value.utf8.count <= 1_024,
+      value.rangeOfCharacter(from: .controlCharacters) == nil,
+      CodexApprovalRedactor.redactString(value, maximumCharacters: 8_192) == value
+    {
+      return "\(prefix):\(value)"
+    }
+    let digest = SHA256.hash(data: Data(value.utf8))
+      .map { String(format: "%02x", $0) }.joined()
+    return "\(prefix):sha256:\(digest)"
   }
 
   private static func gatewayJSON(_ value: CodexMCPJSONValue) throws -> JSONValue {
@@ -1053,6 +1080,17 @@ actor LiveCodexMCPRuntime: CodexMCPRuntimeProtocol {
   }
 
   private static func runtimeError(
+    for error: Error,
+    operation: String
+  ) -> CodexMCPRuntimeError {
+    let mapped = unredactedRuntimeError(for: error, operation: operation)
+    return CodexMCPRuntimeError(
+      code: mapped.code,
+      message: CodexApprovalRedactor.redactString(mapped.message)
+    )
+  }
+
+  private static func unredactedRuntimeError(
     for error: Error,
     operation: String
   ) -> CodexMCPRuntimeError {

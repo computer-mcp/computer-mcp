@@ -41,6 +41,9 @@ computer-mcp profile shell <id> [--no-enabled]
 computer-mcp tunnel openai list|doctor|start|stop|logs [<id>]
 computer-mcp tunnel cloudflare list|doctor|start|stop|logs [<id>]
 
+computer-mcp codex diagnose-thread <thread-id> --workspace-id <id> [--observed-error <message>]
+computer-mcp codex diagnostics --workspace-id <id> [--limit <count>]
+
 computer-mcp tools list
 computer-mcp tools inspect <name>
 computer-mcp tools call <name> --arguments-json '{}'
@@ -86,6 +89,30 @@ computer-mcp install codex --config Examples/computer-mcp.toml --dry-run
 
 `--app` and `--config` are mutually exclusive and exactly one is required. A
 dry run prints the complete secret-free invocation without changing Codex.
+
+## Codex ownership diagnosis
+
+The App-owned diagnostic commands inspect Computer MCP evidence without a
+machine-wide process scan:
+
+```sh
+computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
+computer-mcp codex diagnostics --workspace-id <workspace-id>
+```
+
+`diagnose-thread` explains whether a live Computer MCP runtime has the thread
+loaded, subscribed, or active; whether it is known but released; or whether an
+external writer is only suspected. It returns exact safe follow-up tool calls,
+including inspecting or releasing the owned runtime and deliberately
+reclaiming an idle persisted thread. `--observed-error` may include the message
+shown by Codex Desktop; it is redacted and bounded before appearing in the
+result.
+
+`diagnostics` returns a redacted workspace snapshot covering live and persisted
+runtimes, process groups, thread and turn state, approvals, acceptance runs,
+worktree leases, recent tool/Git audit linkage, cleanup previews, and actionable
+findings. Neither command signals an external Codex process. Both require the
+running App control plane and a registered workspace id.
 
 ## App-owned operation
 

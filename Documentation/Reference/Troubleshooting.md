@@ -173,6 +173,33 @@ Run Provider Doctor and inspect each path independently:
 - `codex.exec.list`
 - `codex.mcp.status`
 
+For a thread that cannot be opened by Codex Desktop or another official
+client, inspect ownership before restarting applications or touching processes:
+
+```sh
+computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> \
+  --observed-error '<message shown by the other client>'
+computer-mcp codex diagnostics --workspace-id <workspace-id>
+```
+
+Interpret `classification` as follows:
+
+- `computer_mcp_owned`: inspect the reported exact runtime, allow any pending
+  approval to finish or deny it, then call `codex.app.thread.release`; stop that
+  exact runtime only when the whole owned session should end.
+- `released_persisted`: no live Computer MCP writer is reported; retry opening
+  the persisted thread in the intended official client.
+- `persisted_or_external`: Computer MCP has no verified live owner. Use the
+  offered reclaim action only when Computer MCP should deliberately become the
+  writer.
+- `external_writer_or_unfinished_watchdog`: preview stale Computer MCP receipt
+  cleanup and allow bounded shutdown to finish. An external Desktop, IDE, CLI,
+  or gateway owner is only inferred and is never signalled by Computer MCP.
+
+If reclaim returns a writer conflict, close or release the owning application
+through that application's own controls. Do not use `killall`, delete session
+files, or assume an unrelated Codex process belongs to Computer MCP.
+
 The installed Codex must support the configured experimental App Server API.
 Computer MCP fails closed on incompatible methods and does not silently fall
 back from App Server to Exec.

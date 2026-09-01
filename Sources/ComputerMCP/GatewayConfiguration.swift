@@ -306,14 +306,30 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "computer.accessibility.action",
       "computer.verify",
       "codex.app.status",
+      "codex.diagnostics.snapshot",
+      "codex.app.runtimes.list",
+      "codex.app.runtimes.history",
+      "codex.app.runtimes.cleanup.preview",
+      "codex.app.runtimes.cleanup.perform",
+      "codex.app.runtimes.inspect",
+      "codex.app.runtimes.stop",
       "codex.app.methods.list",
       "codex.app.methods.describe",
       "codex.app.methods.call",
       "codex.app.thread.start",
       "codex.app.thread.list",
+      "codex.app.thread.loaded.list",
       "codex.app.thread.read",
       "codex.app.thread.fork",
+      "codex.app.thread.reclaim",
+      "codex.app.thread.release",
+      "codex.app.handoff.diagnose",
+      "codex.app.goal.get",
+      "codex.app.goal.set",
+      "codex.app.goal.clear",
+      "codex.app.runtime.stop",
       "codex.app.turn.start",
+      "codex.app.turn.steer",
       "codex.app.turn.interrupt",
       "codex.app.review.start",
       "codex.app.models.list",
@@ -322,6 +338,30 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "codex.app.events.read",
       "codex.app.requests.list",
       "codex.app.requests.respond",
+      "codex.app.approvals.list",
+      "codex.app.approvals.read",
+      "codex.app.approvals.respond",
+      "codex.run.create",
+      "codex.run.list",
+      "codex.run.read",
+      "codex.run.record",
+      "codex.run.evaluate",
+      "codex.run.accept",
+      "codex.run.transition",
+      "codex.run.reconcile",
+      "codex.worktree.leases.acquire",
+      "codex.worktree.leases.list",
+      "codex.worktree.leases.read",
+      "codex.worktree.leases.heartbeat",
+      "codex.worktree.leases.release",
+      "codex.worktree.leases.cleanup.preview",
+      "codex.worktree.leases.cleanup.perform",
+      "codex.worktree.managed.list",
+      "codex.worktree.managed.read",
+      "codex.worktree.provision.plan",
+      "codex.worktree.provision.perform",
+      "codex.worktree.remove.plan",
+      "codex.worktree.remove.perform",
       "codex.exec.start",
       "codex.exec.resume",
       "codex.exec.list",
@@ -2127,6 +2167,10 @@ package struct CodexConfig: Codable, Equatable, Sendable {
   package var mcpEnabled: Bool
   package var experimentalAPI: Bool
   package var appServerRequestTimeoutSeconds: Int
+  package var appServerTerminationGraceMilliseconds: Int
+  package var appServerKillGraceMilliseconds: Int
+  package var appServerApprovalTimeoutSeconds: Int
+  package var appServerAutoApproveWorkspaceWrites: Bool
   package var sandbox: CodexSandboxMode
   package var approvalPolicy: CodexApprovalPolicy
   package var maxSessions: Int
@@ -2140,6 +2184,10 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     mcpEnabled: Bool = true,
     experimentalAPI: Bool = true,
     appServerRequestTimeoutSeconds: Int = 30,
+    appServerTerminationGraceMilliseconds: Int = 1_000,
+    appServerKillGraceMilliseconds: Int = 2_000,
+    appServerApprovalTimeoutSeconds: Int = 300,
+    appServerAutoApproveWorkspaceWrites: Bool = false,
     sandbox: CodexSandboxMode = .workspaceWrite,
     approvalPolicy: CodexApprovalPolicy = .never,
     maxSessions: Int = 8,
@@ -2152,6 +2200,10 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     self.mcpEnabled = mcpEnabled
     self.experimentalAPI = experimentalAPI
     self.appServerRequestTimeoutSeconds = appServerRequestTimeoutSeconds
+    self.appServerTerminationGraceMilliseconds = appServerTerminationGraceMilliseconds
+    self.appServerKillGraceMilliseconds = appServerKillGraceMilliseconds
+    self.appServerApprovalTimeoutSeconds = appServerApprovalTimeoutSeconds
+    self.appServerAutoApproveWorkspaceWrites = appServerAutoApproveWorkspaceWrites
     self.sandbox = sandbox
     self.approvalPolicy = approvalPolicy
     self.maxSessions = maxSessions
@@ -2166,6 +2218,10 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     case mcpEnabled = "mcp_enabled"
     case experimentalAPI = "experimental_api"
     case appServerRequestTimeoutSeconds = "app_server_request_timeout_seconds"
+    case appServerTerminationGraceMilliseconds = "app_server_termination_grace_milliseconds"
+    case appServerKillGraceMilliseconds = "app_server_kill_grace_milliseconds"
+    case appServerApprovalTimeoutSeconds = "app_server_approval_timeout_seconds"
+    case appServerAutoApproveWorkspaceWrites = "app_server_auto_approve_workspace_writes"
     case sandbox
     case approvalPolicy = "approval_policy"
     case maxSessions = "max_sessions"
@@ -2184,6 +2240,16 @@ package struct CodexConfig: Codable, Equatable, Sendable {
       try container.decodeIfPresent(Bool.self, forKey: .experimentalAPI) ?? true
     appServerRequestTimeoutSeconds =
       try container.decodeIfPresent(Int.self, forKey: .appServerRequestTimeoutSeconds) ?? 30
+    appServerTerminationGraceMilliseconds =
+      try container.decodeIfPresent(Int.self, forKey: .appServerTerminationGraceMilliseconds)
+      ?? 1_000
+    appServerKillGraceMilliseconds =
+      try container.decodeIfPresent(Int.self, forKey: .appServerKillGraceMilliseconds) ?? 2_000
+    appServerApprovalTimeoutSeconds =
+      try container.decodeIfPresent(Int.self, forKey: .appServerApprovalTimeoutSeconds) ?? 300
+    appServerAutoApproveWorkspaceWrites =
+      try container.decodeIfPresent(Bool.self, forKey: .appServerAutoApproveWorkspaceWrites)
+      ?? false
     sandbox =
       try container.decodeIfPresent(CodexSandboxMode.self, forKey: .sandbox)
       ?? .workspaceWrite
@@ -2205,6 +2271,24 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     guard appServerRequestTimeoutSeconds >= 1 && appServerRequestTimeoutSeconds <= 300 else {
       throw ConfigurationError.invalid(
         "codex.app_server_request_timeout_seconds must be between 1 and 300."
+      )
+    }
+    guard
+      appServerTerminationGraceMilliseconds >= 0
+        && appServerTerminationGraceMilliseconds <= 30_000
+    else {
+      throw ConfigurationError.invalid(
+        "codex.app_server_termination_grace_milliseconds must be between 0 and 30000."
+      )
+    }
+    guard appServerKillGraceMilliseconds >= 100 && appServerKillGraceMilliseconds <= 30_000 else {
+      throw ConfigurationError.invalid(
+        "codex.app_server_kill_grace_milliseconds must be between 100 and 30000."
+      )
+    }
+    guard appServerApprovalTimeoutSeconds >= 1 && appServerApprovalTimeoutSeconds <= 3_600 else {
+      throw ConfigurationError.invalid(
+        "codex.app_server_approval_timeout_seconds must be between 1 and 3600."
       )
     }
     guard maxEventsPerSession >= 64 && maxEventsPerSession <= 16_384 else {

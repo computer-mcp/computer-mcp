@@ -3,10 +3,10 @@ import Foundation
 /// CLI metadata shared by the executable and library documentation.
 package enum ComputerMCPCLI {
   /// Current package CLI version.
-  package static let version = "1.0.22"
+  package static let version = "1.0.23"
 
   /// Current package build number.
-  package static let build = "23"
+  package static let build = "24"
 
   /// Version string exposed by the command-line executable.
   package static let releaseVersion = "\(version) (\(build))"
@@ -22,6 +22,7 @@ package enum ComputerMCPCLI {
       computer-mcp profile list|show|grant
       computer-mcp tunnel openai list|doctor|start|stop|logs
       computer-mcp tunnel cloudflare list|doctor|start|stop|logs
+      computer-mcp codex diagnose-thread|diagnostics
       computer-mcp tools list|inspect|call
       computer-mcp install cli|codex
       computer-mcp uninstall cli
@@ -36,6 +37,7 @@ package enum ComputerMCPCLI {
       workspace  Manage App-owned workspace authorization.
       profile    Inspect profiles and grant workspace access.
       tunnel     Diagnose and control OpenAI and Cloudflare Tunnel lifecycles.
+      codex      Inspect owned Codex runtime and thread handoff state.
       tools      List, inspect, or call gateway tools.
       install    Install the embedded CLI or Codex integration.
       uninstall  Remove the user-owned CLI link.

@@ -114,7 +114,9 @@ actor CodexEventBuffer {
         cursor: cursor,
         timestamp: Date(),
         kind: kind,
-        payload: bounds.json(payload, maxBytes: bounds.maxEventPayloadBytes)
+        payload: CodexApprovalRedactor.redact(
+          bounds.json(payload, maxBytes: bounds.maxEventPayloadBytes)
+        )
       )
     )
     if events.count > capacity {

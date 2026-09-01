@@ -88,6 +88,49 @@ session, and output policy. `danger-full-access`, raw remote argv/config
 overrides, authentication mutation, marketplace mutation, and remote-control
 pairing are rejected.
 
+Codex App Server approval is a two-level boundary. Gateway policy first
+authorizes the capability for the bound caller, profile, and registered
+workspace. A supported higher-risk request then enters the durable consent
+broker for approve-once, an official protocol-bounded session approval, denial,
+or timeout. Policy authorization never implies consent, and consent cannot
+expand policy. Automatic approval is off by default and, when explicitly
+enabled, applies only to the bounded low-risk workspace-write class.
+
+Approval records contain normalized redacted details, risk, workspace,
+runtime, thread, turn, request correlation, deadline, decision, and terminal
+reason. Credential-like fields and sensitive free text are redacted and
+bounded before persistence. A restart marks an unresolved live request as
+interrupted; the receipt remains auditable, but Computer MCP does not claim the
+upstream request can be replayed.
+
+Codex event buffers are count- and byte-bounded, and every retained event is
+redacted before it becomes observable. Interactive requests and both App Server
+and MCP approval views apply the same redactor. Credential-like or oversized
+protocol request identifiers are represented by a SHA-256 digest instead of
+being copied into runtime state, diagnostics, or persistence. JSONL protocol
+lines are bounded in both directions.
+
+Runtime cleanup is receipt- and ownership-based. Computer MCP may unsubscribe
+threads and signal only the exact process group created by the current owned
+runtime generation. Stale-receipt cleanup is previewable before mutation and
+does not grant control over Codex Desktop, IDE, CLI, or another gateway.
+External writer ownership remains an inference unless a Computer MCP receipt
+and live runtime prove it. A deliberate reclaim asks the official App Server to
+resume the thread and returns a writer conflict without terminating an
+unverified process.
+
+Managed Git worktrees use the same verified-ownership rule. Provisioning is
+bound to a registered source repository, active parent lease, reviewed branch
+and start commit, derived Application Support path, and short-lived persisted
+plan. Removal requires the Computer MCP ownership receipt, inactive child
+lease, no live child runtime, exact common-repository match, clean status,
+unchanged reviewed HEAD, explicit confirmation, and a gateway operation ticket.
+The managed root and worktree must resolve as real, current-user-owned
+directories under the canonical managed root; a receipted path replaced by a
+symbolic link is rejected. Removal does not use force or delete the preserved
+branch. Paths created by users or other tools have no qualifying receipt and
+are never cleanup targets.
+
 ## Stable Denials And Audit Decisions
 
 Security-policy refusals return stable bracketed codes and are stored with the

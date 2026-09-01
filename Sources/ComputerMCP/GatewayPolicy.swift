@@ -88,7 +88,7 @@ package struct GatewayTransportTrace: Codable, Equatable, Sendable {
   }
 }
 
-package enum CapabilityRisk: String, Codable, Sendable {
+package enum CapabilityRisk: String, Codable, Equatable, Sendable {
   case readOnly = "read-only"
   case workspaceWrite = "workspace-write"
   case externalWrite = "external-write"

@@ -77,6 +77,56 @@ backoff instead of producing a false healthy state.
   preflight and post-action verification.
 - Codex: separate App Server, Exec, and MCP runtimes using `swift-codex`.
 
+## Codex App Server Ownership And Teardown
+
+Codex App Server ownership follows the gateway connection rather than a
+machine-wide singleton:
+
+```text
+gateway socket or HTTP session
+  -> GatewayRuntime (caller + profile + transport generation)
+    -> one provider router per registered workspace
+      -> one lazy Codex App Server runtime per workspace
+        -> one current JSONL/stdio connection generation
+          -> one Computer MCP-owned App Server process group
+```
+
+The runtime has a stable `runtime_id` for its lifetime. Each started connection
+has a separate generation id and records the registered workspace, caller,
+profile, socket connection, Tunnel instance/profile, App Server PID,
+supervisor PID, parent PID, process group, timestamps, exit status, signal, and
+termination escalation. Concurrent first requests await the same startup; they
+do not create parallel generations for one runtime. A timed-out connection is
+retired and reaped before a read-only request may make one fresh retry.
+
+Each runtime consumes App Server notifications and server requests for its
+current connection. It tracks threads known to that workspace as loaded,
+subscribed, active, idle, released, or persisted when the available protocol
+evidence supports that conclusion. Active turn and pending approval state are
+recorded separately. Reconnection creates a new connection generation; it does
+not transfer authority over an earlier generation.
+
+Closing an MCP connection shuts down its `GatewayRuntime`, which shuts down
+every workspace provider. Codex shutdown cancels the notification and request
+consumers, releases each subscribed thread with a bounded official
+`thread/unsubscribe`, interrupts still-pending approval records, and closes the
+App Server transport. The transport then:
+
+1. closes stdin so App Server can observe EOF, persist state, release writer
+   resources, and exit;
+2. waits for the configured graceful interval;
+3. sends `SIGTERM` to the exact owned App Server process group when required;
+4. waits again, then sends `SIGKILL` only if the group is still alive;
+5. waits for and records process reaping.
+
+A private supervisor watches the Computer MCP owner PID and applies the same
+bounded termination to the owned process group if the owner dies abruptly.
+Signals are never selected by executable name or a machine-wide process scan;
+Codex Desktop, IDE, CLI, and other user-owned App Servers are outside this
+authority. Normal socket closure, abrupt disconnect, Tunnel replacement,
+service stop, request timeout, and parent death therefore converge on the same
+bounded cleanup contract.
+
 ## Policy And Results
 
 Every call is bound to `ExecutionContext` containing caller, profile, and

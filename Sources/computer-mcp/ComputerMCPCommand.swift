@@ -16,6 +16,7 @@ struct ComputerMCPCommand: AsyncParsableCommand {
       Workspace.self,
       Profile.self,
       Tunnel.self,
+      CodexControl.self,
       Tools.self,
       Audit.self,
       Providers.self,

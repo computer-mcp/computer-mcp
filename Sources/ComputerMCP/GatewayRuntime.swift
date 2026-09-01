@@ -34,6 +34,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
     let commandRunner = ProcessCommandRunner()
     let mcpClient = MCPProxyClient()
+    let codexToolDispatcher = CodexDynamicToolDispatcher()
 
     for workspace in configuredWorkspaces {
       guard workspaceByID[workspace.id] == nil else {
@@ -65,6 +66,17 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           CodexGatewayProvider(
             configuration: configuration.codex,
             workspaceURL: access.rootURL,
+            owner: CodexRuntimeOwner(
+              workspaceID: workspace.id,
+              profileID: effectiveContext.profileID.rawValue,
+              caller: effectiveContext.caller.rawValue,
+              transport: effectiveContext.transportTrace?.transport,
+              socketConnectionID: effectiveContext.transportTrace?.socketConnectionID,
+              tunnelInstanceID: effectiveContext.transportTrace?.tunnelInstanceID,
+              tunnelProfileID: effectiveContext.transportTrace?.tunnelProfileID
+            ),
+            database: database,
+            dynamicToolDispatcher: codexToolDispatcher,
             maxOutputBytes: configuration.policy.maxOutputBytes
           )
         )
@@ -123,6 +135,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.workspaceOrder = configuredWorkspaces.map(\.id)
     self.workspaceAccesses = accessByID
     self.providerRouters = providerRouterByID
+    codexToolDispatcher.attach(self)
   }
 
   deinit {
@@ -174,6 +187,81 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   package func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
     try await callToolAsync(name: name, arguments: arguments, context: contextForCall())
+  }
+
+  func callToolFromCodex(
+    name: String,
+    arguments: JSONValue,
+    requestID: String,
+    workspaceID: String?
+  ) async throws -> JSONValue {
+    var callContext = context
+    callContext.requestID = requestID
+    callContext.workspaceID = workspaceID
+    let targetDescriptor = try descriptor(named: name)
+    if targetDescriptor.risk == .destructive {
+      var prepareContext = callContext
+      prepareContext.requestID = "\(requestID):prepare"
+      let prepared = try await performAsync(
+        name: "operations.prepare",
+        arguments: [
+          "tool": .string(name),
+          "arguments": arguments,
+        ],
+        context: prepareContext,
+        bypassOperationTicket: false,
+        operationLinkage: nil
+      )
+      guard
+        let ticketID = prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
+          .objectValue?["ticket_id"]?.stringValue
+      else {
+        throw GatewayToolError.executionFailed(
+          "codex.app.operation_ticket_missing: Computer MCP could not bind the approved operation."
+        )
+      }
+      return try await performAsync(
+        name: "operations.commit",
+        arguments: [
+          "ticket_id": .string(ticketID),
+          "tool": .string(name),
+          "arguments": arguments,
+        ],
+        context: callContext,
+        bypassOperationTicket: false,
+        operationLinkage: nil
+      )
+    }
+    return try await callToolAsync(
+      name: name,
+      arguments: arguments,
+      context: callContext
+    )
+  }
+
+  func preflightCodexTool(
+    name: String,
+    arguments: JSONValue,
+    requestID: String,
+    workspaceID: String?
+  ) throws -> CapabilityDescriptor {
+    let descriptor = try descriptor(named: name)
+    var callContext = context
+    callContext.requestID = requestID
+    callContext.workspaceID = workspaceID
+    let routed = try route(
+      descriptor: descriptor,
+      arguments: arguments.objectValue ?? [:],
+      context: callContext
+    )
+    try authorize(descriptor, context: routed.context)
+    if descriptor.risk == .destructive {
+      for operationTool in ["operations.prepare", "operations.commit"] {
+        let operationDescriptor = try self.descriptor(named: operationTool)
+        try authorize(operationDescriptor, context: routed.context)
+      }
+    }
+    return descriptor
   }
 
   package func callToolForMCPAsync(
@@ -1168,6 +1256,19 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: [String: JSONValue],
     context: ExecutionContext
   ) throws -> String? {
+    if tool == "codex.worktree.remove.perform",
+      let id = arguments["managed_worktree_id"]?.stringValue,
+      let worktree = try database?.codexManagedWorktree(id: id),
+      worktree.sourceWorkspaceID == context.workspaceID
+    {
+      let data = try Self.encoder.encode(
+        JSONValue.object([
+          "tool": .string(tool),
+          "managed_worktree": worktree.json,
+        ])
+      )
+      return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
     guard let workspaceID = context.workspaceID,
       let rootURL = workspaceAccesses[workspaceID]?.rootURL.standardizedFileURL
     else {

@@ -186,8 +186,13 @@ approval_policy = "never"
 
 App Server, Exec, and MCP are separate `swift-codex` lifecycles. Remote callers
 receive only exact granted tool IDs and cannot supply arbitrary Codex argv or
-configuration overrides. App Server RPCs have a bounded deadline; a timeout
-closes the failed App Server connection so the next call starts a clean one.
+configuration overrides. `app_server_request_timeout_seconds` bounds the
+complete App Server call, including connection startup, workspace validation,
+the reviewed RPC, and the single fresh-connection retry available to read-only
+calls. The first read-only attempt receives half of that budget; writes are
+never retried. After the deadline, Computer MCP completes the separately
+bounded process-group teardown before returning, and cancellation cannot start
+a later generation.
 
 `app_server_termination_grace_milliseconds` is the EOF and TERM grace interval
 (0–30000 ms). `app_server_kill_grace_milliseconds` is the final reaping wait

@@ -86,6 +86,34 @@ struct CodexAppServerProcessTransportTests {
   }
 
   @Test
+  func closeDoesNotWaitForBackpressuredProtocolWriter() async throws {
+    let transport = ManagedCodexAppServerTransport(
+      configuration: .init(
+        executable: "/bin/sh",
+        arguments: ["-c", "trap '' TERM; while :; do /bin/sleep 1; done"],
+        workingDirectory: FileManager.default.temporaryDirectory,
+        terminationGraceMilliseconds: 100,
+        killGraceMilliseconds: 2_000,
+        maximumMessageBytes: 8 * 1_024 * 1_024
+      )
+    )
+    let running = try await waitForRunning(transport)
+    let processID = try #require(running.processID)
+    let blockedWrite = Task {
+      try? await transport.sendLine(String(repeating: "x", count: 4 * 1_024 * 1_024))
+    }
+    try await Task.sleep(for: .milliseconds(100))
+    let clock = ContinuousClock()
+    let started = clock.now
+
+    await transport.close()
+
+    #expect(started.duration(to: clock.now) < .seconds(3))
+    #expect(await waitForProcessExit(processID))
+    _ = await blockedWrite.value
+  }
+
+  @Test
   func outboundProtocolLinesAreBoundedBeforeWrite() async throws {
     let transport = ManagedCodexAppServerTransport(
       configuration: .init(

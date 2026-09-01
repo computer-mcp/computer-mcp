@@ -407,15 +407,20 @@ final class CodexAppServerRuntimeTests {
   }
 
   @Test
-  func testTimeoutRetirementReapsBeforeReadOnlyRetryStarts() async throws {
+  func testTimeoutRetirementReapsWithinEndToEndDeadline() async throws {
     let fixture = try AppServerProcessFixture()
     defer { fixture.remove() }
     try Data().write(to: fixture.hangRequestsFile)
-    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 1)
+    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 4)
+    let clock = ContinuousClock()
+    let started = clock.now
 
     await assertThrowsErrorAsync(
       try await runtime.call(method: "thread/loaded/list", params: .object([:]))
     )
+
+    let elapsed = started.duration(to: clock.now)
+    #expect(elapsed < .seconds(6))
 
     let secondPID = try await fixture.waitForLatestPID(count: 2)
     let processIDs = try fixture.processIDs()
@@ -423,6 +428,27 @@ final class CodexAppServerRuntimeTests {
     #expect(await processIDs.asyncAllSatisfy(waitForProcessExit))
     #expect(!processExists(secondPID))
     #expect(!FileManager.default.fileExists(atPath: fixture.leaseDirectory.path))
+  }
+
+  @Test
+  func testConnectionStartupIsBoundedByEndToEndDeadline() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    try Data().write(to: fixture.hangInitializeFile)
+    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 1)
+    let clock = ContinuousClock()
+    let started = clock.now
+
+    await assertThrowsErrorAsync(
+      try await runtime.call(method: "thread/loaded/list", params: .object([:]))
+    )
+
+    let elapsed = started.duration(to: clock.now)
+    #expect(elapsed < .seconds(3))
+    let processID = try await fixture.waitForLatestPID(count: 1)
+    #expect(await waitForProcessExit(processID))
+    #expect(!FileManager.default.fileExists(atPath: fixture.leaseDirectory.path))
+    await runtime.shutdown()
   }
 
   @Test
@@ -493,7 +519,7 @@ final class CodexAppServerRuntimeTests {
     try Data().write(to: fixture.closeInputAfterApprovalRequestFile)
     let database = try GatewayDatabase(inMemory: ())
     let runtime = fixture.makeRuntime(
-      requestTimeoutSeconds: 3,
+      requestTimeoutSeconds: 10,
       approvalTimeoutSeconds: 1,
       database: database
     )
@@ -1049,6 +1075,25 @@ final class CodexAppServerRuntimeTests {
   }
 
   @Test
+  func testReadOnlyRetrySharesTheEndToEndRequestBudget() {
+    #expect(
+      LiveCodexAppServerRuntime.firstReadOnlyAttemptTimeoutSeconds(
+        totalTimeoutSeconds: 30,
+        risk: .readOnly
+      ) == 15)
+    #expect(
+      LiveCodexAppServerRuntime.firstReadOnlyAttemptTimeoutSeconds(
+        totalTimeoutSeconds: 1,
+        risk: .readOnly
+      ) == nil)
+    #expect(
+      LiveCodexAppServerRuntime.firstReadOnlyAttemptTimeoutSeconds(
+        totalTimeoutSeconds: 30,
+        risk: .workspaceWrite
+      ) == nil)
+  }
+
+  @Test
   func testNormalizePinsThreadListAndSkillsToBoundWorkspace() async throws {
     let workspace = URL(fileURLWithPath: "/tmp/computer-mcp-workspace")
     let runtime = LiveCodexAppServerRuntime(
@@ -1132,6 +1177,36 @@ final class CodexAppServerRuntimeTests {
 
     #expect(result == "recovered")
     #expect(await probe.attempts == [0, 1])
+  }
+
+  @Test
+  func testCancelledEndToEndRequestCannotStartRetryGeneration() async throws {
+    let probe = CodexAppServerRetryProbe()
+    let request = Task {
+      try await LiveCodexAppServerRuntime.withRequestRetry(risk: .readOnly) { attempt in
+        await probe.record(attempt: attempt)
+        while !Task.isCancelled {
+          try? await Task.sleep(for: .milliseconds(10))
+        }
+        throw LiveCodexAppServerRuntime.RequestTimeoutError(seconds: 30)
+      }
+    }
+
+    for _ in 0..<100 {
+      if !(await probe.attempts.isEmpty) {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    request.cancel()
+
+    do {
+      _ = try await request.value
+      Issue.record("Expected cancellation to suppress the retry generation.")
+    } catch {
+      #expect(error is CancellationError)
+    }
+    #expect(await probe.attempts == [0])
   }
 
   @Test
@@ -1252,6 +1327,7 @@ private struct AppServerProcessFixture {
   let processLog: URL
   let leaseDirectory: URL
   let hangRequestsFile: URL
+  let hangInitializeFile: URL
   let approvalRequestFile: URL
   let approvalResponseLog: URL
   let closeInputAfterApprovalRequestFile: URL
@@ -1263,6 +1339,7 @@ private struct AppServerProcessFixture {
     processLog = directory.appendingPathComponent("processes.log")
     leaseDirectory = directory.appendingPathComponent("writer.lease", isDirectory: true)
     hangRequestsFile = directory.appendingPathComponent("hang-requests")
+    hangInitializeFile = directory.appendingPathComponent("hang-initialize")
     approvalRequestFile = directory.appendingPathComponent("approval-request.json")
     approvalResponseLog = directory.appendingPathComponent("approval-response.log")
     closeInputAfterApprovalRequestFile = directory.appendingPathComponent(
@@ -1290,6 +1367,10 @@ private struct AppServerProcessFixture {
       printf '%s\n' "$$" >> "$process_log"
 
       IFS= read -r line || exit 74
+      if [ -f "$fixture_dir/hang-initialize" ]; then
+        /bin/sleep 60
+        exit 76
+      fi
       id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":("[^"]*"|[0-9]+).*/\\1/')
       printf '{"id":%s,"result":{"codexHome":"%s","platformFamily":"unix","platformOs":"macos","userAgent":"Codex/computer-mcp-fixture"}}\n' "$id" "$fixture_dir"
       IFS= read -r line || exit 75

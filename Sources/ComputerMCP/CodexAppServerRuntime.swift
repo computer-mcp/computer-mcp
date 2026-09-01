@@ -454,6 +454,11 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     let task: Task<CodexAppServerConnection, Error>
   }
 
+  private struct RequestGenerationRetirement: Sendable {
+    let id: UUID
+    let task: Task<CodexAppServerProcessSnapshot?, Never>
+  }
+
   struct RequestTimeoutError: Error, LocalizedError, Sendable {
     let seconds: Int
 
@@ -474,6 +479,8 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
   private var connection: CodexAppServerConnection?
   private var processTransport: ManagedCodexAppServerTransport?
   private var connectionStartup: ConnectionStartup?
+  private var timedOutConnectionStartupIDs: Set<UUID> = []
+  private var requestGenerationRetirement: RequestGenerationRetirement?
   private var lastProcessSnapshot: CodexAppServerProcessSnapshot?
   private var notificationTask: Task<Void, Never>?
   private var requestTask: Task<Void, Never>?
@@ -575,27 +582,44 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     let normalized = try normalize(params: params, for: descriptor)
     let response: JSONValue
     do {
-      response = try await Self.withRequestRetry(risk: descriptor.risk) { _ in
-        let connection = try await self.ensureConnection()
-        try await self.validateWorkspaceScope(
-          method: method,
-          params: normalized,
-          connection: connection
-        )
-        return try await Self.boundedRequest(
-          timeoutSeconds: self.configuration.appServerRequestTimeoutSeconds,
-          onTimeout: {
-            await self.retireTimedOutConnection(connection)
-          },
-          operation: {
-            try await Self.sendReviewedRequest(
-              method: method,
-              params: normalized,
-              connection: connection
+      let totalTimeoutSeconds = configuration.appServerRequestTimeoutSeconds
+      let firstAttemptTimeoutSeconds = Self.firstReadOnlyAttemptTimeoutSeconds(
+        totalTimeoutSeconds: totalTimeoutSeconds,
+        risk: descriptor.risk
+      )
+      response = try await Self.boundedRequest(
+        timeoutSeconds: totalTimeoutSeconds,
+        onTimeout: {
+          await self.retireCurrentRequestGeneration()
+        },
+        operation: {
+          try await Self.withRequestRetry(risk: descriptor.risk) { attempt in
+            let runAttempt: @Sendable () async throws -> JSONValue = {
+              let connection = try await self.ensureConnection()
+              try await self.validateWorkspaceScope(
+                method: method,
+                params: normalized,
+                connection: connection
+              )
+              return try await Self.sendReviewedRequest(
+                method: method,
+                params: normalized,
+                connection: connection
+              )
+            }
+            guard attempt == 0, let firstAttemptTimeoutSeconds else {
+              return try await runAttempt()
+            }
+            return try await Self.boundedRequest(
+              timeoutSeconds: firstAttemptTimeoutSeconds,
+              onTimeout: {
+                await self.retireCurrentRequestGeneration()
+              },
+              operation: runAttempt
             )
           }
-        )
-      }
+        }
+      )
     } catch {
       throw GatewayToolError.executionFailed(
         "codex.app.request_failed: \(Self.errorDescription(error))"
@@ -617,8 +641,10 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     var attempt = 0
     while true {
       do {
+        try Task.checkCancellation()
         return try await operation(attempt)
       } catch {
+        try Task.checkCancellation()
         guard
           shouldRetryRequest(
             error,
@@ -643,6 +669,16 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     risk == .readOnly
       && error is RequestTimeoutError
       && attempt + 1 < maximumAttempts
+  }
+
+  static func firstReadOnlyAttemptTimeoutSeconds(
+    totalTimeoutSeconds: Int,
+    risk: CapabilityRisk
+  ) -> Int? {
+    guard risk == .readOnly, totalTimeoutSeconds > 1 else {
+      return nil
+    }
+    return max(1, totalTimeoutSeconds / 2)
   }
 
   func events(afterCursor: Int, maxResults: Int) async -> JSONValue {
@@ -768,6 +804,10 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     }
     isShutdown = true
     shutdownReason = "requested"
+    if let requestGenerationRetirement {
+      await finishRequestGenerationRetirement(requestGenerationRetirement)
+      shutdownReason = "requested"
+    }
     notificationTask?.cancel()
     requestTask?.cancel()
     notificationTask = nil
@@ -801,7 +841,6 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     await activeConnection?.close()
     await activeTransport?.close()
     if let startup {
-      _ = try? await startup.task.value
       lastProcessSnapshot = await startup.transport.snapshot()
     } else if let activeTransport {
       lastProcessSnapshot = await activeTransport.snapshot()
@@ -816,10 +855,20 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
         "codex.app.runtime_stopped: Runtime '\(runtimeID)' has been stopped. Create a new gateway session to start a new generation."
       )
     }
+    if let requestGenerationRetirement {
+      await finishRequestGenerationRetirement(requestGenerationRetirement)
+      try Task.checkCancellation()
+      guard !isShutdown else {
+        throw GatewayToolError.disabled(
+          "codex.app.runtime_stopped: Runtime '\(runtimeID)' has been stopped. Create a new gateway session to start a new generation."
+        )
+      }
+    }
     if let connection {
       return connection
     }
     connectionState = "starting"
+    shutdownReason = nil
     lastError = nil
     let startup: ConnectionStartup
     if let connectionStartup {
@@ -849,17 +898,11 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
         transportFactory: { transport }
       )
       let task = Task {
-        do {
-          let connection = try await client.start()
-          if Task.isCancelled {
-            await connection.close()
-            throw CancellationError()
-          }
-          return connection
-        } catch {
-          await transport.close()
-          throw error
+        let connection = try await client.start()
+        if Task.isCancelled {
+          throw CancellationError()
         }
+        return connection
       }
       startup = .init(id: UUID(), transport: transport, task: task)
       connectionStartup = startup
@@ -895,11 +938,21 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
       )
       return started
     } catch {
+      let reachedRequestDeadline = timedOutConnectionStartupIDs.remove(startup.id) != nil
       if connectionStartup?.id == startup.id {
         connectionStartup = nil
       }
       await startup.transport.close()
-      lastProcessSnapshot = await startup.transport.snapshot()
+      let startupProcessSnapshot = await startup.transport.snapshot()
+      if reachedRequestDeadline {
+        persistRuntimeLease(
+          state: "failed",
+          process: startupProcessSnapshot,
+          reason: "request_timeout"
+        )
+        throw RequestTimeoutError(seconds: configuration.appServerRequestTimeoutSeconds)
+      }
+      lastProcessSnapshot = startupProcessSnapshot
       connectionState = "failed"
       let message = Self.errorDescription(error)
       lastError = message
@@ -1780,16 +1833,18 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     )
   }
 
-  private func retireTimedOutConnection(
-    _ timedOutConnection: CodexAppServerConnection
-  ) async {
-    if connection === timedOutConnection {
-      let timedOutTransport = processTransport
+  private func retireCurrentRequestGeneration() async {
+    if let requestGenerationRetirement {
+      await finishRequestGenerationRetirement(requestGenerationRetirement)
+      return
+    }
+    if let connection {
+      let transport = processTransport
       await interruptPendingApprovals(
-        connection: timedOutConnection,
+        connection: connection,
         reason: "App Server request deadline exceeded."
       )
-      connection = nil
+      self.connection = nil
       connectionID = nil
       processTransport = nil
       notificationTask?.cancel()
@@ -1805,19 +1860,60 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
         kind: "connection_ended",
         payload: .object(["message": .string("App Server request deadline exceeded.")])
       )
-      await timedOutConnection.close()
-      await timedOutTransport?.close()
-      if let timedOutTransport {
-        lastProcessSnapshot = await timedOutTransport.snapshot()
-      }
-      persistRuntimeLease(
-        state: "failed",
-        process: lastProcessSnapshot,
-        reason: shutdownReason
+      let retirement = RequestGenerationRetirement(
+        id: UUID(),
+        task: Task {
+          await connection.close()
+          await transport?.close()
+          return await transport?.snapshot()
+        }
       )
+      requestGenerationRetirement = retirement
+      await finishRequestGenerationRetirement(retirement)
       return
     }
-    await timedOutConnection.close()
+    guard let startup = connectionStartup else {
+      return
+    }
+    if connectionStartup?.id == startup.id {
+      connectionStartup = nil
+    }
+    timedOutConnectionStartupIDs.insert(startup.id)
+    startup.task.cancel()
+    connectionState = "failed"
+    shutdownReason = "request_timeout"
+    lastError = "App Server request deadline exceeded during connection startup."
+    await eventBuffer.append(
+      kind: "connection_failed",
+      payload: .object([
+        "message": .string("App Server request deadline exceeded during connection startup.")
+      ])
+    )
+    let retirement = RequestGenerationRetirement(
+      id: UUID(),
+      task: Task {
+        await startup.transport.close()
+        return await startup.transport.snapshot()
+      }
+    )
+    requestGenerationRetirement = retirement
+    await finishRequestGenerationRetirement(retirement)
+  }
+
+  private func finishRequestGenerationRetirement(
+    _ retirement: RequestGenerationRetirement
+  ) async {
+    let processSnapshot = await retirement.task.value
+    guard requestGenerationRetirement?.id == retirement.id else { return }
+    requestGenerationRetirement = nil
+    if let processSnapshot {
+      lastProcessSnapshot = processSnapshot
+    }
+    persistRuntimeLease(
+      state: "failed",
+      process: lastProcessSnapshot,
+      reason: shutdownReason
+    )
   }
 
   static func boundedRequest<Value: Sendable>(
@@ -1955,22 +2051,14 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     let response: JSONValue
     do {
       response = try Self.gatewayJSON(
-        try await Self.boundedRequest(
-          timeoutSeconds: configuration.appServerRequestTimeoutSeconds,
-          onTimeout: {
-            await self.retireTimedOutConnection(connection)
-          },
-          operation: {
-            try await connection.threadRead(
-              try Self.decodeStableParams(
-                Stable.ThreadReadParams.self,
-                from: .object([
-                  "threadId": .string(threadID),
-                  "includeTurns": .bool(false),
-                ])
-              )
-            )
-          }
+        try await connection.threadRead(
+          try Self.decodeStableParams(
+            Stable.ThreadReadParams.self,
+            from: .object([
+              "threadId": .string(threadID),
+              "includeTurns": .bool(false),
+            ])
+          )
         )
       )
     } catch  where Self.isThreadNotLoaded(error) {
@@ -2019,23 +2107,15 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
           let currentCursor = cursor
           let page: Stable.ThreadListResponse
           do {
-            page = try await Self.boundedRequest(
-              timeoutSeconds: configuration.appServerRequestTimeoutSeconds,
-              onTimeout: {
-                await self.retireTimedOutConnection(connection)
-              },
-              operation: {
-                try await connection.threadList(
-                  Stable.ThreadListParams(
-                    archived: archived,
-                    cursor: currentCursor,
-                    cwd: cwdFilter,
-                    limit: 1_000,
-                    sourceKinds: Self.persistedThreadSourceKinds,
-                    useStateDbOnly: true
-                  )
-                )
-              }
+            page = try await connection.threadList(
+              Stable.ThreadListParams(
+                archived: archived,
+                cursor: currentCursor,
+                cwd: cwdFilter,
+                limit: 1_000,
+                sourceKinds: Self.persistedThreadSourceKinds,
+                useStateDbOnly: true
+              )
             )
           } catch {
             throw GatewayToolError.executionFailed(

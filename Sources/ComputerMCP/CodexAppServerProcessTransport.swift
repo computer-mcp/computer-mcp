@@ -103,6 +103,8 @@ final class ManagedCodexAppServerTransport: CodexAppServerLinePeer, @unchecked S
   private let configuration: Configuration
   private let state: ManagedCodexAppServerProcessState
   private let launchTask: Task<Void, Never>
+  private let closeLock = NSLock()
+  private var closeTask: Task<Void, Never>?
 
   init(configuration: Configuration) {
     self.configuration = configuration
@@ -124,13 +126,31 @@ final class ManagedCodexAppServerTransport: CodexAppServerLinePeer, @unchecked S
   }
 
   func close() async {
+    let task = closeLock.withLock { () -> Task<Void, Never> in
+      if let closeTask {
+        return closeTask
+      }
+      let task = Task { [weak self] in
+        if let self {
+          await self.performClose()
+        }
+      }
+      closeTask = task
+      return task
+    }
+    await task.value
+  }
+
+  private func performClose() async {
     let handles = await state.beginShutdown()
     if let writer = handles.writer {
-      try? await writer.finish()
+      Task {
+        try? await writer.finish()
+      }
     }
 
-    // Give the App Server a bounded opportunity to observe EOF, flush state, release
-    // writer leases, and exit normally before process signals are involved.
+    // Start EOF delivery without waiting for a back-pressured pipe writer. The
+    // bounded process wait and signal escalation below remain authoritative.
     if await waitForExit(milliseconds: configuration.terminationGraceMilliseconds) {
       await launchTask.value
       return
@@ -510,7 +530,7 @@ private actor ManagedCodexAppServerProcessState {
   }
 
   func hasFinished() -> Bool {
-    state == .stopped || state == .failed
+    (state == .stopped || state == .failed) && execution == nil
   }
 
   func snapshot() -> CodexAppServerProcessSnapshot {

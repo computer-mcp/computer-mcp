@@ -11,6 +11,48 @@ final class RealCodexAppServerAcceptanceTests {
       if: ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_ACCEPTANCE"] == "1"
     )
   )
+  func testAppListHonorsEndToEndDeadlineAgainstOfficialAppServer() async throws {
+    let workspace = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let executable =
+      ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_EXECUTABLE"] ?? "codex"
+    let runtime = LiveCodexAppServerRuntime(
+      configuration: CodexConfig(
+        enabled: true,
+        executable: executable,
+        execEnabled: false,
+        mcpEnabled: false,
+        appServerRequestTimeoutSeconds: 30,
+        appServerTerminationGraceMilliseconds: 1_000,
+        appServerKillGraceMilliseconds: 2_000,
+        approvalPolicy: .never
+      ),
+      workspaceURL: workspace
+    )
+    let clock = ContinuousClock()
+    let started = clock.now
+
+    do {
+      _ = try await runtime.call(method: "app/list", params: .object([:]))
+    } catch {
+      #expect(error.localizedDescription.contains("codex.app.request_failed"))
+    }
+
+    #expect(started.duration(to: clock.now) < .seconds(40))
+    let ownedProcessID = await processID(runtime)
+    await runtime.shutdown()
+    if let ownedProcessID {
+      #expect(await waitForExit(ownedProcessID))
+    }
+  }
+
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_ACCEPTANCE"] == "1"
+    )
+  )
   func testSecondOfficialAppServerResumesAfterOwnedRuntimeReleasesThread() async throws {
     let workspace = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

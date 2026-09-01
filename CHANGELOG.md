@@ -4,6 +4,25 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.24 — 2026-09-02
+
+- Treat `app_server_request_timeout_seconds` as one end-to-end App Server call
+  budget spanning process startup, workspace validation, the reviewed request,
+  and the sole read-only retry. A canceled outer request cannot start a later
+  process generation.
+- Share one deterministic close operation across concurrent and repeated
+  teardown paths. Back-pressured stdin finalization no longer delays the
+  bounded EOF, TERM, KILL, and process-reaping sequence.
+- Add deterministic hung-startup, hung-request, back-pressured-writer, retry
+  cancellation, and official Codex `app/list` regressions. The same Codex
+  0.147.0 call that exceeded the 90-second external validation deadline now
+  fails closed within its configured call budget plus bounded teardown.
+- Keep the immutable signed `v1.0.23` candidate unpublished. Exact-artifact
+  acceptance found that its per-attempt deadline, unbounded startup, and
+  repeated transport close could amplify one read-only request beyond the
+  configured boundary. Version 1.0.24 repeats every protected, exact-artifact,
+  ChatGPT, and coordinated website gate from a new signed tag.
+
 ## 1.0.23 — 2026-09-01
 
 - Own each Computer MCP Codex App Server as an observable process group and

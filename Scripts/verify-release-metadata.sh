@@ -31,14 +31,20 @@ PRODUCT_BUILD=$(/usr/libexec/PlistBuddy \
   -c 'Print :CFBundleVersion' \
   Resources/ComputerMCPApp/Info.plist)
 /usr/bin/swift build
-BUILD_GRAPH="$ROOT_DIR/.build/manifest.pif"
-[[ -f "$BUILD_GRAPH" ]] || fail "Missing SwiftPM build graph."
+BUILD_BIN_DIR=$(/usr/bin/swift build --show-bin-path)
+if [[ -f "$ROOT_DIR/.build/manifest.pif" ]]; then
+  BUILD_GRAPH="$ROOT_DIR/.build/manifest.pif"
+elif [[ -f "$BUILD_BIN_DIR/description.json" ]]; then
+  BUILD_GRAPH="$BUILD_BIN_DIR/description.json"
+else
+  fail "Missing SwiftPM build graph for the default build engine."
+fi
 
 for output in "$FIRST_OUTPUT" "$SECOND_OUTPUT"; do
   xcrun swift Scripts/generate-release-metadata.swift \
     --root "$ROOT_DIR" \
     --output "$output" \
-    --build-description "$BUILD_GRAPH" \
+    --build-graph "$BUILD_GRAPH" \
     --checkout-root "$ROOT_DIR/.build/checkouts" \
     --product-version "$PRODUCT_VERSION" \
     --product-build "$PRODUCT_BUILD"

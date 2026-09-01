@@ -18,9 +18,10 @@ coordinated `computer-mcp.github.io` publication from its reviewed commit.
   call that exceeded an external 90-second validation deadline now ends within
   the 30-second call budget plus bounded process teardown.
 - Build, test, documentation, and release gates use SwiftPM's supported default
-  build engine. Release metadata traverses its actual `manifest.pif` product
-  dependency closure, preserving exact linked-versus-resolved-only SBOM and
-  notice classification without the deprecated native-build flag.
+  build engine. Release metadata traverses the actual product dependency graph
+  emitted by that engine, preserving exact linked-versus-resolved-only SBOM and
+  notice classification across supported toolchains without a deprecated
+  build-system override.
 - Every Computer MCP-owned Codex App Server has a stable runtime identity,
   observable process-group ownership, and deterministic teardown across normal
   close, replacement, timeout, shutdown, and parent death. The lifecycle never

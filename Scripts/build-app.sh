@@ -364,12 +364,19 @@ verify_universal_binary() {
 verify_universal_binary "$MACOS_DIR/Computer MCP"
 verify_universal_binary "$RESOURCES_DIR/computer-mcp"
 
-BUILD_GRAPH="$ARM64_SCRATCH/manifest.pif"
-[[ -f "$BUILD_GRAPH" ]] || fail "Missing SwiftPM build graph: $BUILD_GRAPH"
+if [[ -f "$ARM64_SCRATCH/manifest.pif" ]]; then
+  BUILD_GRAPH="$ARM64_SCRATCH/manifest.pif"
+elif [[ -f "$ARM64_BIN_DIR/description.json" ]]; then
+  BUILD_GRAPH="$ARM64_BIN_DIR/description.json"
+elif [[ -f "$ARM64_SCRATCH/arm64-apple-macosx/$CONFIGURATION/description.json" ]]; then
+  BUILD_GRAPH="$ARM64_SCRATCH/arm64-apple-macosx/$CONFIGURATION/description.json"
+else
+  fail "Missing SwiftPM build graph for the arm64 release slice."
+fi
 xcrun swift "$ROOT_DIR/Scripts/generate-release-metadata.swift" \
   --root "$ROOT_DIR" \
   --output "$METADATA_DIR" \
-  --build-description "$BUILD_GRAPH" \
+  --build-graph "$BUILD_GRAPH" \
   --checkout-root "$ARM64_SCRATCH/checkouts" \
   --product-version "$APP_VERSION" \
   --product-build "$APP_BUILD"

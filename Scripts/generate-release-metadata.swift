@@ -229,7 +229,7 @@ private let distributed: [String: DistributedDefinition] = [
 private struct Options {
   let root: URL
   let output: URL
-  let buildDescription: URL?
+  let buildGraph: URL?
   let checkoutRoot: URL
   let productVersion: String
   let productBuild: String
@@ -238,7 +238,7 @@ private struct Options {
     let script = URL(fileURLWithPath: arguments.first ?? #filePath).standardizedFileURL
     var root = script.deletingLastPathComponent().deletingLastPathComponent()
     var output: URL?
-    var buildDescription: URL?
+    var buildGraph: URL?
     var checkoutRoot: URL?
     var productVersion: String?
     var productBuild: String?
@@ -254,8 +254,8 @@ private struct Options {
         root = URL(fileURLWithPath: value).standardizedFileURL
       case "--output":
         output = URL(fileURLWithPath: value).standardizedFileURL
-      case "--build-description":
-        buildDescription = URL(fileURLWithPath: value).standardizedFileURL
+      case "--build-graph":
+        buildGraph = URL(fileURLWithPath: value).standardizedFileURL
       case "--checkout-root":
         checkoutRoot = URL(fileURLWithPath: value).standardizedFileURL
       case "--product-version":
@@ -269,7 +269,7 @@ private struct Options {
     }
     self.root = root
     self.output = output ?? root.appendingPathComponent("dist/ReleaseMetadata", isDirectory: true)
-    self.buildDescription = buildDescription
+    self.buildGraph = buildGraph
     self.checkoutRoot =
       checkoutRoot ?? root.appendingPathComponent(".build/checkouts", isDirectory: true)
     guard let productVersion,
@@ -436,15 +436,15 @@ private func linkedPackagesFromPIF(
   return linked
 }
 
-private func linkedPackages(from descriptionURL: URL) throws -> Set<String> {
-  let object = try JSONSerialization.jsonObject(with: Data(contentsOf: descriptionURL))
+private func linkedPackages(from buildGraphURL: URL) throws -> Set<String> {
+  let object = try JSONSerialization.jsonObject(with: Data(contentsOf: buildGraphURL))
   if let description = object as? [String: Any] {
-    return try linkedPackagesFromNativeDescription(description, sourceURL: descriptionURL)
+    return try linkedPackagesFromNativeDescription(description, sourceURL: buildGraphURL)
   }
   if let records = object as? [[String: Any]] {
-    return try linkedPackagesFromPIF(records, sourceURL: descriptionURL)
+    return try linkedPackagesFromPIF(records, sourceURL: buildGraphURL)
   }
-  throw MetadataError.usage("Malformed SwiftPM build graph: \(descriptionURL.path)")
+  throw MetadataError.usage("Malformed SwiftPM build graph: \(buildGraphURL.path)")
 }
 
 private func makeNotices(
@@ -516,8 +516,8 @@ do {
     throw MetadataError.invalidResolvedFile("duplicate identities")
   }
 
-  if let buildDescription = options.buildDescription {
-    let actual = try linkedPackages(from: buildDescription)
+  if let buildGraph = options.buildGraph {
+    let actual = try linkedPackages(from: buildGraph)
     let expected = Set(distributed.keys)
     guard actual == expected else {
       throw MetadataError.unexpectedLinkedPackages(

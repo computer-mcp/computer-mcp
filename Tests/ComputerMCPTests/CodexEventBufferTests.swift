@@ -51,4 +51,21 @@ final class CodexEventBufferTests {
     #expect((second.objectValue?["returned_events"]?.intValue ?? 0) > (0))
     #expect((second.objectValue?["after_cursor"]) == (.number(Double(firstCursor))))
   }
+
+  @Test
+  func testEventPayloadIsRedactedBeforeRetention() async throws {
+    let buffer = CodexEventBuffer(capacity: 8, maxOutputBytes: 4_096)
+    await buffer.append(
+      kind: "diagnostic",
+      payload: .object([
+        "message": .string("Authorization: Bearer event-secret"),
+        "token": .string("event-secret"),
+      ])
+    )
+
+    let result = await buffer.read(afterCursor: 0, maxResults: 10)
+    let encoded = String(decoding: try JSONEncoder().encode(result), as: UTF8.self)
+    #expect(encoded.contains("[REDACTED]"))
+    #expect(!encoded.contains("event-secret"))
+  }
 }

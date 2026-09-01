@@ -4,6 +4,39 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.23 — 2026-09-01
+
+- Own each Computer MCP Codex App Server as an observable process group and
+  deterministically reap its descendants on connection close, replacement,
+  timeout, shutdown, or parent death. Shutdown records bounded EOF, TERM, and
+  KILL escalation without targeting external Codex processes.
+- Persist runtime and thread-to-workspace ownership receipts; add exact-runtime
+  inspection, release, stop, reviewed stale-receipt cleanup, deliberate thread
+  reclaim, and operator diagnostics for thread occupancy and handoff conflicts.
+- Broker supported Codex approval requests through durable, redacted
+  policy-and-consent records instead of rejecting them indiscriminately. Dynamic
+  Computer MCP tools and governed Git now retain end-to-end request, approval,
+  ticket, audit, and result correlation.
+- Expose stable official Codex Goal get, set, and clear bindings plus turn
+  steering while keeping native Goal state distinct from Computer MCP-owned
+  acceptance runs, evidence, budgets, pause states, stall detection, and
+  explicit completion acceptance.
+- Add exclusive and isolated-worktree writer leases, reviewed managed child
+  worktree provisioning/removal, parent-child lineage, and selected-evidence
+  reconciliation so concurrent executors cannot silently overwrite one
+  worktree.
+- Bound and redact App Server, Exec, MCP, approval, event, orchestration, and
+  diagnostics payloads; represent credential-like protocol identifiers only by
+  digest and reject managed-worktree symlink replacement.
+- Replace the root manuals with product-first English and Simplified Chinese
+  documentation, and coordinate this batch with the independent
+  `computer-mcp.github.io` static product website and its accessibility,
+  link, browser-acceptance, and GitHub Pages gates.
+- The new Codex lifecycle limits and ownership features are additive. Existing
+  configurations remain valid, the Codex provider remains disabled by default,
+  and omitted settings use bounded defaults; no workspace, credential, tunnel,
+  CLI, or MCP migration is required.
+
 ## 1.0.22 — 2026-08-31
 
 - Enforce the Codex App Server deadline even when the underlying RPC ignores

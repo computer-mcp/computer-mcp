@@ -581,6 +581,14 @@ actor LiveCodexExecRuntime: CodexExecRuntimeProtocol {
   }
 
   private static func runtimeError(for error: Error) -> CodexExecRuntimeError {
+    let mapped = unredactedRuntimeError(for: error)
+    return CodexExecRuntimeError(
+      code: mapped.code,
+      message: CodexApprovalRedactor.redactString(mapped.message)
+    )
+  }
+
+  private static func unredactedRuntimeError(for error: Error) -> CodexExecRuntimeError {
     if let error = error as? CodexExecRuntimeError {
       return error
     }

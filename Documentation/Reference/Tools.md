@@ -368,14 +368,67 @@ expand a workspace.
 
 ## Codex Provider Tools
 
-The `[codex]` provider exposes three independent families:
+The `[codex]` provider exposes five independent families:
 
-- `codex.app.*`: App Server status, reviewed method discovery/call, threads,
-  turns, reviews, models, Skills, apps, events, and ordinary user-input
-  requests.
+- `codex.app.*`: App Server status, reviewed method discovery/call, runtime
+  ownership and cleanup, thread start/list/read/fork/release/reclaim, handoff
+  diagnosis, native Goal get/set/clear, turns and steering, reviews, models,
+  Skills, apps, events, ordinary user-input requests, and durable approvals.
 - `codex.exec.*`: start, resume, list, cursor events, result, and cancel.
 - `codex.mcp.*`: status, upstream tools, run/reply, calls, cursor events,
   result, approvals, approval response, and cancel.
+- `codex.run.*`: Computer MCP-owned acceptance runs, evidence, evaluation,
+  explicit acceptance, state transitions, and selected child reconciliation.
+- `codex.worktree.leases.*`: durable mutation ownership, heartbeat, release,
+  conflict reporting, and receipt-only cleanup. `codex.worktree.managed.*`
+  reads Computer MCP-owned lifecycle receipts;
+  `codex.worktree.provision.plan|perform` creates a reviewed isolated child;
+  `codex.worktree.remove.plan|perform` verifies and removes only that clean,
+  released child while preserving its branch.
+
+`codex.diagnostics.snapshot` is the workspace-scoped operator view across those
+families and recent gateway/Git audit rows. It includes correlation and
+generation identifiers but omits command output, file contents, and secrets.
+
+Runtime management is limited to Computer MCP-owned instances. Use
+`codex.app.runtimes.list|inspect|history`, preview cleanup, then perform an
+explicit reviewed cleanup or stop one exact runtime. `codex.app.thread.release`
+unsubscribes the current owned runtime. `codex.app.thread.reclaim` deliberately
+asks that runtime to resume a persisted thread after validating its durable
+registered-workspace ownership receipt or the official persisted thread index;
+a competing writer remains an error and is not terminated.
+`codex.app.handoff.diagnose` correlates that receipt with live runtime, process,
+connection, thread, turn, approval, and last-runtime evidence before supplying
+safe actions. Product surfaces describe those actions and ownership states in
+natural, contextual language; “重新接管线程” and “检查线程占用” are illustrative
+labels rather than fixed interface copy.
+
+Official Goal state and Computer MCP acceptance state are separate.
+`codex.app.goal.get|set|clear` use stable official protocol bindings and native
+status semantics. `codex.run.*` adds Computer MCP-owned criteria, evidence,
+budgets, pause/cancel behavior, contradictions, and acceptance without
+representing those fields as native Codex Goal state. A turn can finish while
+either remains active.
+
+App Server approvals are also separate from the `codex.mcp.*` upstream tool
+approval flow. `codex.app.approvals.list|read|respond` operates the durable
+broker for command, file, permissions, apply-patch, exec-command, and registered
+tool requests. Gateway policy decides whether an operation is eligible before
+approve-once, bounded session approval, denial, or timeout is offered.
+
+Managed worktree provisioning is intentionally two step. The plan validates
+the repository, parent lease, branch, start commit, derived path, profile, and
+lineage and expires after five minutes. Perform uses the plan revision, creates
+the worktree under the App-managed root, registers a child workspace, grants it
+to the current profile, and acquires the isolated lease. Reconnect before
+routing a turn to that newly registered workspace.
+
+Managed removal is also two step and cannot be forced. Release the child lease,
+stop its owned runtime, and ensure the worktree is clean. Removal planning then
+binds the exact receipt, Git common directory, and HEAD. Performing the removal
+requires confirmation and, through the Gateway, `operations.prepare` followed
+by `operations.commit`. The workspace registration and profile grant are
+removed, but the branch remains available for review or reconciliation.
 
 All paths use the gateway-selected workspace, sandbox, approval policy, output
 bounds, and audit context. Raw argv, arbitrary Codex configuration,

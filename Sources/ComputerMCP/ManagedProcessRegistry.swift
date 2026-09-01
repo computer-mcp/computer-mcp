@@ -258,8 +258,8 @@ private final class ManagedProcess: @unchecked Sendable {
     lock.lock()
     terminated = true
     lock.unlock()
-    stdout.stop()
-    stderr.stop()
+    stdout.stop(processHasExited: true)
+    stderr.stop(processHasExited: true)
   }
 
   func snapshot() -> ManagedProcessSnapshot {
@@ -268,8 +268,8 @@ private final class ManagedProcess: @unchecked Sendable {
     lock.unlock()
 
     if isTerminated {
-      stdout.stop()
-      stderr.stop()
+      stdout.stop(processHasExited: true)
+      stderr.stop(processHasExited: true)
     }
 
     return ManagedProcessSnapshot(

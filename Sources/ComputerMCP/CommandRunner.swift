@@ -186,8 +186,9 @@ package final class ProcessCommandRunner: CommandRunning, @unchecked Sendable {
       }
     }
 
-    stdout.stop()
-    stderr.stop()
+    let processHasExited = !process.isRunning
+    stdout.stop(processHasExited: processHasExited)
+    stderr.stop(processHasExited: processHasExited)
 
     return CommandDataResult(
       executable: executable,
@@ -216,6 +217,7 @@ final class OutputCollector: @unchecked Sendable {
   let pipe = Pipe()
   private let limit: Int
   private let lock = NSLock()
+  private let endOfFile = DispatchSemaphore(value: 0)
   private var data = Data()
   private(set) var truncated = false
 
@@ -224,6 +226,7 @@ final class OutputCollector: @unchecked Sendable {
     pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
       let chunk = handle.availableData
       guard !chunk.isEmpty else {
+        self?.endOfFile.signal()
         return
       }
       self?.append(chunk)
@@ -242,9 +245,17 @@ final class OutputCollector: @unchecked Sendable {
     return data
   }
 
-  func stop() {
+  func stop(processHasExited: Bool) {
+    if processHasExited {
+      // Process termination can race the final readability callback. Waiting for
+      // EOF ensures every earlier callback has appended its bytes before the
+      // result snapshot is created.
+      _ = endOfFile.wait(timeout: .now() + .seconds(2))
+    }
     pipe.fileHandleForReading.readabilityHandler = nil
-    append(pipe.fileHandleForReading.availableData)
+    if processHasExited {
+      append(pipe.fileHandleForReading.readDataToEndOfFile())
+    }
   }
 
   private func append(_ chunk: Data) {

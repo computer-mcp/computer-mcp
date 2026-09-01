@@ -105,6 +105,33 @@ final class CodexMCPRuntimeTests {
     #expect((request.threadID) == ("thread-1"))
     #expect((request.prompt) == ("Continue."))
     #expect((started.objectValue?["call_id"]) == (.string("s:reply-1")))
+
+    await assertRuntimeError(
+      try await runtime.reply(
+        threadID: String(repeating: "x", count: 1_025),
+        prompt: "Continue."
+      ),
+      code: "codex.mcp.thread_id_required"
+    )
+  }
+
+  @Test
+  func testCredentialLikeUpstreamRequestIDIsRepresentedByDigest() async throws {
+    let handle = FakeCodexMCPCallHandle(
+      requestID: .string("token=upstream-secret"),
+      result: successfulResult(threadID: "thread-safe", content: "done")
+    )
+    let runtime = makeRuntime(
+      client: FakeCodexMCPClient(state: .running, handles: [handle])
+    )
+
+    let started = try await runtime.run(prompt: "Run safely.", model: nil)
+    let callID = try requiredString("call_id", in: started)
+    #expect(callID.hasPrefix("s:sha256:"))
+    #expect(!callID.contains("upstream-secret"))
+    let result = try await waitForTerminalResult(runtime: runtime, callID: callID)
+    let encoded = String(decoding: try JSONEncoder().encode(result), as: UTF8.self)
+    #expect(!encoded.contains("upstream-secret"))
   }
 
   @Test
@@ -219,6 +246,42 @@ final class CodexMCPRuntimeTests {
     let pending = try await runtime.pendingApprovals(callID: callID)
     #expect((pending.objectValue?["approvals"]?.arrayValue?.count) == (1))
     handle.finish(with: successfulResult(threadID: "thread-3", content: "finished"))
+  }
+
+  @Test
+  func testPendingApprovalAndEventRedactCredentialText() async throws {
+    let workspace = URL(fileURLWithPath: "/tmp/mcp-redaction-workspace")
+    let approval = CodexMCPRuntimeApproval.exec(
+      .init(
+        requestID: .integer(101),
+        threadID: "thread-redaction",
+        message: "Use token=approval-secret",
+        command: ["/usr/bin/env", "token=approval-secret"],
+        cwd: workspace.path
+      )
+    )
+    let handle = FakeCodexMCPCallHandle(
+      requestID: .integer(102),
+      approvalRequests: [approval]
+    )
+    let runtime = makeRuntime(
+      workspace: workspace,
+      client: FakeCodexMCPClient(state: .running, handles: [handle])
+    )
+    let started = try await runtime.run(prompt: "Redact approval.", model: nil)
+    let callID = try requiredString("call_id", in: started)
+    try await waitForApproval(runtime: runtime, callID: callID, approvalID: "n:101")
+
+    let approvals = try await runtime.pendingApprovals(callID: callID)
+    let events = try await runtime.events(callID: callID, afterCursor: 0, maxResults: 100)
+    let encoded = String(
+      decoding: try JSONEncoder().encode(.array([approvals, events]) as JSONValue),
+      as: UTF8.self
+    )
+    #expect(encoded.contains("[REDACTED]"))
+    #expect(!encoded.contains("approval-secret"))
+
+    handle.finish(with: successfulResult(threadID: "thread-redaction", content: "done"))
   }
 
   @Test

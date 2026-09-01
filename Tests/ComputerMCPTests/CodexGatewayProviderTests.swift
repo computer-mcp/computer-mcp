@@ -12,7 +12,16 @@ final class CodexGatewayProviderTests {
     let names = Set(try provider.listTools().map(\.name))
 
     #expect(names.contains("codex.app.methods.call"))
+    #expect(names.contains("codex.diagnostics.snapshot"))
+    #expect(names.contains("codex.app.runtimes.history"))
+    #expect(names.contains("codex.app.runtimes.cleanup.preview"))
+    #expect(names.contains("codex.app.runtimes.cleanup.perform"))
+    #expect(names.contains("codex.app.goal.set"))
+    #expect(names.contains("codex.app.approvals.respond"))
     #expect(names.contains("codex.app.turn.start"))
+    #expect(names.contains("codex.app.turn.steer"))
+    #expect(names.contains("codex.app.thread.reclaim"))
+    #expect(names.contains("codex.app.handoff.diagnose"))
     #expect(names.contains("codex.exec.start"))
     #expect(names.contains("codex.exec.result"))
     #expect(names.contains("codex.mcp.run"))
@@ -57,9 +66,13 @@ final class CodexGatewayProviderTests {
     let tools = try provider.listTools()
     let list = try #require(tools.first { $0.name == "codex.exec.list" })
     let start = try #require(tools.first { $0.name == "codex.exec.start" })
+    let removeWorktree = try #require(
+      tools.first { $0.name == "codex.worktree.remove.perform" }
+    )
 
     #expect((provider.capability(for: list).risk) == (.readOnly))
     #expect((provider.capability(for: start).risk) == (.workspaceWrite))
+    #expect((provider.capability(for: removeWorktree).risk) == (.destructive))
     #expect((provider.capability(for: list).workspaceRequirement) == (.required))
     #expect(provider.capability(for: start).usesNetwork)
   }
@@ -140,6 +153,316 @@ final class CodexGatewayProviderTests {
       .objectValue?["params"]?.objectValue
     #expect((reviewParams?["delivery"]) == (.string("detached")))
     #expect((reviewParams?["target"]) == (.object(["type": .string("uncommittedChanges")])))
+
+    let goal = try await provider.callToolAsync(
+      name: "codex.app.goal.set",
+      arguments: .object([
+        "thread_id": .string("thread-1"),
+        "objective": .string("Ship only after acceptance passes."),
+        "status": .string("active"),
+        "token_budget": .number(100_000),
+      ])
+    )
+    let goalParams = goal.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue?["params"]?.objectValue
+    #expect(goalParams?["threadId"] == .string("thread-1"))
+    #expect(goalParams?["objective"] == .string("Ship only after acceptance passes."))
+    #expect(goalParams?["status"] == .string("active"))
+    #expect(goalParams?["tokenBudget"] == .number(100_000))
+
+    let steer = try await provider.callToolAsync(
+      name: "codex.app.turn.steer",
+      arguments: .object([
+        "thread_id": .string("thread-1"),
+        "expected_turn_id": .string("turn-1"),
+        "prompt": .string("Run the remaining acceptance checks before stopping."),
+        "client_user_message_id": .string("message-1"),
+      ])
+    )
+    let steerParams = steer.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue?["params"]?.objectValue
+    #expect(steerParams?["threadId"] == .string("thread-1"))
+    #expect(steerParams?["expectedTurnId"] == .string("turn-1"))
+    #expect(steerParams?["clientUserMessageId"] == .string("message-1"))
+    #expect(
+      steerParams?["input"]?.arrayValue?.first?.objectValue
+        == [
+          "type": .string("text"),
+          "text": .string("Run the remaining acceptance checks before stopping."),
+        ]
+    )
+
+    let reclaim = try await provider.callToolAsync(
+      name: "codex.app.thread.reclaim",
+      arguments: .object([
+        "thread_id": .string("thread-1"),
+        "model": .string("gpt-test"),
+      ])
+    )
+    let reclaimResult = reclaim.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue
+    #expect(reclaimResult?["method"] == .string("thread/resume"))
+    #expect(reclaimResult?["params"]?.objectValue?["threadId"] == .string("thread-1"))
+    #expect(reclaimResult?["params"]?.objectValue?["model"] == .string("gpt-test"))
+  }
+
+  @Test
+  func testHandoffDiagnosticDoesNotClaimExternalProcessControl() async throws {
+    let provider = makeProvider()
+
+    let response = try await provider.callToolAsync(
+      name: "codex.app.handoff.diagnose",
+      arguments: .object([
+        "thread_id": .string("thread-external"),
+        "observed_error": .string(
+          "opened in another application; Authorization: Bearer handoff-secret"
+        ),
+      ])
+    )
+    let result = response.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue
+
+    #expect(result?["classification"] == .string("external_writer_or_unfinished_watchdog"))
+    #expect(result?["external_owner_visible"] == .bool(false))
+    #expect(result?["external_process_signals_allowed"] == .bool(false))
+    #expect(result?["observed_error"]?.stringValue?.contains("[REDACTED]") == true)
+    #expect(result?["observed_error"]?.stringValue?.contains("handoff-secret") == false)
+    #expect(
+      result?["safe_actions"]?.arrayValue?.first?.objectValue?["tool"]
+        == .string("codex.app.runtimes.cleanup.preview")
+    )
+  }
+
+  @Test
+  func testAcceptanceRunAndLeaseToolsEnforceWorkspaceWriterOwnership() async throws {
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveWorkspace(
+      RegisteredWorkspace(
+        id: "workspace-1",
+        displayName: "Fixture",
+        rootPath: "/tmp/workspace-1"
+      )
+    )
+    let provider = CodexGatewayProvider(
+      configuration: CodexConfig(enabled: true),
+      appServer: FakeAppServerRuntime(),
+      exec: nil,
+      mcp: nil,
+      owner: CodexRuntimeOwner(
+        workspaceID: "workspace-1",
+        profileID: "profile-1",
+        caller: "local-mcp",
+        transport: "fixture",
+        socketConnectionID: "socket-1",
+        tunnelInstanceID: nil,
+        tunnelProfileID: nil
+      ),
+      database: database
+    )
+
+    let created = try await provider.callToolAsync(
+      name: "codex.run.create",
+      arguments: .object([
+        "objective": .string("Deliver the complete batch."),
+        "accepted_scope": .array([.string("runtime"), .string("website")]),
+        "acceptance_criteria": .array([.string("All tests pass")]),
+        "thread_id": .string("thread-1"),
+        "official_goal_linked": .bool(true),
+      ])
+    )
+    let run = created.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue
+    let runID = try #require(run?["id"]?.stringValue)
+    #expect(run?["officialGoalLinked"] == .bool(true))
+
+    let acquired = try await provider.callToolAsync(
+      name: "codex.worktree.leases.acquire",
+      arguments: .object([
+        "agent_id": .string("agent-1"),
+        "thread_id": .string("thread-1"),
+        "run_id": .string(runID),
+      ])
+    )
+    let lease = acquired.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue
+    let leaseID = try #require(lease?["id"]?.stringValue)
+
+    await assertThrowsErrorAsync(
+      try await provider.callToolAsync(
+        name: "codex.app.turn.start",
+        arguments: .object([
+          "thread_id": .string("thread-1"),
+          "prompt": .string("Mutate without the lease."),
+        ])
+      )
+    )
+    await assertThrowsErrorAsync(
+      try await provider.callToolAsync(
+        name: "codex.app.methods.call",
+        arguments: .object([
+          "method": .string("turn/start"),
+          "params": .object([
+            "threadId": .string("thread-1"),
+            "input": .array([
+              .object([
+                "type": .string("text"),
+                "text": .string("Attempt the generic turn-start bypass."),
+              ])
+            ]),
+          ]),
+        ])
+      )
+    )
+    let turn = try await provider.callToolAsync(
+      name: "codex.app.turn.start",
+      arguments: .object([
+        "thread_id": .string("thread-1"),
+        "prompt": .string("Continue under the exclusive writer lease."),
+        "worktree_lease_id": .string(leaseID),
+      ])
+    )
+    let turnParams = turn.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue?["params"]?.objectValue
+    #expect(turnParams?["threadId"] == .string("thread-1"))
+    #expect(turnParams?["worktree_lease_id"] == nil)
+  }
+
+  @Test
+  func testAcceptanceRunCompletesThroughThePublicToolSurface() async throws {
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveWorkspace(
+      RegisteredWorkspace(
+        id: "workspace-1",
+        displayName: "Fixture",
+        rootPath: "/tmp/workspace-1"
+      )
+    )
+    let provider = CodexGatewayProvider(
+      configuration: CodexConfig(enabled: true),
+      appServer: FakeAppServerRuntime(),
+      exec: nil,
+      mcp: nil,
+      owner: CodexRuntimeOwner(
+        workspaceID: "workspace-1",
+        profileID: "profile-1",
+        caller: "local-mcp",
+        transport: "fixture",
+        socketConnectionID: "socket-1",
+        tunnelInstanceID: nil,
+        tunnelProfileID: nil
+      ),
+      database: database
+    )
+
+    var run = try providerResult(
+      await provider.callToolAsync(
+        name: "codex.run.create",
+        arguments: .object([
+          "objective": .string("Deliver one accepted batch."),
+          "accepted_scope": .array([.string("implementation"), .string("verification")]),
+          "acceptance_criteria": .array([
+            .string("Build passes"),
+            .string("Tests pass"),
+            .string("Worktree is clean"),
+          ]),
+          "required_evidence_kinds": .array([
+            .string("build"), .string("test"), .string("git_status"),
+          ]),
+        ])
+      )
+    )
+    let runID = try #require(run["id"]?.stringValue)
+
+    run = try providerResult(
+      await provider.callToolAsync(
+        name: "codex.run.record",
+        arguments: runEventArguments(
+          runID: runID,
+          revision: try revision(of: run),
+          event: "turn_started",
+          summary: "The implementation turn started.",
+          extra: ["turn_id": .string("turn-1")]
+        )
+      )
+    )
+    run = try providerResult(
+      await provider.callToolAsync(
+        name: "codex.run.record",
+        arguments: runEventArguments(
+          runID: runID,
+          revision: try revision(of: run),
+          event: "turn_completed",
+          summary: "The turn ended; acceptance remains open."
+        )
+      )
+    )
+    #expect(run["state"] == .string("active"))
+    #expect(
+      run["diagnostics"]?.arrayValue?.contains(.string("turn_completed_with_open_acceptance"))
+        == true
+    )
+
+    run = try providerResult(
+      await provider.callToolAsync(
+        name: "codex.run.record",
+        arguments: runEventArguments(
+          runID: runID,
+          revision: try revision(of: run),
+          event: "approval_pending",
+          summary: "A governed mutation needs consent.",
+          extra: ["approval_id": .string("approval-1")]
+        )
+      )
+    )
+    #expect(run["state"] == .string("paused"))
+    run = try providerResult(
+      await provider.callToolAsync(
+        name: "codex.run.record",
+        arguments: runEventArguments(
+          runID: runID,
+          revision: try revision(of: run),
+          event: "approval_resolved",
+          summary: "The governed mutation was approved.",
+          extra: ["approval_id": .string("approval-1")]
+        )
+      )
+    )
+
+    for (index, kind) in ["build", "test", "git_status"].enumerated() {
+      run = try providerResult(
+        await provider.callToolAsync(
+          name: "codex.run.record",
+          arguments: runEventArguments(
+            runID: runID,
+            revision: try revision(of: run),
+            event: "acceptance_passed",
+            summary: "Recorded \(kind) evidence.",
+            extra: [
+              "criterion_id": .string("criterion-\(index + 1)"),
+              "evidence_kind": .string(kind),
+              "repository_digest": .string("digest-\(index + 1)"),
+            ]
+          )
+        )
+      )
+    }
+
+    run = try providerResult(
+      await provider.callToolAsync(
+        name: "codex.run.accept",
+        arguments: .object([
+          "run_id": .string(runID),
+          "expected_revision": .number(Double(try revision(of: run))),
+          "worktree_clean": .bool(true),
+        ])
+      )
+    )
+    #expect(run["state"] == .string("completed"))
+    #expect(
+      run["acceptanceCriteria"]?.arrayValue?.allSatisfy {
+        $0.objectValue?["state"] == .string("passed")
+      } == true)
+    #expect(run["evidence"]?.arrayValue?.count == 3)
+    #expect(run["terminalReason"]?.stringValue?.contains("explicitly accepted") == true)
   }
 
   @Test
@@ -235,6 +558,20 @@ final class CodexGatewayProviderTests {
     )
     expectThrows(
       try provider.callTool(name: "codex.exec.list", arguments: .object([:]))
+    )
+    await assertThrowsErrorAsync(
+      try await provider.callToolAsync(
+        name: "codex.app.thread.reclaim",
+        arguments: .object([
+          "thread_id": .string(String(repeating: "x", count: 1_025))
+        ])
+      )
+    )
+    await assertThrowsErrorAsync(
+      try await provider.callToolAsync(
+        name: "codex.app.handoff.diagnose",
+        arguments: .object(["thread_id": .string("token=should-not-be-an-identifier")])
+      )
     )
   }
 
@@ -402,4 +739,31 @@ private func assertThrowsErrorAsync<T>(
   } catch {
     // Expected.
   }
+}
+
+private func providerResult(_ response: JSONValue) throws -> [String: JSONValue] {
+  try #require(
+    response.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue
+  )
+}
+
+private func revision(of run: [String: JSONValue]) throws -> Int {
+  Int(try #require(run["revision"]?.numberValue))
+}
+
+private func runEventArguments(
+  runID: String,
+  revision: Int,
+  event: String,
+  summary: String,
+  extra: [String: JSONValue] = [:]
+) -> JSONValue {
+  .object(
+    [
+      "run_id": .string(runID),
+      "expected_revision": .number(Double(revision)),
+      "event": .string(event),
+      "summary": .string(summary),
+    ].merging(extra) { _, new in new }
+  )
 }

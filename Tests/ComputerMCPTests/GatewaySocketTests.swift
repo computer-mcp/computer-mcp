@@ -44,6 +44,24 @@ final class GatewaySocketTests {
   }
 
   @Test
+  func testHashesUnsafeMCPResponseCorrelationIdentifiers() throws {
+    let response = try jsonData([
+      "jsonrpc": "2.0",
+      "id": "token=do-not-persist",
+      "result": [
+        "structuredContent": [
+          "gateway_execution": ["request_id": "gateway-request"]
+        ]
+      ],
+    ])
+
+    let correlation = try #require(GatewaySocketMCPResponseCorrelation.parse(response))
+    #expect(correlation.mcpRequestID.hasPrefix("sha256:"))
+    #expect(!correlation.mcpRequestID.contains("do-not-persist"))
+    #expect(correlation.mcpRequestID.count == 71)
+  }
+
+  @Test
   func testOfficialMCPClientRoundTripsOverUnixSocket() async throws {
     let fixture = try SocketFixture()
     let server = makeServer(configuration: fixture.configuration)

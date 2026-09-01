@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import Security
@@ -305,7 +306,7 @@ package struct GatewaySocketMCPResponseCorrelation: Equatable, Sendable {
   private static func requestID(_ value: JSONValue?) -> String? {
     switch value {
     case .string(let value):
-      return value
+      return safeExternalIdentifier(value)
     case .number(let value):
       if let integer = JSONValue.number(value).intValue {
         return String(integer)
@@ -317,5 +318,18 @@ package struct GatewaySocketMCPResponseCorrelation: Equatable, Sendable {
     default:
       return nil
     }
+  }
+
+  private static func safeExternalIdentifier(_ value: String) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty, trimmed == value, value.utf8.count <= 1_024,
+      value.rangeOfCharacter(from: .controlCharacters) == nil,
+      CodexApprovalRedactor.redactString(value, maximumCharacters: 1_024) == value
+    {
+      return value
+    }
+    let digest = SHA256.hash(data: Data(value.utf8))
+      .map { String(format: "%02x", $0) }.joined()
+    return "sha256:\(digest)"
   }
 }

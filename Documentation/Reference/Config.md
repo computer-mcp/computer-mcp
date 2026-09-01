@@ -176,6 +176,10 @@ exec_enabled = true
 mcp_enabled = true
 experimental_api = true
 app_server_request_timeout_seconds = 30
+app_server_termination_grace_milliseconds = 1000
+app_server_kill_grace_milliseconds = 2000
+app_server_approval_timeout_seconds = 300
+app_server_auto_approve_workspace_writes = false
 sandbox = "workspace-write"
 approval_policy = "never"
 ```
@@ -184,6 +188,13 @@ App Server, Exec, and MCP are separate `swift-codex` lifecycles. Remote callers
 receive only exact granted tool IDs and cannot supply arbitrary Codex argv or
 configuration overrides. App Server RPCs have a bounded deadline; a timeout
 closes the failed App Server connection so the next call starts a clean one.
+
+`app_server_termination_grace_milliseconds` is the EOF and TERM grace interval
+(0–30000 ms). `app_server_kill_grace_milliseconds` is the final reaping wait
+after KILL (100–30000 ms). `app_server_approval_timeout_seconds` bounds a live
+approval request (1–3600 seconds). Automatic workspace-write approval is off by
+default; enabling it does not bypass caller, profile, workspace, path, risk, or
+capability policy.
 
 Exec requests deliberately ignore the user's global Codex `config.toml` while
 continuing to use that user's `CODEX_HOME` authentication. This prevents global

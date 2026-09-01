@@ -23,6 +23,28 @@ final class ProcessAndOpenAITunnelTests {
   }
 
   @Test
+  func testCommandRunnerDrainsShortOutputUnderConcurrency() async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      for index in 0..<128 {
+        group.addTask {
+          let expected = "result-\(index)\n"
+          let result = try ProcessCommandRunner().run(
+            executable: "/bin/echo",
+            arguments: ["result-\(index)"],
+            workingDirectory: nil,
+            environment: [:],
+            timeoutMilliseconds: 5_000,
+            maxOutputBytes: 1_024
+          )
+          #expect(result.exitCode == 0)
+          #expect(result.stdout == expected)
+        }
+      }
+      try await group.waitForAll()
+    }
+  }
+
+  @Test
   func testManagedProcessCanSpawnReadAndCancel() throws {
     let registry = ManagedProcessRegistry()
     let id = try registry.spawn(

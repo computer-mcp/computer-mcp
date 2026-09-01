@@ -1,181 +1,262 @@
 # Computer MCP
 
+**A policy-controlled, workspace-scoped local execution gateway for AI agents.**
+
+Computer MCP connects ChatGPT, Codex, and other MCP-compatible clients to
+registered workspaces, CLIs, desktop applications, development tools, and
+optional Codex runtimes—without turning your Mac into an unrestricted remote
+shell.
+
+Use it when an agent needs to do real work on your computer, but access still
+needs an owner, a scope, an approval boundary, and an audit trail.
+
+[Get started](#quick-start) · [Product site](https://computer-mcp.github.io/) ·
+[Documentation](Documentation/README.md) ·
+[Latest release](https://github.com/computer-mcp/computer-mcp/releases/latest) ·
 [简体中文](README.zh-CN.md)
 
-Computer MCP is a policy-enforced MCP gateway for macOS. The App owns the
-gateway, profiles, workspace grants, provider and tunnel lifecycles, Keychain
-credentials, and redacted audit trail. Local MCP clients, ChatGPT, and public
-MCP consumers connect to that same App-owned gateway.
+Computer MCP is for developers and technical teams who want local execution
+without granting an AI client the whole machine. It provides:
 
-> Normal App users do not need a TOML file. TOML is for explicit standalone
-> development and advanced configuration only.
+- registered folders instead of an ambient filesystem;
+- capability-scoped profiles instead of one shared permission level;
+- typed tools, registered CLIs, downstream MCP servers, Skills, Computer Use,
+  governed Git, and optional Codex execution;
+- local policy checks plus explicit consent for higher-risk actions;
+- redacted, correlated audit records for requests and results;
+- local, ChatGPT, and reviewed remote connection paths.
 
-## Install the release
+## The 30-second model
+
+```text
+ChatGPT · Codex · another MCP client
+                 │
+       authenticated connection
+                 ▼
+          Computer MCP.app
+                 │
+ caller → profile → registered workspace → policy → approval when required
+                 │
+                 ▼
+ Builtin · Skill · CLI · MCP · Computer Use · Git · Shell · Codex adapter
+                 │
+                 ▼
+       local execution → bounded result → redacted audit receipt
+```
+
+Every call is tied to a caller, profile, capability, and—when relevant—a
+registered workspace. Unknown tools, ungranted workspaces, unsafe paths, and
+unsupported ownership claims fail closed.
+
+## What it enables
+
+- Let ChatGPT inspect a registered project, use local research tools, and hand
+  an implementation task to Codex without exposing arbitrary home-directory
+  access.
+- Give an agent a reviewed path to edit, stage, commit with repository hooks,
+  inspect the result, and prove the worktree is clean—without granting a broad
+  shell by default.
+- Connect deterministic local CLIs, downstream MCP servers, and reusable Skill
+  packages through one policy and audit plane.
+- Observe or control desktop UI through bounded Computer Use capabilities that
+  preflight the relevant macOS permission.
+- Reach the same local execution gateway from ChatGPT through OpenAI Secure MCP
+  Tunnel or from a reviewed remote client through a Cloudflare named tunnel.
+- Run optional Codex App Server, Exec, or MCP lifecycles with explicit runtime,
+  thread, approval, Goal, and worktree ownership.
+
+## Why it is safer than exposing a shell
+
+Computer MCP makes two separate decisions:
+
+1. **Policy authorization:** Is this caller allowed to use this capability in
+   this registered workspace at all?
+2. **Action consent:** If the allowed action is higher risk, does the user or
+   authorized caller approve it now?
+
+Approval never expands policy. A denied capability cannot become allowed just
+because someone clicks Approve. `shell.run`, generic CLI execution, process
+spawning, workspace writes, destructive operations, and Full Shell remain off
+unless the active configuration grants the exact path. Credentials stay in the
+signed App's macOS Data Protection Keychain; examples, diagnostics, logs, and
+audit rows keep only placeholders or redacted summaries.
+
+See [Security and Privacy](Documentation/Architecture/SecurityAndPrivacy.md) for
+the complete trust model and [SECURITY.md](SECURITY.md) for reporting a
+vulnerability.
+
+## Capability status
+
+| Status | Capability | Notes |
+| --- | --- | --- |
+| Stable | App-owned local gateway, workspace registration, profiles, policy, operation tickets, and redacted audit | Default product control plane on macOS 14+ |
+| Stable | Local MCP, ChatGPT through OpenAI Secure MCP Tunnel, and Cloudflare named-tunnel connections | Each remote path has its own caller and profile boundary |
+| Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and Computer Use adapters | Availability still depends on the selected profile, workspace, dependency, and macOS permission |
+| Stable | Governed workspace and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
+| Experimental | Codex App Server, Exec, and MCP provider paths | Opt-in, disabled by default, and dependent on an installed authenticated Codex |
+| Experimental | Native Codex Goal passthrough, Computer MCP acceptance runs, thread handoff diagnosis, and managed child worktrees | The product keeps official Goal state, Computer MCP acceptance, and external-client ownership distinct |
+| Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
+
+Experimental does not mean unbounded: these paths use the same workspace,
+policy, approval, lifecycle, resource-limit, and audit boundaries as stable
+capabilities.
+
+## ChatGPT orchestrates, Codex executes
+
+A representative workflow looks like this:
+
+1. ChatGPT calls Computer MCP to inspect a registered repository and gather
+   local context.
+2. Computer MCP binds the request to the ChatGPT profile and workspace; policy
+   decides which read, Git, CLI, and Codex capabilities are available.
+3. ChatGPT starts or steers a dedicated Codex task for that workspace.
+4. Codex requests a governed mutation. Computer MCP records the redacted
+   approval request; the user or authorized caller approves or denies it.
+5. Codex edits and commits through the governed path. Computer MCP correlates
+   the Codex request, approval, operation ticket, gateway invocation, Git
+   result, and audit receipt.
+6. A Computer MCP acceptance run stays active until its required build, test,
+   and clean-worktree evidence is explicitly accepted. A finished turn alone
+   does not complete the run.
+
+This is optional orchestration, not a claim that Computer MCP is Codex Remote.
+
+## Computer MCP and Codex Remote
+
+Use **official Codex Remote** for the first-party experience of remotely
+controlling ordinary Codex work. It owns that product surface and is the
+preferred choice when Codex itself is the whole workflow.
+
+Use **Computer MCP** when the workflow needs a general MCP-accessible local
+execution plane: multiple AI clients, registered tools and applications,
+workspace/profile policy, custom approval rules, correlated audit, or optional
+Codex orchestration alongside other local capabilities.
+
+The ownership modes remain explicit:
+
+- a quick Codex thread or turn;
+- a dedicated Computer MCP-owned Codex runtime;
+- an official persisted Codex Goal;
+- a separate Computer MCP acceptance run;
+- official Codex Remote;
+- an external Codex Desktop, IDE, or CLI session.
+
+Computer MCP can release or stop only runtimes it verifiably owns. It can
+deliberately try to resume a persisted thread, and it can explain a likely
+writer conflict, but it never claims authority to terminate another
+application's process or subscription.
+
+## Quick start
 
 Computer MCP requires macOS 14 or later.
 
-1. Download `Computer-MCP-1.0.22-universal.dmg` and `SHA256SUMS` from the
-   release that supplied your build.
-2. Verify the DMG digest, open it, and drag **Computer MCP** to Applications.
-3. Open the installed App from Finder. Do not run a copied executable outside
-   its App bundle: macOS privacy grants belong to the signed App identity.
-4. Optionally choose **Install Command Line Tool** on Home. This creates
-   `~/.local/bin/computer-mcp` without `sudo`.
-
-Official release artifacts are Developer ID signed, notarized, and published
-with checksums through GitHub Releases. Source-built and ad-hoc-signed
-artifacts are development builds, not official releases.
-
-## First launch
-
-The welcome page offers four direct paths:
-
-- **Connect ChatGPT**
-- **Connect through Cloudflare**
-- **Connect a local MCP client**
-- **Explore Dashboard**
-
-It remembers only `onboarding_version = 1`. Connection progress is always
-derived from the current App, gateway, dependencies, Keychain entries,
-transport process, and audit records. You can reopen Welcome from the sidebar.
-
-Home shows one recommended next step at a time. A connection is:
-
-| Status | Meaning |
-| --- | --- |
-| Not configured | No connection definition exists |
-| Blocked | A required dependency, credential, or component is unavailable |
-| Needs attention | Setup exists but a required runtime step is incomplete |
-| Ready | Local components, configuration, dependencies, and transport are healthy |
-| Verified | A matching successful request occurred after the current gateway or tunnel start |
-
-## Connect a local MCP client
-
-1. Open **Home** and start the Gateway.
-2. Under **Connect a local MCP client**, copy the displayed stdio command and
-   arguments into your MCP client.
-3. For Codex, choose **Register with Codex**, review the exact command, and
-   confirm. The registration uses:
+1. Download the notarized Universal 2 DMG and `SHA256SUMS` from the
+   [latest release](https://github.com/computer-mcp/computer-mcp/releases/latest).
+2. Verify the checksum, drag **Computer MCP** to Applications, and open the
+   installed App from Finder. macOS privacy grants belong to this signed App
+   identity.
+3. On Welcome, choose **Connect a local MCP client** and start the Gateway.
+4. Copy the displayed stdio command into your client. Codex users can instead
+   review and confirm **Register with Codex**.
+5. Make the first read-only tool call:
 
    ```text
-   computer-mcp bridge --client-identity local-mcp
+   workspace.list
    ```
 
-   It does not use TOML. The internal Codex provider is a separate advanced
-   feature under **Providers**.
-4. Make one MCP tool call, then refresh Home. The path becomes Verified only
-   after a matching `local-mcp` audit event is observed.
+6. Refresh Home. The connection becomes Verified only after a matching,
+   successful audit event is observed.
 
-## Connect ChatGPT
-
-Open **ChatGPT** under Get Started and follow the checks in order:
-
-1. Confirm the target ChatGPT account/workspace can create custom MCP apps and
-   enable developer mode. Availability and administrative controls vary by
-   plan; see OpenAI's current [developer mode and MCP apps guide][openai-apps].
-2. Create or select an OpenAI Secure MCP Tunnel and install the official
-   [`tunnel-client` release][tunnel-client]. Computer MCP detects it but never
-   downloads it.
-3. Choose **Add Connection**, enter the Tunnel identity and gateway profile,
-   and save the runtime API key. The key is stored in Keychain.
-4. Run Diagnostics, start the connection, and wait for Ready.
-5. In ChatGPT Web, create or update the custom app, scan tools, start a new
-   chat, and invoke one Computer MCP tool.
-6. Return to the ChatGPT page and choose **Check for Request**. Verified
-   requires the current tunnel identity, caller, profile, start boundary, and a
-   successful audit decision to match.
-
-Computer MCP does not automate ChatGPT account settings. ChatGPT connects to a
-remote MCP server; Secure MCP Tunnel keeps the local gateway off the public
-Internet. See the full [ChatGPT runbook](Documentation/Reference/ChatGPTWebRunbook.md).
-
-## Connect through Cloudflare
-
-Open **Cloudflare** under Get Started:
-
-1. Install `cloudflared` 2025.4.0 or newer. This version is required for the
-   owner-only named-tunnel token file used by Computer MCP.
-2. In Cloudflare, create a remotely managed named tunnel and route its public
-   hostname to the loopback origin shown by the App. Quick Tunnels are for
-   development validation only.
-3. Choose **Add Connection** and enter the hostname, named-tunnel token, and
-   gateway profile. Tokens are stored in Keychain.
-4. Ask the App to generate a Computer MCP Access Token. Copy it immediately
-   into the external consumer's secret store; after the one-time view closes,
-   the App cannot display it again.
-5. Run Diagnostics, start the named tunnel, connect the public MCP consumer,
-   and make one successful tool call.
-6. Choose **Check for Request**. Ready becomes Verified only for a request that
-   matches the current named tunnel, profile, caller, and start boundary.
-
-Cloudflare Access may add consumer-owned Service Token headers. Computer MCP
-does not store those credentials. See the full
-[Cloudflare runbook](Documentation/Reference/CloudflareRunbook.md) and
-Cloudflare's official [tunnel token documentation][cloudflare-token].
-
-## Diagnose and recover
-
-Every setup page remains usable after a failed dependency check, external
-browser trip, permission denial, or transport failure. Use **Retry**, the
-step-by-step fallback, or **Open Advanced Diagnostics**; setup is not trapped in
-a one-time modal.
-
-The App-owned CLI exposes the same readiness model:
+Optionally install the bundled CLI from Home. It creates
+`~/.local/bin/computer-mcp` without `sudo`. Check the same live readiness model
+from a terminal:
 
 ```sh
-computer-mcp doctor
-computer-mcp doctor --journey local|chatgpt|cloudflare
-computer-mcp doctor --journey chatgpt --json
+computer-mcp doctor --journey local
+computer-mcp doctor --journey local --json
 ```
 
-Doctor exits 0 only for Ready or Verified. Schema-1 JSON remains parseable when
-the App is unavailable and never includes a credential value. More recovery
-steps are in [Troubleshooting](Documentation/Reference/Troubleshooting.md).
+Doctor exits 0 only for Ready or Verified. Its schema-1 JSON remains parseable
+when the App is unavailable and never includes a credential value.
 
-## Permissions
+Continue with the [Quick Start](Documentation/Reference/QuickStart.md),
+[ChatGPT runbook](Documentation/Reference/ChatGPTWebRunbook.md), or
+[Cloudflare runbook](Documentation/Reference/CloudflareRunbook.md). Normal App
+use does not require TOML.
 
-Accessibility and Screen Recording block only capabilities that actually need
-them. Read-only file, system, provider, and non-Computer-Use paths continue to
-work without those grants.
+## Architecture
 
-The App preflights the permission, calls the public macOS request API, attempts
-to open the correct System Settings page, shows a fallback path, and polls again
-when you return. Screen Recording grants must target the signed
-`Computer MCP.app` that executes the protected operation. A Terminal or Codex
-grant does not transfer to Computer MCP.
+The App owns the gateway, private control socket, registered workspace
+bookmarks, profiles, provider and tunnel lifecycles, Keychain credentials, and
+audit database. Local clients use an owner-only Unix-domain socket. ChatGPT
+uses OpenAI Secure MCP Tunnel. Reviewed public MCP consumers can use a
+loopback-only, bearer-protected origin behind a Cloudflare remotely managed
+named tunnel.
 
-## Security boundaries
+The gateway then resolves the exact tool, binds caller/profile/workspace,
+checks policy and any operation ticket, obtains action consent when needed,
+dispatches one bounded adapter, and records the redacted outcome. Standalone
+TOML modes are development and diagnostic surfaces; they do not share the
+App's bookmarks or Keychain state.
 
-- The App Control Socket and gateway socket are owner-only local endpoints.
-- Built-in profiles keep local administration separate from ChatGPT and
-  Cloudflare callers.
-- `shell.run`, generic CLI execution, process spawning, workspace writes, and
-  Full Shell are disabled unless policy and the selected profile both grant
-  them.
-- More than one eligible workspace requires an explicit `workspace_id`.
-- API keys and tunnel tokens live in the macOS Data Protection Keychain under
-  the signed App's private access group. Examples, Doctor, logs, diagnostics,
-  configuration exports, and audit rows contain only placeholders or redacted
-  summaries.
-- HTTP v1 remains loopback-bound and bearer protected; Cloudflare owns the
-  public transport, not the origin authorization boundary.
+Read the current architecture in [Gateway](Documentation/Architecture/Gateway.md),
+[Runtime](Documentation/Architecture/Runtime.md), and
+[Capability Ownership](Documentation/Architecture/Ownership.md). Exhaustive
+commands and schemas belong in [Reference](Documentation/Reference/README.md).
 
-## Advanced development
+## Codex operations and diagnosis
 
-Standalone mode is explicit and uses exactly one TOML file per process:
+The optional Codex provider records owned runtime IDs, process groups,
+connection generations, loaded threads, active turns, approvals, shutdown
+reasons, and termination escalation. Durable ownership receipts allow a later
+Computer MCP generation to validate a thread's workspace before attempting a
+resume.
+
+Operator commands expose the same evidence without requiring direct process or
+open-file inspection:
 
 ```sh
-swift run computer-mcp serve stdio --config Examples/computer-mcp.toml
-swift run computer-mcp config validate --config Examples/computer-mcp.toml
-swift run computer-mcp tools list --config Examples/computer-mcp.toml
+computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
+computer-mcp codex diagnostics --workspace-id <workspace-id>
 ```
 
-Standalone mode does not use the App's bookmarks, database, or Keychain tunnel
-credentials. Do not run it as a second owner of App state. The examples are
-classified in [Examples/README.md](Examples/README.md); exhaustive commands,
-protocol details, and tool schemas live in the
-[Reference documentation](Documentation/Reference/README.md).
+The diagnostic reports verified Computer MCP ownership separately from an
+inferred external conflict and offers only safe actions such as releasing an
+owned thread, stopping an exact owned runtime, reviewing stale receipts, or
+trying to reclaim a persisted thread.
 
+## Current limitations
+
+- The signed product is macOS-only and requires macOS 14 or later.
+- Remote setup depends on user-owned OpenAI or Cloudflare services and their
+  current account, administrator, network, and availability constraints.
+- Accessibility and Screen Recording must be granted to the installed signed
+  App for capabilities that need them; other capabilities remain available.
+- The advanced Codex provider is opt-in and depends on the installed official
+  Codex version, authentication, and stable protocol support.
+- Computer MCP cannot inspect, unsubscribe, or terminate an external Codex
+  Desktop, IDE, CLI, or Remote connection it does not own.
+- Computer MCP does not silently select a workspace when more than one eligible
+  workspace exists, does not implicitly push Git commits, and does not turn a
+  normal completed turn into accepted Goal completion.
+- A development build or ad-hoc-signed App is not an official release and does
+  not inherit the installed release's macOS privacy or Keychain identity.
+
+## Documentation map
+
+- [Documentation home](Documentation/README.md)
+- [Quick Start](Documentation/Reference/QuickStart.md)
+- [CLI reference](Documentation/Reference/CLI.md)
+- [Configuration reference](Documentation/Reference/Config.md)
+- [Tool reference](Documentation/Reference/Tools.md)
+- [Troubleshooting](Documentation/Reference/Troubleshooting.md)
+- [Architecture](Documentation/Architecture/README.md)
+- [Production acceptance contract](Documentation/Reference/ProductizationAcceptance.md)
+- [Release process](Documentation/Reference/Release.md)
+
+## Development and contributing
+
+Inspect [Package.swift](Package.swift) before changing products or targets.
 Build and test from the repository root:
 
 ```sh
@@ -184,17 +265,22 @@ swift-format lint --strict --recursive --configuration .swift-format Package.swi
 /usr/bin/swift test --build-system native
 ```
 
-Local builds are development and release-rehearsal artifacts only. Official
-DMGs come exclusively from the protected GitHub Actions workflow triggered by
-an SSH-signed annotated `vMAJOR.MINOR.PATCH` tag. The workflow signs with
-Developer ID, notarizes and staples the App and DMG, verifies Gatekeeper, and
-creates a draft GitHub Release. See the
-[Release reference](Documentation/Reference/Release.md).
+For standalone development, use one explicit TOML file per process:
 
-The root package exposes only the App and CLI products. It resolves
-`swift-codex` exactly at `0.1.2`; the Validation package remains independent
-under `Tools/Validation`.
+```sh
+swift run computer-mcp serve stdio --config Examples/computer-mcp.toml
+swift run computer-mcp config validate --config Examples/computer-mcp.toml
+swift run computer-mcp tools list --config Examples/computer-mcp.toml
+```
 
-[openai-apps]: https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt
-[tunnel-client]: https://github.com/openai/tunnel-client/releases/latest
-[cloudflare-token]: https://developers.cloudflare.com/tunnel/advanced/tunnel-tokens/
+Standalone mode does not use App-owned bookmarks, database state, or Keychain
+tunnel credentials and must not run as a second owner of the App's state. See
+[Examples](Examples/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before
+opening a change.
+
+Official releases come only from the protected signed-tag workflow. The
+workflow builds, Developer ID signs, notarizes, staples, verifies, and creates
+a draft GitHub Release; publishing remains a separate operator acceptance
+step. See [Release Reference](Documentation/Reference/Release.md).
+
+Computer MCP is available under the terms in [LICENSE](LICENSE).

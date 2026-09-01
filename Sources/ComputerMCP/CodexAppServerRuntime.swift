@@ -530,7 +530,23 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     let processSnapshot =
       await (processTransport ?? connectionStartup?.transport)?.snapshot()
       ?? lastProcessSnapshot
-    return .object([
+    let pendingApprovals = approvalRecords.values.filter { $0.state == .pending }
+    let pendingApprovalIDs = pendingApprovals.map(\.id).sorted().map(JSONValue.string)
+    let threads = workspaceScopedThreadIDs.sorted().map { threadID -> JSONValue in
+      let threadPendingApprovalIDs = pendingApprovals.filter {
+        $0.threadID == threadID
+      }.map(\.id).sorted().map(JSONValue.string)
+      let fields: [String: JSONValue] = [
+        "thread_id": .string(threadID),
+        "loaded": .bool(loadedThreadIDs.contains(threadID)),
+        "subscribed": .bool(subscribedThreadIDs.contains(threadID)),
+        "state": threadStates[threadID] ?? .string("unknown"),
+        "active_turn_id": activeTurnIDs[threadID].map(JSONValue.string) ?? .null,
+        "pending_approval_ids": .array(threadPendingApprovalIDs),
+      ]
+      return .object(fields)
+    }
+    let fields: [String: JSONValue] = [
       "runtime_id": .string(runtimeID),
       "created_at": (try? JSONValue.encoded(createdAt)) ?? .null,
       "owner": owner.flatMap { try? JSONValue.encoded($0) } ?? .null,
@@ -542,30 +558,12 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
       "last_error": lastError.map(JSONValue.string) ?? .null,
       "shutdown_reason": shutdownReason.map(JSONValue.string) ?? .null,
       "pending_user_input_requests": .number(Double(pendingUserInputRequests.count)),
-      "pending_approvals": .number(
-        Double(approvalRecords.values.filter { $0.state == .pending }.count)
-      ),
-      "pending_approval_ids": .array(
-        approvalRecords.values.filter { $0.state == .pending }.map(\.id).sorted()
-          .map(JSONValue.string)
-      ),
-      "threads": .array(
-        workspaceScopedThreadIDs.sorted().map { threadID in
-          let pendingApprovalIDs = approvalRecords.values.filter {
-            $0.state == .pending && $0.threadID == threadID
-          }.map(\.id).sorted()
-          return .object([
-            "thread_id": .string(threadID),
-            "loaded": .bool(loadedThreadIDs.contains(threadID)),
-            "subscribed": .bool(subscribedThreadIDs.contains(threadID)),
-            "state": threadStates[threadID] ?? .string("unknown"),
-            "active_turn_id": activeTurnIDs[threadID].map(JSONValue.string) ?? .null,
-            "pending_approval_ids": .array(pendingApprovalIDs.map(JSONValue.string)),
-          ])
-        }
-      ),
+      "pending_approvals": .number(Double(pendingApprovals.count)),
+      "pending_approval_ids": .array(pendingApprovalIDs),
+      "threads": .array(threads),
       "process": processSnapshot?.json ?? .null,
-    ])
+    ]
+    return .object(fields)
   }
 
   func call(method: String, params: JSONValue?) async throws -> JSONValue {

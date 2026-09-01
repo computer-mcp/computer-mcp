@@ -4,6 +4,21 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.25 — 2026-09-02
+
+- Drain Codex App Server stdout in available chunks instead of requesting and
+  processing one byte per actor hop. Large newline-delimited responses now
+  preserve interactive framing without exhausting the end-to-end request
+  budget.
+- Add a deterministic 256 KiB long-lived protocol-response regression and a
+  gated official Codex 0.147.0 `skills/list` acceptance test. The 233 KiB
+  workspace Skill catalog now completes in under one second in the real
+  release environment, with bounded process teardown.
+- Keep the immutable signed `v1.0.24` candidate unpublished. Exact-artifact
+  acceptance exposed the large-response transport defect, so every protected,
+  notarized, exact-artifact, ChatGPT, and website gate moves to a new signed
+  `v1.0.25` release candidate.
+
 ## 1.0.24 — 2026-09-02
 
 - Treat `app_server_request_timeout_seconds` as one end-to-end App Server call

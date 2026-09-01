@@ -139,10 +139,10 @@ struct CodexAppServerProcessTransportTests {
     await transport.close()
   }
 
-  @Test
-  func ownerProcessDeathTerminatesTheEntireAppServerGroup() async throws {
+  @Test(arguments: 0..<5)
+  func ownerProcessDeathTerminatesTheEntireAppServerGroup(iteration: Int) async throws {
     let directory = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+      .appendingPathComponent("owner-death-\(iteration)-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let owner = Process()
@@ -183,7 +183,13 @@ struct CodexAppServerProcessTransportTests {
     let supervisorPID = try #require(running.supervisorProcessID)
     let descendantPID = try await waitForPID(at: descendantPIDFile)
 
-    owner.waitUntilExit()
+    let ownerExited = await waitForProcessExit(owner)
+    #expect(ownerExited)
+    if !ownerExited {
+      owner.terminate()
+      await transport.close()
+      return
+    }
 
     #expect(await waitForProcessExit(appServerPID))
     #expect(await waitForProcessExit(descendantPID))
@@ -228,6 +234,16 @@ struct CodexAppServerProcessTransportTests {
   private func waitForProcessExit(_ processID: Int32) async -> Bool {
     for _ in 0..<500 {
       if !processExists(processID) {
+        return true
+      }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    return false
+  }
+
+  private func waitForProcessExit(_ process: Process) async -> Bool {
+    for _ in 0..<500 {
+      if !process.isRunning {
         return true
       }
       try? await Task.sleep(for: .milliseconds(10))

@@ -1,7 +1,7 @@
-# Computer MCP 1.0.26 Production Readiness Report
+# Computer MCP 1.0.27 Production Readiness Report
 
-Status: **Historical immutable signed candidate; unpublished after
-exact-artifact validation exposed cleanup and session-disconnect defects.**
+Status: **Protected-CI release template; publication requires exact-artifact,
+productization-contract, and coordinated website acceptance.**
 
 This report is rendered by the protected GitHub release job only after signing,
 notarization, stapling, Gatekeeper, and checksum gates pass. It is bound to the
@@ -17,11 +17,11 @@ not satisfy this record.
 | Commit | `__RELEASE_COMMIT__` |
 | Signed tag | `__RELEASE_TAG__` |
 | Signed tag object | `__RELEASE_TAG_OBJECT__` |
-| App version/build | 1.0.26 (27) |
+| App version/build | 1.0.27 (28) |
 | Architectures | `__APP_ARCHITECTURES__` |
 | Apple Team ID | `__APPLE_TEAM_ID__` |
 | Embedded CLI SHA-256 | `__EMBEDDED_CLI_SHA256__` |
-| DMG | `Computer-MCP-1.0.26-universal.dmg` |
+| DMG | `Computer-MCP-1.0.27-universal.dmg` |
 | DMG SHA-256 | `__DMG_SHA256__` |
 | App notarization submission | `__APP_NOTARY_SUBMISSION_ID__` |
 | DMG notarization submission | `__DMG_NOTARY_SUBMISSION_ID__` |
@@ -33,7 +33,7 @@ not satisfy this record.
 | --- | --- |
 | Root and Validation strict format/lint | Passed by the bound GitHub Actions run |
 | Root and Validation supported-default build/test | Passed by the bound GitHub Actions run |
-| App/CLI package and version boundary | 1.0.26 (27), passed by the bound run |
+| App/CLI package and version boundary | 1.0.27 (28), passed by the bound run |
 | Validation canonical catalog | 22 publisher-verifiable Test Cases with exact ID equality |
 | Production productization contract | All 182 O/A–J/T/R/W/Q/CS criteria resolved with implementation, test, documentation, website, or release evidence |
 | End-to-end App Server deadlines | Normal calls share one configured budget across connection startup, workspace validation, reviewed RPC, and the sole read-only retry; `app/list` uses one separately configured generation and must return its bounded page before that deadline |
@@ -58,7 +58,7 @@ not satisfy this record.
 | Recursive symlink scanning | Final symlink identity is preserved; recursive content tools never follow targets |
 | Authenticated runtime observations | Exact request, Gateway, transport, profile, and audit correlation |
 | Full-catalog runtime harness | Every advertised tool is called with bounded fixtures and one correlated audit row |
-| Validation lifecycle cleanup | Success and failure paths close and reap the owning provider before a fresh authenticated, workspace-bound session archives temporary threads; an active failed validation turn is interrupted first |
+| Validation lifecycle cleanup | Success and failure paths close and reap the owning provider before a fresh authenticated, workspace-bound session archives temporary threads; an active failed validation turn is interrupted first; an exact `no rollout found` result is idempotently clean only for the requested thread; owned bridge shutdown precedes MCP client disconnect |
 | Read-only provider retry | Only the first deadline-expired normal read may retry on a fresh connection within the same total budget; `app/list` uses one generation because a restart repeats its snapshot, while writes and other failures are never retried |
 | Cancellation boundary | A canceled outer call cannot start a retry or later App Server generation |
 | Cloudflare publisher boundary | Quick Tunnel isolation and named lifecycle/auth tests are mandatory; live named deployment is user-owned |
@@ -87,7 +87,7 @@ not satisfy this record.
 | Apple Silicon, macOS 14+ | DMG cold install, Finder launch, login-item registration, labeled menu-bar item, close/reopen lifecycle, TCC/state/CLI lifecycle, and exact catalog | Required before draft publication |
 | Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility check | Required before draft publication |
 
-A physical Intel Mac is not a 1.0.26 release gate. Universal 2 slice checks and
+A physical Intel Mac is not a 1.0.27 release gate. Universal 2 slice checks and
 Rosetta 2 checks cover x86_64 compatibility; the full installation and
 acceptance lifecycle runs natively on Apple Silicon.
 
@@ -129,6 +129,11 @@ Cloudflare live named-tunnel deployment is supported but conditional on a
 deploying user's own account, domain, hostname, and runtime token. The release
 does not acquire, store in CI, or manufacture those user production resources.
 
-The signed tag and unpublished draft remain an audit record. They must not be
-moved, deleted, replaced, or published, and their evidence cannot satisfy the
-current candidate's gates.
+Publishing the 1.0.27 GitHub draft and enabling the reviewed Pages deployment
+are the operator attestations that the installation matrix, canonical Test
+Cases, productization contract, and two-repository coordination passed. No
+checksummed application asset or reviewed website commit may be rebuilt or
+replaced between acceptance and publication. The immutable `v1.0.23`,
+`v1.0.24`, `v1.0.25`, and `v1.0.26` tags and their unpublished drafts remain
+the audit records for the rejected candidates; they must never be moved or
+substituted for 1.0.27.

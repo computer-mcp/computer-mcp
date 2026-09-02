@@ -1,14 +1,7 @@
-# Computer MCP 1.0.25 Production Readiness Report
+# Computer MCP 1.0.26 Production Readiness Report
 
-Status: **Immutable signed unpublished candidate; exact-artifact acceptance
-failed and publication is prohibited.**
-
-The installed, notarized candidate reached every pre-publication gate but its
-full-catalog run showed that `codex.app.apps.list` could receive the upstream
-multi-megabyte directory notification and still exceed the split 30-second
-read budget before the bounded response arrived. A timeout had also been
-incorrectly accepted by the gated source test. Version 1.0.26 requires a real
-bounded page result and repeats every artifact and coordinated website gate.
+Status: **Protected-CI release template; publication requires exact-artifact,
+productization-contract, and coordinated website acceptance.**
 
 This report is rendered by the protected GitHub release job only after signing,
 notarization, stapling, Gatekeeper, and checksum gates pass. It is bound to the
@@ -24,11 +17,11 @@ not satisfy this record.
 | Commit | `__RELEASE_COMMIT__` |
 | Signed tag | `__RELEASE_TAG__` |
 | Signed tag object | `__RELEASE_TAG_OBJECT__` |
-| App version/build | 1.0.25 (26) |
+| App version/build | 1.0.26 (27) |
 | Architectures | `__APP_ARCHITECTURES__` |
 | Apple Team ID | `__APPLE_TEAM_ID__` |
 | Embedded CLI SHA-256 | `__EMBEDDED_CLI_SHA256__` |
-| DMG | `Computer-MCP-1.0.25-universal.dmg` |
+| DMG | `Computer-MCP-1.0.26-universal.dmg` |
 | DMG SHA-256 | `__DMG_SHA256__` |
 | App notarization submission | `__APP_NOTARY_SUBMISSION_ID__` |
 | DMG notarization submission | `__DMG_NOTARY_SUBMISSION_ID__` |
@@ -39,12 +32,12 @@ not satisfy this record.
 | Gate | Required evidence |
 | --- | --- |
 | Root and Validation strict format/lint | Passed by the bound GitHub Actions run |
-| Root and Validation native build/test | Passed by the bound GitHub Actions run |
-| App/CLI package and version boundary | 1.0.25 (26), passed by the bound run |
+| Root and Validation supported-default build/test | Passed by the bound GitHub Actions run |
+| App/CLI package and version boundary | 1.0.26 (27), passed by the bound run |
 | Validation canonical catalog | 22 publisher-verifiable Test Cases with exact ID equality |
 | Production productization contract | All 182 O/A–J/T/R/W/Q/CS criteria resolved with implementation, test, documentation, website, or release evidence |
-| End-to-end App Server deadline | Connection startup, workspace validation, reviewed RPC, and sole read-only retry share one configured call budget; official Codex `app/list` regression passes |
-| Large App Server responses | A 256 KiB long-lived protocol response and official Codex `skills/list` complete within the same request budget without waiting for EOF or crossing one actor boundary per byte; tracked draining also preserves the final line from a short-lived process |
+| End-to-end App Server deadlines | Normal calls share one configured budget across connection startup, workspace validation, reviewed RPC, and the sole read-only retry; `app/list` uses one separately configured generation and must return its bounded page before that deadline |
+| Large App Server responses | A deterministic 4 MiB long-lived protocol line, official Codex `skills/list`, and a multi-megabyte `app/list/updated` notification followed by a bounded Apps page complete without waiting for EOF or crossing one actor boundary per byte; tracked draining also preserves the final line from a short-lived process |
 | Codex process lifecycle | Owned process-group identity and bounded EOF/TERM/KILL/reap across close, replacement, timeout, shutdown, parent death, stubborn descendants, and back-pressured stdin |
 | Close idempotence | Concurrent and repeated teardown paths share one retirement task and do not multiply grace intervals or process signals |
 | Real official-client handoff | First owned client completes a turn and is reaped; a second official client resumes and archives the durable thread, then is reaped |
@@ -66,7 +59,7 @@ not satisfy this record.
 | Authenticated runtime observations | Exact request, Gateway, transport, profile, and audit correlation |
 | Full-catalog runtime harness | Every advertised tool is called with bounded fixtures and one correlated audit row |
 | Validation lifecycle cleanup | The owning provider closes before a fresh authenticated, workspace-bound session archives temporary threads |
-| Read-only provider retry | Only the first deadline-expired read may retry on a fresh connection within the same total budget; writes and other failures are not retried |
+| Read-only provider retry | Only the first deadline-expired normal read may retry on a fresh connection within the same total budget; `app/list` uses one generation because a restart repeats its snapshot, while writes and other failures are never retried |
 | Cancellation boundary | A canceled outer call cannot start a retry or later App Server generation |
 | Cloudflare publisher boundary | Quick Tunnel isolation and named lifecycle/auth tests are mandatory; live named deployment is user-owned |
 | Effective configuration export | Current persisted grants, workspaces, and capabilities without transient entries or secrets |
@@ -94,7 +87,7 @@ not satisfy this record.
 | Apple Silicon, macOS 14+ | DMG cold install, Finder launch, login-item registration, labeled menu-bar item, close/reopen lifecycle, TCC/state/CLI lifecycle, and exact catalog | Required before draft publication |
 | Apple Silicon with Rosetta 2 | Direct x86_64 App/CLI launch and bounded compatibility check | Required before draft publication |
 
-A physical Intel Mac is not a 1.0.25 release gate. Universal 2 slice checks and
+A physical Intel Mac is not a 1.0.26 release gate. Universal 2 slice checks and
 Rosetta 2 checks cover x86_64 compatibility; the full installation and
 acceptance lifecycle runs natively on Apple Silicon.
 
@@ -106,7 +99,8 @@ the checksummed DMG above and resolve every advertised catalog tool to a
 semantic success, a policy-defined expected denial, or a specifically reviewed
 fail-closed expected failure. Every tool call must retain its correlated audit
 row. The exact-artifact full-catalog run must use the installed candidate and
-must not rely on an outer 90-second validator to terminate a Codex request.
+must return a bounded Apps page and must not rely on an outer validator to
+terminate a Codex request. An Apps timeout is inadmissible.
 
 The same release decision must bind the reviewed main-repository commit to the
 reviewed `computer-mcp/computer-mcp.github.io` commit. The website must be built
@@ -135,8 +129,11 @@ Cloudflare live named-tunnel deployment is supported but conditional on a
 deploying user's own account, domain, hostname, and runtime token. The release
 does not acquire, store in CI, or manufacture those user production resources.
 
-These publication conditions were not satisfied: exact-artifact acceptance
-failed before the GitHub draft or reviewed Pages deployment could be published.
-No 1.0.25 asset or website binding may now be rebuilt or substituted. The
-immutable `v1.0.23`, `v1.0.24`, and `v1.0.25` tags and their unpublished drafts
-remain audit records for rejected candidates.
+Publishing the 1.0.26 GitHub draft and enabling the reviewed Pages deployment
+are the operator attestations that the installation matrix, canonical Test
+Cases, productization contract, and two-repository coordination passed. No
+checksummed application asset or reviewed website commit may be rebuilt or
+replaced between acceptance and publication. The immutable `v1.0.23`,
+`v1.0.24`, and `v1.0.25` tags and their unpublished drafts remain the audit
+records for the rejected candidates; they must never be moved or substituted
+for 1.0.26.

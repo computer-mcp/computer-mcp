@@ -1,30 +1,36 @@
-# Computer MCP 1.0.25 Release Notes
+# Computer MCP 1.0.26 Release Notes
 
-Status: **Immutable signed unpublished candidate.** Exact-artifact acceptance
-rejected this candidate after the full catalog exposed an Apps directory
-deadline defect. Its tag and draft remain audit records and must not be moved,
-replaced, or published.
+Status: CI-rendered notarized draft template. The GitHub Release remains a
+draft until the publisher completes exact-artifact acceptance and confirms the
+coordinated `computer-mcp.github.io` publication from its reviewed commit.
 
 ## Highlights
 
+- `codex.app.apps.list` now exposes the current typed pagination inputs. It
+  defaults to cached directory data and a 20-entry page, while allowing a
+  cursor, thread scope, explicit refresh choice, and a limit from 1 through 100.
+- Apps directory loading has its own explicit, end-to-end timeout setting,
+  bounded to 120 seconds by default. It uses one App Server generation because
+  Codex can send a multi-megabyte `app/list/updated` snapshot before the bounded
+  page response, and restarting midway would repeat that snapshot.
 - Codex App Server stdout is drained in available chunks instead of crossing a
   concurrency boundary for every byte. Chunk consumption is serialized and
   awaited before the protocol stream finishes, preserving both interactive
   long-lived responses and the final line from a short-lived process.
-- A deterministic 256 KiB long-lived response regression accompanies a real
-  official Codex 0.147.0 `skills/list` acceptance test. The 233 KiB workspace
-  Skill catalog completes normally and its owned process is reaped.
-- The Codex App Server request timeout is now one end-to-end budget covering
+- A deterministic 4 MiB long-lived response regression accompanies real
+  official Codex 0.147.0 `skills/list` and bounded `app/list` acceptance tests.
+  Both responses must complete normally and every owned process must be reaped;
+  a timeout is not accepted as a passing real-client result.
+- The normal App Server request timeout remains one end-to-end budget covering
   process startup, workspace validation, the reviewed RPC, and at most one
   fresh-connection read-only retry. Cancellation cannot start another process
-  generation after that budget expires.
+  generation after either configured budget expires.
 - Concurrent and repeated App Server shutdown paths now share one retirement
   operation. Back-pressured stdin finalization cannot hold up bounded EOF,
   TERM, KILL, and process reaping.
-- Deterministic hung-startup, hung-request, back-pressured-writer, and canceled
-  retry tests accompany a real official Codex `app/list` regression. The exact
-  call that exceeded an external 90-second validation deadline now ends within
-  the 30-second call budget plus bounded process teardown.
+- Deterministic hung-startup, hung-request, back-pressured-writer, canceled
+  retry, large notification, and bounded Apps page tests protect the complete
+  request and teardown path.
 - Build, test, documentation, and release gates use SwiftPM's supported default
   build engine. Release metadata traverses the actual product dependency graph
   emitted by that engine, preserving exact linked-versus-resolved-only SBOM and
@@ -54,7 +60,7 @@ replaced, or published.
 
 ## Install
 
-1. Download `Computer-MCP-1.0.25-universal.dmg` and `SHA256SUMS` from the same
+1. Download `Computer-MCP-1.0.26-universal.dmg` and `SHA256SUMS` from the same
    GitHub Release.
 2. Verify the SHA-256 digest.
 3. Open the DMG and drag `Computer MCP.app` to `/Applications`.
@@ -86,11 +92,13 @@ user and stored in that user's App-owned Data Protection Keychain.
 - The production Bundle ID, Developer ID identity, private Keychain access
   group, TCC identity, runtime namespace, Secure MCP Tunnel profile, connector,
   credentials, workspaces, and policy remain compatible with 1.0.22 and the
-  unpublished 1.0.23 and 1.0.24 candidates. No data, credential, tunnel, CLI, MCP, or
-  workspace migration is required.
-- The immutable signed `v1.0.23` and `v1.0.24` candidates remain unpublished.
-  Their exact-artifact audits exposed the end-to-end timeout and large-response
-  transport defects corrected by the current candidate.
+  unpublished 1.0.23 through 1.0.25 candidates. The new Apps directory timeout
+  has a bounded default, so no data, credential, tunnel, CLI, MCP,
+  configuration, or workspace migration is required.
+- The immutable signed `v1.0.23`, `v1.0.24`, and `v1.0.25` candidates remain
+  unpublished. Their exact-artifact audits exposed the lifecycle deadline,
+  large-response transport, and large Apps snapshot deadline defects corrected
+  by the current candidate.
 
 ## Product boundaries
 

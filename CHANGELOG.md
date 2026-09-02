@@ -4,6 +4,25 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.26 — 2026-09-02
+
+- Make `codex.app.apps.list` a typed, bounded pagination surface using the
+  current Codex 0.147 App Server parameters. Calls default to cached data and a
+  20-entry page; callers may provide a cursor, thread scope, refresh choice,
+  and a limit from 1 through 100.
+- Give `app/list` one explicit, separately configured end-to-end deadline
+  (120 seconds by default) instead of splitting the normal 30-second read
+  budget across two process generations. A restart can no longer repeat the
+  same multi-megabyte `app/list/updated` snapshot before the page response.
+- Expand the deterministic long-lived protocol-line regression to 4 MiB and
+  require the real official App Server test to return a bounded Apps page.
+  A timeout is no longer accepted as a passing real-client result.
+- Keep the immutable signed `v1.0.25` candidate unpublished. Exact-artifact
+  full-catalog acceptance showed that its repaired stream transport could
+  receive the large Apps snapshot but its 30-second split request budget ended
+  before the upstream page arrived. Version 1.0.26 repeats every protected,
+  notarized, exact-artifact, ChatGPT, and website gate.
+
 ## 1.0.25 — 2026-09-02
 
 - Drain Codex App Server stdout in available chunks instead of requesting and

@@ -985,8 +985,19 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
   }
 
   private static func appsListParams(in object: [String: JSONValue]) throws -> JSONValue {
-    try validateKeys(in: object, allowed: [])
-    return .object([:])
+    try validateKeys(
+      in: object,
+      allowed: ["cursor", "force_refetch", "limit", "thread_id"]
+    )
+    var params: [String: JSONValue] = [
+      "forceRefetch": .bool(false),
+      "limit": .number(20),
+    ]
+    try copyOptionalString("cursor", to: "cursor", from: object, into: &params)
+    try copyOptionalBool("force_refetch", to: "forceRefetch", from: object, into: &params)
+    try copyOptionalInt("limit", to: "limit", from: object, range: 1...100, into: &params)
+    try copyOptionalString("thread_id", to: "threadId", from: object, into: &params)
+    return .object(params)
   }
 
   private static func validateKeys(
@@ -1536,7 +1547,17 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       "codex.app.skills.list", "List Skills for the bound workspace.",
       objectSchema(properties: ["force_reload": booleanSchema()])
     ),
-    tool("codex.app.apps.list", "List apps exposed by Codex App Server.", emptySchema),
+    tool(
+      "codex.app.apps.list", "List a bounded page of apps exposed by Codex App Server.",
+      objectSchema(
+        properties: [
+          "cursor": stringSchema(),
+          "force_refetch": booleanSchema(),
+          "limit": integerSchema(minimum: 1, maximum: 100),
+          "thread_id": stringSchema(),
+        ]
+      )
+    ),
     tool(
       "codex.app.events.read", "Read App Server notifications by monotonic cursor.", cursorSchema),
     tool(

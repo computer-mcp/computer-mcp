@@ -20,6 +20,7 @@ final class CodexConfigurationTests {
     #expect((configuration.codex.maxEventsPerSession) == (1_024))
     #expect(configuration.codex.appServerTerminationGraceMilliseconds == 1_000)
     #expect(configuration.codex.appServerKillGraceMilliseconds == 2_000)
+    #expect(configuration.codex.appServerAppListTimeoutSeconds == 120)
     #expect(configuration.codex.appServerApprovalTimeoutSeconds == 300)
     #expect(!configuration.codex.appServerAutoApproveWorkspaceWrites)
     expectNoThrow(try configuration.validate())
@@ -40,6 +41,7 @@ final class CodexConfigurationTests {
     mcp_enabled = true
     experimental_api = true
     app_server_request_timeout_seconds = 45
+    app_server_app_list_timeout_seconds = 150
     app_server_termination_grace_milliseconds = 1500
     app_server_kill_grace_milliseconds = 2500
     app_server_approval_timeout_seconds = 90
@@ -60,6 +62,7 @@ final class CodexConfigurationTests {
     #expect(configuration.codex.mcpEnabled)
     #expect(configuration.codex.experimentalAPI)
     #expect((configuration.codex.appServerRequestTimeoutSeconds) == (45))
+    #expect(configuration.codex.appServerAppListTimeoutSeconds == 150)
     #expect(configuration.codex.appServerTerminationGraceMilliseconds == 1_500)
     #expect(configuration.codex.appServerKillGraceMilliseconds == 2_500)
     #expect(configuration.codex.appServerApprovalTimeoutSeconds == 90)
@@ -78,6 +81,17 @@ final class CodexConfigurationTests {
 
     expectThrows(try configuration.validate()) { error in
       #expect(error.localizedDescription.contains("app_server_request_timeout_seconds"))
+    }
+  }
+
+  @Test
+  func testCodexRejectsUnboundedAppListDeadline() {
+    let configuration = GatewayConfiguration(
+      codex: CodexConfig(enabled: true, appServerAppListTimeoutSeconds: 301)
+    )
+
+    expectThrows(try configuration.validate()) { error in
+      #expect(error.localizedDescription.contains("app_server_app_list_timeout_seconds"))
     }
   }
 

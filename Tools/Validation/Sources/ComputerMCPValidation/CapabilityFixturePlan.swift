@@ -101,7 +101,13 @@ public struct CapabilityFixturePlan: Sendable {
     case "codex.app.skills.list":
       return primary(["force_reload": .bool(false)])
     case "codex.app.apps.list":
-      return primary([:])
+      return primary(
+        [
+          "force_refetch": .bool(false),
+          "limit": .number(1),
+        ],
+        marker: "data"
+      )
     case "codex.app.events.read":
       return primary([
         "after_cursor": .number(0),

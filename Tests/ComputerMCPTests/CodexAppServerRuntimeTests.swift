@@ -1094,6 +1094,28 @@ final class CodexAppServerRuntimeTests {
   }
 
   @Test
+  func testAppListUsesOneBoundedLongResponseGeneration() {
+    #expect(
+      LiveCodexAppServerRuntime.requestTimeoutSeconds(
+        method: "app/list",
+        configuredTimeoutSeconds: 30,
+        appListTimeoutSeconds: 120
+      ) == 120)
+    #expect(
+      LiveCodexAppServerRuntime.requestTimeoutSeconds(
+        method: "skills/list",
+        configuredTimeoutSeconds: 30,
+        appListTimeoutSeconds: 120
+      ) == 30)
+    #expect(
+      LiveCodexAppServerRuntime.firstReadOnlyAttemptTimeoutSeconds(
+        totalTimeoutSeconds: 120,
+        risk: .readOnly,
+        method: "app/list"
+      ) == nil)
+  }
+
+  @Test
   func testNormalizePinsThreadListAndSkillsToBoundWorkspace() async throws {
     let workspace = URL(fileURLWithPath: "/tmp/computer-mcp-workspace")
     let runtime = LiveCodexAppServerRuntime(

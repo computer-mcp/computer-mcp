@@ -146,7 +146,7 @@ struct CodexAppServerProcessTransportTests {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
 
-    let expected = String(repeating: "x", count: 256 * 1_024)
+    let expected = String(repeating: "x", count: 4 * 1_024 * 1_024)
     let response = directory.appendingPathComponent("large-response.jsonl")
     try Data((expected + "\n").utf8).write(to: response)
     let script = directory.appendingPathComponent("large-response-app-server.sh")
@@ -180,7 +180,7 @@ struct CodexAppServerProcessTransportTests {
     let received = try #require(try await iterator.next())
 
     #expect(received == expected)
-    #expect(started.duration(to: clock.now) < .seconds(3))
+    #expect(started.duration(to: clock.now) < .seconds(10))
     await transport.close()
   }
 

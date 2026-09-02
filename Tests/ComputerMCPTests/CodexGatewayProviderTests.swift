@@ -113,6 +113,31 @@ final class CodexGatewayProviderTests {
   func testTypedAppToolsMapStableArgumentsWithoutRawParams() async throws {
     let provider = makeProvider()
 
+    let apps = try await provider.callToolAsync(
+      name: "codex.app.apps.list",
+      arguments: .object([
+        "cursor": .string("page-2"),
+        "force_refetch": .bool(false),
+        "limit": .number(1),
+        "thread_id": .string("thread-1"),
+      ])
+    )
+    let appsParams = apps.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue?["params"]?.objectValue
+    #expect(appsParams?["cursor"] == .string("page-2"))
+    #expect(appsParams?["forceRefetch"] == .bool(false))
+    #expect(appsParams?["limit"] == .number(1))
+    #expect(appsParams?["threadId"] == .string("thread-1"))
+
+    let defaultApps = try await provider.callToolAsync(
+      name: "codex.app.apps.list",
+      arguments: .object([:])
+    )
+    let defaultAppsParams = defaultApps.objectValue?["structuredContent"]?.objectValue?["result"]?
+      .objectValue?["params"]?.objectValue
+    #expect(defaultAppsParams?["forceRefetch"] == .bool(false))
+    #expect(defaultAppsParams?["limit"] == .number(20))
+
     let list = try await provider.callToolAsync(
       name: "codex.app.thread.list",
       arguments: .object([
@@ -293,6 +318,12 @@ final class CodexGatewayProviderTests {
           "thread_id": .string("thread-1"),
           "prompt": .string("Mutate without the lease."),
         ])
+      )
+    )
+    await assertThrowsErrorAsync(
+      try await provider.callToolAsync(
+        name: "codex.app.apps.list",
+        arguments: .object(["limit": .number(101)])
       )
     )
     await assertThrowsErrorAsync(
@@ -493,6 +524,7 @@ final class CodexGatewayProviderTests {
     let start = try #require(tools.first { $0.name == "codex.app.thread.start" })
     let turn = try #require(tools.first { $0.name == "codex.app.turn.start" })
     let review = try #require(tools.first { $0.name == "codex.app.review.start" })
+    let apps = try #require(tools.first { $0.name == "codex.app.apps.list" })
 
     #expect((start.inputSchema.objectValue?["properties"]?.objectValue?["params"]) == nil)
     #expect(
@@ -500,6 +532,9 @@ final class CodexGatewayProviderTests {
         == (.array([.string("thread_id"), .string("prompt")])))
     #expect((start.outputSchema) != nil)
     #expect((turn.outputSchema) != nil)
+    #expect(
+      apps.inputSchema.objectValue?["properties"]?.objectValue?["limit"]?
+        .objectValue?["maximum"] == .number(100))
     #expect(
       (review.inputSchema.objectValue?["properties"]?.objectValue?["delivery"]?
         .objectValue?["type"]) == (.string("string")))

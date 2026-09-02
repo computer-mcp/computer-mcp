@@ -582,10 +582,15 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
     let normalized = try normalize(params: params, for: descriptor)
     let response: JSONValue
     do {
-      let totalTimeoutSeconds = configuration.appServerRequestTimeoutSeconds
+      let totalTimeoutSeconds = Self.requestTimeoutSeconds(
+        method: method,
+        configuredTimeoutSeconds: configuration.appServerRequestTimeoutSeconds,
+        appListTimeoutSeconds: configuration.appServerAppListTimeoutSeconds
+      )
       let firstAttemptTimeoutSeconds = Self.firstReadOnlyAttemptTimeoutSeconds(
         totalTimeoutSeconds: totalTimeoutSeconds,
-        risk: descriptor.risk
+        risk: descriptor.risk,
+        method: method
       )
       response = try await Self.boundedRequest(
         timeoutSeconds: totalTimeoutSeconds,
@@ -673,12 +678,27 @@ actor LiveCodexAppServerRuntime: CodexAppServerRuntimeProtocol {
 
   static func firstReadOnlyAttemptTimeoutSeconds(
     totalTimeoutSeconds: Int,
-    risk: CapabilityRisk
+    risk: CapabilityRisk,
+    method: String? = nil
   ) -> Int? {
-    guard risk == .readOnly, totalTimeoutSeconds > 1 else {
+    guard risk == .readOnly, totalTimeoutSeconds > 1, method != "app/list" else {
       return nil
     }
     return max(1, totalTimeoutSeconds / 2)
+  }
+
+  static func requestTimeoutSeconds(
+    method: String,
+    configuredTimeoutSeconds: Int,
+    appListTimeoutSeconds: Int
+  ) -> Int {
+    guard method == "app/list" else {
+      return configuredTimeoutSeconds
+    }
+    // Codex can emit a multi-megabyte app/list/updated snapshot before the
+    // bounded page response. Restarting midway repeats that snapshot, so this
+    // read uses one dedicated generation instead of the normal split retry.
+    return appListTimeoutSeconds
   }
 
   func events(afterCursor: Int, maxResults: Int) async -> JSONValue {

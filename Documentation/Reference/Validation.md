@@ -166,11 +166,13 @@ owned by the deploying user. The Cloudflare runbook remains the deployment
 acceptance procedure when a user chooses that transport.
 
 The full-catalog probe still calls every advertised tool and requires one
-correlated audit row per call. A normal success is always preferred. The sole
-environment-dependent exception is `codex.app.apps.list`: a structured
-`codex.app.request_failed` result containing HTTP 403 may be recorded as a
-reviewed `expected_failure` only when its exact audit row has decision `failed`
-and error code `gateway.execution_failed`. This identifies an upstream ChatGPT
+correlated audit row per call. `codex.app.apps.list` requests a cached bounded
+page and must normally return its `data` array within the dedicated App-list
+deadline. A timeout is never admissible. The sole environment-dependent
+exception is an HTTP 403 returned in a structured `codex.app.request_failed`
+result; it may be recorded as a reviewed `expected_failure` only when its exact
+audit row has decision `failed` and error code `gateway.execution_failed`. This
+identifies an upstream ChatGPT
 connector-directory challenge; it does not classify the local App, loopback
 gateway, user content, or Shell as scraping or hostile traffic. Any other
 failure remains inadmissible and blocks readiness.

@@ -176,6 +176,7 @@ exec_enabled = true
 mcp_enabled = true
 experimental_api = true
 app_server_request_timeout_seconds = 30
+app_server_app_list_timeout_seconds = 120
 app_server_termination_grace_milliseconds = 1000
 app_server_kill_grace_milliseconds = 2000
 app_server_approval_timeout_seconds = 300
@@ -186,13 +187,16 @@ approval_policy = "never"
 
 App Server, Exec, and MCP are separate `swift-codex` lifecycles. Remote callers
 receive only exact granted tool IDs and cannot supply arbitrary Codex argv or
-configuration overrides. `app_server_request_timeout_seconds` bounds the
+configuration overrides. `app_server_request_timeout_seconds` bounds a normal
 complete App Server call, including connection startup, workspace validation,
 the reviewed RPC, and the single fresh-connection retry available to read-only
 calls. The first read-only attempt receives half of that budget; writes are
-never retried. After the deadline, Computer MCP completes the separately
-bounded process-group teardown before returning, and cancellation cannot start
-a later generation.
+never retried. `app_server_app_list_timeout_seconds` separately bounds
+`app/list`, whose first bounded page may follow a multi-megabyte upstream
+directory snapshot. That request uses one process generation because restarting
+mid-snapshot would repeat the same work. After either deadline, Computer MCP
+completes the separately bounded process-group teardown before returning, and
+cancellation cannot start a later generation.
 
 `app_server_termination_grace_milliseconds` is the EOF and TERM grace interval
 (0–30000 ms). `app_server_kill_grace_milliseconds` is the final reaping wait

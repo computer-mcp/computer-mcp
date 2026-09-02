@@ -33,6 +33,7 @@ exec_enabled = true
 mcp_enabled = true
 experimental_api = true
 app_server_request_timeout_seconds = 30
+app_server_app_list_timeout_seconds = 120
 app_server_termination_grace_milliseconds = 1000
 app_server_kill_grace_milliseconds = 2000
 app_server_approval_timeout_seconds = 300

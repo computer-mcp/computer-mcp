@@ -50,7 +50,11 @@ final class RealCodexAppServerAcceptanceTests {
         #expect(await waitForExit(ownedProcessID))
       }
     } catch {
+      let ownedProcessID = await processID(runtime)
       await runtime.shutdown()
+      if let ownedProcessID {
+        #expect(await waitForExit(ownedProcessID))
+      }
       throw error
     }
   }
@@ -60,7 +64,7 @@ final class RealCodexAppServerAcceptanceTests {
       if: ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_ACCEPTANCE"] == "1"
     )
   )
-  func testAppListHonorsEndToEndDeadlineAgainstOfficialAppServer() async throws {
+  func testBoundedAppListCompletesAgainstOfficialAppServer() async throws {
     let workspace = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
@@ -74,6 +78,7 @@ final class RealCodexAppServerAcceptanceTests {
         execEnabled: false,
         mcpEnabled: false,
         appServerRequestTimeoutSeconds: 30,
+        appServerAppListTimeoutSeconds: 120,
         appServerTerminationGraceMilliseconds: 1_000,
         appServerKillGraceMilliseconds: 2_000,
         approvalPolicy: .never
@@ -84,16 +89,24 @@ final class RealCodexAppServerAcceptanceTests {
     let started = clock.now
 
     do {
-      _ = try await runtime.call(method: "app/list", params: .object([:]))
+      let response = try await runtime.call(
+        method: "app/list",
+        params: .object([
+          "forceRefetch": .bool(false),
+          "limit": .number(1),
+        ])
+      )
+      let entries = try #require(response.objectValue?["data"]?.arrayValue)
+      #expect(entries.count <= 1)
+      #expect(started.duration(to: clock.now) < .seconds(120))
+      let ownedProcessID = await processID(runtime)
+      await runtime.shutdown()
+      if let ownedProcessID {
+        #expect(await waitForExit(ownedProcessID))
+      }
     } catch {
-      #expect(error.localizedDescription.contains("codex.app.request_failed"))
-    }
-
-    #expect(started.duration(to: clock.now) < .seconds(40))
-    let ownedProcessID = await processID(runtime)
-    await runtime.shutdown()
-    if let ownedProcessID {
-      #expect(await waitForExit(ownedProcessID))
+      await runtime.shutdown()
+      throw error
     }
   }
 

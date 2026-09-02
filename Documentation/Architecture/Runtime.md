@@ -127,12 +127,15 @@ authority. Normal socket closure, abrupt disconnect, Tunnel replacement,
 service stop, request timeout, and parent death therefore converge on the same
 bounded cleanup contract.
 
-The configured App Server request timeout is an end-to-end call budget. It
-starts before connection startup and covers workspace validation, the reviewed
-RPC, and at most one fresh-generation read-only retry. Teardown has its own
-bounded EOF, TERM, and KILL intervals and is completed before a timed-out call
-returns. Concurrent close paths share that one retirement operation, so neither
-back-pressured stdin nor duplicate close requests multiply the deadline.
+The configured App Server request timeout is an end-to-end budget for normal
+calls. It starts before connection startup and covers workspace validation, the
+reviewed RPC, and at most one fresh-generation read-only retry. `app/list` has a
+separate configured budget because Codex may emit a multi-megabyte directory
+snapshot before its bounded page response; it uses one generation so a restart
+cannot repeat that snapshot. Teardown has its own bounded EOF, TERM, and KILL
+intervals and is completed before a timed-out call returns. Concurrent close
+paths share that one retirement operation, so neither back-pressured stdin nor
+duplicate close requests multiply the deadline.
 
 ## Policy And Results
 

@@ -2167,6 +2167,7 @@ package struct CodexConfig: Codable, Equatable, Sendable {
   package var mcpEnabled: Bool
   package var experimentalAPI: Bool
   package var appServerRequestTimeoutSeconds: Int
+  package var appServerAppListTimeoutSeconds: Int
   package var appServerTerminationGraceMilliseconds: Int
   package var appServerKillGraceMilliseconds: Int
   package var appServerApprovalTimeoutSeconds: Int
@@ -2184,6 +2185,7 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     mcpEnabled: Bool = true,
     experimentalAPI: Bool = true,
     appServerRequestTimeoutSeconds: Int = 30,
+    appServerAppListTimeoutSeconds: Int = 120,
     appServerTerminationGraceMilliseconds: Int = 1_000,
     appServerKillGraceMilliseconds: Int = 2_000,
     appServerApprovalTimeoutSeconds: Int = 300,
@@ -2200,6 +2202,7 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     self.mcpEnabled = mcpEnabled
     self.experimentalAPI = experimentalAPI
     self.appServerRequestTimeoutSeconds = appServerRequestTimeoutSeconds
+    self.appServerAppListTimeoutSeconds = appServerAppListTimeoutSeconds
     self.appServerTerminationGraceMilliseconds = appServerTerminationGraceMilliseconds
     self.appServerKillGraceMilliseconds = appServerKillGraceMilliseconds
     self.appServerApprovalTimeoutSeconds = appServerApprovalTimeoutSeconds
@@ -2218,6 +2221,7 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     case mcpEnabled = "mcp_enabled"
     case experimentalAPI = "experimental_api"
     case appServerRequestTimeoutSeconds = "app_server_request_timeout_seconds"
+    case appServerAppListTimeoutSeconds = "app_server_app_list_timeout_seconds"
     case appServerTerminationGraceMilliseconds = "app_server_termination_grace_milliseconds"
     case appServerKillGraceMilliseconds = "app_server_kill_grace_milliseconds"
     case appServerApprovalTimeoutSeconds = "app_server_approval_timeout_seconds"
@@ -2240,6 +2244,8 @@ package struct CodexConfig: Codable, Equatable, Sendable {
       try container.decodeIfPresent(Bool.self, forKey: .experimentalAPI) ?? true
     appServerRequestTimeoutSeconds =
       try container.decodeIfPresent(Int.self, forKey: .appServerRequestTimeoutSeconds) ?? 30
+    appServerAppListTimeoutSeconds =
+      try container.decodeIfPresent(Int.self, forKey: .appServerAppListTimeoutSeconds) ?? 120
     appServerTerminationGraceMilliseconds =
       try container.decodeIfPresent(Int.self, forKey: .appServerTerminationGraceMilliseconds)
       ?? 1_000
@@ -2271,6 +2277,11 @@ package struct CodexConfig: Codable, Equatable, Sendable {
     guard appServerRequestTimeoutSeconds >= 1 && appServerRequestTimeoutSeconds <= 300 else {
       throw ConfigurationError.invalid(
         "codex.app_server_request_timeout_seconds must be between 1 and 300."
+      )
+    }
+    guard appServerAppListTimeoutSeconds >= 1 && appServerAppListTimeoutSeconds <= 300 else {
+      throw ConfigurationError.invalid(
+        "codex.app_server_app_list_timeout_seconds must be between 1 and 300."
       )
     }
     guard

@@ -441,18 +441,21 @@ the audit task before final release preparation.
 
 ## Candidate succession
 
-The signed `v1.0.23`, `v1.0.24`, and `v1.0.25` tags and their draft releases are
-immutable unpublished audit records. They must not be moved, deleted, replaced,
-or published. Exact-artifact acceptance rejected 1.0.25 after its installed
+The signed `v1.0.23`, `v1.0.24`, `v1.0.25`, and `v1.0.26` tags and their draft
+releases are immutable unpublished audit records. They must not be moved,
+deleted, replaced, or published. Exact-artifact acceptance rejected 1.0.25 after its installed
 full-catalog run received the multi-megabyte Codex Apps directory notification
 but exceeded the split 30-second read budget before the bounded page arrived.
 The source regression had incorrectly treated that timeout as passing.
+Exact-artifact acceptance rejected 1.0.26 after its completed catalog calls
+exposed non-idempotent missing-thread cleanup and an unbounded validation
+session disconnect after the final audit event.
 
-Version 1.0.26 is the only current candidate. It must return a bounded Apps page
+Version 1.0.27 is the only current candidate. It must return a bounded Apps page
 within a separate explicit deadline and repeat every protected-source,
 notarized-artifact, installed-App, catalog, native, Rosetta, ChatGPT,
 cold-start-maintenance, website, and coordinated-publication gate. Evidence from
-a rejected candidate may explain provenance but cannot satisfy a 1.0.26 gate.
+a rejected candidate may explain provenance but cannot satisfy a 1.0.27 gate.
 
 ## Current evidence ledger
 
@@ -461,7 +464,7 @@ exists but one or more requirements in that row still lack direct evidence.
 
 | Scope | Current evidence | State |
 | --- | --- | --- |
-| O1, B1–B11 | `CodexAppServerProcessTransport.swift`; lifecycle/process-tree, two-workspace, 4 MiB long-lived-response, and immediate-exit final-line tests; serialized and awaited available-chunk stdout framing; one normal end-to-end request budget with a sole read-only retry; one separately configured `app/list` generation; shared bounded retirement; gated `RealCodexAppServerAcceptanceTests` requiring official `skills/list`, a bounded Apps page, teardown, failure-path process reaping and temporary-thread archival, and the two-client resume/archive lifecycle | Implemented; focused 1.0.26 lifecycle 34/34, transport 7/7, provider 14/14, Validation plan 5/5, complete root 52 suites/799 tests, and real official-client 3/3 passed; the latest bounded Apps page returned in 21.838 seconds |
+| O1, B1–B11 | `CodexAppServerProcessTransport.swift`; lifecycle/process-tree, two-workspace, 4 MiB long-lived-response, and immediate-exit final-line tests; serialized and awaited available-chunk stdout framing; one normal end-to-end request budget with a sole read-only retry; one separately configured `app/list` generation; shared bounded retirement; gated `RealCodexAppServerAcceptanceTests` requiring official `skills/list`, a bounded Apps page, teardown, failure-path process reaping and temporary-thread archival, and the two-client resume/archive lifecycle | Implemented; complete root 52 suites/799 tests passed, and the 1.0.27 official-client run passed 3/3: `skills/list` in 0.460 seconds, bounded `app/list` in 51.473 seconds, and two-client resume/archive in 69.515 seconds |
 | C1–C14 | `codex.app.runtimes.*`, `thread.release`, `thread.reclaim`, `handoff.diagnose`; durable thread-to-workspace ownership receipts; runtime receipt tests; `computer-mcp codex diagnose-thread` and operator references | Implemented, integration-tested, CLI-verified, and operator-documented |
 | D1–D12 | `CodexApprovalBroker.swift`; persisted database records; per-kind, bounded-session, malformed-request, restart-interruption, redaction, timeout, delivery-failure, and policy-boundary tests | Implemented; focused and complete regression reruns passed |
 | E1–E8 | governed built-in Git tools, dynamic policy dispatch, operation tickets, audit correlation; real hook/commit test | Implemented; focused and complete regression reruns passed |
@@ -470,11 +473,11 @@ exists but one or more requirements in that row still lack direct evidence.
 | H1–H9 | durable exclusive/isolated leases, parent lineage, selected child evidence reconciliation, and real Git managed-worktree provision/dirty-refusal/removal/branch-race integration tests | Implemented; focused and complete regression reruns passed |
 | I1–I11 | `codex.diagnostics.snapshot`, handoff diagnosis, runtime/process/thread-ownership/approval/run/lease/audit receipts; `computer-mcp codex diagnose-thread|diagnostics`; architecture and troubleshooting references | Implemented, integration-tested, CLI-verified, and operator-documented |
 | J1–J12 | gateway policy/caller/workspace/ticket/audit suites; App/Exec/MCP bounded-runtime tests; universal event and approval redaction; digest-only unsafe protocol IDs; canonical managed-root and symlink-replacement refusal tests; no external-process-control invariant | Implemented; security review and complete regression reruns passed |
-| Swift regression | `/usr/bin/swift test --no-parallel`: 52 suites/799 tests passed on 2026-09-02. Strict root format/lint and the supported-default build passed. Validation passed 11 suites/67 tests. All three gated official-client tests passed: `skills/list` in 0.483 seconds, bounded `app/list` in 37.880 seconds, and two-client resume/archive in 34.908 seconds; the latest Apps-only rerun passed in 53.295 seconds | Local 1.0.26 source and real-client gates passed; protected signed-tag CI and exact-artifact reruns remain required |
+| Swift regression | Strict root format/lint, supported-default build, and 52 suites/799 tests passed on 2026-09-02. Validation strict format/lint, build, and 12 suites/71 tests passed, including four exact cleanup-classification regressions. The gated 1.0.27 official-client tests passed 3/3 in one run | Local 1.0.27 source gates passed; protected signed-tag CI and exact-artifact reruns remain required |
 | R1–R15 | Product-first English and Simplified Chinese root manuals cover positioning, the 30-second model, use cases, maturity labels, trust and approval, architecture, quick start, Codex ownership, Codex Remote, limitations, troubleshooting, and development | Implemented; DocC, naming, localization, CLI, example, and repository gates passed |
-| W1–W11 | Independent sibling Git repository `computer-mcp.github.io`; static product site, responsive control-path design, metadata/social assets, no `CNAME`, Vite build, HTML/link checks, Axe, desktop/mobile Playwright, CI, and Pages workflow; signed commit `0657fcda80247ef755f30d633aee083f4fe2634f` remains the clean historical binding to rejected 1.0.25 | Partial: the site must be rebound to the exact 1.0.26 candidate, rerun all gates, and remain private with deployment disabled until the coordinated publication decision |
-| Q1–Q12 | Strict format/lint, supported-default root and Validation builds, complete tests, 22 canonical Test Case definitions, real Codex acceptance, development Universal 2 App/DMG verification, documentation and release-boundary regressions, website gates, and clean coordinated publication | Partial: root 52/799, Validation 11/67, real Codex 3/3, and an isolated Universal 2 1.0.26 (27) App/DMG passed; distinct temporary main and Git workspaces returned successful authenticated `workspace.describe` and `git.status` calls. Protected signed-tag CI, notarized artifact, installed exact-artifact catalog 22/22, UI, new-conversation ChatGPT, website, and coordinated publication gates remain required |
-| CS1–CS10 | The independent 1.0.25 cold-start audit passed 10/10 against source parent `32c47d33b10ff49f4cd4578ee6c36b6278d4d0c8` and website `0657fcda80247ef755f30d633aee083f4fe2634f`, including its documented source tests, conflict diagnosis, safely reverted capability update, website checks, release procedure, capability boundaries, metadata closure, and clean worktrees | Historical proof only: a fresh 1.0.26 cold-start audit must repeat all ten criteria and may not reuse the rejected candidate's conclusion |
+| W1–W11 | Independent sibling Git repository `computer-mcp.github.io`; static product site, responsive control-path design, metadata/social assets, no `CNAME`, Vite build, HTML/link checks, Axe, desktop/mobile Playwright, CI, and Pages workflow; signed commit `8469d384016995c4b8311719445a2f9e1a034303` remains the clean historical binding to rejected 1.0.26 | Partial: the site must be rebound to the exact 1.0.27 candidate, rerun all gates, and remain private with deployment disabled until the coordinated publication decision |
+| Q1–Q12 | Strict format/lint, supported-default root and Validation builds, complete tests, 22 canonical Test Case definitions, real Codex acceptance, development Universal 2 App/DMG verification, documentation and release-boundary regressions, website gates, and clean coordinated publication | Partial: root 52/799, Validation 12/71, real Codex 3/3, all static gates, and a Universal 2 1.0.27 (28) development App/DMG passed. Protected signed-tag CI, notarized artifact, installed exact-artifact catalog 22/22, UI, new-conversation ChatGPT, website, and coordinated publication gates remain required |
+| CS1–CS10 | The independent final 1.0.26 source/website audit passed 10/10 against source `9a21725e2658cc1e5b44a15f25575a3e7bad5537` and website `8469d384016995c4b8311719445a2f9e1a034303`, including its documented source tests, real official Codex 3/3, reversible maintenance exercise, website checks, release procedure, capability boundaries, metadata closure, and clean worktrees | Historical proof only: a fresh 1.0.27 cold-start audit must repeat all ten criteria and may not reuse the rejected candidate's conclusion |
 
 The Goal may be completed only when every row is directly proven, both
 repositories are clean, and the two-repository batch is release-ready.

@@ -4,6 +4,19 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.27 — 2026-09-02
+
+- Treat the official App Server's exact `no rollout found` response as an
+  idempotently complete validation cleanup only for the requested temporary
+  thread. Other archive and provider failures remain blocking.
+- Shut down a validation session's owned bridge process before disconnecting
+  its MCP client, preventing a completed exact-artifact catalog run from
+  hanging after its final audit event.
+- Keep the immutable signed `v1.0.26` candidate unpublished. Its installed
+  artifact completed the catalog calls but exposed these validation lifecycle
+  defects, so every protected, notarized, exact-artifact, ChatGPT, and website
+  gate moves to version 1.0.27.
+
 ## 1.0.26 — 2026-09-02
 
 - Make `codex.app.apps.list` a typed, bounded pagination surface using the

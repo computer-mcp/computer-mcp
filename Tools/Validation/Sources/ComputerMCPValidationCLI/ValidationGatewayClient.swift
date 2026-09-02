@@ -332,12 +332,12 @@ actor GatewayClientSession {
 
   func disconnect() async {
     initialization = nil
-    await client.disconnect()
     if let bridgeProcess, bridgeProcess.isRunning {
       bridgeProcess.terminate()
       bridgeProcess.waitUntilExit()
     }
     stderrDrain?.cancel()
+    await client.disconnect()
   }
 
   private func connect(transport: any Transport) async throws {

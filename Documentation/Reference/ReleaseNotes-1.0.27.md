@@ -1,11 +1,20 @@
-# Computer MCP 1.0.26 Release Notes
+# Computer MCP 1.0.27 Release Notes
 
-Status: Historical immutable signed candidate; the GitHub Release remains an
-unpublished draft. Installed-artifact acceptance exposed validation cleanup and
-session-disconnect defects, so this candidate cannot satisfy a later release
-gate.
+Status: CI-rendered notarized draft template. The GitHub Release remains a
+draft until the publisher completes exact-artifact acceptance and confirms the
+coordinated `computer-mcp.github.io` publication from its reviewed commit.
 
 ## Highlights
+
+- Exact-artifact validation cleanup now treats the official App Server's
+  `no rollout found` response as an idempotently clean result only for the exact
+  thread being removed; other provider failures remain blocking.
+- Validation socket sessions terminate their owned bridge process before
+  disconnecting the MCP client, so a completed full-catalog run cannot hang
+  after its final audit record.
+- The immutable signed `v1.0.26` candidate remains unpublished. Its installed
+  artifact completed catalog calls but exposed these two validator lifecycle
+  defects, so every protected and exact-artifact gate moves to this candidate.
 
 - `codex.app.apps.list` now exposes the current typed pagination inputs. It
   defaults to cached directory data and a 20-entry page, while allowing a
@@ -65,7 +74,7 @@ gate.
 
 ## Install
 
-1. Download `Computer-MCP-1.0.26-universal.dmg` and `SHA256SUMS` from the same
+1. Download `Computer-MCP-1.0.27-universal.dmg` and `SHA256SUMS` from the same
    GitHub Release.
 2. Verify the SHA-256 digest.
 3. Open the DMG and drag `Computer MCP.app` to `/Applications`.
@@ -97,13 +106,13 @@ user and stored in that user's App-owned Data Protection Keychain.
 - The production Bundle ID, Developer ID identity, private Keychain access
   group, TCC identity, runtime namespace, Secure MCP Tunnel profile, connector,
   credentials, workspaces, and policy remain compatible with 1.0.22 and the
-  unpublished 1.0.23 through 1.0.25 candidates. The new Apps directory timeout
+  unpublished 1.0.23 through 1.0.26 candidates. The new Apps directory timeout
   has a bounded default, so no data, credential, tunnel, CLI, MCP,
   configuration, or workspace migration is required.
-- The immutable signed `v1.0.23`, `v1.0.24`, and `v1.0.25` candidates remain
-  unpublished. Their exact-artifact audits exposed the lifecycle deadline,
-  large-response transport, and large Apps snapshot deadline defects corrected
-  by the current candidate.
+- The immutable signed `v1.0.23`, `v1.0.24`, `v1.0.25`, and `v1.0.26`
+  candidates remain unpublished. Their exact-artifact audits exposed the
+  lifecycle deadline, large-response transport, large Apps snapshot deadline,
+  and validation cleanup defects corrected by the current candidate.
 
 ## Product boundaries
 

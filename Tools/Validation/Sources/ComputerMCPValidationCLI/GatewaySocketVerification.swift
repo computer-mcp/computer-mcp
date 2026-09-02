@@ -1868,7 +1868,12 @@ private struct AppFullCatalogProbeRunner {
           invocation: fixturePlan.codexThreadArchiveInvocation(threadID: threadID),
           using: cleanupSession
         ).result
-        if result.status == "passed" {
+        let disposition = CodexThreadArchiveCleanupDisposition.classify(
+          status: result.status,
+          detail: result.detail,
+          threadID: threadID
+        )
+        if disposition != .failed {
           archived = true
           break
         }

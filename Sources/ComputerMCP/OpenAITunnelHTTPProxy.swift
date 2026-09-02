@@ -99,12 +99,24 @@ internal enum CodexProcessEnvironment {
   private static let httpsKeys = ["HTTPS_PROXY", "https_proxy"]
   private static let allKeys = ["ALL_PROXY", "all_proxy"]
   private static let noProxyKeys = ["NO_PROXY", "no_proxy"]
+  private static let parentSessionKeys = [
+    "CODEX_APP_TOOLS_PIPE_PATH",
+    "CODEX_CI",
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+    "CODEX_PERMISSION_PROFILE",
+    "CODEX_SAGE_BACKFILL_TRACKER_TAB_REUSE",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+  ]
 
   internal static func resolved(
     base: [String: String] = ProcessInfo.processInfo.environment,
     systemProxy: SystemNetworkProxySettings = .current()
   ) -> [String: String] {
     var environment = base
+    for key in parentSessionKeys {
+      environment.removeValue(forKey: key)
+    }
     let hasInheritedProxy = (httpKeys + httpsKeys + allKeys).contains {
       environment[$0] != nil
     }

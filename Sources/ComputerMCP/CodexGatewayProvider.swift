@@ -9,6 +9,7 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
   private let mcp: (any CodexMCPRuntimeProtocol)?
   private let owner: CodexRuntimeOwner?
   private let database: GatewayDatabase?
+  private let recentThreadReader: CodexRecentThreadReader?
   private let tools: [MCPTool]
 
   init(
@@ -17,7 +18,8 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     exec: (any CodexExecRuntimeProtocol)?,
     mcp: (any CodexMCPRuntimeProtocol)?,
     owner: CodexRuntimeOwner? = nil,
-    database: GatewayDatabase? = nil
+    database: GatewayDatabase? = nil,
+    recentThreadReader: CodexRecentThreadReader? = nil
   ) {
     self.configuration = configuration
     self.appServer = appServer
@@ -25,6 +27,7 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     self.mcp = mcp
     self.owner = owner
     self.database = database
+    self.recentThreadReader = recentThreadReader
     tools = Self.makeTools(
       appServerEnabled: appServer != nil,
       execEnabled: exec != nil,
@@ -67,7 +70,8 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
         )
         : nil,
       owner: owner,
-      database: database
+      database: database,
+      recentThreadReader: CodexRecentThreadReader.live(workspaceURL: workspaceURL)
     )
   }
 
@@ -85,7 +89,7 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       id: tool.name,
       risk: risk,
       workspaceRequirement: .required,
-      localOnly: false,
+      localOnly: Self.localOnlyToolNames.contains(tool.name),
       usesNetwork: true
     )
   }
@@ -103,10 +107,123 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       switch name {
       case "codex.app.status":
         result = try await tryAppServer().status()
+      case "codex.app.elevation.request":
+        let modeValue = try Self.requiredString("mode", in: object)
+        guard let mode = CodexElevationGrantMode(rawValue: modeValue) else {
+          throw GatewayToolError.invalidArguments(
+            "codex.app.elevation_mode_invalid: Use next-turn, thread-scoped-ttl, or bounded-time."
+          )
+        }
+        let threadID = try Self.optionalString("thread_id", in: object).map {
+          try Self.validatedIdentifier($0, key: "thread_id")
+        }
+        let grant = try CodexElevationGrantService.request(
+          owner: owner,
+          database: database,
+          threadID: threadID,
+          mode: mode,
+          reason: try Self.requiredString("reason", in: object),
+          maximumDurationSeconds: try Self.boundedInt(
+            "maximum_duration_seconds",
+            in: object,
+            default: 300,
+            range: 30...3_600
+          ),
+          maximumTurnCount: try Self.optionalBoundedInt(
+            "maximum_turn_count",
+            in: object,
+            range: 1...100
+          )
+        )
+        let effective = try effectiveElevation(owner: owner, threadID: threadID)
+        result = .object([
+          "grant": try reviewedElevationGrant(grant),
+          "effective_sandbox": effectiveSandbox(from: effective),
+          "effective": effective,
+          "local_approval_required": .bool(true),
+        ])
+      case "codex.app.elevation.list":
+        let requestedState = try Self.optionalString("state", in: object)
+        let state = try requestedState.map { rawValue in
+          guard let state = CodexElevationGrantState(rawValue: rawValue) else {
+            throw GatewayToolError.invalidArguments(
+              "codex.app.elevation_state_invalid: Unknown elevation state '\(rawValue)'."
+            )
+          }
+          return state
+        }
+        let grants = try CodexElevationGrantService.visibleGrants(
+          owner: owner,
+          database: database,
+          state: state,
+          limit: try Self.boundedInt("limit", in: object, default: 100, range: 1...1_000)
+        )
+        result = .object([
+          "grants": .array(try grants.map(reviewedElevationGrant))
+        ])
+      case "codex.app.elevation.read":
+        result = .object([
+          "grant": try reviewedElevationGrant(
+            CodexElevationGrantService.read(
+              id: Self.requiredIdentifier("grant_id", in: object),
+              owner: owner,
+              database: database
+            )
+          )
+        ])
+      case "codex.app.elevation.approve":
+        let grant = try CodexElevationGrantService.approve(
+          id: Self.requiredIdentifier("grant_id", in: object),
+          owner: owner,
+          database: database
+        )
+        let effective = try effectiveElevation(for: grant)
+        result = .object([
+          "grant": try reviewedElevationGrant(grant),
+          "active_turn_unchanged": .bool(true),
+          "effective_next_eligible_start": .bool(
+            effectiveSandbox(from: effective) == .string("danger-full-access")
+          ),
+          "effective": effective,
+        ])
+      case "codex.app.elevation.deny":
+        let grant = try CodexElevationGrantService.deny(
+          id: Self.requiredIdentifier("grant_id", in: object),
+          owner: owner,
+          database: database
+        )
+        result = .object([
+          "grant": try reviewedElevationGrant(grant),
+          "effective": try effectiveElevation(for: grant),
+        ])
+      case "codex.app.elevation.revoke":
+        let grant = try CodexElevationGrantService.revoke(
+          id: Self.requiredIdentifier("grant_id", in: object),
+          owner: owner,
+          database: database
+        )
+        let effective = try effectiveElevation(for: grant)
+        result = .object([
+          "grant": try reviewedElevationGrant(grant),
+          "active_turn_unchanged": .bool(true),
+          "effective_next_turn": effectiveSandbox(from: effective),
+          "effective": effective,
+        ])
+      case "codex.app.elevation.effective":
+        let threadID = try Self.optionalString("thread_id", in: object).map {
+          try Self.validatedIdentifier($0, key: "thread_id")
+        }
+        result = try CodexElevationGrantService.effective(
+          owner: owner,
+          database: database,
+          threadID: threadID,
+          configuredSandbox: configuration.sandbox
+        )
       case "codex.diagnostics.snapshot":
         result = try await CodexOperationalDiagnostics.snapshot(
           database: database,
           owner: owner,
+          configuredSandbox: configuration.sandbox,
           limit: try Self.boundedInt("limit", in: object, default: 100, range: 1...1_000)
         )
       case "codex.app.runtimes.list":
@@ -132,6 +249,22 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
           database: database,
           workspaceID: owner?.workspaceID
         )
+      case "codex.app.ownership.reconcile.preview":
+        result = try CodexThreadOwnershipReconciliation.preview(
+          database: database,
+          workspaceID: owner?.workspaceID
+        ).json
+      case "codex.app.ownership.reconcile.perform":
+        guard object["confirm_reconciliation"]?.boolValue == true else {
+          throw GatewayToolError.invalidArguments(
+            "codex.app.ownership_reconciliation_confirmation_required: Preview first, then set confirm_reconciliation=true."
+          )
+        }
+        result = try CodexThreadOwnershipReconciliation.apply(
+          database: database,
+          expectedPlanDigest: Self.requiredIdentifier("expected_plan_digest", in: object),
+          workspaceID: owner?.workspaceID
+        ).json
       case "codex.app.runtimes.inspect":
         let runtimeID = try Self.requiredString("runtime_id", in: object)
         guard
@@ -210,15 +343,64 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
           method: "thread/read",
           params: try Self.threadReadParams(in: object)
         )
+      case "codex.app.thread.recent":
+        guard let recentThreadReader else {
+          throw GatewayToolError.disabled(
+            "codex.app.recent_thread_unavailable: Persisted recent-thread inspection is unavailable for this provider."
+          )
+        }
+        let threadID = try Self.requiredIdentifier("thread_id", in: object)
+        let recentLimits = CodexRecentThreadLimits(
+          maxTurns: try Self.boundedInt("max_turns", in: object, default: 10, range: 1...50),
+          maxMessages: try Self.boundedInt(
+            "max_messages", in: object, default: 50, range: 1...200
+          ),
+          maxItems: try Self.boundedInt("max_items", in: object, default: 100, range: 1...500),
+          maxReadBytes: try Self.boundedInt(
+            "max_bytes", in: object, default: 262_144, range: 4_096...1_048_576
+          ),
+          maxOutputBytes: try Self.boundedInt(
+            "max_output_bytes", in: object, default: 524_288, range: 4_096...1_048_576
+          ),
+          maxElapsedMilliseconds: try Self.boundedInt(
+            "max_elapsed_milliseconds", in: object, default: 2_000, range: 50...5_000
+          )
+        )
+        let recent = try recentThreadReader.read(
+          threadID: threadID,
+          beforeCursor: try Self.optionalString("before_cursor", in: object),
+          limits: recentLimits
+        )
+        let supervision = await CodexThreadHandoffDiagnostics.diagnose(
+          threadID: threadID,
+          observedError: nil,
+          workspaceID: owner?.workspaceID,
+          database: database
+        )
+        var recentObject = recent.objectValue ?? [:]
+        recentObject["live_supervision"] = supervision
+        result = CodexOutputBounds(maxOutputBytes: recentLimits.maxOutputBytes).json(
+          .object(recentObject),
+          maxBytes: recentLimits.maxOutputBytes
+        )
       case "codex.app.thread.fork":
         result = try await tryAppServer().call(
           method: "thread/fork",
           params: try Self.threadForkParams(in: object)
         )
       case "codex.app.thread.release":
-        result = try await tryAppServer().call(
-          method: "thread/unsubscribe",
-          params: try Self.threadIDParams(in: object)
+        let modeValue = try Self.optionalString("mode", in: object) ?? "graceful"
+        guard let mode = CodexThreadHandoffMode(rawValue: modeValue) else {
+          throw GatewayToolError.invalidArguments(
+            "codex.app.handoff_mode_invalid: Use graceful or force-computer-mcp-owned-runtime-only."
+          )
+        }
+        result = try await CodexThreadHandoffService.release(
+          threadID: try Self.requiredIdentifier("thread_id", in: object),
+          workspaceID: owner?.workspaceID,
+          mode: mode,
+          interruptActiveTurn: try Self.optionalBool("interrupt_active_turn", in: object) ?? false,
+          database: database
         )
       case "codex.app.handoff.diagnose":
         result = await CodexThreadHandoffDiagnostics.diagnose(
@@ -623,9 +805,53 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
   }
 
   func shutdown() async {
+    if let connectionID = owner?.elevationConnectionID {
+      try? database?.invalidateCodexElevationGrants(
+        workspaceID: owner?.workspaceID,
+        profileID: owner?.profileID,
+        requestingConnectionID: connectionID,
+        reason: "The bound gateway connection closed."
+      )
+    }
     await appServer?.shutdown()
     await exec?.shutdown()
     await mcp?.shutdown()
+  }
+
+  private func effectiveElevation(
+    owner: CodexRuntimeOwner?,
+    threadID: String?
+  ) throws -> JSONValue {
+    try CodexElevationGrantService.effective(
+      owner: owner,
+      database: database,
+      threadID: threadID,
+      configuredSandbox: configuration.sandbox
+    )
+  }
+
+  private func effectiveElevation(for grant: CodexElevationGrantRecord) throws -> JSONValue {
+    try effectiveElevation(
+      owner: CodexRuntimeOwner(
+        workspaceID: grant.workspaceID,
+        profileID: grant.profileID,
+        caller: grant.requestingCaller,
+        transport: nil,
+        socketConnectionID: grant.requestingConnectionID,
+        tunnelInstanceID: nil,
+        tunnelProfileID: nil
+      ),
+      threadID: grant.threadID
+    )
+  }
+
+  private func reviewedElevationGrant(_ grant: CodexElevationGrantRecord) throws -> JSONValue {
+    try CodexElevationGrantService.reviewedJSON(grant, database: database)
+  }
+
+  private func effectiveSandbox(from effective: JSONValue) -> JSONValue {
+    effective.objectValue?["effective_sandbox"]
+      ?? .string(configuration.sandbox.rawValue)
   }
 
   private func tryAppServer() throws -> any CodexAppServerRuntimeProtocol {
@@ -1176,7 +1402,18 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     in object: [String: JSONValue],
     maximumBytes: Int = 1_024
   ) throws -> String {
-    let value = try requiredString(key, in: object)
+    try validatedIdentifier(
+      requiredString(key, in: object),
+      key: key,
+      maximumBytes: maximumBytes
+    )
+  }
+
+  private static func validatedIdentifier(
+    _ value: String,
+    key: String,
+    maximumBytes: Int = 1_024
+  ) throws -> String {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.utf8.count <= maximumBytes,
       trimmed.rangeOfCharacter(from: .controlCharacters) == nil,
@@ -1210,7 +1447,17 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     in object: [String: JSONValue],
     default defaultValue: Int
   ) throws -> Int {
-    let value = object[key]?.intValue ?? defaultValue
+    let value: Int
+    if let raw = object[key] {
+      guard let supplied = raw.intValue else {
+        throw GatewayToolError.invalidArguments(
+          "codex.argument_invalid: '\(key)' must be a nonnegative integer."
+        )
+      }
+      value = supplied
+    } else {
+      value = defaultValue
+    }
     guard value >= 0 else {
       throw GatewayToolError.invalidArguments(
         "codex.argument_invalid: '\(key)' must be nonnegative."
@@ -1225,10 +1472,34 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     default defaultValue: Int,
     range: ClosedRange<Int>
   ) throws -> Int {
-    let value = object[key]?.intValue ?? defaultValue
+    let value: Int
+    if let raw = object[key] {
+      guard let supplied = raw.intValue else {
+        throw GatewayToolError.invalidArguments(
+          "codex.argument_invalid: '\(key)' must be an integer between \(range.lowerBound) and \(range.upperBound)."
+        )
+      }
+      value = supplied
+    } else {
+      value = defaultValue
+    }
     guard range.contains(value) else {
       throw GatewayToolError.invalidArguments(
         "codex.argument_invalid: '\(key)' must be between \(range.lowerBound) and \(range.upperBound)."
+      )
+    }
+    return value
+  }
+
+  private static func optionalBoundedInt(
+    _ key: String,
+    in object: [String: JSONValue],
+    range: ClosedRange<Int>
+  ) throws -> Int? {
+    guard let raw = object[key] else { return nil }
+    guard let value = raw.intValue, range.contains(value) else {
+      throw GatewayToolError.invalidArguments(
+        "codex.argument_invalid: '\(key)' must be an integer between \(range.lowerBound) and \(range.upperBound)."
       )
     }
     return value
@@ -1299,6 +1570,62 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
     tool(
       "codex.app.status", "Read the persistent Codex App Server connection status.", emptySchema),
     tool(
+      "codex.app.elevation.request",
+      "Request a locally approved, workspace/profile/caller-bound danger-full-access grant. The request does not change the current turn or effective sandbox.",
+      objectSchema(
+        properties: [
+          "thread_id": stringSchema(),
+          "mode": .object([
+            "type": .string("string"),
+            "enum": .array(CodexElevationGrantMode.allCases.map { .string($0.rawValue) }),
+          ]),
+          "reason": stringSchema(),
+          "maximum_duration_seconds": integerSchema(minimum: 30, maximum: 3_600),
+          "maximum_turn_count": integerSchema(minimum: 1, maximum: 100),
+        ],
+        required: ["mode", "reason"]
+      ),
+      write: true
+    ),
+    tool(
+      "codex.app.elevation.list",
+      "List redacted scoped-elevation receipts visible to the bound requester or local administrator.",
+      objectSchema(
+        properties: [
+          "state": stringSchema(),
+          "limit": integerSchema(minimum: 1, maximum: 1_000),
+        ]
+      )
+    ),
+    tool(
+      "codex.app.elevation.read",
+      "Read one redacted scoped-elevation receipt visible to the bound requester or local administrator.",
+      objectSchema(properties: ["grant_id": stringSchema()], required: ["grant_id"])
+    ),
+    tool(
+      "codex.app.elevation.approve",
+      "Locally approve an exact pending elevation request. Approval affects only a future eligible thread/turn start and never hot-switches an active turn.",
+      objectSchema(properties: ["grant_id": stringSchema()], required: ["grant_id"]),
+      write: true
+    ),
+    tool(
+      "codex.app.elevation.deny",
+      "Locally deny an exact pending elevation request.",
+      objectSchema(properties: ["grant_id": stringSchema()], required: ["grant_id"]),
+      write: true
+    ),
+    tool(
+      "codex.app.elevation.revoke",
+      "Revoke a bound elevation grant. The active turn remains unchanged and future turns return to the configured safe sandbox.",
+      objectSchema(properties: ["grant_id": stringSchema()], required: ["grant_id"]),
+      write: true
+    ),
+    tool(
+      "codex.app.elevation.effective",
+      "Report requested and effective Codex sandbox state for a future eligible start without changing runtime state.",
+      objectSchema(properties: ["thread_id": stringSchema()])
+    ),
+    tool(
       "codex.app.runtimes.list",
       "List active Computer MCP-owned Codex App Server runtimes for the selected workspace.",
       emptySchema
@@ -1319,6 +1646,23 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       objectSchema(
         properties: ["confirm_cleanup": booleanSchema()],
         required: ["confirm_cleanup"]
+      ),
+      write: true
+    ),
+    tool(
+      "codex.app.ownership.reconcile.preview",
+      "Preview stale loaded ownership receipts whose Computer MCP runtime and owned process are provably gone. This never changes external Codex state or sends a signal.",
+      emptySchema
+    ),
+    tool(
+      "codex.app.ownership.reconcile.perform",
+      "Locally apply an exact reviewed ownership-receipt repair plan without changing external Codex state or signaling any process.",
+      objectSchema(
+        properties: [
+          "expected_plan_digest": stringSchema(),
+          "confirm_reconciliation": booleanSchema(),
+        ],
+        required: ["expected_plan_digest", "confirm_reconciliation"]
       ),
       write: true
     ),
@@ -1419,6 +1763,23 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       )
     ),
     tool(
+      "codex.app.thread.recent",
+      "Read bounded metadata, Goal status, active/recent turns, messages, items, pending lifecycle state, and compact progress from a persisted thread without loading full history.",
+      objectSchema(
+        properties: [
+          "thread_id": stringSchema(),
+          "before_cursor": stringSchema(),
+          "max_turns": integerSchema(minimum: 1, maximum: 50),
+          "max_messages": integerSchema(minimum: 1, maximum: 200),
+          "max_items": integerSchema(minimum: 1, maximum: 500),
+          "max_bytes": integerSchema(minimum: 4_096, maximum: 1_048_576),
+          "max_output_bytes": integerSchema(minimum: 4_096, maximum: 1_048_576),
+          "max_elapsed_milliseconds": integerSchema(minimum: 50, maximum: 5_000),
+        ],
+        required: ["thread_id"]
+      )
+    ),
+    tool(
       "codex.app.thread.fork", "Fork a Codex thread in the bound workspace.",
       objectSchema(
         properties: [
@@ -1432,8 +1793,21 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       write: true),
     tool(
       "codex.app.thread.release",
-      "Release this runtime's subscription to a verified workspace thread. The persisted thread remains available to official Codex clients.",
-      objectSchema(properties: ["thread_id": stringSchema()], required: ["thread_id"]),
+      "Release a thread from every matching Computer-MCP-owned runtime and verify that another official Codex client can claim it immediately. Active turns are interrupted only when explicitly requested; force mode can stop only exact Computer-MCP-owned runtimes.",
+      objectSchema(
+        properties: [
+          "thread_id": stringSchema(),
+          "interrupt_active_turn": booleanSchema(),
+          "mode": .object([
+            "type": .string("string"),
+            "enum": .array([
+              .string("graceful"),
+              .string("force-computer-mcp-owned-runtime-only"),
+            ]),
+          ]),
+        ],
+        required: ["thread_id"]
+      ),
       write: true
     ),
     tool(
@@ -1992,6 +2366,12 @@ struct CodexGatewayProvider: GatewayToolProvider, Sendable {
       .filter { $0.annotations?.readOnlyHint == true }
       .map(\.name)
   )
+
+  private static let localOnlyToolNames: Set<String> = [
+    "codex.app.elevation.approve",
+    "codex.app.elevation.deny",
+    "codex.app.ownership.reconcile.perform",
+  ]
 
   private static func tool(
     _ name: String,

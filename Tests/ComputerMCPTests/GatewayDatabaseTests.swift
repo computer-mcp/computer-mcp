@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -6,6 +7,12 @@ import Testing
 @Suite
 
 final class GatewayDatabaseTests {
+  @Test
+  func testInMemoryTestDatabaseHasNoProductionFilePath() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    #expect(database.fileURL == nil)
+  }
+
   @Test
   func testPersistsWorkspacesProfilesProvidersAndAuditWithoutPayloadContent() throws {
     let database = try GatewayDatabase(inMemory: ())
@@ -62,6 +69,121 @@ final class GatewayDatabaseTests {
     #expect((try database.profiles()) == ([profile]))
     #expect((try database.providerStates()) == ([provider]))
     #expect((try database.auditEvents()) == ([audit]))
+  }
+
+  @Test
+  func testWorkspaceDeduplicationPreviewIsNonMutating() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let canonical = RegisteredWorkspace(
+      id: "workspace-canonical",
+      displayName: "Shared Workspace",
+      rootPath: "/tmp/shared-workspace",
+      createdAt: Date(timeIntervalSince1970: 1),
+      updatedAt: Date(timeIntervalSince1970: 1)
+    )
+    let duplicate = RegisteredWorkspace(
+      id: "workspace-duplicate",
+      displayName: "Shared Workspace",
+      rootPath: canonical.rootPath,
+      createdAt: Date(timeIntervalSince1970: 2),
+      updatedAt: Date(timeIntervalSince1970: 2)
+    )
+    try database.saveWorkspace(canonical)
+    try database.saveWorkspace(duplicate)
+
+    let before = try database.workspaces()
+    let first = try database.workspaceDeduplicationPlan()
+    let second = try database.workspaceDeduplicationPlan()
+
+    #expect(first == second)
+    #expect(first.groups.count == 1)
+    #expect(first.duplicateCount == 1)
+    #expect(first.groups.first?.canonicalWorkspaceID == canonical.id)
+    #expect(first.groups.first?.duplicateWorkspaceIDs == [duplicate.id])
+    #expect(try database.workspaces() == before)
+    #expect(try database.workspace(id: duplicate.id)?.id == duplicate.id)
+  }
+
+  @Test
+  func testWorkspaceDeduplicationMigrationPreservesReferencesAndHistory() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let canonical = RegisteredWorkspace(
+      id: "workspace-canonical",
+      displayName: "Shared Workspace",
+      rootPath: "/tmp/shared-workspace",
+      createdAt: Date(timeIntervalSince1970: 1),
+      updatedAt: Date(timeIntervalSince1970: 1)
+    )
+    let duplicate = RegisteredWorkspace(
+      id: "workspace-duplicate",
+      displayName: "Shared Workspace",
+      rootPath: canonical.rootPath,
+      createdAt: Date(timeIntervalSince1970: 2),
+      updatedAt: Date(timeIntervalSince1970: 2)
+    )
+    try database.saveWorkspace(canonical)
+    try database.saveWorkspace(duplicate)
+    var profile = ProfileGrant.operate
+    profile.workspaceIDs = [duplicate.id]
+    try database.saveProfile(profile)
+    let historicalAudit = AuditEvent(
+      id: "workspace-history",
+      occurredAt: Date(timeIntervalSince1970: 3),
+      requestID: "workspace-history",
+      caller: .secureTunnel,
+      profileID: .chatGPTOperate,
+      workspaceID: duplicate.id,
+      capabilityID: "file.read",
+      decision: .allowed
+    )
+    try database.recordAudit(historicalAudit)
+    let plan = try database.workspaceDeduplicationPlan()
+
+    let result = try database.applyWorkspaceDeduplication(
+      expectedPlanDigest: plan.planDigest,
+      allowMetadataConflicts: false,
+      now: Date(timeIntervalSince1970: 4)
+    )
+
+    #expect(result.canonicalWorkspaceIDs == [canonical.id])
+    #expect(result.aliasedWorkspaceIDs == [duplicate.id])
+    #expect(result.updatedProfileIDs == [GatewayProfileID.chatGPTOperate.rawValue])
+    let workspaceIDs = try database.workspaces().map(\.id)
+    let resolvedDuplicate = try database.workspace(id: duplicate.id)
+    let storedProfile = try database.profiles().first
+    let storedAudit = try database.auditEvent(requestID: historicalAudit.requestID)
+    let postApplyPlan = try database.workspaceDeduplicationPlan()
+    #expect(workspaceIDs == [canonical.id])
+    #expect(resolvedDuplicate?.id == canonical.id)
+    #expect(storedProfile?.workspaceIDs == [canonical.id])
+    #expect(storedAudit == historicalAudit)
+    #expect(postApplyPlan.groups.isEmpty)
+  }
+
+  @Test
+  func testWorkspaceCanonicalRootBindingTracksAnUpdatedRegistration() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let original = RegisteredWorkspace(
+      id: "workspace-moving",
+      displayName: "Moving Workspace",
+      rootPath: "/tmp/workspace-original"
+    )
+    try database.saveWorkspace(original)
+    var moved = original
+    moved.rootPath = "/tmp/workspace-moved"
+    moved.updatedAt = moved.updatedAt.addingTimeInterval(1)
+    try database.saveWorkspace(moved)
+
+    let replacement = RegisteredWorkspace(
+      id: "workspace-replacement",
+      displayName: "Replacement Workspace",
+      rootPath: original.rootPath
+    )
+    let registration = try database.registerWorkspaceIdempotently(replacement)
+
+    #expect(registration.created)
+    #expect(registration.workspace.id == replacement.id)
+    #expect(try database.workspace(id: original.id)?.rootPath == moved.rootPath)
   }
 
   @Test
@@ -322,6 +444,125 @@ final class GatewayDatabaseTests {
     #expect(try database.codexRuntimeLeases() == [lease])
     #expect(try database.codexThreadOwnership(threadID: ownership.threadID) == ownership)
     #expect(try database.codexThreadOwnerships(workspaceID: "workspace-1") == [ownership])
+  }
+
+  @Test
+  func testStaleOwnershipReconciliationIsReviewedAndNeverSignalsAProcess() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let now = Date(timeIntervalSince1970: 5_000)
+    let stale = CodexThreadOwnershipRecord(
+      threadID: "thread-stale",
+      workspaceID: "workspace-1",
+      workspacePath: "/tmp/workspace-1",
+      runtimeID: "runtime-gone",
+      state: .loaded,
+      createdAt: now,
+      updatedAt: now
+    )
+    try database.saveCodexThreadOwnership(stale)
+
+    let plan = try CodexThreadOwnershipReconciliation.preview(
+      database: database,
+      workspaceID: "workspace-1"
+    )
+    #expect(plan.candidates.map(\.threadID) == [stale.threadID])
+    #expect(!plan.signalsSent)
+    #expect(!plan.externalStateMutated)
+    #expect(try database.codexThreadOwnership(threadID: stale.threadID)?.state == .loaded)
+
+    let result = try CodexThreadOwnershipReconciliation.apply(
+      database: database,
+      expectedPlanDigest: plan.planDigest,
+      workspaceID: "workspace-1",
+      now: now.addingTimeInterval(1)
+    )
+    #expect(result.releasedThreadIDs == [stale.threadID])
+    #expect(!result.signalsSent)
+    #expect(!result.externalStateMutated)
+    #expect(try database.codexThreadOwnership(threadID: stale.threadID)?.state == .released)
+  }
+
+  @Test
+  func testOwnershipReconciliationPreservesReceiptWhileRecordedProcessIsAlive() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let now = Date()
+    let runtimeID = "runtime-live-process"
+    try database.saveCodexRuntimeLease(
+      CodexRuntimeLeaseRecord(
+        id: runtimeID,
+        owner: CodexRuntimeOwner(
+          workspaceID: "workspace-1",
+          profileID: "profile-1",
+          caller: "local-mcp",
+          transport: "fixture",
+          socketConnectionID: nil,
+          tunnelInstanceID: nil,
+          tunnelProfileID: nil
+        ),
+        workspacePath: "/tmp/workspace-1",
+        state: "running",
+        process: CodexAppServerProcessSnapshot(
+          state: .running,
+          processID: getpid(),
+          supervisorProcessID: nil,
+          parentProcessID: getppid(),
+          processGroupID: getpgrp(),
+          startedAt: now,
+          stoppedAt: nil,
+          exitCode: nil,
+          signal: nil,
+          terminationEscalated: false,
+          lastError: nil
+        ),
+        createdAt: now,
+        updatedAt: now,
+        shutdownReason: nil,
+        cleanedAt: nil
+      )
+    )
+    try database.saveCodexThreadOwnership(
+      CodexThreadOwnershipRecord(
+        threadID: "thread-live-process",
+        workspaceID: "workspace-1",
+        workspacePath: "/tmp/workspace-1",
+        runtimeID: runtimeID,
+        state: .loaded,
+        createdAt: now,
+        updatedAt: now
+      )
+    )
+
+    let plan = try CodexThreadOwnershipReconciliation.preview(
+      database: database,
+      workspaceID: "workspace-1"
+    )
+    #expect(plan.candidates.isEmpty)
+    #expect(!plan.signalsSent)
+  }
+
+  @Test
+  func testPreSplitRequestTimeoutIsReconciledWithoutTerminalRuntimeReason() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let now = Date(timeIntervalSince1970: 6_000)
+    try database.saveCodexRuntimeLease(
+      CodexRuntimeLeaseRecord(
+        id: "pre-split-runtime",
+        owner: nil,
+        workspacePath: "/tmp/workspace-1",
+        state: "running",
+        process: nil,
+        createdAt: now,
+        updatedAt: now,
+        shutdownReason: "request_timeout",
+        cleanedAt: nil
+      )
+    )
+
+    let reconciled = try #require(try database.codexRuntimeLeases().first)
+    #expect(reconciled.runtimeState == "running")
+    #expect(reconciled.shutdownReason == nil)
+    #expect(reconciled.lastRequestFailure?.kind == "request_timeout")
+    #expect(reconciled.lastRequestFailure?.recoverable == true)
   }
 
   @Test

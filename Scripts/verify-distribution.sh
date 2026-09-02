@@ -6,10 +6,10 @@ OUTPUT_DIR=${OUTPUT_DIR:-"$ROOT_DIR/dist"}
 PRODUCT_VERSION=$(/usr/libexec/PlistBuddy \
   -c 'Print :CFBundleShortVersionString' \
   "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
-DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$PRODUCT_VERSION-universal.dmg"}
+RELEASE_MODE=${RELEASE_MODE:-0}
+DMG_PATH=${DMG_PATH:-}
 CURRENT_APP_PATH=${CURRENT_APP_PATH:-"$OUTPUT_DIR/Computer MCP.app"}
 CHECKSUM_PATH=${CHECKSUM_PATH:-"$OUTPUT_DIR/SHA256SUMS"}
-RELEASE_MODE=${RELEASE_MODE:-0}
 MOUNT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-mount.XXXXXX")
 BUILD_INFO_FILE=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-build-info.XXXXXX")
 SIGNED_ENTITLEMENTS=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-entitlements.XXXXXX")
@@ -30,6 +30,21 @@ fail() {
   exit 1
 }
 
+if [[ -z "$DMG_PATH" ]]; then
+  if [[ "$RELEASE_MODE" == "1" ]]; then
+    DMG_PATH="$OUTPUT_DIR/Computer-MCP-$PRODUCT_VERSION-universal.dmg"
+  else
+    typeset -a local_artifacts=(
+      "$OUTPUT_DIR"/Computer-MCP-"$PRODUCT_VERSION"-development-*-universal.dmg(N)
+      "$OUTPUT_DIR"/Computer-MCP-"$PRODUCT_VERSION"-validation-*-universal.dmg(N)
+    )
+    [[ ${#local_artifacts[@]} == 1 ]] \
+      || fail "Specify DMG_PATH when zero or multiple local development/validation artifacts exist."
+    DMG_PATH=${local_artifacts[1]}
+  fi
+fi
+PROVENANCE_PATH=${PROVENANCE_PATH:-"${DMG_PATH:r}-ArtifactProvenance.json"}
+
 identifier_is_authorized() {
   local authorized=$1
   local requested=$2
@@ -43,7 +58,15 @@ identifier_is_authorized() {
 [[ -f "$DMG_PATH" ]] || fail "Missing DMG: $DMG_PATH"
 [[ -d "$CURRENT_APP_PATH" ]] || fail "Missing current app bundle: $CURRENT_APP_PATH"
 [[ -f "$CHECKSUM_PATH" ]] || fail "Missing SHA256SUMS: $CHECKSUM_PATH"
-
+[[ -f "$PROVENANCE_PATH" ]] || fail "Missing artifact provenance: $PROVENANCE_PATH"
+ARTIFACT_CLASS=$(/usr/bin/jq -er '.artifact.class' "$PROVENANCE_PATH")
+if [[ "$RELEASE_MODE" == "1" ]]; then
+  [[ "$ARTIFACT_CLASS" == release_candidate ]] \
+    || fail "Release verification requires a release_candidate provenance receipt."
+else
+  [[ "$ARTIFACT_CLASS" == development || "$ARTIFACT_CLASS" == validation ]] \
+    || fail "Local verification requires development or validation provenance."
+fi
 EXPECTED_HASH=$(/usr/bin/awk -v name="${DMG_PATH:t}" '$2 == name { print $1 }' "$CHECKSUM_PATH")
 ACTUAL_HASH=$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')
 [[ -n "$EXPECTED_HASH" && "$EXPECTED_HASH" == "$ACTUAL_HASH" ]] \
@@ -72,6 +95,9 @@ BUILD_IDENTITY="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
 [[ -x "$APP_PATH/Contents/MacOS/Computer MCP" ]] || fail "Missing App executable."
 [[ -x "$CLI_PATH" ]] || fail "Missing embedded CLI."
 [[ -f "$BUILD_IDENTITY" ]] || fail "Missing signed build identity."
+BUILD_IDENTITY_PATH="$BUILD_IDENTITY" \
+  "$ROOT_DIR/Scripts/verify-artifact-provenance.sh" \
+    "$PROVENANCE_PATH" "$DMG_PATH" "$ARTIFACT_CLASS"
 APP_RESOURCE_BUNDLE=$(/usr/bin/find "$APP_PATH/Contents/Resources" -maxdepth 1 \
   -type d -name '*ComputerMCPApp*.bundle' -print -quit)
 [[ -n "$APP_RESOURCE_BUNDLE" ]] || fail "Missing ComputerMCPApp localization bundle."

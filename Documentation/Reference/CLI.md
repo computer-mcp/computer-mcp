@@ -20,40 +20,55 @@ replace a regular file or an unrelated valid link. Add that directory to
 
 ```text
 computer-mcp app status
-computer-mcp doctor [--journey local|chatgpt|cloudflare] [--json]
-
+computer-mcp doctor [--journey <journey>] [--json]
+computer-mcp build-info
 computer-mcp config path
 computer-mcp config show
-computer-mcp config validate [--connect] [--config <path>]
-computer-mcp config export [--output <path>]
-computer-mcp config import --input <path> [--apply --expected-current-digest <digest>]
-
+computer-mcp config defaults
+computer-mcp config validate [--config <config>] [--connect]
+computer-mcp config export [--output <output>]
+computer-mcp config import --input <input> [--apply] [--expected-current-digest <expected-current-digest>]
 computer-mcp workspace list
-computer-mcp workspace add <path> [--display-name <name>]
+computer-mcp workspace add <path> [--display-name <display-name>]
 computer-mcp workspace remove <id>
-computer-mcp workspace enable <id> --profile <profile> [--no-enabled]
-
+computer-mcp workspace enable <id> --profile <profile> [--enabled] [--no-enabled]
+computer-mcp workspace deduplicate [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
 computer-mcp profile list
 computer-mcp profile show <id>
-computer-mcp profile grant <id> --workspace <workspace-id> [--no-enabled]
-computer-mcp profile shell <id> [--no-enabled]
-
-computer-mcp tunnel openai list|doctor|start|stop|logs [<id>]
-computer-mcp tunnel cloudflare list|doctor|start|stop|logs [<id>]
-
-computer-mcp codex diagnose-thread <thread-id> --workspace-id <id> [--observed-error <message>]
-computer-mcp codex diagnostics --workspace-id <id> [--limit <count>]
-
-computer-mcp tools list
-computer-mcp tools inspect <name>
-computer-mcp tools call <name> --arguments-json '{}'
-
+computer-mcp profile grant <id> --workspace <workspace> [--enabled] [--no-enabled]
+computer-mcp profile shell <id> [--enabled] [--no-enabled]
+computer-mcp tunnel openai list
+computer-mcp tunnel openai doctor <id>
+computer-mcp tunnel openai start <id>
+computer-mcp tunnel openai stop <id>
+computer-mcp tunnel openai logs <id>
+computer-mcp tunnel cloudflare list
+computer-mcp tunnel cloudflare doctor <id>
+computer-mcp tunnel cloudflare start <id>
+computer-mcp tunnel cloudflare stop <id>
+computer-mcp tunnel cloudflare logs <id>
+computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> [--observed-error <observed-error>]
+computer-mcp codex diagnostics --workspace-id <workspace-id> [--limit <limit>]
+computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id> [--interrupt-active-turn] [--force-owned-runtime]
+computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id> [--before-cursor <before-cursor>] [--max-turns <max-turns>] [--max-messages <max-messages>] [--max-items <max-items>] [--max-bytes <max-bytes>] [--max-output-bytes <max-output-bytes>] [--max-elapsed-milliseconds <max-elapsed-milliseconds>]
+computer-mcp codex elevation list --workspace-id <workspace-id> [--state <state>]
+computer-mcp codex elevation read <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation approve <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation deny <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation revoke <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation effective --workspace-id <workspace-id> [--thread-id <thread-id>]
+computer-mcp tools list [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp tools inspect <name> [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp tools call <name> [--arguments-json <arguments-json>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp tools inventory --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
+computer-mcp providers discover --config <config>
 computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
-computer-mcp install codex (--app | --config <path>) [--dry-run] [options]
-
-computer-mcp serve stdio|http --config <path> [options]
-computer-mcp bridge [options]
+computer-mcp install codex [--config <config>] [--app] [--name <name>] [--codex-cli <codex-cli>] [--server-executable <server-executable>] [--dry-run]
+computer-mcp serve stdio --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>]
+computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>]
+computer-mcp bridge [--socket <socket>] [--tunnel-credential-file <tunnel-credential-file>] [--tunnel-profile-id <tunnel-profile-id>] [--client-identity <client-identity>]
 ```
 
 Use `--help` on any command for the authoritative options and exit behavior.
@@ -98,6 +113,7 @@ machine-wide process scan:
 ```sh
 computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
 computer-mcp codex diagnostics --workspace-id <workspace-id>
+computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id>
 ```
 
 `diagnose-thread` explains whether a live Computer MCP runtime has the thread
@@ -105,14 +121,84 @@ loaded, subscribed, or active; whether it is known but released; or whether an
 external writer is only suspected. It returns exact safe follow-up tool calls,
 including inspecting or releasing the owned runtime and deliberately
 reclaiming an idle persisted thread. `--observed-error` may include the message
-shown by Codex Desktop; it is redacted and bounded before appearing in the
-result.
+shown by another official client; it is redacted and bounded before appearing
+in the result.
 
 `diagnostics` returns a redacted workspace snapshot covering live and persisted
 runtimes, process groups, thread and turn state, approvals, acceptance runs,
 worktree leases, recent tool/Git audit linkage, cleanup previews, and actionable
 findings. Neither command signals an external Codex process. Both require the
 running App control plane and a registered workspace id.
+
+`release-thread` performs the complete handoff transaction across every
+matching Computer MCP-owned runtime. Graceful mode refuses active turns and
+pending interactive requests. `--interrupt-active-turn` explicitly permits
+the target turn to be interrupted. `--force-owned-runtime` may stop only exact
+matching Computer MCP-owned runtimes when graceful unsubscription cannot
+establish the postcondition. Success requires `final_classification` to be
+`released_persisted`, `externally_claimable` to be true, and no Computer MCP
+writer ownership to remain. The persisted Goal is unchanged and a repeat is
+reported as already released.
+
+## Scoped Codex execution elevation
+
+Remote or ordinary callers request a grant through
+`codex.app.elevation.request`; the CLI intentionally does not turn that request
+into local approval. Review and resolve it from the local App/CLI control plane:
+
+```sh
+computer-mcp codex elevation list --workspace-id <workspace-id>
+computer-mcp codex elevation read <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation approve <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation deny <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation revoke <grant-id> --workspace-id <workspace-id>
+computer-mcp codex elevation effective --workspace-id <workspace-id> \
+  [--thread-id <thread-id>]
+```
+
+Approve and deny require the local caller and `local-admin` profile. A grant is
+bound to its original workspace, canonical root, profile, caller, connection,
+and optional thread. Approval affects only an eligible future thread/turn
+start; it never hot-switches an active turn. `effective` reports requested and
+effective sandbox state without changing it. Revocation restores the configured
+safe sandbox for future turns while leaving an already active turn unchanged.
+List, read, and mutation results include a structured `local_approval_review`
+with the workspace display name/root, exact binding and duration, network,
+filesystem, `.git`, outside-workspace and macOS privacy effects, plus the exact
+revoke tool arguments and CLI argv. Product surfaces may render that structure
+in natural language; the field values, not one fixed sentence, are normative.
+
+## Bounded recent thread reads
+
+Use `recent-thread` for supervision instead of a full historical
+`thread/read`:
+
+```sh
+computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id> \
+  --max-turns 10 --max-messages 50 --max-items 100 \
+  --max-bytes 262144 --max-output-bytes 524288 \
+  --max-elapsed-milliseconds 2000
+```
+
+The result includes a snapshot-bound `next_before_cursor`, `has_more`, Goal and
+active-turn state, recent progress, and exact I/O/output/latency bounds. Pass
+the cursor back with `--before-cursor` for an older bounded page. The command
+opens Codex persistence read-only and never loads the full history by default.
+
+## Workspace registration repair
+
+`workspace add` resolves symlinks and is idempotent for an existing canonical
+root. To repair older duplicates, first preview:
+
+```sh
+computer-mcp workspace deduplicate
+```
+
+Review canonical ids, aliases, profile changes, and metadata conflicts, then
+apply the unchanged plan with its digest. `--allow-metadata-conflicts` is an
+explicit choice to keep the oldest registration metadata. The operation never
+deletes the workspace directory; retired ids remain aliases for historical
+references.
 
 ## App-owned operation
 

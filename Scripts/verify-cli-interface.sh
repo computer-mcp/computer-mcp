@@ -13,6 +13,7 @@ VALIDATION_BIN_DIR=$("$SWIFT_EXECUTABLE" build \
 
 ROOT_CLI="$ROOT_BIN_DIR/computer-mcp"
 VALIDATION_CLI="$VALIDATION_BIN_DIR/computer-mcp-validate"
+CLI_REFERENCE="$ROOT_DIR/Documentation/Reference/CLI.md"
 
 if [[ ! -x "$ROOT_CLI" || ! -x "$VALIDATION_CLI" ]]; then
   echo "CLI interface verification failed: expected executables are unavailable." >&2
@@ -38,49 +39,97 @@ verify_help() {
 
 verify_help "$ROOT_CLI"
 verify_help "$ROOT_CLI" app
-verify_help "$ROOT_CLI" app status
-verify_help "$ROOT_CLI" doctor
 verify_help "$ROOT_CLI" config
-verify_help "$ROOT_CLI" config path
-verify_help "$ROOT_CLI" config show
-verify_help "$ROOT_CLI" config validate
-verify_help "$ROOT_CLI" config export
-verify_help "$ROOT_CLI" config import
 verify_help "$ROOT_CLI" workspace
-verify_help "$ROOT_CLI" workspace list
-verify_help "$ROOT_CLI" workspace add
-verify_help "$ROOT_CLI" workspace remove
-verify_help "$ROOT_CLI" workspace enable
 verify_help "$ROOT_CLI" profile
-verify_help "$ROOT_CLI" profile list
-verify_help "$ROOT_CLI" profile show
-verify_help "$ROOT_CLI" profile grant
 verify_help "$ROOT_CLI" tunnel
 verify_help "$ROOT_CLI" tunnel openai
-verify_help "$ROOT_CLI" tunnel openai list
-verify_help "$ROOT_CLI" tunnel openai doctor
-verify_help "$ROOT_CLI" tunnel openai start
-verify_help "$ROOT_CLI" tunnel openai stop
-verify_help "$ROOT_CLI" tunnel openai logs
 verify_help "$ROOT_CLI" tunnel cloudflare
-verify_help "$ROOT_CLI" tunnel cloudflare list
-verify_help "$ROOT_CLI" tunnel cloudflare doctor
-verify_help "$ROOT_CLI" tunnel cloudflare start
-verify_help "$ROOT_CLI" tunnel cloudflare stop
-verify_help "$ROOT_CLI" tunnel cloudflare logs
+verify_help "$ROOT_CLI" codex
+verify_help "$ROOT_CLI" codex elevation
 verify_help "$ROOT_CLI" tools
-verify_help "$ROOT_CLI" tools list
-verify_help "$ROOT_CLI" tools inspect
-verify_help "$ROOT_CLI" tools call
+verify_help "$ROOT_CLI" audit
+verify_help "$ROOT_CLI" providers
 verify_help "$ROOT_CLI" install
-verify_help "$ROOT_CLI" install cli
-verify_help "$ROOT_CLI" install codex
 verify_help "$ROOT_CLI" uninstall
-verify_help "$ROOT_CLI" uninstall cli
 verify_help "$ROOT_CLI" serve
-verify_help "$ROOT_CLI" serve stdio
-verify_help "$ROOT_CLI" serve http
-verify_help "$ROOT_CLI" bridge
+public_leaf_commands=(
+  "app status"
+  "doctor"
+  "build-info"
+  "config path"
+  "config show"
+  "config defaults"
+  "config validate"
+  "config export"
+  "config import"
+  "workspace list"
+  "workspace add"
+  "workspace remove"
+  "workspace enable"
+  "workspace deduplicate"
+  "profile list"
+  "profile show"
+  "profile grant"
+  "profile shell"
+  "tunnel openai list"
+  "tunnel openai doctor"
+  "tunnel openai start"
+  "tunnel openai stop"
+  "tunnel openai logs"
+  "tunnel cloudflare list"
+  "tunnel cloudflare doctor"
+  "tunnel cloudflare start"
+  "tunnel cloudflare stop"
+  "tunnel cloudflare logs"
+  "codex diagnose-thread"
+  "codex diagnostics"
+  "codex release-thread"
+  "codex recent-thread"
+  "codex elevation list"
+  "codex elevation read"
+  "codex elevation approve"
+  "codex elevation deny"
+  "codex elevation revoke"
+  "codex elevation effective"
+  "tools list"
+  "tools inspect"
+  "tools call"
+  "tools inventory"
+  "audit export"
+  "providers discover"
+  "install cli"
+  "uninstall cli"
+  "install codex"
+  "serve stdio"
+  "serve http"
+  "bridge"
+)
+actual_command_lines=()
+for command_path in $public_leaf_commands; do
+  usage_line=$("$ROOT_CLI" ${=command_path} --help \
+    | /usr/bin/awk '/^USAGE: / { sub(/^USAGE: /, ""); print; exit }')
+  [[ -n "$usage_line" ]] || {
+    echo "CLI interface verification failed: missing usage for '$command_path'." >&2
+    exit 1
+  }
+  actual_command_lines+=("$usage_line")
+done
+actual_command_surface=$(printf '%s\n' "${actual_command_lines[@]}")
+actual_command_surface=${actual_command_surface%$'\n'}
+documented_command_surface=$(/usr/bin/awk '
+  $0 == "## Command surface" { found_surface = 1; next }
+  found_surface && $0 == "```text" { in_surface = 1; next }
+  in_surface && $0 == "```" { exit }
+  in_surface && length($0) > 0 { print }
+' "$CLI_REFERENCE")
+if [[ "$documented_command_surface" != "$actual_command_surface" ]]; then
+  echo "CLI interface verification failed: CLI.md command surface differs from executable USAGE output." >&2
+  /usr/bin/diff -u \
+    <(printf '%s\n' "$actual_command_surface") \
+    <(printf '%s\n' "$documented_command_surface") >&2 || true
+  exit 1
+fi
 
 verify_help "$VALIDATION_CLI"
 verify_help "$VALIDATION_CLI" test-case

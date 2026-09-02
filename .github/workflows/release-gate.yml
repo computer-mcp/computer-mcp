@@ -68,6 +68,7 @@ jobs:
           Scripts/verify-dmg-signing-boundary-regression.sh
           Scripts/verify-developer-id-signature-record-regression.sh
           Scripts/verify-notarization-record-regression.sh
+          Scripts/verify-artifact-provenance-boundary.sh
           Scripts/verify-release-asset-boundary-regression.sh
           Scripts/write-release-checksums-regression.sh
           Scripts/verify-release-tag-restoration.sh
@@ -104,7 +105,7 @@ jobs:
           Scripts/verify-distribution.sh
 
   release:
-    name: Sign, notarize, and draft release
+    name: Sign, notarize, verify, and publish release
     needs: verify
     runs-on: macos-26
     timeout-minutes: 120
@@ -223,7 +224,7 @@ jobs:
           SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_SIGNING_IDENTITY }}
         run: Scripts/release-ci.sh
 
-      - name: Create draft GitHub Release
+      - name: Upload, byte-verify, and publish GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -249,6 +250,47 @@ jobs:
             --notes-file "$notes" \
             "${assets[@]}" \
             dist/SHA256SUMS
+
+          dmg_name="Computer-MCP-${version}-universal.dmg"
+          candidate_receipt="dist/Computer-MCP-${version}-universal-ArtifactProvenance.json"
+          published_receipt="dist/Computer-MCP-${version}-PublishedArtifactProvenance.json"
+          download_dir="$(mktemp -d "$RUNNER_TEMP/computer-mcp-published-asset.XXXXXX")"
+          trap 'rm -rf -- "$download_dir"' EXIT
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "$dmg_name" \
+            --dir "$download_dir"
+          cmp -s "dist/$dmg_name" "$download_dir/$dmg_name" || {
+            echo "Uploaded GitHub release DMG is not byte-identical to the candidate." >&2
+            exit 1
+          }
+          published_sha256="$(shasum -a 256 "$download_dir/$dmg_name" | awk '{print $1}')"
+          source_commit="$(jq -er '.source.commit' "$candidate_receipt")"
+          build_identity="$(jq -er '.source.build_identity' "$candidate_receipt")"
+          app_notary_id="$(jq -er '.notarization.app.submission_id' "$candidate_receipt")"
+          dmg_notary_id="$(jq -er '.notarization.dmg.submission_id' "$candidate_receipt")"
+          SOURCE_COMMIT="$source_commit" \
+            RELEASE_COMMIT="$source_commit" \
+            RELEASE_TAG="$GITHUB_REF_NAME" \
+            BUILD_IDENTITY="$build_identity" \
+            BUILD_IDENTITY_PATH="dist/Computer MCP.app/Contents/Resources/ComputerMCPBuildIdentity.plist" \
+            CREATION_PHASE=published_asset_verification \
+            APP_NOTARIZATION_STATE=accepted \
+            DMG_NOTARIZATION_STATE=accepted \
+            APP_NOTARIZATION_ID="$app_notary_id" \
+            DMG_NOTARIZATION_ID="$dmg_notary_id" \
+            APP_STAPLE_STATE=validated \
+            DMG_STAPLE_STATE=validated \
+            PUBLISHED_ASSET_SHA256="$published_sha256" \
+            BYTE_IDENTICAL_TO_PUBLISHED_ASSET=true \
+            Scripts/write-artifact-provenance.sh \
+              "dist/$dmg_name" "$published_receipt" exact_published_release
+          BUILD_IDENTITY_PATH="dist/Computer MCP.app/Contents/Resources/ComputerMCPBuildIdentity.plist" \
+            VERIFY_GIT_TAG=1 Scripts/verify-artifact-provenance.sh \
+            "$published_receipt" "dist/$dmg_name" exact_published_release
+          gh release upload "$GITHUB_REF_NAME" "$published_receipt"
+          gh release edit "$GITHUB_REF_NAME" --draft=false
+          trap - EXIT
+          rm -rf -- "$download_dir"
 
       - name: Remove ephemeral Apple signing assets
         if: always()

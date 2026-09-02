@@ -8,8 +8,21 @@ METADATA_DIR="$OUTPUT_DIR/ReleaseMetadata"
 INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
 APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")
 APP_BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")
-DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$APP_VERSION-universal.dmg"}
 RELEASE_MODE=${RELEASE_MODE:-0}
+SOURCE_COMMIT=${SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
+ARTIFACT_BUILD_ID=${ARTIFACT_BUILD_ID:-"$APP_BUILD-${SOURCE_COMMIT[1,12]}"}
+if [[ "$RELEASE_MODE" == "1" ]]; then
+  ARTIFACT_CLASS=${ARTIFACT_CLASS:-release_candidate}
+  DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$APP_VERSION-universal.dmg"}
+else
+  ARTIFACT_CLASS=${ARTIFACT_CLASS:-development}
+  DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$APP_VERSION-$ARTIFACT_CLASS-$ARTIFACT_BUILD_ID-universal.dmg"}
+fi
+PROVENANCE_PATH=${PROVENANCE_PATH:-"${DMG_PATH:r}-ArtifactProvenance.json"}
+WORKING_DMG_PATH="$DMG_PATH"
+if [[ "$RELEASE_MODE" == "1" ]]; then
+  WORKING_DMG_PATH="$OUTPUT_DIR/.Computer-MCP-$APP_VERSION-release-candidate-$ARTIFACT_BUILD_ID.dmg"
+fi
 STAGING_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-dmg.XXXXXX")
 STAGING_DIR="$STAGING_PARENT/Computer MCP $APP_VERSION"
 APP_NOTARY_ZIP="$OUTPUT_DIR/Computer-MCP-$APP_VERSION-app-notary.zip"
@@ -21,6 +34,9 @@ typeset -a NOTARY_ARGUMENTS=()
 cleanup() {
   /bin/rm -rf -- "$STAGING_PARENT"
   /bin/rm -f -- "$APP_NOTARY_ZIP"
+  if [[ "$WORKING_DMG_PATH" != "$DMG_PATH" ]]; then
+    /bin/rm -f -- "$WORKING_DMG_PATH"
+  fi
 }
 trap cleanup EXIT
 
@@ -70,6 +86,23 @@ submit_for_notarization() {
 }
 
 [[ -d "$APP_PATH" ]] || fail "Missing app bundle: $APP_PATH"
+[[ "$SOURCE_COMMIT" =~ '^[0-9a-f]{40}$' ]] \
+  || fail "SOURCE_COMMIT must be a full lowercase Git commit."
+[[ "$ARTIFACT_BUILD_ID" =~ '^[A-Za-z0-9._-]{1,200}$' ]] \
+  || fail "ARTIFACT_BUILD_ID is missing or unsafe."
+if [[ "$RELEASE_MODE" == "1" ]]; then
+  [[ "$ARTIFACT_CLASS" == "release_candidate" ]] \
+    || fail "Release packaging must create the release_candidate artifact class."
+  [[ "${DMG_PATH:t}" == "Computer-MCP-$APP_VERSION-universal.dmg" ]] \
+    || fail "Release candidate output must use the exact final asset filename."
+else
+  [[ "$ARTIFACT_CLASS" == "development" || "$ARTIFACT_CLASS" == "validation" ]] \
+    || fail "Local packaging supports only development or validation artifact classes."
+  [[ "${DMG_PATH:t}" == *"-$ARTIFACT_CLASS-"* ]] \
+    || fail "Local artifact filename must identify its $ARTIFACT_CLASS class."
+fi
+[[ ! -e "$DMG_PATH" && ! -e "$PROVENANCE_PATH" ]] \
+  || fail "Refusing to overwrite an existing artifact or provenance receipt."
 [[ -f "$METADATA_DIR/ThirdPartyNotices.txt" ]] \
   || fail "Missing generated ThirdPartyNotices.txt. Run Scripts/build-app.sh first."
 APP_ENVIRONMENT=$(/usr/bin/plutil -extract ComputerMCPEnvironment raw -o - \
@@ -82,12 +115,17 @@ BUILT_APP_VERSION=$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o -
   "$APP_PATH/Contents/Info.plist")
 BUILT_APP_BUILD=$(/usr/bin/plutil -extract CFBundleVersion raw -o - \
   "$APP_PATH/Contents/Info.plist")
+BUILD_IDENTITY_PATH="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
+[[ -f "$BUILD_IDENTITY_PATH" ]] || fail "The App is missing its signed build identity."
+BUILT_SOURCE_COMMIT=$(/usr/bin/plutil -extract source_commit raw -o - "$BUILD_IDENTITY_PATH")
 [[ "$APP_ENVIRONMENT" == "production" ]] \
   || fail "DMG packaging requires the production App environment."
 [[ "$APP_BUNDLE_ID" == "com.showxu.computer-mcp" ]] \
   || fail "DMG packaging requires the production Bundle ID."
 [[ "$BUILT_APP_VERSION" == "$APP_VERSION" && "$BUILT_APP_BUILD" == "$APP_BUILD" ]] \
   || fail "The built App version does not match the repository release metadata."
+[[ "$BUILT_SOURCE_COMMIT" == "$SOURCE_COMMIT" ]] \
+  || fail "The built App source commit differs from SOURCE_COMMIT."
 /bin/mkdir -p "$STAGING_DIR"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
@@ -137,31 +175,58 @@ fi
   "$STAGING_DIR/ThirdPartyNotices.txt" \
   || fail "App and DMG ThirdPartyNotices.txt differ."
 
-if [[ -e "$DMG_PATH" ]]; then
-  /bin/rm -f -- "$DMG_PATH"
-fi
 /usr/sbin/diskutil image create from \
   --format UDZO \
   "$STAGING_DIR" \
-  "$DMG_PATH"
+  "$WORKING_DMG_PATH"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
-  /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp --identifier "$DMG_SIGNING_IDENTIFIER" "$DMG_PATH"
-  /usr/bin/codesign --verify --strict --verbose=2 "$DMG_PATH"
-  DMG_SIGNATURE=$(/usr/bin/codesign -d --verbose=4 "$DMG_PATH" 2>&1)
+  /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp --identifier "$DMG_SIGNING_IDENTIFIER" "$WORKING_DMG_PATH"
+  /usr/bin/codesign --verify --strict --verbose=2 "$WORKING_DMG_PATH"
+  DMG_SIGNATURE=$(/usr/bin/codesign -d --verbose=4 "$WORKING_DMG_PATH" 2>&1)
   print -r -- "$DMG_SIGNATURE" | "$ROOT_DIR/Scripts/verify-developer-id-signature-record.sh" "$EXPECTED_TEAM_ID" "DMG" "$DMG_SIGNING_IDENTIFIER"
-  submit_for_notarization "$DMG_PATH" "$DMG_NOTARY_RECORD" "DMG"
-  xcrun stapler staple "$DMG_PATH"
-  xcrun stapler validate "$DMG_PATH"
+  submit_for_notarization "$WORKING_DMG_PATH" "$DMG_NOTARY_RECORD" "DMG"
+  xcrun stapler staple "$WORKING_DMG_PATH"
+  xcrun stapler validate "$WORKING_DMG_PATH"
+  /bin/mv -- "$WORKING_DMG_PATH" "$DMG_PATH"
 fi
 
 DMG_HASH=$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')
 /usr/bin/printf '%s  %s\n' "$DMG_HASH" "${DMG_PATH:t}" > "$CHECKSUM_PATH"
 
 if [[ "$RELEASE_MODE" == "1" ]]; then
+  APP_NOTARIZATION_ID=$(/usr/bin/jq -er '.id' "$APP_NOTARY_RECORD")
+  DMG_NOTARIZATION_ID=$(/usr/bin/jq -er '.id' "$DMG_NOTARY_RECORD")
+  SOURCE_COMMIT="$SOURCE_COMMIT" \
+    RELEASE_COMMIT="$SOURCE_COMMIT" \
+    RELEASE_TAG="${GITHUB_REF_NAME:-}" \
+    BUILD_IDENTITY="$APP_VERSION-$APP_BUILD-$ARTIFACT_BUILD_ID" \
+    BUILD_IDENTITY_PATH="$BUILD_IDENTITY_PATH" \
+    CREATION_PHASE="release_candidate" \
+    APP_NOTARIZATION_STATE=accepted \
+    DMG_NOTARIZATION_STATE=accepted \
+    APP_NOTARIZATION_ID="$APP_NOTARIZATION_ID" \
+    DMG_NOTARIZATION_ID="$DMG_NOTARIZATION_ID" \
+    APP_STAPLE_STATE=validated \
+    DMG_STAPLE_STATE=validated \
+    "$ROOT_DIR/Scripts/write-artifact-provenance.sh" \
+      "$DMG_PATH" "$PROVENANCE_PATH" release_candidate
+  BUILD_IDENTITY_PATH="$BUILD_IDENTITY_PATH" \
+    "$ROOT_DIR/Scripts/verify-artifact-provenance.sh" \
+    "$PROVENANCE_PATH" "$DMG_PATH" release_candidate
   [[ -s "$CHECKSUM_PATH" ]] || fail "Final SHA256SUMS was not created."
   echo "Created notarized and stapled release DMG: $DMG_PATH"
 else
-  echo "Created development Universal 2 DMG: $DMG_PATH"
+  SOURCE_COMMIT="$SOURCE_COMMIT" \
+    BUILD_IDENTITY="$APP_VERSION-$APP_BUILD-$ARTIFACT_BUILD_ID" \
+    BUILD_IDENTITY_PATH="$BUILD_IDENTITY_PATH" \
+    CREATION_PHASE="$ARTIFACT_CLASS" \
+    "$ROOT_DIR/Scripts/write-artifact-provenance.sh" \
+      "$DMG_PATH" "$PROVENANCE_PATH" "$ARTIFACT_CLASS"
+  BUILD_IDENTITY_PATH="$BUILD_IDENTITY_PATH" \
+    "$ROOT_DIR/Scripts/verify-artifact-provenance.sh" \
+    "$PROVENANCE_PATH" "$DMG_PATH" "$ARTIFACT_CLASS"
+  echo "Created $ARTIFACT_CLASS Universal 2 DMG: $DMG_PATH"
 fi
 echo "Final DMG SHA256: $DMG_HASH"
+echo "Artifact provenance: $PROVENANCE_PATH"

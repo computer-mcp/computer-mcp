@@ -20,13 +20,16 @@ The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
    temporary runner Keychain, builds fresh arm64 and x86_64 slices, signs the
    App with Developer ID, Developer ID signs the DMG container, notarizes and
    staples the App and DMG, runs Gatekeeper validation, captures both
-   notarization receipts, renders artifact-bound
-   release records, assembles checksummed assets, and creates a draft GitHub
-   Release.
+   notarization receipts, renders artifact-bound release records, assembles
+   checksummed assets, uploads them to a draft GitHub Release, downloads the
+   same DMG, proves byte identity, writes the published-artifact provenance
+   receipt, and only then makes the Release public.
 
-Publishing the draft is a GitHub-side operator action after the notarized DMG
-has passed final installation and ChatGPT acceptance. A tag never causes a
-local machine to package or upload an official artifact.
+All product, security, real App Server, handoff, elevation, vehicleOS,
+cold-start, and local package acceptance must be complete before the signed tag
+is pushed. The draft is an internal atomic publication stage, not a second
+human acceptance cycle. A tag never causes a local machine to package or upload
+an official artifact.
 
 ## One-time GitHub configuration
 
@@ -133,7 +136,9 @@ Before tagging:
    corresponding draft markers; any additional external legal review follows
    the publisher's release policy and is not a technical release gate;
 5. merge the release commit to `master` and wait for normal CI to pass;
-6. create an SSH-signed annotated tag from that exact commit and push only the
+6. complete the release-blocking temporary and explicitly authorized real
+   workflow acceptance against the locally signed validation build;
+7. create an SSH-signed annotated tag from that exact commit and push only the
    tag.
 
 Resolve the tag from the repository version so the example cannot drift from
@@ -174,6 +179,10 @@ package-dmg.sh
 verify-distribution.sh
 assemble-release-assets.sh
 gh release create --draft
+gh release download
+cmp candidate and uploaded DMG bytes
+write and verify exact-published provenance
+gh release edit --draft=false
 ```
 
 `build-app.sh` resolves the locked SwiftPM graph, compiles optimized arm64 and
@@ -182,16 +191,33 @@ version-derived notices/SBOM/dependency metadata, validates the provisioning
 profile and private Keychain group, and signs the embedded CLI and App with
 Hardened Runtime and a secure timestamp.
 
-`package-dmg.sh` submits a ZIP of the signed App to Apple's notary service,
-passes the returned JSON through a separately regression-tested fail-closed
-verifier, requires an `Accepted` receipt and UUID submission ID, staples and
-validates the App ticket, and creates
+`package-dmg.sh` separates four artifact classes: `development`, `validation`,
+`release_candidate`, and `exact_published_release`. Development and validation
+filenames contain their class and an immutable build identity; they cannot bind
+a release tag or use the conventional final release filename.
+
+In the protected job, `package-dmg.sh` submits a ZIP of the signed App to
+Apple's notary service, passes the returned JSON through a separately
+regression-tested fail-closed verifier, requires an `Accepted` receipt and UUID
+submission ID, staples and validates the App ticket, and creates
 `Computer-MCP-<version>-universal.dmg`. Before submitting that exact DMG, the
 script signs the container with the configured Developer ID Application
 identity, the unique `com.showxu.computer-mcp.dmg` signing identifier, and a
 secure timestamp; verifies its signature record, identifier, and Team ID; then
-submits, staples, and validates its ticket. Only after those mutations finish
-does it write `SHA256SUMS`.
+submits, staples, and validates its ticket. The candidate is built under a
+unique hidden working name and moved atomically to the conventional filename
+only after signing, notarization, and stapling have succeeded. Only then does
+the script write `SHA256SUMS` and a `release_candidate` provenance receipt.
+
+Every provenance receipt binds artifact class and creation phase, filename,
+size, SHA-256, source commit, build identity and its required digest,
+App and DMG notarization states and submission IDs, staple validation, and
+release tag/commit when applicable. The `exact_published_release` receipt also
+binds the downloaded GitHub asset SHA-256 and a successful byte-for-byte
+comparison. A receipt is stored beside its artifact and is rejected after any
+artifact mutation. Verification also hashes the supplied embedded
+`ComputerMCPBuildIdentity.plist` and requires its `source_commit` to match the
+receipt, so a receipt cannot be reused with a different App build identity.
 
 `verify-distribution.sh` mounts the DMG read-only and verifies the checksum,
 volume identity, Universal 2 slices, versions, source commit, embedded CLI
@@ -209,9 +235,14 @@ over the complete upload set.
 An independently generated summary-only Evidence Manifest can be required with
 `INCLUDE_EVIDENCE_MANIFEST=1`; private raw evidence is never uploaded.
 
-## Draft acceptance and publication
+## Atomic publication and installed verification
 
-Download every file from the draft Release and verify:
+Before tagging, run the complete local acceptance described above. The
+protected workflow then verifies every file in its staged draft and refuses to
+publish until the uploaded DMG is byte-identical to the already verified
+candidate. It does not rebuild, re-sign, or repair an uploaded asset.
+
+After publication, download every file and verify the immutable release record:
 
 ```sh
 release_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
@@ -223,18 +254,20 @@ spctl --assess --type open --context context:primary-signature --verbose=2 \
 xcrun stapler validate "$release_dmg"
 ```
 
-Then install the App from the DMG and run the local, ChatGPT, permission,
-Keychain, launch-at-login, and lifecycle acceptance checks against that exact
-artifact. Publishing the existing draft is the operator attestation that all
-22 canonical checks passed. A live Cloudflare named deployment is a
-user-owned deployment check, not a publisher credential or release gate. Do
-not rebuild or replace individual assets after acceptance.
+Then install the exact published App, restore the active profile, registered
+workspaces, OpenAI Tunnel, gateway, and launch-at-login state, and run a bounded
+production verification plus ownership/elevation diagnostics. This post-install check
+confirms installation and restored local state; it is not permission to defer a
+release-blocking product test until after publication. A live Cloudflare named
+deployment is a user-owned deployment check, not a publisher credential or
+release gate. Do not rebuild or replace individual assets after publication.
 
-Workspace acceptance is local and independent of network providers. In the
-installed candidate, **Workspaces > Add** must open the native macOS directory
-panel, register a new fixture directory with a non-stale bookmark, and refresh
-the existing page in place. A website challenge, provider response, or Shell
-policy cannot be used to classify or interrupt this check.
+Workspace acceptance is local and independent of network providers. Before
+publication, the locally signed validation App's **Workspaces > Add** action
+must open the native macOS directory panel, register a new fixture directory
+with a non-stale bookmark, and refresh the existing page in place. A website
+challenge, provider response, or Shell policy cannot be used to classify or
+interrupt this check.
 
 The exhaustive tool run still calls every advertised catalog entry and
 requires exact audit correlation. Only a structured
@@ -276,6 +309,11 @@ Scripts/package-dmg.sh
 Scripts/verify-distribution.sh
 ```
 
+Local package output defaults to a development filename such as
+`Computer-MCP-<version>-development-<build-id>-universal.dmg`. Set
+`ARTIFACT_CLASS=validation` for a validation artifact. Neither class may use a
+final-release-looking filename, claim notarization, or bind a release tag.
+
 Local `RELEASE_MODE=1`, local notarization, and local GitHub Release upload are
 not supported release paths. Both `build-app.sh` and `package-dmg.sh` reject
 official release mode outside a GitHub tag job, and CI notarization accepts only
@@ -284,8 +322,9 @@ the protected Team API key workflow.
 ## Failure handling
 
 - A failed `verify` job never receives Apple or publication credentials.
-- A failed `release` job runs credential cleanup and creates no GitHub Release
-  unless every prior command has completed.
+- A failed `release` job runs credential cleanup. A failure before upload
+  creates no GitHub Release; a failure during atomic publication may leave a
+  draft that must be inspected explicitly and is never silently overwritten.
 - A rejected notarization stops before DMG publication; inspect the submission
   log using the same Team API key outside workflow logs.
 - A script failure after `notarytool submit --wait` returns is distinct from an
@@ -313,7 +352,8 @@ the protected Team API key workflow.
   immutable tag only when the source and workflow need no correction and no
   draft already exists.
 - If a draft exists, inspect and resolve it explicitly; the workflow will not
-  mutate it on a retry.
+  mutate it on a retry. A public Release is never treated as a retryable draft
+  and its assets are not replaced.
 
 GitHub CI uses the `macos-26` hosted image and selects Xcode 26.4 explicitly so
 the root and Validation Swift 6.2 package manifests use one known toolchain.

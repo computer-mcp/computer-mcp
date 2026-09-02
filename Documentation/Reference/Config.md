@@ -194,9 +194,11 @@ calls. The first read-only attempt receives half of that budget; writes are
 never retried. `app_server_app_list_timeout_seconds` separately bounds
 `app/list`, whose first bounded page may follow a multi-megabyte upstream
 directory snapshot. That request uses one process generation because restarting
-mid-snapshot would repeat the same work. After either deadline, Computer MCP
-completes the separately bounded process-group teardown before returning, and
-cancellation cannot start a later generation.
+mid-snapshot would repeat the same work. A deadline is recorded as a recoverable
+request failure, independently from runtime, connection, and process state. If
+the connection must be replaced, Computer MCP completes its separately bounded
+retirement before a read-only retry; cancellation cannot start a later
+generation after the request has resolved.
 
 `app_server_termination_grace_milliseconds` is the EOF and TERM grace interval
 (0–30000 ms). `app_server_kill_grace_milliseconds` is the final reaping wait
@@ -204,6 +206,15 @@ after KILL (100–30000 ms). `app_server_approval_timeout_seconds` bounds a live
 approval request (1–3600 seconds). Automatic workspace-write approval is off by
 default; enabling it does not bypass caller, profile, workspace, path, risk, or
 capability policy.
+
+The manifest cannot set `sandbox = "danger-full-access"`, and a caller cannot
+smuggle the value through aliases, spelling changes, nested parameters, or raw
+Codex configuration. Temporary full access is available only through a durable
+`codex.app.elevation.request` followed by an exact local-admin approval. It is
+bound to the requesting workspace/profile/caller/connection and optional
+thread, activates only on a future eligible start, and expires or can be
+revoked. There is deliberately no global or persistent always-full-access
+configuration switch.
 
 Exec requests deliberately ignore the user's global Codex `config.toml` while
 continuing to use that user's `CODEX_HOME` authentication. This prevents global

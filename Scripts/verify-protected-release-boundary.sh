@@ -32,6 +32,9 @@ protected_scripts=(
   Scripts/build-app.sh
   Scripts/verify-localization.sh
   Scripts/package-dmg.sh
+  Scripts/write-artifact-provenance.sh
+  Scripts/verify-artifact-provenance.sh
+  Scripts/verify-artifact-provenance-boundary.sh
   Scripts/verify-developer-id-signature-record.sh
   Scripts/verify-notarization-record.sh
   Scripts/verify-distribution.sh

@@ -22,10 +22,10 @@ line_for() {
 }
 
 CREATE_LINE=$(line_for '/usr/sbin/diskutil image create from \')
-SIGN_LINE=$(line_for '  /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp --identifier "$DMG_SIGNING_IDENTIFIER" "$DMG_PATH"')
-VERIFY_LINE=$(line_for '  /usr/bin/codesign --verify --strict --verbose=2 "$DMG_PATH"')
+SIGN_LINE=$(line_for '  /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp --identifier "$DMG_SIGNING_IDENTIFIER" "$WORKING_DMG_PATH"')
+VERIFY_LINE=$(line_for '  /usr/bin/codesign --verify --strict --verbose=2 "$WORKING_DMG_PATH"')
 RECORD_LINE=$(line_for '  print -r -- "$DMG_SIGNATURE" | "$ROOT_DIR/Scripts/verify-developer-id-signature-record.sh" "$EXPECTED_TEAM_ID" "DMG" "$DMG_SIGNING_IDENTIFIER"')
-SUBMIT_LINE=$(line_for '  submit_for_notarization "$DMG_PATH" "$DMG_NOTARY_RECORD" "DMG"')
+SUBMIT_LINE=$(line_for '  submit_for_notarization "$WORKING_DMG_PATH" "$DMG_NOTARY_RECORD" "DMG"')
 
 [[ "$CREATE_LINE" -lt "$SIGN_LINE" \
   && "$SIGN_LINE" -lt "$VERIFY_LINE" \

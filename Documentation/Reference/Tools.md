@@ -371,9 +371,11 @@ expand a workspace.
 The `[codex]` provider exposes five independent families:
 
 - `codex.app.*`: App Server status, reviewed method discovery/call, runtime
-  ownership and cleanup, thread start/list/read/fork/release/reclaim, handoff
-  diagnosis, native Goal get/set/clear, turns and steering, reviews, models,
-  Skills, apps, events, ordinary user-input requests, and durable approvals.
+  ownership and cleanup, stale ownership reconciliation, thread
+  start/list/read/recent/fork/release/reclaim, handoff diagnosis, scoped
+  execution elevation, native Goal get/set/clear, turns and steering, reviews,
+  models, Skills, apps, events, ordinary user-input requests, and durable
+  approvals.
 - `codex.exec.*`: start, resume, list, cursor events, result, and cancel.
 - `codex.mcp.*`: status, upstream tools, run/reply, calls, cursor events,
   result, approvals, approval response, and cancel.
@@ -392,16 +394,41 @@ generation identifiers but omits command output, file contents, and secrets.
 
 Runtime management is limited to Computer MCP-owned instances. Use
 `codex.app.runtimes.list|inspect|history`, preview cleanup, then perform an
-explicit reviewed cleanup or stop one exact runtime. `codex.app.thread.release`
-unsubscribes the current owned runtime. `codex.app.thread.reclaim` deliberately
-asks that runtime to resume a persisted thread after validating its durable
-registered-workspace ownership receipt or the official persisted thread index;
-a competing writer remains an error and is not terminated.
+explicit reviewed cleanup or stop one exact runtime.
+`codex.app.ownership.reconcile.preview|perform` repairs only a digest-bound set
+of stale loaded receipts after the referenced runtime and owned process are
+proven gone; it never mutates external Codex state or sends a signal.
+
+`codex.app.thread.release` performs a full handoff transaction across every
+matching owned runtime. It handles an active turn only when explicitly asked,
+refuses unresolved interactive state in graceful mode, verifies the official
+loaded set after bounded unsubscription, reaps an empty runtime, and returns
+success only when no Computer MCP writer remains and the thread is
+`released_persisted`. `codex.app.thread.reclaim` deliberately asks the runtime
+to resume a persisted thread after validating its durable registered-workspace
+ownership receipt or the official persisted thread index; a competing writer
+remains an error and is not terminated.
 `codex.app.handoff.diagnose` correlates that receipt with live runtime, process,
 connection, thread, turn, approval, and last-runtime evidence before supplying
 safe actions. Product surfaces describe those actions and ownership states in
 natural, contextual language; “重新接管线程” and “检查线程占用” are illustrative
 labels rather than fixed interface copy.
+
+`codex.app.elevation.request|list|read|approve|deny|revoke|effective` manages a
+separate, durable execution-sandbox grant. A request does not elevate anything;
+approve/deny are local-admin-only, and an approved grant is atomically consumed
+only by an eligible future thread/turn start. Next-turn, exact-thread TTL, and
+bounded-time modes remain bound to the original workspace canonical root,
+profile, caller, connection, and optional thread. Expiry, revocation,
+workspace/profile disablement, provider shutdown, and handoff remove future
+effect. The grant changes only Codex's sandbox and does not add Computer MCP
+tools or capabilities.
+
+`codex.app.thread.recent` reads a snapshot-bounded tail of a persisted rollout
+and returns metadata, official Goal state, active/recent turns, messages, items,
+and compact progress. Cursor, page bytes, Goal-scan bytes, output bytes, and
+elapsed scan limits are explicit. It opens Codex state read-only and reports
+`full_history_loaded = false`.
 
 Official Goal state and Computer MCP acceptance state are separate.
 `codex.app.goal.get|set|clear` use stable official protocol bindings and native
@@ -415,6 +442,13 @@ approval flow. `codex.app.approvals.list|read|respond` operates the durable
 broker for command, file, permissions, apply-patch, exec-command, and registered
 tool requests. Gateway policy decides whether an operation is eligible before
 approve-once, bounded session approval, denial, or timeout is offered.
+Capability permission and consent remain separate: an allowed mutation can
+still require consent. For gateway-owned builtins with a reviewed non-mutating
+dry-run implementation, invocation preflight reports read-only consent risk;
+for example, `git.add` with `dry_run=true` executes without creating a mutation
+approval. Actual writes retain their original risk. Configured and downstream
+tools are never downgraded from an unverified `dry_run` argument, and no
+remembered decision crosses tool, workspace, profile, caller, or path scope.
 
 Managed worktree provisioning is intentionally two step. The plan validates
 the repository, parent lease, branch, start commit, derived path, profile, and
@@ -431,9 +465,9 @@ by `operations.commit`. The workspace registration and profile grant are
 removed, but the branch remains available for review or reconciliation.
 
 All paths use the gateway-selected workspace, sandbox, approval policy, output
-bounds, and audit context. Raw argv, arbitrary Codex configuration,
-`danger-full-access`, login/token mutation, marketplace mutation, and remote
-pairing are not part of this tool surface.
+bounds, and audit context. Raw argv, arbitrary Codex configuration, unscoped or
+caller-supplied `danger-full-access`, login/token mutation, marketplace
+mutation, and remote pairing are not part of this tool surface.
 
 `codex.exec.*` invokes the upstream official `--ignore-user-config` mode. It
 still uses the local user's existing Codex authentication, but does not load

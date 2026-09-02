@@ -11,6 +11,7 @@ VERSION=$(/usr/libexec/PlistBuddy \
   "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
 TAG="v$VERSION"
 DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$VERSION-universal.dmg"}
+ARTIFACT_PROVENANCE=${ARTIFACT_PROVENANCE:-"${DMG_PATH:r}-ArtifactProvenance.json"}
 EVIDENCE_MANIFEST=${EVIDENCE_MANIFEST:-"$OUTPUT_DIR/Computer-MCP-$VERSION-EvidenceManifest.json"}
 INCLUDE_EVIDENCE_MANIFEST=${INCLUDE_EVIDENCE_MANIFEST:-0}
 CHECKSUM_PATH="$OUTPUT_DIR/SHA256SUMS"
@@ -39,10 +40,14 @@ for input_path in \
   "$METADATA_DIR/Computer-MCP-$VERSION-SBOM.cdx.json" \
   "$METADATA_DIR/ThirdPartyNotices.txt" \
   "$APP_NOTARY_RECORD" \
-  "$DMG_NOTARY_RECORD"
+  "$DMG_NOTARY_RECORD" \
+  "$ARTIFACT_PROVENANCE"
 do
   [[ -e "$input_path" ]] || fail "Missing release input: $input_path"
 done
+BUILD_IDENTITY_PATH="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist" \
+  VERIFY_GIT_TAG=1 "$ROOT_DIR/Scripts/verify-artifact-provenance.sh" \
+  "$ARTIFACT_PROVENANCE" "$DMG_PATH" release_candidate
 if [[ "$INCLUDE_EVIDENCE_MANIFEST" == "1" ]]; then
   [[ -f "$EVIDENCE_MANIFEST" ]] || fail "Missing release input: $EVIDENCE_MANIFEST"
 fi
@@ -141,6 +146,7 @@ assets=(
   "$READINESS_REPORT"
   "$APP_NOTARY_ASSET"
   "$DMG_NOTARY_ASSET"
+  "$ARTIFACT_PROVENANCE"
 )
 if [[ "$INCLUDE_EVIDENCE_MANIFEST" == "1" ]]; then
   assets+=("$EVIDENCE_MANIFEST")

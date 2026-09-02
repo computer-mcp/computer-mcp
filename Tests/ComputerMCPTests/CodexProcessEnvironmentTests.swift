@@ -6,6 +6,34 @@ import Testing
 @Suite
 final class CodexProcessEnvironmentTests {
   @Test
+  func testChildCodexProcessDoesNotInheritParentSessionAuthority() {
+    let environment = CodexProcessEnvironment.resolved(
+      base: [
+        "CODEX_APP_TOOLS_PIPE_PATH": "/tmp/parent-tools.sock",
+        "CODEX_CI": "1",
+        "CODEX_HOME": "/tmp/codex-home",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+        "CODEX_PERMISSION_PROFILE": "parent-profile",
+        "CODEX_SAGE_BACKFILL_TRACKER_TAB_REUSE": "1",
+        "CODEX_SESSION_ID": "parent-session",
+        "CODEX_THREAD_ID": "parent-thread",
+        "PATH": "/usr/bin",
+      ],
+      systemProxy: SystemNetworkProxySettings()
+    )
+
+    #expect(environment["CODEX_APP_TOOLS_PIPE_PATH"] == nil)
+    #expect(environment["CODEX_CI"] == nil)
+    #expect(environment["CODEX_INTERNAL_ORIGINATOR_OVERRIDE"] == nil)
+    #expect(environment["CODEX_PERMISSION_PROFILE"] == nil)
+    #expect(environment["CODEX_SAGE_BACKFILL_TRACKER_TAB_REUSE"] == nil)
+    #expect(environment["CODEX_SESSION_ID"] == nil)
+    #expect(environment["CODEX_THREAD_ID"] == nil)
+    #expect(environment["CODEX_HOME"] == "/tmp/codex-home")
+    #expect(environment["PATH"] == "/usr/bin")
+  }
+
+  @Test
   func testFixedMacOSProxiesAreMappedToConventionalCodexEnvironment() {
     let environment = CodexProcessEnvironment.resolved(
       base: ["PATH": "/usr/bin"],

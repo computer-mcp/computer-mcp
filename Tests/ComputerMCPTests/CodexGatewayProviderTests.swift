@@ -78,6 +78,154 @@ final class CodexGatewayProviderTests {
   }
 
   @Test
+  func testElevationApprovalAndOwnershipRepairAreLocalOnly() throws {
+    let provider = makeProvider()
+    let tools = try provider.listTools()
+    let approve = try #require(
+      tools.first { $0.name == "codex.app.elevation.approve" }
+    )
+    let deny = try #require(
+      tools.first { $0.name == "codex.app.elevation.deny" }
+    )
+    let repair = try #require(
+      tools.first { $0.name == "codex.app.ownership.reconcile.perform" }
+    )
+
+    #expect(provider.capability(for: approve).localOnly)
+    #expect(provider.capability(for: deny).localOnly)
+    #expect(provider.capability(for: repair).localOnly)
+  }
+
+  @Test
+  func testElevationMutationResultsReflectConfiguredSandboxAndRemainingGrants() async throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let workspace = RegisteredWorkspace(
+      id: "workspace-elevation",
+      displayName: "Elevation Fixture",
+      rootPath: "/tmp/workspace-elevation"
+    )
+    try database.saveWorkspace(workspace)
+    let requester = CodexRuntimeOwner(
+      workspaceID: workspace.id,
+      profileID: GatewayProfileID.chatGPTOperate.rawValue,
+      caller: GatewayCallerKind.secureTunnel.rawValue,
+      transport: "gateway_socket",
+      socketConnectionID: "connection-1",
+      tunnelInstanceID: "tunnel-1",
+      tunnelProfileID: "computer-mcp"
+    )
+    let configuration = CodexConfig(enabled: true, sandbox: .readOnly)
+    let requesterProvider = CodexGatewayProvider(
+      configuration: configuration,
+      appServer: FakeAppServerRuntime(),
+      exec: nil,
+      mcp: nil,
+      owner: requester,
+      database: database
+    )
+    let localAdministratorProvider = CodexGatewayProvider(
+      configuration: configuration,
+      appServer: FakeAppServerRuntime(),
+      exec: nil,
+      mcp: nil,
+      owner: CodexRuntimeOwner(
+        workspaceID: workspace.id,
+        profileID: GatewayProfileID.localAdmin.rawValue,
+        caller: GatewayCallerKind.localCLI.rawValue,
+        transport: "control_socket",
+        socketConnectionID: "local-control",
+        tunnelInstanceID: nil,
+        tunnelProfileID: nil
+      ),
+      database: database
+    )
+
+    await assertThrowsErrorAsync(
+      try await requesterProvider.callToolAsync(
+        name: "codex.app.elevation.request",
+        arguments: .object([
+          "mode": .string("bounded-time"),
+          "reason": .string("Reject a malformed optional turn limit."),
+          "maximum_turn_count": .string("many"),
+        ])
+      )
+    )
+
+    func requestGrant(expectedEffectiveSandbox: String) async throws -> String {
+      let result = try providerResult(
+        await requesterProvider.callToolAsync(
+          name: "codex.app.elevation.request",
+          arguments: .object([
+            "mode": .string("thread-scoped-ttl"),
+            "thread_id": .string("thread-1"),
+            "reason": .string("Exercise exact effective-state reporting."),
+          ])
+        )
+      )
+      #expect(result["effective_sandbox"] == .string(expectedEffectiveSandbox))
+      return try #require(result["grant"]?.objectValue?["id"]?.stringValue)
+    }
+
+    let firstID = try await requestGrant(expectedEffectiveSandbox: "read-only")
+    let firstApproval = try providerResult(
+      await localAdministratorProvider.callToolAsync(
+        name: "codex.app.elevation.approve",
+        arguments: .object(["grant_id": .string(firstID)])
+      )
+    )
+    #expect(firstApproval["effective_next_eligible_start"] == .bool(true))
+    let approvalReview = try #require(
+      firstApproval["grant"]?.objectValue?["local_approval_review"]?.objectValue
+    )
+    #expect(
+      approvalReview["workspace"]?.objectValue?["display_name"]
+        == .string("Elevation Fixture")
+    )
+    #expect(approvalReview["impact"]?.objectValue?["network_access"] == .bool(true))
+    #expect(
+      approvalReview["impact"]?.objectValue?["git_metadata_direct_write"] == .bool(true)
+    )
+    #expect(
+      approvalReview["impact"]?.objectValue?[
+        "sandbox_restriction_to_registered_workspace_removed"
+      ] == .bool(true)
+    )
+    #expect(
+      approvalReview["revoke"]?.objectValue?["cli_argv"]?.arrayValue
+        == [
+          .string("computer-mcp"), .string("codex"), .string("elevation"),
+          .string("revoke"), .string(firstID), .string("--workspace-id"),
+          .string(workspace.id),
+        ]
+    )
+    #expect(
+      firstApproval["effective"]?.objectValue?["effective_sandbox"]
+        == .string("danger-full-access")
+    )
+
+    let secondID = try await requestGrant(expectedEffectiveSandbox: "danger-full-access")
+    _ = try await localAdministratorProvider.callToolAsync(
+      name: "codex.app.elevation.approve",
+      arguments: .object(["grant_id": .string(secondID)])
+    )
+    let firstRevocation = try providerResult(
+      await requesterProvider.callToolAsync(
+        name: "codex.app.elevation.revoke",
+        arguments: .object(["grant_id": .string(firstID)])
+      )
+    )
+    #expect(firstRevocation["effective_next_turn"] == .string("danger-full-access"))
+
+    let secondRevocation = try providerResult(
+      await requesterProvider.callToolAsync(
+        name: "codex.app.elevation.revoke",
+        arguments: .object(["grant_id": .string(secondID)])
+      )
+    )
+    #expect(secondRevocation["effective_next_turn"] == .string("read-only"))
+  }
+
+  @Test
   func testAppMethodCatalogAndTypedCallReturnStructuredEnvelope() async throws {
     let provider = makeProvider()
 

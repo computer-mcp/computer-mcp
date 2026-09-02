@@ -31,19 +31,19 @@ remove_and_reject() {
 }
 
 remove_and_reject missing-sign \
-  '/usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp --identifier "$DMG_SIGNING_IDENTIFIER" "$DMG_PATH"'
+  '/usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp --identifier "$DMG_SIGNING_IDENTIFIER" "$WORKING_DMG_PATH"'
 remove_and_reject missing-timestamp ' --timestamp --identifier "$DMG_SIGNING_IDENTIFIER"'
 remove_and_reject missing-identifier ' --identifier "$DMG_SIGNING_IDENTIFIER"'
 remove_and_reject missing-record \
   'print -r -- "$DMG_SIGNATURE" | "$ROOT_DIR/Scripts/verify-developer-id-signature-record.sh"'
 
 /usr/bin/awk '
-  /codesign --force --sign "\$SIGNING_IDENTITY" --timestamp --identifier "\$DMG_SIGNING_IDENTIFIER" "\$DMG_PATH"/ {
+  /codesign --force --sign "\$SIGNING_IDENTITY" --timestamp --identifier "\$DMG_SIGNING_IDENTIFIER" "\$WORKING_DMG_PATH"/ {
     sign_line = $0
     next
   }
   { print }
-  /submit_for_notarization "\$DMG_PATH"/ { print sign_line }
+  /submit_for_notarization "\$WORKING_DMG_PATH"/ { print sign_line }
 ' "$SOURCE" >"$TEMP_DIR/wrong-order.sh"
 if "$VERIFIER" "$TEMP_DIR/wrong-order.sh" >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"; then
   fail "a DMG signed after notarization was accepted."

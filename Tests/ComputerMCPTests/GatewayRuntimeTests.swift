@@ -749,7 +749,7 @@ final class GatewayRuntimeTests {
       "[codex.app.override_denied] 'config' is controlled by the local gateway."
     )
     let dangerFullAccess = GatewayToolError.invalidArguments(
-      "[codex.app.danger_full_access_denied] danger-full-access is never accepted."
+      "[codex.app.danger_full_access_denied] Caller-supplied danger-full-access is denied; request a scoped grant for local approval."
     )
     let workspaceOverride = GatewayToolError.invalidArguments(
       "[codex.app.workspace_override_denied] cwd must match the bound workspace."

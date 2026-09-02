@@ -18,13 +18,17 @@ enum CodexThreadHandoffDiagnostics {
       let runtimeObject = runtime.objectValue ?? [:]
       return (runtimeObject["threads"]?.arrayValue ?? []).compactMap { thread in
         guard thread.objectValue?["thread_id"]?.stringValue == threadID else { return nil }
-        return .object([
-          "runtime_id": runtimeObject["runtime_id"] ?? .null,
-          "owner": runtimeObject["owner"] ?? .null,
-          "process": runtimeObject["process"] ?? .null,
-          "runtime_state": runtimeObject["state"] ?? .string("unknown"),
-          "thread": thread,
-        ])
+        var item: [String: JSONValue] = [:]
+        item["runtime_id"] = runtimeObject["runtime_id"] ?? .null
+        item["owner"] = runtimeObject["owner"] ?? .null
+        item["process"] = runtimeObject["process"] ?? .null
+        item["runtime_state"] = runtimeObject["runtime_state"] ?? .string("unknown")
+        item["connection_state"] = runtimeObject["connection_state"] ?? .string("unknown")
+        item["process_state"] = runtimeObject["process_state"] ?? .string("unknown")
+        item["current_request_state"] =
+          runtimeObject["current_request_state"] ?? .string("unknown")
+        item["thread"] = thread
+        return .object(item)
       }
     }
     let pendingApprovals =
@@ -39,6 +43,17 @@ enum CodexThreadHandoffDiagnostics {
         $0.id == record.runtimeID
       }
     }
+    let liveReceiptedProcess =
+      ownership.flatMap { record in
+        try? CodexThreadOwnershipReconciliation.hasLiveReceiptedProcess(
+          database: database,
+          runtimeID: record.runtimeID
+        )
+      } ?? false
+    let receiptedRuntimeIsCoordinated =
+      ownership.flatMap { record in
+        CodexRuntimeDirectory.shared.runtime(id: record.runtimeID, workspaceID: workspaceID)
+      } != nil
     let activeComputerMCP = matchingThreads.contains { item in
       guard let thread = item.objectValue?["thread"]?.objectValue else { return false }
       return thread["loaded"]?.boolValue == true
@@ -55,7 +70,7 @@ enum CodexThreadHandoffDiagnostics {
     if activeComputerMCP {
       classification = "computer_mcp_owned"
       explanation =
-        "A live Computer MCP-owned App Server has this thread loaded, subscribed, or active. Release the thread or stop that exact runtime before opening it in Codex Desktop."
+        "A live Computer MCP-owned App Server has this thread loaded, subscribed, or active. Release the thread or stop that exact runtime before another official client claims it."
       actions = matching.compactMap { runtime in
         guard let runtimeID = runtime.objectValue?["runtime_id"]?.stringValue else { return nil }
         return .object([
@@ -67,6 +82,16 @@ enum CodexThreadHandoffDiagnostics {
           ]),
         ])
       }
+    } else if liveReceiptedProcess && !receiptedRuntimeIsCoordinated {
+      classification = "computer_mcp_owned_process_without_live_runtime"
+      explanation =
+        "The exact Computer MCP runtime receipt still identifies a live owned process, but this gateway process cannot coordinate it. Wait for its watchdog or stop only that exact reviewed runtime; external claimability is not established."
+      actions = [
+        .object([
+          "tool": .string("codex.app.runtimes.cleanup.preview"),
+          "arguments": .object([:]),
+        ])
+      ]
     } else if errorSuggestsWriterConflict {
       classification = "external_writer_or_unfinished_watchdog"
       explanation =

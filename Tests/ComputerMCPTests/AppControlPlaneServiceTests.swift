@@ -1040,6 +1040,185 @@ final class AppControlPlaneServiceTests {
     #expect(!(FileManager.default.fileExists(atPath: socketURL.path)))
   }
 
+  @Test
+  func testWorkspaceRegistrationIsIdempotentAcrossCanonicalAliases() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let workspaceURL = fixture.root.appendingPathComponent("Canonical Workspace")
+    let aliasURL = fixture.root.appendingPathComponent("Workspace Alias")
+    try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: aliasURL, withDestinationURL: workspaceURL)
+
+    let first = try await fixture.controlPlane.registerWorkspace(
+      at: workspaceURL,
+      displayName: "Canonical Workspace"
+    )
+    let second = try await fixture.controlPlane.registerWorkspace(
+      at: workspaceURL,
+      displayName: "Canonical Workspace"
+    )
+    let alias = try await fixture.controlPlane.registerWorkspace(
+      at: aliasURL,
+      displayName: "Canonical Workspace"
+    )
+
+    #expect(second.id == first.id)
+    #expect(alias.id == first.id)
+    let registered = try await fixture.controlPlane.workspaces()
+    #expect(registered.count == 1)
+    #expect(registered.first?.id == first.id)
+    #expect(registered.first?.rootPath == first.rootPath)
+    #expect(first.rootPath == workspaceURL.resolvingSymlinksInPath().path)
+  }
+
+  @Test
+  func testWorkspaceRegistrationRejectsConflictingExplicitMetadata() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let workspaceURL = fixture.root.appendingPathComponent("Metadata Workspace")
+    try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+    let first = try await fixture.controlPlane.registerWorkspace(
+      at: workspaceURL,
+      displayName: "Stable Name"
+    )
+
+    do {
+      _ = try await fixture.controlPlane.registerWorkspace(
+        at: workspaceURL,
+        displayName: "Conflicting Name"
+      )
+      Issue.record("Expected duplicate canonical-root metadata to be rejected")
+    } catch let error as AppControlPlaneServiceError {
+      #expect(
+        error
+          == .workspaceMetadataConflict(
+            workspaceID: first.id,
+            existingDisplayName: "Stable Name",
+            requestedDisplayName: "Conflicting Name"
+          ))
+    }
+
+    let registered = try await fixture.controlPlane.workspaces()
+    #expect(registered.count == 1)
+    #expect(registered.first?.id == first.id)
+    #expect(registered.first?.displayName == "Stable Name")
+  }
+
+  @Test
+  func testRemovingWorkspaceAliasRemovesCanonicalProfileReference() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let canonical = RegisteredWorkspace(
+      id: "workspace-canonical",
+      displayName: "Shared Workspace",
+      rootPath: fixture.root.appendingPathComponent("Shared Workspace").path,
+      createdAt: Date(timeIntervalSince1970: 1),
+      updatedAt: Date(timeIntervalSince1970: 1)
+    )
+    let duplicate = RegisteredWorkspace(
+      id: "workspace-duplicate",
+      displayName: canonical.displayName,
+      rootPath: canonical.rootPath,
+      createdAt: Date(timeIntervalSince1970: 2),
+      updatedAt: Date(timeIntervalSince1970: 2)
+    )
+    try fixture.database.saveWorkspace(canonical)
+    try fixture.database.saveWorkspace(duplicate)
+    var profile = ProfileGrant.operate
+    profile.workspaceIDs = [duplicate.id]
+    try fixture.database.saveProfile(profile)
+    let plan = try await fixture.controlPlane.workspaceDeduplicationPlan()
+    _ = try await fixture.controlPlane.applyWorkspaceDeduplication(
+      expectedPlanDigest: plan.planDigest,
+      allowMetadataConflicts: false
+    )
+
+    try await fixture.controlPlane.removeWorkspace(id: duplicate.id)
+
+    #expect(try fixture.database.workspaces().isEmpty)
+    #expect(try fixture.database.workspace(id: canonical.id) == nil)
+    #expect(try fixture.database.workspace(id: duplicate.id) == nil)
+    #expect(try fixture.database.profiles().first?.workspaceIDs.isEmpty == true)
+  }
+
+  @Test
+  func testWorkspaceAndProfileDisablementInvalidateElevationGrants() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(DefaultGatewayConfiguration.manifest)
+    let workspaceURL = fixture.root.appendingPathComponent("Elevation Workspace")
+    try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+    let workspace = try await fixture.controlPlane.registerWorkspace(at: workspaceURL)
+    let localAdmin = CodexRuntimeOwner(
+      workspaceID: workspace.id,
+      profileID: GatewayProfileID.localAdmin.rawValue,
+      caller: GatewayCallerKind.localCLI.rawValue,
+      transport: "control_socket",
+      socketConnectionID: "local-control",
+      tunnelInstanceID: nil,
+      tunnelProfileID: nil
+    )
+    let operateOwner = CodexRuntimeOwner(
+      workspaceID: workspace.id,
+      profileID: GatewayProfileID.chatGPTOperate.rawValue,
+      caller: GatewayCallerKind.secureTunnel.rawValue,
+      transport: "gateway_socket",
+      socketConnectionID: "operate-connection",
+      tunnelInstanceID: "tunnel-1",
+      tunnelProfileID: "computer-mcp"
+    )
+    let workspaceGrant = try CodexElevationGrantService.request(
+      owner: operateOwner,
+      database: fixture.database,
+      threadID: nil,
+      mode: .nextTurn,
+      reason: "Workspace disablement fixture.",
+      maximumDurationSeconds: 300,
+      maximumTurnCount: nil
+    )
+    _ = try CodexElevationGrantService.approve(
+      id: workspaceGrant.id,
+      owner: localAdmin,
+      database: fixture.database
+    )
+    _ = try await fixture.controlPlane.setWorkspaceEnabled(
+      false,
+      workspaceID: workspace.id,
+      profileID: .chatGPTOperate
+    )
+    #expect(
+      try fixture.database.codexElevationGrant(id: workspaceGrant.id)?.state == .invalidated
+    )
+
+    let observeOwner = CodexRuntimeOwner(
+      workspaceID: workspace.id,
+      profileID: GatewayProfileID.chatGPTObserve.rawValue,
+      caller: GatewayCallerKind.secureTunnel.rawValue,
+      transport: "gateway_socket",
+      socketConnectionID: "observe-connection",
+      tunnelInstanceID: "tunnel-1",
+      tunnelProfileID: "computer-mcp"
+    )
+    let profileGrant = try CodexElevationGrantService.request(
+      owner: observeOwner,
+      database: fixture.database,
+      threadID: nil,
+      mode: .nextTurn,
+      reason: "Profile change fixture.",
+      maximumDurationSeconds: 300,
+      maximumTurnCount: nil
+    )
+    _ = try CodexElevationGrantService.approve(
+      id: profileGrant.id,
+      owner: localAdmin,
+      database: fixture.database
+    )
+    try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
+    #expect(
+      try fixture.database.codexElevationGrant(id: profileGrant.id)?.state == .invalidated
+    )
+  }
+
   private var validManifest: String {
     """
     schema_version = 1

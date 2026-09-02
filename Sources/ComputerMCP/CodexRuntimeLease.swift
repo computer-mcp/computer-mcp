@@ -1,6 +1,26 @@
 import Darwin
 import Foundation
 
+struct CodexRuntimeRequestFailure: Codable, Equatable, Sendable {
+  let kind: String
+  let message: String
+  let occurredAt: Date
+  let connectionGeneration: Int
+  let recoverable: Bool
+
+  private enum CodingKeys: String, CodingKey {
+    case kind
+    case message
+    case occurredAt = "occurred_at"
+    case connectionGeneration = "connection_generation"
+    case recoverable
+  }
+
+  var json: JSONValue {
+    (try? JSONValue.encoded(self)) ?? .object([:])
+  }
+}
+
 struct CodexRuntimeLeaseRecord: Codable, Equatable, Sendable, Identifiable {
   let id: String
   let owner: CodexRuntimeOwner?
@@ -11,9 +31,38 @@ struct CodexRuntimeLeaseRecord: Codable, Equatable, Sendable, Identifiable {
   var updatedAt: Date
   var shutdownReason: String?
   var cleanedAt: Date?
+  var runtimeState: String? = nil
+  var connectionState: String? = nil
+  var processState: String? = nil
+  var currentRequestState: String? = nil
+  var lastRequestFailure: CodexRuntimeRequestFailure? = nil
 
   var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])
+  }
+
+  func reconciledStateSemantics() -> CodexRuntimeLeaseRecord {
+    var reconciled = self
+    let terminal = state == "stopped" || state == "cleaned"
+    if !terminal, let priorShutdownReason = shutdownReason {
+      reconciled.runtimeState = runtimeState ?? "running"
+      reconciled.connectionState = connectionState ?? state
+      reconciled.processState = processState ?? process?.state.rawValue ?? "absent"
+      reconciled.currentRequestState = currentRequestState ?? "idle"
+      reconciled.lastRequestFailure =
+        lastRequestFailure
+        ?? CodexRuntimeRequestFailure(
+          kind:
+            priorShutdownReason == "request_timeout"
+            ? "request_timeout" : "compatibility_request_failure",
+          message: "Recovered a request failure stored before runtime/request state separation.",
+          occurredAt: updatedAt,
+          connectionGeneration: 0,
+          recoverable: true
+        )
+      reconciled.shutdownReason = nil
+    }
+    return reconciled
   }
 }
 
@@ -55,6 +104,10 @@ enum CodexRuntimeMaintenance {
       record.updatedAt = Date()
       record.cleanedAt = record.updatedAt
       record.shutdownReason = record.shutdownReason ?? "stale_record_cleaned"
+      record.runtimeState = "stopped"
+      record.connectionState = "stopped"
+      record.processState = "stopped"
+      record.currentRequestState = "idle"
       try database.saveCodexRuntimeLease(record)
       cleaned.append(record.json)
     }
@@ -72,7 +125,8 @@ enum CodexRuntimeMaintenance {
     guard let database else { return [] }
     return try database.codexRuntimeLeases(limit: 5_000).filter {
       $0.owner?.workspaceID == workspaceID
-        && ["starting", "running", "failed"].contains($0.state)
+        && ($0.runtimeState == "running"
+          || ["starting", "running", "failed"].contains($0.state))
     }
   }
 

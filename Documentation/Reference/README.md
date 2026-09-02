@@ -1,8 +1,8 @@
 # Reference
 
 - [Production Productization Acceptance Contract](ProductizationAcceptance.md):
-  normative scope, evidence requirements, and coordinated two-repository
-  release gates for the current production productization batch.
+  normative scope and evidence requirements for the focused production
+  reliability release.
 
 This directory contains detailed operational reference material.
 
@@ -11,6 +11,9 @@ This directory contains detailed operational reference material.
 - [Quick Start](QuickStart.md): release installation, first launch, and local MCP.
 - [CLI](CLI.md): command-line modes and exit behavior.
 - [Config](Config.md): TOML source and policy configuration.
+- [Tools](Tools.md): complete gateway tool families, including deterministic
+  Codex handoff, scoped local elevation, bounded recent-thread reads, and
+  ownership reconciliation.
 - [ChatGPT Web Runbook](ChatGPTWebRunbook.md): App-managed Secure MCP Tunnel setup.
 - [Cloudflare Runbook](CloudflareRunbook.md): named-tunnel onboarding,
   authentication, lifecycle, and verification.
@@ -63,7 +66,8 @@ This directory contains detailed operational reference material.
 - [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
 - [Tools](Tools.md): MCP gateway tools and result contracts.
 - [Release](Release.md): signed-tag GitHub Actions release, protected Apple
-  credentials, notarization, DMG, draft acceptance, and local rehearsal scope.
+  credentials, notarization, artifact provenance, atomic publication, and local
+  rehearsal scope.
 - [Troubleshooting](Troubleshooting.md): common failures and checks.
 - [简体中文](zh-CN/README.md): mirrored onboarding and recovery guides.
 

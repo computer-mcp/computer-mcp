@@ -56,6 +56,10 @@ Unknown tools, workspaces, providers, and Codex RPC methods fail closed.
 ## Workspace Model
 
 The App registers folders with persistent security bookmarks and stable ids.
+The symlink-resolved canonical root is the registration identity, so adding the
+same directory through another path spelling returns the existing workspace.
+Historical duplicate ids can be repaired through a reviewed, digest-bound
+deduplication plan; aliases preserve prior audit and ownership references.
 `workspace.list` and `workspace.describe` are always the discovery path. When
 multiple workspaces are granted, a scoped call must include `workspace_id`;
 there is no mutable global current directory.

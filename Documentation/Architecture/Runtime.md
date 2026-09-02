@@ -101,10 +101,11 @@ retired and reaped before a read-only request may make one fresh retry.
 
 Each runtime consumes App Server notifications and server requests for its
 current connection. It tracks threads known to that workspace as loaded,
-subscribed, active, idle, released, or persisted when the available protocol
-evidence supports that conclusion. Active turn and pending approval state are
-recorded separately. Reconnection creates a new connection generation; it does
-not transfer authority over an earlier generation.
+subscribed, active, idle, release-requested, released, externally claimable,
+stopped, stale-receipt, or inconsistent when the available protocol evidence
+supports that conclusion. Active turn, pending approval, and pending user-input
+state are recorded separately. Reconnection creates a new connection
+generation; it does not transfer authority over an earlier generation.
 
 Closing an MCP connection shuts down its `GatewayRuntime`, which shuts down
 every workspace provider. Codex shutdown cancels the notification and request
@@ -127,15 +128,53 @@ authority. Normal socket closure, abrupt disconnect, Tunnel replacement,
 service stop, request timeout, and parent death therefore converge on the same
 bounded cleanup contract.
 
-The configured App Server request timeout is an end-to-end budget for normal
-calls. It starts before connection startup and covers workspace validation, the
+The configured App Server request timeout is an end-to-end budget for a normal
+call. It starts before connection startup and covers workspace validation, the
 reviewed RPC, and at most one fresh-generation read-only retry. `app/list` has a
 separate configured budget because Codex may emit a multi-megabyte directory
 snapshot before its bounded page response; it uses one generation so a restart
-cannot repeat that snapshot. Teardown has its own bounded EOF, TERM, and KILL
-intervals and is completed before a timed-out call returns. Concurrent close
-paths share that one retirement operation, so neither back-pressured stdin nor
-duplicate close requests multiply the deadline.
+cannot repeat that snapshot. A request timeout is a recoverable request result,
+not a terminal runtime shutdown reason. Runtime lifecycle, connection state,
+process state, current request state, last request failure, and terminal
+shutdown reason are persisted independently. An actually stopped runtime has a
+terminal reason; a live running runtime does not. Current request state is
+derived from an active-request count, so one completed concurrent request cannot
+report the runtime idle while another request is still running.
+
+Connection retirement still has separately bounded EOF, TERM, and KILL
+intervals. Concurrent close paths share one retirement operation, so neither
+back-pressured stdin nor duplicate close requests multiply the deadline. A
+fresh read-only retry may begin only after the timed-out connection generation
+has been retired and reaped.
+
+### Thread handoff and bounded supervision
+
+`codex.app.thread.release` is a high-level transaction, not a synonym for one
+successful `thread/unsubscribe` response. It serializes against thread/turn
+starts, operates on every matching owned runtime, applies the requested active
+turn policy, resolves or refuses pending interactive state, validates the
+official loaded set after unsubscription, reaps runtimes that have no other
+work, and performs a final ownership rescan. Only a final
+`released_persisted` classification returns success.
+
+Long-running supervision uses `codex.app.thread.recent`. It reads the newest
+Codex state database in read-only mode, verifies the persisted thread's
+canonical workspace and rollout root, scans only a bounded rollout tail, and
+returns bounded metadata, Goal state, active/recent turns, messages, items, and
+compact progress. Snapshot-bound cursors provide older pages without loading
+the complete history. Page I/O, Goal scan I/O, record count, output bytes, and
+elapsed scan budget are reported with the result; no Codex state is mutated.
+
+### Validation cleanup
+
+Disposable real validation owns exact workspace, thread, runtime, process, and
+managed-worktree identities. Primary acceptance, turn finish,
+unsubscribe/release, runtime stop, process reap, worktree cleanup, and final
+diagnostics each have independent deadlines. A primary success remains a
+success when cleanup times out, with a structured cleanup warning naming the
+exact target and safe operator-reviewed action. Cleanup can stop only the receipted
+Computer MCP runtime/PID and cannot select a process or worktree by name or path
+heuristic.
 
 ## Policy And Results
 

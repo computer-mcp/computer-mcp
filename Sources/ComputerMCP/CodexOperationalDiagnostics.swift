@@ -4,6 +4,7 @@ enum CodexOperationalDiagnostics {
   static func snapshot(
     database: GatewayDatabase?,
     owner: CodexRuntimeOwner?,
+    configuredSandbox: CodexSandboxMode,
     limit: Int,
     now: Date = Date()
   ) async throws -> JSONValue {
@@ -32,6 +33,24 @@ enum CodexOperationalDiagnostics {
       database: database,
       workspaceID: workspaceID
     )
+    let ownershipReconciliation = try CodexThreadOwnershipReconciliation.preview(
+      database: database,
+      workspaceID: workspaceID
+    )
+    let elevationGrants: [CodexElevationGrantRecord] =
+      if database == nil {
+        []
+      } else {
+        try CodexElevationGrantService.visibleGrants(
+          owner: owner,
+          database: database,
+          limit: limit,
+          now: now
+        )
+      }
+    let effectiveElevationGrants = elevationGrants.filter {
+      $0.state.isEffective && $0.inFlightClaimID == nil
+    }
     let pendingApprovals = approvals.filter { $0.state == .pending }
     let activeRuns = runs.filter { !$0.state.isTerminal }
     let activeLeases = leases.filter { $0.state == .active && $0.expiresAt > now }
@@ -67,6 +86,10 @@ enum CodexOperationalDiagnostics {
         "persisted_runtime_count": .number(Double(persistedRuntimes.count)),
         "thread_ownership_receipt_count": .number(Double(threadOwnership.count)),
         "pending_approval_count": .number(Double(pendingApprovals.count)),
+        "effective_elevation_grant_count": .number(Double(effectiveElevationGrants.count)),
+        "ownership_reconciliation_candidate_count": .number(
+          Double(ownershipReconciliation.candidates.count)
+        ),
         "active_run_count": .number(Double(activeRuns.count)),
         "active_worktree_lease_count": .number(Double(activeLeases.count)),
         "active_managed_worktree_count": .number(Double(activeManagedWorktrees.count)),
@@ -77,7 +100,17 @@ enum CodexOperationalDiagnostics {
       "persisted_runtimes": .array(persistedRuntimes.map(\.json)),
       "thread_ownership_receipts": .array(threadOwnership.map(\.json)),
       "runtime_cleanup": cleanup,
+      "ownership_reconciliation": ownershipReconciliation.json,
       "pending_approvals": .array(pendingApprovals.map(\.json)),
+      "elevation": .object([
+        "configured_default_sandbox": .string(configuredSandbox.rawValue),
+        "requested_sandbox": effectiveElevationGrants.isEmpty
+          ? .null : .string("danger-full-access"),
+        "effective_next_eligible_start": effectiveElevationGrants.isEmpty
+          ? .string(configuredSandbox.rawValue) : .string("danger-full-access"),
+        "active_turn_unchanged": .bool(true),
+        "grants": .array(elevationGrants.map(\.json)),
+      ]),
       "active_runs": .array(activeRuns.map(\.json)),
       "active_worktree_leases": .array(activeLeases.map(\.json)),
       "expired_worktree_lease_receipts": .array(expiredLeaseReceipts.map(\.json)),

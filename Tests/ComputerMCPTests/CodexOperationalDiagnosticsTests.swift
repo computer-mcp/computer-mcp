@@ -168,6 +168,7 @@ final class CodexOperationalDiagnosticsTests {
     let snapshot = try await CodexOperationalDiagnostics.snapshot(
       database: database,
       owner: owner,
+      configuredSandbox: .workspaceWrite,
       limit: 100,
       now: now
     )

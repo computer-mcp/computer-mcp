@@ -435,6 +435,17 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           displayName: object["display_name"]?.stringValue
         )
         payload = try encodedPayload(ControlWorkspaceSummary(workspace))
+      case "workspace.deduplicate":
+        if object["apply"]?.boolValue == true {
+          payload = try encodedPayload(
+            try await controlPlane.applyWorkspaceDeduplication(
+              expectedPlanDigest: try requiredString("expected_plan_digest", in: object),
+              allowMetadataConflicts: object["allow_metadata_conflicts"]?.boolValue ?? false
+            )
+          )
+        } else {
+          payload = try encodedPayload(try await controlPlane.workspaceDeduplicationPlan())
+        }
       case "workspace.remove":
         let id = try requiredString("id", in: object)
         try await controlPlane.removeWorkspace(id: id)
@@ -825,6 +836,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       "workspace.add",
       arguments: ["path": .string, "display_name": .string],
       required: ["path"],
+      readOnly: false
+    ),
+    ControlToolContract(
+      "workspace.deduplicate",
+      arguments: [
+        "apply": .boolean,
+        "expected_plan_digest": .string,
+        "allow_metadata_conflicts": .boolean,
+      ],
       readOnly: false
     ),
     ControlToolContract(

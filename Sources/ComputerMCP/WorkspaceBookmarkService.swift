@@ -237,7 +237,7 @@ package struct WorkspaceBookmarkService: WorkspaceBookmarkServicing, Sendable {
     guard isDirectory.boolValue else {
       throw WorkspaceBookmarkError.rootIsNotDirectory(path: standardizedURL.path)
     }
-    return standardizedURL
+    return standardizedURL.resolvingSymlinksInPath()
   }
 
   private func normalizedDisplayName(_ displayName: String?, for url: URL) -> String {

@@ -173,8 +173,8 @@ Run Provider Doctor and inspect each path independently:
 - `codex.exec.list`
 - `codex.mcp.status`
 
-For a thread that cannot be opened by Codex Desktop or another official
-client, inspect ownership before restarting applications or touching processes:
+When another official Codex client cannot claim a thread, inspect ownership
+before restarting applications or touching processes:
 
 ```sh
 computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> \
@@ -199,6 +199,46 @@ Interpret `classification` as follows:
 If reclaim returns a writer conflict, close or release the owning application
 through that application's own controls. Do not use `killall`, delete session
 files, or assume an unrelated Codex process belongs to Computer MCP.
+
+If a graceful release reports an active turn or pending interactive request,
+resolve it first or explicitly choose the matching release option. A successful
+unsubscribe alone is not handoff success. Use `release-thread` and require
+`final_classification = released_persisted`, `externally_claimable = true`, and
+an empty `computer_mcp_writer_ownership_remaining` result. If an ownership
+receipt remains loaded after its exact runtime and owned process are gone, run
+`codex.app.ownership.reconcile.preview`, review the plan, and apply that exact
+digest; this repair changes local receipts only.
+
+### Full access was requested but did not apply
+
+Check the grant rather than passing a sandbox override:
+
+```sh
+computer-mcp codex elevation effective --workspace-id <workspace-id> \
+  --thread-id <thread-id>
+computer-mcp codex elevation list --workspace-id <workspace-id>
+```
+
+`pending` means the local user has not approved it; remote callers cannot
+self-approve. `approved` applies to an eligible future thread/turn start, never
+the active turn. A wrong workspace, canonical root, profile, caller,
+connection, or thread does not match. `expired`, `revoked`, `consumed`, and
+`invalidated` cannot elevate a new turn. After revocation, the active turn is
+unchanged and the next turn uses `workspace-write`.
+
+If `effective` reports full access but an MCP tool is still denied, that is
+expected when the profile lacks that Computer MCP capability. Codex sandbox
+access does not grant `file.write`, Full Shell, another workspace, operation
+tickets, TCC, or downstream tools.
+
+### A long thread is slow to inspect
+
+Use `computer-mcp codex recent-thread` with its default bounds instead of full
+`thread/read`. Follow `next_before_cursor` only when older context is needed.
+The returned `bounds` report page and Goal-scan I/O, output limit, elapsed scan,
+and whether the cooperative latency budget was exhausted. A cursor is tied to
+the exact rollout snapshot; restart from the newest page if the file identity
+changes.
 
 The installed Codex must support the configured experimental App Server API.
 Computer MCP fails closed on incompatible methods and does not silently fall
@@ -255,12 +295,15 @@ App rejects ad-hoc identity before opening the control plane.
 
 ## Release Artifact Is Rejected
 
-Development builds use Apple Development signing when exactly one identity is
-available; otherwise they are ad-hoc signed. Neither path is notarized. For
-official distribution, push a signed `vMAJOR.MINOR.PATCH` tag and inspect the
-GitHub `Release` workflow. Do not promote a local DMG. The protected release job
-must report successful Developer ID signing, App and DMG notarization, stapling,
-Gatekeeper assessment, and checksum assembly before it creates a draft Release.
+Development and validation artifacts name their class and build identity. They
+use Apple Development signing when exactly one identity is available;
+otherwise they are ad-hoc signed. Neither path is notarized or allowed to use a
+final-release-looking filename. For official distribution, push a signed
+`vMAJOR.MINOR.PATCH` tag only after all local and real acceptance is complete.
+Do not promote a local DMG. The protected release job must report successful
+Developer ID signing, App and DMG notarization, stapling, Gatekeeper assessment,
+checksum assembly, provenance verification, and uploaded-byte identity before
+it publishes the Release.
 
 For a downloaded draft candidate, run:
 
@@ -269,6 +312,10 @@ shasum -a 256 -c SHA256SUMS
 spctl --assess --type open --context context:primary-signature --verbose=2 \
   Computer-MCP-<version>-universal.dmg
 xcrun stapler validate Computer-MCP-<version>-universal.dmg
+BUILD_IDENTITY_PATH="Computer MCP.app/Contents/Resources/ComputerMCPBuildIdentity.plist" \
+  Scripts/verify-artifact-provenance.sh \
+  Computer-MCP-<version>-PublishedArtifactProvenance.json \
+  Computer-MCP-<version>-universal.dmg exact_published_release
 ```
 
 Common workflow failures are intentionally fail-closed:
@@ -311,5 +358,12 @@ Common workflow failures are intentionally fail-closed:
 - `Unnotarized Developer ID` from `spctl` means the artifact was assessed
   before Apple accepted and stapled the exact App/DMG, or a different artifact
   was substituted afterward.
+- `development artifact has a final-release-looking name` means a local build
+  was named like an official release. Repackage it with its generated
+  `-development-<build-id>-` or `-validation-<build-id>-` name; do not rename it.
+- `published byte identity was not proven` or a published checksum mismatch
+  means the downloaded GitHub asset is not proven to be the verified candidate.
+  Keep the Release non-public and investigate; never overwrite or repair the
+  artifact in place.
 
 See [Release](Release.md).

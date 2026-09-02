@@ -38,5 +38,8 @@ remove_and_reject missing-app-receipt-asset '  "$APP_NOTARY_ASSET"'
 remove_and_reject missing-dmg-receipt-asset '  "$DMG_NOTARY_ASSET"'
 remove_and_reject missing-checksum-assembler \
   '"$ROOT_DIR/Scripts/write-release-checksums.sh"'
+remove_and_reject missing-provenance-verification \
+  'VERIFY_GIT_TAG=1 "$ROOT_DIR/Scripts/verify-artifact-provenance.sh"'
+remove_and_reject missing-provenance-asset '  "$ARTIFACT_PROVENANCE"'
 
 echo "Release asset boundary regression passed."

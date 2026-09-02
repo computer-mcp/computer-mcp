@@ -90,6 +90,7 @@ struct Workspace: ParsableCommand {
     commandName: "workspace",
     subcommands: [
       WorkspaceList.self, WorkspaceAdd.self, WorkspaceRemove.self, WorkspaceEnable.self,
+      WorkspaceDeduplicate.self,
     ]
   )
 }
@@ -139,6 +140,44 @@ struct WorkspaceEnable: AsyncParsableCommand {
         arguments: .object([
           "workspace_id": .string(id), "profile": .string(profile), "enabled": .bool(enabled),
         ])
+      )
+    )
+  }
+}
+
+struct WorkspaceDeduplicate: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "deduplicate")
+
+  @Flag(name: .long, help: "Apply the previously previewed plan.")
+  var apply = false
+
+  @Option(
+    name: .long,
+    help: "Plan digest printed by preview; required with --apply to prevent races."
+  )
+  var expectedPlanDigest: String?
+
+  @Flag(
+    name: .long,
+    help: "Keep the oldest registration metadata after explicitly reviewing conflicts."
+  )
+  var allowMetadataConflicts = false
+
+  func run() async throws {
+    if apply && expectedPlanDigest == nil {
+      throw ValidationError("--apply requires --expected-plan-digest from a prior preview.")
+    }
+    var arguments: [String: JSONValue] = ["apply": .bool(apply)]
+    if let expectedPlanDigest {
+      arguments["expected_plan_digest"] = .string(expectedPlanDigest)
+    }
+    if allowMetadataConflicts {
+      arguments["allow_metadata_conflicts"] = .bool(true)
+    }
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "workspace.deduplicate",
+        arguments: .object(arguments)
       )
     )
   }

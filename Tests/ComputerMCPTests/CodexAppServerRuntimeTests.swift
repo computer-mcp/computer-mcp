@@ -9,6 +9,533 @@ import Testing
 
 final class CodexAppServerRuntimeTests {
   @Test
+  func testScopedElevationRequiresLocalApprovalAndConsumesAtomically() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let workspace = RegisteredWorkspace(
+      id: "fixture-workspace",
+      displayName: "Fixture",
+      rootPath: "/tmp/fixture-workspace"
+    )
+    try database.saveWorkspace(workspace)
+    let requester = elevationRequesterOwner(workspaceID: workspace.id)
+    let grant = try CodexElevationGrantService.request(
+      owner: requester,
+      database: database,
+      threadID: "thread_fixture",
+      mode: .nextTurn,
+      reason: "Run one reviewed Git operation.",
+      maximumDurationSeconds: 300,
+      maximumTurnCount: nil
+    )
+
+    #expect(grant.state == .pending)
+    expectThrows(
+      try CodexElevationGrantService.approve(
+        id: grant.id,
+        owner: requester,
+        database: database
+      )
+    )
+    let approved = try CodexElevationGrantService.approve(
+      id: grant.id,
+      owner: elevationLocalAdminOwner(workspaceID: workspace.id),
+      database: database
+    )
+    #expect(approved.state == .approved)
+
+    let root = URL(fileURLWithPath: workspace.rootPath).standardizedFileURL
+      .resolvingSymlinksInPath().path
+    let claimed = try database.claimCodexElevationGrant(
+      workspaceID: workspace.id,
+      canonicalRoot: root,
+      profileID: "fixture-profile",
+      requestingCaller: "local-mcp",
+      requestingConnectionID: "socket-fixture",
+      threadID: "thread_fixture",
+      runtimeID: "runtime-1",
+      action: .turnStart,
+      now: Date()
+    )
+    let first = try #require(claimed)
+    #expect(
+      try database.claimCodexElevationGrant(
+        workspaceID: workspace.id,
+        canonicalRoot: root,
+        profileID: "fixture-profile",
+        requestingCaller: "local-mcp",
+        requestingConnectionID: "socket-fixture",
+        threadID: "thread_fixture",
+        runtimeID: "runtime-2",
+        action: .turnStart,
+        now: Date()
+      ) == nil
+    )
+    let consumed = try database.commitCodexElevationClaim(
+      first,
+      runtimeID: "runtime-1",
+      threadID: "thread_fixture",
+      turnID: "turn-1",
+      now: Date()
+    )
+    #expect(consumed.state == .consumed)
+    #expect(consumed.consumedTurnCount == 1)
+    #expect(consumed.consumedTurnIDs == ["turn-1"])
+  }
+
+  @Test
+  func testApprovedElevationAppliesAtThreadStartAndFirstTurnThenRestores() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveWorkspace(
+      RegisteredWorkspace(
+        id: "fixture-workspace",
+        displayName: "Fixture",
+        rootPath: fixture.directory.path
+      )
+    )
+    let pending = try CodexElevationGrantService.request(
+      owner: elevationRequesterOwner(workspaceID: "fixture-workspace"),
+      database: database,
+      threadID: nil,
+      mode: .nextTurn,
+      reason: "Start one reviewed full-access thread.",
+      maximumDurationSeconds: 300,
+      maximumTurnCount: nil
+    )
+    _ = try CodexElevationGrantService.approve(
+      id: pending.id,
+      owner: elevationLocalAdminOwner(workspaceID: "fixture-workspace"),
+      database: database
+    )
+    let runtime = fixture.makeRuntime(database: database)
+
+    _ = try await runtime.call(method: "thread/start", params: .object([:]))
+    let threadStartRequests = try fixture.requests()
+    let threadStart = try #require(
+      threadStartRequests.last { $0.contains("thread\\/start") },
+      "Captured requests: \(threadStartRequests)"
+    )
+    #expect(threadStart.contains("\"sandbox\":\"danger-full-access\""))
+    let storedActivation = try database.codexElevationGrant(id: pending.id)
+    let activated = try #require(storedActivation)
+    #expect(activated.state == .active)
+    #expect(activated.threadID == "thread_elevated")
+
+    _ = try await runtime.call(
+      method: "turn/start",
+      params: .object([
+        "threadId": .string("thread_elevated"),
+        "input": .array([
+          .object(["type": .string("text"), "text": .string("Commit the fixture.")])
+        ]),
+      ])
+    )
+    let elevatedTurn = try #require(fixture.requests().last { $0.contains("turn\\/start") })
+    #expect(elevatedTurn.contains("\"type\":\"dangerFullAccess\""))
+    #expect(try database.codexElevationGrant(id: pending.id)?.state == .consumed)
+    let immediateThreadState = await runtime.status().objectValue?["threads"]?.arrayValue?
+      .first { $0.objectValue?["thread_id"] == .string("thread_elevated") }
+    #expect(immediateThreadState?.objectValue?["state"] == .string("active"))
+    #expect(immediateThreadState?.objectValue?["active_turn_id"] == .string("turn_elevated"))
+
+    _ = try await runtime.call(
+      method: "turn/start",
+      params: .object([
+        "threadId": .string("thread_elevated"),
+        "input": .array([
+          .object(["type": .string("text"), "text": .string("Read status.")])
+        ]),
+      ])
+    )
+    let restoredTurn = try #require(fixture.requests().last { $0.contains("turn\\/start") })
+    #expect(restoredTurn.contains("\"type\":\"workspaceWrite\""))
+    #expect(!restoredTurn.contains("dangerFullAccess"))
+
+    await runtime.shutdown()
+  }
+
+  @Test
+  func testApprovalNeverHotSwitchesAnAlreadyStartedTurn() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveWorkspace(
+      RegisteredWorkspace(
+        id: "fixture-workspace",
+        displayName: "Fixture",
+        rootPath: fixture.directory.path
+      )
+    )
+    let runtime = fixture.makeRuntime(database: database)
+    _ = try await runtime.call(method: "thread/start", params: .object([:]))
+    _ = try await runtime.call(
+      method: "turn/start",
+      params: .object([
+        "threadId": .string("thread_elevated"),
+        "input": .array([
+          .object(["type": .string("text"), "text": .string("Start safely.")])
+        ]),
+      ])
+    )
+    let firstTurn = try #require(fixture.requests().last { $0.contains("turn\\/start") })
+    #expect(firstTurn.contains("\"type\":\"workspaceWrite\""))
+    #expect(!firstTurn.contains("dangerFullAccess"))
+
+    let pending = try CodexElevationGrantService.request(
+      owner: elevationRequesterOwner(workspaceID: "fixture-workspace"),
+      database: database,
+      threadID: "thread_elevated",
+      mode: .nextTurn,
+      reason: "Elevate only a future turn.",
+      maximumDurationSeconds: 300,
+      maximumTurnCount: nil
+    )
+    _ = try CodexElevationGrantService.approve(
+      id: pending.id,
+      owner: elevationLocalAdminOwner(workspaceID: "fixture-workspace"),
+      database: database
+    )
+    let requestsAfterApproval = try fixture.requests()
+    #expect(requestsAfterApproval.contains(firstTurn))
+
+    _ = try await runtime.call(
+      method: "turn/start",
+      params: .object([
+        "threadId": .string("thread_elevated"),
+        "input": .array([
+          .object(["type": .string("text"), "text": .string("Use reviewed access.")])
+        ]),
+      ])
+    )
+    let nextTurn = try #require(fixture.requests().last { $0.contains("turn\\/start") })
+    #expect(nextTurn.contains("\"type\":\"dangerFullAccess\""))
+    #expect(firstTurn.contains("\"type\":\"workspaceWrite\""))
+
+    await runtime.shutdown()
+  }
+
+  @Test
+  func testUnconfirmedElevatedStartInvalidatesGrantAndStopsOwnedRuntime() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveWorkspace(
+      RegisteredWorkspace(
+        id: "fixture-workspace",
+        displayName: "Fixture",
+        rootPath: fixture.directory.path
+      )
+    )
+    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 1, database: database)
+    _ = try await runtime.call(method: "thread/loaded/list", params: .object([:]))
+    let processID = try await fixture.waitForLatestPID(count: 1)
+    let pending = try CodexElevationGrantService.request(
+      owner: elevationRequesterOwner(workspaceID: "fixture-workspace"),
+      database: database,
+      threadID: "thread_fixture",
+      mode: .nextTurn,
+      reason: "Fail closed when the elevated start outcome is unknown.",
+      maximumDurationSeconds: 300,
+      maximumTurnCount: nil
+    )
+    _ = try CodexElevationGrantService.approve(
+      id: pending.id,
+      owner: elevationLocalAdminOwner(workspaceID: "fixture-workspace"),
+      database: database
+    )
+    try Data().write(to: fixture.hangTurnStartFile)
+
+    await assertThrowsErrorAsync(
+      try await runtime.call(
+        method: "turn/start",
+        params: .object([
+          "threadId": .string("thread_fixture"),
+          "input": .array([
+            .object(["type": .string("text"), "text": .string("Start ambiguously.")])
+          ]),
+        ])
+      )
+    )
+
+    let invalidated = try database.codexElevationGrant(id: pending.id)
+    #expect(invalidated?.state == .invalidated)
+    #expect(invalidated?.inFlightClaimID == nil)
+    #expect(await runtime.status().objectValue?["runtime_state"] == .string("stopped"))
+    #expect(await waitForProcessExit(processID))
+  }
+
+  @Test
+  func testReleaseForHandoffVerifiesLoadedStateAndReapsEmptyRuntime() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let runtime = fixture.makeRuntime(database: database)
+    _ = try await runtime.call(method: "thread/loaded/list", params: .object([:]))
+    _ = try await runtime.call(
+      method: "thread/goal/set",
+      params: .object([
+        "threadId": .string("thread_fixture"),
+        "objective": .string("Pass every acceptance criterion."),
+      ])
+    )
+    let processID = try await fixture.waitForLatestPID(count: 1)
+
+    let released = try await CodexThreadHandoffService.release(
+      threadID: "thread_fixture",
+      workspaceID: "fixture-workspace",
+      mode: .graceful,
+      interruptActiveTurn: false,
+      database: database
+    )
+
+    #expect(released.objectValue?["final_classification"] == .string("released_persisted"))
+    #expect(released.objectValue?["externally_claimable"] == .bool(true))
+    #expect(
+      released.objectValue?["runtime_results"]?.arrayValue?.first?.objectValue?["runtime_action"]
+        == .string("reaped")
+    )
+    #expect(await waitForProcessExit(processID))
+    #expect(
+      await CodexRuntimeDirectory.shared.runtimeIDs(
+        owning: "thread_fixture",
+        workspaceID: "fixture-workspace"
+      ).isEmpty
+    )
+    #expect(
+      try database.codexThreadOwnership(threadID: "thread_fixture")?.state == .released
+    )
+
+    let second = try await CodexThreadHandoffService.release(
+      threadID: "thread_fixture",
+      workspaceID: "fixture-workspace",
+      mode: .graceful,
+      interruptActiveTurn: false,
+      database: database
+    )
+    #expect(second.objectValue?["already_released"] == .bool(true))
+    #expect(second.objectValue?["final_classification"] == .string("released_persisted"))
+
+    let claimingRuntime = fixture.makeRuntime(database: database)
+    let persistedGoal = try await claimingRuntime.call(
+      method: "thread/goal/get",
+      params: .object(["threadId": .string("thread_fixture")])
+    )
+    #expect(
+      persistedGoal.objectValue?["goal"]?.objectValue?["objective"]
+        == .string("Pass every acceptance criterion.")
+    )
+    let claimingPID = try await fixture.waitForLatestPID(count: 2)
+    #expect(processExists(claimingPID))
+    await claimingRuntime.shutdown()
+    #expect(await waitForProcessExit(claimingPID))
+  }
+
+  @Test
+  func testActiveTurnRequiresExplicitInterruptBeforeHandoff() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    try fixture.configureActiveTurnOnStart()
+    let database = try GatewayDatabase(inMemory: ())
+    let runtime = fixture.makeRuntime(database: database)
+    _ = try await runtime.call(method: "thread/loaded/list", params: .object([:]))
+    try await waitUntilRuntimeCondition {
+      await runtime.status().objectValue?["threads"]?.arrayValue?.first?
+        .objectValue?["active_turn_id"] == .string("turn_fixture")
+    }
+
+    await assertThrowsErrorAsync(
+      try await CodexThreadHandoffService.release(
+        threadID: "thread_fixture",
+        workspaceID: "fixture-workspace",
+        mode: .graceful,
+        interruptActiveTurn: false,
+        database: database
+      )
+    )
+    #expect(await runtime.hasLiveOwnership(of: "thread_fixture"))
+
+    let released = try await CodexThreadHandoffService.release(
+      threadID: "thread_fixture",
+      workspaceID: "fixture-workspace",
+      mode: .graceful,
+      interruptActiveTurn: true,
+      database: database
+    )
+    #expect(released.objectValue?["externally_claimable"] == .bool(true))
+    #expect(
+      released.objectValue?["runtime_results"]?.arrayValue?.first?.objectValue?[
+        "active_turn_handling"
+      ] == .string("interrupted")
+    )
+  }
+
+  @Test
+  func testMultiRuntimeHandoffPreflightsAllOwnersBeforeMutation() async throws {
+    let idleFixture = try AppServerProcessFixture()
+    let activeFixture = try AppServerProcessFixture()
+    defer {
+      idleFixture.remove()
+      activeFixture.remove()
+    }
+    try activeFixture.configureActiveTurnOnStart()
+    let idleRuntime = idleFixture.makeRuntime()
+    let activeRuntime = activeFixture.makeRuntime()
+    _ = try await idleRuntime.call(method: "thread/loaded/list", params: .object([:]))
+    _ = try await activeRuntime.call(method: "thread/loaded/list", params: .object([:]))
+    try await waitUntilRuntimeCondition {
+      await activeRuntime.status().objectValue?["threads"]?.arrayValue?.first?
+        .objectValue?["active_turn_id"] == .string("turn_fixture")
+    }
+    let idleProcessID = try await idleFixture.waitForLatestPID(count: 1)
+    let activeProcessID = try await activeFixture.waitForLatestPID(count: 1)
+
+    await assertThrowsErrorAsync(
+      try await CodexThreadHandoffService.release(
+        threadID: "thread_fixture",
+        workspaceID: "fixture-workspace",
+        mode: .graceful,
+        interruptActiveTurn: false,
+        database: nil
+      )
+    )
+
+    #expect(await idleRuntime.hasLiveOwnership(of: "thread_fixture"))
+    #expect(await activeRuntime.hasLiveOwnership(of: "thread_fixture"))
+    #expect(processExists(idleProcessID))
+    #expect(processExists(activeProcessID))
+    await idleRuntime.shutdown()
+    await activeRuntime.shutdown()
+  }
+
+  @Test
+  func testHandoffCannotTrustReleasedReceiptWhileExactReceiptedProcessLives() async throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let now = Date()
+    try database.saveCodexRuntimeLease(
+      CodexRuntimeLeaseRecord(
+        id: "runtime-receipted-live",
+        owner: elevationRequesterOwner(workspaceID: "fixture-workspace"),
+        workspacePath: "/tmp/fixture-workspace",
+        state: "running",
+        process: CodexAppServerProcessSnapshot(
+          state: .running,
+          processID: getpid(),
+          supervisorProcessID: nil,
+          parentProcessID: getppid(),
+          processGroupID: getpgrp(),
+          startedAt: now,
+          stoppedAt: nil,
+          exitCode: nil,
+          signal: nil,
+          terminationEscalated: false,
+          lastError: nil
+        ),
+        createdAt: now,
+        updatedAt: now,
+        shutdownReason: nil,
+        cleanedAt: nil
+      )
+    )
+    try database.saveCodexThreadOwnership(
+      CodexThreadOwnershipRecord(
+        threadID: "thread-receipted-live",
+        workspaceID: "fixture-workspace",
+        workspacePath: "/tmp/fixture-workspace",
+        runtimeID: "runtime-receipted-live",
+        state: .released,
+        createdAt: now,
+        updatedAt: now
+      )
+    )
+
+    await assertThrowsErrorAsync(
+      try await CodexThreadHandoffService.release(
+        threadID: "thread-receipted-live",
+        workspaceID: "fixture-workspace",
+        mode: .graceful,
+        interruptActiveTurn: false,
+        database: database
+      )
+    )
+    #expect(
+      try database.codexThreadOwnership(threadID: "thread-receipted-live")?.state == .released
+    )
+  }
+
+  @Test
+  func testHandoffPreservesRuntimeWithAnotherActiveThread() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    try fixture.configureLoadedThreads(
+      initial: ["thread_fixture", "thread_other"],
+      afterUnsubscribe: ["thread_other"]
+    )
+    try fixture.configureActiveTurnOnStart(
+      threadID: "thread_other",
+      turnID: "turn_other"
+    )
+    let database = try GatewayDatabase(inMemory: ())
+    let runtime = fixture.makeRuntime(database: database)
+    _ = try await runtime.call(method: "thread/loaded/list", params: .object([:]))
+    try await waitUntilRuntimeCondition {
+      let threads = await runtime.status().objectValue?["threads"]?.arrayValue ?? []
+      return threads.contains {
+        $0.objectValue?["thread_id"] == .string("thread_other")
+          && $0.objectValue?["active_turn_id"] == .string("turn_other")
+      }
+    }
+
+    let released = try await CodexThreadHandoffService.release(
+      threadID: "thread_fixture",
+      workspaceID: "fixture-workspace",
+      mode: .graceful,
+      interruptActiveTurn: false,
+      database: database
+    )
+
+    #expect(
+      released.objectValue?["runtime_results"]?.arrayValue?.first?.objectValue?["runtime_action"]
+        == .string("preserved-for-other-work")
+    )
+    #expect(!(await runtime.hasLiveOwnership(of: "thread_fixture")))
+    #expect(await runtime.hasLiveOwnership(of: "thread_other"))
+    await runtime.shutdown()
+  }
+
+  @Test
+  func testProviderDisconnectReconcilesLoadedThreadOwnership() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let runtime = fixture.makeRuntime(database: database)
+    _ = try await runtime.call(method: "thread/loaded/list", params: .object([:]))
+    #expect(
+      try database.codexThreadOwnership(threadID: "thread_fixture")?.state == .loaded
+    )
+    let provider = CodexGatewayProvider(
+      configuration: CodexConfig(enabled: true, execEnabled: false, mcpEnabled: false),
+      appServer: runtime,
+      exec: nil,
+      mcp: nil,
+      owner: elevationRequesterOwner(workspaceID: "fixture-workspace"),
+      database: database
+    )
+
+    await provider.shutdown()
+
+    #expect(
+      try database.codexThreadOwnership(threadID: "thread_fixture")?.state == .released
+    )
+    #expect(
+      await CodexRuntimeDirectory.shared.runtimeIDs(
+        owning: "thread_fixture",
+        workspaceID: "fixture-workspace"
+      ).isEmpty
+    )
+  }
+
+  @Test
   func testShutdownReapsProtocolProcessAndReleasesWriterLease() async throws {
     let fixture = try AppServerProcessFixture()
     defer { fixture.remove() }
@@ -150,6 +677,14 @@ final class CodexAppServerRuntimeTests {
     )
     #expect(firstStatuses.objectValue?["runtimes"]?.arrayValue?.count == 1)
     #expect(secondStatuses.objectValue?["runtimes"]?.arrayValue?.count == 1)
+    #expect(
+      try database.codexThreadOwnership(threadID: "thread_workspace_one")?.workspaceID
+        == firstWorkspace.id
+    )
+    #expect(
+      try database.codexThreadOwnership(threadID: "thread_workspace_two")?.workspaceID
+        == secondWorkspace.id
+    )
 
     await gateway.shutdown()
 
@@ -411,7 +946,8 @@ final class CodexAppServerRuntimeTests {
     let fixture = try AppServerProcessFixture()
     defer { fixture.remove() }
     try Data().write(to: fixture.hangRequestsFile)
-    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 4)
+    let database = try GatewayDatabase(inMemory: ())
+    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 4, database: database)
     let clock = ContinuousClock()
     let started = clock.now
 
@@ -428,6 +964,51 @@ final class CodexAppServerRuntimeTests {
     #expect(await processIDs.asyncAllSatisfy(waitForProcessExit))
     #expect(!processExists(secondPID))
     #expect(!FileManager.default.fileExists(atPath: fixture.leaseDirectory.path))
+    let recoverableStatus = await runtime.status().objectValue
+    #expect(recoverableStatus?["runtime_state"] == .string("running"))
+    #expect(recoverableStatus?["shutdown_reason"] == .null)
+    #expect(
+      recoverableStatus?["last_request_failure"]?.objectValue?["kind"]
+        == .string("request_timeout")
+    )
+    let recoverableReceipts = try database.codexRuntimeLeases(limit: 10)
+    let recoverableReceipt = try #require(
+      recoverableReceipts.first { $0.id == runtime.runtimeID })
+    #expect(recoverableReceipt.shutdownReason == nil)
+    #expect(recoverableReceipt.lastRequestFailure?.kind == "request_timeout")
+
+    await runtime.shutdown()
+    let stoppedReceipts = try database.codexRuntimeLeases(limit: 10)
+    let stoppedReceipt = try #require(stoppedReceipts.first { $0.id == runtime.runtimeID })
+    #expect(stoppedReceipt.runtimeState == "stopped")
+    #expect(stoppedReceipt.shutdownReason == "requested")
+  }
+
+  @Test
+  func testConcurrentRequestsRemainRunningUntilEveryRequestCompletes() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    try Data().write(to: fixture.delayLoadedThreadsFile)
+    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 5)
+
+    async let first = runtime.call(method: "thread/loaded/list", params: .object([:]))
+    try await waitUntilRuntimeCondition {
+      await runtime.status().objectValue?["current_request_count"] == .number(1)
+    }
+    async let second = runtime.call(method: "thread/loaded/list", params: .object([:]))
+    try await waitUntilRuntimeCondition {
+      await runtime.status().objectValue?["current_request_count"] == .number(2)
+    }
+
+    let concurrentStatus = await runtime.status().objectValue
+    #expect(concurrentStatus?["current_request_state"] == .string("running"))
+    #expect(concurrentStatus?["current_request_count"] == .number(2))
+    _ = try await (first, second)
+    let completedStatus = await runtime.status().objectValue
+    #expect(completedStatus?["current_request_state"] == .string("idle"))
+    #expect(completedStatus?["current_request_count"] == .number(0))
+
+    await runtime.shutdown()
   }
 
   @Test
@@ -507,8 +1088,14 @@ final class CodexAppServerRuntimeTests {
     #expect(timedOut.resolutionReason == "Approval deadline expired.")
     #expect(try await fixture.waitForApprovalResponse().contains("cancel"))
     #expect(try database.codexApproval(id: pending.id)?.state == .timedOut)
-
-    await runtime.shutdown()
+    let released = try await CodexThreadHandoffService.release(
+      threadID: "thread_fixture",
+      workspaceID: "fixture-workspace",
+      mode: .graceful,
+      interruptActiveTurn: false,
+      database: database
+    )
+    #expect(released.objectValue?["externally_claimable"] == .bool(true))
   }
 
   @Test
@@ -562,8 +1149,9 @@ final class CodexAppServerRuntimeTests {
     let approvedFixture = try AppServerProcessFixture()
     defer { approvedFixture.remove() }
     try approvedFixture.configureFileApproval(grantRoot: approvedFixture.directory.path)
+    let approvedDatabase = try GatewayDatabase(inMemory: ())
     let approvedRuntime = approvedFixture.makeRuntime(
-      database: database,
+      database: approvedDatabase,
       autoApproveWorkspaceWrites: true
     )
     _ = try await approvedRuntime.call(method: "thread/loaded/list", params: .object([:]))
@@ -851,6 +1439,45 @@ final class CodexAppServerRuntimeTests {
   }
 
   @Test
+  func testPendingUserInputRequiresReviewedForceReleaseAndDoesNotStrandRuntime() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    try fixture.configureUserInput(question: "Confirm the reviewed release")
+    let database = try GatewayDatabase(inMemory: ())
+    let runtime = fixture.makeRuntime(database: database)
+    _ = try await runtime.call(method: "thread/loaded/list", params: .object([:]))
+    _ = try await waitForInteractiveRequest(runtime, kind: "user_input")
+    let processID = try await fixture.waitForLatestPID(count: 1)
+
+    await assertThrowsErrorAsync(
+      try await CodexThreadHandoffService.release(
+        threadID: "thread_fixture",
+        workspaceID: "fixture-workspace",
+        mode: .graceful,
+        interruptActiveTurn: false,
+        database: database
+      )
+    )
+    #expect(await runtime.hasLiveOwnership(of: "thread_fixture"))
+
+    let released = try await CodexThreadHandoffService.release(
+      threadID: "thread_fixture",
+      workspaceID: "fixture-workspace",
+      mode: .forceComputerMCPOwnedRuntimeOnly,
+      interruptActiveTurn: false,
+      database: database
+    )
+    #expect(released.objectValue?["externally_claimable"] == .bool(true))
+    #expect(await waitForProcessExit(processID))
+    #expect(
+      await CodexRuntimeDirectory.shared.runtimeIDs(
+        owning: "thread_fixture",
+        workspaceID: "fixture-workspace"
+      ).isEmpty
+    )
+  }
+
+  @Test
   func testRegisteredReadOnlyToolRunsThroughGatewayPolicyAndAudit() async throws {
     let fixture = try AppServerProcessFixture()
     defer { fixture.remove() }
@@ -870,6 +1497,72 @@ final class CodexAppServerRuntimeTests {
     #expect(response.contains("success"))
     #expect(response.contains("true"))
     #expect(try database.auditEvent(requestID: "codex-call-fixture")?.capabilityID == "system.time")
+
+    await gateway.shutdown()
+  }
+
+  @Test
+  func testApprovedElevationDoesNotBypassGatewayCapabilityPolicy() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveWorkspace(
+      RegisteredWorkspace(
+        id: "fixture-workspace",
+        displayName: "Fixture",
+        rootPath: fixture.directory.path
+      )
+    )
+    let requester = CodexRuntimeOwner(
+      workspaceID: "fixture-workspace",
+      profileID: GatewayProfileID.localAdmin.rawValue,
+      caller: GatewayCallerKind.localMCP.rawValue,
+      transport: "fixture",
+      socketConnectionID: "elevated-policy-fixture",
+      tunnelInstanceID: nil,
+      tunnelProfileID: nil
+    )
+    let pending = try CodexElevationGrantService.request(
+      owner: requester,
+      database: database,
+      threadID: "thread_fixture",
+      mode: .threadScopedTTL,
+      reason: "Prove sandbox elevation does not add Computer MCP capabilities.",
+      maximumDurationSeconds: 300,
+      maximumTurnCount: 2
+    )
+    let approved = try CodexElevationGrantService.approve(
+      id: pending.id,
+      owner: elevationLocalAdminOwner(workspaceID: "fixture-workspace"),
+      database: database
+    )
+    #expect(approved.state == .approved)
+    let gateway = try makeDynamicToolGateway(
+      fixture: fixture,
+      database: database,
+      targetCapabilities: [],
+      builtins: ["file.write"]
+    )
+
+    do {
+      _ = try await gateway.callToolAsync(
+        name: "file.write",
+        arguments: .object([
+          "workspace_id": .string("fixture-workspace"),
+          "path": .string("must-not-exist.txt"),
+          "content": .string("denied"),
+        ])
+      )
+      Issue.record("Expected the ungranted Computer MCP capability to remain denied.")
+    } catch {
+      #expect(error.localizedDescription.contains("policy.capability_denied"))
+    }
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: fixture.directory.appendingPathComponent("must-not-exist.txt").path
+      )
+    )
+    #expect(try database.codexElevationGrant(id: approved.id)?.state == .approved)
 
     await gateway.shutdown()
   }
@@ -917,6 +1610,46 @@ final class CodexAppServerRuntimeTests {
         == "from-codex")
     #expect(try await fixture.waitForApprovalResponse().contains("true"))
     #expect(try database.auditEvent(requestID: "codex-call-fixture")?.capabilityID == "file.append")
+
+    await gateway.shutdown()
+  }
+
+  @Test
+  func testReviewedDryRunToolExecutesWithoutMutationApproval() async throws {
+    let fixture = try AppServerProcessFixture()
+    defer { fixture.remove() }
+    try fixture.configureDynamicTool(
+      name: "git.add",
+      arguments: .object([
+        "paths": .array([.string("preview.txt")]),
+        "dry_run": .bool(true),
+      ])
+    )
+    try runGit(["init"], in: fixture.directory)
+    try Data("preview\n".utf8).write(
+      to: fixture.directory.appendingPathComponent("preview.txt")
+    )
+    let database = try GatewayDatabase(inMemory: ())
+    let gateway = try makeDynamicToolGateway(
+      fixture: fixture,
+      database: database,
+      targetCapabilities: ["git.add"],
+      builtins: ["git.add"],
+      cli: CLISectionConfig(commands: [
+        CLICommandConfig(id: "git", executable: "/usr/bin/git")
+      ])
+    )
+
+    _ = try await gateway.callToolAsync(
+      name: "codex.app.thread.loaded.list",
+      arguments: .object(["workspace_id": .string("fixture-workspace")])
+    )
+    let response = try await fixture.waitForApprovalResponse()
+    #expect(response.contains("true"), "\(response)")
+    let approvals = try database.codexApprovals(limit: 10)
+    #expect(approvals.isEmpty)
+    #expect(try runGit(["diff", "--cached", "--name-only"], in: fixture.directory).isEmpty)
+    #expect(try database.auditEvent(requestID: "codex-call-fixture") != nil)
 
     await gateway.shutdown()
   }
@@ -1182,6 +1915,21 @@ final class CodexAppServerRuntimeTests {
       ),
       expectedCode: "codex.app.danger_full_access_denied"
     )
+    for alias in ["DangerFullAccess", "danger_full_access", "danger full-access"] {
+      await assertThrowsErrorAsync(
+        try await runtime.normalize(
+          params: .object([
+            "metadata": .object([
+              "nested": .array([
+                .object(["sandbox_policy": .string(alias)])
+              ])
+            ])
+          ]),
+          for: try method("thread/start")
+        ),
+        expectedCode: "codex.app.danger_full_access_denied"
+      )
+    }
   }
 
   @Test
@@ -1343,16 +2091,46 @@ final class CodexAppServerRuntimeTests {
   }
 }
 
+private func elevationRequesterOwner(workspaceID: String) -> CodexRuntimeOwner {
+  CodexRuntimeOwner(
+    workspaceID: workspaceID,
+    profileID: "fixture-profile",
+    caller: "local-mcp",
+    transport: "fixture",
+    socketConnectionID: "socket-fixture",
+    tunnelInstanceID: nil,
+    tunnelProfileID: nil
+  )
+}
+
+private func elevationLocalAdminOwner(workspaceID: String) -> CodexRuntimeOwner {
+  CodexRuntimeOwner(
+    workspaceID: workspaceID,
+    profileID: GatewayProfileID.localAdmin.rawValue,
+    caller: GatewayCallerKind.localCLI.rawValue,
+    transport: "control-socket",
+    socketConnectionID: "local-control",
+    tunnelInstanceID: nil,
+    tunnelProfileID: nil
+  )
+}
+
 private struct AppServerProcessFixture {
   let directory: URL
   let executable: URL
   let processLog: URL
   let leaseDirectory: URL
   let hangRequestsFile: URL
+  let hangTurnStartFile: URL
   let hangInitializeFile: URL
+  let delayLoadedThreadsFile: URL
   let approvalRequestFile: URL
   let approvalResponseLog: URL
   let closeInputAfterApprovalRequestFile: URL
+  let activeTurnOnStartFile: URL
+  let requestLog: URL
+  let loadedThreadsFile: URL
+  let loadedThreadsAfterUnsubscribeFile: URL
 
   init() throws {
     directory = FileManager.default.temporaryDirectory
@@ -1361,11 +2139,19 @@ private struct AppServerProcessFixture {
     processLog = directory.appendingPathComponent("processes.log")
     leaseDirectory = directory.appendingPathComponent("writer.lease", isDirectory: true)
     hangRequestsFile = directory.appendingPathComponent("hang-requests")
+    hangTurnStartFile = directory.appendingPathComponent("hang-turn-start")
     hangInitializeFile = directory.appendingPathComponent("hang-initialize")
+    delayLoadedThreadsFile = directory.appendingPathComponent("delay-loaded-threads")
     approvalRequestFile = directory.appendingPathComponent("approval-request.json")
     approvalResponseLog = directory.appendingPathComponent("approval-response.log")
     closeInputAfterApprovalRequestFile = directory.appendingPathComponent(
       "close-input-after-approval-request"
+    )
+    activeTurnOnStartFile = directory.appendingPathComponent("active-turn-on-start")
+    requestLog = directory.appendingPathComponent("requests.log")
+    loadedThreadsFile = directory.appendingPathComponent("loaded-threads.json")
+    loadedThreadsAfterUnsubscribeFile = directory.appendingPathComponent(
+      "loaded-threads-after-unsubscribe.json"
     )
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try Data(
@@ -1396,6 +2182,7 @@ private struct AppServerProcessFixture {
       id=$(printf '%s\n' "$line" | /usr/bin/sed -E 's/.*"id":("[^"]*"|[0-9]+).*/\\1/')
       printf '{"id":%s,"result":{"codexHome":"%s","platformFamily":"unix","platformOs":"macos","userAgent":"Codex/computer-mcp-fixture"}}\n' "$id" "$fixture_dir"
       IFS= read -r line || exit 75
+      printf '%s\n' "$line" >> "$fixture_dir/requests.log"
       if [ -f "$fixture_dir/approval-request.json" ]; then
         /bin/cat "$fixture_dir/approval-request.json"
         printf '\n'
@@ -1405,8 +2192,13 @@ private struct AppServerProcessFixture {
           exit 0
         fi
       fi
+      if [ -f "$fixture_dir/active-turn-on-start" ]; then
+        /bin/cat "$fixture_dir/active-turn-on-start"
+        printf '\n'
+      fi
 
       while IFS= read -r line; do
+        printf '%s\n' "$line" >> "$fixture_dir/requests.log"
         case "$line" in
           *'"id":900'*|*'"id":"900"'*)
             printf '%s\n' "$line" >> "$fixture_dir/approval-response.log"
@@ -1419,10 +2211,37 @@ private struct AppServerProcessFixture {
             if [ -f "$fixture_dir/hang-requests" ]; then
               continue
             fi
-            printf '{"id":%s,"result":{"data":["thread_fixture"],"nextCursor":null}}\n' "$id"
+            if [ -f "$fixture_dir/delay-loaded-threads" ]; then
+              /bin/sleep 1
+            fi
+            if [ -f "$fixture_dir/loaded-threads.json" ]; then
+              loaded=$(/bin/cat "$fixture_dir/loaded-threads.json")
+            else
+              case "$workspace_dir" in
+                */workspace-one) loaded='["thread_workspace_one"]' ;;
+                */workspace-two) loaded='["thread_workspace_two"]' ;;
+                *) loaded='["thread_fixture"]' ;;
+              esac
+            fi
+            printf '{"id":%s,"result":{"data":%s,"nextCursor":null}}\n' "$id" "$loaded"
             ;;
           *thread*unsubscribe*)
+            if [ -f "$fixture_dir/loaded-threads-after-unsubscribe.json" ]; then
+              /bin/cp "$fixture_dir/loaded-threads-after-unsubscribe.json" "$fixture_dir/loaded-threads.json"
+            fi
             printf '{"id":%s,"result":{"status":"unsubscribed"}}\n' "$id"
+            ;;
+          *thread*start*)
+            printf '{"id":%s,"result":{"approvalPolicy":"on-request","approvalsReviewer":"user","cwd":"%s","model":"gpt-test","modelProvider":"openai","sandbox":{"type":"dangerFullAccess"},"thread":{"cliVersion":"fixture","createdAt":1,"cwd":"%s","ephemeral":false,"id":"thread_elevated","modelProvider":"openai","preview":"","sessionId":"session_elevated","source":"appServer","status":{"type":"idle"},"turns":[],"updatedAt":1}}}\n' "$id" "$workspace_dir" "$workspace_dir"
+            ;;
+          *turn*interrupt*)
+            printf '{"id":%s,"result":{}}\n' "$id"
+            ;;
+          *turn*start*)
+            if [ -f "$fixture_dir/hang-turn-start" ]; then
+              continue
+            fi
+            printf '{"id":%s,"result":{"turn":{"id":"turn_elevated","items":[],"status":"inProgress"}}}\n' "$id"
             ;;
           *thread*goal*set*)
             printf '{"id":%s,"result":{"goal":{"createdAt":1,"objective":"Pass every acceptance criterion.","status":"active","threadId":"thread_fixture","timeUsedSeconds":30,"tokenBudget":50000,"tokensUsed":1250,"updatedAt":2}}}\n' "$id"
@@ -1432,6 +2251,9 @@ private struct AppServerProcessFixture {
             ;;
           *thread*goal*clear*)
             printf '{"id":%s,"result":{"cleared":true}}\n' "$id"
+            ;;
+          *thread*read*)
+            printf '{"id":%s,"error":{"code":-32600,"message":"thread not loaded by this fixture runtime"}}\n' "$id"
             ;;
           *)
             printf '{"id":%s,"error":{"code":-32601,"message":"fixture method unavailable"}}\n' "$id"
@@ -1546,6 +2368,40 @@ private struct AppServerProcessFixture {
     try CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
       .encode(request)
       .write(to: approvalRequestFile)
+  }
+
+  func configureActiveTurnOnStart(
+    threadID: String = "thread_fixture",
+    turnID: String = "turn_fixture"
+  ) throws {
+    let notification: JSONValue = .object([
+      "method": .string("turn/started"),
+      "params": .object([
+        "threadId": .string(threadID),
+        "turn": .object([
+          "id": .string(turnID),
+          "items": .array([]),
+          "status": .string("inProgress"),
+        ]),
+      ]),
+    ])
+    try CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
+      .encode(notification)
+      .write(to: activeTurnOnStartFile)
+  }
+
+  func configureLoadedThreads(
+    initial: [String],
+    afterUnsubscribe: [String]
+  ) throws {
+    let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
+    try encoder.encode(initial).write(to: loadedThreadsFile)
+    try encoder.encode(afterUnsubscribe).write(to: loadedThreadsAfterUnsubscribeFile)
+  }
+
+  func requests() throws -> [String] {
+    guard let value = try? String(contentsOf: requestLog, encoding: .utf8) else { return [] }
+    return value.split(whereSeparator: \.isNewline).map(String.init)
   }
 
   func configureDynamicTool(
@@ -1678,6 +2534,18 @@ private func waitUntilSocketCondition(
   }
   throw CodexAppServerProcessTransportError.launchFailed(
     "Timed out waiting for gateway socket lifecycle condition."
+  )
+}
+
+private func waitUntilRuntimeCondition(
+  _ condition: @escaping @Sendable () async -> Bool
+) async throws {
+  for _ in 0..<500 {
+    if await condition() { return }
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  throw CodexAppServerProcessTransportError.launchFailed(
+    "Timed out waiting for Codex runtime state."
   )
 }
 

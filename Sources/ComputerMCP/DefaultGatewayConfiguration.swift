@@ -204,6 +204,13 @@ package enum DefaultGatewayConfiguration {
     codex.app.approvals.list
     codex.app.approvals.read
     codex.app.approvals.respond
+    codex.app.elevation.approve
+    codex.app.elevation.deny
+    codex.app.elevation.effective
+    codex.app.elevation.list
+    codex.app.elevation.read
+    codex.app.elevation.request
+    codex.app.elevation.revoke
     codex.app.events.read
     codex.app.goal.clear
     codex.app.goal.get
@@ -213,6 +220,8 @@ package enum DefaultGatewayConfiguration {
     codex.app.methods.describe
     codex.app.methods.list
     codex.app.models.list
+    codex.app.ownership.reconcile.perform
+    codex.app.ownership.reconcile.preview
     codex.app.requests.list
     codex.app.requests.respond
     codex.app.review.start
@@ -229,6 +238,7 @@ package enum DefaultGatewayConfiguration {
     codex.app.thread.list
     codex.app.thread.loaded.list
     codex.app.thread.read
+    codex.app.thread.recent
     codex.app.thread.reclaim
     codex.app.thread.release
     codex.app.thread.start

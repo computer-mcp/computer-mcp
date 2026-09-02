@@ -81,6 +81,12 @@ unless the active configuration grants the exact path. Credentials stay in the
 signed App's macOS Data Protection Keychain; examples, diagnostics, logs, and
 audit rows keep only placeholders or redacted summaries.
 
+The optional Codex provider has one narrower exception to its safe
+`workspace-write` default: a caller can request a workspace/profile/caller-bound
+temporary Full Access grant, but only a local administrator can approve it. It
+applies to a future eligible thread or turn, expires or can be revoked, and
+never adds Computer MCP tools, workspaces, Full Shell, or approval authority.
+
 See [Security and Privacy](Documentation/Architecture/SecurityAndPrivacy.md) for
 the complete trust model and [SECURITY.md](SECURITY.md) for reporting a
 vulnerability.
@@ -94,7 +100,7 @@ vulnerability.
 | Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and Computer Use adapters | Availability still depends on the selected profile, workspace, dependency, and macOS permission |
 | Stable | Governed workspace and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
 | Experimental | Codex App Server, Exec, and MCP provider paths | Opt-in, disabled by default, and dependent on an installed authenticated Codex |
-| Experimental | Native Codex Goal passthrough, Computer MCP acceptance runs, thread handoff diagnosis, and managed child worktrees | The product keeps official Goal state, Computer MCP acceptance, and external-client ownership distinct |
+| Experimental | Native Codex Goal passthrough, Computer MCP acceptance runs, deterministic thread handoff, bounded recent-thread supervision, scoped local Codex elevation, and managed child worktrees | The product keeps official Goal state, Computer MCP acceptance, Codex sandbox elevation, gateway capabilities, and external-client ownership distinct |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
 
 Experimental does not mean unbounded: these paths use the same workspace,
@@ -218,12 +224,21 @@ open-file inspection:
 ```sh
 computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
 computer-mcp codex diagnostics --workspace-id <workspace-id>
+computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id>
+computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id>
+computer-mcp codex elevation effective --workspace-id <workspace-id> \
+  --thread-id <thread-id>
 ```
 
 The diagnostic reports verified Computer MCP ownership separately from an
 inferred external conflict and offers only safe actions such as releasing an
 owned thread, stopping an exact owned runtime, reviewing stale receipts, or
-trying to reclaim a persisted thread.
+trying to reclaim a persisted thread. Handoff succeeds only after no owned
+runtime still claims the thread and another official client can immediately
+claim the persisted thread. Long-running supervision reads a bounded recent
+tail instead of loading the whole history. Scoped Full Access is locally
+approved, visible, expiring, and revocable; the configured default remains
+safe.
 
 ## Current limitations
 
@@ -236,6 +251,9 @@ trying to reclaim a persisted thread.
   Codex version, authentication, and stable protocol support.
 - Computer MCP cannot inspect, unsubscribe, or terminate an external Codex
   Desktop, IDE, CLI, or Remote connection it does not own.
+- Unscoped or caller-supplied `danger-full-access` remains rejected. Scoped
+  elevation requires a matching durable grant and local approval and does not
+  widen Computer MCP capability policy.
 - Computer MCP does not silently select a workspace when more than one eligible
   workspace exists, does not implicitly push Git commits, and does not turn a
   normal completed turn into accepted Goal completion.

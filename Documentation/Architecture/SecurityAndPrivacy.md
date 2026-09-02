@@ -84,9 +84,36 @@ Application-specific automation remains in `apple-cli-mcp`.
 ## Codex
 
 Codex App Server, Exec, and MCP use gateway-owned workspace, sandbox, approval,
-session, and output policy. `danger-full-access`, raw remote argv/config
-overrides, authentication mutation, marketplace mutation, and remote-control
-pairing are rejected.
+session, and output policy. An unscoped `danger-full-access` value, raw remote
+argv/config overrides, authentication mutation, marketplace mutation, and
+remote-control pairing are rejected. The configured default sandbox remains
+`workspace-write`; callers cannot replace it in a thread or turn request.
+
+An authorized caller may request a separately persisted Codex execution
+elevation. The request itself grants nothing. It is bound to the registered
+workspace id and canonical root, profile, caller, connection, optional exact
+thread, requested mode, duration/turn limits, and redacted reason. Approval and
+denial require a local caller using the `local-admin` profile. The supported
+modes are one next eligible turn, an exact thread with a TTL, and bounded time
+with an optional turn limit. Pending requests expire after 15 minutes; approved
+grants expire, can be revoked, and are invalidated by a matching workspace or
+profile disable/removal, provider shutdown, or thread handoff.
+
+An approved grant never hot-switches an active turn. The runtime claims it
+atomically for an eligible future `thread/start` or `turn/start`, applies the
+official `dangerFullAccess` sandbox to that start, and commits consumption only
+after the upstream start succeeds. If a start cannot produce both a confirmed
+response and durable consumption receipt, its claim is invalidated and its
+exact owned runtime is stopped; ambiguous access never becomes reusable.
+One-turn grants cannot be consumed twice, including across restart. Revocation
+leaves an already active turn unchanged and restores the configured safe
+sandbox for future starts.
+
+Codex sandbox elevation is not Computer MCP capability elevation. It does not
+add gateway tools, profile grants, registered workspaces, Full Shell, operation
+tickets, TCC permissions, downstream MCP tools, or approval authority. In
+particular, an elevated Codex turn cannot invoke a Computer MCP capability such
+as `file.write` unless that capability was already granted independently.
 
 Codex App Server approval is a two-level boundary. Gateway policy first
 authorizes the capability for the bound caller, profile, and registered
@@ -95,6 +122,13 @@ broker for approve-once, an official protocol-bounded session approval, denial,
 or timeout. Policy authorization never implies consent, and consent cannot
 expand policy. Automatic approval is off by default and, when explicitly
 enabled, applies only to the bounded low-risk workspace-write class.
+For registered Computer MCP tools, the gateway authorizes the static tool
+capability first and then derives consent risk from the reviewed invocation.
+A built-in dry-run path whose implementation is known not to mutate state is
+treated as read-only for consent, so repeated previews such as
+`git.add` with `dry_run=true` do not create mutation approvals. The downgrade
+does not apply to configured or downstream tools and does not widen the tool,
+workspace, profile, caller, or path grant.
 
 Approval records contain normalized redacted details, risk, workspace,
 runtime, thread, turn, request correlation, deadline, decision, and terminal
@@ -144,7 +178,9 @@ Representative codes include:
 - `mcp.tool_not_approved` for downstream catalog drift;
 - `codex.app.override_denied`, `codex.app.danger_full_access_denied`, and
   `codex.app.workspace_override_denied` for rejected Codex App authority
-  changes.
+  changes. `codex.app.danger_full_access_denied` continues to cover raw or
+  mismatched overrides; an effective scoped grant is consumed internally and
+  does not weaken this validation rule.
 
 Malformed arguments and provider/runtime failures remain `failed`. Acceptance
 tests must correlate the client-visible code, Gateway request ID, and exact

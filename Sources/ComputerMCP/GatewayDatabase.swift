@@ -1,7 +1,12 @@
+import CryptoKit
 import Foundation
 import GRDB
 
 package final class GatewayDatabase: @unchecked Sendable {
+  // Exceeds the maximum 300-second App Server request budget so reconciliation cannot
+  // invalidate a legitimately in-flight elevated start before its request deadline.
+  private static let codexElevationClaimStaleInterval: TimeInterval = 330
+
   private let writer: any DatabaseWriter
   let fileURL: URL?
 
@@ -9,38 +14,175 @@ package final class GatewayDatabase: @unchecked Sendable {
     self.fileURL = URL(fileURLWithPath: path).standardizedFileURL
     self.writer = try DatabaseQueue(path: path)
     try Self.migrator.migrate(writer)
+    try reconcileCodexRuntimeLeaseSemantics()
   }
 
   package init(inMemory: Void) throws {
     self.fileURL = nil
     self.writer = try DatabaseQueue()
     try Self.migrator.migrate(writer)
+    try reconcileCodexRuntimeLeaseSemantics()
   }
 
   package func saveWorkspace(_ workspace: RegisteredWorkspace) throws {
     try writer.write { database in
       try WorkspaceRecord(workspace).save(database)
+      let canonicalRoot = Self.canonicalWorkspaceRoot(workspace.rootPath)
+      try WorkspaceCanonicalRootRecord
+        .filter(Column("workspaceID") == workspace.id)
+        .filter(Column("canonicalRootPath") != canonicalRoot)
+        .deleteAll(database)
+      try WorkspaceCanonicalRootRecord(
+        canonicalRootPath: canonicalRoot,
+        workspaceID: workspace.id,
+        createdAt: workspace.createdAt
+      ).insert(database, onConflict: .ignore)
+    }
+  }
+
+  package func registerWorkspaceIdempotently(
+    _ proposed: RegisteredWorkspace
+  ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
+    let canonicalRoot = Self.canonicalWorkspaceRoot(proposed.rootPath)
+    return try writer.write { database in
+      if let binding = try WorkspaceCanonicalRootRecord.fetchOne(
+        database,
+        key: canonicalRoot
+      ) {
+        if let existing = try WorkspaceRecord.fetchOne(database, key: binding.workspaceID) {
+          return (existing.value, false)
+        }
+        _ = try WorkspaceCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
+      }
+      if let existing = try WorkspaceRecord.fetchAll(database).first(where: {
+        Self.canonicalWorkspaceRoot($0.rootPath) == canonicalRoot
+      }) {
+        try WorkspaceCanonicalRootRecord(
+          canonicalRootPath: canonicalRoot,
+          workspaceID: existing.id,
+          createdAt: existing.createdAt
+        ).insert(database, onConflict: .ignore)
+        return (existing.value, false)
+      }
+      try WorkspaceRecord(proposed).insert(database)
+      try WorkspaceCanonicalRootRecord(
+        canonicalRootPath: canonicalRoot,
+        workspaceID: proposed.id,
+        createdAt: proposed.createdAt
+      ).insert(database)
+      return (proposed, true)
     }
   }
 
   package func workspaces() throws -> [RegisteredWorkspace] {
     try writer.read { database in
-      try WorkspaceRecord
+      let aliasIDs = Set(
+        try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID)
+      )
+      return
+        try WorkspaceRecord
         .order(Column("displayName").collating(.nocase), Column("id"))
         .fetchAll(database)
+        .filter { !aliasIDs.contains($0.id) }
         .map(\.value)
     }
   }
 
   package func workspace(id: String) throws -> RegisteredWorkspace? {
     try writer.read { database in
-      try WorkspaceRecord.fetchOne(database, key: id)?.value
+      let resolvedID =
+        try WorkspaceAliasRecord.fetchOne(database, key: id)?.canonicalWorkspaceID ?? id
+      return try WorkspaceRecord.fetchOne(database, key: resolvedID)?.value
     }
   }
 
   package func deleteWorkspace(id: String) throws {
     _ = try writer.write { database in
-      try WorkspaceRecord.deleteOne(database, key: id)
+      let canonicalID =
+        try WorkspaceAliasRecord.fetchOne(database, key: id)?.canonicalWorkspaceID ?? id
+      let aliasIDs =
+        try WorkspaceAliasRecord
+        .filter(Column("canonicalWorkspaceID") == canonicalID)
+        .fetchAll(database)
+        .map(\.aliasWorkspaceID)
+      try WorkspaceAliasRecord
+        .filter(Column("canonicalWorkspaceID") == canonicalID)
+        .deleteAll(database)
+      try WorkspaceCanonicalRootRecord
+        .filter(Column("workspaceID") == canonicalID)
+        .deleteAll(database)
+      for aliasID in aliasIDs {
+        _ = try WorkspaceRecord.deleteOne(database, key: aliasID)
+      }
+      return try WorkspaceRecord.deleteOne(database, key: canonicalID)
+    }
+  }
+
+  package func workspaceDeduplicationPlan() throws -> WorkspaceDeduplicationPlan {
+    try writer.read { database in
+      try Self.workspaceDeduplicationPlan(database)
+    }
+  }
+
+  package func applyWorkspaceDeduplication(
+    expectedPlanDigest: String,
+    allowMetadataConflicts: Bool,
+    now: Date = Date()
+  ) throws -> WorkspaceDeduplicationResult {
+    try writer.write { database in
+      let plan = try Self.workspaceDeduplicationPlan(database)
+      guard plan.planDigest == expectedPlanDigest else {
+        throw WorkspaceDeduplicationError.planChanged(
+          expected: expectedPlanDigest,
+          actual: plan.planDigest
+        )
+      }
+      let conflictIDs = plan.groups.filter(\.hasMetadataConflict)
+        .flatMap(\.duplicateWorkspaceIDs)
+        .sorted()
+      if !allowMetadataConflicts, !conflictIDs.isEmpty {
+        throw WorkspaceDeduplicationError.metadataConflict(workspaceIDs: conflictIDs)
+      }
+
+      var updatedProfileIDs: Set<String> = []
+      for group in plan.groups {
+        for duplicateID in group.duplicateWorkspaceIDs {
+          try WorkspaceAliasRecord(
+            aliasWorkspaceID: duplicateID,
+            canonicalWorkspaceID: group.canonicalWorkspaceID,
+            canonicalRootPath: group.canonicalRootPath,
+            migratedAt: now
+          ).save(database)
+        }
+        for row in try ProfileRecord.fetchAll(database) {
+          var profile = try row.value()
+          let duplicateReferences = profile.workspaceIDs.intersection(
+            group.duplicateWorkspaceIDs
+          )
+          guard !duplicateReferences.isEmpty else { continue }
+          profile.workspaceIDs.subtract(duplicateReferences)
+          profile.workspaceIDs.insert(group.canonicalWorkspaceID)
+          try ProfileRecord(profile, updatedAt: now).save(database)
+          updatedProfileIDs.insert(profile.id.rawValue)
+        }
+      }
+
+      let result = WorkspaceDeduplicationResult(
+        receiptID: UUID().uuidString,
+        planDigest: plan.planDigest,
+        canonicalWorkspaceIDs: plan.groups.map(\.canonicalWorkspaceID).sorted(),
+        aliasedWorkspaceIDs: plan.groups.flatMap(\.duplicateWorkspaceIDs).sorted(),
+        updatedProfileIDs: updatedProfileIDs.sorted(),
+        appliedAt: now
+      )
+      let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
+      try WorkspaceDeduplicationReceiptRecord(
+        id: result.receiptID,
+        planDigest: result.planDigest,
+        appliedAt: now,
+        payloadJSON: String(decoding: try encoder.encode(result), as: UTF8.self)
+      ).insert(database)
+      return result
     }
   }
 
@@ -217,7 +359,19 @@ package final class GatewayDatabase: @unchecked Sendable {
         .order(Column("updatedAt").desc, Column("id").desc)
         .limit(max(1, min(limit, 5_000)))
         .fetchAll(database)
-        .map { try $0.value() }
+        .map { try $0.value().reconciledStateSemantics() }
+    }
+  }
+
+  private func reconcileCodexRuntimeLeaseSemantics() throws {
+    try writer.write { database in
+      for row in try CodexRuntimeLeaseRow.fetchAll(database) {
+        let current = try row.value()
+        let reconciled = current.reconciledStateSemantics()
+        if reconciled != current {
+          try CodexRuntimeLeaseRow(reconciled).save(database)
+        }
+      }
     }
   }
 
@@ -248,6 +402,323 @@ package final class GatewayDatabase: @unchecked Sendable {
       return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
         try $0.value()
       }
+    }
+  }
+
+  func applyCodexThreadOwnershipReconciliation(
+    plan: CodexThreadOwnershipReconciliationPlan,
+    now: Date
+  ) throws -> CodexThreadOwnershipReconciliationResult {
+    try writer.write { database in
+      var releasedThreadIDs: [String] = []
+      for candidate in plan.candidates {
+        guard var row = try CodexThreadOwnershipRow.fetchOne(database, key: candidate.threadID),
+          row.runtimeID == candidate.runtimeID,
+          row.state == CodexThreadOwnershipState.loaded.rawValue
+        else {
+          throw CodexThreadOwnershipReconciliationError.planChanged(
+            expected: plan.planDigest,
+            actual: "ownership-state-changed"
+          )
+        }
+        row.state = CodexThreadOwnershipState.released.rawValue
+        row.updatedAt = now
+        try row.save(database)
+        releasedThreadIDs.append(candidate.threadID)
+      }
+      let result = CodexThreadOwnershipReconciliationResult(
+        schemaVersion: 1,
+        receiptID: UUID().uuidString,
+        planDigest: plan.planDigest,
+        releasedThreadIDs: releasedThreadIDs.sorted(),
+        appliedAt: now,
+        signalsSent: false,
+        externalStateMutated: false
+      )
+      let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
+      try CodexThreadOwnershipReconciliationReceiptRow(
+        id: result.receiptID,
+        planDigest: result.planDigest,
+        appliedAt: now,
+        payloadJSON: String(decoding: try encoder.encode(result), as: UTF8.self)
+      ).insert(database)
+      return result
+    }
+  }
+
+  func saveCodexElevationGrant(_ grant: CodexElevationGrantRecord) throws {
+    try writer.write { database in
+      try CodexElevationGrantRow(grant).save(database)
+    }
+  }
+
+  func codexElevationGrant(id: String) throws -> CodexElevationGrantRecord? {
+    try writer.read { database in
+      try CodexElevationGrantRow.fetchOne(database, key: id)?.value()
+    }
+  }
+
+  func codexElevationGrants(
+    workspaceID: String? = nil,
+    state: CodexElevationGrantState? = nil,
+    limit: Int = 500
+  ) throws -> [CodexElevationGrantRecord] {
+    try writer.read { database in
+      var request = CodexElevationGrantRow.order(
+        Column("updatedAt").desc,
+        Column("id").desc
+      )
+      if let workspaceID {
+        request = request.filter(Column("workspaceID") == workspaceID)
+      }
+      if let state {
+        request = request.filter(Column("state") == state.rawValue)
+      }
+      return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
+        try $0.value()
+      }
+    }
+  }
+
+  func updateCodexElevationGrant(
+    id: String,
+    mutate: (inout CodexElevationGrantRecord) throws -> Void
+  ) throws -> CodexElevationGrantRecord {
+    try writer.write { database in
+      guard let row = try CodexElevationGrantRow.fetchOne(database, key: id) else {
+        throw CodexElevationGrantError.unknown(id)
+      }
+      var grant = try row.value()
+      try mutate(&grant)
+      try CodexElevationGrantRow(grant).save(database)
+      return grant
+    }
+  }
+
+  func reconcileCodexElevationGrants(now: Date) throws {
+    try writer.write { database in
+      let rows =
+        try CodexElevationGrantRow
+        .filter(
+          [
+            CodexElevationGrantState.pending.rawValue, CodexElevationGrantState.approved.rawValue,
+            CodexElevationGrantState.active.rawValue,
+          ].contains(Column("state"))
+        )
+        .fetchAll(database)
+      for row in rows {
+        var grant = try row.value()
+        if grant.inFlightClaimID != nil,
+          grant.updatedAt <= now.addingTimeInterval(-Self.codexElevationClaimStaleInterval)
+        {
+          grant.state = .invalidated
+          grant.resolvedAt = now
+          grant.resolutionReason =
+            "An elevated start ended without a durable consumption receipt."
+          grant.inFlightClaimID = nil
+          grant.inFlightAction = nil
+          grant.updatedAt = now
+          try CodexElevationGrantRow(grant).save(database)
+          continue
+        }
+        let wasPending = grant.state == .pending
+        let expired =
+          wasPending
+          ? grant.requestExpiresAt <= now
+          : grant.expiresAt.map { $0 <= now } ?? true
+        guard expired else { continue }
+        grant.state = .expired
+        grant.resolvedAt = now
+        grant.resolutionReason =
+          wasPending ? "Local approval deadline expired." : "Elevation grant expired."
+        grant.inFlightClaimID = nil
+        grant.inFlightAction = nil
+        grant.updatedAt = now
+        try CodexElevationGrantRow(grant).save(database)
+      }
+    }
+  }
+
+  func invalidateCodexElevationGrants(
+    workspaceID: String? = nil,
+    profileID: String? = nil,
+    requestingConnectionID: String? = nil,
+    threadID: String? = nil,
+    consumedRuntimeIDs: Set<String> = [],
+    reason: String,
+    now: Date = Date()
+  ) throws {
+    try writer.write { database in
+      var request = CodexElevationGrantRow.filter(
+        [
+          CodexElevationGrantState.pending.rawValue, CodexElevationGrantState.approved.rawValue,
+          CodexElevationGrantState.active.rawValue,
+        ].contains(Column("state"))
+      )
+      if let workspaceID {
+        request = request.filter(Column("workspaceID") == workspaceID)
+      }
+      if let profileID {
+        request = request.filter(Column("profileID") == profileID)
+      }
+      if let requestingConnectionID {
+        request = request.filter(Column("requestingConnectionID") == requestingConnectionID)
+      }
+      for row in try request.fetchAll(database) {
+        var grant = try row.value()
+        if let threadID, grant.threadID != threadID {
+          if consumedRuntimeIDs.isEmpty
+            || consumedRuntimeIDs.isDisjoint(with: grant.consumedRuntimeIDs)
+          {
+            continue
+          }
+        } else if threadID == nil, !consumedRuntimeIDs.isEmpty,
+          consumedRuntimeIDs.isDisjoint(with: grant.consumedRuntimeIDs)
+        {
+          continue
+        }
+        grant.state = .invalidated
+        grant.resolvedAt = now
+        grant.resolutionReason = CodexApprovalRedactor.redactString(
+          reason,
+          maximumCharacters: 512
+        )
+        grant.inFlightClaimID = nil
+        grant.inFlightAction = nil
+        grant.updatedAt = now
+        try CodexElevationGrantRow(grant).save(database)
+      }
+    }
+  }
+
+  func claimCodexElevationGrant(
+    workspaceID: String,
+    canonicalRoot: String,
+    profileID: String,
+    requestingCaller: String,
+    requestingConnectionID: String?,
+    threadID: String?,
+    runtimeID: String,
+    action: CodexElevationAction,
+    now: Date
+  ) throws -> CodexElevationClaim? {
+    try writer.write { database in
+      let rows =
+        try CodexElevationGrantRow
+        .filter(Column("workspaceID") == workspaceID)
+        .filter(Column("profileID") == profileID)
+        .filter(Column("requestingCaller") == requestingCaller)
+        .filter(
+          Column("state") == CodexElevationGrantState.approved.rawValue
+            || Column("state") == CodexElevationGrantState.active.rawValue
+        )
+        .order(Column("createdAt"), Column("id"))
+        .fetchAll(database)
+      for row in rows {
+        var grant = try row.value()
+        if grant.expiresAt.map({ $0 <= now }) ?? true {
+          grant.state = .expired
+          grant.resolvedAt = now
+          grant.resolutionReason = "Elevation grant expired."
+          grant.inFlightClaimID = nil
+          grant.inFlightAction = nil
+          grant.updatedAt = now
+          try CodexElevationGrantRow(grant).save(database)
+          continue
+        }
+        guard grant.canonicalRoot == canonicalRoot,
+          grant.requestingConnectionID == requestingConnectionID,
+          grant.inFlightClaimID == nil
+        else { continue }
+        switch action {
+        case .threadStart:
+          guard grant.threadID == nil else { continue }
+        case .turnStart:
+          guard grant.threadID == nil || grant.threadID == threadID else { continue }
+        }
+        let claimID = UUID().uuidString
+        grant.inFlightClaimID = claimID
+        grant.inFlightAction = action
+        grant.updatedAt = now
+        try CodexElevationGrantRow(grant).save(database)
+        return CodexElevationClaim(id: claimID, action: action, grant: grant)
+      }
+      return nil
+    }
+  }
+
+  func commitCodexElevationClaim(
+    _ claim: CodexElevationClaim,
+    runtimeID: String,
+    threadID: String,
+    turnID: String?,
+    now: Date
+  ) throws -> CodexElevationGrantRecord {
+    try updateCodexElevationGrant(id: claim.grant.id) { grant in
+      guard grant.inFlightClaimID == claim.id, grant.inFlightAction == claim.action,
+        grant.state.isEffective
+      else {
+        throw CodexElevationGrantError.claimMismatch
+      }
+      grant.activationAt = grant.activationAt ?? now
+      if !grant.consumedRuntimeIDs.contains(runtimeID) {
+        grant.consumedRuntimeIDs.append(runtimeID)
+        grant.consumedRuntimeIDs = Array(grant.consumedRuntimeIDs.suffix(128))
+      }
+      switch claim.action {
+      case .threadStart:
+        grant.threadID = threadID
+        grant.state = .active
+      case .turnStart:
+        grant.consumedTurnCount += 1
+        if let turnID, !grant.consumedTurnIDs.contains(turnID) {
+          grant.consumedTurnIDs.append(turnID)
+          grant.consumedTurnIDs = Array(grant.consumedTurnIDs.suffix(128))
+        }
+        if grant.mode == .nextTurn
+          || grant.maximumTurnCount.map({ grant.consumedTurnCount >= $0 }) == true
+        {
+          grant.state = .consumed
+          grant.resolvedAt = now
+          grant.resolutionReason = "The approved turn scope was consumed."
+        } else {
+          grant.state = .active
+        }
+      }
+      grant.inFlightClaimID = nil
+      grant.inFlightAction = nil
+      grant.updatedAt = now
+    }
+  }
+
+  func abortCodexElevationClaim(
+    _ claim: CodexElevationClaim,
+    now: Date
+  ) throws {
+    _ = try updateCodexElevationGrant(id: claim.grant.id) { grant in
+      guard grant.inFlightClaimID == claim.id else { return }
+      grant.inFlightClaimID = nil
+      grant.inFlightAction = nil
+      grant.updatedAt = now
+    }
+  }
+
+  func invalidateCodexElevationClaim(
+    _ claim: CodexElevationClaim,
+    reason: String,
+    now: Date
+  ) throws {
+    _ = try updateCodexElevationGrant(id: claim.grant.id) { grant in
+      guard grant.inFlightClaimID == claim.id else { return }
+      grant.state = .invalidated
+      grant.resolvedAt = now
+      grant.resolutionReason = CodexApprovalRedactor.redactString(
+        reason,
+        maximumCharacters: 512
+      )
+      grant.inFlightClaimID = nil
+      grant.inFlightAction = nil
+      grant.updatedAt = now
     }
   }
 
@@ -815,8 +1286,143 @@ package final class GatewayDatabase: @unchecked Sendable {
         columns: ["workspaceID", "state", "updatedAt"]
       )
     }
+    migrator.registerMigration("codex-scoped-elevation-grants") { database in
+      try database.create(table: "codexElevationGrants") { table in
+        table.column("id", .text).primaryKey()
+        table.column("workspaceID", .text).notNull()
+        table.column("profileID", .text).notNull()
+        table.column("requestingCaller", .text).notNull()
+        table.column("requestingConnectionID", .text)
+        table.column("threadID", .text)
+        table.column("state", .text).notNull()
+        table.column("createdAt", .datetime).notNull()
+        table.column("updatedAt", .datetime).notNull()
+        table.column("payloadJSON", .text).notNull()
+      }
+      try database.create(
+        index: "codexElevationGrants_on_workspace_profile_state_updatedAt",
+        on: "codexElevationGrants",
+        columns: ["workspaceID", "profileID", "state", "updatedAt"]
+      )
+      try database.create(
+        index: "codexElevationGrants_on_thread_state",
+        on: "codexElevationGrants",
+        columns: ["threadID", "state"]
+      )
+    }
+    migrator.registerMigration("workspace-canonical-roots") { database in
+      try database.create(table: "workspaceCanonicalRoots") { table in
+        table.column("canonicalRootPath", .text).primaryKey()
+        table.column("workspaceID", .text).notNull()
+        table.column("createdAt", .datetime).notNull()
+      }
+      try database.create(
+        index: "workspaceCanonicalRoots_on_workspaceID",
+        on: "workspaceCanonicalRoots",
+        columns: ["workspaceID"]
+      )
+      let workspaces =
+        try WorkspaceRecord
+        .order(Column("createdAt"), Column("id"))
+        .fetchAll(database)
+      for workspace in workspaces {
+        try WorkspaceCanonicalRootRecord(
+          canonicalRootPath: GatewayDatabase.canonicalWorkspaceRoot(workspace.rootPath),
+          workspaceID: workspace.id,
+          createdAt: workspace.createdAt
+        ).insert(database, onConflict: .ignore)
+      }
+    }
+    migrator.registerMigration("workspace-deduplication-aliases") { database in
+      try database.create(table: "workspaceAliases") { table in
+        table.column("aliasWorkspaceID", .text).primaryKey()
+        table.column("canonicalWorkspaceID", .text).notNull()
+        table.column("canonicalRootPath", .text).notNull()
+        table.column("migratedAt", .datetime).notNull()
+      }
+      try database.create(
+        index: "workspaceAliases_on_canonicalWorkspaceID",
+        on: "workspaceAliases",
+        columns: ["canonicalWorkspaceID"]
+      )
+      try database.create(table: "workspaceDeduplicationReceipts") { table in
+        table.column("id", .text).primaryKey()
+        table.column("planDigest", .text).notNull()
+        table.column("appliedAt", .datetime).notNull()
+        table.column("payloadJSON", .text).notNull()
+      }
+    }
+    migrator.registerMigration("codex-ownership-reconciliation-receipts") { database in
+      try database.create(table: "codexOwnershipReconciliationReceipts") { table in
+        table.column("id", .text).primaryKey()
+        table.column("planDigest", .text).notNull()
+        table.column("appliedAt", .datetime).notNull()
+        table.column("payloadJSON", .text).notNull()
+      }
+    }
     return migrator
   }()
+
+  private static func workspaceDeduplicationPlan(
+    _ database: Database
+  ) throws -> WorkspaceDeduplicationPlan {
+    let aliasIDs = Set(try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID))
+    let workspaces = try WorkspaceRecord.fetchAll(database)
+      .filter { !aliasIDs.contains($0.id) }
+      .sorted {
+        if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+        return $0.id < $1.id
+      }
+    let profiles = try ProfileRecord.fetchAll(database).map { try $0.value() }
+    let grouped = Dictionary(grouping: workspaces) {
+      canonicalWorkspaceRoot($0.rootPath)
+    }
+    let groups = grouped.keys.sorted().compactMap {
+      canonicalRoot
+        -> WorkspaceDeduplicationGroup? in
+      guard let records = grouped[canonicalRoot], records.count > 1,
+        let canonical = records.first
+      else { return nil }
+      let members = records.map { record in
+        WorkspaceDeduplicationMember(
+          workspaceID: record.id,
+          displayName: record.displayName,
+          rootPath: record.rootPath,
+          createdAt: record.createdAt,
+          referencedProfileIDs:
+            profiles
+            .filter { $0.workspaceIDs.contains(record.id) }
+            .map { $0.id.rawValue }
+            .sorted()
+        )
+      }
+      return WorkspaceDeduplicationGroup(
+        canonicalRootPath: canonicalRoot,
+        canonicalWorkspaceID: canonical.id,
+        duplicateWorkspaceIDs: Array(records.dropFirst().map(\.id)).sorted(),
+        members: members,
+        hasMetadataConflict: Set(records.map(\.displayName)).count > 1
+      )
+    }
+    let digestInput = WorkspaceDeduplicationDigestInput(groups: groups)
+    let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
+    let digest = SHA256.hash(data: try encoder.encode(digestInput))
+      .map { String(format: "%02x", $0) }
+      .joined()
+    return WorkspaceDeduplicationPlan(
+      planDigest: digest,
+      groups: groups,
+      duplicateCount: groups.reduce(0) { $0 + $1.duplicateWorkspaceIDs.count },
+      affectedProfileIDs: Set(
+        groups.flatMap(\.members).flatMap(\.referencedProfileIDs)
+      ).sorted()
+    )
+  }
+
+  private static func canonicalWorkspaceRoot(_ path: String) -> String {
+    URL(fileURLWithPath: path, isDirectory: true)
+      .standardizedFileURL.resolvingSymlinksInPath().path
+  }
 }
 
 private struct RuntimeSettingRecord: Codable, FetchableRecord, PersistableRecord {
@@ -864,6 +1470,38 @@ private struct WorkspaceRecord: Codable, FetchableRecord, PersistableRecord {
       updatedAt: updatedAt
     )
   }
+}
+
+private struct WorkspaceCanonicalRootRecord: Codable, FetchableRecord, PersistableRecord {
+  static let databaseTableName = "workspaceCanonicalRoots"
+
+  var canonicalRootPath: String
+  var workspaceID: String
+  var createdAt: Date
+}
+
+private struct WorkspaceAliasRecord: Codable, FetchableRecord, PersistableRecord {
+  static let databaseTableName = "workspaceAliases"
+
+  var aliasWorkspaceID: String
+  var canonicalWorkspaceID: String
+  var canonicalRootPath: String
+  var migratedAt: Date
+}
+
+private struct WorkspaceDeduplicationReceiptRecord: Codable, FetchableRecord,
+  PersistableRecord
+{
+  static let databaseTableName = "workspaceDeduplicationReceipts"
+
+  var id: String
+  var planDigest: String
+  var appliedAt: Date
+  var payloadJSON: String
+}
+
+private struct WorkspaceDeduplicationDigestInput: Codable {
+  var groups: [WorkspaceDeduplicationGroup]
 }
 
 private struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
@@ -1320,6 +1958,54 @@ private struct CodexThreadOwnershipRow: Codable, FetchableRecord, PersistableRec
       createdAt: createdAt,
       updatedAt: updatedAt
     )
+  }
+}
+
+private struct CodexThreadOwnershipReconciliationReceiptRow: Codable, FetchableRecord,
+  PersistableRecord
+{
+  static let databaseTableName = "codexOwnershipReconciliationReceipts"
+
+  var id: String
+  var planDigest: String
+  var appliedAt: Date
+  var payloadJSON: String
+}
+
+private struct CodexElevationGrantRow: Codable, FetchableRecord, PersistableRecord {
+  static let databaseTableName = "codexElevationGrants"
+
+  var id: String
+  var workspaceID: String
+  var profileID: String
+  var requestingCaller: String
+  var requestingConnectionID: String?
+  var threadID: String?
+  var state: String
+  var createdAt: Date
+  var updatedAt: Date
+  var payloadJSON: String
+
+  init(_ value: CodexElevationGrantRecord) throws {
+    id = value.id
+    workspaceID = value.workspaceID
+    profileID = value.profileID
+    requestingCaller = value.requestingCaller
+    requestingConnectionID = value.requestingConnectionID
+    threadID = value.threadID
+    state = value.state.rawValue
+    createdAt = value.createdAt
+    updatedAt = value.updatedAt
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    payloadJSON = String(decoding: try encoder.encode(value), as: UTF8.self)
+  }
+
+  func value() throws -> CodexElevationGrantRecord {
+    guard let data = payloadJSON.data(using: .utf8) else {
+      throw GatewayDatabaseError.invalidStoredValue("Codex elevation grant is not UTF-8.")
+    }
+    return try JSONDecoder().decode(CodexElevationGrantRecord.self, from: data)
   }
 }
 

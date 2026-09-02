@@ -6,15 +6,15 @@ scope in a repository-owned form so implementation, review, release, and a
 cold-start maintainer can evaluate the same outcome without access to the
 planning conversation.
 
-The release is one indivisible batch with two repositories:
+The focused reliability release following v1.0.27 is one indivisible
+`computer-mcp` source, App, CLI, documentation, validation, and publication
+batch. A passing subset is progress evidence, not permission to publish.
 
-1. `computer-mcp`, containing the gateway, App, CLI, tests, and documentation;
-2. `computer-mcp.github.io`, containing the public product website and its
-   independent build, accessibility, link, browser-acceptance, and deployment checks.
-
-Neither repository may be released as the completed productization batch while
-the other or any requirement below remains unverified. A passing subset is
-progress evidence, not permission to publish.
+The release does not broaden the product or website. The already accepted
+`computer-mcp.github.io` product site remains a separate repository and is not
+edited, rebound, redeployed, or used as a release gate for this hardening batch
+unless a security or capability statement becomes factually inaccurate.
+v1.0.27 and all rejected historical candidates remain immutable.
 
 ## Product contract
 
@@ -61,6 +61,77 @@ eventual root cause:
 - **O5 — turn-only completion:** a completed turn must not be represented as a
   completed durable Goal or accepted Computer MCP run while acceptance remains
   open.
+- **O6 — false handoff success:** a successful unsubscribe must not be reported
+  as a completed handoff while any live Computer MCP runtime still loads or
+  owns the thread.
+- **O7 — unusable safe default:** the default Codex sandbox remains
+  `workspace-write`, but a trusted workflow must be able to request a bounded,
+  locally approved Full Access grant that actually applies at a future eligible
+  thread/turn start.
+- **O8 — unbounded supervision:** ordinary progress checks must not require a
+  complete read of a very large persisted rollout.
+- **O9 — ambiguous runtime state:** a request timeout must not become a terminal
+  runtime shutdown reason while the runtime is still alive.
+- **O10 — ambiguous artifact identity:** a development or validation DMG must
+  never masquerade as the exact published release asset.
+
+## Focused reliability and execution-control contract
+
+The handoff operation is a transaction across all matching Computer MCP-owned
+runtimes. It binds workspace and thread, serializes against new starts, requires
+an explicit active-turn decision, accounts for pending approvals and user
+input, performs bounded official unsubscription, validates the loaded set,
+reaps an empty runtime, preserves a runtime with other useful work, and rescans
+live ownership. Success means `released_persisted`, no Computer MCP writer, an
+unchanged persisted Goal/history, and immediate claimability by another
+official client. The operation is idempotent and never signals an unverified
+external process.
+
+Codex Full Access is a separate durable grant, not a manifest default and not a
+Computer MCP capability grant. The request binds canonical workspace,
+workspace id, profile, caller, connection, optional exact thread, reason,
+duration, turn count, and mode. Only a local administrator can approve or deny
+the exact request. Approval never changes an active turn; the next eligible
+`thread/start` or `turn/start` atomically claims the grant, uses the official
+`dangerFullAccess` sandbox, and records successful consumption. A start that
+cannot produce a confirmed response and durable consumption receipt invalidates
+the claim and stops its exact owned runtime rather than making ambiguous access
+reusable. Expiry, revocation, restart reconciliation, workspace or
+profile disablement/removal, provider shutdown, and handoff remove future
+effect. Default, mismatched, aliased, nested, or caller-supplied Full Access
+still fails closed.
+
+Long-thread supervision must use a read-only, canonical-workspace-validated,
+bounded rollout-tail reader with snapshot cursors. It returns metadata, native
+Goal, active/recent turns, messages, items, and compact progress while reporting
+page bytes, Goal-scan bytes, output bytes, record count, and elapsed scan budget.
+Full history remains an explicit separate operation, not the supervision
+default.
+
+Workspace registration uses the symlink-resolved canonical root as identity.
+Repeated registration is idempotent. Historical duplicates use a digest-bound
+preview/apply repair that retains aliases, moves profile references, and
+preserves audit/ownership history without deleting a user directory.
+
+Runtime lifecycle, connection, process, current request, last request failure,
+and terminal shutdown reason are independent state. Stale thread ownership can
+be repaired only when the exact runtime and receipted process/supervisor are
+proven gone; repair changes local receipts and sends no signal.
+
+Disposable validation gives independent deadlines to primary acceptance, turn
+finish, release, runtime stop, process reap, managed-worktree cleanup, and final
+diagnostics. Cleanup failure cannot erase a primary success; it produces an
+exact-target warning and safe operator-reviewed action. Worktree and process cleanup
+requires durable ownership evidence and never selects a target by name or path
+heuristic.
+
+Artifact provenance distinguishes `development`, `validation`,
+`release_candidate`, and `exact_published_release`. Each receipt binds artifact
+name/class/phase, size and SHA-256, source commit, build identity, notarization,
+stapling, and release tag/commit as applicable. The published receipt also
+binds the downloaded GitHub asset checksum and byte identity. Only a fully
+signed, notarized, stapled release candidate may acquire the conventional
+release filename, and publication must not rebuild or mutate it.
 
 ## A. Runtime model
 
@@ -343,6 +414,98 @@ interruption/recovery semantics.
 - **T-G4** reject concurrent run or lease revisions;
 - **T-G5** reconcile only selected accepted child evidence.
 
+### Focused hardening matrix
+
+The follow-up reliability release adds these 44 mandatory automated evidence
+cases. They are one matrix; a passing subset is not a release gate.
+
+Handoff and runtime ownership:
+
+1. An active turn cannot silently hand off.
+2. Explicit interrupt plus release succeeds.
+3. Releasing an idle loaded thread removes its subscription.
+4. Release removes live loaded ownership.
+5. An empty runtime is reaped.
+6. A runtime with another active thread is preserved.
+7. The persisted Goal survives release.
+8. Another official client can claim immediately after successful release.
+9. Release is idempotent.
+10. Tunnel disconnect reconciles ownership.
+11. Approval timeout does not strand a thread.
+12. A user-input request does not strand a released runtime.
+13. No external Codex process is signalled.
+
+Scoped execution elevation:
+
+14. The safe default still rejects unscoped Full Access.
+15. A Secure Tunnel caller cannot self-approve.
+16. Local-admin approval creates an exact scoped grant.
+17. A wrong workspace, profile, thread, or caller is rejected.
+18. An expired or revoked grant is rejected.
+19. An active turn does not hot-switch.
+20. The next eligible start receives Full Access.
+21. A one-turn grant is consumed atomically once.
+22. A TTL grant expires correctly.
+23. Restart reconciliation preserves truthful grant state.
+24. Workspace/profile disablement invalidates the grant.
+25. Alias or nested configuration cannot bypass sandbox validation.
+26. Elevation does not bypass Computer MCP capability policy.
+27. Diagnostics report requested and effective sandbox accurately.
+28. Handoff/release invalidates and safely cleans matching elevated ownership.
+
+Bounded long-thread supervision:
+
+29. A very large synthetic thread has a bounded recent read.
+30. Snapshot pagination/cursors return correct non-overlapping pages.
+31. Goal/status is read without loading full history.
+32. I/O, output, and latency budgets remain bounded and observable.
+
+Workspace and persisted state:
+
+33. Duplicate canonical-root registration is idempotent.
+34. Deduplication has a non-mutating preview.
+35. Applying an unchanged plan preserves aliases and references.
+36. Tests cannot pollute the production database.
+37. A request timeout does not set a terminal runtime shutdown reason.
+38. A stopped runtime has a terminal shutdown reason.
+39. Stale ownership reconciliation changes only safely stale receipts.
+
+Validation cleanup and artifacts:
+
+40. Primary success plus cleanup timeout preserves success with a cleanup warning.
+41. Cleanup phases use independent bounded deadlines.
+42. Cleanup stops only the exact owned process/runtime.
+43. A development artifact cannot masquerade as a published release artifact.
+44. A release receipt binds commit, tag, checksum, notarization, stapling, and
+    published byte identity.
+
+In addition to case 20, cold-start coverage must prove both eligible paths: an
+approved matching grant applies Full Access to a new thread start and to the
+first eligible turn start; the same requests remain safe without a matching
+grant.
+
+### Real focused acceptance
+
+With a disposable repository and disposable persisted threads, the real
+official App Server acceptance must prove bidirectional handoff: Computer MCP
+starts work, releases it, has no live owner, another official App Server client
+claims it without a writer conflict, releases it back, Computer MCP reclaims it,
+and all temporary runtimes/processes are reaped.
+
+The same disposable acceptance must prove the safe sandbox first, remote grant
+request, exact local approval, unchanged current turn, effective Full Access on
+the next turn, a real Git commit, a controlled local/test network operation,
+revocation, restoration of `workspace-write` on the next turn, release, and no
+surviving elevated grant/runtime. A synthetic or disposable large rollout must
+separately prove bounded recent supervision.
+
+After all automated and disposable checks pass, the existing user-nominated
+real workspace/thread workflow is release-blocking and may be exercised only
+with the user's explicit approval. It must preserve the native Goal and history
+while proving scoped elevation, revocation, handoff to the other official
+client, handoff back to Computer MCP, and no stale ownership. Repository
+documentation must not publish the user's private identifiers.
+
 ### Existing product regression
 
 All existing unit, integration, gateway, tunnel, workspace, policy, CLI, App,
@@ -375,33 +538,14 @@ The README must include:
 
 It must lead with the product rather than package internals or a tool inventory.
 
-## Independent public website acceptance
+## Independent public website boundary
 
-The `computer-mcp.github.io` repository must be a maintainable static GitHub
-Pages product site, not generated API documentation. It does not use a custom
-domain unless a later explicit product decision changes this contract.
-
-Required sections are:
-
-- **W1** hero with product name, positioning, Get Started, and GitHub/docs CTA;
-- **W2** the controlled-local-access problem;
-- **W3** workflow from AI client through authenticated gateway, policy/profile,
-  registered workspace/tool, local execution, audit, and result;
-- **W4** core capabilities;
-- **W5** real use cases;
-- **W6** security, trust, refusal behavior, and limitations;
-- **W7** the complementary Computer MCP/Codex Remote relationship;
-- **W8** architecture diagram;
-- **W9** quick start;
-- **W10** current status and honest roadmap;
-- **W11** footer links to GitHub, documentation, security, and license.
-
-The site must be responsive, accessible, keyboard navigable, technically
-credible, and have clear typography. It must not use fake testimonials, fake
-logos, unsupported claims, copied brand assets, or a generic AI-gradient visual
-template. It needs useful mobile and desktop layouts, metadata, a social image,
-favicon, SEO basics, automated production build, link validation, accessibility
-checks, browser-behavior tests, and compatible GitHub Pages deployment.
+The `computer-mcp.github.io` product site is already accepted and remains a
+separate repository without a custom domain. This focused batch does not
+redesign, edit, rebind, deploy, or retest it. If a source change would make an
+existing security or capability statement inaccurate, publication stops until
+an explicitly scoped website correction is reviewed. No such correction is
+currently required. Versioned reports retain their historical website evidence.
 
 ## Repository and release quality
 
@@ -414,15 +558,19 @@ The batch requires:
 - **Q5** Swift build and complete test suite;
 - **Q6** relevant real CLI and App/package validations;
 - **Q7** documentation checks and `git diff --check`;
-- **Q8** website format, type/build, link, accessibility, and browser-behavior checks;
+- **Q8** artifact-provenance and protected release-boundary checks;
 - **Q9** independent defect-first review, fixes, and rerun evidence;
-- **Q10** logical Conventional Commits in both repositories;
-- **Q11** clean worktrees in both repositories;
-- **Q12** one coordinated release-ready batch with no partial publication.
+- **Q10** logical Conventional Commits in the source repository;
+- **Q11** a clean isolated source worktree, with the website left unchanged;
+- **Q12** one release-ready hardening batch with no partial publication;
+- **Q13** the focused release uses one candidate only after every local,
+  security, disposable-real, authorized-real, documentation, review, and
+  cold-start gate passes; after exact published installation it restores the
+  prior App-owned state and leaves the local Computer MCP service running.
 
 ## Cold-start maintainability audit
 
-A fresh Codex task with only the repositories must be able to:
+A fresh Codex task with only the source repository must be able to:
 
 - **CS1** explain product positioning;
 - **CS2** explain the trust and two-level approval model;
@@ -432,10 +580,18 @@ A fresh Codex task with only the repositories must be able to:
 - **CS6** run the complete Swift test suite;
 - **CS7** identify stable, experimental, and planned capabilities;
 - **CS8** update one small capability safely;
-- **CS9** build and test the website;
-- **CS10** identify the coordinated release procedure.
+- **CS9** identify the website as a separate, already accepted, unchanged surface;
+- **CS10** identify the controlled release procedure;
+- **CS11** find the exact local-only elevation approval boundary and prove an
+  approved grant affects a new thread/first eligible turn while the default
+  remains safe;
+- **CS12** release a disposable thread and interpret ownership diagnostics
+  without relying on fixed UI wording;
+- **CS13** supervise a large thread through the bounded recent reader;
+- **CS14** distinguish development, validation, candidate, and exact published
+  artifact provenance.
 
-The audit must succeed without the original conversation. Its repository change
+The audit must succeed without the original conversation. Its source-repository change
 must be reviewed and either accepted as part of the batch or cleanly reverted by
 the audit task before final release preparation.
 
@@ -451,11 +607,14 @@ Exact-artifact acceptance rejected 1.0.26 after its completed catalog calls
 exposed non-idempotent missing-thread cleanup and an unbounded validation
 session disconnect after the final audit event.
 
-Version 1.0.27 is the only current candidate. It must return a bounded Apps page
-within a separate explicit deadline and repeat every protected-source,
-notarized-artifact, installed-App, catalog, native, Rosetta, ChatGPT,
-cold-start-maintenance, website, and coordinated-publication gate. Evidence from
-a rejected candidate may explain provenance but cannot satisfy a 1.0.27 gate.
+Version 1.0.27 is the immutable installed baseline for this focused hardening
+release, not a candidate to rebuild or republish. No v1.0.28 candidate exists
+until every source, disposable-real, documentation, independent-review, and
+cold-start gate passes. The one resulting v1.0.28 candidate must then pass the
+authorized vehicleOS, protected-source, notarized-artifact, installed-App,
+catalog, native, Rosetta, ChatGPT, and controlled-publication
+gates. Evidence from an earlier version or a rejected candidate may explain
+provenance but cannot satisfy a v1.0.28 gate.
 
 ## Current evidence ledger
 
@@ -464,7 +623,8 @@ exists but one or more requirements in that row still lack direct evidence.
 
 | Scope | Current evidence | State |
 | --- | --- | --- |
-| O1, B1–B11 | `CodexAppServerProcessTransport.swift`; lifecycle/process-tree, two-workspace, 4 MiB long-lived-response, and immediate-exit final-line tests; serialized and awaited available-chunk stdout framing; one normal end-to-end request budget with a sole read-only retry; one separately configured `app/list` generation; shared bounded retirement; gated `RealCodexAppServerAcceptanceTests` requiring official `skills/list`, a bounded Apps page, teardown, failure-path process reaping and temporary-thread archival, and the two-client resume/archive lifecycle | Implemented; complete root 52 suites/799 tests passed, and the 1.0.27 official-client run passed 3/3: `skills/list` in 0.460 seconds, bounded `app/list` in 51.473 seconds, and two-client resume/archive in 69.515 seconds |
+| O1, B1–B11 | `CodexAppServerProcessTransport.swift`; lifecycle/process-tree, two-workspace, 4 MiB long-lived-response, and immediate-exit final-line tests; serialized and awaited available-chunk stdout framing; one normal end-to-end request budget with a sole read-only retry; one separately configured `app/list` generation; shared bounded retirement; gated `RealCodexAppServerAcceptanceTests` requiring official `skills/list`, a bounded Apps page, teardown, failure-path process reaping and temporary-thread archival, and the two-client resume/archive lifecycle | Current disposable official-client acceptance passed: `skills/list` in 3.045 seconds, bounded Apps listing in 39.981 seconds, approved Full Access at eligible startup in 37.416 seconds, real Git/loopback/revocation in 87.531 seconds, and three-runtime handoff in 53.056 seconds. Temporary diagnostics were archived and cleaned |
+| O2, O6–O10 focused hardening | Transactional multi-runtime handoff/reclaim/diagnostics; durable scoped Full Access grants; bounded rollout-tail supervision; canonical workspace repair; runtime/request-state separation; stale ownership reconciliation; bounded cleanup; worktree safety; artifact and build-identity provenance | All focused automated cases, disposable official-client acceptance, the 30,000-record bounded-read acceptance, final complete source rerun, defect-first review, and cold-start source audit passed. The authorized vehicleOS run and exact candidate gates remain open |
 | C1–C14 | `codex.app.runtimes.*`, `thread.release`, `thread.reclaim`, `handoff.diagnose`; durable thread-to-workspace ownership receipts; runtime receipt tests; `computer-mcp codex diagnose-thread` and operator references | Implemented, integration-tested, CLI-verified, and operator-documented |
 | D1–D12 | `CodexApprovalBroker.swift`; persisted database records; per-kind, bounded-session, malformed-request, restart-interruption, redaction, timeout, delivery-failure, and policy-boundary tests | Implemented; focused and complete regression reruns passed |
 | E1–E8 | governed built-in Git tools, dynamic policy dispatch, operation tickets, audit correlation; real hook/commit test | Implemented; focused and complete regression reruns passed |
@@ -473,11 +633,12 @@ exists but one or more requirements in that row still lack direct evidence.
 | H1–H9 | durable exclusive/isolated leases, parent lineage, selected child evidence reconciliation, and real Git managed-worktree provision/dirty-refusal/removal/branch-race integration tests | Implemented; focused and complete regression reruns passed |
 | I1–I11 | `codex.diagnostics.snapshot`, handoff diagnosis, runtime/process/thread-ownership/approval/run/lease/audit receipts; `computer-mcp codex diagnose-thread|diagnostics`; architecture and troubleshooting references | Implemented, integration-tested, CLI-verified, and operator-documented |
 | J1–J12 | gateway policy/caller/workspace/ticket/audit suites; App/Exec/MCP bounded-runtime tests; universal event and approval redaction; digest-only unsafe protocol IDs; canonical managed-root and symlink-replacement refusal tests; no external-process-control invariant | Implemented; security review and complete regression reruns passed |
-| Swift regression | Strict root format/lint, supported-default build, and 52 suites/799 tests passed on 2026-09-02. Validation strict format/lint, build, and 12 suites/71 tests passed, including four exact cleanup-classification regressions. The gated 1.0.27 official-client tests passed 3/3 in one run | Local 1.0.27 source gates passed; protected signed-tag CI and exact-artifact reruns remain required |
+| Swift regression | Final v1.0.28 source format and strict lint passed; the supported-default build passed; root tests passed 824 tests in 52 suites plus 25 App tests in 4 suites; Validation passed 71 tests in 12 suites. The exact automated total is 920 tests. The development Universal 2 App and provenance-bound DMG package gates also passed | Complete for the pre-candidate local source gate. The later protected candidate must rebuild from the clean signed-tag source and pass its own exact-artifact gates |
 | R1–R15 | Product-first English and Simplified Chinese root manuals cover positioning, the 30-second model, use cases, maturity labels, trust and approval, architecture, quick start, Codex ownership, Codex Remote, limitations, troubleshooting, and development | Implemented; DocC, naming, localization, CLI, example, and repository gates passed |
-| W1–W11 | Independent sibling Git repository `computer-mcp.github.io`; static product site, responsive control-path design, metadata/social assets, no `CNAME`, Vite build, HTML/link checks, Axe, desktop/mobile Playwright, CI, and Pages workflow; the reviewed 1.0.27 binding passed Prettier, HTML, production build, 16 links, Axe, and Playwright with 13 passes plus one expected desktop mobile-menu skip | Implemented locally; after this source commit is fixed, `public/release.json` must be rebound once to its exact hash, all gates rerun, and the private site kept undeployed until the coordinated publication decision |
-| Q1–Q12 | Strict format/lint, supported-default root and Validation builds, complete tests, 22 canonical Test Case definitions, real Codex acceptance, development Universal 2 App/DMG verification, documentation and release-boundary regressions, website gates, and clean coordinated publication | Partial: root 52/799, Validation 12/71, real Codex 3/3, all static gates, a Universal 2 1.0.27 (28) development App/DMG, and the complete website check passed. Protected signed-tag CI, notarized artifact, installed exact-artifact catalog 22/22, UI, new-conversation ChatGPT, exact website binding, and coordinated publication gates remain required |
-| CS1–CS10 | The independent final 1.0.26 source/website audit passed 10/10 against source `9a21725e2658cc1e5b44a15f25575a3e7bad5537` and website `8469d384016995c4b8311719445a2f9e1a034303`, including its documented source tests, real official Codex 3/3, reversible maintenance exercise, website checks, release procedure, capability boundaries, metadata closure, and clean worktrees | Historical proof only: a fresh 1.0.27 cold-start audit must repeat all ten criteria and may not reuse the rejected candidate's conclusion |
+| Website boundary | Independent sibling repository `computer-mcp.github.io`; reviewed 1.0.27 site remains the accepted public product surface | Outside this focused batch; no source change requires a website text correction, binding, build, or deployment |
+| Q1–Q13 | Strict format/lint, supported-default root and Validation builds, all 920 automated tests, exact focused cases, disposable real Codex acceptance, development Universal 2 App/DMG verification, documentation, complete executable-derived CLI contract, repository and protected release-boundary regressions | All pre-candidate local, security, disposable-real, documentation, and review gates passed. Authorized vehicleOS, the single protected signed-tag candidate, notarized artifact, installed exact-artifact, state restoration, live-service checks, and controlled publication remain required |
+| CS1–CS14 | A fresh read-only v1.0.28 audit reconstructed product/trust positioning, provider lifecycles, ownership/handoff, elevation expiry and local approval, cleanup, workspace repair, provenance, release procedure, and the unchanged website boundary. It reported no implementation defect outside the CLI reference; after the executable-derived CLI contract was installed, a new context-free remediation audit concluded: “The CLI remediation gate passes with no remaining source defect.” | Passed for the pre-candidate source gate; authorized vehicleOS and later exact-artifact release checks are separate gates |
 
-The Goal may be completed only when every row is directly proven, both
-repositories are clean, and the two-repository batch is release-ready.
+The Goal may be completed only when every row is directly proven, the isolated
+source worktree is clean, the website remains unmodified, and the hardening
+batch is release-ready.

@@ -27,13 +27,18 @@ ASSET_ARRAY_LINE=$(line_for 'assets=(')
 APP_ASSET_LINE=$(line_for '  "$APP_NOTARY_ASSET"')
 DMG_ASSET_LINE=$(line_for '  "$DMG_NOTARY_ASSET"')
 CHECKSUM_LINE=$(line_for '"$ROOT_DIR/Scripts/write-release-checksums.sh" \')
+PROVENANCE_VERIFY_LINE=$(line_for '  VERIFY_GIT_TAG=1 "$ROOT_DIR/Scripts/verify-artifact-provenance.sh" \')
+PROVENANCE_ASSET_COUNT=$(/usr/bin/grep -Fxc '  "$ARTIFACT_PROVENANCE"' "$ASSEMBLER" || true)
+[[ "$PROVENANCE_ASSET_COUNT" == "2" ]] \
+  || fail "artifact provenance must be both a verified input and a checksummed upload asset."
 
 [[ "$APP_COPY_LINE" -lt "$ASSET_ARRAY_LINE" \
   && "$DMG_COPY_LINE" -lt "$ASSET_ARRAY_LINE" \
   && "$ASSET_ARRAY_LINE" -lt "$APP_ASSET_LINE" \
   && "$ASSET_ARRAY_LINE" -lt "$DMG_ASSET_LINE" \
   && "$APP_ASSET_LINE" -lt "$CHECKSUM_LINE" \
-  && "$DMG_ASSET_LINE" -lt "$CHECKSUM_LINE" ]] \
+  && "$DMG_ASSET_LINE" -lt "$CHECKSUM_LINE" \
+  && "$PROVENANCE_VERIFY_LINE" -lt "$CHECKSUM_LINE" ]] \
   || fail "notarization receipts must be copied into the upload root before checksum assembly."
 
 echo "Release asset boundary passed."

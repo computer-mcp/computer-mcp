@@ -53,6 +53,7 @@ package actor AppControlPlaneService {
   private var cachedLaunchAtLoginState: LaunchAtLoginState = .unavailable
   private var launchAtLoginRefreshInProgress = false
   private var launchAtLoginGeneration: UInt64 = 0
+  private var ownershipReconciliationTask: Task<Void, Never>?
 
   internal init(
     directories: AppControlPlaneServiceDirectories,
@@ -116,9 +117,25 @@ package actor AppControlPlaneService {
     try directories.prepare()
     try directories.secureDatabaseFiles()
     try manifestStore.startHotReloadMonitoring()
+    _ = try CodexThreadOwnershipReconciliation.reconcileSafely(database: database)
+    if ownershipReconciliationTask == nil {
+      let database = database
+      ownershipReconciliationTask = Task {
+        while !Task.isCancelled {
+          do {
+            try await Task.sleep(for: .seconds(60))
+          } catch {
+            return
+          }
+          _ = try? CodexThreadOwnershipReconciliation.reconcileSafely(database: database)
+        }
+      }
+    }
   }
 
   package func stop() async throws {
+    ownershipReconciliationTask?.cancel()
+    ownershipReconciliationTask = nil
     manifestStore.stopHotReloadMonitoring()
     for profileID in cloudflareRuntimes.keys.sorted() {
       _ = try? await stopCloudflareTunnel(profileID: profileID)
@@ -187,17 +204,49 @@ package actor AppControlPlaneService {
     at url: URL,
     displayName: String? = nil
   ) throws -> RegisteredWorkspace {
-    let workspace = try bookmarkService.registerFolder(at: url, displayName: displayName)
-    try database.saveWorkspace(workspace)
-    return workspace
+    let proposed = try bookmarkService.registerFolder(at: url, displayName: displayName)
+    let registration = try database.registerWorkspaceIdempotently(proposed)
+    if !registration.created,
+      displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+      registration.workspace.displayName != proposed.displayName
+    {
+      throw AppControlPlaneServiceError.workspaceMetadataConflict(
+        workspaceID: registration.workspace.id,
+        existingDisplayName: registration.workspace.displayName,
+        requestedDisplayName: proposed.displayName
+      )
+    }
+    return registration.workspace
+  }
+
+  package func workspaceDeduplicationPlan() throws -> WorkspaceDeduplicationPlan {
+    try database.workspaceDeduplicationPlan()
+  }
+
+  package func applyWorkspaceDeduplication(
+    expectedPlanDigest: String,
+    allowMetadataConflicts: Bool
+  ) throws -> WorkspaceDeduplicationResult {
+    try database.applyWorkspaceDeduplication(
+      expectedPlanDigest: expectedPlanDigest,
+      allowMetadataConflicts: allowMetadataConflicts
+    )
   }
 
   package func removeWorkspace(id: String) throws {
-    for var profile in try database.profiles() where profile.workspaceIDs.contains(id) {
-      profile.workspaceIDs.remove(id)
+    guard let workspace = try database.workspace(id: id) else {
+      throw AppControlPlaneServiceError.unknownWorkspace(id)
+    }
+    let canonicalID = workspace.id
+    try database.invalidateCodexElevationGrants(
+      workspaceID: canonicalID,
+      reason: "The registered workspace was removed."
+    )
+    for var profile in try database.profiles() where profile.workspaceIDs.contains(canonicalID) {
+      profile.workspaceIDs.remove(canonicalID)
       try database.saveProfile(profile)
     }
-    try database.deleteWorkspace(id: id)
+    try database.deleteWorkspace(id: canonicalID)
   }
 
   package func profileGrants() throws -> [ProfileGrant] {
@@ -272,6 +321,11 @@ package actor AppControlPlaneService {
       grant.workspaceIDs.insert(workspaceID)
     } else {
       grant.workspaceIDs.remove(workspaceID)
+      try database.invalidateCodexElevationGrants(
+        workspaceID: workspaceID,
+        profileID: profileID.rawValue,
+        reason: "The workspace was disabled for this profile."
+      )
     }
     try grant.validate()
     try database.saveProfile(grant)
@@ -296,6 +350,13 @@ package actor AppControlPlaneService {
     }
     guard try profileGrants().contains(where: { $0.id == profile }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue)
+    }
+    let previous = try activeGatewayProfile()
+    if previous != profile {
+      try database.invalidateCodexElevationGrants(
+        profileID: previous.rawValue,
+        reason: "The active gateway profile changed."
+      )
     }
     try database.saveRuntimeSetting(
       key: Self.activeProfileSettingKey,
@@ -826,6 +887,11 @@ package enum AppControlPlaneServiceError: Error, LocalizedError, Equatable {
   case unknownOpenAITunnelConfiguration(String)
   case unknownGatewayProfile(String)
   case unknownWorkspace(String)
+  case workspaceMetadataConflict(
+    workspaceID: String,
+    existingDisplayName: String,
+    requestedDisplayName: String
+  )
   case invalidStoredProfile(String)
   case localAdminCannotBeSocketProfile
   case fullShellProfileNotAllowed(String)
@@ -846,6 +912,13 @@ package enum AppControlPlaneServiceError: Error, LocalizedError, Equatable {
       return "Unknown gateway profile: \(id)"
     case .unknownWorkspace(let id):
       return "Unknown workspace: \(id)"
+    case .workspaceMetadataConflict(
+      let workspaceID,
+      let existingDisplayName,
+      let requestedDisplayName
+    ):
+      return
+        "Workspace '\(workspaceID)' already registers this canonical root as '\(existingDisplayName)'; requested display name '\(requestedDisplayName)' conflicts."
     case .invalidStoredProfile(let id):
       return "The stored active gateway profile is invalid: \(id)"
     case .localAdminCannotBeSocketProfile:

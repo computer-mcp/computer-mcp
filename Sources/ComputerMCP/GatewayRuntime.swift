@@ -261,8 +261,68 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         try authorize(operationDescriptor, context: routed.context)
       }
     }
-    return descriptor
+    return Self.effectiveCodexToolDescriptor(
+      descriptor,
+      arguments: routed.arguments
+    )
   }
+
+  private static func effectiveCodexToolDescriptor(
+    _ descriptor: CapabilityDescriptor,
+    arguments: [String: JSONValue]
+  ) -> CapabilityDescriptor {
+    guard let defaultDryRun = reviewedDryRunCapabilities[descriptor.id] else {
+      return descriptor
+    }
+    let dryRun: Bool
+    if let supplied = arguments["dry_run"] {
+      guard let value = supplied.boolValue else { return descriptor }
+      dryRun = value
+    } else {
+      dryRun = defaultDryRun
+    }
+    guard dryRun else { return descriptor }
+    var effective = descriptor
+    effective.risk = .readOnly
+    return effective
+  }
+
+  // These builtins have reviewed implementations whose dry-run path does not mutate state.
+  // Configured and downstream tools are intentionally excluded because their contracts are
+  // not owned by the gateway.
+  private static let reviewedDryRunCapabilities: [String: Bool] = [
+    "archive.create": true,
+    "archive.extract": true,
+    "file.append": false,
+    "file.chmod": false,
+    "file.copy": false,
+    "file.download": true,
+    "file.insert_text": false,
+    "file.mkdir": false,
+    "file.move": false,
+    "file.remove_xattr": false,
+    "file.replace_lines": false,
+    "file.replace_text": false,
+    "file.symlink": false,
+    "file.touch": false,
+    "file.trash": false,
+    "file.write": false,
+    "file.write_files": true,
+    "git.add": false,
+    "git.branch_create": true,
+    "git.branch_delete": true,
+    "git.branch_rename": true,
+    "git.branch_switch": true,
+    "git.clean": true,
+    "git.commit": false,
+    "git.restore_worktree": true,
+    "git.stash_push": false,
+    "git.tag_create": true,
+    "git.tag_delete": true,
+    "git.unstage": false,
+    "json.write": true,
+    "plist.write": true,
+  ]
 
   package func callToolForMCPAsync(
     name: String,

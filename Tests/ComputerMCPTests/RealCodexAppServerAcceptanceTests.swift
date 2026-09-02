@@ -105,7 +105,11 @@ final class RealCodexAppServerAcceptanceTests {
         #expect(await waitForExit(ownedProcessID))
       }
     } catch {
+      let ownedProcessID = await processID(runtime)
       await runtime.shutdown()
+      if let ownedProcessID {
+        #expect(await waitForExit(ownedProcessID))
+      }
       throw error
     }
   }
@@ -167,16 +171,22 @@ final class RealCodexAppServerAcceptanceTests {
       database: database
     )
     var second: LiveCodexAppServerRuntime?
+    var threadID: String?
+    var turnID: String?
+    var firstReleased = false
     do {
       let started = try await first.call(
         method: "thread/start",
         params: .object(["ephemeral": .bool(false)])
       )
-      let threadID = try #require(started.objectValue?["thread"]?.objectValue?["id"]?.stringValue)
+      let createdThreadID = try #require(
+        started.objectValue?["thread"]?.objectValue?["id"]?.stringValue
+      )
+      threadID = createdThreadID
       let turn = try await first.call(
         method: "turn/start",
         params: .object([
-          "threadId": .string(threadID),
+          "threadId": .string(createdThreadID),
           "input": .array([
             .object([
               "type": .string("text"),
@@ -187,11 +197,17 @@ final class RealCodexAppServerAcceptanceTests {
           ]),
         ])
       )
-      let turnID = try #require(turn.objectValue?["turn"]?.objectValue?["id"]?.stringValue)
-      try #require(await waitForIdle(first, threadID: threadID, turnID: turnID))
+      let createdTurnID = try #require(
+        turn.objectValue?["turn"]?.objectValue?["id"]?.stringValue
+      )
+      turnID = createdTurnID
+      try #require(
+        await waitForIdle(first, threadID: createdThreadID, turnID: createdTurnID)
+      )
       let firstPID = try #require(await processID(first))
 
       await first.shutdown()
+      firstReleased = true
       #expect(await waitForExit(firstPID))
 
       let nextOwner = CodexRuntimeOwner(
@@ -212,15 +228,17 @@ final class RealCodexAppServerAcceptanceTests {
       second = next
       let resumed = try await next.call(
         method: "thread/resume",
-        params: .object(["threadId": .string(threadID)])
+        params: .object(["threadId": .string(createdThreadID)])
       )
-      #expect(resumed.objectValue?["thread"]?.objectValue?["id"] == .string(threadID))
+      #expect(
+        resumed.objectValue?["thread"]?.objectValue?["id"] == .string(createdThreadID)
+      )
       let secondPID = try #require(await processID(next))
       #expect(secondPID != firstPID)
 
       _ = try await next.call(
         method: "thread/archive",
-        params: .object(["threadId": .string(threadID)])
+        params: .object(["threadId": .string(createdThreadID)])
       )
       await next.shutdown()
       #expect(await waitForExit(secondPID))
@@ -232,9 +250,63 @@ final class RealCodexAppServerAcceptanceTests {
       #expect(stopped.count == 2)
       #expect(Set(stopped.compactMap { $0.process?.processID }) == [firstPID, secondPID])
     } catch {
-      await first.shutdown()
-      await second?.shutdown()
+      if !firstReleased, let threadID, let turnID {
+        _ = try? await first.call(
+          method: "turn/interrupt",
+          params: .object([
+            "threadId": .string(threadID),
+            "turnId": .string(turnID),
+          ])
+        )
+      }
+      #expect(await shutdownAndWaitForExit(first))
+      if let second {
+        #expect(await shutdownAndWaitForExit(second))
+      }
+      if let threadID {
+        #expect(
+          await archiveTemporaryThread(
+            threadID,
+            configuration: configuration,
+            workspaceURL: workspace
+          )
+        )
+      }
       throw error
+    }
+  }
+
+  private func shutdownAndWaitForExit(_ runtime: LiveCodexAppServerRuntime) async -> Bool {
+    let ownedProcessID = await processID(runtime)
+    await runtime.shutdown()
+    guard let ownedProcessID else {
+      return true
+    }
+    return await waitForExit(ownedProcessID)
+  }
+
+  private func archiveTemporaryThread(
+    _ threadID: String,
+    configuration: CodexConfig,
+    workspaceURL: URL
+  ) async -> Bool {
+    let cleanup = LiveCodexAppServerRuntime(
+      configuration: configuration,
+      workspaceURL: workspaceURL
+    )
+    do {
+      _ = try await cleanup.call(
+        method: "thread/archive",
+        params: .object(["threadId": .string(threadID)])
+      )
+      return await shutdownAndWaitForExit(cleanup)
+    } catch {
+      let exited = await shutdownAndWaitForExit(cleanup)
+      if !exited {
+        Issue.record("Temporary real-client cleanup App Server did not exit")
+      }
+      Issue.record("Failed to archive temporary real-client thread \(threadID): \(error)")
+      return false
     }
   }
 

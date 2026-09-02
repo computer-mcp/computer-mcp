@@ -40,7 +40,7 @@ not satisfy this record.
 | Large App Server responses | A deterministic 4 MiB long-lived protocol line, official Codex `skills/list`, and a multi-megabyte `app/list/updated` notification followed by a bounded Apps page complete without waiting for EOF or crossing one actor boundary per byte; tracked draining also preserves the final line from a short-lived process |
 | Codex process lifecycle | Owned process-group identity and bounded EOF/TERM/KILL/reap across close, replacement, timeout, shutdown, parent death, stubborn descendants, and back-pressured stdin |
 | Close idempotence | Concurrent and repeated teardown paths share one retirement task and do not multiply grace intervals or process signals |
-| Real official-client handoff | First owned client completes a turn and is reaped; a second official client resumes and archives the durable thread, then is reaped |
+| Real official-client handoff | First owned client completes a turn and is reaped; a second official client resumes and archives the durable thread, then is reaped; exceptional paths reap every test-owned process and archive any created temporary thread through a fresh workspace-scoped client |
 | Thread ownership diagnosis | Durable workspace/runtime receipts, safe release/reclaim, reviewed cleanup, and actionable conflict classification without external-process control |
 | Approval broker | Persisted approve-once, bounded-session, deny, timeout, malformed, out-of-scope, automatic-low-risk, and restart-interruption coverage with redaction |
 | Governed Git | Real temporary-repository stage/commit path, reviewed message, hooks, clean final status, and full request/approval/ticket/audit/result correlation |
@@ -58,7 +58,7 @@ not satisfy this record.
 | Recursive symlink scanning | Final symlink identity is preserved; recursive content tools never follow targets |
 | Authenticated runtime observations | Exact request, Gateway, transport, profile, and audit correlation |
 | Full-catalog runtime harness | Every advertised tool is called with bounded fixtures and one correlated audit row |
-| Validation lifecycle cleanup | The owning provider closes before a fresh authenticated, workspace-bound session archives temporary threads |
+| Validation lifecycle cleanup | Success and failure paths close and reap the owning provider before a fresh authenticated, workspace-bound session archives temporary threads; an active failed validation turn is interrupted first |
 | Read-only provider retry | Only the first deadline-expired normal read may retry on a fresh connection within the same total budget; `app/list` uses one generation because a restart repeats its snapshot, while writes and other failures are never retried |
 | Cancellation boundary | A canceled outer call cannot start a retry or later App Server generation |
 | Cloudflare publisher boundary | Quick Tunnel isolation and named lifecycle/auth tests are mandatory; live named deployment is user-owned |

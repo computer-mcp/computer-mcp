@@ -17,6 +17,9 @@ All notable user-visible changes to Computer MCP are documented here.
 - Expand the deterministic long-lived protocol-line regression to 4 MiB and
   require the real official App Server test to return a bounded Apps page.
   A timeout is no longer accepted as a passing real-client result.
+- Make every real official-client failure path reap its test-owned App Server.
+  A handoff test that has already created a durable thread also interrupts its
+  active turn and archives that thread through a fresh workspace-scoped client.
 - Keep the immutable signed `v1.0.25` candidate unpublished. Exact-artifact
   full-catalog acceptance showed that its repaired stream transport could
   receive the large Apps snapshot but its 30-second split request budget ended

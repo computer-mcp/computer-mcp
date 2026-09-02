@@ -21,6 +21,10 @@ coordinated `computer-mcp.github.io` publication from its reviewed commit.
   official Codex 0.147.0 `skills/list` and bounded `app/list` acceptance tests.
   Both responses must complete normally and every owned process must be reaped;
   a timeout is not accepted as a passing real-client result.
+- Real official-client tests now make their exceptional path as strict as their
+  success path: every test-owned App Server is reaped, and a handoff failure
+  interrupts and archives any durable temporary thread through a fresh client
+  bound to the same temporary workspace.
 - The normal App Server request timeout remains one end-to-end budget covering
   process startup, workspace validation, the reviewed RPC, and at most one
   fresh-connection read-only retry. Cancellation cannot start another process

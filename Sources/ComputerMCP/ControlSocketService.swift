@@ -87,6 +87,10 @@ package actor ControlSocketService {
           let registry = ControlToolRegistry(
             controlPlane: controlPlane,
             gatewayService: gatewayService,
+            operations: AppControlPlaneOperations(
+              controlPlane: controlPlane,
+              gatewayService: gatewayService
+            ),
             identity: identity
           )
           return await MCPRuntimeAdapter.makeGatewayServer(
@@ -228,6 +232,7 @@ private struct ControlWorkspaceSummary: Encodable {
 private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable {
   private enum ControlArgumentType {
     case boolean
+    case integer
     case object
     case string
 
@@ -235,6 +240,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       switch self {
       case .boolean:
         return .object(["type": .string("boolean")])
+      case .integer:
+        return .object(["type": .string("integer")])
       case .object:
         return .object(["type": .string("object")])
       case .string:
@@ -246,6 +253,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       switch self {
       case .boolean:
         return value.boolValue != nil
+      case .integer:
+        return value.intValue != nil
       case .object:
         return value.objectValue != nil
       case .string:
@@ -256,6 +265,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     var description: String {
       switch self {
       case .boolean: "a Boolean"
+      case .integer: "an integer"
       case .object: "an object"
       case .string: "a string"
       }
@@ -332,28 +342,47 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
 
   private let controlPlane: AppControlPlaneService
   private let gatewayService: AppGatewayService
+  private let operations: AppControlPlaneOperations
   private let identity: GatewaySocketConnectionIdentity
 
   init(
     controlPlane: AppControlPlaneService,
     gatewayService: AppGatewayService,
+    operations: AppControlPlaneOperations,
     identity: GatewaySocketConnectionIdentity
   ) {
     self.controlPlane = controlPlane
     self.gatewayService = gatewayService
+    self.operations = operations
     self.identity = identity
   }
 
   func listTools() throws -> [MCPTool] {
-    Self.toolContracts.map { contract in
-      MCPTool(
+    let contractIDs = Set(Self.toolContracts.map(\.name))
+    let capabilityIDs = Set(AppControlCapabilityCatalog.all.map(\.id))
+    guard contractIDs == capabilityIDs else {
+      throw GatewayToolError.executionFailed(
+        "The App control capability catalog and control-socket contracts have drifted."
+      )
+    }
+    return try Self.toolContracts.map { contract in
+      guard let capability = AppControlCapabilityCatalog.byID[contract.name],
+        capability.readOnly == contract.readOnly
+      else {
+        throw GatewayToolError.executionFailed(
+          "The App control capability metadata for '\(contract.name)' is inconsistent."
+        )
+      }
+      return MCPTool(
         name: contract.name,
-        description: "Owner-only Computer MCP App control operation.",
+        description:
+          capability.summary
+          + " Available only through the current-user owner-only control socket.",
         inputSchema: contract.inputSchema,
         annotations: .init(
           readOnlyHint: contract.readOnly,
-          destructiveHint: !contract.readOnly,
-          idempotentHint: true,
+          destructiveHint: capability.destructive,
+          idempotentHint: capability.idempotent,
           openWorldHint: false
         )
       )
@@ -378,6 +407,11 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       let object = try contract.validate(arguments)
       let payload: JSONValue
       switch name {
+      case "app.capabilities":
+        payload = .object([
+          "schema_version": .number(1),
+          "capabilities": try encodedPayload(AppControlCapabilityCatalog.all),
+        ])
       case "app.status":
         let snapshot = try await controlPlane.snapshot()
         let activeProfile = try await controlPlane.activeGatewayProfile()
@@ -395,6 +429,18 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           "openai_tunnel_count": .number(Double(snapshot.openAITunnelConfigurations.count)),
           "cloudflare_tunnel_count": .number(Double(snapshot.cloudflareProfiles.count)),
         ])
+      case "app.start":
+        payload = try encodedPayload(try await operations.startGateway())
+      case "app.stop":
+        payload = try encodedPayload(try await operations.stopGateway())
+      case "app.restart":
+        payload = try encodedPayload(try await operations.restartGateway())
+      case "app.launch_at_login":
+        payload = try encodedPayload(
+          try await controlPlane.setLaunchAtLoginEnabled(
+            object["enabled"]?.boolValue ?? true
+          )
+        )
       case "readiness":
         let rawJourney = try requiredString("journey", in: object)
         guard let journey = ProductJourney(rawValue: rawJourney) else {
@@ -424,13 +470,25 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         ])
       case "config.validate", "config.import":
         payload = try await configurationOperation(name: name, arguments: object)
+      case "config.history":
+        payload = try encodedPayload(
+          try await controlPlane.configurationHistory(
+            limit: try boundedLimit(object["limit"], default: 50, maximum: 200)
+          )
+        )
+      case "config.rollback":
+        payload = try encodedPayload(
+          try await operations.rollbackManifest(
+            to: requiredString("revision_id", in: object)
+          )
+        )
       case "workspace.list":
         payload = try encodedPayload(
           try await controlPlane.workspaces().map(ControlWorkspaceSummary.init)
         )
       case "workspace.add":
         let path = try requiredString("path", in: object)
-        let workspace = try await controlPlane.registerWorkspace(
+        let workspace = try await operations.registerWorkspace(
           at: URL(fileURLWithPath: path).standardizedFileURL,
           displayName: object["display_name"]?.stringValue
         )
@@ -438,7 +496,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       case "workspace.deduplicate":
         if object["apply"]?.boolValue == true {
           payload = try encodedPayload(
-            try await controlPlane.applyWorkspaceDeduplication(
+            try await operations.applyWorkspaceDeduplication(
               expectedPlanDigest: try requiredString("expected_plan_digest", in: object),
               allowMetadataConflicts: object["allow_metadata_conflicts"]?.boolValue ?? false
             )
@@ -448,12 +506,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         }
       case "workspace.remove":
         let id = try requiredString("id", in: object)
-        try await controlPlane.removeWorkspace(id: id)
+        try await operations.removeWorkspace(id: id)
         payload = .object(["removed": .string(id)])
       case "workspace.enable", "profile.grant":
         let profile = try requiredProfile(in: object)
         let workspaceID = try requiredString("workspace_id", in: object)
-        let grant = try await controlPlane.setWorkspaceEnabled(
+        let grant = try await operations.setWorkspaceEnabled(
           object["enabled"]?.boolValue ?? true,
           workspaceID: workspaceID,
           profileID: profile
@@ -466,17 +524,31 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         guard let grant = try await controlPlane.profileGrants().first(where: { $0.id == profile })
         else { throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue) }
         payload = try encodedPayload(grant)
+      case "profile.activate":
+        payload = try encodedPayload(
+          try await operations.activateProfile(requiredProfile(in: object))
+        )
       case "profile.shell":
         let profile = try requiredProfile(in: object)
-        let grant = try await controlPlane.setFullShellEnabled(
+        let grant = try await operations.setFullShellEnabled(
           object["enabled"]?.boolValue ?? true,
           profileID: profile
         )
-        let gateway = await gatewayService.snapshot()
-        if gateway.state == .running, gateway.profileID == profile {
-          try await gatewayService.restart(profile: profile)
-        }
         payload = try encodedPayload(grant)
+      case "provider.list":
+        payload = try encodedPayload(try await controlPlane.providerStates())
+      case "provider.doctor":
+        payload = try encodedPayload(
+          try await operations.refreshProvider(id: object["id"]?.stringValue)
+        )
+      case "permissions.status":
+        payload = try encodedPayload(await controlPlane.computerUsePermissions())
+      case "audit.list":
+        payload = try encodedPayload(
+          try await controlPlane.auditEvents(
+            limit: try boundedLimit(object["limit"], default: 200, maximum: 1_000)
+          )
+        )
       case "tools.list":
         let tools = try await controlPlane.localAdminTools(
           transportTrace: localAdminTransportTrace
@@ -509,16 +581,45 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
       case "tunnel.openai.start":
         payload = try encodedPayload(
-          try await controlPlane.startOpenAITunnel(profileID: requiredString("id", in: object))
+          try await operations.startOpenAITunnel(id: requiredString("id", in: object))
+        )
+      case "tunnel.openai.reconnect":
+        payload = try encodedPayload(
+          try await operations.reconnectOpenAITunnel(id: requiredString("id", in: object))
+        )
+      case "tunnel.openai.provision":
+        payload = try encodedPayload(
+          try await controlPlane.provisionOpenAITunnel(
+            profileID: requiredString("id", in: object),
+            force: object["force"]?.boolValue ?? false
+          )
         )
       case "tunnel.openai.stop":
         payload = try encodedPayload(
-          try await controlPlane.stopOpenAITunnel(profileID: requiredString("id", in: object))
+          try await operations.stopOpenAITunnel(id: requiredString("id", in: object))
         )
       case "tunnel.openai.logs":
         payload = try encodedPayload(
           try await controlPlane.openAITunnelLogs(profileID: requiredString("id", in: object))
         )
+      case "tunnel.openai.save":
+        payload = try encodedPayload(
+          try await operations.saveOpenAITunnelConfiguration(
+            OpenAITunnelConfigurationInput(
+              id: requiredString("id", in: object),
+              tunnelClientProfile: requiredString("tunnel_client_profile", in: object),
+              tunnelID: requiredString("tunnel_id", in: object),
+              gatewayProfile: requiredProfile("gateway_profile", in: object),
+              tunnelClientPath: object["tunnel_client_path"]?.stringValue,
+              httpProxy: object["http_proxy"]?.stringValue,
+              apiKey: object["api_key"]?.stringValue
+            )
+          )
+        )
+      case "tunnel.openai.remove":
+        let id = try requiredString("id", in: object)
+        try await operations.deleteOpenAITunnelConfiguration(id: id)
+        payload = .object(["removed": .string(id)])
       case "tunnel.cloudflare.list":
         payload = .object([
           "profiles": try encodedPayload(try await controlPlane.cloudflareTunnelConfigurations()),
@@ -532,15 +633,11 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
       case "tunnel.cloudflare.start":
         payload = try encodedPayload(
-          try await controlPlane.startCloudflareTunnel(
-            profileID: requiredString("id", in: object)
-          )
+          try await operations.startCloudflareTunnel(id: requiredString("id", in: object))
         )
       case "tunnel.cloudflare.stop":
         payload = try encodedPayload(
-          try await controlPlane.stopCloudflareTunnel(
-            profileID: requiredString("id", in: object)
-          )
+          try await operations.stopCloudflareTunnel(id: requiredString("id", in: object))
         )
       case "tunnel.cloudflare.logs":
         payload = try encodedPayload(
@@ -548,6 +645,26 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
             profileID: requiredString("id", in: object)
           )
         )
+      case "tunnel.cloudflare.save":
+        payload = try encodedPayload(
+          try await operations.saveCloudflareTunnelConfiguration(
+            CloudflareTunnelConfigurationInput(
+              id: requiredString("id", in: object),
+              tunnelName: requiredString("tunnel_name", in: object),
+              publicHostname: requiredString("public_hostname", in: object),
+              gatewayProfile: requiredProfile("gateway_profile", in: object),
+              localPort: object["local_port"]?.intValue ?? 8_765,
+              metricsPort: object["metrics_port"]?.intValue ?? 20_241,
+              cloudflaredPath: object["cloudflared_path"]?.stringValue,
+              tunnelToken: object["tunnel_token"]?.stringValue,
+              regenerateAccessToken: object["regenerate_access_token"]?.boolValue ?? false
+            )
+          )
+        )
+      case "tunnel.cloudflare.remove":
+        let id = try requiredString("id", in: object)
+        try await operations.deleteCloudflareTunnelConfiguration(id: id)
+        payload = .object(["removed": .string(id)])
       default:
         throw GatewayToolError.unknownTool(name)
       }
@@ -633,6 +750,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     }
     let currentDigest = Self.digest(currentData)
     let proposedDigest = Self.digest(Data(canonical.utf8))
+    let gatewayWasRunning = await gatewayService.snapshot().state == .running
     var result: [String: JSONValue] = [
       "ok": .bool(true),
       "schema_version": .number(Double(parsed.schemaVersion)),
@@ -641,7 +759,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       "changed": .bool(currentDigest != proposedDigest),
       "diff": Self.manifestDiff(current: currentManifest, proposed: canonical),
       "toml": .string(canonical),
-      "transport_started": .bool(false),
+      "transport_will_restart": .bool(gatewayWasRunning),
     ]
     if name == "config.import", arguments["apply"]?.boolValue == true {
       guard
@@ -657,14 +775,22 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           "The active manifest changed after preview; run config import again."
         )
       }
-      let revision = try await controlPlane.activateManifest(canonical)
+      let revision = try await operations.activateManifest(canonical)
       result["applied_revision"] = .string(revision.id)
+      result["transport_restarted"] = .bool(gatewayWasRunning)
     }
     return .object(result)
   }
 
   private func requiredProfile(in object: [String: JSONValue]) throws -> GatewayProfileID {
-    let rawValue = try requiredString("profile", in: object)
+    try requiredProfile("profile", in: object)
+  }
+
+  private func requiredProfile(
+    _ key: String,
+    in object: [String: JSONValue]
+  ) throws -> GatewayProfileID {
+    let rawValue = try requiredString(key, in: object)
     guard let profile = GatewayProfileID(rawValue: rawValue) else {
       throw GatewayToolError.invalidArguments("Invalid profile ID '\(rawValue)'.")
     }
@@ -686,6 +812,18 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       throw GatewayToolError.invalidArguments("Missing non-empty '\(key)'.")
     }
     return value
+  }
+
+  private func boundedLimit(
+    _ value: JSONValue?,
+    default defaultValue: Int,
+    maximum: Int
+  ) throws -> Int {
+    let limit = value?.intValue ?? defaultValue
+    guard (1...maximum).contains(limit) else {
+      throw GatewayToolError.invalidArguments("limit must be between 1 and \(maximum).")
+    }
+    return limit
   }
 
   private func encodedPayload<T: Encodable>(_ value: T) throws -> JSONValue {
@@ -806,7 +944,16 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
   }
 
   private static let toolContracts: [ControlToolContract] = [
+    ControlToolContract("app.capabilities", readOnly: true),
     ControlToolContract("app.status", readOnly: true),
+    ControlToolContract("app.start", readOnly: false),
+    ControlToolContract("app.stop", readOnly: false),
+    ControlToolContract("app.restart", readOnly: false),
+    ControlToolContract(
+      "app.launch_at_login",
+      arguments: ["enabled": .boolean],
+      readOnly: false
+    ),
     ControlToolContract(
       "readiness",
       arguments: ["journey": .string],
@@ -821,6 +968,17 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       readOnly: true
     ),
     ControlToolContract("config.export", readOnly: true),
+    ControlToolContract(
+      "config.history",
+      arguments: ["limit": .integer],
+      readOnly: true
+    ),
+    ControlToolContract(
+      "config.rollback",
+      arguments: ["revision_id": .string],
+      required: ["revision_id"],
+      readOnly: false
+    ),
     ControlToolContract(
       "config.import",
       arguments: [
@@ -867,6 +1025,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       readOnly: true
     ),
     ControlToolContract(
+      "profile.activate",
+      arguments: ["profile": .string],
+      required: ["profile"],
+      readOnly: false
+    ),
+    ControlToolContract(
       "profile.grant",
       arguments: ["profile": .string, "workspace_id": .string, "enabled": .boolean],
       required: ["profile", "workspace_id"],
@@ -877,6 +1041,18 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       arguments: ["profile": .string, "enabled": .boolean],
       required: ["profile"],
       readOnly: false
+    ),
+    ControlToolContract("provider.list", readOnly: true),
+    ControlToolContract(
+      "provider.doctor",
+      arguments: ["id": .string],
+      readOnly: true
+    ),
+    ControlToolContract("permissions.status", readOnly: true),
+    ControlToolContract(
+      "audit.list",
+      arguments: ["limit": .integer],
+      readOnly: true
     ),
     ControlToolContract("tools.list", readOnly: true),
     ControlToolContract(
@@ -894,13 +1070,52 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     ControlToolContract("tunnel.openai.list", readOnly: true),
     tunnelContract("tunnel.openai.doctor", readOnly: true),
     tunnelContract("tunnel.openai.start", readOnly: false),
+    tunnelContract("tunnel.openai.reconnect", readOnly: false),
+    ControlToolContract(
+      "tunnel.openai.provision",
+      arguments: ["id": .string, "force": .boolean],
+      required: ["id"],
+      readOnly: false
+    ),
     tunnelContract("tunnel.openai.stop", readOnly: false),
     tunnelContract("tunnel.openai.logs", readOnly: true),
+    ControlToolContract(
+      "tunnel.openai.save",
+      arguments: [
+        "id": .string,
+        "tunnel_client_profile": .string,
+        "tunnel_id": .string,
+        "gateway_profile": .string,
+        "tunnel_client_path": .string,
+        "http_proxy": .string,
+        "api_key": .string,
+      ],
+      required: ["id", "tunnel_client_profile", "tunnel_id", "gateway_profile"],
+      readOnly: false
+    ),
+    tunnelContract("tunnel.openai.remove", readOnly: false),
     ControlToolContract("tunnel.cloudflare.list", readOnly: true),
     tunnelContract("tunnel.cloudflare.doctor", readOnly: true),
     tunnelContract("tunnel.cloudflare.start", readOnly: false),
     tunnelContract("tunnel.cloudflare.stop", readOnly: false),
     tunnelContract("tunnel.cloudflare.logs", readOnly: true),
+    ControlToolContract(
+      "tunnel.cloudflare.save",
+      arguments: [
+        "id": .string,
+        "tunnel_name": .string,
+        "public_hostname": .string,
+        "gateway_profile": .string,
+        "local_port": .integer,
+        "metrics_port": .integer,
+        "cloudflared_path": .string,
+        "tunnel_token": .string,
+        "regenerate_access_token": .boolean,
+      ],
+      required: ["id", "tunnel_name", "public_hostname", "gateway_profile"],
+      readOnly: false
+    ),
+    tunnelContract("tunnel.cloudflare.remove", readOnly: false),
   ]
 
   private static let toolContractsByName = Dictionary(

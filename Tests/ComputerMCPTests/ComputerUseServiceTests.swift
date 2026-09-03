@@ -509,6 +509,23 @@ final class ComputerUseServiceTests {
         ]))
   }
 
+  @Test
+  func testAccessibilityActionRejectsTheComputerMCPHostProcess() {
+    let adapter = FakeComputerUseAdapter(permissions: [.accessibility: .granted])
+    let service = ComputerUseService(adapter: adapter)
+    let processID = Int32(ProcessInfo.processInfo.processIdentifier)
+
+    expectThrows(
+      try service.performAccessibilityAction(
+        .press,
+        on: ComputerUseAccessibilityReference(processID: processID, childPath: [])
+      )
+    ) { error in
+      #expect((error as? ComputerUseError) == (.selfTargetForbidden(processID: processID)))
+    }
+    #expect(adapter.calls.isEmpty)
+  }
+
   private func assertInvalidArgument(
     _ error: Error,
     field: String,

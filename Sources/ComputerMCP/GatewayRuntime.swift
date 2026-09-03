@@ -1159,7 +1159,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var tools = [
       MCPTool(
         name: "workspace.list",
-        description: "List workspaces registered and granted to the active profile.",
+        description:
+          "List workspaces registered and granted to the active profile. This remote tool cannot "
+          + "register authorization roots; use the owner-only local 'computer-mcp workspace add' "
+          + "command and never operate the Computer MCP UI through Computer Use.",
         inputSchema: .object(["type": .string("object"), "additionalProperties": .bool(false)]),
         annotations: .init(
           readOnlyHint: true,

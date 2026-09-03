@@ -153,7 +153,7 @@ final class AppControlPlaneServiceTests {
         ])
       )
       #expect(preview.objectValue?["schema_version"] == .number(1))
-      #expect(preview.objectValue?["transport_started"] == .bool(false))
+      #expect(preview.objectValue?["transport_will_restart"] == .bool(false))
       #expect(preview.objectValue?["applied_revision"] == nil)
 
       let dormantProfile = OpenAITunnelConfiguration(
@@ -195,7 +195,7 @@ final class AppControlPlaneServiceTests {
         ])
       )
       #expect(applied.objectValue?["applied_revision"]?.stringValue?.isEmpty == false)
-      #expect(applied.objectValue?["transport_started"] == .bool(false))
+      #expect(applied.objectValue?["transport_restarted"] == .bool(false))
       #expect(
         try await fixture.controlPlane.activeConfiguration().server.name == "computer-mcp-imported")
       #expect((try await fixture.controlPlane.desiredOpenAITunnelConfigurationIDs()).isEmpty)
@@ -311,6 +311,140 @@ final class AppControlPlaneServiceTests {
       await service.stop()
       throw error
     }
+  }
+
+  @Test
+  func testControlSocketAndAppAdapterShareLifecycleAwareOperations() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(DefaultGatewayConfiguration.manifest)
+    let gatewayService = AppGatewayService.live(
+      controlPlane: fixture.controlPlane,
+      directories: fixture.directories
+    )
+    let service = ControlSocketService(
+      controlPlane: fixture.controlPlane,
+      gatewayService: gatewayService,
+      socketURL: fixture.directories.controlSocket
+    )
+    try await service.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      let capabilities = try await client.call("app.capabilities")
+      let capabilityIDs = Set(
+        try #require(capabilities.objectValue?["capabilities"]?.arrayValue).compactMap {
+          $0.objectValue?["id"]?.stringValue
+        }
+      )
+      #expect(capabilityIDs == Set(AppControlCapabilityCatalog.all.map(\.id)))
+      #expect(
+        capabilities.objectValue?["schema_version"] == .number(1)
+      )
+
+      let started = try await client.call("app.start")
+      #expect(started.objectValue?["state"] == .string("running"))
+
+      let workspaceURL = fixture.root.appendingPathComponent("Shared Operations")
+      try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+      let workspace = try await client.call(
+        "workspace.add",
+        arguments: .object(["path": .string(workspaceURL.path)])
+      )
+      let workspaceID = try #require(workspace.objectValue?["id"]?.stringValue)
+      #expect((await gatewayService.snapshot()).state == .running)
+
+      let activated = try await client.call(
+        "profile.activate",
+        arguments: .object(["profile": .string(GatewayProfileID.chatGPTOperate.rawValue)])
+      )
+      #expect(activated.objectValue?["restarted"] == .bool(true))
+      #expect(
+        try await fixture.controlPlane.activeGatewayProfile() == GatewayProfileID.chatGPTOperate
+      )
+
+      let granted = try await client.call(
+        "workspace.enable",
+        arguments: .object([
+          "workspace_id": .string(workspaceID),
+          "profile": .string(GatewayProfileID.chatGPTOperate.rawValue),
+          "enabled": .bool(true),
+        ])
+      )
+      #expect(
+        granted.objectValue?["workspace_ids"]?.arrayValue?.contains(.string(workspaceID)) == true
+      )
+      #expect((await gatewayService.snapshot()).state == .running)
+
+      let permissions = try await client.call("permissions.status")
+      #expect(permissions.objectValue?["accessibility"] != nil)
+      #expect(permissions.objectValue?["screen_recording"] != nil)
+
+      let history = try await client.call(
+        "config.history",
+        arguments: .object(["limit": .number(10)])
+      )
+      #expect(history.objectValue?["result"]?.arrayValue?.isEmpty == false)
+
+      let audit = try await client.call(
+        "audit.list",
+        arguments: .object(["limit": .number(50)])
+      )
+      #expect(audit.objectValue?["result"]?.arrayValue?.isEmpty == false)
+
+      let openAISaved = try await client.call(
+        "tunnel.openai.save",
+        arguments: .object([
+          "id": .string("shared-openai"),
+          "tunnel_client_profile": .string("computer-mcp"),
+          "tunnel_id": .string("tunnel_shared"),
+          "gateway_profile": .string(GatewayProfileID.chatGPTOperate.rawValue),
+          "api_key": .string("openai-secret"),
+        ])
+      )
+      #expect(
+        openAISaved.objectValue?["configuration"]?.objectValue?["id"]
+          == .string("shared-openai")
+      )
+      #expect(!String(describing: openAISaved).contains("openai-secret"))
+      #expect(
+        try await fixture.controlPlane.hasOpenAITunnelAPIKey(
+          reference: SecretReference(account: "tunnel.shared-openai.openai-api-key")
+        )
+      )
+      _ = try await client.call(
+        "tunnel.openai.remove",
+        arguments: .object(["id": .string("shared-openai")])
+      )
+
+      let cloudflareSaved = try await client.call(
+        "tunnel.cloudflare.save",
+        arguments: .object([
+          "id": .string("shared-cloudflare"),
+          "tunnel_name": .string("shared-tunnel"),
+          "public_hostname": .string("shared.example.com"),
+          "gateway_profile": .string(GatewayProfileID.cloudflareObserve.rawValue),
+          "tunnel_token": .string("cloudflare-secret"),
+        ])
+      )
+      #expect(
+        cloudflareSaved.objectValue?["profile"]?.objectValue?["id"] == .string("shared-cloudflare"))
+      #expect(!String(describing: cloudflareSaved).contains("cloudflare-secret"))
+      _ = try await client.call(
+        "tunnel.cloudflare.remove",
+        arguments: .object(["id": .string("shared-cloudflare")])
+      )
+
+      let stopped = try await client.call("app.stop")
+      #expect(stopped.objectValue?["state"] == .string("stopped"))
+    } catch {
+      _ = try? await AppControlPlaneOperations(
+        controlPlane: fixture.controlPlane,
+        gatewayService: gatewayService
+      ).stopGateway()
+      await service.stop()
+      throw error
+    }
+    await service.stop()
   }
 
   @Test

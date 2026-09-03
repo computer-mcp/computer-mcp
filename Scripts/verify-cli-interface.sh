@@ -42,6 +42,7 @@ verify_help "$ROOT_CLI" app
 verify_help "$ROOT_CLI" config
 verify_help "$ROOT_CLI" workspace
 verify_help "$ROOT_CLI" profile
+verify_help "$ROOT_CLI" permissions
 verify_help "$ROOT_CLI" tunnel
 verify_help "$ROOT_CLI" tunnel openai
 verify_help "$ROOT_CLI" tunnel cloudflare
@@ -54,7 +55,12 @@ verify_help "$ROOT_CLI" install
 verify_help "$ROOT_CLI" uninstall
 verify_help "$ROOT_CLI" serve
 public_leaf_commands=(
+  "app capabilities"
   "app status"
+  "app start"
+  "app stop"
+  "app restart"
+  "app launch-at-login"
   "doctor"
   "build-info"
   "config path"
@@ -63,6 +69,8 @@ public_leaf_commands=(
   "config validate"
   "config export"
   "config import"
+  "config history"
+  "config rollback"
   "workspace list"
   "workspace add"
   "workspace remove"
@@ -70,18 +78,25 @@ public_leaf_commands=(
   "workspace deduplicate"
   "profile list"
   "profile show"
+  "profile activate"
   "profile grant"
   "profile shell"
   "tunnel openai list"
   "tunnel openai doctor"
   "tunnel openai start"
+  "tunnel openai reconnect"
   "tunnel openai stop"
+  "tunnel openai provision"
   "tunnel openai logs"
+  "tunnel openai save"
+  "tunnel openai remove"
   "tunnel cloudflare list"
   "tunnel cloudflare doctor"
   "tunnel cloudflare start"
   "tunnel cloudflare stop"
   "tunnel cloudflare logs"
+  "tunnel cloudflare save"
+  "tunnel cloudflare remove"
   "codex diagnose-thread"
   "codex diagnostics"
   "codex release-thread"
@@ -96,7 +111,11 @@ public_leaf_commands=(
   "tools inspect"
   "tools call"
   "tools inventory"
+  "permissions status"
+  "audit list"
   "audit export"
+  "providers list"
+  "providers doctor"
   "providers discover"
   "install cli"
   "uninstall cli"
@@ -128,6 +147,17 @@ if [[ "$documented_command_surface" != "$actual_command_surface" ]]; then
   /usr/bin/diff -u \
     <(printf '%s\n' "$actual_command_surface") \
     <(printf '%s\n' "$documented_command_surface") >&2 || true
+  exit 1
+fi
+
+openai_save_help=$("$ROOT_CLI" tunnel openai save --help)
+cloudflare_save_help=$("$ROOT_CLI" tunnel cloudflare save --help)
+grep -F -- '--api-key-stdin' <<<"$openai_save_help" >/dev/null
+grep -F -- '--tunnel-token-stdin' <<<"$cloudflare_save_help" >/dev/null
+if grep -E -- '--api-key([ =]|$)|--tunnel-token([ =]|$)' \
+  <<<"$openai_save_help"$'\n'"$cloudflare_save_help" >/dev/null
+then
+  echo "CLI interface verification failed: Tunnel secrets must not be accepted through argv." >&2
   exit 1
 fi
 
@@ -168,13 +198,41 @@ OUTSIDE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-cli.XXXXXX")
 FIXTURE_MANIFEST="$OUTSIDE_DIR/validation-fixture.toml"
 FIXTURE_MARKER="$OUTSIDE_DIR/provider-starts.log"
 DOCTOR_JSON="$OUTSIDE_DIR/doctor.json"
+CAPABILITIES_JSON="$OUTSIDE_DIR/capabilities.json"
 CODEX_APP_PLAN="$OUTSIDE_DIR/codex-app-plan.json"
-trap 'rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
+trap 'rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CAPABILITIES_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
 (
   cd "$OUTSIDE_DIR"
   verify_help "$ROOT_CLI"
   verify_help "$VALIDATION_CLI"
 )
+
+"$ROOT_CLI" app capabilities >"$CAPABILITIES_JSON"
+/usr/bin/plutil -convert xml1 -o /dev/null "$CAPABILITIES_JSON"
+[[ $(/usr/bin/jq -r '.schema_version' "$CAPABILITIES_JSON") == "1" ]]
+capability_count=$(/usr/bin/jq -r '.capabilities | length' "$CAPABILITIES_JSON")
+unique_capability_count=$(
+  /usr/bin/jq -r '.capabilities[].id' "$CAPABILITIES_JSON" \
+    | LC_ALL=C /usr/bin/sort -u \
+    | /usr/bin/wc -l \
+    | /usr/bin/awk '{print $1}'
+)
+[[ "$capability_count" == "$unique_capability_count" && "$capability_count" -gt 0 ]] || {
+  echo "CLI interface verification failed: capability ids are empty or duplicated." >&2
+  exit 1
+}
+while IFS= read -r catalog_command; do
+  [[ "$catalog_command" == computer-mcp\ * ]] || {
+    echo "CLI interface verification failed: invalid catalog command '$catalog_command'." >&2
+    exit 1
+  }
+  command_path=${catalog_command#computer-mcp }
+  printf '%s\n' "${public_leaf_commands[@]}" \
+    | /usr/bin/grep -Fx "$command_path" >/dev/null || {
+      echo "CLI interface verification failed: catalog command '$catalog_command' is absent." >&2
+      exit 1
+    }
+done < <(/usr/bin/jq -r '.capabilities[].cli_command' "$CAPABILITIES_JSON")
 
 "$VALIDATION_CLI" fixture manifest generate \
   --output "$FIXTURE_MANIFEST" \

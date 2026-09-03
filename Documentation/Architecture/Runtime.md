@@ -9,13 +9,14 @@ and that socket.
 
 | Component | Responsibility |
 | --- | --- |
+| `AppControlPlaneOperations` | Shared lifecycle-aware App/CLI use cases, validation, restart/reconnect coordination, and rollback |
 | `AppControlPlaneService` | Directories, database, manifest revisions, bookmarks, profiles, providers, Tunnel, Keychain, and launch at login |
 | `AppGatewayService` | Own the private socket and one official SDK server per client connection |
 | `GatewayRuntime` | Compose providers, apply policy, route calls, and audit outcomes |
 | `GatewayProviderRouter` | Map exact tool name to one domain provider |
 | `MCPRuntimeAdapter` | Construct official SDK MCP servers for App and standalone modes |
 | `GatewayStdioSocketBridge` | Bridge MCP stdio to the Gateway Socket |
-| `ControlSocketService` | Serve owner-only App/CLI administration without creating another control plane |
+| `ControlSocketService` | Adapt owner-only CLI calls to shared App control operations without creating another control plane |
 | `CloudflareTunnelManager` | Own loopback HTTP, named-tunnel token file, cloudflared, metrics, and cleanup |
 | `AppFileLogger` | Bounded, rotated, redacted lifecycle JSONL |
 
@@ -28,6 +29,13 @@ administration binds `local-cli`; MCP bridge clients bind `local-mcp` or an
 authenticated transport caller. Static definitions live in the schema 1
 manifest, grants/desired state in GRDB, bookmarks in App storage, and all
 secrets in Keychain.
+
+SwiftUI and the embedded CLI both call `AppControlPlaneOperations` for
+mutations. Workspace, profile, manifest, provider, gateway, and Tunnel actions
+therefore share validation, running-gateway restart, desired-Tunnel
+reconnection, and rollback behavior. The CLI reaches that layer through the
+owner-only control socket; it does not open App storage as a second service
+owner.
 
 App startup brings the App Control Plane, Control Socket, and Gateway Socket to
 readiness before restoring desired remote transports in the background. Status
@@ -74,7 +82,8 @@ backoff instead of producing a false healthy state.
 - Builtin/Skills: bounded typed operations inside resolved workspace or Skill
   roots.
 - Computer Use: native macOS observation/action service with non-prompting TCC
-  preflight and post-action verification.
+  preflight, main-thread AX action dispatch, host-process self-target denial,
+  and post-action verification.
 - Codex: separate App Server, Exec, and MCP runtimes using `swift-codex`.
 
 ## Codex App Server Ownership And Teardown

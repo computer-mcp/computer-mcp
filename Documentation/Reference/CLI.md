@@ -19,7 +19,12 @@ replace a regular file or an unrelated valid link. Add that directory to
 ## Command surface
 
 ```text
+computer-mcp app capabilities
 computer-mcp app status
+computer-mcp app start
+computer-mcp app stop
+computer-mcp app restart
+computer-mcp app launch-at-login [--enabled] [--no-enabled]
 computer-mcp doctor [--journey <journey>] [--json]
 computer-mcp build-info
 computer-mcp config path
@@ -28,6 +33,8 @@ computer-mcp config defaults
 computer-mcp config validate [--config <config>] [--connect]
 computer-mcp config export [--output <output>]
 computer-mcp config import --input <input> [--apply] [--expected-current-digest <expected-current-digest>]
+computer-mcp config history [--limit <limit>]
+computer-mcp config rollback <revision-id>
 computer-mcp workspace list
 computer-mcp workspace add <path> [--display-name <display-name>]
 computer-mcp workspace remove <id>
@@ -35,18 +42,25 @@ computer-mcp workspace enable <id> --profile <profile> [--enabled] [--no-enabled
 computer-mcp workspace deduplicate [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
 computer-mcp profile list
 computer-mcp profile show <id>
+computer-mcp profile activate <id>
 computer-mcp profile grant <id> --workspace <workspace> [--enabled] [--no-enabled]
 computer-mcp profile shell <id> [--enabled] [--no-enabled]
 computer-mcp tunnel openai list
 computer-mcp tunnel openai doctor <id>
 computer-mcp tunnel openai start <id>
+computer-mcp tunnel openai reconnect <id>
 computer-mcp tunnel openai stop <id>
+computer-mcp tunnel openai provision <id> [--force]
 computer-mcp tunnel openai logs <id>
+computer-mcp tunnel openai save <id> --tunnel-client-profile <tunnel-client-profile> --tunnel-id <tunnel-id> --gateway-profile <gateway-profile> [--tunnel-client-path <tunnel-client-path>] [--http-proxy <http-proxy>] [--api-key-stdin]
+computer-mcp tunnel openai remove <id>
 computer-mcp tunnel cloudflare list
 computer-mcp tunnel cloudflare doctor <id>
 computer-mcp tunnel cloudflare start <id>
 computer-mcp tunnel cloudflare stop <id>
 computer-mcp tunnel cloudflare logs <id>
+computer-mcp tunnel cloudflare save <id> --tunnel-name <tunnel-name> --public-hostname <public-hostname> --gateway-profile <gateway-profile> [--local-port <local-port>] [--metrics-port <metrics-port>] [--cloudflared-path <cloudflared-path>] [--tunnel-token-stdin] [--regenerate-access-token]
+computer-mcp tunnel cloudflare remove <id>
 computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> [--observed-error <observed-error>]
 computer-mcp codex diagnostics --workspace-id <workspace-id> [--limit <limit>]
 computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id> [--interrupt-active-turn] [--force-owned-runtime]
@@ -61,7 +75,11 @@ computer-mcp tools list [--config <config>] [--caller <caller>] [--profile <prof
 computer-mcp tools inspect <name> [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools call <name> [--arguments-json <arguments-json>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools inventory --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp permissions status
+computer-mcp audit list [--limit <limit>]
 computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
+computer-mcp providers list
+computer-mcp providers doctor [<id>]
 computer-mcp providers discover --config <config>
 computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
@@ -209,10 +227,28 @@ does not silently create another database or gateway.
 `config import` is two phase. The first invocation validates the candidate,
 shows a secret-free diff, and returns the current digest. `--apply` requires
 that digest so a concurrent App edit cannot be overwritten. Apply never starts
-a transport.
+a stopped transport; when the gateway is already running it uses the same
+restart-and-rollback operation as the App so the active runtime cannot drift
+from the accepted manifest.
+
+Workspace, profile, manifest, gateway, and Tunnel lifecycle writes all use the
+same lifecycle-aware operations as the App. A local CLI call therefore performs
+the same validation, restart, desired-Tunnel reconnection, and failure rollback
+as the corresponding UI action.
+
+The owner-only control CLI is deliberately not registered as a remotely
+executable `cli.exec` provider. Doing so would let a remote caller inherit the
+local-admin control-socket identity. Remote callers may inspect only workspaces
+already granted to their profile; adding an authorization root remains a local
+App or CLI operation. Computer Use rejects Accessibility actions aimed at the
+Computer MCP host process rather than using its UI as an administration path.
 
 OpenAI and Cloudflare commands are distinct namespaces and cannot select a
 transport from ambient arguments. `doctor` is read-only and redacts secrets.
+New OpenAI API keys and Cloudflare named-tunnel tokens are accepted only from
+standard input through `--api-key-stdin` or `--tunnel-token-stdin`; the CLI has
+no option that places either credential in argv. Updating a configuration
+without either flag preserves its existing Keychain secret.
 
 ## `bridge`
 

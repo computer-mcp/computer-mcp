@@ -6,8 +6,23 @@ import Foundation
 struct App: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "app",
-    subcommands: [Status.self]
+    abstract: "Inspect and control the App-owned gateway lifecycle.",
+    subcommands: [
+      Capabilities.self, Status.self, Start.self, Stop.self, Restart.self, LaunchAtLogin.self,
+    ]
   )
+
+  struct Capabilities: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "capabilities")
+    func run() throws {
+      printJSON(
+        .object([
+          "schema_version": .number(1),
+          "capabilities": try .encoded(AppControlCapabilityCatalog.all),
+        ])
+      )
+    }
+  }
 
   struct Status: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "status")
@@ -16,6 +31,40 @@ struct App: AsyncParsableCommand {
         try await AppControlPlaneServiceClient.live().call(
           "app.status",
           timeout: .seconds(5)
+        )
+      )
+    }
+  }
+
+  struct Start: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "start")
+    func run() async throws {
+      printJSON(try await AppControlPlaneServiceClient.live().call("app.start"))
+    }
+  }
+
+  struct Stop: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "stop")
+    func run() async throws {
+      printJSON(try await AppControlPlaneServiceClient.live().call("app.stop"))
+    }
+  }
+
+  struct Restart: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "restart")
+    func run() async throws {
+      printJSON(try await AppControlPlaneServiceClient.live().call("app.restart"))
+    }
+  }
+
+  struct LaunchAtLogin: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "launch-at-login")
+    @Flag(name: .long, inversion: .prefixedNo) var enabled = true
+    func run() async throws {
+      printJSON(
+        try await AppControlPlaneServiceClient.live().call(
+          "app.launch_at_login",
+          arguments: .object(["enabled": .bool(enabled)])
         )
       )
     }
@@ -56,7 +105,10 @@ struct ConfigImport: AsyncParsableCommand {
   @Option(name: .long, help: "Current schema-1 TOML manifest to preview or import.")
   var input: String
 
-  @Flag(name: .long, help: "Apply a previously previewed import without starting transports.")
+  @Flag(
+    name: .long,
+    help: "Apply a previewed import; restart only when the App gateway is already running."
+  )
   var apply = false
 
   @Option(
@@ -80,6 +132,42 @@ struct ConfigImport: AsyncParsableCommand {
       try await AppControlPlaneServiceClient.live().call(
         "config.import",
         arguments: .object(arguments)
+      )
+    )
+  }
+}
+
+struct ConfigHistory: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "history")
+
+  @Option(name: .long, help: "Maximum revisions to return (1...200).")
+  var limit = 50
+
+  func validate() throws {
+    guard (1...200).contains(limit) else {
+      throw ValidationError("--limit must be between 1 and 200.")
+    }
+  }
+
+  func run() async throws {
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "config.history",
+        arguments: .object(["limit": .number(Double(limit))])
+      )
+    )
+  }
+}
+
+struct ConfigRollback: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "rollback")
+  @Argument(help: "Stable revision id returned by config history.") var revisionID: String
+
+  func run() async throws {
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "config.rollback",
+        arguments: .object(["revision_id": .string(revisionID)])
       )
     )
   }
@@ -186,8 +274,25 @@ struct WorkspaceDeduplicate: AsyncParsableCommand {
 struct Profile: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "profile",
-    subcommands: [ProfileList.self, ProfileShow.self, ProfileGrant.self, ProfileShell.self]
+    subcommands: [
+      ProfileList.self, ProfileShow.self, ProfileActivate.self, ProfileGrant.self,
+      ProfileShell.self,
+    ]
   )
+}
+
+struct ProfileActivate: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "activate")
+  @Argument var id: String
+
+  func run() async throws {
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "profile.activate",
+        arguments: .object(["profile": .string(id)])
+      )
+    )
+  }
 }
 
 struct ProfileList: AsyncParsableCommand {
@@ -260,7 +365,8 @@ struct OpenAITunnel: ParsableCommand {
     commandName: "openai",
     subcommands: [
       OpenAITunnelList.self, OpenAITunnelDoctor.self, OpenAITunnelStart.self,
-      OpenAITunnelStop.self, OpenAITunnelLogs.self,
+      OpenAITunnelReconnect.self, OpenAITunnelStop.self, OpenAITunnelProvision.self,
+      OpenAITunnelLogs.self, OpenAITunnelSave.self, OpenAITunnelRemove.self,
     ]
   )
 }
@@ -270,7 +376,8 @@ struct CloudflareTunnel: ParsableCommand {
     commandName: "cloudflare",
     subcommands: [
       CloudflareTunnelList.self, CloudflareTunnelDoctor.self, CloudflareTunnelStart.self,
-      CloudflareTunnelStop.self, CloudflareTunnelLogs.self,
+      CloudflareTunnelStop.self, CloudflareTunnelLogs.self, CloudflareTunnelSave.self,
+      CloudflareTunnelRemove.self,
     ]
   )
 }
@@ -303,6 +410,146 @@ struct OpenAITunnelStop: AsyncParsableCommand {
   @Argument var id: String
   func run() async throws {
     printJSON(try await controlTunnelCall(transport: "openai", action: "stop", id: id))
+  }
+}
+
+struct OpenAITunnelReconnect: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "reconnect")
+  @Argument var id: String
+  func run() async throws {
+    printJSON(try await controlTunnelCall(transport: "openai", action: "reconnect", id: id))
+  }
+}
+
+struct OpenAITunnelProvision: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "provision")
+  @Argument var id: String
+  @Flag(name: .long, help: "Replace an existing Tunnel client profile.") var force = false
+
+  func run() async throws {
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "tunnel.openai.provision",
+        arguments: .object(["id": .string(id), "force": .bool(force)])
+      )
+    )
+  }
+}
+
+struct OpenAITunnelSave: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "save",
+    abstract: "Create or update an OpenAI Tunnel configuration."
+  )
+
+  @Argument var id: String
+  @Option(name: .long) var tunnelClientProfile: String
+  @Option(name: .long) var tunnelID: String
+  @Option(name: .long) var gatewayProfile: String
+  @Option(name: .long) var tunnelClientPath: String?
+  @Option(name: .long) var httpProxy: String?
+  @Flag(name: .long, help: "Read a new OpenAI API key from standard input.")
+  var apiKeyStdin = false
+
+  func run() async throws {
+    var arguments: [String: JSONValue] = [
+      "id": .string(id),
+      "tunnel_client_profile": .string(tunnelClientProfile),
+      "tunnel_id": .string(tunnelID),
+      "gateway_profile": .string(gatewayProfile),
+    ]
+    if let tunnelClientPath { arguments["tunnel_client_path"] = .string(tunnelClientPath) }
+    if let httpProxy { arguments["http_proxy"] = .string(httpProxy) }
+    if let apiKey = try readSecretFromStandardInput(
+      when: apiKeyStdin,
+      label: "OpenAI API key"
+    ) {
+      arguments["api_key"] = .string(apiKey)
+    }
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "tunnel.openai.save",
+        arguments: .object(arguments)
+      )
+    )
+  }
+}
+
+struct OpenAITunnelRemove: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "remove")
+  @Argument var id: String
+
+  func run() async throws {
+    printJSON(try await controlTunnelCall(transport: "openai", action: "remove", id: id))
+  }
+}
+
+struct CloudflareTunnelSave: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "save",
+    abstract: "Create or update a named Cloudflare Tunnel configuration."
+  )
+
+  @Argument var id: String
+  @Option(name: .long) var tunnelName: String
+  @Option(name: .long) var publicHostname: String
+  @Option(name: .long) var gatewayProfile: String
+  @Option(name: .long) var localPort = 8_765
+  @Option(name: .long) var metricsPort = 20_241
+  @Option(name: .long) var cloudflaredPath: String?
+  @Flag(name: .long, help: "Read a new named-tunnel token from standard input.")
+  var tunnelTokenStdin = false
+  @Flag(name: .long, help: "Generate and return a replacement Computer MCP access token.")
+  var regenerateAccessToken = false
+
+  func run() async throws {
+    var arguments: [String: JSONValue] = [
+      "id": .string(id),
+      "tunnel_name": .string(tunnelName),
+      "public_hostname": .string(publicHostname),
+      "gateway_profile": .string(gatewayProfile),
+      "local_port": .number(Double(localPort)),
+      "metrics_port": .number(Double(metricsPort)),
+      "regenerate_access_token": .bool(regenerateAccessToken),
+    ]
+    if let cloudflaredPath { arguments["cloudflared_path"] = .string(cloudflaredPath) }
+    if let token = try readSecretFromStandardInput(
+      when: tunnelTokenStdin,
+      label: "Named-tunnel token"
+    ) {
+      arguments["tunnel_token"] = .string(token)
+    }
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "tunnel.cloudflare.save",
+        arguments: .object(arguments)
+      )
+    )
+  }
+}
+
+struct CloudflareTunnelRemove: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "remove")
+  @Argument var id: String
+
+  func run() async throws {
+    printJSON(try await controlTunnelCall(transport: "cloudflare", action: "remove", id: id))
+  }
+}
+
+struct Permissions: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "permissions",
+    abstract: "Inspect macOS permissions without prompting.",
+    subcommands: [PermissionsStatus.self]
+  )
+}
+
+struct PermissionsStatus: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "status")
+
+  func run() async throws {
+    printJSON(try await AppControlPlaneServiceClient.live().call("permissions.status"))
   }
 }
 
@@ -417,4 +664,24 @@ private func writeOrPrint(_ content: String, output: String?) throws {
   )
   try Data(content.utf8).write(to: url, options: .atomic)
   print(url.path)
+}
+
+private func readSecretFromStandardInput(
+  when enabled: Bool,
+  label: String
+) throws -> String? {
+  guard enabled else { return nil }
+  let maximumBytes = 65_536
+  let data = try FileHandle.standardInput.read(upToCount: maximumBytes + 1) ?? Data()
+  guard data.count <= maximumBytes else {
+    throw ValidationError("\(label) must not exceed \(maximumBytes) bytes.")
+  }
+  guard let value = String(data: data, encoding: .utf8) else {
+    throw ValidationError("\(label) must be valid UTF-8.")
+  }
+  let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !normalized.isEmpty, !normalized.contains("\0") else {
+    throw ValidationError("\(label) must not be empty.")
+  }
+  return normalized
 }

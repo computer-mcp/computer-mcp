@@ -15,6 +15,7 @@ struct ComputerMCPCommand: AsyncParsableCommand {
       Config.self,
       Workspace.self,
       Profile.self,
+      Permissions.self,
       Tunnel.self,
       CodexControl.self,
       Tools.self,
@@ -332,6 +333,8 @@ struct Config: ParsableCommand {
       Validate.self,
       ConfigExport.self,
       ConfigImport.self,
+      ConfigHistory.self,
+      ConfigRollback.self,
     ]
   )
 }

@@ -6,6 +6,7 @@ import Foundation
 final class LiveAppControlPlane: AppControlPlane {
   private let controlPlane: AppControlPlaneService
   private let gatewayService: AppGatewayService
+  private let operations: AppControlPlaneOperations
   private let controlSocketService: ControlSocketService?
   private let fileLogger: AppFileLogger
   private let permissionRequester: any SystemPermissionRequesting
@@ -29,6 +30,10 @@ final class LiveAppControlPlane: AppControlPlane {
       controlPlane: controlPlane,
       directories: controlPlane.directories
     )
+    self.operations = AppControlPlaneOperations(
+      controlPlane: controlPlane,
+      gatewayService: gatewayService
+    )
     self.controlSocketService = ControlSocketService(
       controlPlane: controlPlane,
       gatewayService: gatewayService,
@@ -47,6 +52,10 @@ final class LiveAppControlPlane: AppControlPlane {
   ) {
     self.controlPlane = controlPlane
     self.gatewayService = gatewayService
+    self.operations = AppControlPlaneOperations(
+      controlPlane: controlPlane,
+      gatewayService: gatewayService
+    )
     self.controlSocketService = nil
     self.fileLogger = fileLogger
     self.permissionRequester = permissionRequester
@@ -413,15 +422,13 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func startGateway() async throws {
     fileLogger.append(.info, event: "gateway.start.requested")
-    try await controlPlane.setGatewayDesiredRunning(true)
-    try await gatewayService.start()
+    _ = try await operations.startGateway()
     fileLogger.append(.info, event: "gateway.start.completed")
   }
 
   func stopGateway() async throws {
     fileLogger.append(.info, event: "gateway.stop.requested")
-    try await controlPlane.setGatewayDesiredRunning(false)
-    await gatewayService.stop()
+    _ = try await operations.stopGateway()
     fileLogger.append(.info, event: "gateway.stop.completed")
   }
 
@@ -430,19 +437,17 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   func registerWorkspace(at url: URL) async throws {
-    let workspace = try await controlPlane.registerWorkspace(at: url)
+    let workspace = try await operations.registerWorkspace(at: url)
     fileLogger.append(
       .info,
       event: "workspace.registered",
       fields: ["workspace_id": workspace.id]
     )
-    try await restartGatewayIfRunning()
   }
 
   func removeWorkspace(id: String) async throws {
-    try await controlPlane.removeWorkspace(id: id)
+    try await operations.removeWorkspace(id: id)
     fileLogger.append(.info, event: "workspace.removed", fields: ["workspace_id": id])
-    try await restartGatewayIfRunning()
   }
 
   func setWorkspaceEnabled(
@@ -455,7 +460,7 @@ final class LiveAppControlPlane: AppControlPlane {
         AppLocalization.formatted("Unknown gateway profile: %@", profileID)
       )
     }
-    _ = try await controlPlane.setWorkspaceEnabled(
+    _ = try await operations.setWorkspaceEnabled(
       enabled,
       workspaceID: workspaceID,
       profileID: profile
@@ -468,10 +473,6 @@ final class LiveAppControlPlane: AppControlPlane {
         "workspace_id": workspaceID,
       ]
     )
-    let service = await gatewayService.snapshot()
-    if service.state == .running, service.profileID == profile {
-      try await restartGatewayIfRunning(profile: profile)
-    }
   }
 
   func activateProfile(id: String) async throws {
@@ -480,20 +481,7 @@ final class LiveAppControlPlane: AppControlPlane {
         AppLocalization.formatted("Unknown gateway profile: %@", id)
       )
     }
-    let previousProfile = try await controlPlane.activeGatewayProfile()
-    try await validateDesiredTunnelProfileAlignment(with: profile)
-    try await controlPlane.setActiveGatewayProfile(profile)
-    do {
-      if await gatewayService.snapshot().state == .running {
-        try await restartGatewayIfRunning(profile: profile)
-      }
-    } catch {
-      try? await controlPlane.setActiveGatewayProfile(previousProfile)
-      if await gatewayService.snapshot().state == .running {
-        try? await gatewayService.restart(profile: previousProfile)
-      }
-      throw error
-    }
+    _ = try await operations.activateProfile(profile)
     fileLogger.append(
       .info,
       event: "profile.activated",
@@ -507,16 +495,12 @@ final class LiveAppControlPlane: AppControlPlane {
         AppLocalization.formatted("Unknown gateway profile: %@", profileID)
       )
     }
-    _ = try await controlPlane.setFullShellEnabled(enabled, profileID: profile)
+    _ = try await operations.setFullShellEnabled(enabled, profileID: profile)
     fileLogger.append(
       .warning,
       event: enabled ? "profile.full_shell.enabled" : "profile.full_shell.disabled",
       fields: ["profile_id": profile.rawValue]
     )
-    let service = await gatewayService.snapshot()
-    if service.state == .running, service.profileID == profile {
-      try await restartGatewayIfRunning(profile: profile)
-    }
   }
 
   func startProvider(id: String) async throws {
@@ -538,7 +522,7 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   func doctorProvider(id: String) async throws {
-    let states = try await controlPlane.refreshProviders()
+    let states = try await operations.refreshProvider(id: id)
     guard states.contains(where: { $0.id == id }) else {
       throw AppControlPlaneError.unavailable(
         AppLocalization.formatted("Provider '%@' has no independent doctor contract.", id)
@@ -548,22 +532,18 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func startOpenAITunnel(id: String) async throws {
     fileLogger.append(.info, event: "tunnel.start.requested", fields: ["profile_id": id])
-    let profile = try await appOpenAITunnelConfiguration(id: id)
-    try await ensureGateway(for: profile)
-    _ = try await controlPlane.startOpenAITunnel(profileID: id)
+    _ = try await operations.startOpenAITunnel(id: id)
     fileLogger.append(.info, event: "tunnel.start.completed", fields: ["profile_id": id])
   }
 
   func reconnectOpenAITunnel(id: String) async throws {
-    let profile = try await appOpenAITunnelConfiguration(id: id)
-    try await ensureGateway(for: profile)
-    _ = try await controlPlane.reconnectOpenAITunnel(profileID: id)
+    _ = try await operations.reconnectOpenAITunnel(id: id)
     reconnectAttempts[id] = 0
     nextReconnectAt[id] = nil
   }
 
   func stopOpenAITunnel(id: String) async throws {
-    _ = try await controlPlane.stopOpenAITunnel(profileID: id)
+    _ = try await operations.stopOpenAITunnel(id: id)
     fileLogger.append(.info, event: "tunnel.stop.completed", fields: ["profile_id": id])
   }
 
@@ -602,98 +582,39 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   func saveOpenAITunnelConfiguration(_ draft: OpenAITunnelConfigurationDraft) async throws {
-    let id = try Self.requiredField(draft.id, label: "Profile ID")
-    let tunnelClientProfile = try Self.requiredField(
-      draft.tunnelClientProfile,
-      label: "Tunnel client profile"
-    )
-    let tunnelID = try Self.requiredField(draft.tunnelID, label: "Tunnel ID")
-    guard let gatewayProfile = GatewayProfileID(rawValue: draft.gatewayProfileID),
-      gatewayProfile != .localAdmin
-    else {
+    guard let gatewayProfile = GatewayProfileID(rawValue: draft.gatewayProfileID) else {
       throw AppControlPlaneError.unavailable(
-        "Tunnel gateway profile must be chatgpt-observe or chatgpt-operate."
+        AppLocalization.formatted("Unknown gateway profile: %@", draft.gatewayProfileID)
       )
     }
-
-    let existing = try await controlPlane.openAITunnelConfigurations().first { $0.id == id }
-    let secretReference: SecretReference
-    if let existingReference = existing?.apiKeyReference {
-      secretReference = existingReference
-    } else {
-      secretReference = try SecretReference(account: "tunnel.\(id).openai-api-key")
-    }
-    let apiKey = draft.apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-    if (apiKey == nil || apiKey?.isEmpty == true) && existing == nil {
-      throw AppControlPlaneError.unavailable(
-        "An OpenAI API key is required when creating a Tunnel profile."
+    let result = try await operations.saveOpenAITunnelConfiguration(
+      OpenAITunnelConfigurationInput(
+        id: draft.id,
+        tunnelClientProfile: draft.tunnelClientProfile,
+        tunnelID: draft.tunnelID,
+        gatewayProfile: gatewayProfile,
+        tunnelClientPath: draft.tunnelClientPath,
+        httpProxy: draft.httpProxy,
+        apiKey: draft.apiKey
       )
-    }
-
-    let profile = OpenAITunnelConfiguration(
-      id: id,
-      tunnelClientProfile: tunnelClientProfile,
-      tunnelID: tunnelID,
-      gatewayProfile: gatewayProfile,
-      manifestPath: controlPlane.directories.manifest.path,
-      gatewayExecutablePath: try Self.embeddedGatewayExecutablePath(),
-      gatewaySocketPath: controlPlane.directories.gatewaySocket.path,
-      profileDirectory: controlPlane.directories.tunnelClientProfiles.path,
-      tunnelClientPath: Self.optionalField(draft.tunnelClientPath),
-      httpProxy: Self.optionalField(draft.httpProxy),
-      apiKeyReference: secretReference
     )
-    try profile.validate()
-    let wasDesired = Set(try await controlPlane.desiredOpenAITunnelConfigurationIDs()).contains(id)
-    if wasDesired {
-      try await validateDesiredTunnelProfileAlignment(
-        with: gatewayProfile,
-        excludingTunnelID: id
-      )
-    }
-    let keyCheckpoint = try await controlPlane.checkpointOpenAITunnelAPIKey(
-      reference: secretReference
-    )
-    if existing != nil {
-      _ = try await controlPlane.suspendOpenAITunnel(profileID: id)
-    }
-    do {
-      try await controlPlane.saveOpenAITunnelConfiguration(profile)
-      if let apiKey, !apiKey.isEmpty {
-        try await controlPlane.setOpenAITunnelAPIKey(apiKey, reference: secretReference)
-      }
-      if wasDesired {
-        try await ensureGateway(for: profile)
-        _ = try await controlPlane.reconnectOpenAITunnel(profileID: id)
-        reconnectAttempts[id] = 0
-        nextReconnectAt[id] = nil
-      }
-    } catch {
-      if let existing {
-        try? await controlPlane.saveOpenAITunnelConfiguration(existing)
-      } else {
-        try? await controlPlane.deleteOpenAITunnelConfiguration(id: id)
-      }
-      try? await controlPlane.restoreOpenAITunnelAPIKey(keyCheckpoint)
-      if wasDesired, let existing {
-        try? await ensureGateway(for: existing)
-        _ = try? await controlPlane.reconnectOpenAITunnel(profileID: id)
-      }
-      throw error
+    if result.reconnected {
+      reconnectAttempts[result.configuration.id] = 0
+      nextReconnectAt[result.configuration.id] = nil
     }
   }
 
   func deleteOpenAITunnel(id: String) async throws {
-    try await controlPlane.deleteOpenAITunnelConfiguration(id: id)
+    try await operations.deleteOpenAITunnelConfiguration(id: id)
   }
 
   func startCloudflareTunnel(id: String) async throws {
     fileLogger.append(.info, event: "cloudflare.start.requested", fields: ["profile_id": id])
-    _ = try await controlPlane.startCloudflareTunnel(profileID: id)
+    _ = try await operations.startCloudflareTunnel(id: id)
   }
 
   func stopCloudflareTunnel(id: String) async throws {
-    _ = try await controlPlane.stopCloudflareTunnel(profileID: id)
+    _ = try await operations.stopCloudflareTunnel(id: id)
     fileLogger.append(.info, event: "cloudflare.stop.completed", fields: ["profile_id": id])
   }
 
@@ -719,51 +640,29 @@ final class LiveAppControlPlane: AppControlPlane {
   func saveCloudflareTunnelConfiguration(
     _ draft: CloudflareTunnelConfigurationDraft
   ) async throws -> String? {
-    let id = try Self.requiredField(draft.id, label: "Profile ID")
-    let tunnelName = try Self.requiredField(draft.tunnelName, label: "Named tunnel")
-    let publicHostname = try Self.requiredField(draft.publicHostname, label: "Public hostname")
-    guard let gatewayProfile = GatewayProfileID(rawValue: draft.gatewayProfileID),
-      gatewayProfile != .localAdmin
-    else {
-      throw AppControlPlaneError.unavailable("A remote Cloudflare gateway profile is required.")
-    }
-    let existing = try await controlPlane.cloudflareTunnelConfigurations().first { $0.id == id }
-    let tunnelTokenReference =
-      try existing?.tunnelTokenReference
-      ?? SecretReference(account: "cloudflare.\(id).tunnel-token")
-    let accessTokenReference =
-      try existing?.accessTokenReference
-      ?? SecretReference(account: "cloudflare.\(id).access-token")
-    let token = draft.tunnelToken?.trimmingCharacters(in: .whitespacesAndNewlines)
-    if existing == nil && (token == nil || token?.isEmpty == true) {
+    guard let gatewayProfile = GatewayProfileID(rawValue: draft.gatewayProfileID) else {
       throw AppControlPlaneError.unavailable(
-        "A remotely managed named-tunnel token is required. Quick Tunnel and noauth are not supported."
+        AppLocalization.formatted("Unknown gateway profile: %@", draft.gatewayProfileID)
       )
     }
-    let normalizedCloudflaredPath = draft.cloudflaredPath?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    let normalizedToken = token?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let result = try await controlPlane.saveCloudflareTunnelConfiguration(
-      CloudflareTunnelConfiguration(
-        id: id,
-        tunnelName: tunnelName,
-        publicHostname: publicHostname,
+    let result = try await operations.saveCloudflareTunnelConfiguration(
+      CloudflareTunnelConfigurationInput(
+        id: draft.id,
+        tunnelName: draft.tunnelName,
+        publicHostname: draft.publicHostname,
         gatewayProfile: gatewayProfile,
         localPort: draft.localPort,
         metricsPort: draft.metricsPort,
-        cloudflaredPath: normalizedCloudflaredPath?.isEmpty == true
-          ? nil : normalizedCloudflaredPath,
-        tunnelTokenReference: tunnelTokenReference,
-        accessTokenReference: accessTokenReference
-      ),
-      tunnelToken: normalizedToken?.isEmpty == true ? nil : normalizedToken,
-      regenerateAccessToken: draft.regenerateAccessToken
+        cloudflaredPath: draft.cloudflaredPath,
+        tunnelToken: draft.tunnelToken,
+        regenerateAccessToken: draft.regenerateAccessToken
+      )
     )
     return result.generatedAccessToken
   }
 
   func deleteCloudflareTunnel(id: String) async throws {
-    try await controlPlane.deleteCloudflareTunnelConfiguration(id: id)
+    try await operations.deleteCloudflareTunnelConfiguration(id: id)
   }
 
   func installCommandLineTool() async throws -> EmbeddedCLIInstallationStatus {
@@ -824,33 +723,11 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   func saveManifest(_ content: String) async throws {
-    let previous = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
-    _ = try await controlPlane.activateManifest(content)
-    do {
-      try await restartGatewayIfRunning()
-    } catch {
-      _ = try? await controlPlane.activateManifest(previous)
-      try? await restartGatewayIfRunning()
-      throw error
-    }
+    _ = try await operations.activateManifest(content)
   }
 
   func rollbackManifest(to revisionID: String) async throws {
-    let previous = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
-    _ = try await controlPlane.rollbackManifest(to: revisionID)
-    do {
-      try await restartGatewayIfRunning()
-    } catch {
-      _ = try? await controlPlane.activateManifest(previous)
-      try? await restartGatewayIfRunning()
-      throw error
-    }
+    _ = try await operations.rollbackManifest(to: revisionID)
   }
 
   func exportDiagnostics(to destination: URL) async throws {
@@ -889,15 +766,19 @@ final class LiveAppControlPlane: AppControlPlane {
   private func restartGatewayIfRunning(
     profile requestedProfile: GatewayProfileID? = nil
   ) async throws {
-    let snapshot = await gatewayService.snapshot()
-    if snapshot.state == .running {
-      let profile = requestedProfile ?? snapshot.profileID
-      if let profile {
-        try await validateDesiredTunnelProfileAlignment(with: profile)
-      }
-      let desiredProfiles = try await desiredOpenAITunnelConfigurations()
-      try await gatewayService.restart(profile: profile)
-      await reconnectDesiredOpenAITunnels(desiredProfiles)
+    let result = try await operations.restartGatewayIfRunning(profile: requestedProfile)
+    for id in result.reconnectedTunnelIDs {
+      reconnectAttempts[id] = 0
+      nextReconnectAt[id] = nil
+    }
+    for id in result.deferredTunnelIDs {
+      reconnectAttempts[id] = 1
+      nextReconnectAt[id] = Date().addingTimeInterval(2)
+      fileLogger.append(
+        .warning,
+        event: "tunnel.reconnect.deferred",
+        fields: ["profile_id": id]
+      )
     }
   }
 
@@ -905,41 +786,10 @@ final class LiveAppControlPlane: AppControlPlane {
     with profile: GatewayProfileID,
     excludingTunnelID: String? = nil
   ) async throws {
-    if let conflicting = try await desiredOpenAITunnelConfigurations().first(where: {
-      $0.id != excludingTunnelID && $0.gatewayProfile != profile
-    }) {
-      throw AppControlPlaneError.unavailable(
-        AppLocalization.formatted(
-          "Tunnel '%@' is configured to stay running with profile %@. Stop it before activating %@.",
-          conflicting.id,
-          conflicting.gatewayProfile.rawValue,
-          profile.rawValue
-        )
-      )
-    }
-  }
-
-  private func reconnectDesiredOpenAITunnels(
-    _ profiles: [OpenAITunnelConfiguration]
-  ) async {
-    for profile in profiles {
-      do {
-        _ = try await controlPlane.reconnectOpenAITunnel(
-          profileID: profile.id,
-          allowKeychainAuthenticationUI: false
-        )
-        reconnectAttempts[profile.id] = 0
-        nextReconnectAt[profile.id] = nil
-      } catch {
-        reconnectAttempts[profile.id] = 1
-        nextReconnectAt[profile.id] = Date().addingTimeInterval(2)
-        fileLogger.append(
-          .warning,
-          event: "tunnel.reconnect.deferred",
-          fields: ["profile_id": profile.id]
-        )
-      }
-    }
+    try await operations.validateDesiredTunnelProfileAlignment(
+      with: profile,
+      excludingTunnelID: excludingTunnelID
+    )
   }
 
   private func appOpenAITunnelConfiguration(id: String) async throws -> OpenAITunnelConfiguration {
@@ -955,49 +805,7 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   private func ensureGateway(for profile: OpenAITunnelConfiguration) async throws {
-    let runningTunnels = try await controlPlane.snapshot().openAITunnelStatuses.filter {
-      $0.profileID != profile.id && $0.state == .running
-    }
-    if !runningTunnels.isEmpty {
-      let profiles = try await controlPlane.openAITunnelConfigurations()
-      let conflicting = runningTunnels.compactMap { status in
-        profiles.first { $0.id == status.profileID }
-      }.first { $0.gatewayProfile != profile.gatewayProfile }
-      if let conflicting {
-        throw AppControlPlaneError.unavailable(
-          AppLocalization.formatted(
-            "Tunnel '%@' is already running with profile %@. Stop it before starting %@.",
-            conflicting.id,
-            conflicting.gatewayProfile.rawValue,
-            profile.gatewayProfile.rawValue
-          )
-        )
-      }
-    }
-
-    let previousDesiredRunning = try await controlPlane.gatewayDesiredRunning()
-    let previousProfile = try await controlPlane.activeGatewayProfile()
-    let service = await gatewayService.snapshot()
-    try await controlPlane.setGatewayDesiredRunning(true)
-    do {
-      try await controlPlane.setActiveGatewayProfile(profile.gatewayProfile)
-      if service.state == .running {
-        if service.profileID != profile.gatewayProfile {
-          try await gatewayService.restart(profile: profile.gatewayProfile)
-        }
-      } else {
-        try await gatewayService.start(profile: profile.gatewayProfile)
-      }
-    } catch {
-      try? await controlPlane.setActiveGatewayProfile(previousProfile)
-      try? await controlPlane.setGatewayDesiredRunning(previousDesiredRunning)
-      if service.state == .running {
-        try? await gatewayService.restart(profile: previousProfile)
-      } else {
-        await gatewayService.stop()
-      }
-      throw error
-    }
+    try await operations.ensureGateway(for: profile)
   }
 
   private func restoreRuntime() async throws {
@@ -1122,13 +930,7 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   private func desiredOpenAITunnelConfigurations() async throws -> [OpenAITunnelConfiguration] {
-    let desiredIDs = Set(try await controlPlane.desiredOpenAITunnelConfigurationIDs())
-    var profiles: [OpenAITunnelConfiguration] = []
-    for profile in try await controlPlane.openAITunnelConfigurations()
-    where desiredIDs.contains(profile.id) {
-      profiles.append(try await appOpenAITunnelConfiguration(id: profile.id))
-    }
-    return profiles.sorted { $0.id < $1.id }
+    try await operations.desiredOpenAITunnelConfigurations()
   }
 
   private static func reconnectDelay(for attempt: Int) -> TimeInterval {
@@ -1161,21 +963,6 @@ final class LiveAppControlPlane: AppControlPlane {
       )
     }
     return executable.standardizedFileURL.path
-  }
-
-  private static func requiredField(_ value: String, label: String) throws -> String {
-    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalized.isEmpty, !normalized.contains("\0") else {
-      throw AppControlPlaneError.unavailable(
-        AppLocalization.formatted("%@ must not be empty.", AppLocalization.string(label))
-      )
-    }
-    return normalized
-  }
-
-  private static func optionalField(_ value: String?) -> String? {
-    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    return normalized.isEmpty ? nil : normalized
   }
 
   private func providerSummaries(

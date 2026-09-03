@@ -81,6 +81,12 @@ allows ChatGPT's own Computer Use principal to operate while the Mac is
 locked; it does not grant or transfer TCC permissions to `Computer MCP.app`.
 Application-specific automation remains in `apple-cli-mcp`.
 
+Computer Use cannot perform Accessibility actions on the Computer MCP host
+process. This prevents a remote caller from turning generic UI automation into
+an implicit App administration channel and avoids re-entering AppKit menu
+presentation from a non-main executor. App administration uses the local
+SwiftUI adapter or owner-only `computer-mcp` control CLI.
+
 ## Codex
 
 Codex App Server, Exec, and MCP use gateway-owned workspace, sandbox, approval,

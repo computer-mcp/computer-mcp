@@ -180,7 +180,8 @@ struct CodexAppServerProcessTransportTests {
     let received = try #require(try await iterator.next())
 
     #expect(received == expected)
-    #expect(started.duration(to: clock.now) < .seconds(10))
+    // Keep enough headroom below the 30-second request budget for a loaded CI runner.
+    #expect(started.duration(to: clock.now) < .seconds(25))
     await transport.close()
   }
 

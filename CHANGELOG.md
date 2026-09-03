@@ -4,6 +4,26 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.28 — 2026-09-03
+
+- Make Codex thread release a deterministic, idempotent handoff transaction
+  that removes loaded/subscribed ownership, safely reaps only proven
+  Computer-MCP-owned runtimes, preserves the persisted Goal, and reports
+  whether another official Codex client can claim immediately.
+- Add locally approved, workspace/profile/caller/connection/thread-bound
+  Full Access grants with next-turn, thread TTL, and bounded-time modes.
+  Running turns never hot-switch; grants expire or revoke back to the safe
+  configured sandbox without widening Computer MCP capabilities.
+- Add bounded recent-thread and Goal supervision, authoritative handoff
+  diagnosis, runtime/request-state separation, automatic stale-ownership
+  reconciliation, and bounded validation cleanup.
+- Make canonical workspace registration idempotent, add reviewed deduplication,
+  strengthen managed-worktree ownership, and distinguish development,
+  validation, candidate, and exact-published artifact provenance.
+- Pass 920 automated tests, disposable official-client Git/network/handoff and
+  30,000-record supervision acceptance, independent review, cold-start audit,
+  and the authorized real vehicleOS Full Access/reclaim/release workflow.
+
 ## 1.0.27 — 2026-09-02
 
 - Treat the official App Server's exact `no rollout found` response as an

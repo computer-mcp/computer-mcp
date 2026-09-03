@@ -989,7 +989,9 @@ final class CodexAppServerRuntimeTests {
     let fixture = try AppServerProcessFixture()
     defer { fixture.remove() }
     try Data().write(to: fixture.delayLoadedThreadsFile)
-    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 5)
+    // Keep the retry boundary above the fixture's two serialized one-second replies;
+    // this test observes request accounting rather than timeout retirement.
+    let runtime = fixture.makeRuntime(requestTimeoutSeconds: 10)
 
     async let first = runtime.call(method: "thread/loaded/list", params: .object([:]))
     try await waitUntilRuntimeCondition {

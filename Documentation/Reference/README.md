@@ -10,6 +10,8 @@ This directory contains detailed operational reference material.
 
 - [Quick Start](QuickStart.md): release installation, first launch, and local MCP.
 - [CLI](CLI.md): command-line modes and exit behavior.
+- [Control Plane Capabilities](ControlPlaneCapabilities.md): shared App/CLI
+  management inventory, ownership, and secret-input rules.
 - [Config](Config.md): TOML source and policy configuration.
 - [Tools](Tools.md): complete gateway tool families, including deterministic
   Codex handoff, scoped local elevation, bounded recent-thread reads, and
@@ -19,9 +21,13 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
+- [1.0.29 Production Readiness Report](ProductionReadinessReport-1.0.29.md):
+  version-bound protected-CI template for the unified local control-plane
+  release, exact artifact identity, and publication acceptance.
+- [1.0.28 Production Readiness Report](ProductionReadinessReport-1.0.28.md):
+  immutable production predecessor and historical release record.
 - [1.0.27 Production Readiness Report](ProductionReadinessReport-1.0.27.md):
-  version-bound CI render template for the coordinated productization release,
-  artifact identity, automated gates, and publication acceptance.
+  historical release record.
 - [1.0.26 Production Readiness Report](ProductionReadinessReport-1.0.26.md):
   historical unpublished candidate record.
 - [1.0.25 Production Readiness Report](ProductionReadinessReport-1.0.25.md):

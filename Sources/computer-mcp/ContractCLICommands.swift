@@ -116,8 +116,33 @@ struct Audit: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "audit",
     abstract: "Inspect bounded, argument-free audit evidence.",
-    subcommands: [AuditExport.self]
+    subcommands: [AuditList.self, AuditExport.self]
   )
+}
+
+struct AuditList: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "list",
+    abstract: "List recent redacted audit events from the running App."
+  )
+
+  @Option(name: .long, help: "Maximum events to return (1...1000).")
+  var limit = 200
+
+  func validate() throws {
+    guard (1...1_000).contains(limit) else {
+      throw ValidationError("--limit must be between 1 and 1000.")
+    }
+  }
+
+  func run() async throws {
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "audit.list",
+        arguments: .object(["limit": .number(Double(limit))])
+      )
+    )
+  }
 }
 
 struct AuditExport: ParsableCommand {
@@ -163,8 +188,38 @@ struct Providers: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "providers",
     abstract: "Inspect external provider availability.",
-    subcommands: [ProvidersDiscover.self]
+    subcommands: [ProvidersList.self, ProvidersDoctor.self, ProvidersDiscover.self]
   )
+}
+
+struct ProvidersList: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "list",
+    abstract: "List provider health recorded by the running App."
+  )
+
+  func run() async throws {
+    printJSON(try await AppControlPlaneServiceClient.live().call("provider.list"))
+  }
+}
+
+struct ProvidersDoctor: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "doctor",
+    abstract: "Refresh provider diagnostics without starting providers."
+  )
+
+  @Argument(help: "Optional exact provider id.") var id: String?
+
+  func run() async throws {
+    let arguments: JSONValue = id.map { .object(["id": .string($0)]) } ?? .object([:])
+    printJSON(
+      try await AppControlPlaneServiceClient.live().call(
+        "provider.doctor",
+        arguments: arguments
+      )
+    )
+  }
 }
 
 struct ProvidersDiscover: ParsableCommand {

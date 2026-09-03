@@ -361,6 +361,10 @@ execution would produce, and the probe is written to the Gateway audit log.
 resolution. Every scoped tool accepts `workspace_id`; omission is rejected when
 more than one workspace is available.
 
+Remote workspace tools never register an authorization root. Add or remove a
+workspace through the local App or `computer-mcp workspace …` CLI. Do not use
+Computer Use to operate Computer MCP's own UI as an administration fallback.
+
 `operations.prepare` creates a short-lived, single-use ticket for a configured
 destructive atomic. `operations.commit` executes the exact canonical tool name
 and arguments bound into that ticket. Tickets do not grant capabilities or
@@ -4986,6 +4990,12 @@ The Computer Use provider exposes generic macOS observation and input tools.
 It requires the corresponding Screen Recording or Accessibility permission to
 already belong to the signed app or active development executable; remote calls
 never trigger permission prompts.
+
+`computer.accessibility.action` rejects references whose process ID is the
+Computer MCP host itself with `computer_use.self_target_forbidden`. Accepted AX
+actions are dispatched on the main thread before entering macOS Accessibility
+or AppKit behavior. Computer MCP administration belongs to the owner-only CLI,
+not to Computer Use.
 
 `computer.permissions`, `computer.displays`, and
 `computer.pointer.position` do not request TCC access. The pointer tool returns

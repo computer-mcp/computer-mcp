@@ -4,6 +4,30 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.0.29 — 2026-09-03
+
+- Unify App, owner-only control Socket, and CLI management behind one
+  `AppControlPlaneOperations` use-case layer so lifecycle-aware workspace,
+  profile, configuration, provider, and tunnel changes have one behavior and
+  rollback policy across every local control surface.
+- Add a machine-readable owner-control capability catalog and complete the CLI
+  surface for App lifecycle, configuration history and rollback, profile
+  activation, provider health, permission status, audit reads, and OpenAI and
+  Cloudflare tunnel administration.
+- Accept tunnel credentials only from standard input, retain them in the
+  App-owned Data Protection Keychain, and keep secret-bearing administration
+  out of process arguments and remote MCP tools.
+- Reject Accessibility actions targeting the Computer MCP host process and
+  route Accessibility execution through the main actor, closing the crash path
+  caused by remotely pressing the App's own menu-bar UI.
+- Keep workspace registration and other owner administration on the local CLI
+  boundary. Remote callers receive explicit guidance instead of gaining a
+  privilege-escalating path through `cli.exec` or Computer Use.
+- Preserve existing schema-1 configuration, workspaces, profiles, audit data,
+  tunnel credentials, Bundle ID, Keychain identity, and local runtime
+  namespace; no migration or replacement of 1.0.28 is required before the
+  exact 1.0.29 release is installed.
+
 ## 1.0.28 — 2026-09-03
 
 - Make Codex thread release a deterministic, idempotent handoff transaction

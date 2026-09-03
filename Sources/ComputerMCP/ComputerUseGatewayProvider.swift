@@ -65,7 +65,7 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
   }
 
   internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    guard name != "computer.screenshot" else {
+    guard name != "computer.screenshot" && name != "computer.accessibility.action" else {
       throw ComputerUseGatewayProviderError.asyncToolRequired(name)
     }
     return try executeSync(name: name, arguments: arguments)
@@ -85,6 +85,17 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
         throw ComputerUseGatewayProviderError.invalidArguments(
           Self.decodingMessage(error)
         )
+      } catch {
+        throw ComputerUseGatewayProviderError.invalidArguments(error.localizedDescription)
+      }
+    }
+    if name == "computer.accessibility.action" {
+      do {
+        return try await MainActor.run {
+          try executeSync(name: name, arguments: arguments)
+        }
+      } catch let error as ComputerUseGatewayProviderError {
+        throw error
       } catch {
         throw ComputerUseGatewayProviderError.invalidArguments(error.localizedDescription)
       }
@@ -518,7 +529,9 @@ extension ComputerUseGatewayProvider {
       tool(
         name: "computer.accessibility.action",
         description:
-          "Perform one standard Accessibility action on a previously returned reference.",
+          "Perform one standard Accessibility action on a previously returned reference. "
+          + "The Computer MCP host process is never a valid target; administer it through the "
+          + "owner-only computer-mcp CLI.",
         input: accessibilityActionInputSchema,
         result: actionResultSchema,
         readOnly: false

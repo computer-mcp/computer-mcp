@@ -82,6 +82,25 @@ final class ComputerUseGatewayProviderTests {
   }
 
   @Test
+  func testAccessibilityActionRequiresAsyncDispatch() throws {
+    let provider = ComputerUseGatewayProvider(
+      service: ComputerUseService(adapter: ProviderComputerUseAdapter())
+    )
+
+    expectThrows(
+      try provider.callTool(
+        name: "computer.accessibility.action",
+        arguments: .object([:])
+      )
+    ) { error in
+      #expect(
+        (error as? ComputerUseGatewayProviderError)
+          == (.asyncToolRequired("computer.accessibility.action"))
+      )
+    }
+  }
+
+  @Test
   func testScreenshotToolReturnsMCPImageAndStructuredPNG() async throws {
     let adapter = ProviderComputerUseAdapter(
       permissions: [.screenRecording: .granted]

@@ -7,6 +7,8 @@ These documents state the current architecture truth for `computer-mcp`.
 - [Package](Package.md): SwiftPM products, targets, dependencies, and command
   ownership.
 - [Runtime](Runtime.md): App socket, execution planes, and tool dispatch.
+- [App Control Plane](ControlPlane.md): shared SwiftUI/CLI operations and the
+  local administration boundary.
 - [Gateway](Gateway.md): product topology, workspace model, and policy routing.
 - [Capability Ownership](Ownership.md): gateway, Codex, Apple-provider, and
   builtin admission boundaries.

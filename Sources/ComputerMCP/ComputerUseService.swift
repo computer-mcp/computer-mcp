@@ -453,6 +453,7 @@ internal enum ComputerUseError: Error, Equatable, Sendable {
   case eventCreationFailed(kind: String)
   case systemCallFailed(operation: String, code: Int32)
   case accessibilityElementUnavailable(ComputerUseAccessibilityReference)
+  case selfTargetForbidden(processID: Int32)
   case screenshotSourceUnavailable(target: ComputerUseScreenshotTarget, id: UInt32?)
   case screenshotEncodingFailed
   case screenshotTooLarge(actualBytes: Int, maximumBytes: Int)
@@ -478,6 +479,8 @@ internal enum ComputerUseError: Error, Equatable, Sendable {
       "computer_use.system_call_failed"
     case .accessibilityElementUnavailable:
       "computer_use.accessibility_element_unavailable"
+    case .selfTargetForbidden:
+      "computer_use.self_target_forbidden"
     case .screenshotSourceUnavailable:
       "computer_use.screenshot_source_unavailable"
     case .screenshotEncodingFailed:
@@ -509,6 +512,9 @@ extension ComputerUseError: LocalizedError {
     case .accessibilityElementUnavailable(let reference):
       "The Accessibility element at PID \(reference.processID), path "
         + "\(reference.childPath) is no longer available."
+    case .selfTargetForbidden(let processID):
+      "Computer Use cannot perform Accessibility actions on the Computer MCP host process "
+        + "(PID \(processID)). Use the owner-only computer-mcp CLI for App administration."
     case .screenshotSourceUnavailable(let target, let id):
       "The requested \(target.rawValue) screenshot source"
         + (id.map { " with id \($0)" } ?? "") + " is unavailable."
@@ -825,6 +831,9 @@ internal struct ComputerUseService: Sendable {
     verificationPolicy: ComputerUseVerificationPolicy = ComputerUseVerificationPolicy()
   ) throws -> ComputerUseActionResult {
     try validate(reference)
+    guard reference.processID != Int32(ProcessInfo.processInfo.processIdentifier) else {
+      throw ComputerUseError.selfTargetForbidden(processID: reference.processID)
+    }
     return try performAction(
       kind: .accessibilityAction,
       requiredPermissions: [.accessibility],

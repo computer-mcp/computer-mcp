@@ -319,7 +319,7 @@ struct GatewayToolCatalogTests {
     try Data(configuration.exportedTOML().utf8).write(to: manifest)
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+      .appendingPathComponent(".build/debug/computer-mcp")
     let transport = try MCPChildProcessTransport(
       server: .init(
         id: "gateway", transport: .stdio, command: executable.path,

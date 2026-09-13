@@ -58,7 +58,7 @@ struct StandaloneToolCommandTests {
     arguments += ["--config", manifest.path]
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+      .appendingPathComponent(".build/debug/computer-mcp")
     let invocationArguments = arguments
     let result = try await BlockingOperationExecutor(label: "standalone-tool-test").perform {
       try ProcessCommandRunner().run(

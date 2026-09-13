@@ -33,7 +33,7 @@ struct CombinedPluginWorkflowTests {
     _ = try PluginArchiveExtractor().extract(archive, toNewDirectory: sourceRoot)
     let digest = Self.digest(try Data(contentsOf: archive))
     let fixture = try PluginControlFixture(
-      worker: Self.repository.appendingPathComponent(".build/out/Products/Debug/computer-mcp").path,
+      worker: Self.repository.appendingPathComponent(".build/debug/computer-mcp").path,
       bundled: source == .bundled ? .load(directory: packages) : .load(directory: nil))
     defer { fixture.remove() }
     let manualSkills = fixture.root.appendingPathComponent("manual-skills/manual-guide")

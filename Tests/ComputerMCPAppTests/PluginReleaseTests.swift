@@ -10,12 +10,29 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct PluginReleaseTests {
   @Test
-  func pageLabelUsesTheViewLocale() {
+  func pageLabelUsesTheViewLocale() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+    let output = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ComputerMCPReleaseLocalization-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: output) }
+    let result = try ProcessCommandRunner().run(
+      executable: "/usr/bin/xcrun",
+      arguments: [
+        "xcstringstool", "compile",
+        root.appendingPathComponent("Sources/ComputerMCPApp/Resources/Localizable.xcstrings").path,
+        "--output-directory", output.path, "--serialization-format", "binary",
+      ], workingDirectory: root, environment: [:], timeoutMilliseconds: 30_000,
+      maxOutputBytes: 16_384)
+    try #require(result.exitCode == 0, "\(result.stderr)")
+    let bundle = try #require(Bundle(url: output))
     #expect(
-      AppLocalization.formatted("Asset page %@", locale: Locale(identifier: "zh-Hans"), "2")
+      AppLocalization.formatted(
+        "Asset page %@", locale: Locale(identifier: "zh-Hans"), bundle: bundle, "2")
         == "归档页 2")
     #expect(
-      AppLocalization.formatted("Asset page %@", locale: Locale(identifier: "en"), "2")
+      AppLocalization.formatted(
+        "Asset page %@", locale: Locale(identifier: "en"), bundle: bundle, "2")
         == "Asset page 2")
   }
 

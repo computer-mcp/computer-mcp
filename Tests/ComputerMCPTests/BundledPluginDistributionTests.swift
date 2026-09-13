@@ -154,7 +154,7 @@ struct BundledPluginDistributionTests {
   }
 
   private static var worker: URL {
-    repository.appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+    repository.appendingPathComponent(".build/debug/computer-mcp")
   }
 
   private static func prepare(index: URL, output: URL, architectures: [String]) async throws

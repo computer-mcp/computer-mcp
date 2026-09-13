@@ -541,7 +541,7 @@ struct MCPRegistrationControlFixture: Sendable {
   func cli(_ arguments: [String]) async throws -> CommandResult {
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+      .appendingPathComponent(".build/debug/computer-mcp")
     return try await BlockingOperationExecutor(label: "mcp-registration-cli-test").perform {
       try ProcessCommandRunner().run(
         executable: executable.path,

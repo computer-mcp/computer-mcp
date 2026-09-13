@@ -155,7 +155,7 @@ struct MCPHTTPAuthenticationTests {
         #expect(stale.exitCode != 0)
         let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
           .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
-            ".build/out/Products/Debug/computer-mcp")
+            ".build/debug/computer-mcp")
         let execution = CLIProcessExecution()
         let saved = try await execution.runAsync(
           executable: executable.path,

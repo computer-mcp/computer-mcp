@@ -17,7 +17,7 @@ struct PluginControlPlaneTests {
     let codex = try #require(environment["COMPUTER_MCP_CODEX_EXECUTABLE"])
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+      .appendingPathComponent(".build/debug/computer-mcp")
     let digest = SHA256.hash(data: try Data(contentsOf: archive))
       .map { String(format: "%02x", $0) }.joined()
     let fixture = try PluginControlFixture(worker: executable.path)
@@ -621,7 +621,7 @@ struct PluginControlFixture: Sendable {
   func cli(_ arguments: [String]) async throws -> CommandResult {
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
-        ".build/out/Products/Debug/computer-mcp")
+        ".build/debug/computer-mcp")
     return try await BlockingOperationExecutor(label: "plugin-cli-test").perform {
       try ProcessCommandRunner().run(
         executable: executable.path,

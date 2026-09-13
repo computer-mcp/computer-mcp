@@ -78,15 +78,16 @@ struct CLIExecutionContextTests {
   @Test
   func anExplicitRunnerEnvironmentDoesNotReintroduceAmbientValues() throws {
     let result = try ProcessCommandRunner(environment: ["PATH": "/usr/bin:/bin"]).run(
-      executable: "/usr/bin/python3",
-      arguments: [
-        "-c", "import os; assert 'HOME' not in os.environ; print(os.environ['CLI_CONTEXT_VALUE'])",
-      ],
+      executable: "/usr/bin/env",
+      arguments: [],
       workingDirectory: FileManager.default.temporaryDirectory,
       environment: ["CLI_CONTEXT_VALUE": "isolated"], timeoutMilliseconds: 2_000,
       maxOutputBytes: 1_024)
-    #expect(result.exitCode == 0)
-    #expect(result.stdout == "isolated\n")
+    #expect(result.exitCode == 0, "\(result.stderr)")
+    #expect(!result.timedOut)
+    let variables = result.stdout.split(separator: "\n")
+    #expect(variables.contains("CLI_CONTEXT_VALUE=isolated"))
+    #expect(!variables.contains { $0.hasPrefix("HOME=") })
   }
 
   @Test

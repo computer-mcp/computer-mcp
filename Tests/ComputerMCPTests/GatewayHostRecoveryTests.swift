@@ -54,7 +54,7 @@ struct GatewayHostRecoveryTests {
     try Data(configuration.exportedTOML().utf8).write(to: manifest)
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+      .appendingPathComponent(".build/debug/computer-mcp")
     let result = try await BlockingOperationExecutor(label: "gateway-host-crash-test").perform {
       try ProcessCommandRunner().run(
         executable: "/usr/bin/python3",

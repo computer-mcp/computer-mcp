@@ -273,7 +273,7 @@ final class AppControlPlaneServiceTests {
       let before = try fixture.database.pluginStoreSnapshot()
       let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+        .appendingPathComponent(".build/debug/computer-mcp")
       let args = [
         "plugins", "search", "工作", "--kind", "mcp", "--page", "2", "--refresh",
         "--control-socket", fixture.directories.controlSocket.path,
@@ -337,7 +337,7 @@ final class AppControlPlaneServiceTests {
     do {
       let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+        .appendingPathComponent(".build/debug/computer-mcp")
       let command = try ProcessCommandRunner().run(
         executable: executable.path,
         arguments: [
@@ -368,7 +368,7 @@ final class AppControlPlaneServiceTests {
   func publishedPluginInstallsAndUninstallsThroughIsolatedHost() async throws {
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+      .appendingPathComponent(".build/debug/computer-mcp")
     let fixture = try AppControlPlaneServiceFixture(gatewayExecutablePath: executable.path)
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
@@ -451,7 +451,7 @@ final class AppControlPlaneServiceTests {
       let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
       let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-      let executable = repository.appendingPathComponent(".build/out/Products/Debug/computer-mcp")
+      let executable = repository.appendingPathComponent(".build/debug/computer-mcp")
       #expect(FileManager.default.isExecutableFile(atPath: executable.path))
       let command = try ProcessCommandRunner().run(
         executable: executable.path,

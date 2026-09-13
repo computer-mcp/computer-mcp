@@ -239,7 +239,7 @@ struct PreparationFixture: Sendable {
     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
     return PluginArchivePreparation(
-      workerExecutable: repository.appendingPathComponent(".build/out/Products/Debug/computer-mcp"),
+      workerExecutable: repository.appendingPathComponent(".build/debug/computer-mcp"),
       stagingParent: staging)
   }
 

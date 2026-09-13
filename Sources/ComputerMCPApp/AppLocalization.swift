@@ -47,16 +47,19 @@ enum AppLocalization {
     )
   }
 
-  static func formatted(_ key: String, locale: Locale? = nil, _ arguments: CVarArg...) -> String {
+  static func formatted(
+    _ key: String, locale: Locale? = nil, bundle: Bundle? = nil, _ arguments: CVarArg...
+  ) -> String {
     let format: String
     if let locale {
       let localization =
         Bundle.preferredLocalizations(
           from: ["en", "zh-Hans"], forPreferences: [locale.identifier]
         ).first ?? "en"
-      format = localizedString(key, localization: localization, localizationBundle: nil)
+      format = localizedString(
+        key, localization: localization, localizationBundle: nil, resources: bundle)
     } else {
-      format = string(key)
+      format = (bundle ?? resourceBundle).localizedString(forKey: key, value: key, table: nil)
     }
     return String(
       format: format,
@@ -72,7 +75,8 @@ enum AppLocalization {
   private static func localizedString(
     _ key: String,
     localization: String,
-    localizationBundle: Bundle?
+    localizationBundle: Bundle?,
+    resources: Bundle? = nil
   ) -> String {
     if let localizationBundle {
       return localizationBundle.localizedString(
@@ -82,13 +86,13 @@ enum AppLocalization {
       )
     }
     guard
-      let localizationURL = resourceBundle.url(
+      let localizationURL = (resources ?? resourceBundle).url(
         forResource: localization,
         withExtension: "lproj"
       ),
       let localizedBundle = Bundle(url: localizationURL)
     else {
-      return string(key)
+      return (resources ?? resourceBundle).localizedString(forKey: key, value: key, table: nil)
     }
     return localizedBundle.localizedString(forKey: key, value: key, table: "Localizable")
   }

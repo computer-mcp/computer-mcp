@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import GRDB
 import MCP
 import Testing
 
@@ -7,6 +8,26 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct MCPHostSessionTests {
+  @Test
+  func deletingPersistedAuthorityDoesNotRestoreConfiguredHostAccess() async throws {
+    let fixture = try HostFixture(fileBacked: true)
+    defer { fixture.remove() }
+    let catalog = try fixture.runtime.hostToolCatalog(workspaceID: "first", origin: "plugin")
+    try #require(catalog.contains { $0.name == "file.read" })
+    let path = try #require(fixture.database.fileURL).path
+    let writer = try DatabaseQueue(path: path)
+    try await writer.write { database in
+      try database.execute(sql: "DELETE FROM profiles WHERE id = ?", arguments: ["chatgpt-operate"])
+    }
+    #expect(try fixture.database.profiles().isEmpty)
+    #expect(throws: (any Error).self) {
+      try fixture.runtime.hostToolCatalog(workspaceID: "first", origin: "plugin")
+    }
+    let result = try await fixture.call("file.read", ["path": .string("value.txt")])
+    #expect(result.objectValue?["isError"] == .bool(true))
+    await fixture.runtime.shutdown()
+  }
+
   @Test
   func ordinaryMCPCallsUseBoundWorkspaceAndOriginalAuditIdentity() async throws {
     let fixture = try HostFixture()
@@ -221,7 +242,7 @@ private final class HostFixture: Sendable {
   let context: ExecutionContext
   let registration: MCPServerConfig
 
-  init(observe: Bool = false) throws {
+  init(observe: Bool = false, fileBacked: Bool = false) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "host-fixture-" + UUID().uuidString)
     first = root.appendingPathComponent("first")
@@ -231,7 +252,10 @@ private final class HostFixture: Sendable {
       try directory.lastPathComponent.write(
         to: directory.appendingPathComponent("value.txt"), atomically: true, encoding: .utf8)
     }
-    database = try GatewayDatabase(inMemory: ())
+    database =
+      try fileBacked
+      ? GatewayDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
+      : GatewayDatabase(inMemory: ())
     let workspaces = [first, second].map {
       RegisteredWorkspace(
         id: $0.lastPathComponent, displayName: $0.lastPathComponent, rootPath: $0.path)

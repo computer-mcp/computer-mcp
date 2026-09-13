@@ -4,6 +4,13 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.1.2 — 2026-09-14
+
+- Preserve configuration-backed host callback authority for local plugin
+  execution and thread release; deletion of a persisted grant still revokes it.
+- Bind host-service MCP calls to the selected workspace, automatically choosing
+  the sole available workspace and requiring a selection when several exist.
+
 ## 1.1.1 — 2026-09-13
 
 - Fix installed-App crashes in plugin and MCP management pages by resolving

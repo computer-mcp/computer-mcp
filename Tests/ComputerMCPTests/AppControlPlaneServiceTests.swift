@@ -364,13 +364,28 @@ final class AppControlPlaneServiceTests {
 
   @Test(
     .enabled(
-      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"),
-    arguments: [
-      ("swift-format", "swift-format.zip"),
-      ("computer-use", "computer-use.zip"),
-      ("codex", "codex-plugin.zip"),
-    ])
-  func publishedPluginInstallsAndUninstallsThroughIsolatedHost(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"))
+  func publishedCodexInstallsAndUninstallsThroughIsolatedHost() async throws {
+    try await checkPublishedPluginInstallation(pluginID: "codex", archiveName: "codex-plugin.zip")
+  }
+
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"))
+  func publishedComputerUseInstallsAndUninstallsThroughIsolatedHost() async throws {
+    try await checkPublishedPluginInstallation(
+      pluginID: "computer-use", archiveName: "computer-use.zip")
+  }
+
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"))
+  func publishedSwiftFormatInstallsAndUninstallsThroughIsolatedHost() async throws {
+    try await checkPublishedPluginInstallation(
+      pluginID: "swift-format", archiveName: "swift-format.zip")
+  }
+
+  private func checkPublishedPluginInstallation(
     pluginID: String, archiveName: String
   ) async throws {
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -412,7 +427,9 @@ final class AppControlPlaneServiceTests {
       let installed = try fixture.database.pluginStoreSnapshot()
       let record = try #require(installed.installations.first { $0.pluginID == pluginID })
       #expect(installed.settings[pluginID]?.enabled == false)
-      #expect(record.source.githubRelease != nil)
+      let provenance = try #require(record.source.githubRelease)
+      #expect(record.version == provenance.declaration.version)
+      print("Verified official install: \(pluginID) \(provenance.tag) sha256=\(provenance.sha256)")
       #expect(FileManager.default.fileExists(atPath: record.source.root.path))
       _ = try await client.call(
         "plugin.uninstall",

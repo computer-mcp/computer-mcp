@@ -537,7 +537,10 @@ private final class NativeCodexFixture: Sendable {
     var ancestor = target
     var visited: Set<Int32> = []
     while ancestor != getpid() {
-      try #require(ancestor > 1 && visited.insert(ancestor).inserted && visited.count <= 12)
+      try #require(ancestor > 1)
+      let firstVisit = visited.insert(ancestor).inserted
+      try #require(firstVisit)
+      try #require(visited.count <= 12)
       var info = proc_bsdinfo()
       let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
       try #require(proc_pidinfo(ancestor, PROC_PIDTBSDINFO, 0, &info, size) == size)

@@ -30,7 +30,7 @@ struct ConfigDefaults: ParsableCommand {
   }
 }
 
-struct ToolsInventory: ParsableCommand {
+struct ToolsInventory: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "inventory",
     abstract: "Emit the versioned tool and capability inventory for a standalone manifest."
@@ -48,7 +48,7 @@ struct ToolsInventory: ParsableCommand {
   @Option(name: .long, help: "Optional default stable workspace id.")
   var workspaceID: String?
 
-  func run() throws {
+  func run() async throws {
     let configurationURL = URL(fileURLWithPath: config).standardizedFileURL
     var gateway = try GatewayConfiguration.load(path: configurationURL.path)
     let excludedDynamicReexports = gateway.mcp.servers.filter {
@@ -61,54 +61,60 @@ struct ToolsInventory: ParsableCommand {
       workspaceID: workspaceID,
       transportTrace: GatewayTransportTrace(transport: "cli-inventory")
     )
-    let runtime = try GatewayRuntime(
+    let runtime = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,
       database: GatewayDatabase(inMemory: ())
     )
-    let tools = try runtime.listTools().sorted { $0.name < $1.name }
+    do {
+      let tools = try runtime.listTools().sorted { $0.name < $1.name }
 
-    printJSON(
-      .object([
-        "schema_version": .number(1),
-        "configuration": .string(configurationURL.lastPathComponent),
-        "server": .string(gateway.server.name),
-        "caller": .string(context.caller.rawValue),
-        "profile": .string(context.profileID.rawValue),
-        "excluded_dynamic_reexports": .array(
-          excludedDynamicReexports.map(JSONValue.string)
-        ),
-        "tools": .array(
-          try tools.map { tool in
-            let descriptor = try runtime.capabilityDescriptor(named: tool.name)
-            var object: [String: JSONValue] = [
-              "name": .string(tool.name),
-              "title": .string(tool.title),
-              "description": .string(tool.description),
-              "input_schema": tool.inputSchema,
-              "capability": .object([
-                "id": .string(descriptor.id),
-                "risk": .string(descriptor.risk.rawValue),
-                "workspace_requirement": .string(descriptor.workspaceRequirement.rawValue),
-                "local_only": .bool(descriptor.localOnly),
-                "uses_network": .bool(descriptor.usesNetwork),
-                "tcc_services": .array(descriptor.tccServices.sorted().map(JSONValue.string)),
-              ]),
-            ]
-            if let outputSchema = tool.outputSchema {
-              object["output_schema"] = outputSchema
+      printJSON(
+        .object([
+          "schema_version": .number(1),
+          "configuration": .string(configurationURL.lastPathComponent),
+          "server": .string(gateway.server.name),
+          "caller": .string(context.caller.rawValue),
+          "profile": .string(context.profileID.rawValue),
+          "excluded_dynamic_reexports": .array(
+            excludedDynamicReexports.map(JSONValue.string)
+          ),
+          "tools": .array(
+            try tools.map { tool in
+              let descriptor = try runtime.capabilityDescriptor(named: tool.name)
+              var object: [String: JSONValue] = [
+                "name": .string(tool.name),
+                "title": .string(tool.title),
+                "description": .string(tool.description),
+                "input_schema": tool.inputSchema,
+                "capability": .object([
+                  "id": .string(descriptor.id),
+                  "risk": .string(descriptor.risk.rawValue),
+                  "workspace_requirement": .string(descriptor.workspaceRequirement.rawValue),
+                  "local_only": .bool(descriptor.localOnly),
+                  "uses_network": .bool(descriptor.usesNetwork),
+                  "tcc_services": .array(descriptor.tccServices.sorted().map(JSONValue.string)),
+                ]),
+              ]
+              if let outputSchema = tool.outputSchema {
+                object["output_schema"] = outputSchema
+              }
+              if let annotations = tool.annotations {
+                object["annotations"] = annotations.json
+              }
+              if let meta = tool.meta {
+                object["meta"] = meta
+              }
+              return .object(object)
             }
-            if let annotations = tool.annotations {
-              object["annotations"] = annotations.json
-            }
-            if let meta = tool.meta {
-              object["meta"] = meta
-            }
-            return .object(object)
-          }
-        ),
-      ])
-    )
+          ),
+        ])
+      )
+      await runtime.shutdown()
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
   }
 }
 
@@ -206,7 +212,7 @@ struct ProvidersList: AsyncParsableCommand {
 struct ProvidersDoctor: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "doctor",
-    abstract: "Refresh provider diagnostics without starting providers."
+    abstract: "Run provider version and diagnostic probes without opening MCP sessions."
   )
 
   @Argument(help: "Optional exact provider id.") var id: String?
@@ -225,7 +231,7 @@ struct ProvidersDoctor: AsyncParsableCommand {
 struct ProvidersDiscover: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "discover",
-    abstract: "Emit bounded, versioned external-provider diagnostics as JSON."
+    abstract: "Inspect external providers with version and diagnostic probes as JSON."
   )
 
   @Option(name: .long, help: "Path to a schema-1 TOML manifest.")

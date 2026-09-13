@@ -200,10 +200,6 @@ package enum DefaultGatewayConfiguration {
     """
     archive.create
     archive.extract
-    codex.app.apps.list
-    codex.app.approvals.list
-    codex.app.approvals.read
-    codex.app.approvals.respond
     codex.app.elevation.approve
     codex.app.elevation.deny
     codex.app.elevation.effective
@@ -211,78 +207,6 @@ package enum DefaultGatewayConfiguration {
     codex.app.elevation.read
     codex.app.elevation.request
     codex.app.elevation.revoke
-    codex.app.events.read
-    codex.app.goal.clear
-    codex.app.goal.get
-    codex.app.goal.set
-    codex.app.handoff.diagnose
-    codex.app.methods.call
-    codex.app.methods.describe
-    codex.app.methods.list
-    codex.app.models.list
-    codex.app.ownership.reconcile.perform
-    codex.app.ownership.reconcile.preview
-    codex.app.requests.list
-    codex.app.requests.respond
-    codex.app.review.start
-    codex.app.runtime.stop
-    codex.app.runtimes.cleanup.perform
-    codex.app.runtimes.cleanup.preview
-    codex.app.runtimes.history
-    codex.app.runtimes.inspect
-    codex.app.runtimes.list
-    codex.app.runtimes.stop
-    codex.app.skills.list
-    codex.app.status
-    codex.app.thread.fork
-    codex.app.thread.list
-    codex.app.thread.loaded.list
-    codex.app.thread.read
-    codex.app.thread.recent
-    codex.app.thread.reclaim
-    codex.app.thread.release
-    codex.app.thread.start
-    codex.app.turn.interrupt
-    codex.app.turn.start
-    codex.app.turn.steer
-    codex.diagnostics.snapshot
-    codex.exec.cancel
-    codex.exec.events
-    codex.exec.list
-    codex.exec.result
-    codex.exec.resume
-    codex.exec.start
-    codex.mcp.approval.respond
-    codex.mcp.approvals.list
-    codex.mcp.calls.list
-    codex.mcp.cancel
-    codex.mcp.events
-    codex.mcp.reply
-    codex.mcp.result
-    codex.mcp.run
-    codex.mcp.status
-    codex.mcp.tools.list
-    codex.run.accept
-    codex.run.create
-    codex.run.evaluate
-    codex.run.list
-    codex.run.read
-    codex.run.reconcile
-    codex.run.record
-    codex.run.transition
-    codex.worktree.leases.acquire
-    codex.worktree.leases.cleanup.perform
-    codex.worktree.leases.cleanup.preview
-    codex.worktree.leases.heartbeat
-    codex.worktree.leases.list
-    codex.worktree.leases.read
-    codex.worktree.leases.release
-    codex.worktree.managed.list
-    codex.worktree.managed.read
-    codex.worktree.provision.plan
-    codex.worktree.provision.perform
-    codex.worktree.remove.plan
-    codex.worktree.remove.perform
     computer.accessibility.action
     computer.keyboard.key
     computer.keyboard.text
@@ -472,24 +396,6 @@ package enum DefaultGatewayConfiguration {
       format_flag = "--format"
       default_format = "json"
       dry_run_flag = "--dry-run"
-
-      [codex]
-      enabled = true
-      executable = \(tomlString(codexExecutable))
-      app_server_enabled = true
-      exec_enabled = true
-      mcp_enabled = true
-      experimental_api = true
-      app_server_request_timeout_seconds = 30
-      app_server_app_list_timeout_seconds = 120
-      app_server_termination_grace_milliseconds = 1000
-      app_server_kill_grace_milliseconds = 2000
-      app_server_approval_timeout_seconds = 300
-      app_server_auto_approve_workspace_writes = false
-      sandbox = "workspace-write"
-      approval_policy = "never"
-      max_sessions = 8
-      max_events_per_session = 1024
 
       [builtin]
       enabled = \(tomlArray(enabledBuiltinCapabilities))

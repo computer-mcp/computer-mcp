@@ -84,6 +84,8 @@ final class ComputerMCPAppModel: ObservableObject {
   @Published private(set) var exportedDiagnosticsURL: URL?
 
   private let controlPlane: any AppControlPlane
+  let pluginManagement: PluginManagementModel
+  let mcpRegistrations: MCPRegistrationModel
   private let onboardingPreferences: any OnboardingPreferenceStoring
   private let permissionCoach = PermissionCoachWindowController()
   private var didStart = false
@@ -95,6 +97,8 @@ final class ComputerMCPAppModel: ObservableObject {
     onboardingPreferences: any OnboardingPreferenceStoring = UserDefaultsOnboardingPreferences()
   ) {
     self.controlPlane = controlPlane
+    self.pluginManagement = PluginManagementModel(controlPlane: controlPlane)
+    self.mcpRegistrations = MCPRegistrationModel(controlPlane: controlPlane)
     self.onboardingPreferences = onboardingPreferences
     self.isPresentingWelcome =
       onboardingPreferences.completedVersion < UserDefaultsOnboardingPreferences.currentVersion
@@ -207,6 +211,8 @@ final class ComputerMCPAppModel: ObservableObject {
       Task { await loadProfiles() }
     case .providers:
       Task { await loadProviders() }
+    case .plugins:
+      Task { await pluginManagement.reload() }
     case .tunnels:
       Task {
         await loadOpenAITunnels()

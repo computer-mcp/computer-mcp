@@ -13,6 +13,12 @@ This directory contains detailed operational reference material.
 - [Control Plane Capabilities](ControlPlaneCapabilities.md): shared App/CLI
   management inventory, ownership, and secret-input rules.
 - [Config](Config.md): TOML source and policy configuration.
+- [Codex Migration](CodexMigration.md): offline configuration export and controlled
+  transfer of domain state to the independent plugin.
+- [CLI Trees](CLITrees.md): machine-readable command descriptors, argv/stdin
+  encoding, projected tools, output validation, and coverage.
+- [Plugin Packages](PluginPackages.md): immutable manifests, contribution
+  sources, and package-directory validation boundaries.
 - [Tools](Tools.md): complete gateway tool families, including deterministic
   Codex handoff, scoped local elevation, bounded recent-thread reads, and
   ownership reconciliation.
@@ -21,6 +27,10 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
+- [1.1.0 Release Notes](ReleaseNotes-1.1.0.md) and
+  [Production Readiness Report](ProductionReadinessReport-1.1.0.md):
+  plugin distribution, Gateway integration, Codex migration, and exact-artifact
+  release gates with explicit external acceptance boundaries.
 - [1.0.29 Production Readiness Report](ProductionReadinessReport-1.0.29.md):
   version-bound protected-CI template for the unified local control-plane
   release, exact artifact identity, and publication acceptance.
@@ -79,3 +89,5 @@ This directory contains detailed operational reference material.
 
 Keep current architecture truth in `Documentation/Architecture/`. Keep
 accepted rationale in `Documentation/Decisions/`.
+
+- [Scoped host services](HostServices.md): inherited MCP callbacks, approval ownership, derived registrations, diagnostics and recovery.

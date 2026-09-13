@@ -26,6 +26,33 @@ git -C "$ROOT_DIR" worktree add --detach "$WORKTREE" HEAD >/dev/null
 "$WORKTREE/Scripts/verify-public-repository.sh" >/dev/null \
   || fail "a clean Git worktree was rejected because of its control file."
 
+for private_directory in .agent .codex .computer-mcp .local; do
+  /bin/mkdir -p "$WORKTREE/$private_directory"
+  /usr/sbin/mkfile -n 11m "$WORKTREE/$private_directory/fixture.bin"
+done
+"$WORKTREE/Scripts/verify-public-repository.sh" >/dev/null \
+  || fail "untracked private runtime artifacts were treated as public source."
+
+git -C "$WORKTREE" add -f .agent/fixture.bin
+if "$WORKTREE/Scripts/verify-public-repository.sh" \
+  >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"
+then
+  fail "tracked private metadata was accepted."
+fi
+/usr/bin/grep -Fq 'private agent metadata is tracked' "$TEMP_DIR/stderr" \
+  || fail "tracked private metadata did not produce the expected diagnosis."
+git -C "$WORKTREE" update-index --force-remove .agent/fixture.bin
+
+/usr/sbin/mkfile -n 11m "$WORKTREE/public-fixture.bin"
+if "$WORKTREE/Scripts/verify-public-repository.sh" \
+  >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"
+then
+  fail "an oversized public source file was accepted."
+fi
+/usr/bin/grep -Fq 'source file exceeds 10 MiB' "$TEMP_DIR/stderr" \
+  || fail "the oversized public file did not produce the expected diagnosis."
+/bin/rm -- "$WORKTREE/public-fixture.bin"
+
 /usr/bin/printf '/Users/%s/credential\n' 'xudongxu' >"$WORKTREE/leak.txt"
 if "$WORKTREE/Scripts/verify-public-repository.sh" \
   >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"

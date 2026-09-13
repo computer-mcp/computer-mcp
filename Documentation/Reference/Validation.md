@@ -25,6 +25,14 @@ A probe is an auxiliary observation. It cannot independently produce PASS.
   computer-mcp-validate --help
 ```
 
+The repository's `Scripts/verify-package-boundary.sh` and
+`Scripts/verify-cli-interface.sh` gates require an executable ripgrep. They use
+`rg` from the calling environment by default; set `RIPGREP_EXECUTABLE` to an
+existing installation's executable path when it is not on that PATH. The scripts
+do not install tools or change the user's PATH. A missing executable, failed
+version check or search error fails validation; only ripgrep's ordinary no-match
+status can establish that a forbidden pattern is absent.
+
 ## Command hierarchy
 
 ```text
@@ -82,17 +90,97 @@ Generate a reviewable runbook from the catalog:
   computer-mcp-validate runbook generate --output validation-runbook.md
 ```
 
-Real ChatGPT, Safari, OpenAI Secure MCP Tunnel, Cloudflare Tunnel, installed
-App, and external provider actions belong only in Validation Runs. They never
-become automated Swift tests.
+Actions against real ChatGPT, Safari, OpenAI Secure MCP Tunnel, Cloudflare
+Tunnel, the installed App or user-owned provider sessions belong only in
+Validation Runs. They never become automated Swift tests. Opt-in package
+regressions may use an explicitly selected native executable against disposable
+local state and loopback fixtures; they do not produce external-consumer or
+production-readiness evidence.
 
 Automated fixtures use repository-local ignored build storage or a uniquely
 created temporary directory. They never use Desktop, Documents, iCloud Drive,
-or another user-content directory. Codex App lifecycle fixtures create
-ephemeral threads and run reviews inline. Exec and MCP checks that require a
-persisted upstream session archive every created thread before the run can
-pass. Cleanup failure fails the Validation Run instead of leaving an active test
-task in the user's Codex task list.
+or another user-content directory. Codex lifecycle fixtures use ephemeral
+threads or a newly created private Codex home, and run reviews inline. Checks
+using shared upstream session storage archive every created thread before the
+Validation Run can pass. Private homes are removed only after their owned
+writers stop. Cleanup failure fails validation instead of leaving an active
+test task in the user's Codex task list.
+
+## Disposable GUI target
+
+`Tests/ComputerMCPTests/Fixtures/gui_acceptance.swift` is an AppKit target for
+manual Validation Runs. It exposes a counter and two buttons, writes its PID,
+counter and running state to an explicitly supplied receipt, and closes after
+120 seconds. It is a copied test resource, not an automatically launched test.
+Build a private target from the repository root:
+
+```sh
+GUI_RUN=$(mktemp -d /tmp/computer-mcp-gui.XXXXXX)
+GUI_APP="$GUI_RUN/GUI Fixture.app"
+mkdir -p "$GUI_APP/Contents/MacOS"
+cp Tests/ComputerMCPTests/Fixtures/gui_acceptance.plist "$GUI_APP/Contents/Info.plist"
+/usr/bin/swiftc -swift-version 6 -parse-as-library \
+  Tests/ComputerMCPTests/Fixtures/gui_acceptance.swift \
+  -o "$GUI_APP/Contents/MacOS/GUIFixture" -framework AppKit
+/usr/bin/open -n -W "$GUI_APP" --args "$GUI_RUN/state.json"
+```
+
+The final command waits for this target to exit. Drive it from a separate
+terminal or authorized MCP client using a disposable Gateway configuration and
+workspace rooted at `GUI_RUN`. Do not point acceptance commands at the normal
+App control socket. Keep the receipt and raw results in the Validation Run.
+
+For CUA, first discover the actual authorized catalog and observe this target
+using its receipted PID. Perform one increment and observe the counter again.
+For the AX path, query that PID with `computer.accessibility.query`; identify
+`fixture-increment` from the returned references, perform its `AXPress`, then
+query `fixture-counter` and verify `AXValue` equals `Count 1`. References come
+from the current query, not a saved child path. Independently require the
+receipt's counter to equal one. Use a fresh target for each provider path.
+
+Record caller executable/signing identity, permission state, vendor errors and
+whether a system authorization flow occurred. A successful catalog or AX test
+does not prove CUA execution. If an action reports an error, observe the target
+and receipt before considering a retry; an error may accompany an effective
+action. Never automatically repeat an uncertain CUA action through AX.
+Use the close button or the bounded automatic exit, and confirm both the
+receipt's stopped state and the launched target's process exit before cleanup.
+An error returned by the close action is not itself proof of failed cleanup.
+
+## Isolated Codex plugin regressions
+
+The host package can test a separately packaged adapter over standard MCP:
+
+```sh
+Scripts/verify-codex-plugin-host.sh /absolute/plugin/bin/codex-mcp-adapter
+```
+
+This verifies host grants, tickets, audit, dynamic tools, migration and actual
+socket/HTTP teardown with a disposable vendor-protocol fixture. It does not
+start the user's Codex installation by default.
+
+To also verify a selected native Codex executable, opt in explicitly:
+
+```sh
+COMPUTER_MCP_REAL_CODEX_ACCEPTANCE=1 \
+COMPUTER_MCP_REAL_CODEX_EXECUTABLE=/absolute/vendor/codex \
+Scripts/verify-codex-plugin-host.sh /absolute/plugin/bin/codex-mcp-adapter
+```
+
+`RealCodexPluginAcceptanceTests` checks bounded skills/app queries, scoped
+Git and loopback-network access before approval and after revocation, cold
+thread/first-turn authorization, and three independent connections handing off
+the same thread and Goal. The native process executes the test commands;
+model responses come from a local fixture that rejects authentication.
+Command results, available execution events, filesystem/network effects,
+exact process exit and adapter database state are independently checked.
+
+These tests create private Codex homes, databases, repositories and local
+services. They do not use production host sockets, existing accounts/threads,
+external model services, system-permission changes or public Git operations.
+Successful cleanup removes the private state; failure retains isolated evidence
+and reports its path. Native sandbox tool errors can lack a command-execution
+event, so denial checks also require the exact native function-call result.
 
 ## Evidence contract
 

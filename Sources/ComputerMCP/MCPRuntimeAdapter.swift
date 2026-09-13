@@ -13,7 +13,7 @@ package enum MCPRuntimeAdapter: Sendable {
       version: ComputerMCPCLI.version,
       title: "Computer MCP Gateway",
       instructions: instructions,
-      capabilities: .init(tools: .init(listChanged: false))
+      capabilities: .init(tools: .init(listChanged: true))
     )
 
     await registerGatewayHandlers(
@@ -64,12 +64,20 @@ package enum MCPRuntimeAdapter: Sendable {
     registry: any GatewayToolServing
   ) async {
     let surface = GatewayMCPToolSurface(registry: registry)
+    let changes = registry.toolChanges()
+    let notifier = MCPToolCatalogNotifier(
+      registry: registry, changes: changes, initialCatalog: try? await surface.listToolsAsync())
+    await server.onNotification(InitializedNotification.self) { [weak server] _ in
+      if let server { await notifier.start(server: server) }
+    }
 
     await server.withMethodHandler(MCP.ListTools.self) { _ in
-      MCP.ListTools.Result(tools: try await surface.listToolsAsync().map(\.sdkTool))
+      try await registry.refreshTools()
+      return MCP.ListTools.Result(tools: try await surface.listToolsAsync().map(\.sdkTool))
     }
 
     await server.withMethodHandler(MCP.CallTool.self) { params in
+      try Task.checkCancellation()
       let arguments: JSONValue?
       if let sdkArguments = params.arguments {
         arguments = .object(sdkArguments.mapValues(JSONValue.init(sdkValue:)))
@@ -78,11 +86,12 @@ package enum MCPRuntimeAdapter: Sendable {
       }
 
       do {
-        return try await registry.callToolForMCPAsync(
+        let result = try await registry.callToolForMCPAsync(
           name: params.name,
           arguments: arguments
         )
-        .sdkCallToolResult()
+        try Task.checkCancellation()
+        return try result.sdkCallToolResult()
       } catch GatewayToolError.invalidArguments(let message) {
         throw MCPError.invalidParams(message)
       }

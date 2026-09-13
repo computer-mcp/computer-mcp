@@ -332,7 +332,9 @@ extension AppControlPlaneService {
       }
       return CloudflareTunnelStatus(
         profileID: profile.id,
-        state: .stopped,
+        state: cloudflareStopTasks[profile.id] != nil
+          ? .stopping
+          : cloudflareStartTasks[profile.id] != nil ? .starting : .stopped,
         processID: nil,
         originURL: "http://127.0.0.1:\(profile.localPort)/mcp",
         publicURL: profile.mcpURL?.absoluteString,
@@ -357,14 +359,8 @@ extension AppControlPlaneService {
     var version: String?
     var tokenFileSupported: Bool?
     if let executable {
-      let result = try? ProcessCommandRunner().run(
-        executable: executable,
-        arguments: ["version"],
-        workingDirectory: nil,
-        environment: [:],
-        timeoutMilliseconds: 5_000,
-        maxOutputBytes: 16_384
-      )
+      let result = try? await cloudflaredVersionResult(executable)
+      try Task.checkCancellation()
       version = result?.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
       if result?.exitCode != 0 {
         diagnostics.append("cloudflared version failed")
@@ -402,6 +398,20 @@ extension AppControlPlaneService {
   }
 
   package func startCloudflareTunnel(profileID: String) async throws -> CloudflareTunnelStatus {
+    guard cloudflareStartTasks[profileID] == nil, cloudflareStopTasks[profileID] == nil else {
+      throw CloudflareTunnelError.alreadyRunning(profileID)
+    }
+    let task = Task { try await self.performCloudflareStart(profileID: profileID) }
+    cloudflareStartTasks[profileID] = task
+    defer { cloudflareStartTasks.removeValue(forKey: profileID) }
+    return try await withTaskCancellationHandler {
+      try await task.value
+    } onCancel: {
+      task.cancel()
+    }
+  }
+
+  private func performCloudflareStart(profileID: String) async throws -> CloudflareTunnelStatus {
     if let existingRuntime = cloudflareRuntimes[profileID] {
       if existingRuntime.process?.isRunning == true {
         throw CloudflareTunnelError.alreadyRunning(profileID)
@@ -410,7 +420,9 @@ extension AppControlPlaneService {
       await Self.releaseCloudflareRuntimeResources(existingRuntime, terminateProcess: true)
     }
     let profile = try requireCloudflareProfile(profileID)
-    let configuration = try manifestStore.activeConfiguration()
+    try Task.checkCancellation()
+    let inputs = try gatewayInputs()
+    let configuration = inputs.configuration
     let grant = configuration.profileGrant(for: profile.gatewayProfile)
     guard grant.allowedCallers.contains(.cloudflareTunnel) else {
       throw CloudflareTunnelError.profileCallerMismatch(profile.gatewayProfile.rawValue)
@@ -424,20 +436,14 @@ extension AppControlPlaneService {
     guard let cloudflared = resolveCloudflared(profile.cloudflaredPath) else {
       throw CloudflareTunnelError.cloudflaredUnavailable
     }
-    let versionResult = try ProcessCommandRunner().run(
-      executable: cloudflared,
-      arguments: ["version"],
-      workingDirectory: nil,
-      environment: [:],
-      timeoutMilliseconds: 5_000,
-      maxOutputBytes: 16_384
-    )
+    let versionResult = try await cloudflaredVersionResult(cloudflared)
     let version =
       versionResult.exitCode == 0
       ? versionResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : nil
     guard let version, Self.cloudflaredVersionSupportsTokenFile(version) else {
       throw CloudflareTunnelError.unsupportedCloudflaredVersion(version)
     }
+    try requireCurrentGatewayInputs(inputs)
     let desiredBeforeStart = try desiredCloudflareProfileIDs().contains(profileID)
 
     let tokenFile = directories.runtime.appendingPathComponent(
@@ -476,7 +482,7 @@ extension AppControlPlaneService {
         profileID: profile.gatewayProfile
       )
       try httpConfiguration.validate()
-      let gateway = try GatewayRuntime(
+      let gateway = try await GatewayRuntime.make(
         configuration: httpConfiguration,
         context: httpConfiguration.executionContext(
           caller: .cloudflareTunnel,
@@ -488,8 +494,10 @@ extension AppControlPlaneService {
           )
         ),
         database: database,
-        registeredWorkspaces: try database.workspaces(),
-        bookmarkService: bookmarkService
+        registeredWorkspaces: inputs.workspaces,
+        bookmarkService: bookmarkService,
+        mcpClient: MCPProxyClient(secretStore: secretStore),
+        bundledPlugins: bundledPlugins
       )
       let origin = GatewayHTTPRuntime(
         configuration: httpConfiguration,
@@ -500,7 +508,9 @@ extension AppControlPlaneService {
         accessToken: accessToken
       )
       runtime.origin = origin
+      try requireCurrentGatewayInputs(inputs)
       try await origin.startListening()
+      try requireCurrentGatewayInputs(inputs)
 
       let stdoutURL = directories.logs.appendingPathComponent(
         "cloudflare-\(profile.id).stdout.log"
@@ -539,6 +549,7 @@ extension AppControlPlaneService {
       runtime.process = process
       try process.run()
       try await Task.sleep(for: .milliseconds(250))
+      try requireCurrentGatewayInputs(inputs)
       guard process.isRunning else {
         throw CloudflareTunnelError.processLaunchFailed(
           "cloudflared exited during startup with status \(process.terminationStatus)"
@@ -558,11 +569,41 @@ extension AppControlPlaneService {
     }
   }
 
+  private func cloudflaredVersionResult(_ executable: String) async throws -> CommandResult {
+    try Task.checkCancellation()
+    let environment = ProcessInfo.processInfo.environment
+    let result = try await providerProbeOperations.perform {
+      try ManagedCommandRunner().run(
+        executable: executable, arguments: ["version"], workingDirectory: nil,
+        environment: environment, timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
+    }
+    try Task.checkCancellation()
+    guard !result.timedOut, !result.stdoutTruncated, !result.stderrTruncated else {
+      throw CloudflareTunnelError.unsupportedCloudflaredVersion(nil)
+    }
+    return result
+  }
+
   package func stopCloudflareTunnel(profileID: String) async throws -> CloudflareTunnelStatus {
+    if let task = cloudflareStopTasks[profileID] { return try await task.value }
+    let starting = cloudflareStartTasks[profileID]
+    let task = Task {
+      starting?.cancel()
+      _ = await starting?.result
+      return try await self.performCloudflareStop(profileID: profileID)
+    }
+    cloudflareStopTasks[profileID] = task
+    defer { cloudflareStopTasks.removeValue(forKey: profileID) }
+    return try await task.value
+  }
+
+  private func performCloudflareStop(profileID: String) async throws -> CloudflareTunnelStatus {
     let profile = try requireCloudflareProfile(profileID)
     guard var runtime = cloudflareRuntimes[profileID] else {
       try setCloudflareDesiredRunning(false, profileID: profileID)
-      return cloudflareTunnelStatuses().first { $0.profileID == profileID }!
+      var status = cloudflareTunnelStatuses().first { $0.profileID == profileID }!
+      status.state = .stopped
+      return status
     }
     runtime.state = .stopping
     cloudflareRuntimes[profileID] = runtime
@@ -570,7 +611,9 @@ extension AppControlPlaneService {
     cloudflareRuntimes.removeValue(forKey: profileID)
     try setCloudflareDesiredRunning(false, profileID: profileID)
     try recordCloudflareLifecycle(profile: profile, action: "stop", decision: .allowed)
-    return cloudflareTunnelStatuses().first { $0.profileID == profileID }!
+    var status = cloudflareTunnelStatuses().first { $0.profileID == profileID }!
+    status.state = .stopped
+    return status
   }
 
   package func cloudflareTunnelLogs(profileID: String, maxBytes: Int = 65_536) throws

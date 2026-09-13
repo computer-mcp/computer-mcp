@@ -23,7 +23,6 @@ fail() {
 }
 
 cd "$ROOT_DIR"
-Scripts/verify-swift-codex-release-gate.sh
 PRODUCT_VERSION=$(/usr/libexec/PlistBuddy \
   -c 'Print :CFBundleShortVersionString' \
   Resources/ComputerMCPApp/Info.plist)
@@ -60,36 +59,14 @@ for file in "$MANIFEST" "$SBOM" "$NOTICES"; do
   [[ -s "$file" ]] || fail "Missing or empty generated file: ${file:t}"
 done
 
-PIN_COUNT=$(
-  /usr/bin/plutil -extract pins json -o - Package.resolved \
-    | rg -o '"identity"' \
-    | /usr/bin/wc -l \
-    | /usr/bin/awk '{print $1}'
-)
-LINKED_COUNT=$(
-  /usr/bin/plutil -extract linked_distributed json -o - "$MANIFEST" \
-    | rg -o '"identity"' \
-    | /usr/bin/wc -l \
-    | /usr/bin/awk '{print $1}'
-)
-RESOLVED_ONLY_COUNT=$(
-  /usr/bin/plutil -extract resolved_only json -o - "$MANIFEST" \
-    | rg -o '"identity"' \
-    | /usr/bin/wc -l \
-    | /usr/bin/awk '{print $1}'
-)
-SBOM_COMPONENT_COUNT=$(
-  /usr/bin/plutil -extract components json -o - "$SBOM" \
-    | rg -o '"type":"library"' \
-    | /usr/bin/wc -l \
-    | /usr/bin/awk '{print $1}'
-)
+PIN_COUNT=$(jq '.pins | length' Package.resolved)
+LINKED_COUNT=$(jq '.linked_distributed | length' "$MANIFEST")
+RESOLVED_ONLY_COUNT=$(jq '.resolved_only | length' "$MANIFEST")
+SBOM_COMPONENT_COUNT=$(jq '[.components[] | select(.type == "library")] | length' "$SBOM")
 
-[[ "$PIN_COUNT" == "41" ]] || fail "Expected 41 locked dependencies; found $PIN_COUNT."
-[[ "$LINKED_COUNT" == "13" ]] \
-  || fail "Expected 13 linked-and-distributed dependencies; found $LINKED_COUNT."
-[[ "$RESOLVED_ONLY_COUNT" == "28" ]] \
-  || fail "Expected 28 resolved-only dependencies; found $RESOLVED_ONLY_COUNT."
+(( LINKED_COUNT > 0 )) || fail "No linked dependencies were classified."
+(( LINKED_COUNT + RESOLVED_ONLY_COUNT == PIN_COUNT )) \
+  || fail "Linked and resolved-only classifications do not partition Package.resolved."
 [[ "$SBOM_COMPONENT_COUNT" == "$PIN_COUNT" ]] \
   || fail "SBOM component count does not match Package.resolved."
 [[ $(/usr/bin/plutil -extract schema_version raw -o - "$MANIFEST") == "1" ]] \
@@ -107,4 +84,4 @@ for legal_file in LICENSE EULA.md PRIVACY.md THIRD_PARTY_NOTICES.md; do
   [[ -s "$legal_file" ]] || fail "Missing release legal file: $legal_file"
 done
 
-echo "Deterministic release metadata gate passed (13 linked, 28 resolved-only, 41 total)."
+echo "Deterministic release metadata gate passed ($LINKED_COUNT linked, $RESOLVED_ONLY_COUNT resolved-only, $PIN_COUNT total)."

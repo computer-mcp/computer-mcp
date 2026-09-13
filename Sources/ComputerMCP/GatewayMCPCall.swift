@@ -118,17 +118,10 @@ internal struct GatewayCallInspector: Sendable {
 }
 
 internal actor GatewayClientSession {
-  private struct HTTPDisconnectContext: Sendable {
-    let endpoint: URL
-    let accessToken: String?
-    let transport: HTTPClientTransport
-  }
-
   private let client: Client
   private let transportName: String
   private let endpoint: String
   private var initialization: Initialize.Result?
-  private var httpDisconnectContext: HTTPDisconnectContext?
 
   private init(transportName: String, endpoint: String) {
     self.client = Client(name: "computer-mcp-client", version: "1")
@@ -165,7 +158,7 @@ internal actor GatewayClientSession {
       transportName: streaming ? "streamable_http" : "http",
       endpoint: endpoint.absoluteString
     )
-    let transport = HTTPClientTransport(
+    let transport = MCPHTTPClientTransport(
       endpoint: endpoint,
       streaming: streaming,
       requestModifier: { request in
@@ -178,11 +171,6 @@ internal actor GatewayClientSession {
       }
     )
     try await session.connect(transport: transport)
-    await session.setHTTPDisconnectContext(
-      endpoint: endpoint,
-      accessToken: accessToken,
-      transport: transport
-    )
     return session
   }
 
@@ -242,39 +230,8 @@ internal actor GatewayClientSession {
   }
 
   internal func disconnect() async {
-    await terminateHTTPSession()
     initialization = nil
     await client.disconnect()
-  }
-
-  private func setHTTPDisconnectContext(
-    endpoint: URL,
-    accessToken: String?,
-    transport: HTTPClientTransport
-  ) {
-    httpDisconnectContext = HTTPDisconnectContext(
-      endpoint: endpoint,
-      accessToken: accessToken,
-      transport: transport
-    )
-  }
-
-  private func terminateHTTPSession() async {
-    guard let context = httpDisconnectContext else { return }
-    httpDisconnectContext = nil
-    guard let sessionID = await context.transport.sessionID else { return }
-
-    var request = URLRequest(url: context.endpoint)
-    request.httpMethod = "DELETE"
-    request.setValue(sessionID, forHTTPHeaderField: HTTPHeaderName.sessionID)
-    request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-    if let protocolVersion = initialization?.protocolVersion {
-      request.setValue(protocolVersion, forHTTPHeaderField: HTTPHeaderName.protocolVersion)
-    }
-    if let accessToken = context.accessToken, !accessToken.isEmpty {
-      request.setValue("Bearer \(accessToken)", forHTTPHeaderField: HTTPHeaderName.authorization)
-    }
-    _ = try? await URLSession.shared.data(for: request)
   }
 
   private func connect(transport: any Transport) async throws {

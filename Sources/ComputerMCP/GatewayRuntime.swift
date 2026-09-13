@@ -11,18 +11,104 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let workspaceOrder: [String]
   private let workspaceAccesses: [String: ResolvedWorkspaceAccess]
   private let providerRouters: [String: GatewayProviderRouter]
-  private let shutdownState = GatewayRuntimeShutdownState()
+  private let lifetime: GatewayRuntimeLifetime
+  private static let construction = BlockingOperationExecutor(
+    label: "computer-mcp.gateway-construction", serial: false)
+  private let hostToolDirectory = MCPHostToolDirectory()
+  package let pluginOrigins: [IntegrationRegistration: PluginContributionOrigin]
+  package let pluginDiagnostics: [PluginResolutionDiagnostic]
+  package let pluginIssues: [PluginStoreIssue]
 
-  package init(
+  /// Synchronous construction starts discovery. Async callers use `make` to join failed startup cleanup.
+  package convenience init(
     configuration: GatewayConfiguration,
     context: ExecutionContext? = nil,
     database: GatewayDatabase? = nil,
     registeredWorkspaces: [RegisteredWorkspace]? = nil,
     bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
-    policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator()
+    policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
+    mcpClient: any DownstreamMCPClient = MCPProxyClient(),
+    plugins: [ResolvedPlugin]? = nil,
+    bundledPlugins: BundledPlugins = .current
   ) throws {
+    try self.init(
+      configuration: configuration, context: context, database: database,
+      registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
+      policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
+      bundledPlugins: bundledPlugins, lifetime: GatewayRuntimeLifetime())
+  }
+
+  package static func make(
+    configuration: GatewayConfiguration,
+    context: ExecutionContext? = nil,
+    database: GatewayDatabase? = nil,
+    registeredWorkspaces: [RegisteredWorkspace]? = nil,
+    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
+    policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
+    mcpClient: any DownstreamMCPClient = MCPProxyClient(),
+    plugins: [ResolvedPlugin]? = nil,
+    bundledPlugins: BundledPlugins = .current
+  ) async throws -> GatewayRuntime {
+    try Task.checkCancellation()
+    let lifetime = GatewayRuntimeLifetime()
+    do {
+      let runtime = try await construction.perform {
+        try GatewayRuntime(
+          configuration: configuration, context: context, database: database,
+          registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
+          policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
+          bundledPlugins: bundledPlugins, lifetime: lifetime)
+      }
+      try Task.checkCancellation()
+      return runtime
+    } catch {
+      await lifetime.beginShutdown().value
+      throw error
+    }
+  }
+
+  private init(
+    configuration: GatewayConfiguration, context: ExecutionContext?, database: GatewayDatabase?,
+    registeredWorkspaces: [RegisteredWorkspace]?, bookmarkService: any WorkspaceBookmarkServicing,
+    policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
+    plugins: [ResolvedPlugin]?, bundledPlugins: BundledPlugins, lifetime: GatewayRuntimeLifetime
+  ) throws {
+    self.lifetime = lifetime
+    var initialized = false
+    defer { if !initialized { _ = lifetime.beginShutdown() } }
+    var sourceConfiguration = configuration
+    let pluginState = try (database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
+      .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
+    sourceConfiguration.knownPluginMCPServerIDs.formUnion(pluginState.knownMCPRegistrationIDs)
+    let resolved =
+      try plugins == nil ? PluginHost.resolve(pluginState, bundled: bundledPlugins) : nil
+    let composition = try GatewayPluginComposition(
+      configuration: sourceConfiguration, plugins: plugins ?? resolved?.plugins ?? [])
+    let configuration = composition.runtimeConfiguration
+    guard configuration.codex?.enabled != true else {
+      throw ConfigurationError.invalid(
+        "Embedded Codex execution requires migration. Use config migrate-codex and the independent Codex plugin before starting this gateway."
+      )
+    }
+    pluginOrigins = composition.origins
+    pluginDiagnostics = composition.diagnostics
+    pluginIssues = resolved?.issues ?? []
     let effectiveContext = context ?? configuration.executionContext()
+    let configuredGrant = configuration.profiles.first { $0.id == effectiveContext.profileID }?
+      .grant
     let persistedProfiles = try database?.profiles() ?? []
+    let persistedGrant = persistedProfiles.first(where: { $0.id == effectiveContext.profileID })
+    let mcpGrant = configuredGrant ?? configuration.profileGrant(for: effectiveContext.profileID)
+    let derivesObserveGrant =
+      configuredGrant == nil
+      && (effectiveContext.profileID == .chatGPTObserve
+        || effectiveContext.profileID == .cloudflareObserve)
+    let scopedMCPClient = AuthorizedMCPClient(
+      base: mcpClient,
+      policy: MCPToolAccessPolicy(
+        configuration: configuration,
+        grant: persistedGrant.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
+        derivesObserveGrant: derivesObserveGrant))
 
     let persistedWorkspaces = try database?.workspaces() ?? []
     let configuredWorkspaces =
@@ -33,14 +119,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var accessByID: [String: ResolvedWorkspaceAccess] = [:]
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
     let commandRunner = ProcessCommandRunner()
-    let mcpClient = MCPProxyClient()
-    let codexToolDispatcher = CodexDynamicToolDispatcher()
+    let runtimeID = UUID()
 
     for workspace in configuredWorkspaces {
       guard workspaceByID[workspace.id] == nil else {
         throw GatewayRuntimeError.duplicateWorkspaceID(workspace.id)
       }
       let access = try bookmarkService.resolve(workspace)
+      lifetime.onShutdown { access.close() }
       var workspaceConfiguration = configuration
       workspaceConfiguration.workspaceDirectory = access.rootURL.standardizedFileURL
       let shellManager = SubprocessShellRuntime()
@@ -56,44 +142,41 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         commandRunner: commandRunner,
         processManager: processManager,
         shellManager: shellManager,
-        mcpClient: mcpClient
+        mcpClient: scopedMCPClient,
+        hostContext: MCPHostContext(
+          runtimeID: runtimeID, context: effectiveContext, workspaceID: workspace.id,
+          rootURL: access.rootURL, readOnly: !mcpGrant.permitsRisk(.workspaceWrite),
+          tools: hostToolDirectory,
+          managedWorkspaceRoot: database?.fileURL?.deletingLastPathComponent()
+            .appendingPathComponent("Managed Worktrees", isDirectory: true),
+          processOwnershipRoot: database?.mcpProcessOwnershipRoot)
       )
-      var additionalProviders: [any GatewayToolProvider] = [
-        ComputerUseGatewayProvider()
+      let registryCleanup = lifetime.onShutdown { await registry.shutdown() }
+      let codexOwner = CodexRuntimeOwner(
+        workspaceID: workspace.id,
+        profileID: effectiveContext.profileID.rawValue,
+        caller: effectiveContext.caller.rawValue,
+        transport: effectiveContext.transportTrace?.transport,
+        socketConnectionID: effectiveContext.transportTrace?.socketConnectionID,
+        tunnelInstanceID: effectiveContext.transportTrace?.tunnelInstanceID,
+        tunnelProfileID: effectiveContext.transportTrace?.tunnelProfileID
+      )
+      let additionalProviders: [any GatewayToolProvider] = [
+        ComputerUseGatewayProvider(),
+        CodexElevationTools(owner: codexOwner, database: database),
       ]
-      if configuration.codex.enabled {
-        additionalProviders.append(
-          CodexGatewayProvider(
-            configuration: configuration.codex,
-            workspaceURL: access.rootURL,
-            owner: CodexRuntimeOwner(
-              workspaceID: workspace.id,
-              profileID: effectiveContext.profileID.rawValue,
-              caller: effectiveContext.caller.rawValue,
-              transport: effectiveContext.transportTrace?.transport,
-              socketConnectionID: effectiveContext.transportTrace?.socketConnectionID,
-              tunnelInstanceID: effectiveContext.transportTrace?.tunnelInstanceID,
-              tunnelProfileID: effectiveContext.transportTrace?.tunnelProfileID
-            ),
-            database: database,
-            dynamicToolDispatcher: codexToolDispatcher,
-            maxOutputBytes: configuration.policy.maxOutputBytes
-          )
-        )
-      }
-      providerRouterByID[workspace.id] = try GatewayProviderRouter(
+      let router = try GatewayProviderRouter(
         registry: registry,
-        additionalProviders: additionalProviders
+        additionalProviders: additionalProviders,
+        reservedToolNames: Set(Self.coreTools(databaseEnabled: true).map(\.name))
       )
+      providerRouterByID[workspace.id] = router
+      lifetime.replaceShutdown(registryCleanup) { await router.shutdown() }
       if access.workspace != workspace {
-        try database?.saveWorkspace(access.workspace)
+        try database?.saveWorkspace(access.workspace, replacing: workspace)
       }
     }
 
-    let persistedGrant = persistedProfiles.first(where: { $0.id == effectiveContext.profileID })
-    let configuredGrant = configuration.profiles
-      .first(where: { $0.id == effectiveContext.profileID })?
-      .grant
     let baseGrant: ProfileGrant
     if let configuredGrant {
       baseGrant = configuredGrant
@@ -101,13 +184,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       || effectiveContext.profileID == .cloudflareObserve
     {
       var readOnlyCapabilities: Set<String> = ["workspace.list", "workspace.describe"]
+      // The observe risk boundary independently limits this to host-classified read-only targets.
+      readOnlyCapabilities.insert("mcp.tools.call")
       if let firstWorkspaceID = configuredWorkspaces.first?.id,
         let providerRouter = providerRouterByID[firstWorkspaceID]
       {
         readOnlyCapabilities.formUnion(
           try providerRouter.listTools()
             .filter {
-              $0.annotations?.readOnlyHint == true && !$0.name.hasPrefix("codex.")
+              try providerRouter.capability(named: $0.name).risk == .readOnly
+                && !$0.name.hasPrefix("codex.")
             }
             .map(\.name)
         )
@@ -135,27 +221,219 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.workspaceOrder = configuredWorkspaces.map(\.id)
     self.workspaceAccesses = accessByID
     self.providerRouters = providerRouterByID
-    codexToolDispatcher.attach(self)
+    hostToolDirectory.attach(self)
+    initialized = true
+  }
+
+  /// Catalog and calls borrow this runtime but cannot widen its bound workspace or recurse.
+  func hostToolCatalog(workspaceID: String, origin: String) throws -> [MCPTool] {
+    try validateHostOrigin(workspaceID: workspaceID, origin: origin)
+    var bound = context
+    bound.workspaceID = workspaceID
+    let currentGrant = try currentHostGrant()
+    return try listTools().filter { tool in
+      guard !tool.name.hasPrefix("codex."), let descriptor = try? descriptor(named: tool.name),
+        !descriptor.localOnly,
+        descriptor.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true
+      else { return false }
+      return policyEvaluator.evaluate(
+        capability: descriptor, context: bound, grant: currentGrant,
+        registeredWorkspaceIDs: Set(workspaceOrder)
+      ).isAllowed
+    }
+  }
+
+  func callHostTool(
+    name: String, arguments: [String: JSONValue], workspaceID: String,
+    origin: String, requestID: String
+  ) async throws -> JSONValue {
+    var bound = context
+    bound.workspaceID = workspaceID
+    bound.requestID = requestID
+    var dispatched = false
+    let started = ContinuousClock.now
+    do {
+      try validateHostOrigin(workspaceID: workspaceID, origin: origin)
+      try validateHostTarget(name: name, arguments: arguments, context: bound, depth: 0)
+      if name == "workspace.list" {
+        let rows = workspaceList(context: bound).objectValue?["workspaces"]?.arrayValue ?? []
+        let result = Self.attachExecutionMetadata(
+          to: try resultEnvelope(
+            .object([
+              "workspaces": .array(
+                rows.filter {
+                  $0.objectValue?["id"] == .string(workspaceID)
+                })
+            ])), context: bound, capabilityID: name, operationLinkage: nil)
+        try recordAudit(
+          context: bound, capabilityID: name, decision: .allowed, errorCode: nil,
+          duration: started.duration(to: .now),
+          inputDigest: try Self.inputDigest(tool: name, arguments: arguments),
+          output: result, operationLinkage: nil)
+        return result
+      }
+      dispatched = true
+      return try await callToolAsync(name: name, arguments: .object(arguments), context: bound)
+    } catch {
+      let result = Self.attachExecutionMetadata(
+        to: Self.errorEnvelope(error), context: bound, capabilityID: name, operationLinkage: nil)
+      if !dispatched {
+        try? recordAudit(
+          context: bound, capabilityID: name, decision: Self.auditDecision(for: error),
+          errorCode: Self.auditErrorCode(for: error), duration: started.duration(to: .now),
+          inputDigest: try? Self.inputDigest(tool: name, arguments: arguments), output: result,
+          operationLinkage: nil)
+      }
+      return result
+    }
+  }
+
+  private var hostServiceRegistrations: Set<String> {
+    Set(configuration.mcp.servers.filter { $0.enabled && $0.hostServices }.map(\.id))
+  }
+
+  private func validateHostOrigin(workspaceID: String, origin: String) throws {
+    guard !lifetime.isClosing, hostServiceRegistrations.contains(origin),
+      let workspace = workspaces[workspaceID]
+    else {
+      throw Self.invalid(
+        code: "policy.host_scope_unavailable",
+        message: "The originating host scope is no longer available.")
+    }
+    if let database {
+      guard let current = try database.workspace(id: workspaceID), current.id == workspaceID,
+        current.rootPath == workspace.rootPath
+      else {
+        throw Self.invalid(
+          code: "policy.workspace_denied",
+          message: "The registered workspace changed or was removed.")
+      }
+    }
+  }
+
+  private func currentHostGrant() throws -> ProfileGrant {
+    guard let database else { return grant }
+    guard let persisted = try database.profiles().first(where: { $0.id == grant.id }) else {
+      throw Self.invalid(
+        code: "policy.host_grant_revoked",
+        message: "The persisted host profile is no longer available.")
+    }
+    return grant.applyingPersistedRuntimeState(persisted)
+  }
+
+  private func validateHostTarget(
+    name: String, arguments: [String: JSONValue], context: ExecutionContext, depth: Int
+  ) throws {
+    guard depth < 8, !name.hasPrefix("codex."), !name.hasPrefix("host.") else {
+      throw Self.invalid(
+        code: "policy.host_recursion_denied",
+        message: "A host callback cannot enter a domain runtime recursively.")
+    }
+    let descriptor = try invocationDescriptor(named: name, arguments: arguments)
+    guard !descriptor.localOnly,
+      descriptor.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true,
+      !(name.hasPrefix("mcp.")
+        && arguments["server"]?.stringValue.map(hostServiceRegistrations.contains) == true)
+    else {
+      throw Self.invalid(
+        code: "policy.host_recursion_denied",
+        message:
+          "Host administration and callback-enabled MCP registrations are not callback targets.")
+    }
+    let routed = try route(descriptor: descriptor, arguments: arguments, context: context)
+    try authorize(descriptor, context: routed.context)
+    let current = try currentHostGrant()
+    let decision = policyEvaluator.evaluate(
+      capability: descriptor, context: routed.context, grant: current,
+      registeredWorkspaceIDs: Set(workspaceOrder))
+    guard case .allow = decision else {
+      throw Self.invalid(
+        code: "policy.host_grant_revoked",
+        message: "The host grant no longer permits this callback.")
+    }
+    if name == "policy.probe" || name == "operations.prepare" || name == "operations.commit" {
+      let key = name == "policy.probe" ? "capability_id" : "tool"
+      let target = try Self.requiredString(key, in: arguments)
+      guard arguments["arguments"] == nil || arguments["arguments"]?.objectValue != nil else {
+        throw Self.invalid(
+          code: "policy.invalid_target_arguments",
+          message: "Nested target arguments must be an object.")
+      }
+      try validateHostTarget(
+        name: target, arguments: arguments["arguments"]?.objectValue ?? [:],
+        context: routed.context, depth: depth + 1)
+    }
+  }
+
+  private func beginHostInvocation(
+    descriptor: CapabilityDescriptor, name: String, arguments: [String: JSONValue],
+    context: ExecutionContext, linkage: OperationAuditLinkage?
+  ) throws -> MCPHostInvocation? {
+    guard let reference = descriptor.mcpReference,
+      hostServiceRegistrations.contains(reference.serverID)
+    else { return nil }
+    let invocation = MCPHostInvocation(
+      reference: reference, upstreamName: name, upstreamArguments: arguments,
+      arguments: name == "mcp.tools.call" ? arguments["arguments"]?.objectValue ?? [:] : arguments,
+      context: context, ticketID: linkage?.ticketID, ticketInvocationID: linkage?.invocationID,
+      parentRequestID: linkage?.parentRequestID)
+    try hostToolDirectory.begin(invocation)
+    return invocation
+  }
+
+  func requireHostInvocation(
+    workspaceID: String, origin: String, methods: Set<String>,
+    matching: (MCPHostInvocation) -> Bool = { _ in true }
+  ) throws -> MCPHostInvocation {
+    try validateHostOrigin(workspaceID: workspaceID, origin: origin)
+    let matches = hostToolDirectory.active(workspaceID: workspaceID, origin: origin).filter {
+      methods.contains($0.reference.toolName) && matching($0)
+    }
+    guard matches.count == 1, let invocation = matches.first else {
+      throw Self.invalid(
+        code: "policy.host_invocation_required",
+        message: "Host service requires one matching live gateway invocation.")
+    }
+    let descriptor = try invocationDescriptor(
+      named: invocation.upstreamName, arguments: invocation.upstreamArguments)
+    guard descriptor.mcpReference == invocation.reference,
+      policyEvaluator.evaluate(
+        capability: descriptor, context: invocation.context,
+        grant: try currentHostGrant(), registeredWorkspaceIDs: Set(workspaceOrder)
+      ).isAllowed
+    else {
+      throw Self.invalid(
+        code: "policy.host_grant_revoked", message: "The live invocation is no longer authorized.")
+    }
+    return invocation
+  }
+
+  func makeHostServices(context: MCPHostContext, origin: String) throws -> MCPBoundHostServices? {
+    guard let database else { return nil }
+    try validateHostOrigin(workspaceID: context.workspace.id, origin: origin)
+    return MCPBoundHostServices(
+      database: database, directory: hostToolDirectory, context: context, origin: origin)
   }
 
   deinit {
-    for access in workspaceAccesses.values {
-      access.close()
-    }
+    _ = lifetime.beginShutdown()
   }
 
   package func shutdown() async {
-    guard shutdownState.begin() else { return }
-    for workspaceID in workspaceOrder {
-      await providerRouters[workspaceID]?.shutdown()
-    }
-    for access in workspaceAccesses.values {
-      access.close()
-    }
+    hostToolDirectory.attach(nil)
+    await lifetime.beginShutdown().value
   }
 
   package func listTools() throws -> [MCPTool] {
     try listTools(context: context)
+  }
+
+  package func toolChanges() -> AsyncStream<Void> {
+    firstProviderRouter?.toolChanges() ?? AsyncStream { $0.finish() }
+  }
+
+  package func refreshTools() async throws {
+    for workspaceID in workspaceOrder { try await providerRouters[workspaceID]?.refreshTools() }
   }
 
   package func listTools(context: ExecutionContext) throws -> [MCPTool] {
@@ -189,85 +467,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     try await callToolAsync(name: name, arguments: arguments, context: contextForCall())
   }
 
-  func callToolFromCodex(
-    name: String,
-    arguments: JSONValue,
-    requestID: String,
-    workspaceID: String?
-  ) async throws -> JSONValue {
-    var callContext = context
-    callContext.requestID = requestID
-    callContext.workspaceID = workspaceID
-    let targetDescriptor = try descriptor(named: name)
-    if targetDescriptor.risk == .destructive {
-      var prepareContext = callContext
-      prepareContext.requestID = "\(requestID):prepare"
-      let prepared = try await performAsync(
-        name: "operations.prepare",
-        arguments: [
-          "tool": .string(name),
-          "arguments": arguments,
-        ],
-        context: prepareContext,
-        bypassOperationTicket: false,
-        operationLinkage: nil
-      )
-      guard
-        let ticketID = prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
-          .objectValue?["ticket_id"]?.stringValue
-      else {
-        throw GatewayToolError.executionFailed(
-          "codex.app.operation_ticket_missing: Computer MCP could not bind the approved operation."
-        )
-      }
-      return try await performAsync(
-        name: "operations.commit",
-        arguments: [
-          "ticket_id": .string(ticketID),
-          "tool": .string(name),
-          "arguments": arguments,
-        ],
-        context: callContext,
-        bypassOperationTicket: false,
-        operationLinkage: nil
-      )
-    }
-    return try await callToolAsync(
-      name: name,
-      arguments: arguments,
-      context: callContext
-    )
-  }
-
-  func preflightCodexTool(
-    name: String,
-    arguments: JSONValue,
-    requestID: String,
-    workspaceID: String?
-  ) throws -> CapabilityDescriptor {
-    let descriptor = try descriptor(named: name)
-    var callContext = context
-    callContext.requestID = requestID
-    callContext.workspaceID = workspaceID
-    let routed = try route(
-      descriptor: descriptor,
-      arguments: arguments.objectValue ?? [:],
-      context: callContext
-    )
-    try authorize(descriptor, context: routed.context)
-    if descriptor.risk == .destructive {
-      for operationTool in ["operations.prepare", "operations.commit"] {
-        let operationDescriptor = try self.descriptor(named: operationTool)
-        try authorize(operationDescriptor, context: routed.context)
-      }
-    }
-    return Self.effectiveCodexToolDescriptor(
-      descriptor,
-      arguments: routed.arguments
-    )
-  }
-
-  private static func effectiveCodexToolDescriptor(
+  private static func effectiveOperationDescriptor(
     _ descriptor: CapabilityDescriptor,
     arguments: [String: JSONValue]
   ) -> CapabilityDescriptor {
@@ -341,6 +541,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         arguments: arguments,
         context: callContext
       )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       return Self.attachExecutionMetadata(
         to: Self.errorEnvelope(error),
@@ -397,7 +599,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ?? Self.operationLinkageFromArguments(name: name, arguments: arguments)
 
     do {
-      let descriptor = try descriptor(named: name)
+      let descriptor = try invocationDescriptor(named: name, arguments: arguments)
       let routed = try route(
         descriptor: descriptor,
         arguments: arguments,
@@ -445,9 +647,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         guard let providerRouter = providerRouters[registryWorkspaceID] else {
           throw GatewayRuntimeError.workspaceNotFound(registryWorkspaceID)
         }
+        let hostInvocation = try beginHostInvocation(
+          descriptor: descriptor, name: name, arguments: routed.arguments,
+          context: routed.context, linkage: operationLinkage)
+        defer { hostToolDirectory.end(hostInvocation) }
         rawResult = try providerRouter.callTool(
           name: name,
-          arguments: .object(routed.arguments)
+          arguments: .object(routed.arguments),
+          expectedCapability: name == "mcp.tools.call" ? nil : descriptor
         )
       }
       let result = Self.attachExecutionMetadata(
@@ -504,7 +711,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ?? Self.operationLinkageFromArguments(name: name, arguments: arguments)
 
     do {
-      let descriptor = try descriptor(named: name)
+      let descriptor = try invocationDescriptor(named: name, arguments: arguments)
       let routed = try route(
         descriptor: descriptor,
         arguments: arguments,
@@ -552,9 +759,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         guard let providerRouter = providerRouters[registryWorkspaceID] else {
           throw GatewayRuntimeError.workspaceNotFound(registryWorkspaceID)
         }
+        let hostInvocation = try beginHostInvocation(
+          descriptor: descriptor, name: name, arguments: routed.arguments,
+          context: routed.context, linkage: operationLinkage)
+        defer { hostToolDirectory.end(hostInvocation) }
         rawResult = try await providerRouter.callToolAsync(
           name: name,
-          arguments: .object(routed.arguments)
+          arguments: .object(routed.arguments),
+          expectedCapability: name == "mcp.tools.call" ? nil : descriptor
         )
       }
       let result = Self.attachExecutionMetadata(
@@ -614,7 +826,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
     }
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
-    let targetDescriptor = try descriptor(named: toolName)
+    let targetDescriptor = try invocationDescriptor(named: toolName, arguments: targetArguments)
     guard targetDescriptor.risk == .destructive else {
       throw Self.invalid(
         code: "operations.not_required",
@@ -689,7 +901,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
     }
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
-    let targetDescriptor = try descriptor(named: capabilityID)
+    let targetDescriptor = try invocationDescriptor(named: capabilityID, arguments: targetArguments)
     let routed = try route(
       descriptor: targetDescriptor,
       arguments: targetArguments,
@@ -700,6 +912,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "capability_id": .string(capabilityID),
       "decision": .string("allowed"),
       "risk": .string(targetDescriptor.risk.rawValue),
+      "effective_risk": .string(
+        Self.effectiveOperationDescriptor(targetDescriptor, arguments: routed.arguments).risk
+          .rawValue),
       "workspace_id": routed.context.workspaceID.map(JSONValue.string) ?? .null,
     ])
   }
@@ -731,7 +946,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message: "The operation ticket is not bound to this principal, profile, and tool."
       )
     }
-    let targetDescriptor = try descriptor(named: toolName)
+    let targetDescriptor = try invocationDescriptor(named: toolName, arguments: targetArguments)
     let routed = try route(
       descriptor: targetDescriptor,
       arguments: targetArguments,
@@ -952,6 +1167,17 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     _ descriptor: CapabilityDescriptor,
     context: ExecutionContext
   ) throws {
+    if descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp.") {
+      guard context.caller == self.context.caller,
+        context.profileID == self.context.profileID,
+        context.transportTrace == self.context.transportTrace
+      else {
+        throw Self.invalid(
+          code: PolicyDenialCode.callerDenied.rawValue,
+          message:
+            "Downstream MCP calls must retain their gateway connection's caller and provenance.")
+      }
+    }
     let decision = policyEvaluator.evaluate(
       capability: descriptor,
       context: context,
@@ -985,9 +1211,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     if context.caller.isRemote && descriptor.localOnly {
       return false
     }
-    guard grant.capabilityIDs.contains("*") || grant.capabilityIDs.contains(descriptor.id) else {
+    guard grant.grants(descriptor) else {
       return false
     }
+    guard grant.permitsRisk(descriptor.risk) else { return false }
     if descriptor.risk == .fullShell {
       return grant.fullShellEnabled
         && (!descriptor.id.hasPrefix("shell.") || configuration.policy.shellEnabled)
@@ -1005,6 +1232,34 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       return try firstProviderRouter.capability(named: name)
     }
     throw GatewayToolError.unknownTool(name)
+  }
+
+  private func invocationDescriptor(
+    named name: String, arguments: [String: JSONValue]
+  ) throws -> CapabilityDescriptor {
+    var descriptor = try descriptor(named: name)
+    guard name == "mcp.tools.call" else { return descriptor }
+    let serverID = try Self.requiredString("server", in: arguments)
+    let toolName = try Self.requiredString("tool", in: arguments)
+    let reference = MCPToolReference(serverID: serverID, toolName: toolName)
+    descriptor.mcpReference = reference
+    descriptor.equivalentCapabilityIDs = configuration.mcpCapabilityIDs(for: reference)
+    descriptor.risk = configuration.mcpRisk(for: reference)
+    // Denial must not reveal whether an out-of-scope registration or selection exists.
+    guard grant.grants(descriptor) else {
+      throw Self.invalid(
+        code: PolicyDenialCode.capabilityDenied.rawValue,
+        message: "The profile does not grant this downstream MCP tool.")
+    }
+    guard let server = configuration.mcp.servers.first(where: { $0.id == serverID }) else {
+      throw GatewayToolError.unknownMCPServer(serverID)
+    }
+    guard server.permitsTool(toolName) else {
+      throw Self.invalid(
+        code: "mcp.tool_not_approved",
+        message: "The host has not approved this downstream MCP tool.")
+    }
+    return descriptor
   }
 
   private var firstProviderRouter: GatewayProviderRouter? {
@@ -1310,7 +1565,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       inputSchema: .object(schema),
       outputSchema: tool.outputSchema,
       annotations: tool.annotations,
-      meta: tool.meta
+      meta: tool.meta,
+      mcpReference: tool.mcpReference
     )
   }
 
@@ -1319,19 +1575,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: [String: JSONValue],
     context: ExecutionContext
   ) throws -> String? {
-    if tool == "codex.worktree.remove.perform",
-      let id = arguments["managed_worktree_id"]?.stringValue,
-      let worktree = try database?.codexManagedWorktree(id: id),
-      worktree.sourceWorkspaceID == context.workspaceID
-    {
-      let data = try Self.encoder.encode(
-        JSONValue.object([
-          "tool": .string(tool),
-          "managed_worktree": worktree.json,
-        ])
-      )
-      return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
     guard let workspaceID = context.workspaceID,
       let rootURL = workspaceAccesses[workspaceID]?.rootURL.standardizedFileURL
     else {
@@ -1683,15 +1926,39 @@ private struct RoutedCall {
   var registryWorkspaceID: String?
 }
 
-private final class GatewayRuntimeShutdownState: @unchecked Sendable {
+/// Retains each acquired resource until one shared cleanup task has joined it, including failed initialization.
+private final class GatewayRuntimeLifetime: @unchecked Sendable {
   private let lock = NSLock()
-  private var started = false
+  private var cleanup: [@Sendable () async -> Void] = []
+  private var shutdown: Task<Void, Never>?
+  var isClosing: Bool { lock.withLock { shutdown != nil } }
 
-  func begin() -> Bool {
+  @discardableResult
+  func onShutdown(_ operation: @escaping @Sendable () async -> Void) -> Int {
     lock.withLock {
-      guard !started else { return false }
-      started = true
-      return true
+      precondition(shutdown == nil)
+      cleanup.append(operation)
+      return cleanup.count - 1
+    }
+  }
+
+  func replaceShutdown(_ index: Int, with operation: @escaping @Sendable () async -> Void) {
+    lock.withLock {
+      precondition(shutdown == nil)
+      cleanup[index] = operation
+    }
+  }
+
+  func beginShutdown() -> Task<Void, Never> {
+    lock.withLock {
+      if let shutdown { return shutdown }
+      let operations = cleanup.reversed()
+      cleanup.removeAll()
+      let task = Task {
+        for operation in operations { await operation() }
+      }
+      shutdown = task
+      return task
     }
   }
 }

@@ -187,15 +187,6 @@ private let distributed: [String: DistributedDefinition] = [
     licenseExpression: "Apache-2.0",
     legalFiles: ["LICENSE.txt"]
   ),
-  "swift-codex": DistributedDefinition(
-    licenseExpression: "MIT AND Apache-2.0",
-    legalFiles: [
-      "LICENSE",
-      "THIRD_PARTY_NOTICES.md",
-      "Vendor/CodexAppServerProtocolSchema/LICENSE",
-      "Vendor/CodexAppServerProtocolSchema/NOTICE",
-    ]
-  ),
   "swift-collections": DistributedDefinition(
     licenseExpression: "Apache-2.0",
     legalFiles: ["LICENSE.txt"]

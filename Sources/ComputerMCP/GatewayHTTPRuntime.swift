@@ -43,7 +43,6 @@ internal struct GatewayHTTPLimits: Sendable {
 
 internal final class GatewayHTTPRuntime: @unchecked Sendable {
   private let configuration: GatewayConfiguration
-  private let registry: any GatewayToolServing
   private let host: String
   private let port: Int
   private let publicBaseURL: String?
@@ -61,7 +60,6 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
     limits: GatewayHTTPLimits = .v1
   ) {
     self.configuration = configuration
-    self.registry = registry
     self.host = host
     self.port = port
     self.publicBaseURL = publicBaseURL
@@ -89,16 +87,18 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
 
   internal func waitUntilClosed() async {
     await app.waitUntilClosed()
-    await registry.shutdown()
   }
 
   internal func stop() async {
     await app.stop()
-    await registry.shutdown()
   }
 
   internal func activeSessionCount() async -> Int {
     await app.activeSessionCount()
+  }
+
+  internal func boundPort() async -> Int? {
+    await app.boundPort()
   }
 }
 
@@ -106,6 +106,7 @@ private actor GatewayHTTPApp {
   private struct SessionContext {
     let server: MCP.Server
     let transport: StatefulHTTPServerTransport
+    let eventTransport: MCPHTTPEventSubscriptionTransport
     var lastAccessedAt: Date
   }
 
@@ -117,7 +118,7 @@ private actor GatewayHTTPApp {
   private let configuration: GatewayConfiguration
   private let registry: any GatewayToolServing
   private let authenticator: HTTPBearerAuthenticator
-  private let listeningPort: Int
+  private var listeningPort: Int
   private let effectivePublicBaseURL: String?
   private let logger: Logger
   private let limits: GatewayHTTPLimits
@@ -125,8 +126,15 @@ private actor GatewayHTTPApp {
   private var eventLoopGroup: MultiThreadedEventLoopGroup?
   private var sessions: [String: SessionContext] = [:]
   private var pendingSessionIDs = Set<String>()
+  private var pendingSessionWaiters: [CheckedContinuation<Void, Never>] = []
+  private var retiringSessions: [String: Task<Void, Never>] = [:]
   private var cleanupTask: Task<Void, Never>?
+  private var isStarting = false
+  private var startupWaiters: [CheckedContinuation<Void, Never>] = []
   private var isStopping = false
+  private var stopTask: Task<Void, Never>?
+  private var stopCompleted = false
+  private var generation = UUID()
 
   init(
     configuration: GatewayConfiguration,
@@ -150,8 +158,20 @@ private actor GatewayHTTPApp {
   }
 
   func startListening(host: String, port: Int) async throws {
-    guard channel == nil else {
-      throw ConfigurationError.invalid("The HTTP gateway is already listening.")
+    guard channel == nil, !isStarting, !isStopping || stopCompleted else {
+      throw ConfigurationError.invalid(
+        "The HTTP gateway is already starting, listening, or stopping.")
+    }
+    isStarting = true
+    isStopping = false
+    stopCompleted = false
+    stopTask = nil
+    generation = UUID()
+    defer {
+      isStarting = false
+      let waiters = startupWaiters
+      startupWaiters.removeAll()
+      for waiter in waiters { waiter.resume() }
     }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
     eventLoopGroup = group
@@ -188,8 +208,13 @@ private actor GatewayHTTPApp {
       metadata: ["host": "\(host)", "port": "\(port)", "path": "\(configuration.server.http.path)"]
     )
     do {
-      channel = try await bootstrap.bind(host: host, port: port).get()
-      isStopping = false
+      let bound = try await bootstrap.bind(host: host, port: port).get()
+      guard !isStopping else {
+        try? await bound.close()
+        throw ConfigurationError.invalid("The HTTP gateway stopped during startup.")
+      }
+      channel = bound
+      listeningPort = channel?.localAddress?.port ?? port
       startCleanupTask()
     } catch {
       eventLoopGroup = nil
@@ -198,21 +223,31 @@ private actor GatewayHTTPApp {
     }
   }
 
+  func boundPort() -> Int? { channel?.localAddress?.port }
+
   func waitUntilClosed() async {
     guard let bound = channel else { return }
+    let observedGeneration = generation
     try? await bound.closeFuture.get()
-    channel = nil
-    cleanupTask?.cancel()
-    cleanupTask = nil
-    await stopAllSessions()
-    if let group = eventLoopGroup {
-      eventLoopGroup = nil
-      try? await group.shutdownGracefully()
-    }
+    guard generation == observedGeneration else { return }
+    await stop()
   }
 
   func stop() async {
+    if let stopTask {
+      await stopTask.value
+      return
+    }
     isStopping = true
+    let stopping = Task { await self.finishStop() }
+    stopTask = stopping
+    await stopping.value
+  }
+
+  private func finishStop() async {
+    if isStarting {
+      await withCheckedContinuation { startupWaiters.append($0) }
+    }
     cleanupTask?.cancel()
     cleanupTask = nil
     let activeChannel = channel
@@ -221,10 +256,16 @@ private actor GatewayHTTPApp {
       try? await activeChannel?.close()
     }
     await stopAllSessions()
+    // A session being constructed still owns discovery work in the shared registry.
+    if !pendingSessionIDs.isEmpty {
+      await withCheckedContinuation { pendingSessionWaiters.append($0) }
+    }
     if let group = eventLoopGroup {
       eventLoopGroup = nil
       try? await group.shutdownGracefully()
     }
+    await registry.shutdown()
+    stopCompleted = true
   }
 
   func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -252,13 +293,31 @@ private actor GatewayHTTPApp {
   }
 
   private func handleMCP(_ request: HTTPRequest) async -> HTTPResponse {
+    guard !isStopping, channel != nil else {
+      return gatewayHTTPError(statusCode: 503, code: "server_stopping")
+    }
     await reapIdleSessions(at: Date())
+    guard !isStopping, channel != nil else {
+      return gatewayHTTPError(statusCode: 503, code: "server_stopping")
+    }
     let sessionID = request.header(HTTPHeaderName.sessionID)
 
     if let sessionID, var session = sessions[sessionID] {
       session.lastAccessedAt = Date()
       sessions[sessionID] = session
       let response = await session.transport.handleRequest(request)
+      // A GET with a replay cursor may resume a POST response rather than subscribe to events.
+      if request.method.uppercased() == "GET",
+        request.header(HTTPHeaderName.lastEventID) == nil,
+        case .stream = response
+      {
+        do {
+          try await session.eventTransport.eventStreamOpened()
+        } catch {
+          await removeSession(sessionID)
+          return .error(statusCode: 503, .connectionClosed)
+        }
+      }
       if request.method.uppercased() == "DELETE" && response.statusCode == 200 {
         await removeSession(sessionID)
       }
@@ -280,7 +339,8 @@ private actor GatewayHTTPApp {
 
   private func createSessionAndHandle(_ request: HTTPRequest) async -> HTTPResponse {
     let sessionID = UUID().uuidString
-    guard sessions.count + pendingSessionIDs.count < limits.maxSessions else {
+    let admittedIDs = Set(sessions.keys).union(pendingSessionIDs).union(retiringSessions.keys)
+    guard admittedIDs.count < limits.maxSessions else {
       return gatewayHTTPError(
         statusCode: 429,
         code: "session_capacity_exceeded",
@@ -288,6 +348,14 @@ private actor GatewayHTTPApp {
       )
     }
     pendingSessionIDs.insert(sessionID)
+    defer {
+      pendingSessionIDs.remove(sessionID)
+      if pendingSessionIDs.isEmpty {
+        let waiters = pendingSessionWaiters
+        pendingSessionWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+      }
+    }
     let transport = StatefulHTTPServerTransport(
       sessionIDGenerator: FixedSessionIDGenerator(sessionID: sessionID),
       validationPipeline: makeValidationPipeline(),
@@ -298,16 +366,16 @@ private actor GatewayHTTPApp {
       configuration: configuration,
       registry: registry
     )
-    let normalizationTransport = MCPInitializeNormalizationTransport(wrapping: transport)
+    let eventTransport = MCPHTTPEventSubscriptionTransport(wrapping: transport, logger: logger)
+    let normalizationTransport = MCPInitializeNormalizationTransport(wrapping: eventTransport)
 
     do {
       try await server.start(transport: normalizationTransport)
     } catch {
-      pendingSessionIDs.remove(sessionID)
+      await server.stop()
       return .error(statusCode: 500, .internalError(error.localizedDescription))
     }
 
-    pendingSessionIDs.remove(sessionID)
     guard !isStopping, channel != nil else {
       await server.stop()
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
@@ -315,6 +383,7 @@ private actor GatewayHTTPApp {
     sessions[sessionID] = SessionContext(
       server: server,
       transport: transport,
+      eventTransport: eventTransport,
       lastAccessedAt: Date()
     )
     return await transport.handleRequest(request)
@@ -325,19 +394,22 @@ private actor GatewayHTTPApp {
   }
 
   func removeSession(_ sessionID: String) async {
+    if let retiring = retiringSessions[sessionID] {
+      await retiring.value
+      return
+    }
     guard let session = sessions.removeValue(forKey: sessionID) else {
       return
     }
-    await session.server.stop()
+    let retiring = Task { await session.server.stop() }
+    retiringSessions[sessionID] = retiring
+    await retiring.value
+    retiringSessions.removeValue(forKey: sessionID)
   }
 
   private func stopAllSessions() async {
-    let activeSessions = Array(sessions.values)
-    sessions.removeAll(keepingCapacity: false)
-    pendingSessionIDs.removeAll(keepingCapacity: false)
-    for session in activeSessions {
-      await session.server.stop()
-    }
+    let sessionIDs = Set(sessions.keys).union(retiringSessions.keys)
+    for sessionID in sessionIDs { await removeSession(sessionID) }
   }
 
   private func reapIdleSessions(at now: Date) async {
@@ -694,20 +766,24 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
         status: NIOHTTP1.HTTPResponseStatus(statusCode: response.statusCode),
         headers: responseHeaders
       )
-      writePart(.head(head), writer: writer)
-      Task {
+      let streamTask = Task {
         do {
+          // SSE stays open; waiting for response end would buffer notifications indefinitely.
+          try await self.writeStreamPart(.head(head), writer: writer)
           for try await data in stream {
+            try Task.checkCancellation()
             var buffer = self.allocator.buffer(capacity: data.count)
             buffer.writeBytes(data)
-            self.writePart(.body(.byteBuffer(buffer)), writer: writer)
+            try await self.writeStreamPart(.body(.byteBuffer(buffer)), writer: writer)
           }
+          try Task.checkCancellation()
+          try await self.writeStreamPart(.end(nil), writer: writer)
         } catch {
-          let buffer = self.allocator.buffer(
-            string: "event: error\ndata: \(error.localizedDescription)\n\n")
-          self.writePart(.body(.byteBuffer(buffer)), writer: writer)
+          writer.context.eventLoop.execute { writer.context.close(promise: nil) }
         }
-        self.writePart(.end(nil), writer: writer, flush: true)
+      }
+      writer.context.eventLoop.execute {
+        writer.context.channel.closeFuture.whenComplete { _ in streamTask.cancel() }
       }
 
     default:
@@ -739,6 +815,23 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
         flush: true,
         closeAfterWrite: closeAfterWrite
       )
+    }
+  }
+
+  private func writeStreamPart(_ part: HTTPServerResponsePart, writer: SendableChannelContext)
+    async throws
+  {
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, any Error>) in
+      writer.context.eventLoop.execute {
+        guard writer.context.channel.isActive else {
+          continuation.resume(throwing: CancellationError())
+          return
+        }
+        writer.context.writeAndFlush(self.wrapOutboundOut(part)).whenComplete {
+          continuation.resume(with: $0)
+        }
+      }
     }
   }
 

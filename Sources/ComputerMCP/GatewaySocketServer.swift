@@ -127,19 +127,20 @@ package final class GatewaySocketServer: @unchecked Sendable {
 
   package func stop() async {
     guard let snapshot = await state.beginStopping() else {
+      await state.waitUntilStopped()
       return
     }
 
     if snapshot.listener.isActive {
       try? await snapshot.listener.close()
     }
-    for session in snapshot.sessions {
-      if session.channel.isActive {
-        try? await session.channel.close()
+    for channel in snapshot.channels {
+      if channel.isActive {
+        try? await channel.close()
       }
-      await session.server.stop()
-      await session.shutdown()
     }
+    for server in snapshot.servers { await server.stop() }
+    await state.waitUntilConnectionsFinish()
     try? await snapshot.eventLoopGroup.shutdownGracefully()
     GatewaySocketServerSecurity.removeSocketIfOwned(
       configuration: configuration,
@@ -152,11 +153,21 @@ package final class GatewaySocketServer: @unchecked Sendable {
     await state.connectionCount()
   }
 
+  package func reserveIdleConfigurationChange() async -> Bool {
+    await state.reserveIdleConfigurationChange()
+  }
+
+  package func finishConfigurationChange() async { await state.finishConfigurationChange() }
+
   private func runConnection(
     channel: Channel,
     handler: GatewaySocketFrameHandler
   ) async {
     let identifier = UUID()
+    guard await state.beginConnection(identifier: identifier, channel: channel) else {
+      try? await channel.close()
+      return
+    }
     do {
       let identity = try await connectionIdentity(from: handler)
       let session = try await sessionFactory(identity)
@@ -178,12 +189,12 @@ package final class GatewaySocketServer: @unchecked Sendable {
       guard
         await state.register(
           identifier: identifier,
-          session: session,
-          channel: channel
+          server: server
         )
       else {
         await transport.disconnect()
         await session.shutdown()
+        await state.finishConnection(identifier: identifier)
         return
       }
 
@@ -197,9 +208,7 @@ package final class GatewaySocketServer: @unchecked Sendable {
         )
       }
       await server.stop()
-      if let removed = await state.remove(identifier: identifier) {
-        await removed.shutdown()
-      }
+      await session.shutdown()
     } catch {
       handler.finish(throwing: error)
     }
@@ -207,6 +216,7 @@ package final class GatewaySocketServer: @unchecked Sendable {
     if channel.isActive {
       try? await channel.close()
     }
+    await state.finishConnection(identifier: identifier)
   }
 
   private func connectionIdentity(
@@ -257,17 +267,12 @@ package struct GatewaySocketServerSession: Sendable {
 }
 
 private actor GatewaySocketServerState {
-  struct Session: Sendable {
-    let server: MCP.Server
-    let channel: Channel
-    let shutdown: @Sendable () async -> Void
-  }
-
   struct StopSnapshot: Sendable {
     let listener: Channel
     let eventLoopGroup: MultiThreadedEventLoopGroup
     let socketIdentity: GatewaySocketFileIdentity
-    let sessions: [Session]
+    let channels: [Channel]
+    let servers: [MCP.Server]
   }
 
   private enum Lifecycle {
@@ -282,7 +287,50 @@ private actor GatewaySocketServerState {
   private var listenerChannel: Channel?
   private var group: MultiThreadedEventLoopGroup?
   private var socketIdentity: GatewaySocketFileIdentity?
-  private var sessions: [UUID: Session] = [:]
+  private var servers: [UUID: MCP.Server] = [:]
+  // Admission, session creation and asynchronous cleanup share one ownership lifetime.
+  private var connections: [UUID: Channel] = [:]
+  private var connectionWaiters: [CheckedContinuation<Void, Never>] = []
+  private var stopWaiters: [CheckedContinuation<Void, Never>] = []
+  private var configurationChangeReserved = false
+
+  func beginConnection(identifier: UUID, channel: Channel) -> Bool {
+    guard lifecycle == .starting || lifecycle == .running, !configurationChangeReserved else {
+      return false
+    }
+    connections[identifier] = channel
+    return true
+  }
+
+  func finishConnection(identifier: UUID) {
+    servers.removeValue(forKey: identifier)
+    connections.removeValue(forKey: identifier)
+    if connections.isEmpty {
+      let waiters = connectionWaiters
+      connectionWaiters.removeAll()
+      for waiter in waiters { waiter.resume() }
+    }
+  }
+
+  func waitUntilConnectionsFinish() async {
+    guard !connections.isEmpty else { return }
+    await withCheckedContinuation { connectionWaiters.append($0) }
+  }
+
+  func waitUntilStopped() async {
+    guard lifecycle == .stopping else { return }
+    await withCheckedContinuation { stopWaiters.append($0) }
+  }
+
+  func reserveIdleConfigurationChange() -> Bool {
+    guard lifecycle == .running, !configurationChangeReserved,
+      connections.isEmpty
+    else { return false }
+    configurationChangeReserved = true
+    return true
+  }
+
+  func finishConfigurationChange() { configurationChangeReserved = false }
 
   func beginStarting() throws {
     guard lifecycle == .idle || lifecycle == .stopped else {
@@ -322,22 +370,13 @@ private actor GatewaySocketServerState {
 
   func register(
     identifier: UUID,
-    session: GatewaySocketServerSession,
-    channel: Channel
+    server: MCP.Server
   ) -> Bool {
     guard lifecycle == .starting || lifecycle == .running else {
       return false
     }
-    sessions[identifier] = Session(
-      server: session.server,
-      channel: channel,
-      shutdown: session.shutdown
-    )
+    servers[identifier] = server
     return true
-  }
-
-  func remove(identifier: UUID) -> Session? {
-    sessions.removeValue(forKey: identifier)
   }
 
   func beginStopping() -> StopSnapshot? {
@@ -354,9 +393,9 @@ private actor GatewaySocketServerState {
       listener: listenerChannel,
       eventLoopGroup: group,
       socketIdentity: socketIdentity,
-      sessions: Array(sessions.values)
+      channels: Array(connections.values),
+      servers: Array(servers.values)
     )
-    sessions.removeAll()
     self.listenerChannel = nil
     self.group = nil
     self.socketIdentity = nil
@@ -365,10 +404,13 @@ private actor GatewaySocketServerState {
 
   func markStopped() {
     lifecycle = .stopped
+    let waiters = stopWaiters
+    stopWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
   }
 
   func connectionCount() -> Int {
-    sessions.count
+    connections.count
   }
 }
 

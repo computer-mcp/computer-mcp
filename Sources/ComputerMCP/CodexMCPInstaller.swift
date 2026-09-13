@@ -21,6 +21,7 @@ package struct CodexMCPInstallInvocation: Codable, Equatable, Sendable {
 package enum CodexMCPInstallerError: Error, LocalizedError, Equatable {
   case missingCodexCLI(String)
   case missingServerExecutable(String)
+  case unusableExecutable(String, String)
 
   package var errorDescription: String? {
     switch self {
@@ -28,6 +29,8 @@ package enum CodexMCPInstallerError: Error, LocalizedError, Equatable {
       return "Could not find \(name). Install Codex CLI or pass --codex-cli."
     case .missingServerExecutable(let name):
       return "Could not find \(name). Build computer-mcp or pass --server-executable."
+    case .unusableExecutable(let name, let message):
+      return "Could not use \(name): \(message)"
     }
   }
 }
@@ -112,19 +115,8 @@ package struct CodexMCPInstaller: Sendable {
       codexCLI ?? "codex",
       missing: { .missingCodexCLI($0) }
     )
-    let resolvedExecutablePath: String
-    if executablePath.contains("/") {
-      let absolute = absolutePath(executablePath)
-      guard FileManager.default.isExecutableFile(atPath: absolute) else {
-        throw CodexMCPInstallerError.missingServerExecutable(executablePath)
-      }
-      resolvedExecutablePath = absolute
-    } else {
-      resolvedExecutablePath = try resolveExecutable(
-        executablePath,
-        missing: { .missingServerExecutable($0) }
-      )
-    }
+    let resolvedExecutablePath = try resolveExecutable(
+      executablePath, missing: { .missingServerExecutable($0) })
     let mcpCommand = [resolvedExecutablePath] + serverArguments
     return CodexMCPInstallInvocation(
       codexCLI: resolvedCodexCLI,
@@ -148,16 +140,15 @@ package struct CodexMCPInstaller: Sendable {
     _ executable: String,
     missing: (String) -> CodexMCPInstallerError
   ) throws -> String {
-    if executable.contains("/") {
-      guard FileManager.default.isExecutableFile(atPath: executable) else {
-        throw missing(executable)
-      }
-      return absolutePath(executable)
+    let inspection = ExecutableInspection.inspect(
+      executable,
+      workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+      environment: ProcessInfo.processInfo.environment)
+    guard inspection.exists, let path = inspection.path else { throw missing(executable) }
+    guard !inspection.hasKnownFailure else {
+      throw CodexMCPInstallerError.unusableExecutable(executable, inspection.message)
     }
-    if let path = findOnPath(executable) {
-      return path
-    }
-    throw missing(executable)
+    return path
   }
 
   private func absolutePath(_ path: String) -> String {
@@ -171,16 +162,4 @@ package struct CodexMCPInstaller: Sendable {
     .absoluteURL.path
   }
 
-  private func findOnPath(_ name: String) -> String? {
-    let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-      .split(separator: ":")
-      .map(String.init)
-    for path in paths {
-      let candidate = URL(fileURLWithPath: path).appendingPathComponent(name).path
-      if FileManager.default.isExecutableFile(atPath: candidate) {
-        return candidate
-      }
-    }
-    return nil
-  }
 }

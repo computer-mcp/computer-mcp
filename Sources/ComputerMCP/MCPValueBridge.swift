@@ -113,17 +113,11 @@ extension JSONValue {
     let isError = object["isError"]?.boolValue
     let structuredContent = object["structuredContent"]?.sdkValue
     let meta = object["_meta"]?.sdkMetadata
-    let content = object["content"]?.arrayValue?.compactMap { value -> MCP.Tool.Content? in
-      guard let item = value.objectValue,
-        item["type"]?.stringValue == "text",
-        let text = item["text"]?.stringValue
-      else {
-        return nil
-      }
-      return .text(text: text, annotations: nil, _meta: nil)
-    }
-
-    if let content, !content.isEmpty {
+    if let values = object["content"]?.arrayValue {
+      // Decode the complete protocol content; unsupported or malformed items must
+      // fail instead of silently turning a partial result into a successful reply.
+      let content = try JSONDecoder().decode(
+        [MCP.Tool.Content].self, from: JSONEncoder().encode(values))
       return MCP.CallTool.Result(
         content: content,
         structuredContent: structuredContent,

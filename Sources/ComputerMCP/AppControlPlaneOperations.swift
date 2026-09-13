@@ -155,6 +155,12 @@ package struct AppControlPlaneOperations: Sendable {
     return await gatewayService.snapshot()
   }
 
+  package func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> PluginHostSnapshot
+  {
+    try await gatewayService.changePlugins(change, expectedRevision: expectedRevision)
+  }
+
   package func stopGateway() async throws -> AppGatewayServiceSnapshot {
     try await controlPlane.setGatewayDesiredRunning(false)
     await gatewayService.stop()
@@ -249,17 +255,19 @@ package struct AppControlPlaneOperations: Sendable {
     return grant
   }
 
-  package func activateManifest(_ manifest: String) async throws -> ConfigurationRevision {
+  package func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws
+    -> ConfigurationRevision
+  {
     let previous = try String(
       contentsOf: controlPlane.directories.manifest,
       encoding: .utf8
     )
-    let revision = try await controlPlane.activateManifest(manifest)
+    let revision = try await controlPlane.activateManifest(manifest, expectedDigest: expectedDigest)
     do {
       _ = try await restartGatewayIfRunning()
       return revision
     } catch {
-      _ = try? await controlPlane.activateManifest(previous)
+      _ = try? await controlPlane.activateManifest(previous, expectedDigest: revision.digest)
       _ = try? await restartGatewayIfRunning()
       throw error
     }
@@ -334,7 +342,7 @@ package struct AppControlPlaneOperations: Sendable {
       tunnelID: tunnelID,
       gatewayProfile: input.gatewayProfile,
       manifestPath: controlPlane.directories.manifest.path,
-      gatewayExecutablePath: controlPlane.openAITunnelGatewayExecutablePath,
+      gatewayExecutablePath: controlPlane.gatewayExecutablePath,
       gatewaySocketPath: controlPlane.directories.gatewaySocket.path,
       profileDirectory: controlPlane.directories.tunnelClientProfiles.path,
       tunnelClientPath: Self.optional(input.tunnelClientPath),

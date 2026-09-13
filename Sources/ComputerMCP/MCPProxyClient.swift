@@ -3,16 +3,57 @@ import MCP
 
 /// Proxies configured downstream servers through persistent MCP SDK sessions.
 package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
-  private let pool = MCPConnectionPool()
+  private let pool: MCPConnectionPool
+  private let changes: GatewayToolChangeBroadcaster
+  private let secretStore: KeychainSecretStore?
+  private let processOwnershipRoot: URL?
+  private let calls = BlockingOperationExecutor(label: "computer-mcp.mcp-calls", serial: false)
 
-  package init() {}
+  package init(
+    workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    hostContext: MCPHostContext? = nil,
+    secretStore: KeychainSecretStore? = nil,
+    processOwnershipRoot: URL? = nil
+  ) {
+    let changes = GatewayToolChangeBroadcaster()
+    self.changes = changes
+    self.secretStore = secretStore
+    self.processOwnershipRoot = processOwnershipRoot
+    var hostContext = hostContext
+    if hostContext?.processOwnershipRoot == nil {
+      hostContext?.processOwnershipRoot = processOwnershipRoot
+    }
+    self.pool = MCPConnectionPool(
+      workingDirectory: workingDirectory.standardizedFileURL, environment: environment,
+      hostContext: hostContext, secretStore: secretStore,
+      toolsChanged: { changes.send() })
+  }
+
+  package func makeScopedClient(
+    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+  )
+    -> any DownstreamMCPClient
+  {
+    MCPProxyClient(
+      workingDirectory: workingDirectory, environment: environment, hostContext: hostContext,
+      secretStore: secretStore, processOwnershipRoot: processOwnershipRoot)
+  }
+
+  package func toolChanges() -> AsyncStream<Void> { changes.stream() }
+
+  package func shutdown() async {
+    changes.finish()
+    await pool.shutdown().value
+  }
 
   deinit {
-    pool.disconnectAll()
+    changes.finish()
+    _ = pool.shutdown()
   }
 
   package func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    try run(server: server) { connection in
+    try run(server: server, notifyToolsOnConnect: false) { connection in
       try await connection.listTools()
     }
   }
@@ -29,6 +70,39 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     arguments: JSONValue,
     requestID: String?
   ) throws -> JSONValue {
+    try callTool(
+      server: server, name: name, arguments: arguments, requestID: requestID, cancellation: nil)
+  }
+
+  package func callToolAsync(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
+  ) async throws -> JSONValue {
+    let cancellation = MCPCallCancellation()
+    return try await withTaskCancellationHandler {
+      do {
+        try Task.checkCancellation()
+        let result = try await calls.perform {
+          try cancellation.checkCancellation()
+          return try self.callTool(
+            server: server, name: name, arguments: arguments, requestID: requestID,
+            cancellation: cancellation)
+        }
+        await cancellation.finish()
+        try Task.checkCancellation()
+        return result
+      } catch {
+        await cancellation.finish()
+        throw error
+      }
+    } onCancel: {
+      cancellation.cancel()
+    }
+  }
+
+  private func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
+    cancellation: MCPCallCancellation?
+  ) throws -> JSONValue {
     guard let object = arguments.objectValue else {
       throw GatewayToolError.invalidArguments(
         "Downstream MCP tool arguments must be an object."
@@ -40,7 +114,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       try await connection.callTool(
         name: name,
         arguments: object,
-        gatewayRequestID: requestID
+        gatewayRequestID: requestID, cancellation: cancellation,
+        cancellationDeliveryFailed: { self.pool.invalidate(server: server, connection: connection) }
       )
     }
   }
@@ -106,9 +181,10 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   }
 
   package func connectionStatus(server: MCPServerConfig) throws -> JSONValue {
+    guard server.enabled else { return .object(["state": .string("disabled")]) }
     guard let connection = pool.existingConnection(for: server) else {
       return .object([
-        "state": .string("not_started"),
+        "state": .string(pool.inactiveState(serverID: server.id)),
         "persistent_session": .bool(true),
         "active_requests": .number(0),
         "latest_event_cursor": .number(0),
@@ -162,21 +238,32 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
 
   private func run<T: Sendable>(
     server: MCPServerConfig,
+    notifyToolsOnConnect: Bool = true,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
     let connection = try pool.connection(for: server)
+    try runExisting(
+      server: server, connection: connection,
+      timeoutMilliseconds: server.startupTimeoutMs ?? 30_000,
+      phase: "startup"
+    ) { connection in
+      try await connection.ensureConnected(notifyTools: notifyToolsOnConnect)
+    }
     return try runExisting(server: server, connection: connection, operation: operation)
   }
 
   private func runExisting<T: Sendable>(
     server: MCPServerConfig,
     connection: MCPProxyConnection,
+    timeoutMilliseconds: Int? = nil,
+    phase: String = "request",
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
-    let timeout = server.requestTimeoutMs ?? server.startupTimeoutMs ?? 30_000
+    let timeout = timeoutMilliseconds ?? server.requestTimeoutMs ?? 30_000
     let box = AsyncOperationBox<T>()
     let task = Task.detached {
       do {
+        try Task.checkCancellation()
         box.complete(.success(try await operation(connection)))
       } catch {
         box.complete(.failure(error))
@@ -184,19 +271,41 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
 
     guard box.wait(timeoutMilliseconds: timeout) else {
-      task.cancel()
+      // Retirement owns cancellation delivery and joins it after closing the transport.
+      // Cancelling only this bridge would leave an SDK request or a startup task alive.
       pool.invalidate(server: server, connection: connection)
+      task.cancel()
       throw GatewayToolError.executionFailed(
-        "MCP server '\(server.id)' request timed out."
+        "MCP server '\(server.id)' \(phase) timed out."
       )
     }
 
     do {
       return try box.get()
     } catch {
-      pool.invalidate(server: server, connection: connection)
+      if phase == "startup" || Self.requiresRetirement(error) {
+        pool.invalidate(server: server, connection: connection)
+      }
       throw error
     }
+  }
+
+  private static func requiresRetirement(_ error: any Error) -> Bool {
+    // A rejected or explicitly cancelled request does not revoke other requests
+    // on the same session. Startup, timeouts and transport failures still retire it.
+    if error is CancellationError { return false }
+    if let error = error as? GatewayToolError, case .invalidArguments = error { return false }
+    if let error = error as? MCPError {
+      switch error {
+      case .methodNotFound, .invalidParams, .serverError, .urlElicitationRequired:
+        return false
+      case .parseError, .invalidRequest, .internalError, .connectionClosed, .transportError:
+        // The pinned SDK also uses internalError for local disconnects. Without
+        // provenance, these failures cannot establish a reusable session.
+        return true
+      }
+    }
+    return true
   }
 }
 
@@ -208,37 +317,63 @@ private final class MCPConnectionPool: @unchecked Sendable {
 
   private let lock = NSLock()
   private var entries: [String: Entry] = [:]
+  private var stopped = false
+  private struct Retirement {
+    let id: UUID
+    let task: Task<Bool, Never>
+    var failed = false
+  }
+  private var retirements: [String: Retirement] = [:]
+  private var shutdownTask: Task<Void, Never>?
+  private let workingDirectory: URL
+  private let environment: [String: String]
+  private let hostContext: MCPHostContext?
+  private let secretStore: KeychainSecretStore?
+  private let toolsChanged: @Sendable () -> Void
+
+  init(
+    workingDirectory: URL, environment: [String: String],
+    hostContext: MCPHostContext?,
+    secretStore: KeychainSecretStore?,
+    toolsChanged: @escaping @Sendable () -> Void
+  ) {
+    self.workingDirectory = workingDirectory
+    self.environment = environment
+    self.hostContext = hostContext
+    self.secretStore = secretStore
+    self.toolsChanged = toolsChanged
+  }
 
   func connection(for server: MCPServerConfig) throws -> MCPProxyConnection {
+    guard server.enabled else {
+      throw GatewayToolError.disabled("MCP registration '\(server.id)' is disabled.")
+    }
     lock.lock()
+    defer { lock.unlock() }
+    guard !stopped else {
+      throw GatewayToolError.disabled("The downstream MCP client is stopped.")
+    }
     if let entry = entries[server.id], entry.configuration == server {
-      lock.unlock()
       return entry.connection
     }
-
-    do {
-      let connection = try MCPProxyConnection(server: server)
-      let replaced = entries.updateValue(
-        Entry(configuration: server, connection: connection),
-        forKey: server.id
-      )
-      lock.unlock()
-      if let replaced {
-        Task {
-          await replaced.connection.disconnect()
-        }
-      }
-      return connection
-    } catch {
-      lock.unlock()
-      throw error
+    if let replaced = entries.removeValue(forKey: server.id) {
+      retireLocked(serverID: server.id, connection: replaced.connection)
     }
+    let connection = try MCPProxyConnection(
+      server: server, workingDirectory: workingDirectory, environment: environment,
+      hostContext: hostContext, secretStore: secretStore, predecessor: retirements[server.id]?.task,
+      onTermination: { [weak self] connection in
+        self?.invalidate(server: server, connection: connection)
+      },
+      toolsChanged: toolsChanged)
+    entries[server.id] = Entry(configuration: server, connection: connection)
+    return connection
   }
 
   func existingConnection(for server: MCPServerConfig) -> MCPProxyConnection? {
     lock.lock()
     defer { lock.unlock() }
-    guard let entry = entries[server.id], entry.configuration == server else {
+    guard !stopped, let entry = entries[server.id], entry.configuration == server else {
       return nil
     }
     return entry.connection
@@ -254,24 +389,57 @@ private final class MCPConnectionPool: @unchecked Sendable {
       return
     }
     entries.removeValue(forKey: server.id)
+    retireLocked(serverID: server.id, connection: connection)
     lock.unlock()
-    Task {
-      // Let an in-flight SDK cancellation handler flush notifications/cancelled
-      // before the stale transport is torn down.
-      try? await Task.sleep(for: .milliseconds(50))
-      await connection.disconnect()
+  }
+
+  private func retireLocked(serverID: String, connection: MCPProxyConnection) {
+    let id = UUID()
+    let task = Task { [weak self] in
+      let confirmed = await connection.disconnect()
+      // A failed retirement remains a barrier: a new process must not overlap it.
+      self?.finishRetirement(serverID: serverID, id: id, confirmed: confirmed)
+      return confirmed
+    }
+    retirements[serverID] = Retirement(id: id, task: task)
+  }
+
+  private func finishRetirement(serverID: String, id: UUID, confirmed: Bool) {
+    lock.withLock {
+      guard retirements[serverID]?.id == id else { return }
+      if confirmed {
+        retirements.removeValue(forKey: serverID)
+      } else {
+        retirements[serverID]?.failed = true
+      }
     }
   }
 
-  func disconnectAll() {
-    lock.lock()
-    let connections = entries.values.map(\.connection)
-    entries.removeAll()
-    lock.unlock()
-    for connection in connections {
-      Task {
-        await connection.disconnect()
+  func inactiveState(serverID: String) -> String {
+    lock.withLock {
+      if let retirement = retirements[serverID] {
+        return retirement.failed ? "cleanup_failed" : "retiring"
       }
+      return stopped ? "stopped" : "not_started"
+    }
+  }
+
+  func shutdown() -> Task<Void, Never> {
+    lock.withLock {
+      if let shutdownTask { return shutdownTask }
+      stopped = true
+      for (serverID, entry) in entries {
+        retireLocked(serverID: serverID, connection: entry.connection)
+      }
+      let retired = retirements.values.map(\.task)
+      entries.removeAll()
+      let task = Task {
+        await withTaskGroup(of: Void.self) { group in
+          for task in retired { group.addTask { _ = await task.value } }
+        }
+      }
+      shutdownTask = task
+      return task
     }
   }
 }
@@ -308,9 +476,16 @@ private actor MCPProxyConnection {
   }
 
   private let server: MCPServerConfig
+  private let onTermination: @Sendable (MCPProxyConnection) -> Void
   private let client: MCP.Client
   private let transport: any MCP.Transport
+  // Retain the single initialization attempt until retirement, including a failed attempt.
   private var connectTask: Task<Initialize.Result, Error>?
+  private var terminationObserver: Task<Void, Never>?
+  private var closeTask: Task<Bool, Never>?
+  private let predecessor: Task<Bool, Never>?
+  private var observers: [MCP.ID: Task<Void, Never>] = [:]
+  private var reservedRequestIDs: Set<String> = []
   private var initializeResult: Initialize.Result?
   private var handlersRegistered = false
   private var connected = false
@@ -318,20 +493,35 @@ private actor MCPProxyConnection {
   private var events: [Event] = []
   private var nextEventCursor = 1
   private var activeRequests: [String: ActiveRequest] = [:]
+  private let toolsChanged: @Sendable () -> Void
 
-  init(server: MCPServerConfig) throws {
+  init(
+    server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
+    hostContext: MCPHostContext?,
+    secretStore: KeychainSecretStore?,
+    predecessor: Task<Bool, Never>? = nil,
+    onTermination: @escaping @Sendable (MCPProxyConnection) -> Void,
+    toolsChanged: @escaping @Sendable () -> Void
+  ) throws {
     self.server = server
+    self.predecessor = predecessor
+    self.toolsChanged = toolsChanged
+    self.onTermination = onTermination
     client = MCP.Client(
       name: "computer-mcp-gateway",
       version: ComputerMCPCLI.version
     )
-    transport = try Self.makeTransport(server: server)
+    transport = try Self.makeTransport(
+      server: server, workingDirectory: workingDirectory, environment: environment,
+      hostContext: hostContext, secretStore: secretStore)
   }
 
   func listTools() async throws -> [MCPTool] {
-    try await ensureConnected()
-    let result = try await client.listTools()
-    return result.tools.map { tool in
+    try await ensureConnected(notifyTools: false)
+    let tools = try await MCPToolCatalogLoader.load { [client] cursor in
+      try await client.listTools(cursor: cursor)
+    }
+    return tools.map { tool in
       MCPTool(
         name: tool.name,
         title: tool.title,
@@ -354,48 +544,54 @@ private actor MCPProxyConnection {
   func callTool(
     name: String,
     arguments: [String: JSONValue],
-    gatewayRequestID: String
+    gatewayRequestID: String,
+    cancellation: MCPCallCancellation? = nil,
+    cancellationDeliveryFailed: @escaping @Sendable () -> Void = {}
   ) async throws -> JSONValue {
     try await ensureConnected()
-    guard activeRequests[gatewayRequestID] == nil else {
+    try cancellation?.checkCancellation()
+    // Reserve before crossing into the SDK actor so concurrent calls cannot
+    // dispatch the same gateway identity while its native request is being created.
+    guard activeRequests[gatewayRequestID] == nil,
+      reservedRequestIDs.insert(gatewayRequestID).inserted
+    else {
       throw GatewayToolError.invalidArguments(
         "Downstream MCP request id '\(gatewayRequestID)' is already active."
       )
     }
+    defer { reservedRequestIDs.remove(gatewayRequestID) }
 
     let context: RequestContext<CallTool.Result> = try await client.callTool(
       name: name,
       arguments: arguments.mapValues(\.sdkValue)
     )
+    guard closeTask == nil else {
+      try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
+      throw MCPError.connectionClosed
+    }
     activeRequests[gatewayRequestID] = ActiveRequest(
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
       startedAt: Date()
     )
-
-    do {
-      let result = try await withTaskCancellationHandler {
-        try await context.value
-      } onCancel: {
-        Task {
-          try? await self.cancelRequest(
-            gatewayRequestID: gatewayRequestID,
-            reason: "Gateway request cancelled."
-          )
-        }
-      }
-      activeRequests.removeValue(forKey: gatewayRequestID)
-      return try JSONValue.sdkToolResult(
-        content: result.content,
-        structuredContent: result.structuredContent,
-        isError: result.isError,
-        meta: result._meta
-      )
-    } catch {
-      activeRequests.removeValue(forKey: gatewayRequestID)
-      throw error
+    cancellation?.install(onDeliveryFailure: cancellationDeliveryFailed) { [client] in
+      try await client.cancelRequest(context.requestID, reason: "Upstream MCP request cancelled.")
     }
+    defer {
+      if activeRequests[gatewayRequestID]?.downstreamRequestID == context.requestID {
+        activeRequests.removeValue(forKey: gatewayRequestID)
+      }
+    }
+
+    let result = try await context.value
+    try cancellation?.checkCancellation()
+    return try JSONValue.sdkToolResult(
+      content: result.content,
+      structuredContent: result.structuredContent,
+      isError: result.isError,
+      meta: result._meta
+    )
   }
 
   func startToolCall(
@@ -404,16 +600,25 @@ private actor MCPProxyConnection {
     gatewayRequestID: String
   ) async throws -> JSONValue {
     try await ensureConnected()
-    guard activeRequests[gatewayRequestID] == nil else {
+    // Reserve before crossing into the SDK actor so concurrent calls cannot
+    // dispatch the same gateway identity while its native request is being created.
+    guard activeRequests[gatewayRequestID] == nil,
+      reservedRequestIDs.insert(gatewayRequestID).inserted
+    else {
       throw GatewayToolError.invalidArguments(
         "Downstream MCP request id '\(gatewayRequestID)' is already active."
       )
     }
+    defer { reservedRequestIDs.remove(gatewayRequestID) }
 
     let context: RequestContext<CallTool.Result> = try await client.callTool(
       name: name,
       arguments: arguments.mapValues(\.sdkValue)
     )
+    guard closeTask == nil else {
+      try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
+      throw MCPError.connectionClosed
+    }
     let active = ActiveRequest(
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
@@ -423,21 +628,21 @@ private actor MCPProxyConnection {
     activeRequests[gatewayRequestID] = active
     appendEvent(kind: "request.started")
 
-    Task { [weak self] in
+    observers[context.requestID] = Task { [weak self] in
       do {
         let result = try await context.value
         await self?.finishStartedRequest(
-          gatewayRequestID: gatewayRequestID,
+          gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
           kind: result.isError == true ? "request.error_result" : "request.completed"
         )
       } catch is CancellationError {
         await self?.finishStartedRequest(
-          gatewayRequestID: gatewayRequestID,
+          gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
           kind: "request.cancelled"
         )
       } catch {
         await self?.finishStartedRequest(
-          gatewayRequestID: gatewayRequestID,
+          gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
           kind: "request.failed"
         )
       }
@@ -560,36 +765,103 @@ private actor MCPProxyConnection {
     ])
   }
 
-  private func finishStartedRequest(gatewayRequestID: String, kind: String) {
-    guard activeRequests.removeValue(forKey: gatewayRequestID) != nil else {
+  private func finishStartedRequest(
+    gatewayRequestID: String, downstreamRequestID: MCP.ID, kind: String
+  ) {
+    observers.removeValue(forKey: downstreamRequestID)
+    // Cancellation releases the gateway ID for reuse. Completion of its old
+    // native request must not remove a later request with that same gateway ID.
+    guard activeRequests[gatewayRequestID]?.downstreamRequestID == downstreamRequestID else {
       return
     }
+    activeRequests.removeValue(forKey: gatewayRequestID)
     appendEvent(kind: kind)
   }
 
-  func disconnect() async {
-    connectTask?.cancel()
-    connectTask = nil
-    for request in activeRequests.values {
-      try? await client.cancelRequest(
-        request.downstreamRequestID,
-        reason: "Downstream MCP session disconnected."
-      )
-    }
-    activeRequests.removeAll()
-    await client.disconnect()
-    await transport.disconnect()
+  func disconnect() async -> Bool {
+    if let closeTask { return await closeTask.value }
+    let startup = connectTask
+    let terminationObserver = terminationObserver
+    startup?.cancel()
+    let requests = Array(activeRequests.values)
+    let observers = Array(observers.values)
     connected = false
-    appendEvent(kind: "connection.disconnected")
+    activeRequests.removeAll()
+    let task = Task { [client, transport, predecessor] in
+      let cancellation = Task {
+        for request in requests {
+          try? await client.cancelRequest(
+            request.downstreamRequestID, reason: "Downstream MCP session disconnected.")
+        }
+      }
+      // Delivery is acknowledged by the transport write, not an arbitrary delay. A
+      // blocked pipe still has a finite flush budget and is unblocked by teardown.
+      let deliveryObserver = await Self.waitForCancellationDelivery(cancellation)
+      await client.disconnect()
+      await transport.disconnect()
+      await terminationObserver?.value
+      _ = await startup?.result
+      // SDK startup may have been suspended in transport.connect at the first close.
+      await client.disconnect()
+      await cancellation.value
+      await deliveryObserver.value
+      for observer in observers { await observer.value }
+      let predecessorExited = await predecessor?.value ?? true
+      let processExited: Bool
+      if let child = transport as? MCPChildProcessTransport {
+        processExited = await child.shutdownConfirmed()
+      } else {
+        processExited = true
+      }
+      return predecessorExited && processExited
+    }
+    closeTask = task
+    let confirmed = await task.value
+    connectTask = nil
+    self.terminationObserver = nil
+    self.observers.removeAll()
+    if !confirmed { lastError = "An owned downstream process has not confirmed exit." }
+    appendEvent(kind: confirmed ? "connection.disconnected" : "connection.cleanup_failed")
+    return confirmed
   }
 
-  private func ensureConnected() async throws {
+  private static func waitForCancellationDelivery(_ delivery: Task<Void, Never>) async
+    -> Task<Void, Never>
+  {
+    let (events, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let delivered = Task {
+      await delivery.value
+      continuation.yield(())
+    }
+    let deadline = Task {
+      do {
+        try await Task.sleep(for: .milliseconds(250))
+        continuation.yield(())
+      } catch {}
+    }
+    for await _ in events { break }
+    continuation.finish()
+    deadline.cancel()
+    await deadline.value
+    return delivered
+  }
+
+  func ensureConnected(notifyTools: Bool = true) async throws {
+    try Task.checkCancellation()
+    guard closeTask == nil else { throw MCPError.connectionClosed }
+    if let predecessor, !(await predecessor.value) {
+      throw GatewayToolError.executionFailed(
+        "Previous MCP process has not confirmed exit; reconnect is blocked.")
+    }
+    try Task.checkCancellation()
+    guard closeTask == nil else { throw MCPError.connectionClosed }
     if connected {
       return
     }
 
     if !handlersRegistered {
       await registerNotificationHandlers()
+      guard closeTask == nil else { throw MCPError.connectionClosed }
       handlersRegistered = true
     }
 
@@ -599,23 +871,34 @@ private actor MCPProxyConnection {
     } else {
       let client = client
       let transport = transport
+      if let child = transport as? MCPChildProcessTransport {
+        // Retiring the exact generation clears stale status and resolves SDK
+        // requests after owned cleanup, outside the transport reader.
+        let onTermination = onTermination
+        terminationObserver = Task { [weak self] in
+          for await _ in child.termination {}
+          if let self { onTermination(self) }
+        }
+      }
       task = Task {
-        try await client.connect(transport: transport)
+        try Task.checkCancellation()
+        return try await client.connect(transport: transport)
       }
       connectTask = task
     }
 
     do {
       let result = try await task.value
+      try Task.checkCancellation()
+      guard closeTask == nil else { throw MCPError.connectionClosed }
       if !connected {
         initializeResult = result
         connected = true
         lastError = nil
         appendEvent(kind: "connection.connected")
+        if notifyTools { toolsChanged() }
       }
-      connectTask = nil
     } catch {
-      connectTask = nil
       connected = false
       lastError = String(describing: error)
       appendEvent(kind: "connection.failed")
@@ -625,7 +908,7 @@ private actor MCPProxyConnection {
 
   private func registerNotificationHandlers() async {
     await client.onNotification(ToolListChangedNotification.self) { [weak self] _ in
-      await self?.appendEvent(kind: ToolListChangedNotification.name)
+      await self?.receiveToolListChange()
     }
     await client.onNotification(ResourceListChangedNotification.self) { [weak self] _ in
       await self?.appendEvent(kind: ResourceListChangedNotification.name)
@@ -633,6 +916,12 @@ private actor MCPProxyConnection {
     await client.onNotification(PromptListChangedNotification.self) { [weak self] _ in
       await self?.appendEvent(kind: PromptListChangedNotification.name)
     }
+  }
+
+  private func receiveToolListChange() {
+    guard closeTask == nil else { return }
+    appendEvent(kind: ToolListChangedNotification.name)
+    toolsChanged()
   }
 
   private func appendEvent(kind: String) {
@@ -643,26 +932,26 @@ private actor MCPProxyConnection {
     }
   }
 
-  private static func makeTransport(server: MCPServerConfig) throws -> any MCP.Transport {
+  private static func makeTransport(
+    server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
+    hostContext: MCPHostContext?, secretStore: KeychainSecretStore?
+  ) throws -> any MCP.Transport {
+    try server.authentication?.validate(endpoint: server.url, transport: server.transport)
     switch server.transport {
     case .stdio:
-      return try MCPChildProcessTransport(server: server)
+      return try MCPChildProcessTransport(
+        server: server, workingDirectory: workingDirectory, environment: environment,
+        hostContext: hostContext)
 
-    case .streamableHTTP, .sse:
+    case .streamableHTTP, .sse, .http:
       guard let urlString = server.url, let url = URL(string: urlString) else {
         throw GatewayToolError.executionFailed(
           "MCP server '\(server.id)' has no valid url."
         )
       }
-      return MCP.HTTPClientTransport(endpoint: url, streaming: true)
-
-    case .http:
-      guard let urlString = server.url, let url = URL(string: urlString) else {
-        throw GatewayToolError.executionFailed(
-          "MCP server '\(server.id)' has no valid url."
-        )
-      }
-      return MCP.HTTPClientTransport(endpoint: url, streaming: false)
+      return MCPHTTPClientTransport(
+        endpoint: url, streaming: server.transport != .http,
+        bearerToken: { try await server.authentication?.bearerToken(from: secretStore) })
     }
   }
 }

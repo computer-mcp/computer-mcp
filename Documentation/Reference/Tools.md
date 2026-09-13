@@ -8,12 +8,13 @@ provider-declared schemas and result shape when the Swift SDK exposes them.
 
 ## `cli.list`
 
-Lists TOML-registered CLI providers. Each entry includes `has_interface` so MCP
-consumers can decide whether to call `cli.describe` before using the provider.
+Lists directly registered and Plugin-contributed CLI providers. Entries include
+`has_interface` and `has_tree`; `cli.describe` provides their registration details.
+Validated [CLI Trees](CLITrees.md) contribute typed tools to the same catalog.
 
 ## `cli.describe`
 
-Returns one CLI provider's configuration metadata and mechanical interface.
+Returns one CLI provider's configuration metadata, mechanical interface and tree source.
 Environment values are not returned.
 
 Arguments:
@@ -29,6 +30,15 @@ Arguments:
 Reports whether registered CLI provider executables can be resolved without
 invoking provider command trees. Omit `id` to inspect all configured providers.
 
+`resolution` retains `exists`, `is_executable`, `resolved_path` and
+`resolution_source`, and includes `status`, `is_regular_file`, `is_script`, a
+diagnostic `message` and nested `interpreters`. Inspection uses the host launch
+environment merged with that CLI's `env`, including its PATH override and cwd.
+An executable script can report `interpreter_unavailable` even when its file
+exists and has execution permission. `passed` means static file/interpreter
+checks passed, not that a command, binary format, version or permissions were
+validated. `unverified` requires further inspection; it is not a successful probe.
+
 Arguments:
 
 ```json
@@ -39,7 +49,11 @@ Arguments:
 
 ## `cli.help`
 
-Runs a registered CLI path with `--help` and returns the raw help text plus
+For file-backed trees, returns the declared node's description, input schema,
+coverage and help argv with `executed: false`. Unknown paths are rejected.
+Executable tree exporters are not run by this read-only capability.
+
+For a CLI without a tree, runs a registered path with `--help` and returns raw text plus
 mechanical context for constructing a follow-up `cli.exec` MCP call. MCP
 consumers should not execute the shown command outside this gateway.
 
@@ -82,7 +96,9 @@ Result text contains JSON like:
 ## `cli.exec`
 
 Executes a registered local CLI through this MCP gateway with explicit argv.
-Use this for follow-up calls after reading `cli.help`.
+Use this for raw registrations that permit arbitrary arguments. Tree-backed
+registrations use their projected typed tools and reject raw `cli.exec` and
+`process.spawn` calls.
 
 Arguments:
 
@@ -105,13 +121,18 @@ truncation flags.
 
 ## `mcp.servers.list`
 
-Lists TOML-registered downstream MCP servers.
+Lists TOML-registered downstream MCP servers visible to the current profile.
 
 ## `mcp.servers.status`
 
-Reports deterministic readiness metadata for TOML-registered downstream MCP
+Reports non-executing readiness metadata for registered downstream MCP
 servers without starting subprocesses or calling downstream tools. For stdio
-servers it resolves the configured command. For HTTP servers it reports parsed
+servers it inspects the configured command and script interpreters using the
+host environment merged with the server's `env`. `command_resolution` has the
+same inspection fields as `cli.status`. `ready` is true when those static checks
+pass, with `readiness_scope` set to `file_and_interpreter_checks`; it does not
+prove initialization, tools, binary compatibility or system authorization.
+For HTTP servers it reports parsed
 URL metadata. Configured environment variable names are listed with values
 redacted.
 
@@ -123,13 +144,15 @@ Arguments:
 }
 ```
 
-Omit `server` to inspect every registered downstream MCP server.
+Omit `server` to inspect every downstream MCP server visible to the profile.
 
 ## `mcp.tools.list`
 
-Calls downstream `tools/list` for one server.
-The returned catalog is filtered by that provider's reviewed `allowed_tools`.
-`allow_any_tool` is accepted only for trusted local-admin configurations.
+Calls downstream `tools/list` for one server. The complete paginated catalog is
+filtered by the host's `allowed_tools` / `allow_any_tool` selection and the
+profile's tool authority and risk limits. `profiles.mcp_servers` can explicitly
+grant a registration to a local or remote profile. Counts, search results, and
+descriptions use that same filtered catalog.
 
 Arguments:
 
@@ -177,8 +200,11 @@ Arguments:
 ## `mcp.tools.call`
 
 Calls a tool on one downstream MCP server.
-The exact tool name must be present in the provider's reviewed allowlist;
-discovery does not grant authority to newly added downstream tools.
+The exact tool name must be selected by the host's whitelist or all-tools policy;
+discovery itself grants no authority. An explicit all-tools grant includes future
+tools, while a whitelist grants only its selected names. Profile and host risk
+checks apply to the actual target, including operation tickets for destructive
+tools.
 Calls wait for the downstream result by default. For a long-running request
 that must remain controllable by a sequential MCP consumer, set
 `wait_for_result` to `false` and supply a nonempty caller-stable `request_id`.
@@ -372,7 +398,13 @@ expand a workspace.
 
 ## Codex Provider Tools
 
-The `[codex]` provider exposes five independent families:
+The independent Codex MCP plugin exposes five execution and management families.
+The host selects their tool exposure and grants through the MCP registration;
+the adapter owns domain execution and persistence. See
+[Codex migration](CodexMigration.md) for configuration and offline state transfer.
+The execution names below are adapter-native; the MCP registration's prefix
+determines their exported names. The `codex.app.elevation.*` authority tools
+remain host-owned and keep their host names.
 
 - `codex.app.*`: App Server status, reviewed method discovery/call, runtime
   ownership and cleanup, stale ownership reconciliation, thread
@@ -383,11 +415,11 @@ The `[codex]` provider exposes five independent families:
 - `codex.exec.*`: start, resume, list, cursor events, result, and cancel.
 - `codex.mcp.*`: status, upstream tools, run/reply, calls, cursor events,
   result, approvals, approval response, and cancel.
-- `codex.run.*`: Computer MCP-owned acceptance runs, evidence, evaluation,
+- `codex.run.*`: adapter-owned acceptance runs, evidence, evaluation,
   explicit acceptance, state transitions, and selected child reconciliation.
 - `codex.worktree.leases.*`: durable mutation ownership, heartbeat, release,
   conflict reporting, and receipt-only cleanup. `codex.worktree.managed.*`
-  reads Computer MCP-owned lifecycle receipts;
+  reads adapter-owned lifecycle receipts;
   `codex.worktree.provision.plan|perform` creates a reviewed isolated child;
   `codex.worktree.remove.plan|perform` verifies and removes only that clean,
   released child while preserving its branch.
@@ -418,15 +450,22 @@ safe actions. Product surfaces describe those actions and ownership states in
 natural, contextual language; “重新接管线程” and “检查线程占用” are illustrative
 labels rather than fixed interface copy.
 
-`codex.app.elevation.request|list|read|approve|deny|revoke|effective` manages a
-separate, durable execution-sandbox grant. A request does not elevate anything;
+`codex.app.elevation.request|list|read|approve|deny|revoke|effective` is a
+host-owned tool family available under gateway policy independently of the
+Codex execution provider. It manages a separate, durable execution-sandbox
+grant in the Gateway Database. A request does not elevate anything;
 approve/deny are local-admin-only, and an approved grant is atomically consumed
 only by an eligible future thread/turn start. Next-turn, exact-thread TTL, and
 bounded-time modes remain bound to the original workspace canonical root,
 profile, caller, connection, and optional thread. Expiry, revocation,
-workspace/profile disablement, provider shutdown, and handoff remove future
+workspace/profile disablement, gateway connection closure, and handoff remove future
 effect. The grant changes only Codex's sandbox and does not add Computer MCP
 tools or capabilities.
+
+The host's `effective_sandbox` reports available elevation for a future start:
+`danger-full-access` with a matching grant, otherwise `null`. The adapter owns
+the configured baseline and reports applied runtime permissions; the host does
+not infer them from configuration-import records.
 
 `codex.app.thread.recent` reads a snapshot-bounded tail of a persisted rollout
 and returns metadata, official Goal state, active/recent turns, messages, items,
@@ -468,8 +507,8 @@ requires confirmation and, through the Gateway, `operations.prepare` followed
 by `operations.commit`. The workspace registration and profile grant are
 removed, but the branch remains available for review or reconciliation.
 
-All paths use the gateway-selected workspace, sandbox, approval policy, output
-bounds, and audit context. Raw argv, arbitrary Codex configuration, unscoped or
+All paths use the gateway-selected workspace and audit context, with sandbox,
+approval policy and output bounds configured by the adapter. Raw argv, arbitrary Codex configuration, unscoped or
 caller-supplied `danger-full-access`, login/token mutation, marketplace
 mutation, and remote pairing are not part of this tool surface.
 

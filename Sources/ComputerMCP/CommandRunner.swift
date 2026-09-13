@@ -117,7 +117,11 @@ package enum CommandRunnerError: Error, LocalizedError, Equatable {
 }
 
 package final class ProcessCommandRunner: CommandRunning, @unchecked Sendable {
-  package init() {}
+  private let baseEnvironment: [String: String]
+
+  package init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    baseEnvironment = environment
+  }
 
   package func run(
     executable: String,
@@ -156,9 +160,17 @@ package final class ProcessCommandRunner: CommandRunning, @unchecked Sendable {
     maxOutputBytes: Int
   ) throws -> CommandDataResult {
     let process = Process()
-    configure(process: process, executable: executable, arguments: arguments)
-    process.currentDirectoryURL = workingDirectory
-    process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+    let cwd = workingDirectory ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let childEnvironment = baseEnvironment.merging(environment) { _, new in new }
+    let inspection = ExecutableInspection.inspect(
+      executable, workingDirectory: cwd, environment: childEnvironment)
+    guard !inspection.hasKnownFailure, let path = inspection.path else {
+      throw CommandRunnerError.launchFailed(inspection.message)
+    }
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = arguments
+    process.currentDirectoryURL = cwd
+    process.environment = childEnvironment
 
     let perStreamLimit = max(1, maxOutputBytes)
     let stdout = OutputCollector(limit: perStreamLimit)

@@ -148,6 +148,12 @@ final class ComputerMCPAppModelTests {
     let chineseBundle = try #require(Bundle(url: localizationURL))
 
     #expect(
+      chineseBundle.localizedString(forKey: "Search", value: nil, table: "Localizable") == "搜索"
+    )
+    #expect(
+      chineseBundle.localizedString(forKey: "Status", value: nil, table: "Localizable") == "状态"
+    )
+    #expect(
       chineseBundle.localizedString(
         forKey: "Gateway runtime and local data plane",
         value: nil,
@@ -193,8 +199,8 @@ final class ComputerMCPAppModelTests {
     )
   }
 
-  @Test
-  func testRepositoryLocalizationGate() throws {
+  @Test(arguments: [nil, "C", "en_US.UTF-8"] as [String?])
+  func testRepositoryLocalizationGate(locale: String?) throws {
     let root = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
       .deletingLastPathComponent()
@@ -203,6 +209,12 @@ final class ComputerMCPAppModelTests {
     let output = Pipe()
     process.executableURL = URL(fileURLWithPath: "/bin/zsh")
     process.arguments = [root.appendingPathComponent("Scripts/verify-localization.sh").path]
+    if let locale {
+      var environment = ProcessInfo.processInfo.environment
+      environment["LANG"] = locale
+      environment["LC_ALL"] = locale
+      process.environment = environment
+    }
     process.standardOutput = output
     process.standardError = output
     try process.run()

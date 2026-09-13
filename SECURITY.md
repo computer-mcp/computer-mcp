@@ -26,13 +26,15 @@ Include:
 
 `computer-mcp` runs registered local sources on behalf of an MCP client:
 
-- CLI commands registered in TOML.
-- Local or remote MCP servers registered in TOML.
+- CLI commands and local or remote MCP servers registered directly or through
+  plugin contributions, under the same host policy and workspace boundaries.
 - Builtins explicitly enabled in TOML.
 - Optional Full Shell only when both manifest and local profile enable it.
-- Codex App Server, Exec, and MCP only when `[codex]` and the active profile
-  permit them.
-- Generic Computer Use only after local TCC grants.
+- Codex execution through the independent MCP adapter, with host-owned tool
+  grants, approvals and scoped services. Adapter configuration owns vendor
+  execution settings and domain state.
+- Native Computer Use subject to vendor caller authentication and system
+  permissions; generic AX fallback subject to local TCC grants.
 
 Reports about command injection, source allowlist bypass, unexpected shell
 execution, socket peer bypass, profile/workspace bypass, token leakage, path

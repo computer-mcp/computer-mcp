@@ -412,6 +412,19 @@ sign_binary() {
 }
 
 sign_binary "$RESOURCES_DIR/computer-mcp"
+"$RESOURCES_DIR/computer-mcp" _bundle-plugins \
+  --index "$ROOT_DIR/Resources/PluginArchives/index.json" \
+  --output "$RESOURCES_DIR/Plugins" \
+  --architectures arm64 x86_64 >"$METADATA_DIR/BundledPlugins.json"
+# Sign package-owned native code inside-out before sealing the outer App.
+# The archive worker has already rejected links and special filesystem entries.
+while IFS= read -r -d '' plugin_file; do
+  if /usr/bin/file -b "$plugin_file" | /usr/bin/grep -q 'Mach-O'; then
+    verify_universal_binary "$plugin_file"
+    sign_binary "$plugin_file"
+    /usr/bin/codesign --verify --strict "$plugin_file"
+  fi
+done < <(/usr/bin/find "$RESOURCES_DIR/Plugins" -depth -type f -print0)
 CLI_HASH=$(/usr/bin/shasum -a 256 "$RESOURCES_DIR/computer-mcp" | /usr/bin/awk '{print $1}')
 ACTUAL_TEAM_ID=$(/usr/bin/codesign -d --verbose=4 "$RESOURCES_DIR/computer-mcp" 2>&1 \
   | /usr/bin/sed -n 's/^TeamIdentifier=//p')

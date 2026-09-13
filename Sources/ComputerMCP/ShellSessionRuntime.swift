@@ -21,6 +21,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
   internal var shell: String?
   internal var workingDirectory: String?
   internal var environment: [String: String]
+  internal var inheritsEnvironment: Bool?
 
   internal init(
     mode: ShellLaunchMode = .shell,
@@ -29,7 +30,8 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
     argv: [String] = [],
     shell: String? = nil,
     workingDirectory: String? = nil,
-    environment: [String: String] = [:]
+    environment: [String: String] = [:],
+    inheritsEnvironment: Bool = true
   ) {
     self.mode = mode
     self.command = command
@@ -38,6 +40,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
     self.shell = shell
     self.workingDirectory = workingDirectory
     self.environment = environment
+    self.inheritsEnvironment = inheritsEnvironment
   }
 
   fileprivate func resolved(defaultShell: String, defaultWorkingDirectory: URL) throws
@@ -78,7 +81,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
         executable: shell,
         arguments: ["-lc", command],
         workingDirectory: directory.standardizedFileURL,
-        environment: environment
+        environment: environment, inheritsEnvironment: inheritsEnvironment != false
       )
 
     case .argv:
@@ -94,7 +97,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
         executable: executable,
         arguments: argv,
         workingDirectory: directory.standardizedFileURL,
-        environment: environment
+        environment: environment, inheritsEnvironment: inheritsEnvironment != false
       )
     }
   }
@@ -261,17 +264,25 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
     } catch ShellRuntimeError.sessionNotRunning where standardInput.isEmpty {
       // A command that never reads stdin may finish before the close reaches its pipe.
     }
-    let session = try requireSession(sessionID)
     let waitMilliseconds = timeoutMilliseconds + max(terminationGraceMilliseconds, 250) + 2_000
-    if !session.waitForCompletion(timeoutMilliseconds: waitMilliseconds) {
+    return try wait(
+      sessionID: sessionID, timeoutMilliseconds: waitMilliseconds,
+      maxReadBytes: maxOutputBytes, encoding: .utf8)
+  }
+
+  internal func wait(
+    sessionID: String, timeoutMilliseconds: Int, maxReadBytes: Int, encoding: ShellStreamEncoding
+  ) throws -> ShellSessionSnapshot {
+    let session = try requireSession(sessionID)
+    if !session.waitForCompletion(timeoutMilliseconds: timeoutMilliseconds) {
       _ = try? cancel(sessionID: sessionID)
       throw ShellRuntimeError.timeoutWaitingForTermination(sessionID)
     }
     return session.snapshot(
       stdoutCursor: 0,
       stderrCursor: 0,
-      maxReadBytes: maxOutputBytes,
-      encoding: .utf8
+      maxReadBytes: maxReadBytes,
+      encoding: encoding
     )
   }
 
@@ -393,7 +404,23 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
   }
 
   private static func launch(_ launch: ResolvedShellLaunch, session: ShellSession) async {
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+    let input = ShellSessionInput()
+    var readers: [ProcessOutputReader] = []
     do {
+      let stdout = try ProcessOutputReader(
+        handle: stdoutPipe.fileHandleForReading,
+        consume: { session.appendStdout($0) },
+        onError: { session.recordStreamError("stdout: \($0.localizedDescription)") })
+      readers.append(stdout)
+      let stderr = try ProcessOutputReader(
+        handle: stderrPipe.fileHandleForReading,
+        consume: { session.appendStderr($0) },
+        onError: { session.recordStreamError("stderr: \($0.localizedDescription)") })
+      readers.append(stderr)
+      stdout.start()
+      stderr.start()
       let environmentOverrides = Dictionary(
         uniqueKeysWithValues: launch.environment.map { key, value in
           (Subprocess.Environment.Key(rawValue: key)!, Optional(value))
@@ -408,44 +435,55 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
       let outcome = try await Subprocess.run(
         executable,
         arguments: Arguments(launch.arguments),
-        environment: .inherit.updating(environmentOverrides),
+        environment: launch.inheritsEnvironment
+          ? .inherit.updating(environmentOverrides)
+          : .custom(environmentOverrides.compactMapValues { $0 }),
         workingDirectory: FilePath(launch.workingDirectory.path),
         platformOptions: platformOptions,
-        // DispatchIO waits for the preferred size before yielding while the
-        // pipe remains open. A single-byte preference preserves live output;
-        // CursorDataBuffer still coalesces and bounds the stored stream.
-        preferredBufferSize: 1
-      ) { execution, inputWriter, stdout, stderr in
+        input: input,
+        output: .fileDescriptor(
+          FileDescriptor(rawValue: stdoutPipe.fileHandleForWriting.fileDescriptor),
+          closeAfterSpawningProcess: false),
+        error: .fileDescriptor(
+          FileDescriptor(rawValue: stderrPipe.fileHandleForWriting.fileDescriptor),
+          closeAfterSpawningProcess: false)
+      ) { execution in
+        defer { input.finish() }
+        try stdoutPipe.fileHandleForWriting.close()
+        try stderrPipe.fileHandleForWriting.close()
+        var writers = input.ready.stream.makeAsyncIterator()
+        guard let inputWriter = await writers.next() else { throw CancellationError() }
         session.attach(execution: execution, inputWriter: inputWriter)
         await withTaskGroup(of: Void.self) { group in
-          group.addTask {
-            do {
-              for try await buffer in stdout {
-                session.appendStdout(Self.data(from: buffer))
-              }
-            } catch {
-              session.recordStreamError("stdout: \(error.localizedDescription)")
-            }
-          }
-          group.addTask {
-            do {
-              for try await buffer in stderr {
-                session.appendStderr(Self.data(from: buffer))
-              }
-            } catch {
-              session.recordStreamError("stderr: \(error.localizedDescription)")
-            }
-          }
+          group.addTask { await stdout.waitForEnd() }
+          group.addTask { await stderr.waitForEnd() }
         }
       }
       session.finish(status: outcome.terminationStatus)
     } catch {
+      input.finish()
+      try? stdoutPipe.fileHandleForWriting.close()
+      try? stderrPipe.fileHandleForWriting.close()
+      for reader in readers { await reader.stop(drainRemainingOutput: false) }
       session.failLaunchOrExecution(error.localizedDescription)
     }
   }
+}
 
-  private static func data(from buffer: AsyncBufferSequence.Buffer) -> Data {
-    buffer.withUnsafeBytes { Data($0) }
+/// The session owns interactive writes; the subprocess input task keeps its writer alive until EOF.
+private struct ShellSessionInput: InputProtocol {
+  let ready = AsyncStream<StandardInputWriter>.makeStream()
+  private let release = AsyncStream<Void>.makeStream()
+
+  func write(with writer: StandardInputWriter) async throws {
+    ready.continuation.yield(writer)
+    ready.continuation.finish()
+    for await _ in release.stream {}
+  }
+
+  func finish() {
+    ready.continuation.finish()
+    release.continuation.finish()
   }
 }
 
@@ -454,6 +492,7 @@ private struct ResolvedShellLaunch: Sendable {
   var arguments: [String]
   var workingDirectory: URL
   var environment: [String: String]
+  var inheritsEnvironment: Bool
 }
 
 private final class ShellSession: @unchecked Sendable {

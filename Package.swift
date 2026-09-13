@@ -27,15 +27,13 @@ let package = Package(
     .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
     .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0"),
     .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
-    .package(
-      url: "https://github.com/swift-library/swift-codex.git",
-      exact: "0.1.2"
-    ),
   ],
   targets: [
+    .systemLibrary(name: "CSystemArchive"),
     .target(
       name: "ComputerMCP",
       dependencies: [
+        "CSystemArchive",
         .product(name: "MCP", package: "swift-sdk"),
         .product(name: "GRDB", package: "GRDB.swift"),
         .product(name: "Logging", package: "swift-log"),
@@ -45,11 +43,6 @@ let package = Package(
         .product(name: "Subprocess", package: "swift-subprocess"),
         .product(name: "TOML", package: "swift-toml"),
         .product(name: "Yams", package: "Yams"),
-        .product(name: "CodexAppServerClient", package: "swift-codex"),
-        .product(name: "CodexAppServerProtocol", package: "swift-codex"),
-        .product(name: "CodexAppServerRuntime", package: "swift-codex"),
-        .product(name: "CodexExec", package: "swift-codex"),
-        .product(name: "CodexMCP", package: "swift-codex"),
       ],
       exclude: ["ComputerMCP.docc"]
     ),
@@ -69,7 +62,8 @@ let package = Package(
     ),
     .testTarget(
       name: "ComputerMCPTests",
-      dependencies: ["ComputerMCP"]
+      dependencies: ["ComputerMCP"],
+      resources: [.copy("Fixtures")]
     ),
     .testTarget(
       name: "ComputerMCPAppTests",

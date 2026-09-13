@@ -115,6 +115,78 @@ final class LiveAppControlPlaneTests {
     }
   }
 
+  @Test
+  func pluginScreenUsesSharedHostTransactionsAndRetainsFilesOnRemoval() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let package = fixture.root.appendingPathComponent("Local Package", isDirectory: true)
+      let skill = package.appendingPathComponent("skills/guide", isDirectory: true)
+      try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+      try "---\nname: guide\ndescription: Test guide\n---\nRead only.".write(
+        to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+      try """
+      id = 'screen-package'
+      name = 'Screen package'
+      version = '1.0.0'
+      [[skills]]
+      id = 'guide'
+      path = 'skills'
+      """.write(
+        to: package.appendingPathComponent(PluginManifest.filename), atomically: true,
+        encoding: .utf8)
+      let model = PluginManagementModel(controlPlane: fixture.app)
+      await model.reload()
+      #expect(model.snapshot?.state.revision == 0)
+      #expect(await model.apply(.registerDevelopment(package), expectedRevision: 0))
+      let registered = try #require(model.snapshot)
+      let installation = try #require(registered.state.installations.first)
+      #expect(registered.state.settings["screen-package"]?.enabled == false)
+      #expect(model.selectedID == "screen-package")
+      let draft = PluginSettingsDraft(id: "screen-package", snapshot: registered)
+      #expect(await model.apply(.enabled(pluginID: "screen-package", true), expectedRevision: 1))
+      #expect(model.snapshot?.contributions.map(\.componentID) == ["guide"])
+      #expect(try await fixture.controlPlane.pluginSnapshot().state == model.snapshot?.state)
+
+      #expect(
+        !(await model.apply(
+          .settings(pluginID: draft.id, try draft.settings()), expectedRevision: draft.revision)))
+      #expect(model.snapshot?.state.revision == 2)
+      #expect(
+        await model.apply(.removeDevelopment(installationID: installation.id), expectedRevision: 2))
+      let removed = try #require(model.snapshot)
+      #expect(removed.state.installations.isEmpty)
+      #expect(removed.state.settings["screen-package"]?.enabled == true)
+      #expect(removed.contributions.isEmpty)
+      #expect(!removed.issues.isEmpty)
+      #expect(FileManager.default.fileExists(atPath: skill.appendingPathComponent("SKILL.md").path))
+      #expect(try await fixture.app.fetchPlugins().state == removed.state)
+    }
+  }
+
+  @Test
+  func applicationRecoversPluginFilesWhileGatewayRemainsDisabled() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      try await fixture.controlPlane.setGatewayDesiredRunning(false)
+      let directories = fixture.controlPlane.directories
+      let database = try GatewayDatabase(path: directories.database.path)
+      let identity: PluginDirectoryIdentity
+      do {
+        let storage = try PluginInstallationStorage(at: directories.plugins)
+        defer { storage.finishTransaction() }
+        identity = try storage.createInstallation()
+        try database.recordPluginDirectory(
+          .init(
+            installationID: identity.url.lastPathComponent, pluginID: "interrupted-install",
+            identity: identity))
+      }
+      try await fixture.app.startApplication()
+      #expect(try await fixture.app.fetchStatus().serviceState == .stopped)
+      #expect(try database.pluginOwnedDirectories().isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: identity.url.path))
+      #expect(try await fixture.app.fetchPlugins().recoveryError == nil)
+      #expect(try database.pluginStoreSnapshot().revision == 0)
+    }
+  }
+
   private func withAppControlPlaneFixture<T>(
     permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester(),
     keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter(),

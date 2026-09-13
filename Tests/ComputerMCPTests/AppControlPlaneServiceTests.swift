@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import MCP
 import Testing
@@ -8,6 +9,606 @@ import Testing
 @Suite(.serialized)
 
 final class AppControlPlaneServiceTests {
+  @Test(
+    arguments: [
+      "tools", "call", "call-error", "socket", "profiles", "export", "workspace", "shell", "tunnel",
+      "tunnel-rejected",
+    ],
+    ["complete", "cancel", "configuration", "workspace", "grant", "plugin"])
+  func gatewayConstructionKeepsManagementResponsiveAndJoinsOwnedProcesses(
+    operation: String, change: String
+  ) async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let script = fixture.root.appendingPathComponent("catalog.py")
+    try Data(Self.gatedCatalogScript.utf8).write(to: script)
+    let release = fixture.root.appendingPathComponent("release")
+    let waiting = fixture.root.appendingPathComponent("waiting")
+    let expired = fixture.root.appendingPathComponent("expired")
+    var configuration = GatewayConfiguration(
+      mcp: .init(servers: [
+        .init(
+          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+          args: [script.path, fixture.root.path, operation], exposure: .reexport, prefix: "fixture",
+          allowAnyTool: true, startupTimeoutMs: 5000, requestTimeoutMs: 5000,
+          toolRisks: ["inspect": .readOnly])
+      ]), workspaceDirectory: fixture.root)
+    configuration.policy.shellEnabled = true
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    let workspace = RegisteredWorkspace(
+      id: "fixture", displayName: "Fixture", rootPath: fixture.root.path,
+      bookmarkIsStale: change == "workspace")
+    try fixture.database.saveWorkspace(workspace)
+    if operation.hasPrefix("tunnel") {
+      try await fixture.controlPlane.saveOpenAITunnelConfiguration(
+        OpenAITunnelConfiguration(
+          id: "fixture", tunnelClientProfile: "fixture", tunnelID: "tunnel_fixture",
+          gatewayProfile: .chatGPTObserve,
+          manifestPath: fixture.directories.manifest.path,
+          gatewayExecutablePath: "/tmp/computer-mcp",
+          gatewaySocketPath: fixture.directories.gatewaySocket.path))
+    }
+    let originalProfiles = try fixture.database.profiles()
+    let pending = Task {
+      let trace = GatewayTransportTrace(transport: "control_socket")
+      switch operation {
+      case "tools":
+        let tools = try await fixture.controlPlane.localAdminTools(transportTrace: trace)
+        #expect(tools.contains { $0.name == "fixture.inspect" })
+      case "call", "call-error":
+        let result = try await fixture.controlPlane.callLocalAdminTool(
+          name: operation == "call" ? "fixture.inspect" : "fixture.missing",
+          arguments: .object(["workspace_id": .string(workspace.id)]), transportTrace: trace)
+        #expect(result.objectValue?["isError"] == .bool(operation == "call-error"))
+      case "socket":
+        let session = try await fixture.controlPlane.makeGatewaySocketSession(
+          caller: .localMCP, profileID: .localAdmin)
+        await session.server.stop()
+        await session.shutdown()
+      case "profiles":
+        let grants = try await fixture.controlPlane.profileGrants()
+        #expect(
+          grants.contains {
+            $0.id == .chatGPTObserve && $0.capabilityIDs.contains("fixture.inspect")
+          })
+      case "export":
+        let exported = try await fixture.controlPlane.effectiveConfigurationForExport()
+        #expect(exported.workspaces.contains { $0.id == workspace.id })
+      case "workspace":
+        _ = try await fixture.controlPlane.setWorkspaceEnabled(
+          true, workspaceID: workspace.id, profileID: .chatGPTOperate)
+      case "shell":
+        _ = try await fixture.controlPlane.setFullShellEnabled(true, profileID: .chatGPTOperate)
+      default:
+        do {
+          _ = try await fixture.controlPlane.doctorOpenAITunnel(profileID: "fixture")
+          #expect(operation == "tunnel")
+        } catch let error as ChatGPTProfileAuditError where operation == "tunnel-rejected" {
+          #expect(
+            error == .writeToolsRequireExplicitOptIn(["fixture.inspect"]))
+        }
+      }
+    }
+    do {
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: .seconds(5))
+      while !FileManager.default.fileExists(atPath: waiting.path), clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      try #require(FileManager.default.fileExists(atPath: waiting.path))
+      var current = try await fixture.controlPlane.activeConfiguration()
+      // The vendor is still waiting for this test to release its catalog response.
+      #expect(!FileManager.default.fileExists(atPath: expired.path))
+      switch change {
+      case "cancel": pending.cancel()
+      case "configuration":
+        current.server.name = "changed-while-discovering"
+        _ = try await fixture.controlPlane.activateManifest(current.exportedTOML())
+      case "workspace":
+        var updated = workspace
+        updated.displayName = "Changed while discovering"
+        try fixture.database.saveWorkspace(updated)
+      case "grant":
+        try fixture.database.saveProfile(
+          ProfileGrant(id: .chatGPTOperate, capabilityIDs: [], workspaceIDs: [], allowedCallers: [])
+        )
+      case "plugin":
+        var snapshot = try fixture.database.pluginStoreSnapshot()
+        snapshot.revision += 1
+        try fixture.database.savePluginStoreSnapshot(
+          snapshot, expectedRevision: snapshot.revision - 1)
+      default: break
+      }
+      let profilesBeforeCompletion = try fixture.database.profiles()
+      let workspacesBeforeCompletion = try fixture.database.workspaces()
+      try Data().write(to: release)
+      switch await pending.result {
+      case .success:
+        #expect(change == "complete")
+      case .failure(let error):
+        if change == "cancel" {
+          #expect(error is CancellationError)
+        } else if change != "complete" {
+          #expect(error as? AppControlPlaneServiceError == .gatewayInputsChanged, "\(error)")
+        } else {
+          Issue.record("Unexpected management failure: \(error)")
+        }
+      }
+      if change != "complete" {
+        #expect(try fixture.database.profiles() == profilesBeforeCompletion)
+        #expect(try fixture.database.workspaces() == workspacesBeforeCompletion)
+      } else if operation != "workspace" && operation != "shell" {
+        #expect(try fixture.database.profiles() == originalProfiles)
+      }
+      let pids = try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+        .filter { $0.hasPrefix("pid-") }.compactMap { Int32($0.dropFirst(4)) }
+      #expect(!pids.isEmpty)
+      for pid in pids {
+        #expect(kill(pid, 0) == -1 && errno == ESRCH, "Owned catalog process \(pid) must be joined")
+      }
+      #expect(!FileManager.default.fileExists(atPath: expired.path))
+    } catch {
+      pending.cancel()
+      try? Data().write(to: release)
+      _ = await pending.result
+      throw error
+    }
+  }
+
+  private static let gatedCatalogScript = #"""
+    import json, os, pathlib, sys, time
+    root = pathlib.Path(sys.argv[1])
+    (root / ("pid-" + str(os.getpid()))).touch()
+    for line in sys.stdin:
+        request = json.loads(line)
+        method = request.get("method")
+        if method == "initialize":
+            result = {"protocolVersion":"2025-11-25", "capabilities":{"tools":{}}, "serverInfo":{"name":"gated", "version":"1"}}
+        elif method == "tools/list":
+            (root / "waiting").touch()
+            deadline = time.monotonic() + 3
+            while not (root / "release").exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if not (root / "release").exists():
+                (root / "expired").touch()
+            result = {"tools":[{"name":"inspect", "description":"Inspect fixture", "inputSchema":{"type":"object"}, "annotations":{"readOnlyHint":sys.argv[2] != "tunnel-rejected"}}]}
+        elif method == "tools/call":
+            result = {"content":[{"type":"text", "text":"fixture"}], "isError":False}
+        else:
+            continue
+        print(json.dumps({"jsonrpc":"2.0", "id":request["id"], "result":result}), flush=True)
+    """#
+
+  @Test
+  func rejectedManagementChangesAndProfileSelectionDoNotDiscoverDownstreamTools() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let script = fixture.root.appendingPathComponent("catalog.py")
+    try Data(Self.gatedCatalogScript.utf8).write(to: script)
+    let configuration = GatewayConfiguration(
+      mcp: .init(servers: [
+        .init(
+          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+          args: [script.path, fixture.root.path, "tools"], exposure: .reexport,
+          prefix: "fixture", allowAnyTool: true, startupTimeoutMs: 5000)
+      ]), workspaceDirectory: fixture.root)
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    try fixture.database.saveWorkspace(
+      RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+    await #expect(throws: AppControlPlaneServiceError.unknownWorkspace("missing")) {
+      _ = try await fixture.controlPlane.setWorkspaceEnabled(
+        true, workspaceID: "missing", profileID: .chatGPTOperate)
+    }
+    await #expect(throws: AppControlPlaneServiceError.fullShellManifestDisabled) {
+      _ = try await fixture.controlPlane.setFullShellEnabled(true, profileID: .chatGPTOperate)
+    }
+    try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
+    #expect(try await fixture.controlPlane.activeGatewayProfile() == .chatGPTOperate)
+    let cancelled = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      _ = try await fixture.controlPlane.localAdminTools(
+        transportTrace: GatewayTransportTrace(transport: "control_socket"))
+    }
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    #expect(try fixture.database.profiles().isEmpty)
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+        .allSatisfy { !$0.hasPrefix("pid-") })
+  }
+
+  @Test(arguments: [false, true])
+  func providerProbeLeavesControlPlaneResponsiveAndDiscardsObsoleteResults(cancel: Bool)
+    async throws
+  {
+    let probe = GatedProviderDiscovery()
+    let started = probe.started.stream()
+    let fixture = try AppControlPlaneServiceFixture(providerDiscovery: probe)
+    defer { fixture.cleanup() }
+    try await fixture.controlPlane.start()
+    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    let refreshing = Task { try await fixture.controlPlane.refreshProviders() }
+    do {
+      var events = started.makeAsyncIterator()
+      _ = await events.next()
+      #expect(try await fixture.controlPlane.providerStates().isEmpty)
+      #expect(probe.isWaiting)
+      if cancel {
+        refreshing.cancel()
+      } else {
+        _ = try await fixture.controlPlane.activateManifest(
+          validManifest.replacingOccurrences(
+            of: "computer-mcp-test", with: "changed-provider-config"))
+      }
+      probe.release.signal()
+      switch await refreshing.result {
+      case .success: Issue.record("An obsolete provider probe must not publish its result")
+      case .failure(let error):
+        if cancel {
+          #expect(error is CancellationError)
+        } else {
+          #expect(error as? AtomicManifestStoreError == .staleDigest)
+        }
+      }
+      #expect(try await fixture.controlPlane.providerStates().isEmpty)
+    } catch {
+      refreshing.cancel()
+      probe.release.signal()
+      _ = await refreshing.result
+      throw error
+    }
+  }
+
+  @Test
+  func testOfficialPluginSearchCLIUsesSharedServiceAndStructuredFailures() async throws {
+    let catalog = ControlPlaneCatalogFake()
+    let fixture = try AppControlPlaneServiceFixture(pluginCatalog: catalog)
+    defer { fixture.cleanup() }
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let socket = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await socket.start()
+    do {
+      let before = try fixture.database.pluginStoreSnapshot()
+      let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent(".build/debug/computer-mcp")
+      let args = [
+        "plugins", "search", "工作", "--kind", "mcp", "--page", "2", "--refresh",
+        "--control-socket", fixture.directories.controlSocket.path,
+      ]
+      let success = try ProcessCommandRunner().run(
+        executable: executable.path, arguments: args,
+        workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
+        maxOutputBytes: 1_048_576)
+      #expect(success.exitCode == 0, "\(success.stderr)")
+      let json = try JSONDecoder().decode(JSONValue.self, from: Data(success.stdout.utf8))
+      #expect(json.objectValue?["query"] == .string("工作"))
+      #expect(json.objectValue?["kind"] == .string("mcp"))
+      #expect(json.objectValue?["page"] == .number(2))
+      #expect(json.objectValue?["next_page"] == .number(3))
+      #expect(json.objectValue?["publisher_id"] == .number(315_005_910))
+      #expect(AppControlCapabilityCatalog.all.first { $0.id == "plugin.search" }?.readOnly == true)
+      #expect(json.objectValue?["entries"]?.arrayValue?.count == 1)
+      #expect(await catalog.refreshRequested)
+      await catalog.fail()
+      let failure = try ProcessCommandRunner().run(
+        executable: executable.path, arguments: args,
+        workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
+        maxOutputBytes: 1_048_576)
+      #expect(failure.exitCode != 0)
+      let error = try JSONDecoder().decode(JSONValue.self, from: Data(failure.stdout.utf8))
+      #expect(
+        error.objectValue?["error"]?.objectValue?["code"] == .string("plugin.catalog.rate_limited"))
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      await #expect(throws: ControlSocketCallError.self) {
+        try await client.call("plugin.search", arguments: .object(["kind": .string("unknown")]))
+      }
+      await #expect(throws: ControlSocketCallError.self) {
+        try await client.call("plugin.search", arguments: .object(["page": .number(1.5)]))
+      }
+      #expect(await catalog.calls == 2)
+      #expect(try fixture.database.pluginStoreSnapshot() == before)
+      let events = try fixture.database.auditEvents(limit: 10).filter {
+        $0.capabilityID == "plugin.search"
+      }
+      #expect(events.contains { $0.decision == .allowed && $0.caller == .localCLI })
+      #expect(events.contains { $0.errorCode == "plugin.catalog.rate_limited" })
+      await socket.stop()
+      await gateway.stop()
+    } catch {
+      await socket.stop()
+      await gateway.stop()
+      throw error
+    }
+  }
+
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_CATALOG_TEST"] == "1"))
+  func testOfficialPluginSearchAgainstPublicGitHubFromIsolatedCLI() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let socket = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await socket.start()
+    do {
+      let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent(".build/debug/computer-mcp")
+      let command = try ProcessCommandRunner().run(
+        executable: executable.path,
+        arguments: [
+          "plugins", "search", "--refresh", "--control-socket",
+          fixture.directories.controlSocket.path,
+        ],
+        workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
+        maxOutputBytes: 1_048_576)
+      #expect(command.exitCode == 0, "Live GitHub response: \(command.stdout) \(command.stderr)")
+      let json = try JSONDecoder().decode(JSONValue.self, from: Data(command.stdout.utf8))
+      #expect(json.objectValue?["publisher_id"] == .number(315_005_910))
+      #expect(json.objectValue?["cached"] == .bool(false))
+      #expect(json.objectValue?["issues"]?.arrayValue?.isEmpty == true)
+      print("Live GitHub catalog via isolated CLI: \(command.stdout)")
+      #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
+      await socket.stop()
+      await gateway.stop()
+    } catch {
+      await socket.stop()
+      await gateway.stop()
+      throw error
+    }
+  }
+
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"))
+  func publishedPluginInstallsAndUninstallsThroughIsolatedHost() async throws {
+    let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent(".build/debug/computer-mcp")
+    let fixture = try AppControlPlaneServiceFixture(gatewayExecutablePath: executable.path)
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(
+      GatewayConfiguration(workspaceDirectory: fixture.root).exportedTOML())
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let socket = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await socket.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      let search = try await client.call(
+        "plugin.search",
+        arguments: .object(["query": .string("swift-format"), "refresh": .bool(true)]))
+      let entry = try #require(
+        search.objectValue?["entries"]?.arrayValue?.first {
+          $0.objectValue?["repository"] == .string("computer-mcp/plugin-swift-format")
+        })
+      let repositoryID = try #require(entry.objectValue?["repository_id"])
+      let release = try await client.call(
+        "plugin.artifacts",
+        arguments: .object([
+          "repository": .string("computer-mcp/plugin-swift-format"),
+          "repository_id": repositoryID,
+        ]))
+      let artifact = try #require(
+        release.objectValue?["artifacts"]?.arrayValue?.first {
+          $0.objectValue?["name"] == .string("swift-format.zip")
+        })
+      _ = try await client.call(
+        "plugin.install_release",
+        arguments: .object(["artifact": artifact, "expected_revision": .number(0)]))
+      let installed = try fixture.database.pluginStoreSnapshot()
+      let record = try #require(installed.installations.first { $0.pluginID == "swift-format" })
+      #expect(installed.settings["swift-format"]?.enabled == false)
+      #expect(record.source.githubRelease != nil)
+      #expect(FileManager.default.fileExists(atPath: record.source.root.path))
+      _ = try await client.call(
+        "plugin.uninstall",
+        arguments: .object([
+          "installation_id": .string(record.id),
+          "expected_revision": .number(Double(installed.revision)),
+        ]))
+      let removed = try fixture.database.pluginStoreSnapshot()
+      #expect(removed.installations.isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+      await socket.stop()
+      await gateway.stop()
+    } catch {
+      await socket.stop()
+      await gateway.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func testPluginControlSocketPreflightsCompositionAndRuntimeLoadsRecordedSettings() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
+    configuration.cli.commands = [.init(id: "personal", executable: "/bin/echo")]
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    let packageRoot = fixture.root.appendingPathComponent("package")
+    try FileManager.default.createDirectory(
+      at: packageRoot.appendingPathComponent("skills"), withIntermediateDirectories: true)
+    try PluginManifestTests.combined.replacingOccurrences(
+      of: "tree = { kind = 'introspection', args = ['schema', '--json'] }\n", with: ""
+    )
+    .write(
+      to: packageRoot.appendingPathComponent(PluginManifest.filename), atomically: true,
+      encoding: .utf8)
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let service = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await service.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+      let executable = repository.appendingPathComponent(".build/debug/computer-mcp")
+      #expect(FileManager.default.isExecutableFile(atPath: executable.path))
+      let command = try ProcessCommandRunner().run(
+        executable: executable.path,
+        arguments: [
+          "plugins", "register", packageRoot.path, "--expected-revision", "0", "--control-socket",
+          fixture.directories.controlSocket.path,
+        ],
+        workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 15_000,
+        maxOutputBytes: 1_048_576)
+      #expect(command.exitCode == 0, "\(command.stderr)")
+      let registered = try JSONDecoder().decode(JSONValue.self, from: Data(command.stdout.utf8))
+      #expect(registered.objectValue?["state"]?.objectValue?["revision"] == .number(1))
+      var settings = PluginSettings(
+        enabled: true,
+        mcp: ["native": .init(enabled: false)],
+        cli: ["commands": .init(registrationID: "personal", allowAnyArgs: true)],
+        skills: ["guidance": .init(registrationID: "package-skills")],
+        dependencyExecutables: ["vendor": "/usr/bin/printf"])
+      await #expect(throws: ControlSocketCallError.self) {
+        try await client.call(
+          "plugin.configure",
+          arguments: .object([
+            "id": .string("test-package"), "settings": try .encoded(settings),
+            "expected_revision": .number(1),
+          ]))
+      }
+      #expect(try fixture.database.pluginStoreSnapshot().revision == 1)
+      let stale = try ProcessCommandRunner().run(
+        executable: executable.path,
+        arguments: [
+          "plugins", "enable", "test-package", "--expected-revision", "0", "--control-socket",
+          fixture.directories.controlSocket.path,
+        ],
+        workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 15_000,
+        maxOutputBytes: 1_048_576)
+      #expect(stale.exitCode != 0)
+      #expect(stale.stderr.contains("Reload"))
+      settings.cli["commands"]?.registrationID = "package-cli"
+      _ = try await client.call(
+        "plugin.configure",
+        arguments: .object([
+          "id": .string("test-package"), "settings": try .encoded(settings),
+          "expected_revision": .number(1),
+        ]))
+      let source = try await fixture.controlPlane.activeConfiguration()
+      #expect(source.cli.commands.map(\.id) == ["personal"])
+      #expect(source.knownPluginMCPServerIDs.contains("plugin-12-test-package-native"))
+      let runtime = try GatewayRuntime(configuration: source, database: fixture.database)
+      #expect(runtime.pluginOrigins.count == 2)
+      #expect(runtime.pluginDiagnostics.isEmpty && runtime.pluginIssues.isEmpty)
+      #expect(
+        runtime.pluginOrigins[.init(kind: .cli, id: "package-cli")]?.pluginID == "test-package")
+      await runtime.shutdown()
+      let inspected = try await client.call(
+        "plugin.show", arguments: .object(["id": .string("test-package")]))
+      #expect(inspected.objectValue?["contributions"]?.arrayValue?.count == 2)
+      _ = try await client.call(
+        "plugin.disable",
+        arguments: .object(["id": .string("test-package"), "expected_revision": .number(2)]))
+      let disabled = try fixture.database.pluginStoreSnapshot()
+      #expect(disabled.settings["test-package"]?.enabled == false)
+      #expect(
+        disabled.settings["test-package"]?.dependencyExecutables == settings.dependencyExecutables)
+      let disabledRuntime = try GatewayRuntime(configuration: source, database: fixture.database)
+      #expect(disabledRuntime.pluginOrigins.isEmpty)
+      await disabledRuntime.shutdown()
+      let audit = try #require(
+        fixture.database.auditEvents(limit: 50).first {
+          $0.capabilityID == "plugin.configure"
+        })
+      #expect(audit.caller == .localCLI && audit.profileID == .localAdmin)
+      await service.stop()
+      await gateway.stop()
+    } catch {
+      await service.stop()
+      await gateway.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func testPluginChangesPreserveConnectedClientsAndAdmissionRecoversAfterFailure() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(
+      GatewayConfiguration(workspaceDirectory: fixture.root).exportedTOML())
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    try await gateway.start(profile: .chatGPTOperate)
+    let client = Client(name: "plugin-client", version: "1")
+    do {
+      let transport = GatewaySocketTransport(
+        configuration: .init(
+          socketURL: fixture.directories.gatewaySocket, clientIdentity: .localCLI))
+      _ = try await client.connect(transport: transport)
+      await #expect(throws: PluginHostError.connectedClients) {
+        try await gateway.changePlugins(
+          .enabled(pluginID: "test-package", true), expectedRevision: 0)
+      }
+      #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
+      try await client.ping()
+      await client.disconnect()
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: .seconds(5))
+      while await gateway.snapshot().connectionCount != 0, clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      #expect(await gateway.snapshot().connectionCount == 0)
+      await #expect(throws: PluginStoreError.staleRevision(expected: 1, actual: 0)) {
+        try await gateway.changePlugins(
+          .enabled(pluginID: "test-package", true), expectedRevision: 1)
+      }
+      let result = try await gateway.changePlugins(
+        .enabled(pluginID: "test-package", true), expectedRevision: 0)
+      #expect(result.state.revision == 1)
+      #expect(result.issues.count == 1)
+      let next = Client(name: "plugin-next", version: "1")
+      _ = try await next.connect(
+        transport: GatewaySocketTransport(
+          configuration: .init(
+            socketURL: fixture.directories.gatewaySocket, clientIdentity: .localCLI)))
+      try await next.ping()
+      await next.disconnect()
+      await gateway.stop()
+    } catch {
+      await client.disconnect()
+      await gateway.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func testPluginMCPGrantCanBeExportedAndReloadedWhileDisabledWithoutCopyingRegistrations()
+    async throws
+  {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(GatewayConfiguration().exportedTOML())
+    let store = PluginStore(database: fixture.database)
+    _ = try await store.setSettings(
+      .init(mcp: ["native": .init(registrationID: "plugin-native")]), for: "test-package",
+      expectedRevision: 0)
+    let text = """
+      schema_version = 1
+      [[profiles]]
+      id = 'chatgpt-operate'
+      mcp_servers = ['plugin-native']
+      """
+    #expect(throws: ConfigurationError.self) { try GatewayConfiguration.load(text: text) }
+    _ = try await fixture.controlPlane.activateManifest(text)
+    let exported = try await fixture.controlPlane.effectiveConfigurationForExport().exportedTOML()
+    let loaded = try await fixture.controlPlane.parseManifest(exported)
+    #expect(loaded.mcp.servers.isEmpty)
+    #expect(loaded.profiles.first { $0.id == .chatGPTOperate }?.mcpServers == ["plugin-native"])
+    #expect(!exported.contains("knownPluginMCPServerIDs"))
+  }
+
   @Test
   func testOwnerOnlyControlSocketOperatesTheAppControlPlaneWithoutStartingTransport() async throws {
     let fixture = try AppControlPlaneServiceFixture()
@@ -32,7 +633,7 @@ final class AppControlPlaneServiceTests {
         status.objectValue?["gateway_socket"] == .string(fixture.directories.gatewaySocket.path))
       #expect(fixture.directories.controlSocket != fixture.directories.gatewaySocket)
       #expect(try permissions(at: fixture.directories.controlSocket) == 0o600)
-      #expect(status.objectValue?["provider_count"] == .number(8))
+      #expect(status.objectValue?["provider_count"] == .number(7))
       #expect(status.objectValue?["launch_at_login"] == .string("unavailable"))
 
       let readiness = try await client.call(
@@ -448,6 +1049,31 @@ final class AppControlPlaneServiceTests {
   }
 
   @Test
+  func testConfigExportPreservesMCPRegistrationGrants() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(
+      """
+      schema_version = 1
+      [[mcp.servers]]
+      id = "fixture-mcp"
+      transport = "stdio"
+      command = "/bin/cat"
+      allow_any_tool = true
+      [[profiles]]
+      id = "chatgpt-operate"
+      mcp_servers = ["fixture-mcp"]
+      """
+    )
+    let exported = try await fixture.controlPlane.effectiveConfigurationForExport()
+    let reloaded = try GatewayConfiguration.load(text: exported.exportedTOML())
+    let grant = try #require(reloaded.profiles.first { $0.id == .chatGPTOperate })
+    #expect(grant.mcpServers == ["fixture-mcp"])
+    #expect(grant.capabilities.isEmpty)
+    #expect(reloaded.mcp.servers.first?.allowAnyTool == true)
+  }
+
+  @Test
   func testConfigExportProjectsPersistedWorkspaceAndFullShellRuntimeState() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
@@ -543,7 +1169,7 @@ final class AppControlPlaneServiceTests {
   @Test
   func testDirectoriesProfilesProvidersAndLaunchAtLoginComposeThroughFacade() async throws {
     let fixture = try AppControlPlaneServiceFixture(
-      openAITunnelGatewayExecutablePath:
+      gatewayExecutablePath:
         "/Applications/Computer MCP.app/Contents/Resources/computer-mcp"
     )
     defer { fixture.cleanup() }
@@ -1400,7 +2026,9 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
   init(
     keychainAdapter: (any KeychainAdapter)? = nil,
     launchAtLoginController: any LaunchAtLoginControlling = MemoryLaunchAtLoginController(),
-    openAITunnelGatewayExecutablePath: String = "computer-mcp"
+    gatewayExecutablePath: String = "computer-mcp",
+    pluginCatalog: any PluginCatalogSearching = GitHubPluginCatalog(),
+    providerDiscovery: any ControlPlaneProviderDiscovering = TestProviderDiscovery()
   ) throws {
     root = URL(
       fileURLWithPath: "/private/tmp/cm-cp-\(UUID().uuidString.prefix(8))",
@@ -1431,14 +2059,43 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       manifestStore: manifestStore,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
-      openAITunnelGatewayExecutablePath: openAITunnelGatewayExecutablePath,
-      providerDiscovery: TestProviderDiscovery(),
-      launchAtLoginController: launchAtLoginController
+      gatewayExecutablePath: gatewayExecutablePath,
+      providerDiscovery: providerDiscovery,
+      launchAtLoginController: launchAtLoginController,
+      pluginCatalog: pluginCatalog
     )
   }
 
   func cleanup() {
     try? FileManager.default.removeItem(at: root)
+  }
+}
+
+private actor ControlPlaneCatalogFake: PluginCatalogSearching {
+  private var failing = false
+  private(set) var refreshRequested = false
+  private(set) var calls = 0
+  func fail() { failing = true }
+  func search(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
+    -> PluginCatalogSearchResult
+  {
+    calls += 1
+    refreshRequested = refresh
+    if failing { throw PluginCatalogError.rateLimited(retryAfterSeconds: 60) }
+    return PluginCatalogSearchResult(
+      publisher: "computer-mcp", publisherID: 315_005_910, query: query, kind: kind, page: page,
+      nextPage: page + 1, checkedRepositories: 1,
+      fetchedAt: Date(timeIntervalSince1970: 1_788_846_000),
+      cached: false,
+      entries: [
+        PluginCatalogEntry(
+          repositoryID: 1234, repository: "computer-mcp/fixture", publisherID: 315_005_910,
+          revision: String(repeating: "a", count: 40),
+          manifestBlobSHA: String(repeating: "b", count: 40),
+          manifestSHA256: String(repeating: "c", count: 64), pluginID: "fixture",
+          name: "工作 fixture",
+          version: try PluginVersion("1.0.0"), summary: nil, mcp: ["native"], cli: [], skills: [])
+      ], issues: [])
   }
 }
 
@@ -1554,6 +2211,22 @@ private struct TestProviderDiscovery: ControlPlaneProviderDiscovering {
         diagnostics: []
       )
     ]
+  }
+}
+
+private final class GatedProviderDiscovery: ControlPlaneProviderDiscovering, @unchecked Sendable {
+  let started = GatewayToolChangeBroadcaster()
+  let release = DispatchSemaphore(value: 0)
+  private let lock = NSLock()
+  private var waiting = false
+  var isWaiting: Bool { lock.withLock { waiting } }
+
+  func discover(configuration: GatewayConfiguration) throws -> [ExternalProviderDiscoveryResult] {
+    lock.withLock { waiting = true }
+    started.send()
+    _ = release.wait(timeout: .now() + .seconds(5))
+    lock.withLock { waiting = false }
+    return try TestProviderDiscovery().discover(configuration: configuration)
   }
 }
 

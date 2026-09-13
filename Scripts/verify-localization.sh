@@ -23,7 +23,8 @@ duplicate_keys=$(
   || fail "Duplicate String Catalog keys:\n$duplicate_keys"
 
 /usr/bin/env -u GEM_HOME -u GEM_PATH \
-  /usr/bin/ruby --disable-gems -rjson - "$ROOT_DIR" "$CATALOG" <<'RUBY'
+  /usr/bin/ruby --disable-gems -EUTF-8 -rjson - "$ROOT_DIR" "$CATALOG" <<'RUBY'
+# encoding: UTF-8
 root, catalog_path = ARGV
 catalog = JSON.parse(File.read(catalog_path)).fetch("strings")
 abort "error: App String Catalog unexpectedly contains fewer than 450 keys." if catalog.length < 450
@@ -124,10 +125,15 @@ Dir.glob(File.join(root, "Sources/ComputerMCPApp/*.swift")).sort.each do |path|
     missing_literals << "#{path.delete_prefix(root + "/")}: #{value}" unless catalog.key?(value)
   end
 
-  source.scan(/\b(?:Text|Label|Button|Section|LabeledContent|Toggle)\s*\(\s*"((?:\\.|[^"\\])*)"/m) do |match|
+  source.scan(/\b(?:Text|Label|Button|Section|LabeledContent|Toggle|TextField|SecureField|Picker|DisclosureGroup|Link|WindowGroup|Menu)\s*\(\s*"((?:\\.|[^"\\])*)"/m) do |match|
     raw = match.first
     if raw.include?('\\(')
       interpolated_swiftui_sites << "#{path.delete_prefix(root + "/")}: #{raw}"
+    else
+      value = raw.gsub('\\"', '"').gsub('\\\\', '\\')
+      if value.match?(/[A-Za-z]/) && !catalog.key?(value)
+        missing_literals << "#{path.delete_prefix(root + "/")}: #{value}"
+      end
     end
   end
 end

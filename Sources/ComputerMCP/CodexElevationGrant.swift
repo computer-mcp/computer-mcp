@@ -311,9 +311,11 @@ enum CodexElevationGrantService {
     guard let database else { throw CodexElevationGrantError.persistenceUnavailable }
     try database.reconcileCodexElevationGrants(now: now)
     let isAdmin = isLocalAdministrator(owner)
+    guard isAdmin || owner != nil else { return [] }
     return try database.codexElevationGrants(
       workspaceID: owner?.workspaceID,
       state: state,
+      requester: isAdmin ? nil : owner,
       limit: limit
     ).filter {
       isAdmin
@@ -337,11 +339,11 @@ enum CodexElevationGrantService {
     return record
   }
 
+  /// Reports eligibility for a future elevated start, not an adapter's current sandbox.
   static func effective(
     owner: CodexRuntimeOwner?,
     database: GatewayDatabase?,
     threadID: String?,
-    configuredSandbox: CodexSandboxMode,
     now: Date = Date()
   ) throws -> JSONValue {
     let grants = try visibleGrants(owner: owner, database: database, limit: 5_000, now: now)
@@ -355,7 +357,7 @@ enum CodexElevationGrantService {
     return .object([
       "requested_sandbox": grants.isEmpty ? .null : .string("danger-full-access"),
       "effective_sandbox": grants.isEmpty
-        ? .string(configuredSandbox.rawValue) : .string("danger-full-access"),
+        ? .null : .string("danger-full-access"),
       "effective_next_turn": .bool(!grants.isEmpty),
       "active_turn_unchanged": .bool(true),
       "matching_grants": .array(grants.map(\.json)),

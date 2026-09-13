@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 internal protocol GatewayToolProvider: Sendable {
   var id: String { get }
@@ -82,22 +83,16 @@ internal struct GatewayCapabilityCatalog: Sendable {
 internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
   internal let id: String
   private let registry: GatewayToolRegistry
-  private let domain: GatewayToolDomain
-  private let catalog: GatewayCapabilityCatalog
   private let tools: [MCPTool]
 
   internal init(
     id: String,
     registry: GatewayToolRegistry,
-    domain: GatewayToolDomain,
-    tools: [MCPTool],
-    catalog: GatewayCapabilityCatalog = GatewayCapabilityCatalog()
+    tools: [MCPTool]
   ) {
     self.id = id
     self.registry = registry
-    self.domain = domain
     self.tools = tools
-    self.catalog = catalog
   }
 
   internal func listTools() throws -> [MCPTool] {
@@ -105,14 +100,21 @@ internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
   }
 
   internal func capability(for tool: MCPTool) -> CapabilityDescriptor {
-    catalog.descriptor(for: tool)
+    registry.capability(for: tool)
   }
 
   internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    guard GatewayToolDomain.classify(name) == domain else {
+    guard let definition = tools.first(where: { $0.name == name }) else {
       throw GatewayToolError.unknownTool(name)
     }
-    return try registry.callTool(name: name, arguments: arguments)
+    return try registry.callTool(definition: definition, arguments: arguments)
+  }
+
+  internal func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+    guard let definition = tools.first(where: { $0.name == name }) else {
+      throw GatewayToolError.unknownTool(name)
+    }
+    return try await registry.callToolAsync(definition: definition, arguments: arguments)
   }
 }
 
@@ -159,19 +161,64 @@ internal enum GatewayToolDomain: String, CaseIterable, Sendable {
   }
 }
 
-internal final class GatewayProviderRouter: GatewayToolServing, @unchecked Sendable {
-  private let providers: [any GatewayToolProvider]
+internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
+  private struct State {
+    var snapshot: GatewayToolCatalogSnapshot
+    var monitors: [Task<Void, Never>] = []
+    var stopped = false
+    var shutdownTask: Task<Void, Never>?
+    var lastRefreshError: String?
+  }
 
-  internal init(providers: [any GatewayToolProvider]) throws {
-    var names = Set<String>()
-    for provider in providers {
-      for tool in try provider.listTools() {
-        guard names.insert(tool.name).inserted else {
-          throw GatewayProviderRouterError.duplicateTool(tool.name)
+  private let state: OSAllocatedUnfairLock<State>
+  private let source: @Sendable () throws -> [any GatewayToolProvider]
+  private let reservedToolNames: Set<String>
+  private let shutdownSource: @Sendable () async -> Void
+  private let refreshCoordinator = GatewayCatalogRefreshCoordinator()
+  private let changes = GatewayToolChangeBroadcaster()
+
+  internal convenience init(providers: [any GatewayToolProvider]) throws {
+    try self.init(source: { providers })
+  }
+
+  internal init(
+    source: @escaping @Sendable () throws -> [any GatewayToolProvider],
+    invalidations: AsyncStream<Void>? = nil,
+    refreshInterval: Duration? = nil,
+    reservedToolNames: Set<String> = [],
+    shutdownSource: @escaping @Sendable () async -> Void = {}
+  ) throws {
+    self.source = source
+    self.reservedToolNames = reservedToolNames
+    self.shutdownSource = shutdownSource
+    self.state = OSAllocatedUnfairLock(
+      initialState: State(
+        snapshot: try .init(providers: source(), reservedToolNames: reservedToolNames)))
+    if let invalidations {
+      let monitor = Task { [weak self] in
+        for await _ in invalidations {
+          guard !Task.isCancelled else { break }
+          // refreshTools records failures and preserves the validated snapshot.
+          try? await self?.refreshTools()
         }
       }
+      state.withLock { $0.monitors.append(monitor) }
     }
-    self.providers = providers
+    if let refreshInterval {
+      let monitor = Task { [weak self] in
+        while !Task.isCancelled {
+          do { try await Task.sleep(for: refreshInterval) } catch { break }
+          guard let self else { break }
+          try? await self.refreshTools()
+        }
+      }
+      state.withLock { $0.monitors.append(monitor) }
+    }
+  }
+
+  deinit {
+    for monitor in state.withLock({ $0.monitors }) { monitor.cancel() }
+    changes.finish()
   }
 
   internal convenience init(registry: GatewayToolRegistry) throws {
@@ -180,62 +227,147 @@ internal final class GatewayProviderRouter: GatewayToolServing, @unchecked Senda
 
   internal convenience init(
     registry: GatewayToolRegistry,
-    additionalProviders: [any GatewayToolProvider]
+    additionalProviders: [any GatewayToolProvider],
+    reservedToolNames: Set<String> = []
   ) throws {
-    let tools = try registry.listTools()
     try self.init(
-      providers: GatewayToolDomain.allCases.map { domain in
-        GatewayDomainToolProvider(
-          id: domain.rawValue,
-          registry: registry,
-          domain: domain,
-          tools: tools.filter { GatewayToolDomain.classify($0.name) == domain }
-        )
-      } + additionalProviders
+      source: {
+        let tools = try registry.listTools()
+        return GatewayToolDomain.allCases.map { domain in
+          GatewayDomainToolProvider(
+            id: domain.rawValue, registry: registry,
+            tools: tools.filter { GatewayToolDomain.classify($0.name) == domain })
+        } + (try registry.cliTreeProviders()) + additionalProviders
+      },
+      invalidations: registry.toolChanges(),
+      refreshInterval: registry.hasReexportedMCPServers || registry.hasCLITrees
+        ? .seconds(30) : nil,
+      reservedToolNames: reservedToolNames,
+      shutdownSource: { await registry.shutdown() }
     )
   }
 
   internal func listTools() throws -> [MCPTool] {
-    try providers.flatMap { try $0.listTools() }
+    try state.withLock { state in
+      guard !state.stopped else { throw GatewayProviderRouterError.stopped }
+      return state.snapshot.tools
+    }
   }
 
   internal func capability(named name: String) throws -> CapabilityDescriptor {
-    for provider in providers {
-      if let tool = try provider.listTools().first(where: { $0.name == name }) {
-        return provider.capability(for: tool)
-      }
-    }
-    throw GatewayToolError.unknownTool(name)
+    try route(named: name).capability
   }
 
   internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    for provider in providers where try provider.listTools().contains(where: { $0.name == name }) {
-      return try provider.callTool(name: name, arguments: arguments)
-    }
-    throw GatewayToolError.unknownTool(name)
+    try callTool(name: name, arguments: arguments, expectedCapability: nil)
+  }
+
+  internal func callTool(
+    name: String, arguments: JSONValue?, expectedCapability: CapabilityDescriptor?
+  ) throws -> JSONValue {
+    let route = try route(named: name, expectedCapability: expectedCapability)
+    return try route.provider.callTool(name: name, arguments: arguments)
   }
 
   internal func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    for provider in providers where try provider.listTools().contains(where: { $0.name == name }) {
-      return try await provider.callToolAsync(name: name, arguments: arguments)
+    try await callToolAsync(name: name, arguments: arguments, expectedCapability: nil)
+  }
+
+  internal func callToolAsync(
+    name: String, arguments: JSONValue?, expectedCapability: CapabilityDescriptor?
+  ) async throws -> JSONValue {
+    let route = try route(named: name, expectedCapability: expectedCapability)
+    return try await route.provider.callToolAsync(name: name, arguments: arguments)
+  }
+
+  private func route(named name: String, expectedCapability: CapabilityDescriptor? = nil) throws
+    -> GatewayToolCatalogSnapshot.Route
+  {
+    try state.withLock { state in
+      guard !state.stopped else { throw GatewayProviderRouterError.stopped }
+      guard let route = state.snapshot.routes[name] else {
+        throw GatewayToolError.unknownTool(name)
+      }
+      if let expectedCapability, route.capability != expectedCapability {
+        throw GatewayProviderRouterError.capabilityChanged(name)
+      }
+      return route
     }
-    throw GatewayToolError.unknownTool(name)
+  }
+
+  internal func toolChanges() -> AsyncStream<Void> { changes.stream() }
+
+  internal var lastRefreshError: String? { state.withLock { $0.lastRefreshError } }
+
+  internal func refreshTools() async throws {
+    try await refreshCoordinator.run { [self] in
+      do {
+        try Task.checkCancellation()
+        let snapshot: GatewayToolCatalogSnapshot = try await withCheckedThrowingContinuation {
+          continuation in
+          // Existing providers have synchronous discovery; keep it off cooperative executors.
+          DispatchQueue.global(qos: .utility).async { [source, reservedToolNames] in
+            continuation.resume(
+              with: Result {
+                try GatewayToolCatalogSnapshot(
+                  providers: source(), reservedToolNames: reservedToolNames)
+              })
+          }
+        }
+        try Task.checkCancellation()
+        let changed = try state.withLock { state in
+          guard !state.stopped else { throw GatewayProviderRouterError.stopped }
+          let changed = !state.snapshot.hasSameSurface(as: snapshot)
+          state.snapshot = snapshot
+          state.lastRefreshError = nil
+          return changed
+        }
+        if changed { changes.send() }
+      } catch {
+        state.withLock { $0.lastRefreshError = error.localizedDescription }
+        throw error
+      }
+    }
   }
 
   internal func shutdown() async {
-    for provider in providers {
-      await provider.shutdown()
+    let task = state.withLock { state -> Task<Void, Never> in
+      if let task = state.shutdownTask { return task }
+      state.stopped = true
+      let monitors = state.monitors
+      let providers = state.snapshot.providers
+      let task = Task { [changes, refreshCoordinator, shutdownSource] in
+        for monitor in monitors { monitor.cancel() }
+        changes.finish()
+        await refreshCoordinator.stop()
+        for monitor in monitors { await monitor.value }
+        for provider in providers { await provider.shutdown() }
+        await shutdownSource()
+      }
+      state.shutdownTask = task
+      return task
     }
+    await task.value
   }
 }
 
 internal enum GatewayProviderRouterError: Error, LocalizedError, Equatable {
   case duplicateTool(String)
+  case invalidToolDefinition(String)
+  case capabilityChanged(String)
+  case stopped
 
   internal var errorDescription: String? {
     switch self {
     case .duplicateTool(let name):
       return "Multiple gateway providers expose tool '\(name)'."
+    case .invalidToolDefinition(let name):
+      return "Gateway tool '\(name)' has an invalid name or schema shape."
+    case .capabilityChanged(let name):
+      return
+        "[gateway.catalog_changed] Capability '\(name)' changed before dispatch; no operation was executed."
+    case .stopped:
+      return "The gateway tool catalog is stopped."
     }
   }
 }

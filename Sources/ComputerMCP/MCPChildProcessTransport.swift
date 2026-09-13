@@ -1,198 +1,159 @@
-import Darwin
 import Foundation
 import Logging
 import MCP
 
+/// MCP framing over the same owned-process primitive used by other stdio adapters.
 actor MCPChildProcessTransport: MCP.Transport {
   nonisolated let logger: Logger
+  /// Finishes after process and host-service cleanup, including failed startup.
+  nonisolated let termination: AsyncStream<Void>
+  private let terminated: AsyncStream<Void>.Continuation
 
   private let server: MCPServerConfig
   private let command: String
-  private var isConnected = false
-  private var process: Process?
-  private var stdin: Pipe?
-  private var stdoutReader: MCPLineDelimitedOutputReader?
-  private var stderrReader: MCPDiscardingOutputReader?
+  private let workingDirectory: URL
+  private let environment: [String: String]
+  private let hostContext: MCPHostContext?
+  private var hostSession: MCPHostSession?
+  private var process: ManagedLineProcess?
+  private var ownership: MCPProcessOwnership?
+  private var ownershipError = false
+  private var reader: Task<Void, Never>?
+  private var closeTask: Task<Void, Never>?
+  private var closed = false
   private let stream: AsyncThrowingStream<Data, Swift.Error>
   private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
 
-  init(server: MCPServerConfig, logger: Logger? = nil) throws {
+  init(
+    server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
+    hostContext: MCPHostContext? = nil, logger: Logger? = nil
+  ) throws {
     guard let command = server.command, !command.isEmpty else {
       throw GatewayToolError.executionFailed("MCP server '\(server.id)' has no command.")
     }
+    guard !server.hostServices || hostContext?.tools != nil else {
+      throw GatewayToolError.executionFailed(
+        "The stdio registration requires scoped host services.")
+    }
     self.server = server
+    self.hostContext = hostContext
     self.command = command
+    self.workingDirectory =
+      server.resolvedWorkingDirectory(base: workingDirectory)
+      .standardizedFileURL
+    self.environment = try MCPHostContext.launchEnvironment(
+      inherited: environment, overrides: server.env, context: hostContext)
     self.logger =
       logger
       ?? Logger(
-        label: "computer-mcp.mcp-child-process",
-        factory: {
-          _ in SwiftLogNoOpLogHandler()
-        })
-
-    var continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation!
-    self.stream = AsyncThrowingStream { continuation = $0 }
-    self.continuation = continuation
+        label: "computer-mcp.mcp-child-process", factory: { _ in SwiftLogNoOpLogHandler() })
+    (stream, continuation) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(16))
+    (termination, terminated) = AsyncStream.makeStream()
   }
 
   func connect() async throws {
-    guard !isConnected else {
-      return
-    }
-
-    let process = Process()
-    configure(process: process, executable: command, arguments: server.args)
-    if let cwd = server.cwd {
-      process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-    }
-    process.environment = ProcessInfo.processInfo.environment.merging(server.env) { _, new in new }
-
-    let stdin = Pipe()
-    let stdout = Pipe()
-    let stderr = Pipe()
-    guard fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+    guard !closed else { throw MCPError.connectionClosed }
+    try Task.checkCancellation()
+    guard process == nil else { return }
+    let inspection = ExecutableInspection.inspect(
+      command, workingDirectory: workingDirectory, environment: environment)
+    guard !inspection.hasKnownFailure, let executable = inspection.path else {
       throw GatewayToolError.executionFailed(
-        "Could not configure MCP server '\(server.id)' stdin for safe provider exit."
-      )
+        "Could not start MCP server '\(server.id)': \(inspection.message)")
     }
-    process.standardInput = stdin
-    process.standardOutput = stdout
-    process.standardError = stderr
-
+    let ownership = try MCPProcessOwnership.acquire(
+      root: hostContext?.processOwnershipRoot
+        ?? FileManager.default.temporaryDirectory.appendingPathComponent(
+          "computer-mcp-mcp-processes", isDirectory: true),
+      workspace: hostContext.map { URL(fileURLWithPath: $0.workspace.rootPath) }
+        ?? workingDirectory,
+      registration: server.id)
+    self.ownership = ownership
+    let session =
+      try server.hostServices
+      ? hostContext.map { try MCPHostSession(context: $0, server: server) } : nil
+    var environment = environment
+    if session != nil { environment[MCPHostContext.descriptorEnvironmentKey] = "3" }
+    let process: ManagedLineProcess
     do {
-      try process.run()
+      process = try ManagedLineProcess(
+        configuration: .init(
+          executable: executable, arguments: server.args, environment: environment,
+          workingDirectory: workingDirectory,
+          maximumMessageBytes: 16 * 1_024 * 1_024,
+          inheritedDescriptors: session.map { [3: $0.childHandle] } ?? [:],
+          ownershipHandle: try ownership.supervisorHandle()))
     } catch {
-      throw GatewayToolError.executionFailed(
-        "Could not start MCP server '\(server.id)': \(error.localizedDescription)")
+      await session?.close()
+      try? ownership.finish(confirmed: await session?.shutdownConfirmed() ?? true)
+      throw error
     }
-
+    try? session?.childHandle.close()
+    self.hostSession = session
     self.process = process
-    self.stdin = stdin
-    isConnected = true
-
-    let stdoutReader = MCPLineDelimitedOutputReader(
-      handle: stdout.fileHandleForReading,
-      continuation: continuation
-    )
-    let stderrReader = MCPDiscardingOutputReader(handle: stderr.fileHandleForReading)
-    self.stdoutReader = stdoutReader
-    self.stderrReader = stderrReader
-    stdoutReader.start()
-    stderrReader.start()
+    reader = Task { [continuation] in
+      do {
+        for try await line in process.inboundLines {
+          try Task.checkCancellation()
+          if line.isEmpty { continue }
+          switch continuation.yield(Data(line.utf8)) {
+          case .enqueued: break
+          case .dropped: throw ManagedLineProcessError.bufferOverflow
+          case .terminated: throw MCPError.connectionClosed
+          @unknown default: throw MCPError.connectionClosed
+          }
+        }
+        continuation.finish(throwing: MCPError.connectionClosed)
+      } catch {
+        continuation.finish(throwing: error)
+      }
+      await self.closeProcess()
+    }
   }
 
   func disconnect() async {
-    guard isConnected else {
+    await closeProcess()
+    await reader?.value
+  }
+
+  private func closeProcess() async {
+    if let closeTask {
+      await closeTask.value
       return
     }
-
-    isConnected = false
-    stdoutReader?.stop()
-    stderrReader?.stop()
-    stdoutReader = nil
-    stderrReader = nil
-    try? stdin?.fileHandleForWriting.close()
-    stdin = nil
-    if let process, process.isRunning {
-      process.terminate()
-    }
-    process = nil
+    closed = true
     continuation.finish()
+    reader?.cancel()
+    let task = Task { [process, hostSession, ownership, terminated] in
+      defer { terminated.finish() }
+      await hostSession?.close()
+      await process?.close()
+      let confirmed = await hostSession?.shutdownConfirmed() ?? true
+      let exited = await process?.snapshot().hasExited ?? true
+      do {
+        try ownership?.finish(confirmed: confirmed && exited, hostServicesConfirmed: confirmed)
+      } catch {
+        self.ownershipError = true
+      }
+    }
+    closeTask = task
+    await task.value
+  }
+
+  func shutdownConfirmed() async -> Bool {
+    guard !ownershipError else { return false }
+    guard await hostSession?.shutdownConfirmed() ?? true else { return false }
+    guard let process else { return closed }
+    return await process.snapshot().hasExited
   }
 
   func send(_ data: Data) async throws {
-    guard isConnected, let stdin else {
-      throw GatewayToolError.executionFailed("MCP server '\(server.id)' is not connected.")
+    guard !closed, let process else { throw MCPError.connectionClosed }
+    guard let line = String(data: data, encoding: .utf8) else {
+      throw MCPError.invalidRequest("MCP stdio requires UTF-8 JSON.")
     }
-    var message = data
-    message.append(0x0A)
-    try stdin.fileHandleForWriting.write(contentsOf: message)
+    try await process.sendLine(line)
   }
 
-  func receive() -> AsyncThrowingStream<Data, Swift.Error> {
-    stream
-  }
-}
-
-/// Drains child-process stdout without blocking a Swift cooperative-executor thread.
-private final class MCPLineDelimitedOutputReader: @unchecked Sendable {
-  private let handle: FileHandle
-  private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
-  private let lock = NSLock()
-  private var buffer = Data()
-  private var stopped = false
-
-  init(
-    handle: FileHandle,
-    continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
-  ) {
-    self.handle = handle
-    self.continuation = continuation
-  }
-
-  func start() {
-    handle.readabilityHandler = { [weak self] handle in
-      self?.consumeAvailableData(from: handle)
-    }
-  }
-
-  func stop() {
-    lock.lock()
-    stopped = true
-    lock.unlock()
-    handle.readabilityHandler = nil
-  }
-
-  private func consumeAvailableData(from handle: FileHandle) {
-    let chunk = handle.availableData
-    lock.lock()
-    guard !stopped else {
-      lock.unlock()
-      return
-    }
-    guard !chunk.isEmpty else {
-      stopped = true
-      lock.unlock()
-      handle.readabilityHandler = nil
-      continuation.finish()
-      return
-    }
-
-    buffer.append(chunk)
-    var messages: [Data] = []
-    while let newline = buffer.firstIndex(of: 0x0A) {
-      var line = buffer[..<newline]
-      if line.last == 0x0D {
-        line = line.dropLast()
-      }
-      buffer.removeSubrange(...newline)
-      if !line.isEmpty {
-        messages.append(Data(line))
-      }
-    }
-    lock.unlock()
-
-    for message in messages {
-      continuation.yield(message)
-    }
-  }
-}
-
-/// Keeps an untrusted provider's stderr pipe drained without occupying a Swift task thread.
-private final class MCPDiscardingOutputReader: @unchecked Sendable {
-  private let handle: FileHandle
-
-  init(handle: FileHandle) {
-    self.handle = handle
-  }
-
-  func start() {
-    handle.readabilityHandler = { handle in
-      _ = handle.availableData
-    }
-  }
-
-  func stop() {
-    handle.readabilityHandler = nil
-  }
+  func receive() -> AsyncThrowingStream<Data, Swift.Error> { stream }
 }

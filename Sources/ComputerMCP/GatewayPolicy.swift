@@ -109,6 +109,8 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var localOnly: Bool
   package var usesNetwork: Bool
   package var tccServices: [String]
+  package var mcpReference: MCPToolReference?
+  package var equivalentCapabilityIDs: [String]?
 
   package init(
     id: String,
@@ -116,7 +118,9 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     workspaceRequirement: WorkspaceRequirement = .none,
     localOnly: Bool = false,
     usesNetwork: Bool = false,
-    tccServices: [String] = []
+    tccServices: [String] = [],
+    mcpReference: MCPToolReference? = nil,
+    equivalentCapabilityIDs: [String]? = nil
   ) {
     self.id = id
     self.risk = risk
@@ -124,6 +128,8 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     self.localOnly = localOnly
     self.usesNetwork = usesNetwork
     self.tccServices = tccServices
+    self.mcpReference = mcpReference
+    self.equivalentCapabilityIDs = equivalentCapabilityIDs
   }
 }
 
@@ -155,19 +161,36 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   package var workspaceIDs: Set<String>
   package var allowedCallers: Set<GatewayCallerKind>
   package var fullShellEnabled: Bool
+  package var mcpServerIDs: Set<String>
 
   package init(
     id: GatewayProfileID,
     capabilityIDs: Set<String>,
     workspaceIDs: Set<String> = [],
     allowedCallers: Set<GatewayCallerKind>,
-    fullShellEnabled: Bool = false
+    fullShellEnabled: Bool = false,
+    mcpServerIDs: Set<String> = []
   ) {
     self.id = id
     self.capabilityIDs = capabilityIDs
     self.workspaceIDs = workspaceIDs
     self.allowedCallers = allowedCallers
     self.fullShellEnabled = fullShellEnabled
+    self.mcpServerIDs = mcpServerIDs
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, capabilityIDs, workspaceIDs, allowedCallers, fullShellEnabled, mcpServerIDs
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(GatewayProfileID.self, forKey: .id)
+    capabilityIDs = try container.decode(Set<String>.self, forKey: .capabilityIDs)
+    workspaceIDs = try container.decode(Set<String>.self, forKey: .workspaceIDs)
+    allowedCallers = try container.decode(Set<GatewayCallerKind>.self, forKey: .allowedCallers)
+    fullShellEnabled = try container.decode(Bool.self, forKey: .fullShellEnabled)
+    mcpServerIDs = try container.decodeIfPresent(Set<String>.self, forKey: .mcpServerIDs) ?? []
   }
 
   package static let observe = ProfileGrant(
@@ -226,7 +249,8 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
       capabilityIDs: effectiveCapabilities,
       workspaceIDs: persisted.workspaceIDs,
       allowedCallers: allowedCallers,
-      fullShellEnabled: effectiveFullShellEnabled
+      fullShellEnabled: effectiveFullShellEnabled,
+      mcpServerIDs: mcpServerIDs
     )
   }
 
@@ -241,6 +265,32 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
       throw GatewayPolicyConfigurationError.fullShellProfileNotAllowed(id)
     }
   }
+
+  package func permitsRisk(_ risk: CapabilityRisk) -> Bool {
+    !(id == .chatGPTObserve || id == .cloudflareObserve) || risk == .readOnly
+  }
+
+  package func grants(_ capability: CapabilityDescriptor) -> Bool {
+    if capabilityIDs.contains("*") { return true }
+    if let reference = capability.mcpReference {
+      // The generic call capability explicitly grants the host-selected tools across registrations.
+      if mcpServerIDs.contains(reference.serverID) || capabilityIDs.contains("mcp.tools.call") {
+        return true
+      }
+      let names = Set([capability.id] + (capability.equivalentCapabilityIDs ?? []))
+        .subtracting(Self.mcpSurfaceCapabilities)
+      return !capabilityIDs.isDisjoint(with: names)
+    }
+    if capabilityIDs.contains(capability.id) { return true }
+    return !mcpServerIDs.isEmpty && Self.mcpSurfaceCapabilities.contains(capability.id)
+  }
+
+  package static let mcpSurfaceCapabilities: Set<String> = [
+    "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
+    "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
+    "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
+    "mcp.requests.list", "mcp.requests.cancel",
+  ]
 }
 
 package enum GatewayPolicyConfigurationError: Error, LocalizedError, Equatable {
@@ -269,6 +319,7 @@ package enum PolicyDenialCode: String, Codable, Sendable {
   case workspaceRequired = "policy.workspace_required"
   case workspaceDenied = "policy.workspace_denied"
   case fullShellDisabled = "policy.full_shell_disabled"
+  case readOnlyProfile = "policy.read_only_profile"
 }
 
 package enum PolicyDecision: Equatable, Sendable {
@@ -317,11 +368,17 @@ package struct GatewayPolicyEvaluator: Sendable {
       )
     }
 
-    guard grant.capabilityIDs.contains("*") || grant.capabilityIDs.contains(capability.id) else {
+    guard grant.grants(capability) else {
       return .deny(
         code: .capabilityDenied,
         message: "The profile does not grant capability '\(capability.id)'."
       )
+    }
+
+    guard grant.permitsRisk(capability.risk) else {
+      return .deny(
+        code: .readOnlyProfile,
+        message: "Observe profiles require a host-classified read-only capability.")
     }
 
     if capability.risk == .fullShell && !grant.fullShellEnabled {

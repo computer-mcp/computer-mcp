@@ -30,6 +30,38 @@ package struct AppControlCapability: Codable, Equatable, Sendable, Identifiable 
 package enum AppControlCapabilityCatalog {
   package static let all: [AppControlCapability] = [
     item(
+      "mcp.process.recover", "computer-mcp mcp recover-process",
+      "Retire one reviewed MCP process receipt after confirmed process and host cleanup.",
+      destructive: true, idempotent: false),
+    item(
+      "mcp.doctor", "computer-mcp mcp doctor",
+      "Probe one MCP connection and catalog in a registered workspace.", readOnly: true),
+    item(
+      "mcp.list", "computer-mcp mcp list", "List manual and resolved plugin MCP registrations.",
+      readOnly: true),
+    item(
+      "mcp.show", "computer-mcp mcp show", "Read one MCP registration and its ownership.",
+      readOnly: true),
+    item(
+      "mcp.credential.status", "computer-mcp mcp credential status",
+      "Check a bound MCP credential without reading its value.", readOnly: true),
+    item(
+      "mcp.credential.set", "computer-mcp mcp credential set",
+      "Save a bearer token to the bound host Keychain item."),
+    item(
+      "mcp.credential.remove", "computer-mcp mcp credential remove",
+      "Remove the bound host Keychain item, retaining registration and grants.", destructive: true),
+    item("mcp.add", "computer-mcp mcp add", "Preview or apply a manual MCP registration."),
+    item(
+      "mcp.configure", "computer-mcp mcp configure",
+      "Preview or replace one manual MCP registration."),
+    item("mcp.enable", "computer-mcp mcp enable", "Preview or enable one manual MCP registration."),
+    item(
+      "mcp.disable", "computer-mcp mcp disable", "Preview or disable one manual MCP registration."),
+    item(
+      "mcp.remove", "computer-mcp mcp remove",
+      "Preview or remove an unreferenced manual MCP registration.", destructive: true),
+    item(
       "app.capabilities", "computer-mcp app capabilities",
       "List this control-plane capability contract.", surface: .cli, readOnly: true),
     item(
@@ -102,6 +134,56 @@ package enum AppControlCapabilityCatalog {
     item(
       "permissions.status", "computer-mcp permissions status",
       "Read current macOS permission status without prompting.", readOnly: true),
+    item(
+      "plugin.list", "computer-mcp plugins list",
+      "Read plugin source selections, settings and resolution diagnostics.",
+      readOnly: true),
+    item(
+      "plugin.doctor", "computer-mcp plugins doctor",
+      "Check package configuration and files, including disabled contributions; no code is executed.",
+      readOnly: true),
+    item(
+      "plugin.search", "computer-mcp plugins search",
+      "Search public plugin declarations from the official GitHub organization.", readOnly: true),
+    item(
+      "plugin.artifacts", "computer-mcp plugins artifacts",
+      "List verified archive selections from an official repository's published release.",
+      readOnly: true),
+    item(
+      "plugin.install_release", "computer-mcp plugins install-release",
+      "Download and install an exact release archive after revalidating its source and bytes."),
+    item(
+      "plugin.show", "computer-mcp plugins show", "Read one plugin and its host settings.",
+      readOnly: true),
+    item(
+      "plugin.register", "computer-mcp plugins register",
+      "Register or explicitly refresh a local development package."),
+    item(
+      "plugin.install", "computer-mcp plugins install",
+      "Install or update a local archive after digest, identity and compatibility checks."),
+    item(
+      "plugin.uninstall", "computer-mcp plugins uninstall",
+      "Revoke an artifact registration and clean only its receipted files; retain host settings.",
+      destructive: true),
+    item(
+      "plugin.recover", "computer-mcp plugins recover",
+      "Retry owned-file recovery without changing plugin selections or grants.", destructive: true),
+    item(
+      "plugin.configure", "computer-mcp plugins configure",
+      "Replace one plugin's host settings with revision protection."),
+    item(
+      "plugin.enable", "computer-mcp plugins enable",
+      "Enable a registered plugin without granting additional tools."),
+    item(
+      "plugin.disable", "computer-mcp plugins disable",
+      "Disable a plugin while retaining source and host overrides."),
+    item(
+      "plugin.select", "computer-mcp plugins select",
+      "Select a recorded installation or restore bundled fallback."),
+    item(
+      "plugin.remove", "computer-mcp plugins remove",
+      "Withdraw a development registration; retain its files and host overrides.",
+      destructive: true),
     item(
       "audit.list", "computer-mcp audit list", "List bounded redacted audit events.", readOnly: true
     ),

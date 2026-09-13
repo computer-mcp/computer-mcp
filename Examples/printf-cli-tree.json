@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "source": "Computer MCP literal-string printf integration",
+  "executable_version": "system printf; version not probed",
+  "coverage": "partial",
+  "omissions": ["General printf format strings, numeric conversions, and escape interpretation are not exposed."],
+  "commands": [
+    {
+      "id": "print",
+      "path": [],
+      "description": "Print each supplied string literally on its own line.",
+      "executable": true,
+      "parameters": [
+        {
+          "name": "values",
+          "description": "Strings to print, preserving spaces, quotes and Unicode.",
+          "schema": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+          "required": true
+        }
+      ],
+      "argv": [
+        {"kind": "literal", "value": "--"},
+        {"kind": "literal", "value": "%s\n"},
+        {"kind": "positional", "parameter": "values"}
+      ],
+      "stdout": "text"
+    }
+  ]
+}

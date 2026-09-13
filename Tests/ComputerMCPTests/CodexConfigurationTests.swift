@@ -6,23 +6,24 @@ import Testing
 @Suite
 final class CodexConfigurationTests {
   @Test
-  func testCodexDefaultsAreDisabledAndFailClosed() throws {
-    let configuration = GatewayConfiguration()
+  func testEmbeddedCodexImportDefaultsAreDisabledAndFailClosed() throws {
+    let configuration = GatewayConfiguration(codex: .init())
 
-    #expect(!(configuration.codex.enabled))
-    #expect(configuration.codex.appServerEnabled)
-    #expect(configuration.codex.execEnabled)
-    #expect(configuration.codex.mcpEnabled)
-    #expect(configuration.codex.experimentalAPI)
-    #expect((configuration.codex.sandbox) == (.workspaceWrite))
-    #expect((configuration.codex.approvalPolicy) == (.never))
-    #expect((configuration.codex.maxSessions) == (8))
-    #expect((configuration.codex.maxEventsPerSession) == (1_024))
-    #expect(configuration.codex.appServerTerminationGraceMilliseconds == 1_000)
-    #expect(configuration.codex.appServerKillGraceMilliseconds == 2_000)
-    #expect(configuration.codex.appServerAppListTimeoutSeconds == 120)
-    #expect(configuration.codex.appServerApprovalTimeoutSeconds == 300)
-    #expect(!configuration.codex.appServerAutoApproveWorkspaceWrites)
+    let imported = try #require(configuration.codex)
+    #expect(!(imported.enabled))
+    #expect(imported.appServerEnabled)
+    #expect(imported.execEnabled)
+    #expect(imported.mcpEnabled)
+    #expect(imported.experimentalAPI)
+    #expect((imported.sandbox) == (.workspaceWrite))
+    #expect((imported.approvalPolicy) == (.never))
+    #expect((imported.maxSessions) == (8))
+    #expect((imported.maxEventsPerSession) == (1_024))
+    #expect(imported.appServerTerminationGraceMilliseconds == 1_000)
+    #expect(imported.appServerKillGraceMilliseconds == 2_000)
+    #expect(imported.appServerAppListTimeoutSeconds == 120)
+    #expect(imported.appServerApprovalTimeoutSeconds == 300)
+    #expect(!imported.appServerAutoApproveWorkspaceWrites)
     expectNoThrow(try configuration.validate())
   }
 
@@ -55,28 +56,29 @@ final class CodexConfigurationTests {
 
     let configuration = try GatewayConfiguration.load(path: path.path)
 
-    #expect(configuration.codex.enabled)
-    #expect((configuration.codex.executable) == ("/opt/local/bin/codex"))
-    #expect(configuration.codex.appServerEnabled)
-    #expect(!(configuration.codex.execEnabled))
-    #expect(configuration.codex.mcpEnabled)
-    #expect(configuration.codex.experimentalAPI)
-    #expect((configuration.codex.appServerRequestTimeoutSeconds) == (45))
-    #expect(configuration.codex.appServerAppListTimeoutSeconds == 150)
-    #expect(configuration.codex.appServerTerminationGraceMilliseconds == 1_500)
-    #expect(configuration.codex.appServerKillGraceMilliseconds == 2_500)
-    #expect(configuration.codex.appServerApprovalTimeoutSeconds == 90)
-    #expect(configuration.codex.appServerAutoApproveWorkspaceWrites)
-    #expect((configuration.codex.sandbox) == (.readOnly))
-    #expect((configuration.codex.approvalPolicy) == (.onRequest))
-    #expect((configuration.codex.maxSessions) == (4))
-    #expect((configuration.codex.maxEventsPerSession) == (512))
+    let imported = try #require(configuration.codex)
+    #expect(imported.enabled)
+    #expect((imported.executable) == ("/opt/local/bin/codex"))
+    #expect(imported.appServerEnabled)
+    #expect(!(imported.execEnabled))
+    #expect(imported.mcpEnabled)
+    #expect(imported.experimentalAPI)
+    #expect((imported.appServerRequestTimeoutSeconds) == (45))
+    #expect(imported.appServerAppListTimeoutSeconds == 150)
+    #expect(imported.appServerTerminationGraceMilliseconds == 1_500)
+    #expect(imported.appServerKillGraceMilliseconds == 2_500)
+    #expect(imported.appServerApprovalTimeoutSeconds == 90)
+    #expect(imported.appServerAutoApproveWorkspaceWrites)
+    #expect((imported.sandbox) == (.readOnly))
+    #expect((imported.approvalPolicy) == (.onRequest))
+    #expect((imported.maxSessions) == (4))
+    #expect((imported.maxEventsPerSession) == (512))
   }
 
   @Test
   func testCodexRejectsUnboundedAppServerRequestDeadline() {
     let configuration = GatewayConfiguration(
-      codex: CodexConfig(enabled: true, appServerRequestTimeoutSeconds: 0)
+      codex: CodexConfigurationImport(enabled: true, appServerRequestTimeoutSeconds: 0)
     )
 
     expectThrows(try configuration.validate()) { error in
@@ -87,7 +89,7 @@ final class CodexConfigurationTests {
   @Test
   func testCodexRejectsUnboundedAppListDeadline() {
     let configuration = GatewayConfiguration(
-      codex: CodexConfig(enabled: true, appServerAppListTimeoutSeconds: 301)
+      codex: CodexConfigurationImport(enabled: true, appServerAppListTimeoutSeconds: 301)
     )
 
     expectThrows(try configuration.validate()) { error in
@@ -98,7 +100,7 @@ final class CodexConfigurationTests {
   @Test
   func testCodexRejectsDangerFullAccess() {
     let configuration = GatewayConfiguration(
-      codex: CodexConfig(enabled: true, sandbox: .dangerFullAccess)
+      codex: CodexConfigurationImport(enabled: true, sandbox: .dangerFullAccess)
     )
 
     expectThrows(try configuration.validate()) { error in
@@ -110,7 +112,7 @@ final class CodexConfigurationTests {
   @Test
   func testCodexRequiresAtLeastOneEnabledPath() {
     let configuration = GatewayConfiguration(
-      codex: CodexConfig(
+      codex: CodexConfigurationImport(
         enabled: true,
         appServerEnabled: false,
         execEnabled: false,
@@ -129,12 +131,12 @@ final class CodexConfigurationTests {
   func testCodexBoundsSessionAndEventLimits() {
     expectThrows(
       try GatewayConfiguration(
-        codex: CodexConfig(enabled: true, maxSessions: 0)
+        codex: CodexConfigurationImport(enabled: true, maxSessions: 0)
       ).validate()
     )
     expectThrows(
       try GatewayConfiguration(
-        codex: CodexConfig(enabled: true, maxEventsPerSession: 63)
+        codex: CodexConfigurationImport(enabled: true, maxEventsPerSession: 63)
       ).validate()
     )
   }
@@ -143,17 +145,18 @@ final class CodexConfigurationTests {
   func testCodexBoundsProcessAndApprovalDeadlines() {
     expectThrows(
       try GatewayConfiguration(
-        codex: CodexConfig(enabled: true, appServerTerminationGraceMilliseconds: 30_001)
+        codex: CodexConfigurationImport(
+          enabled: true, appServerTerminationGraceMilliseconds: 30_001)
       ).validate()
     )
     expectThrows(
       try GatewayConfiguration(
-        codex: CodexConfig(enabled: true, appServerKillGraceMilliseconds: 99)
+        codex: CodexConfigurationImport(enabled: true, appServerKillGraceMilliseconds: 99)
       ).validate()
     )
     expectThrows(
       try GatewayConfiguration(
-        codex: CodexConfig(enabled: true, appServerApprovalTimeoutSeconds: 3_601)
+        codex: CodexConfigurationImport(enabled: true, appServerApprovalTimeoutSeconds: 3_601)
       ).validate()
     )
   }

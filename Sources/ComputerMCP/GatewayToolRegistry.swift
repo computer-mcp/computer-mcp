@@ -68,6 +68,9 @@ package struct MCPTool: Equatable, Sendable {
   /// Optional MCP tool metadata.
   package let meta: JSONValue?
 
+  /// Assigned by registration; never decoded from MCP annotations or `_meta`.
+  package let mcpReference: MCPToolReference?
+
   /// Creates an MCP tool definition.
   package init(
     name: String,
@@ -76,7 +79,8 @@ package struct MCPTool: Equatable, Sendable {
     inputSchema: JSONValue,
     outputSchema: JSONValue? = MCPTool.resultEnvelopeSchema,
     annotations: MCPToolAnnotations? = nil,
-    meta: JSONValue? = nil
+    meta: JSONValue? = nil,
+    mcpReference: MCPToolReference? = nil
   ) {
     self.name = name
     self.title = title ?? MCPTool.defaultTitle(for: name)
@@ -85,6 +89,7 @@ package struct MCPTool: Equatable, Sendable {
     self.outputSchema = outputSchema
     self.annotations = annotations
     self.meta = meta
+    self.mcpReference = mcpReference
   }
 
   /// JSON representation used in MCP `tools/list` responses.
@@ -107,15 +112,16 @@ package struct MCPTool: Equatable, Sendable {
     return .object(object)
   }
 
-  internal func prefixed(_ prefix: String) -> MCPTool {
+  internal func prefixed(_ prefix: String, serverID: String) -> MCPTool {
     MCPTool(
-      name: "\(prefix).\(name)",
+      name: prefix.isEmpty ? name : "\(prefix).\(name)",
       title: title,
       description: description,
       inputSchema: inputSchema,
       outputSchema: outputSchema,
       annotations: annotations,
-      meta: meta
+      meta: meta,
+      mcpReference: MCPToolReference(serverID: serverID, toolName: name)
     )
   }
 
@@ -127,7 +133,8 @@ package struct MCPTool: Equatable, Sendable {
       inputSchema: inputSchema,
       outputSchema: outputSchema,
       annotations: annotations,
-      meta: meta
+      meta: meta,
+      mcpReference: mcpReference
     )
   }
 
@@ -176,7 +183,16 @@ internal enum GatewayToolError: Error, LocalizedError, Equatable {
   }
 }
 
-internal protocol DownstreamMCPClient: Sendable {
+package protocol DownstreamMCPClient: Sendable {
+  /// Creates a client whose connections and shutdown belong to one workspace owner.
+  /// Launch context is host-owned and must not be inferred from a plugin manifest's identity.
+  func makeScopedClient(
+    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+  )
+    -> any DownstreamMCPClient
+  func toolChanges() -> AsyncStream<Void>
+  func shutdown() async
+  func isServerVisible(_ server: MCPServerConfig) -> Bool
   func listTools(server: MCPServerConfig) throws -> [MCPTool]
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue
   func callTool(
@@ -191,6 +207,9 @@ internal protocol DownstreamMCPClient: Sendable {
     arguments: JSONValue,
     requestID: String
   ) throws -> JSONValue
+  func callToolAsync(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
+  ) async throws -> JSONValue
   func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue
   func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue
   func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue
@@ -205,7 +224,26 @@ internal protocol DownstreamMCPClient: Sendable {
 }
 
 extension DownstreamMCPClient {
-  internal func callTool(
+  package func callToolAsync(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
+  ) async throws -> JSONValue {
+    try Task.checkCancellation()
+    let result = try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(
+          with: Result {
+            try self.callTool(
+              server: server, name: name, arguments: arguments, requestID: requestID)
+          })
+      }
+    }
+    try Task.checkCancellation()
+    return result
+  }
+  package func toolChanges() -> AsyncStream<Void> { AsyncStream { $0.finish() } }
+  package func shutdown() async {}
+  package func isServerVisible(_ server: MCPServerConfig) -> Bool { true }
+  package func callTool(
     server: MCPServerConfig,
     name: String,
     arguments: JSONValue,
@@ -214,14 +252,14 @@ extension DownstreamMCPClient {
     try callTool(server: server, name: name, arguments: arguments)
   }
 
-  internal func connectionStatus(server: MCPServerConfig) throws -> JSONValue {
+  package func connectionStatus(server: MCPServerConfig) throws -> JSONValue {
     .object([
       "state": .string("not_observed"),
       "persistent_session": .bool(false),
     ])
   }
 
-  internal func startToolCall(
+  package func startToolCall(
     server: MCPServerConfig,
     name: String,
     arguments: JSONValue,
@@ -232,7 +270,7 @@ extension DownstreamMCPClient {
     )
   }
 
-  internal func readEvents(
+  package func readEvents(
     server: MCPServerConfig,
     afterCursor: Int,
     maxResults: Int
@@ -247,7 +285,7 @@ extension DownstreamMCPClient {
     ])
   }
 
-  internal func activeRequests(server: MCPServerConfig) throws -> JSONValue {
+  package func activeRequests(server: MCPServerConfig) throws -> JSONValue {
     .object([
       "server": .string(server.id),
       "requests": .array([]),
@@ -255,7 +293,7 @@ extension DownstreamMCPClient {
     ])
   }
 
-  internal func cancelRequest(
+  package func cancelRequest(
     server: MCPServerConfig,
     requestID: String,
     reason: String?
@@ -1572,23 +1610,61 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   private let mcpClient: DownstreamMCPClient
   private let environment: [String: String]
   private let encoder: JSONEncoder
+  private let cliExecution: CLIProcessExecution
 
   internal init(
     configuration: GatewayConfiguration,
-    commandRunner: CommandRunning = ProcessCommandRunner(),
+    commandRunner: CommandRunning? = nil,
     processManager: ProcessManaging = ManagedProcessRegistry(),
     shellManager: ShellManaging = SubprocessShellRuntime(),
     mcpClient: DownstreamMCPClient = MCPProxyClient(),
+    hostContext: MCPHostContext? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
-    self.configuration = configuration
-    self.commandRunner = commandRunner
+    var enabledConfiguration = configuration
+    let disabledMCPIDs = Set(configuration.mcp.servers.filter { !$0.enabled }.map(\.id))
+    enabledConfiguration.mcp.servers.removeAll { !$0.enabled }
+    enabledConfiguration.tools.removeAll { disabledMCPIDs.contains($0.source) }
+    self.configuration = enabledConfiguration
+    self.cliExecution = CLIProcessExecution(
+      maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
+    self.commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
     self.processManager = processManager
     self.shellManager = shellManager
-    self.mcpClient = mcpClient
+    self.mcpClient = mcpClient.makeScopedClient(
+      workingDirectory: configuration.workspaceDirectory, environment: environment,
+      hostContext: hostContext)
     self.environment = environment
     self.encoder = JSONEncoder()
     self.encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+  }
+
+  internal var hasReexportedMCPServers: Bool {
+    configuration.mcp.servers.contains { $0.exposure.includesReexport }
+  }
+
+  internal var hasCLITrees: Bool { configuration.cli.commands.contains { $0.tree != nil } }
+
+  internal func cliTreeProviders() throws -> [any GatewayToolProvider] {
+    try configuration.cli.commands.compactMap { command in
+      guard let source = command.tree else { return nil }
+      var command = command
+      command.env = environment.merging(command.env) { _, value in value }
+      let tree = try source.load(
+        command: command, workspace: configuration.workspaceDirectory, execution: cliExecution)
+      return CLITreeToolProvider(
+        registration: command, tree: tree, workspace: configuration.workspaceDirectory,
+        execution: cliExecution,
+        timeoutMilliseconds: command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs,
+        maxOutputBytes: configuration.policy.maxOutputBytes)
+    }
+  }
+
+  internal func toolChanges() -> AsyncStream<Void> { mcpClient.toolChanges() }
+
+  internal func shutdown() async {
+    await cliExecution.shutdown()
+    await mcpClient.shutdown()
   }
 
   /// Registered gateway and optionally reexported downstream MCP tools.
@@ -1603,16 +1679,20 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     )
 
     for configuredTool in configuration.tools {
+      guard let target = configuredTool.tool,
+        let server = configuration.mcp.servers.first(where: { $0.id == configuredTool.source }),
+        mcpClient.isServerVisible(server), server.permitsTool(target)
+      else { continue }
       try appendTool(try toolDefinition(for: configuredTool), to: &tools)
     }
 
     for server in configuration.mcp.servers where server.exposure.includesReexport {
-      guard let prefix = server.prefix, !prefix.isEmpty else {
+      guard let prefix = server.prefix else {
         throw GatewayToolError.invalidArguments(
           "MCP server '\(server.id)' uses reexport exposure but has no prefix.")
       }
       let downstreamTools = try permittedDownstreamTools(server: server).map {
-        $0.prefixed(prefix)
+        $0.prefixed(prefix, serverID: server.id)
       }
       let existing = Set(tools.map(\.name))
       if let conflict = downstreamTools.first(where: { existing.contains($0.name) }) {
@@ -2585,16 +2665,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       if let configuredTool = configuration.tools.first(where: { $0.name == name }) {
         return try callConfiguredTool(configuredTool, arguments: object)
       }
-      if let reexport = reexportedTool(for: name) {
-        try requireDownstreamToolAllowed(
-          reexport.downstreamName,
-          server: reexport.server
-        )
-        return try mcpClient.callTool(
-          server: reexport.server,
-          name: reexport.downstreamName,
-          arguments: .object(object)
-        )
+      guard configuration.mcp.servers.contains(where: { $0.exposure.includesReexport }) else {
+        throw GatewayToolError.unknownTool(name)
+      }
+      // Membership and routing come from the validated discovered definition,
+      // including explicitly preserved native names, not a prefix guess.
+      if let definition = try listTools().first(where: { $0.name == name }),
+        definition.mcpReference != nil
+      {
+        return try callTool(definition: definition, arguments: arguments)
       }
       throw GatewayToolError.unknownTool(name)
     }
@@ -2606,7 +2685,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       description: tool.description
         ?? "Call configured \(tool.adapter.rawValue) tool \(tool.name).",
       inputSchema: try tool.inputSchemaValue(),
-      outputSchema: nil
+      outputSchema: nil,
+      mcpReference: tool.tool.map { MCPToolReference(serverID: tool.source, toolName: $0) }
     )
   }
 
@@ -2633,6 +2713,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       throw GatewayToolError.invalidArguments("MCP-backed tool '\(tool.name)' requires tool.")
     }
     let server = try mcpServer(tool.source)
+    try requireDownstreamToolAllowed(downstreamTool, server: server)
     return try mcpClient.callTool(
       server: server,
       name: downstreamTool,
@@ -5470,6 +5551,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
           "risk": .string(command.risk ?? "unspecified"),
           "discovery": .array(command.discovery.map { .string($0) }),
           "has_interface": .bool(command.interface != nil),
+          "has_tree": .bool(command.tree != nil),
         ])
       })
   }
@@ -5501,6 +5583,26 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     let id = try requiredString("id", in: object)
     let command = try registeredCLICommand(id)
     let path = try optionalStringArray("path", in: object)
+    if let source = command.tree {
+      guard source.kind == .file else {
+        throw GatewayToolError.disabled(
+          "This CLI uses an executable interface exporter; use its projected tools and catalog metadata."
+        )
+      }
+      let tree = try source.load(
+        command: command, workspace: configuration.workspaceDirectory, execution: cliExecution)
+      guard let node = tree.commands.first(where: { $0.path == path }) else {
+        throw GatewayToolError.invalidArguments("The path is not in the declared CLI tree.")
+      }
+      // cli.help is read-only. Publisher-provided help argv is metadata, not an
+      // authority to execute arbitrary code through a discovery capability.
+      return .object([
+        "id": .string(command.id), "path": .array(path.map(JSONValue.string)),
+        "description": .string(node.description), "input_schema": node.inputSchema,
+        "help_argv": node.helpArgv.map { .array($0.map(JSONValue.string)) } ?? .null,
+        "executed": .bool(false), "coverage": .string(tree.coverage.rawValue),
+      ])
+    }
     var helpArgv = path
     if helpArgv.last != "--help" && helpArgv.last != "-h" {
       helpArgv.append("--help")
@@ -5554,7 +5656,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     timeout: Int?,
     requireArbitraryArgs: Bool
   ) throws -> CommandResult {
-    if requireArbitraryArgs && !command.allowAnyArgs {
+    if requireArbitraryArgs && (!command.allowAnyArgs || command.tree != nil) {
       throw GatewayToolError.disabled(
         "CLI command '\(command.id)' does not allow arbitrary args.")
     }
@@ -5581,12 +5683,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "discovery": .array(command.discovery.map { .string($0) }),
       "has_interface": .bool(command.interface != nil),
       "interface": command.interface?.json ?? .null,
+      "tree": command.tree.flatMap { try? JSONValue.encoded($0) } ?? .null,
     ])
   }
 
   private func mcpServerList() -> JSONValue {
     .array(
-      configuration.mcp.servers.map { server in
+      configuration.mcp.servers.filter { mcpClient.isServerVisible($0) }.map { server in
         .object([
           "id": .string(server.id),
           "transport": .string(server.transport.rawValue),
@@ -5602,7 +5705,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     if let id {
       servers = [try mcpServer(id)]
     } else {
-      servers = configuration.mcp.servers
+      servers = configuration.mcp.servers.filter { mcpClient.isServerVisible($0) }
     }
 
     return .object([
@@ -5627,15 +5730,18 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       let command = server.command ?? ""
       let resolved = resolveExecutable(
         command,
-        base: mcpWorkingDirectory(server),
-        defaultBase: configuration.workspaceDirectory
+        base: server.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
+        defaultBase: configuration.workspaceDirectory,
+        overrides: server.env
       )
       object["command"] = .string(command)
       object["args"] = .array(server.args.map { .string($0) })
-      object["cwd"] =
-        mcpWorkingDirectory(server).map { .string($0.standardizedFileURL.path) } ?? .null
+      object["cwd"] = .string(
+        server.resolvedWorkingDirectory(base: configuration.workspaceDirectory).standardizedFileURL
+          .path)
       object["command_resolution"] = executableResolutionJSON(resolved)
-      object["ready"] = .bool(resolved.exists && resolved.isExecutable)
+      object["ready"] = .bool(resolved.status == .passed)
+      object["readiness_scope"] = .string("file_and_interpreter_checks")
 
     case .streamableHTTP, .http, .sse:
       object["url"] = server.url.map(JSONValue.string) ?? .null
@@ -5946,7 +6052,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     guard let command = configuration.cli.commands.first(where: { $0.id == id }) else {
       throw GatewayToolError.unknownCLI(id)
     }
-    guard command.allowAnyArgs else {
+    guard command.allowAnyArgs, command.tree == nil else {
       throw GatewayToolError.disabled(
         "CLI command '\(command.id)' does not allow arbitrary args.")
     }
@@ -27805,70 +27911,26 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func resolveExecutable(_ executable: String, command: CLICommandConfig)
-    -> ExecutableResolution
+    -> ExecutableInspection
   {
     resolveExecutable(
       executable,
       base: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
-      defaultBase: configuration.workspaceDirectory
+      defaultBase: configuration.workspaceDirectory,
+      overrides: command.env
     )
   }
 
-  private func resolveExecutable(_ executable: String, base: URL?, defaultBase: URL)
-    -> ExecutableResolution
-  {
-    if executable.contains("/") {
-      let base = base ?? defaultBase
-      let url =
-        executable.hasPrefix("/")
-        ? URL(fileURLWithPath: executable)
-        : base.appendingPathComponent(executable)
-      let path = url.standardizedFileURL.path
-      return ExecutableResolution(
-        path: path,
-        source: executable.hasPrefix("/") ? "absolute_path" : "relative_path",
-        exists: FileManager.default.fileExists(atPath: path),
-        isExecutable: FileManager.default.isExecutableFile(atPath: path)
-      )
-    }
-
-    guard let path = pathExecutable(executable) else {
-      return ExecutableResolution(
-        path: nil,
-        source: "path",
-        exists: false,
-        isExecutable: false
-      )
-    }
-
-    return ExecutableResolution(
-      path: path,
-      source: "path",
-      exists: true,
-      isExecutable: FileManager.default.isExecutableFile(atPath: path)
-    )
+  private func resolveExecutable(
+    _ executable: String, base: URL?, defaultBase: URL, overrides: [String: String]
+  ) -> ExecutableInspection {
+    ExecutableInspection.inspect(
+      executable, workingDirectory: base ?? defaultBase,
+      environment: environment.merging(overrides) { _, value in value })
   }
 
-  private func executableResolutionJSON(_ resolution: ExecutableResolution) -> JSONValue {
-    .object([
-      "exists": .bool(resolution.exists),
-      "is_executable": .bool(resolution.isExecutable),
-      "resolved_path": resolution.path.map(JSONValue.string) ?? .null,
-      "resolution_source": .string(resolution.source),
-    ])
-  }
-
-  private func mcpWorkingDirectory(_ server: MCPServerConfig) -> URL? {
-    guard let cwd = server.cwd, !cwd.isEmpty else {
-      return configuration.workspaceDirectory
-    }
-    if cwd == "workspace" {
-      return configuration.workspaceDirectory
-    }
-    if cwd.hasPrefix("/") {
-      return URL(fileURLWithPath: cwd)
-    }
-    return configuration.workspaceDirectory.appendingPathComponent(cwd)
+  private func executableResolutionJSON(_ resolution: ExecutableInspection) -> JSONValue {
+    resolution.json
   }
 
   private func mcpEnvironmentEntries(_ server: MCPServerConfig) -> [JSONValue] {
@@ -27904,10 +27966,6 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     ])
   }
 
-  private func pathExecutable(_ executable: String) -> String? {
-    pathExecutables(executable, allMatches: false).first
-  }
-
   private func pathExecutables(_ executable: String, allMatches: Bool) -> [String] {
     var matches: [String] = []
     var seen = Set<String>()
@@ -27934,19 +27992,60 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return pathValue.split(separator: ":").map(String.init).filter { !$0.isEmpty }
   }
 
-  private func reexportedTool(for name: String) -> (
-    server: MCPServerConfig, downstreamName: String
-  )? {
-    for server in configuration.mcp.servers where server.exposure.includesReexport {
-      guard let prefix = server.prefix else {
-        continue
-      }
-      let marker = "\(prefix)."
-      if name.hasPrefix(marker) {
-        return (server, String(name.dropFirst(marker.count)))
+  internal func capability(for tool: MCPTool) -> CapabilityDescriptor {
+    guard let reference = tool.mcpReference else {
+      return GatewayCapabilityCatalog().descriptor(for: tool)
+    }
+    return CapabilityDescriptor(
+      id: tool.name,
+      risk: configuration.mcpRisk(for: reference),
+      workspaceRequirement: .optional,
+      usesNetwork: true,
+      mcpReference: reference,
+      equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference)
+    )
+  }
+
+  internal func callTool(definition: MCPTool, arguments: JSONValue?) throws -> JSONValue {
+    guard let reference = definition.mcpReference else {
+      return try callTool(name: definition.name, arguments: arguments)
+    }
+    let server = try mcpServer(reference.serverID)
+    try requireDownstreamToolAllowed(reference.toolName, server: server)
+    return try mcpClient.callTool(
+      server: server, name: reference.toolName, arguments: arguments ?? .object([:]))
+  }
+
+  internal func callToolAsync(definition: MCPTool, arguments: JSONValue?) async throws -> JSONValue
+  {
+    try Task.checkCancellation()
+    if let reference = definition.mcpReference {
+      let server = try mcpServer(reference.serverID)
+      try requireDownstreamToolAllowed(reference.toolName, server: server)
+      return try await mcpClient.callToolAsync(
+        server: server, name: reference.toolName, arguments: arguments ?? .object([:]),
+        requestID: nil)
+    }
+    if definition.name == "mcp.tools.call" {
+      let object = arguments?.objectValue ?? [:]
+      if try optionalBool("wait_for_result", in: object) ?? true {
+        let server = try mcpServer(requiredString("server", in: object))
+        let name = try requiredString("tool", in: object)
+        try requireDownstreamToolAllowed(name, server: server)
+        return try textResult(
+          await mcpClient.callToolAsync(
+            server: server, name: name, arguments: object["arguments"] ?? .object([:]),
+            requestID: optionalString("request_id", in: object)))
       }
     }
-    return nil
+    return try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(
+          with: Result {
+            try self.callTool(definition: definition, arguments: arguments)
+          })
+      }
+    }
   }
 
   private func permittedDownstreamTools(server: MCPServerConfig) throws -> [MCPTool] {
@@ -27960,13 +28059,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     guard server.permitsTool(name) else {
       throw GatewayToolError.invalidArguments(
         "[mcp.tool_not_approved] Downstream MCP tool '\(name)' is not approved for server '\(server.id)'. "
-          + "Add it to allowed_tools or expose it as a pinned [[tools]] mapping."
+          + "The host must select it in allowed_tools or explicitly grant allow_any_tool."
       )
     }
   }
 
   private func mcpServer(_ id: String) throws -> MCPServerConfig {
-    guard let server = configuration.mcp.servers.first(where: { $0.id == id }) else {
+    guard let server = configuration.mcp.servers.first(where: { $0.id == id }),
+      mcpClient.isServerVisible(server)
+    else {
       throw GatewayToolError.unknownMCPServer(id)
     }
     return server
@@ -28203,7 +28304,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       MCPTool(
         name: "cli.describe",
         description:
-          "Describe one registered CLI provider and its mechanical interface for MCP consumers.",
+          "Describe a registered CLI provider, its mechanical interface, and any declared CLI Tree source.",
         inputSchema: objectSchema(
           properties: ["id": stringSchema("Registered CLI id.")],
           required: ["id"]
@@ -28222,7 +28323,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       MCPTool(
         name: "cli.help",
         description:
-          "Return raw CLI help plus exec_context for constructing a follow-up cli.exec MCP call. Do not execute the command outside this gateway.",
+          "Return declared metadata for a file-backed CLI Tree path without executing it. For a CLI without a tree, return raw help and follow-up cli.exec context. Executable tree exporters are not run by this read-only tool.",
         inputSchema: objectSchema(
           properties: [
             "id": stringSchema("Registered CLI id."),
@@ -28236,7 +28337,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       MCPTool(
         name: "cli.exec",
         description:
-          "Execute a registered local CLI through this MCP gateway using explicit argv. All local CLI execution should use this tool rather than local shell calls.",
+          "Execute explicit argv for a registered CLI that grants unrestricted arguments. Tree-backed CLIs use their projected typed tools. Keep execution inside this gateway's authorization boundary.",
         inputSchema: objectSchema(
           properties: [
             "id": stringSchema("Registered CLI id."),
@@ -33017,7 +33118,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     case "cli.list", "cli.describe", "cli.status", "cli.help",
       "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
       "mcp.tools.find", "mcp.resources.list", "mcp.resources.templates.list",
-      "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "process.list",
+      "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
+      "mcp.requests.list", "process.list",
       "process.read", "shell.list", "shell.read":
       return MCPToolAnnotations(
         readOnlyHint: true,
@@ -35652,13 +35754,6 @@ private struct SkillSearchResult {
       ]),
     ])
   }
-}
-
-private struct ExecutableResolution {
-  var path: String?
-  var source: String
-  var exists: Bool
-  var isExecutable: Bool
 }
 
 private enum FileNameMatchMode: String {

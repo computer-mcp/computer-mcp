@@ -15,7 +15,7 @@ Swift SDK. The module provides:
 - policy, single-use operation tickets, and redacted audit persistence;
 - bounded Builtin, Skill, CLI, Shell, process, downstream MCP, and Computer Use
   execution planes;
-- Codex App Server, Exec, and MCP integrations through `swift-codex`;
+- Codex execution through an independent standard MCP adapter plugin;
 - independent App-managed OpenAI and Cloudflare transport profiles and Keychain
   credentials;
 - built-in profile defaults;

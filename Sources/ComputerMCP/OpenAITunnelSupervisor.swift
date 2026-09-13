@@ -207,7 +207,7 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
   private let environment: [String: String]
 
   internal init(
-    commandRunner: any CommandRunning = ProcessCommandRunner(),
+    commandRunner: any CommandRunning = ManagedCommandRunner(),
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
     self.commandRunner = commandRunner
@@ -219,8 +219,9 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
     configuration: GatewayConfiguration
   ) throws -> String {
     if let requestedPath {
-      let path = URL(fileURLWithPath: requestedPath).standardizedFileURL.path
-      guard FileManager.default.isExecutableFile(atPath: path) else {
+      let inspection = ExecutableInspection.inspect(
+        requestedPath, workingDirectory: configuration.workspaceDirectory, environment: environment)
+      guard !inspection.hasKnownFailure, let path = inspection.path else {
         throw OpenAITunnelSupervisorError.tunnelClientUnavailable
       }
       return path
@@ -234,7 +235,7 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
     )
     guard let result = try discovery.discover().first,
       let path = result.resolvedPath,
-      result.doctorStatus.state != .unavailable
+      result.version != nil, result.doctorStatus.state == .notApplicable
     else {
       throw OpenAITunnelSupervisorError.tunnelClientUnavailable
     }

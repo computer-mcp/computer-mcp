@@ -21,7 +21,7 @@ final class LiveAppControlPlane: AppControlPlane {
     )
     let controlPlane = try AppControlPlaneService.live(
       directories: directories,
-      openAITunnelGatewayExecutablePath: Self.embeddedGatewayExecutablePath(),
+      gatewayExecutablePath: Self.embeddedGatewayExecutablePath(),
       keychainService: identity.environment.keychainService,
       keychainAccessGroup: identity.keychainAccessGroup
     )
@@ -65,6 +65,7 @@ final class LiveAppControlPlane: AppControlPlane {
   func startApplication() async throws {
     fileLogger.append(.info, event: "app.start.requested")
     try await controlSocketService?.start()
+    try await controlPlane.recoverPluginsAtStartup()
     guard try await controlPlane.gatewayDesiredRunning() else {
       fileLogger.append(.info, event: "app.start.gateway_disabled")
       return
@@ -201,6 +202,68 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func fetchProviders() async throws -> [ProviderSummary] {
     try await providerSummaries(service: gatewayService.snapshot())
+  }
+
+  func fetchPlugins() async throws -> PluginHostSnapshot {
+    try await controlPlane.pluginSnapshot()
+  }
+
+  func fetchMCPRegistrations() async throws -> MCPRegistrationSnapshot {
+    try await controlPlane.mcpRegistrations()
+  }
+
+  func mcpCredentialStatus(id: String) async throws -> MCPRegistrationCredentialStatus {
+    try await controlPlane.mcpCredentialStatus(id: id)
+  }
+
+  func changeMCPCredential(id: String, expectedBindingDigest: String, token: String?) async throws {
+    try await controlPlane.changeMCPCredential(
+      id: id, expectedBindingDigest: expectedBindingDigest, token: token)
+  }
+
+  func doctorMCPRegistration(id: String, workspaceID: String) async throws
+    -> MCPRegistrationDoctorReport
+  {
+    try await controlPlane.doctorMCPRegistration(id: id, workspaceID: workspaceID)
+  }
+
+  func recoverMCPProcessReceipt(
+    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    expectedCurrentDigest: String
+  ) async throws {
+    try await controlPlane.recoverMCPProcessReceipt(
+      id: id, workspaceID: workspaceID, receiptID: receiptID,
+      expectedReceiptDigest: expectedReceiptDigest, expectedCurrentDigest: expectedCurrentDigest)
+  }
+
+  func changeMCPRegistration(
+    _ change: MCPRegistrationChange, apply: Bool, expectedCurrentDigest: String?
+  ) async throws -> MCPRegistrationChangePreview {
+    try await operations.changeMCPRegistration(
+      change, apply: apply, expectedCurrentDigest: expectedCurrentDigest)
+  }
+
+  func doctorPlugin(id: String) async throws -> PluginDoctorReport {
+    try await controlPlane.doctorPlugin(id: id)
+  }
+
+  func pluginReleaseArtifacts(repository: String, repositoryID: Int64, tag: String?, page: Int)
+    async throws -> GitHubPluginReleaseArtifacts
+  {
+    try await controlPlane.pluginReleaseArtifacts(
+      repository: repository, repositoryID: repositoryID, tag: tag, page: page)
+  }
+
+  func searchPlugins(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
+    -> PluginCatalogSearchResult
+  {
+    try await controlPlane.searchPlugins(query: query, kind: kind, page: page, refresh: refresh)
+  }
+
+  func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> PluginHostSnapshot
+  {
+    try await operations.changePlugins(change, expectedRevision: expectedRevision)
   }
 
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] {
@@ -1029,27 +1092,13 @@ final class LiveAppControlPlane: AppControlPlane {
           id: "mcp:\(server.id)",
           displayName: server.id,
           kind: .mcp,
-          state: inProcessState,
+          state: server.enabled ? inProcessState : .stopped,
           version: nil,
           executablePath: server.command ?? server.url,
           toolCount: nil,
-          lastDoctorMessage: "Connected on demand through the MCP proxy.",
-          lastError: nil,
-          lifecycleManaged: false
-        )
-      )
-    }
-    if configuration.codex.enabled {
-      summaries.append(
-        ProviderSummary(
-          id: "codex",
-          displayName: "Codex",
-          kind: .codex,
-          state: inProcessState,
-          version: nil,
-          executablePath: configuration.codex.executable,
-          toolCount: nil,
-          lastDoctorMessage: "App Server, Exec, and MCP paths are independently isolated.",
+          lastDoctorMessage: server.enabled
+            ? "Connected on demand through the MCP proxy."
+            : AppLocalization.string("Disabled"),
           lastError: nil,
           lifecycleManaged: false
         )

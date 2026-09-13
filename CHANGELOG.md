@@ -4,6 +4,28 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.1.0 — 2026-09-13
+
+- Add independently distributed plugins combining MCP, CLI and Skills, with
+  bundled, downloaded and development sources sharing host policy, registration,
+  installation transactions, saved settings and recovery.
+- Add official GitHub search and verified release installation to the App and
+  management CLI, including enable, disable, update, rollback and uninstall.
+- Refresh downstream MCP catalogs and routes atomically, with all-tools and
+  whitelist exposure, pagination, caller-visible notifications, preserved
+  multimodal results and independent workspace/process ownership.
+- Project verified CLI command trees into MCP with deterministic argv encoding,
+  bounded execution and explicit structured coverage. External dependencies
+  remain user/vendor-owned.
+- Extract Codex App Server, Exec and Codex MCP execution into the independent
+  plugin while retaining host approval authority. Provide configuration export
+  and offline seven-table domain-state migration; switching existing execution
+  owners requires a stopped writer and a controlled handoff.
+- Distribute the native Computer Use declaration and Skills as a bundled plugin
+  while preserving native AX fallback. Vendor authentication and system
+  permission failures remain explicit; catalog discovery does not prove native
+  actions are available.
+
 ## 1.0.29 — 2026-09-03
 
 - Unify App, owner-only control Socket, and CLI management behind one

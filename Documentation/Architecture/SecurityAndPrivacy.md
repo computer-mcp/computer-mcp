@@ -25,6 +25,25 @@ It is available only to `chatgpt-operate` and `local-admin`, remains off by
 default, and can be enabled only through the local control plane. If enabled,
 workspace bookmarks are routing and audit context, not containment.
 
+Downstream MCP annotations are presentation hints, not host authorization.
+Registration assigns each exposed tool its actual server/tool identity;
+neither a tool-name prefix nor downstream `_meta` can supply that identity.
+Host risk classification and tool selection apply to configured aliases,
+reexports, and generic calls. A generic invocation resolves its target's host
+risk before policy, consent preflight, or operation-ticket handling. A
+destructive target requires the same ticket through every calling path.
+
+Profiles may receive an entire MCP registration through host-owned
+`mcp_servers`, including remote profiles. Registration selection and profile
+authorization are intersected at discovery and execution; an all-tools
+selection follows future tools without copying a static capability list.
+Exact alias and reexport grants refer to the same underlying tool. The explicit
+generic `mcp.tools.call` capability grants host-selected tools across
+registrations; generic discovery alone grants no tool authority. Catalog
+counts and definitions are filtered before exposure. Observe and Full Shell
+boundaries still apply, and persisted runtime settings cannot substitute a
+different registration grant for the manifest's grant.
+
 ## Transport And Secrets
 
 The remote paths are:
@@ -103,7 +122,9 @@ denial require a local caller using the `local-admin` profile. The supported
 modes are one next eligible turn, an exact thread with a TTL, and bounded time
 with an optional turn limit. Pending requests expire after 15 minutes; approved
 grants expire, can be revoked, and are invalidated by a matching workspace or
-profile disable/removal, provider shutdown, or thread handoff.
+profile disable/removal, gateway connection closure, or thread handoff. These
+approval tools and receipts belong to the host and are available under gateway
+policy independently of the Codex execution provider.
 
 An approved grant never hot-switches an active turn. The runtime claims it
 atomically for an eligible future `thread/start` or `turn/start`, applies the

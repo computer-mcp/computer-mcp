@@ -14,33 +14,36 @@ struct PluginDoctorView: View {
           LabeledContent {
             Text(model.pluginID)
           } label: {
-            Text("Plugin", bundle: .module)
+            Text("Plugin", bundle: AppLocalization.resourceBundle)
           }
           Text(
             "Checks include disabled contributions. Nothing is enabled, executed or installed.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           ).foregroundStyle(.secondary)
           if let report {
             Text(verbatim: AppLocalization.string(report.enabled ? "Enabled" : "Disabled"))
             LabeledContent {
               Text(String(report.revision))
             } label: {
-              Text("Revision", bundle: .module)
+              Text("Revision", bundle: AppLocalization.resourceBundle)
             }
             LabeledContent {
               Text(DateFormatter.computerMCPDateTime.string(from: report.checkedAt))
             } label: {
-              Text("Checked at", bundle: .module)
+              Text("Checked at", bundle: AppLocalization.resourceBundle)
             }
             Text(
               verbatim: AppLocalization.string(
                 report.status == .failed ? "Some package checks failed" : "Package checks finished")
             )
-            Text("File checks do not confirm a working integration.", bundle: .module)
-              .foregroundStyle(.secondary)
+            Text(
+              "File checks do not confirm a working integration.",
+              bundle: AppLocalization.resourceBundle
+            )
+            .foregroundStyle(.secondary)
           }
         } header: {
-          Text("Check package", bundle: .module)
+          Text("Check package", bundle: AppLocalization.resourceBundle)
         }
         if let report {
           if !report.dependencies.isEmpty {
@@ -56,7 +59,7 @@ struct PluginDoctorView: View {
                 }
               }
             } header: {
-              Text("External executables", bundle: .module)
+              Text("External executables", bundle: AppLocalization.resourceBundle)
             }
           }
           ForEach(report.checks) { check in
@@ -75,7 +78,7 @@ struct PluginDoctorView: View {
                 LabeledContent {
                   Text(dependency)
                 } label: {
-                  Text("Dependency ID", bundle: .module)
+                  Text("Dependency ID", bundle: AppLocalization.resourceBundle)
                 }
               }
               if let inspection = check.inspection {
@@ -90,7 +93,7 @@ struct PluginDoctorView: View {
                 LabeledContent {
                   Text(directory).textSelection(.enabled)
                 } label: {
-                  Text("Working directory", bundle: .module)
+                  Text("Working directory", bundle: AppLocalization.resourceBundle)
                 }
               }
             } header: {
@@ -101,10 +104,13 @@ struct PluginDoctorView: View {
             ForEach(report.notChecked, id: \.self) { item in
               Text(uncheckedTitle(item))
             }
-            Text("File checks do not confirm a working integration.", bundle: .module)
-              .foregroundStyle(.secondary)
+            Text(
+              "File checks do not confirm a working integration.",
+              bundle: AppLocalization.resourceBundle
+            )
+            .foregroundStyle(.secondary)
           } header: {
-            Text("Not checked", bundle: .module)
+            Text("Not checked", bundle: AppLocalization.resourceBundle)
           }
         }
       }
@@ -118,14 +124,14 @@ struct PluginDoctorView: View {
         Button {
           checkRequest += 1
         } label: {
-          Text("Check again", bundle: .module)
+          Text("Check again", bundle: AppLocalization.resourceBundle)
         }
         .disabled(model.isChecking)
         Spacer()
         Button {
           dismiss()
         } label: {
-          Text("Done", bundle: .module)
+          Text("Done", bundle: AppLocalization.resourceBundle)
         }
         .keyboardShortcut(.cancelAction)
       }.padding(16)

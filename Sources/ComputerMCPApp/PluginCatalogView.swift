@@ -146,7 +146,7 @@ struct PluginCatalogView: View {
           release = PluginReleaseSelection(entry: entry, revision: revision)
         }
       } label: {
-        Text("Choose release archive", bundle: .module)
+        Text("Choose release archive", bundle: AppLocalization.resourceBundle)
       }
       .disabled(management.snapshot == nil || management.isSaving)
       HStack(spacing: 16) {

@@ -4,6 +4,15 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.1.1 — 2026-09-13
+
+- Fix installed-App crashes in plugin and MCP management pages by resolving
+  localized resources from the packaged App bundle.
+- Verify packaged localization outside SwiftPM build directories and require
+  local installation acceptance of the final package before publishing its draft.
+- Exercise official plugin release installation through separate live checks
+  for Codex, Computer Use and Swift Format.
+
 ## 1.1.0 — 2026-09-13
 
 - Add independently distributed plugins combining MCP, CLI and Skills, with

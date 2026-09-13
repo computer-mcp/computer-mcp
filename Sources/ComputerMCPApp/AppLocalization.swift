@@ -2,7 +2,8 @@ import Foundation
 import SwiftUI
 
 enum AppLocalization {
-  private static var resourceBundle: Bundle {
+  /// Packaged apps use their main localization resources; SwiftPM runs use the module bundle.
+  static var resourceBundle: Bundle {
     let main = Bundle.main
     if main.url(forResource: "Localizable", withExtension: "strings") != nil {
       return main

@@ -199,6 +199,73 @@ final class ComputerMCPAppModelTests {
     )
   }
 
+  @Test(.timeLimit(.minutes(1)))
+  func packagedLocalizationLoadsWithoutASwiftPMBuildDirectory() throws {
+    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ComputerMCPLocalizationProbe-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let contents = root.appendingPathComponent("Probe.app/Contents")
+    let executable = contents.appendingPathComponent("MacOS/Probe")
+    let resources = contents.appendingPathComponent("Resources")
+    try FileManager.default.createDirectory(
+      at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+    let info: [String: String] = [
+      "CFBundleExecutable": "Probe", "CFBundleIdentifier": "test.computer-mcp.localization",
+      "CFBundlePackageType": "APPL", "CFBundleDevelopmentRegion": "en",
+    ]
+    try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+      .write(to: contents.appendingPathComponent("Info.plist"))
+    let source = root.appendingPathComponent("Probe.swift")
+    try #"""
+    import Foundation
+    extension Bundle {
+      static var module: Bundle { fatalError("Packaged localization evaluated the SwiftPM fallback") }
+    }
+    @main enum Probe {
+      static func main() throws {
+        let resources = AppLocalization.resourceBundle
+        precondition(resources.bundleURL == Bundle.main.bundleURL)
+        let chinese = Bundle(url: resources.url(forResource: "zh-Hans", withExtension: "lproj")!)!
+        precondition(chinese.localizedString(forKey: "Search", value: nil, table: "Localizable") == "搜索")
+        precondition(!AppLocalization.string("Plugin").isEmpty)
+      }
+    }
+    """#.write(to: source, atomically: true, encoding: .utf8)
+    let commands: [(String, [String])] = [
+      (
+        "/usr/bin/xcrun",
+        [
+          "xcstringstool", "compile",
+          repository.appendingPathComponent(
+            "Sources/ComputerMCPApp/Resources/Localizable.xcstrings"
+          ).path,
+          "--output-directory", resources.path, "--serialization-format", "binary",
+        ]
+      ),
+      (
+        "/usr/bin/swiftc",
+        [
+          "-parse-as-library", source.path,
+          repository.appendingPathComponent("Sources/ComputerMCPApp/AppLocalization.swift").path,
+          "-o", executable.path,
+        ]
+      ),
+      (executable.path, []),
+    ]
+    for (command, arguments) in commands {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: command)
+      process.arguments = arguments
+      process.currentDirectoryURL = root
+      try process.run()
+      process.waitUntilExit()
+      try #require(process.terminationReason == .exit && process.terminationStatus == 0)
+    }
+  }
+
   @Test(arguments: [nil, "C", "en_US.UTF-8"] as [String?])
   func testRepositoryLocalizationGate(locale: String?) throws {
     let root = URL(fileURLWithPath: #filePath)

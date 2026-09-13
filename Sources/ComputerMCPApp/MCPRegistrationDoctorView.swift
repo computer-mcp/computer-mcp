@@ -12,20 +12,22 @@ struct MCPRegistrationDoctorView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Check connection", bundle: .module).font(.title2.bold())
+      Text("Check connection", bundle: AppLocalization.resourceBundle).font(.title2.bold())
       Text(verbatim: registrationID).font(.headline)
       Text(
         "Starts only this enabled MCP to check its connection and catalog. No tools are called, dependencies installed or grants changed.",
-        bundle: .module)
+        bundle: AppLocalization.resourceBundle)
       if case .loaded(let workspaces) = appModel.workspaces, !workspaces.isEmpty {
         Picker(AppLocalization.string("Workspace"), selection: $workspaceID) {
-          Text("Choose a workspace", bundle: .module).tag("")
+          Text("Choose a workspace", bundle: AppLocalization.resourceBundle).tag("")
           ForEach(workspaces) { workspace in
             Text(verbatim: workspace.displayName).tag(workspace.id)
           }
         }.disabled(model.isBusy)
       } else {
-        Text("Register a workspace before checking a connection.", bundle: .module)
+        Text(
+          "Register a workspace before checking a connection.",
+          bundle: AppLocalization.resourceBundle)
         Button(AppLocalization.string("Refresh")) { appModel.refresh(.workspaces) }
       }
       if let report = model.doctorReport,
@@ -61,19 +63,19 @@ struct MCPRegistrationDoctorView: View {
           }.frame(maxHeight: 160)
           Text(
             "Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           )
           .font(.caption).foregroundStyle(.secondary)
         }
         Text(
           "Not verified: tool execution, remote profile permissions, system permissions and persistent host services.",
-          bundle: .module
+          bundle: AppLocalization.resourceBundle
         ).foregroundStyle(.secondary)
       }
       if model.processRecovered {
         Text(
           "Process record recovered. Check the connection again when ready; no process was started.",
-          bundle: .module)
+          bundle: AppLocalization.resourceBundle)
       }
       if let error = model.errorMessage {
         Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)

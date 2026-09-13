@@ -8,7 +8,7 @@ struct MCPCredentialView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("Manage credential", bundle: .module).font(.headline)
+      Text("Manage credential", bundle: AppLocalization.resourceBundle).font(.headline)
       Text(verbatim: registrationID)
       if let status = model.credentialStatus, status.registrationID == registrationID {
         Text(verbatim: status.authentication.endpoint).textSelection(.enabled)
@@ -19,7 +19,7 @@ struct MCPCredentialView: View {
         SecureField(AppLocalization.string("Bearer token"), text: $token)
         Text(
           "The token is stored only in the host Keychain. New requests read the current value; changing it does not cancel already issued requests.",
-          bundle: .module
+          bundle: AppLocalization.resourceBundle
         )
         .font(.caption).foregroundStyle(.secondary)
         HStack {

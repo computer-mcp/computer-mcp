@@ -68,6 +68,7 @@ jobs:
           Scripts/verify-developer-id-signature-record-regression.sh
           Scripts/verify-notarization-record-regression.sh
           Scripts/verify-artifact-provenance-boundary.sh
+          zsh Scripts/verify-artifact-provenance-boundary-regression.sh
           Scripts/verify-release-asset-boundary-regression.sh
           Scripts/write-release-checksums-regression.sh
           Scripts/verify-release-tag-restoration.sh
@@ -104,7 +105,7 @@ jobs:
           Scripts/verify-distribution.sh
 
   release:
-    name: Sign, notarize, verify, and publish release
+    name: Sign, notarize, verify, and prepare release draft
     needs: verify
     runs-on: macos-26
     timeout-minutes: 120
@@ -223,7 +224,7 @@ jobs:
           SIGNING_IDENTITY: ${{ vars.DEVELOPER_ID_SIGNING_IDENTITY }}
         run: Scripts/release-ci.sh
 
-      - name: Upload, byte-verify, and publish GitHub Release
+      - name: Upload and byte-verify GitHub Release draft
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -287,7 +288,7 @@ jobs:
             VERIFY_GIT_TAG=1 Scripts/verify-artifact-provenance.sh \
             "$published_receipt" "dist/$dmg_name" exact_published_release
           gh release upload "$GITHUB_REF_NAME" "$published_receipt"
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          echo "Draft ready for local installation acceptance. Publication is a separate operator action." >>"$GITHUB_STEP_SUMMARY"
           trap - EXIT
           rm -rf -- "$download_dir"
 

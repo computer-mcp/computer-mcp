@@ -12,7 +12,7 @@ struct MCPRegistrationsView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text("MCP Registrations", bundle: .module).font(.title2.bold())
+        Text("MCP Registrations", bundle: AppLocalization.resourceBundle).font(.title2.bold())
         Spacer()
         Button(AppLocalization.string("Add MCP")) { editor = .new }
           .disabled(model.isBusy || model.preview != nil)
@@ -75,7 +75,7 @@ struct MCPRegistrationsView: View {
       if let preview = model.preview {
         Divider()
         VStack(alignment: .leading, spacing: 10) {
-          Text("Review MCP change", bundle: .module).font(.headline)
+          Text("Review MCP change", bundle: AppLocalization.resourceBundle).font(.headline)
           Text(verbatim: preview.id)
           if let after = preview.after {
             Text(
@@ -88,11 +88,11 @@ struct MCPRegistrationsView: View {
           } else {
             Text(
               "The registration will be removed. External dependencies are retained.",
-              bundle: .module)
+              bundle: AppLocalization.resourceBundle)
           }
           Text(
             "Profile grants are unchanged. A registration cannot grant itself permissions.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           )
           .font(.caption).foregroundStyle(.secondary)
           if preview.transportWillRestart {
@@ -101,7 +101,7 @@ struct MCPRegistrationsView: View {
               systemImage: "exclamationmark.triangle")
             Text(
               "Outstanding calls may have an unknown outcome. Reconnect and inspect before retrying.",
-              bundle: .module
+              bundle: AppLocalization.resourceBundle
             )
             .font(.caption)
           }
@@ -158,8 +158,9 @@ private struct MCPRegistrationEditor: View {
           !isNew)
         Toggle(AppLocalization.string("Enabled"), isOn: $draft.server.enabled)
         Picker(AppLocalization.string("Transport"), selection: $draft.server.transport) {
-          Text("Local process", bundle: .module).tag(MCPTransport.stdio)
-          Text("Streamable HTTP", bundle: .module).tag(MCPTransport.streamableHTTP)
+          Text("Local process", bundle: AppLocalization.resourceBundle).tag(MCPTransport.stdio)
+          Text("Streamable HTTP", bundle: AppLocalization.resourceBundle).tag(
+            MCPTransport.streamableHTTP)
           if draft.server.transport == .http { Text(verbatim: "HTTP").tag(MCPTransport.http) }
           if draft.server.transport == .sse { Text(verbatim: "SSE").tag(MCPTransport.sse) }
         }
@@ -180,8 +181,8 @@ private struct MCPRegistrationEditor: View {
             endpoint: draft.server.url ?? "", account: "mcp.\(draft.server.id)")
         }
         Picker(AppLocalization.string("Tool exposure"), selection: $draft.server.exposure) {
-          Text("Gateway calls", bundle: .module).tag(MCPExposure.gateway)
-          Text("Reexport tools", bundle: .module).tag(MCPExposure.reexport)
+          Text("Gateway calls", bundle: AppLocalization.resourceBundle).tag(MCPExposure.gateway)
+          Text("Reexport tools", bundle: AppLocalization.resourceBundle).tag(MCPExposure.reexport)
         }
         .onChange(of: draft.server.exposure) { _, exposure in
           if exposure == .reexport && draft.server.prefix == nil {
@@ -194,17 +195,18 @@ private struct MCPRegistrationEditor: View {
             text: Binding(get: { draft.server.prefix ?? "" }, set: { draft.server.prefix = $0 }))
           Text(
             "An empty prefix preserves original tool names. Conflicts are rejected.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           ).font(.caption)
         }
         Toggle(
           AppLocalization.string("All current and future tools"), isOn: $draft.server.allowAnyTool)
         if !draft.server.allowAnyTool {
           VStack(alignment: .leading) {
-            Text("Allowed tool names, one per line", bundle: .module)
+            Text("Allowed tool names, one per line", bundle: AppLocalization.resourceBundle)
             TextEditor(text: $draft.allowedToolsText).font(.system(.body, design: .monospaced))
               .frame(minHeight: 70)
-            Text("An empty selection exposes no tools.", bundle: .module).font(.caption)
+            Text("An empty selection exposes no tools.", bundle: AppLocalization.resourceBundle)
+              .font(.caption)
           }
         }
         DisclosureGroup(AppLocalization.string("Advanced")) {
@@ -214,7 +216,7 @@ private struct MCPRegistrationEditor: View {
             .disabled(draft.server.transport != .stdio)
           Text(
             "External dependencies are user-managed. Host services do not grant local administration.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           ).font(.caption)
         }
       }.formStyle(.grouped)

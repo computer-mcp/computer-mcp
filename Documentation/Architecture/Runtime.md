@@ -180,7 +180,10 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   Publisher hints do not change the host Full Shell boundary. See
   [CLI Trees](../Reference/CLITrees.md) for the contract and refresh behavior.
 - Shell/process: `swift-subprocess` sessions with stdin, cursor output,
-  timeouts, cancellation, process-group cleanup, and byte limits.
+  timeouts, cancellation, process-group cleanup, and byte limits. A shared
+  nonblocking pipe reader delivers available bytes without waiting for a full
+  buffer and applies consumer backpressure between bounded reads. Session
+  completion joins both output readers, including inherited pipe writers.
 - Downstream MCP: persistent official SDK clients over stdio or Streamable
   HTTP, including tools, resources, prompts, list-changed events, and
   cancellation. Each workspace registry owns an independently scoped client,

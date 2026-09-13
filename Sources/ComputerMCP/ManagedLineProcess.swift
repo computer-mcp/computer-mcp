@@ -300,9 +300,10 @@ final class ManagedLineProcess: @unchecked Sendable {
         }
       }
       let standardOutput = try FileDescriptor.pipe()
-      let outputReader = try ManagedLineProcessOutputReader(
-        readEnd: standardOutput.readEnd,
-        state: state
+      let outputReader = try ProcessOutputReader(
+        handle: FileHandle(fileDescriptor: standardOutput.readEnd.rawValue, closeOnDealloc: true),
+        consume: { try await state.appendStandardOutput($0) },
+        onError: { await state.recordStreamError($0) }
       )
       outputReader.start()
       do {
@@ -461,128 +462,6 @@ final class ManagedLineProcess: @unchecked Sendable {
     return nil
   }
 
-}
-
-/// File descriptor access and callback/task ownership are serialized by lock. Nonblocking reads
-/// let shutdown drain a finite pipe without waiting on a descendant that retained stdout.
-private final class ManagedLineProcessOutputReader: @unchecked Sendable {
-  private let handle: FileHandle
-  private let state: ManagedLineProcessState
-  private let lock = NSLock()
-  private var stopped = false
-  private var consumptionTask: Task<Void, Never>?
-
-  init(
-    readEnd: FileDescriptor,
-    state: ManagedLineProcessState
-  ) throws {
-    self.handle = FileHandle(fileDescriptor: readEnd.rawValue, closeOnDealloc: true)
-    self.state = state
-    let flags = fcntl(readEnd.rawValue, F_GETFL)
-    guard flags >= 0, fcntl(readEnd.rawValue, F_SETFL, flags | O_NONBLOCK) >= 0 else {
-      throw ManagedLineProcessError.launchFailed(
-        "Cannot configure the managed process output pipe.")
-    }
-  }
-
-  func start() {
-    arm()
-  }
-
-  func stop(drainRemainingOutput: Bool) async {
-    let task = lock.withLock { () -> Task<Void, Never>? in
-      if !stopped {
-        stopped = true
-        handle.readabilityHandler = nil
-        if drainRemainingOutput {
-          // A pipe holds fewer bytes than this budget. A concurrent writer cannot make drain infinite.
-          var remaining = 1_048_576
-          while remaining > 0, let data = readChunkLocked(), !data.isEmpty {
-            remaining -= data.count
-            enqueueLocked(data)
-          }
-          if remaining <= 0 {
-            let previous = consumptionTask
-            consumptionTask = Task { [state] in
-              await previous?.value
-              await state.recordStreamError(ManagedLineProcessError.bufferOverflow)
-            }
-          }
-        }
-        try? handle.close()
-      }
-      return consumptionTask
-    }
-    await task?.value
-  }
-
-  private func arm() {
-    lock.withLock { armLocked() }
-  }
-
-  private func armLocked() {
-    guard !stopped else { return }
-    handle.readabilityHandler = { [weak self] handle in
-      self?.consumeAvailableData(from: handle)
-    }
-  }
-
-  private func consumeAvailableData(from handle: FileHandle) {
-    lock.withLock {
-      guard !stopped else { return }
-      handle.readabilityHandler = nil
-      guard let data = readChunkLocked() else {
-        armLocked()
-        return
-      }
-      guard !data.isEmpty else {
-        stopped = true
-        try? handle.close()
-        return
-      }
-      enqueueLocked(data)
-    }
-  }
-
-  private func readChunkLocked() -> Data? {
-    var bytes = [UInt8](repeating: 0, count: 65_536)
-    while true {
-      let count = Darwin.read(handle.fileDescriptor, &bytes, bytes.count)
-      if count >= 0 { return Data(bytes.prefix(count)) }
-      if errno == EINTR { continue }
-      if errno == EAGAIN || errno == EWOULDBLOCK { return nil }
-      let previous = consumptionTask
-      consumptionTask = Task { [state] in
-        await previous?.value
-        await state.recordStreamError(
-          ManagedLineProcessError.launchFailed("Cannot read managed process stdout."))
-      }
-      return Data()
-    }
-  }
-
-  private func enqueueLocked(_ data: Data) {
-    let previous = consumptionTask
-    consumptionTask = Task { [weak self, state] in
-      await previous?.value
-      do {
-        try await state.appendStandardOutput(data)
-        self?.arm()
-      } catch {
-        await state.recordStreamError(error)
-        self?.stopProducing()
-      }
-    }
-  }
-
-  private func stopProducing() {
-    lock.withLock {
-      guard !stopped else { return }
-      stopped = true
-      handle.readabilityHandler = nil
-      try? handle.close()
-    }
-  }
 }
 
 private struct ManagedLineProcessShutdownHandles: Sendable {

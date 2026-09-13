@@ -404,7 +404,23 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
   }
 
   private static func launch(_ launch: ResolvedShellLaunch, session: ShellSession) async {
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+    let input = ShellSessionInput()
+    var readers: [ProcessOutputReader] = []
     do {
+      let stdout = try ProcessOutputReader(
+        handle: stdoutPipe.fileHandleForReading,
+        consume: { session.appendStdout($0) },
+        onError: { session.recordStreamError("stdout: \($0.localizedDescription)") })
+      readers.append(stdout)
+      let stderr = try ProcessOutputReader(
+        handle: stderrPipe.fileHandleForReading,
+        consume: { session.appendStderr($0) },
+        onError: { session.recordStreamError("stderr: \($0.localizedDescription)") })
+      readers.append(stderr)
+      stdout.start()
+      stderr.start()
       let environmentOverrides = Dictionary(
         uniqueKeysWithValues: launch.environment.map { key, value in
           (Subprocess.Environment.Key(rawValue: key)!, Optional(value))
@@ -424,41 +440,50 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
           : .custom(environmentOverrides.compactMapValues { $0 }),
         workingDirectory: FilePath(launch.workingDirectory.path),
         platformOptions: platformOptions,
-        // DispatchIO waits for the preferred size before yielding while the
-        // pipe remains open. A single-byte preference preserves live output;
-        // CursorDataBuffer still coalesces and bounds the stored stream.
-        preferredBufferSize: 1
-      ) { execution, inputWriter, stdout, stderr in
+        input: input,
+        output: .fileDescriptor(
+          FileDescriptor(rawValue: stdoutPipe.fileHandleForWriting.fileDescriptor),
+          closeAfterSpawningProcess: false),
+        error: .fileDescriptor(
+          FileDescriptor(rawValue: stderrPipe.fileHandleForWriting.fileDescriptor),
+          closeAfterSpawningProcess: false)
+      ) { execution in
+        defer { input.finish() }
+        try stdoutPipe.fileHandleForWriting.close()
+        try stderrPipe.fileHandleForWriting.close()
+        var writers = input.ready.stream.makeAsyncIterator()
+        guard let inputWriter = await writers.next() else { throw CancellationError() }
         session.attach(execution: execution, inputWriter: inputWriter)
         await withTaskGroup(of: Void.self) { group in
-          group.addTask {
-            do {
-              for try await buffer in stdout {
-                session.appendStdout(Self.data(from: buffer))
-              }
-            } catch {
-              session.recordStreamError("stdout: \(error.localizedDescription)")
-            }
-          }
-          group.addTask {
-            do {
-              for try await buffer in stderr {
-                session.appendStderr(Self.data(from: buffer))
-              }
-            } catch {
-              session.recordStreamError("stderr: \(error.localizedDescription)")
-            }
-          }
+          group.addTask { await stdout.waitForEnd() }
+          group.addTask { await stderr.waitForEnd() }
         }
       }
       session.finish(status: outcome.terminationStatus)
     } catch {
+      input.finish()
+      try? stdoutPipe.fileHandleForWriting.close()
+      try? stderrPipe.fileHandleForWriting.close()
+      for reader in readers { await reader.stop(drainRemainingOutput: false) }
       session.failLaunchOrExecution(error.localizedDescription)
     }
   }
+}
 
-  private static func data(from buffer: AsyncBufferSequence.Buffer) -> Data {
-    buffer.withUnsafeBytes { Data($0) }
+/// The session owns interactive writes; the subprocess input task keeps its writer alive until EOF.
+private struct ShellSessionInput: InputProtocol {
+  let ready = AsyncStream<StandardInputWriter>.makeStream()
+  private let release = AsyncStream<Void>.makeStream()
+
+  func write(with writer: StandardInputWriter) async throws {
+    ready.continuation.yield(writer)
+    ready.continuation.finish()
+    for await _ in release.stream {}
+  }
+
+  func finish() {
+    ready.continuation.finish()
+    release.continuation.finish()
   }
 }
 

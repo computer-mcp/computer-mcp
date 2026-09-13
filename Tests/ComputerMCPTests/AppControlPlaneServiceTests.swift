@@ -364,8 +364,15 @@ final class AppControlPlaneServiceTests {
 
   @Test(
     .enabled(
-      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"))
-  func publishedPluginInstallsAndUninstallsThroughIsolatedHost() async throws {
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"),
+    arguments: [
+      ("swift-format", "swift-format.zip"),
+      ("computer-use", "computer-use.zip"),
+      ("codex", "codex-plugin.zip"),
+    ])
+  func publishedPluginInstallsAndUninstallsThroughIsolatedHost(
+    pluginID: String, archiveName: String
+  ) async throws {
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent(".build/debug/computer-mcp")
@@ -383,28 +390,28 @@ final class AppControlPlaneServiceTests {
       let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
       let search = try await client.call(
         "plugin.search",
-        arguments: .object(["query": .string("swift-format"), "refresh": .bool(true)]))
+        arguments: .object(["query": .string(pluginID), "refresh": .bool(true)]))
       let entry = try #require(
         search.objectValue?["entries"]?.arrayValue?.first {
-          $0.objectValue?["repository"] == .string("computer-mcp/plugin-swift-format")
+          $0.objectValue?["repository"] == .string("computer-mcp/plugin-\(pluginID)")
         })
       let repositoryID = try #require(entry.objectValue?["repository_id"])
       let release = try await client.call(
         "plugin.artifacts",
         arguments: .object([
-          "repository": .string("computer-mcp/plugin-swift-format"),
+          "repository": .string("computer-mcp/plugin-\(pluginID)"),
           "repository_id": repositoryID,
         ]))
       let artifact = try #require(
         release.objectValue?["artifacts"]?.arrayValue?.first {
-          $0.objectValue?["name"] == .string("swift-format.zip")
+          $0.objectValue?["name"] == .string(archiveName)
         })
       _ = try await client.call(
         "plugin.install_release",
         arguments: .object(["artifact": artifact, "expected_revision": .number(0)]))
       let installed = try fixture.database.pluginStoreSnapshot()
-      let record = try #require(installed.installations.first { $0.pluginID == "swift-format" })
-      #expect(installed.settings["swift-format"]?.enabled == false)
+      let record = try #require(installed.installations.first { $0.pluginID == pluginID })
+      #expect(installed.settings[pluginID]?.enabled == false)
       #expect(record.source.githubRelease != nil)
       #expect(FileManager.default.fileExists(atPath: record.source.root.path))
       _ = try await client.call(

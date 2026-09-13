@@ -17,8 +17,11 @@ internal enum ExternalProviderDoctorState: String, Codable, Equatable, Sendable 
 
 internal enum ExternalProviderDiagnosticCode: String, Codable, Equatable, Sendable {
   case executableNotFound = "executable-not-found"
+  case executableUnavailable = "executable-unavailable"
+  case executableUnverified = "executable-unverified"
   case versionProbeFailed = "version-probe-failed"
   case versionUnavailable = "version-unavailable"
+  case contractProbeFailed = "contract-probe-failed"
   case contractIncomplete = "contract-incomplete"
   case doctorFailed = "doctor-failed"
   case probeLaunchFailed = "probe-launch-failed"
@@ -64,10 +67,17 @@ internal struct ExternalProviderDiscoveryResult: Codable, Equatable, Sendable {
 internal struct ExternalProviderLaunchConfig: Codable, Equatable, Hashable, Sendable {
   internal var executable: String
   internal var arguments: [String]
+  internal var workingDirectory: URL?
+  internal var environment: [String: String]
 
-  internal init(executable: String, arguments: [String] = []) {
+  internal init(
+    executable: String, arguments: [String] = [], workingDirectory: URL? = nil,
+    environment: [String: String] = [:]
+  ) {
     self.executable = executable
     self.arguments = arguments
+    self.workingDirectory = workingDirectory
+    self.environment = environment
   }
 }
 
@@ -134,7 +144,7 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
   internal init(
     definitions: [ExternalProviderDefinition] = ExternalProviderDefinition.defaults,
     configuredProviders: [String: [ExternalProviderLaunchConfig]] = [:],
-    commandRunner: CommandRunning = ProcessCommandRunner(),
+    commandRunner: CommandRunning = ManagedCommandRunner(),
     environment: [String: String] = ProcessInfo.processInfo.environment,
     configurationBaseDirectory: URL = URL(
       fileURLWithPath: FileManager.default.currentDirectoryPath),
@@ -157,7 +167,7 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
   internal init(
     configuration: GatewayConfiguration,
     definitions: [ExternalProviderDefinition] = ExternalProviderDefinition.defaults,
-    commandRunner: CommandRunning = ProcessCommandRunner(),
+    commandRunner: CommandRunning = ManagedCommandRunner(),
     environment: [String: String] = ProcessInfo.processInfo.environment,
     commonSearchDirectories: [URL]? = nil,
     timeoutMilliseconds: Int = 10_000,
@@ -211,18 +221,38 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
       )
     }
 
+    let inspection = resolved.inspection
     var diagnostics: [ExternalProviderDiagnostic] = []
-    let version = inspectVersion(resolved, diagnostics: &diagnostics)
+    if inspection.status != .passed {
+      diagnostics.append(
+        ExternalProviderDiagnostic(
+          code: inspection.hasKnownFailure ? .executableUnavailable : .executableUnverified,
+          operation: "resolve", message: inspection.message))
+    }
+    if inspection.hasKnownFailure || inspection.path == nil {
+      return ExternalProviderDiscoveryResult(
+        providerID: definition.id, kind: definition.kind,
+        resolvedPath: inspection.exists ? inspection.path : nil,
+        launchArguments: resolved.arguments, version: nil,
+        doctorStatus: .init(state: .unavailable, message: inspection.message),
+        diagnostics: diagnostics)
+    }
+    guard let version = inspectVersion(resolved, diagnostics: &diagnostics) else {
+      return ExternalProviderDiscoveryResult(
+        providerID: definition.id, kind: definition.kind, resolvedPath: resolved.executable,
+        launchArguments: resolved.arguments, version: nil,
+        doctorStatus: .init(
+          state: .failed, message: "Executable was found but its version probe failed."),
+        diagnostics: diagnostics)
+    }
     let doctorStatus: ExternalProviderDoctorStatus
     switch definition.kind {
     case .appleCLIMCP:
       doctorStatus = inspectAppleCLIContract(resolved, diagnostics: &diagnostics)
     case .codex:
       doctorStatus = ExternalProviderDoctorStatus(
-        state: version == nil ? .failed : .passed,
-        message: version == nil
-          ? "Codex executable was found but its version probe failed."
-          : "Codex executable and version probe passed."
+        state: .passed,
+        message: "Codex executable and version probe passed."
       )
     case .browser, .tunnelClient:
       doctorStatus = ExternalProviderDoctorStatus(
@@ -302,6 +332,10 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
         declarations += result.stdout + "\n" + result.stderr
       } else {
         missingCapabilities.append("help")
+        diagnostics.append(
+          ExternalProviderDiagnostic(
+            code: .contractProbeFailed, operation: "help",
+            message: probeFailureMessage(operation: "Help", result: result)))
       }
     }
 
@@ -321,6 +355,12 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
         declarations += "\n" + output
       } else {
         missingCapabilities.append("catalog")
+        if !probeSucceeded(result) {
+          diagnostics.append(
+            ExternalProviderDiagnostic(
+              code: .contractProbeFailed, operation: "catalog",
+              message: probeFailureMessage(operation: "Catalog", result: result)))
+        }
       }
     }
 
@@ -401,8 +441,8 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
         try commandRunner.run(
           executable: resolved.executable,
           arguments: resolved.arguments + arguments,
-          workingDirectory: nil,
-          environment: [:],
+          workingDirectory: resolved.workingDirectory,
+          environment: resolved.environment,
           timeoutMilliseconds: timeoutMilliseconds,
           maxOutputBytes: maxOutputBytes
         ))
@@ -412,61 +452,33 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
   }
 
   private func resolve(_ definition: ExternalProviderDefinition) -> ResolvedLaunch? {
-    var launches = configuredProviders[definition.id] ?? []
-    launches += definition.executableNames.map {
-      ExternalProviderLaunchConfig(executable: $0)
+    // A configured launch is an identity, not permission to probe a different
+    // installation when that launch is missing or cannot run in its environment.
+    if let configured = configuredProviders[definition.id]?.first {
+      return resolve(configured)
     }
-
-    var visited = Set<ExternalProviderLaunchConfig>()
-    for launch in launches where visited.insert(launch).inserted {
-      guard let executable = resolveExecutable(launch.executable) else {
-        continue
-      }
-      return ResolvedLaunch(executable: executable, arguments: launch.arguments)
-    }
-    return nil
-  }
-
-  private func resolveExecutable(_ executable: String) -> String? {
-    guard !executable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return nil
-    }
-
-    if executable.contains("/") {
-      let url =
-        executable.hasPrefix("/")
-        ? URL(fileURLWithPath: executable)
-        : configurationBaseDirectory.appendingPathComponent(executable)
-      return executablePathIfValid(url)
-    }
-
-    for directory in executableSearchDirectories() {
-      if let path = executablePathIfValid(directory.appendingPathComponent(executable)) {
-        return path
+    for name in definition.executableNames {
+      let found = resolve(ExternalProviderLaunchConfig(executable: name))
+      if found.inspection.status != .missing { return found }
+      for directory in commonSearchDirectories ?? defaultCommonSearchDirectories() {
+        let candidate = resolve(
+          ExternalProviderLaunchConfig(executable: directory.appendingPathComponent(name).path))
+        if candidate.inspection.isRegularFile && candidate.inspection.isExecutable {
+          return candidate
+        }
       }
     }
     return nil
   }
 
-  private func executablePathIfValid(_ url: URL) -> String? {
-    let standardized = url.standardizedFileURL
-    guard fileManager.isExecutableFile(atPath: standardized.path) else {
-      return nil
-    }
-    return standardized.resolvingSymlinksInPath().path
-  }
-
-  private func executableSearchDirectories() -> [URL] {
-    let pathDirectories = (environment["PATH"] ?? "")
-      .split(separator: ":", omittingEmptySubsequences: true)
-      .map { URL(fileURLWithPath: String($0), isDirectory: true) }
-    let commonDirectories = commonSearchDirectories ?? defaultCommonSearchDirectories()
-
-    var seen = Set<String>()
-    return (pathDirectories + commonDirectories).compactMap { url in
-      let standardized = url.standardizedFileURL
-      return seen.insert(standardized.path).inserted ? standardized : nil
-    }
+  private func resolve(_ launch: ExternalProviderLaunchConfig) -> ResolvedLaunch {
+    let directory = (launch.workingDirectory ?? configurationBaseDirectory).standardizedFileURL
+    let childEnvironment = environment.merging(launch.environment) { _, value in value }
+    let inspection = ExecutableInspection.inspect(
+      launch.executable, workingDirectory: directory, environment: childEnvironment)
+    return ResolvedLaunch(
+      executable: inspection.path ?? launch.executable, arguments: launch.arguments,
+      workingDirectory: directory, environment: childEnvironment, inspection: inspection)
   }
 
   private func defaultCommonSearchDirectories() -> [URL] {
@@ -518,12 +530,15 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
   }
 
   private func probeSucceeded(_ result: CommandResult) -> Bool {
-    result.exitCode == 0 && !result.timedOut
+    result.exitCode == 0 && !result.timedOut && !result.stdoutTruncated && !result.stderrTruncated
   }
 
   private func probeFailureMessage(operation: String, result: CommandResult) -> String {
     if result.timedOut {
       return "\(operation) probe timed out."
+    }
+    if result.stdoutTruncated || result.stderrTruncated {
+      return "\(operation) probe output was truncated."
     }
     return
       "\(operation) probe failed with exit code \(result.exitCode.map(String.init) ?? "unknown")."
@@ -553,12 +568,12 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
     var providers: [String: [ExternalProviderLaunchConfig]] = [:]
     for definition in definitions {
       var launches: [ExternalProviderLaunchConfig] = []
-      if definition.kind == .codex, configuration.codex.enabled {
+      if definition.kind == .codex, let codex = configuration.codex, codex.enabled {
         launches.append(
-          ExternalProviderLaunchConfig(executable: configuration.codex.executable)
+          ExternalProviderLaunchConfig(executable: codex.executable)
         )
       }
-      for server in configuration.mcp.servers {
+      for server in configuration.mcp.servers where server.enabled {
         guard let command = server.command,
           matches(
             definition,
@@ -572,7 +587,10 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
         launches.append(
           ExternalProviderLaunchConfig(
             executable: command,
-            arguments: server.args
+            arguments: server.args,
+            workingDirectory: server.resolvedWorkingDirectory(
+              base: configuration.workspaceDirectory),
+            environment: server.env
           ))
       }
       for command in configuration.cli.commands
@@ -582,7 +600,12 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
         executable: command.executable,
         arguments: []
       ) {
-        launches.append(ExternalProviderLaunchConfig(executable: command.executable))
+        launches.append(
+          ExternalProviderLaunchConfig(
+            executable: command.executable,
+            workingDirectory: command.resolvedWorkingDirectory(
+              base: configuration.workspaceDirectory),
+            environment: command.env))
       }
       if !launches.isEmpty {
         providers[definition.id] = orderedUnique(launches)
@@ -615,4 +638,7 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
 private struct ResolvedLaunch: Equatable, Sendable {
   var executable: String
   var arguments: [String]
+  var workingDirectory: URL
+  var environment: [String: String]
+  var inspection: ExecutableInspection
 }

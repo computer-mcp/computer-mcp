@@ -2,9 +2,11 @@
 
 ## Purpose
 
-Computer MCP is a deterministic execution gateway. It publishes MCP tools and
-routes each call to a statically registered Builtin, Skill, CLI, downstream MCP,
-Computer Use, Shell, or Codex adapter. It does not plan, rank, select, or
+Computer MCP is a policy-enforced execution gateway. Its current tool catalog
+combines configured local capabilities, downstream MCP discovery and verified
+CLI command-tree projections. Plugins package MCP, CLI and Skills contributions;
+direct registrations and plugin contributions share the registry, routing,
+authorization and lifecycle. The gateway does not plan, rank, select or
 semantically rewrite tools.
 
 ## App-owned Topology
@@ -51,7 +53,8 @@ The execution sequence is:
 6. Bound output and return structured content or a stable error.
 7. Persist a redacted audit decision.
 
-Unknown tools, workspaces, providers, and Codex RPC methods fail closed.
+Unknown tools, workspaces and providers fail closed. Domain adapters validate
+their own protocol methods inside the scope delegated by the host.
 
 ## Workspace Model
 
@@ -71,17 +74,24 @@ are persisted separately and are not copied into TOML.
 
 | Source | Registration | Execution |
 | --- | --- | --- |
-| CLI | `[[cli.commands]]` | Raw help discovery and direct executable + argv |
-| MCP | `[[mcp.servers]]` | Persistent stdio or Streamable HTTP client session |
+| CLI | `[[cli.commands]]` or plugin contribution | Verified command-tree projection and deterministic argv; explicit raw CLI access |
+| MCP | `[[mcp.servers]]` or plugin contribution | Persistent stdio or Streamable HTTP client session |
 | Builtin | `[builtin].enabled` | Explicit typed local capability |
-| Skills | `[skills]` | Bounded reads inside registered Skill roots |
-| Computer Use | profile capability | Native generic UI observation/control with TCC preflight |
-| Codex | `[codex]` | App Server, Exec, and MCP runtimes |
+| Skills | `[skills]` or plugin contribution | Bounded reads inside registered Skill roots |
+| Native AX fallback | profile capability | Generic UI observation/control with TCC preflight |
 | Shell | `[policy]` plus local grant | Direct argv or shell script with complete process I/O |
 
-CLI commands are not expanded into a generated top-level catalog. MCP consumers
-use `cli.describe`, `cli.help`, then `cli.exec`. Selected downstream MCP tools
-may be pinned through `[[tools]]` or reviewed reexports.
+CLI trees define projected tools and exact argument constraints. Raw
+`cli.describe`, `cli.help` and `cli.exec` remain available under their own policy;
+raw calls cannot bypass declared tree constraints. Missing structured coverage
+is reported explicitly.
+
+Downstream MCP registrations select all tools or a whitelist. Discovery,
+pagination, schema updates and reconnects update the same validated catalog and
+routes atomically. Upstream notifications reflect changes visible to each caller.
+Tool annotations do not grant access or override host read-only boundaries.
+Codex execution uses the independent MCP adapter plugin; native Computer Use
+connects directly through its MCP declaration or a manual MCP registration.
 
 ## ChatGPT And Codex
 
@@ -91,8 +101,8 @@ Neither can use local Codex MCP configuration or directly reach localhost.
 
 Codex has two distinct relationships:
 
-- Computer MCP can use Codex through its App Server, Exec, and MCP provider
-  paths.
+- Computer MCP can invoke the independent Codex plugin, which owns the separate
+  App Server, Exec and Codex MCP provider lifecycles.
 - Codex can use Computer MCP as an external MCP server through
   `computer-mcp install codex`.
 

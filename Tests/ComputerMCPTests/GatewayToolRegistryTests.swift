@@ -219,6 +219,50 @@ final class GatewayToolRegistryTests {
   }
 
   @Test
+  func testStatusUsesProviderEnvironmentForScriptInterpretersWithoutStartingThem() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let script = directory.appendingPathComponent("script")
+    try "#!/usr/bin/env sh\ntouch should-not-run\n".write(
+      to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    let config = GatewayConfiguration.fixture(
+      cli: .init(commands: [
+        .init(
+          id: "missing-runtime", executable: script.path, cwd: directory.path,
+          env: ["PATH": directory.path]),
+        .init(
+          id: "available-runtime", executable: script.path, cwd: directory.path,
+          env: ["PATH": "/bin"]),
+      ]),
+      mcp: .init(servers: [
+        .init(
+          id: "missing-runtime", transport: .stdio, command: script.path,
+          env: ["PATH": directory.path, "TOKEN": "never-emit-this"], cwd: directory.path)
+      ]))
+    let registry = GatewayToolRegistry(configuration: config, environment: ["PATH": "/bin"])
+    let cli = try decodeTextPayload(registry.callTool(name: "cli.status", arguments: .object([:])))
+    let commands = try #require(cli.objectValue?["commands"]?.arrayValue)
+    #expect(
+      commands[0].objectValue?["resolution"]?.objectValue?["status"]
+        == .string("interpreter_unavailable"))
+    #expect(commands[1].objectValue?["resolution"]?.objectValue?["status"] == .string("passed"))
+    let mcp = try decodeTextPayload(
+      registry.callTool(name: "mcp.servers.status", arguments: .object([:])))
+    let server = try #require(mcp.objectValue?["servers"]?.arrayValue?.first?.objectValue)
+    #expect(server["ready"] == .bool(false))
+    #expect(server["readiness_scope"] == .string("file_and_interpreter_checks"))
+    #expect(server["command_resolution"]?.objectValue?["is_executable"] == .bool(true))
+    #expect(
+      server["command_resolution"]?.objectValue?["status"] == .string("interpreter_unavailable"))
+    #expect(
+      !String(decoding: try JSONEncoder().encode(mcp), as: UTF8.self).contains("never-emit-this"))
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: directory.appendingPathComponent("should-not-run").path))
+  }
+
+  @Test
   func testCLIStatusRejectsUnknownID() {
     let registry = GatewayToolRegistry(configuration: .fixture())
 
@@ -22242,6 +22286,12 @@ private final class FakeProcessManager: ProcessManaging, @unchecked Sendable {
 }
 
 private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sendable {
+  func makeScopedClient(
+    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+  )
+    -> any DownstreamMCPClient
+  { self }
+
   struct Call: Equatable {
     var server: String
     var tool: String

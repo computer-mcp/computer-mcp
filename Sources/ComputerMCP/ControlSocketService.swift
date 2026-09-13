@@ -397,8 +397,13 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     let requestID = UUID().uuidString
     let startedAt = ContinuousClock.now
     let rawArguments = arguments ?? .object([:])
+    var digestArguments = rawArguments
+    if name == "mcp.credential.set", var object = rawArguments.objectValue {
+      object["token"] = .string("<redacted>")
+      digestArguments = .object(object)
+    }
     let inputDigest = try Self.digest(
-      .object(["tool": .string(name), "arguments": rawArguments])
+      .object(["tool": .string(name), "arguments": digestArguments])
     )
     do {
       guard let contract = Self.toolContractsByName[name] else {
@@ -543,6 +548,156 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
       case "permissions.status":
         payload = try encodedPayload(await controlPlane.computerUsePermissions())
+      case "mcp.credential.status":
+        payload = try encodedPayload(
+          try await controlPlane.mcpCredentialStatus(id: requiredString("id", in: object)))
+      case "mcp.credential.set", "mcp.credential.remove":
+        try await controlPlane.changeMCPCredential(
+          id: requiredString("id", in: object),
+          expectedBindingDigest: requiredString("expected_binding_digest", in: object),
+          token: name == "mcp.credential.set" ? requiredString("token", in: object) : nil)
+        payload = .object(["updated": .bool(true)])
+      case "mcp.doctor":
+        payload = try encodedPayload(
+          try await controlPlane.doctorMCPRegistration(
+            id: requiredString("id", in: object),
+            workspaceID: requiredString("workspace_id", in: object)))
+      case "mcp.process.recover":
+        try await controlPlane.recoverMCPProcessReceipt(
+          id: requiredString("id", in: object),
+          workspaceID: requiredString("workspace_id", in: object),
+          receiptID: requiredString("receipt_id", in: object),
+          expectedReceiptDigest: requiredString("expected_receipt_digest", in: object),
+          expectedCurrentDigest: requiredString("expected_current_digest", in: object))
+        payload = .object(["recovered": .bool(true)])
+      case "mcp.list", "mcp.show":
+        let snapshot = try await controlPlane.mcpRegistrations()
+        if name == "mcp.show" {
+          let id = try requiredString("id", in: object)
+          guard let entry = snapshot.registrations.first(where: { $0.id == id }) else {
+            throw GatewayToolError.unknownMCPServer(id)
+          }
+          payload = try encodedPayload(
+            MCPRegistrationSnapshot(
+              currentDigest: snapshot.currentDigest, registrations: [entry]))
+        } else {
+          payload = try encodedPayload(snapshot)
+        }
+      case "mcp.add", "mcp.configure", "mcp.enable", "mcp.disable", "mcp.remove":
+        let change: MCPRegistrationChange
+        switch name {
+        case "mcp.add", "mcp.configure":
+          let server = try JSONDecoder().decode(
+            MCPServerConfig.self, from: JSONEncoder().encode(object["registration"] ?? .null))
+          change = name == "mcp.add" ? .add(server) : .configure(server)
+        case "mcp.enable", "mcp.disable":
+          change = .enabled(id: try requiredString("id", in: object), name == "mcp.enable")
+        default:
+          change = .remove(id: try requiredString("id", in: object))
+        }
+        payload = try encodedPayload(
+          try await operations.changeMCPRegistration(
+            change, apply: object["apply"]?.boolValue ?? false,
+            expectedCurrentDigest: object["expected_current_digest"]?.stringValue))
+      case "plugin.list":
+        payload = try encodedPayload(try await controlPlane.pluginSnapshot())
+      case "plugin.doctor":
+        payload = try encodedPayload(
+          try await controlPlane.doctorPlugin(id: requiredString("id", in: object)))
+      case "plugin.search":
+        let kind = object["kind"]?.stringValue.flatMap(IntegrationKind.init(rawValue:))
+        if object["kind"] != nil && kind == nil {
+          throw GatewayToolError.invalidArguments("kind must be mcp, cli, or skills.")
+        }
+        let pageNumber = object["page"]?.numberValue ?? 1
+        guard let page = Int(exactly: pageNumber), (1...100_000).contains(page) else {
+          throw PluginCatalogError.invalidQuery
+        }
+        payload = try encodedPayload(
+          try await controlPlane.searchPlugins(
+            query: object["query"]?.stringValue ?? "", kind: kind, page: page,
+            refresh: object["refresh"]?.boolValue ?? false))
+      case "plugin.artifacts":
+        guard let number = object["repository_id"]?.numberValue,
+          let repositoryID = Int64(exactly: number), GitHubPluginArtifact.validID(repositoryID),
+          let page = Int(exactly: object["page"]?.numberValue ?? 1), (1...1_000).contains(page)
+        else { throw PluginCatalogError.invalidQuery }
+        payload = try encodedPayload(
+          try await controlPlane.pluginReleaseArtifacts(
+            repository: requiredString("repository", in: object), repositoryID: repositoryID,
+            tag: object["tag"]?.stringValue, page: page))
+      case "plugin.show":
+        let id = try requiredString("id", in: object)
+        let snapshot = try await controlPlane.pluginSnapshot()
+        guard
+          snapshot.state.settings[id] != nil
+            || snapshot.bundled.contains(where: { $0.manifest.id == id })
+            || snapshot.issues.contains(where: { $0.pluginID == id })
+        else {
+          throw GatewayToolError.invalidArguments("Unknown plugin '\(id)'.")
+        }
+        payload = try encodedPayload(
+          PluginHostSnapshot(filtering: snapshot, pluginID: id))
+      case "plugin.register", "plugin.configure", "plugin.enable", "plugin.disable",
+        "plugin.select", "plugin.remove", "plugin.install", "plugin.install_release",
+        "plugin.uninstall", "plugin.recover":
+        guard let revision = object["expected_revision"]?.numberValue,
+          revision >= 0, revision <= 9_007_199_254_740_991, let expected = Int64(exactly: revision)
+        else {
+          throw GatewayToolError.invalidArguments(
+            "expected_revision must be a nonnegative exact JSON integer.")
+        }
+        let change: PluginHostChange
+        switch name {
+        case "plugin.register":
+          let path = try requiredString("path", in: object)
+          guard path.hasPrefix("/"), !path.contains("\0") else {
+            throw GatewayToolError.invalidArguments(
+              "A development package path must be absolute and NUL-free.")
+          }
+          change = .registerDevelopment(URL(fileURLWithPath: path))
+        case "plugin.configure":
+          let settings = try JSONDecoder().decode(
+            PluginSettings.self,
+            from: JSONEncoder().encode(object["settings"] ?? .object([:])))
+          change = .settings(pluginID: try requiredString("id", in: object), settings)
+        case "plugin.enable", "plugin.disable":
+          change = .enabled(pluginID: try requiredString("id", in: object), name == "plugin.enable")
+        case "plugin.select":
+          change = .select(
+            pluginID: try requiredString("id", in: object),
+            installationID: object["installation_id"]?.stringValue)
+        case "plugin.install":
+          let path = try requiredString("archive", in: object)
+          guard path.hasPrefix("/"), !path.contains("\0") else {
+            throw GatewayToolError.invalidArguments(
+              "An archive path must be absolute and NUL-free.")
+          }
+          change = .installArchive(
+            archive: URL(fileURLWithPath: path), sha256: try requiredString("sha256", in: object),
+            pluginID: try requiredString("id", in: object),
+            version: try PluginVersion(requiredString("version", in: object)))
+        case "plugin.install_release":
+          let data = try JSONEncoder().encode(object["artifact"] ?? .null)
+          guard data.count <= 262_144 else { throw PluginCatalogError.invalidResponse }
+          let artifact: GitHubPluginArtifact
+          do {
+            artifact = try CanonicalJSONCoding.decoder().decode(
+              GitHubPluginArtifact.self, from: data)
+          } catch { throw PluginCatalogError.invalidResponse }
+          try artifact.validate()
+          change = .installRelease(artifact)
+        case "plugin.uninstall":
+          change = .uninstallArtifact(
+            installationID: try requiredString("installation_id", in: object))
+        case "plugin.recover":
+          change = .recover
+        default:
+          change = .removeDevelopment(
+            installationID: try requiredString("installation_id", in: object))
+        }
+        payload = try encodedPayload(
+          try await operations.changePlugins(change, expectedRevision: expected))
       case "audit.list":
         payload = try encodedPayload(
           try await controlPlane.auditEvents(
@@ -739,10 +894,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     } else {
       manifest = try await controlPlane.activeConfiguration().exportedTOML()
     }
-    let parsed = try GatewayConfiguration.load(
-      text: manifest,
-      baseURL: controlPlane.directories.configuration
-    )
+    let parsed = try await controlPlane.parseManifest(manifest)
     let canonical = try parsed.exportedTOML()
     let currentData = try Data(contentsOf: controlPlane.directories.manifest)
     guard let currentManifest = String(data: currentData, encoding: .utf8) else {
@@ -775,7 +927,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           "The active manifest changed after preview; run config import again."
         )
       }
-      let revision = try await operations.activateManifest(canonical)
+      let revision = try await operations.activateManifest(canonical, expectedDigest: expected)
       result["applied_revision"] = .string(revision.id)
       result["transport_restarted"] = .bool(gatewayWasRunning)
     }
@@ -887,6 +1039,34 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
   private static func auditDisposition(
     for error: Error
   ) -> (decision: AuditDecision, code: String) {
+    if error is MCPHTTPAuthenticationError { return (.failed, "mcp.authentication") }
+    if let error = error as? PluginCatalogError {
+      return (.failed, error.code)
+    }
+    if let error = error as? PluginArchiveError {
+      return (.failed, "plugin.archive.\(error.rawValue)")
+    }
+    if let error = error as? PluginStoreError {
+      let code =
+        switch error {
+        case .staleRevision: "stale_revision"
+        case .unknownInstallation: "unknown_installation"
+        case .invalidState: "invalid_state"
+        case .manifestChanged: "manifest_changed"
+        case .installationBusy: "installation_busy"
+        }
+      return (.failed, "plugin.\(code)")
+    }
+    if let error = error as? PluginHostError {
+      let code =
+        switch error {
+        case .changeInProgress: "change_in_progress"
+        case .connectedClients: "connected_clients"
+        case .invalidComposition: "invalid_composition"
+        case .workerUnavailable: "worker_unavailable"
+        }
+      return (.failed, "plugin.\(code)")
+    }
     if case .localAdminCannotBeSocketProfile = error as? AppControlPlaneServiceError {
       return (.denied, "policy.local_admin_remote")
     }
@@ -944,6 +1124,102 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
   }
 
   private static let toolContracts: [ControlToolContract] = [
+    ControlToolContract("mcp.list", readOnly: true),
+    ControlToolContract(
+      "mcp.credential.status", arguments: ["id": .string], required: ["id"], readOnly: true),
+    ControlToolContract(
+      "mcp.credential.set",
+      arguments: ["id": .string, "expected_binding_digest": .string, "token": .string],
+      required: ["id", "expected_binding_digest", "token"], readOnly: false),
+    ControlToolContract(
+      "mcp.credential.remove",
+      arguments: ["id": .string, "expected_binding_digest": .string],
+      required: ["id", "expected_binding_digest"], readOnly: false),
+    ControlToolContract(
+      "mcp.doctor", arguments: ["id": .string, "workspace_id": .string],
+      required: ["id", "workspace_id"], readOnly: true),
+    ControlToolContract(
+      "mcp.process.recover",
+      arguments: [
+        "id": .string, "workspace_id": .string, "receipt_id": .string,
+        "expected_receipt_digest": .string, "expected_current_digest": .string,
+      ],
+      required: [
+        "id", "workspace_id", "receipt_id", "expected_receipt_digest", "expected_current_digest",
+      ],
+      readOnly: false),
+    ControlToolContract("mcp.show", arguments: ["id": .string], required: ["id"], readOnly: true),
+    ControlToolContract(
+      "mcp.add",
+      arguments: ["registration": .object, "apply": .boolean, "expected_current_digest": .string],
+      required: ["registration"], readOnly: false),
+    ControlToolContract(
+      "mcp.configure",
+      arguments: ["registration": .object, "apply": .boolean, "expected_current_digest": .string],
+      required: ["registration"], readOnly: false),
+    ControlToolContract(
+      "mcp.enable",
+      arguments: ["id": .string, "apply": .boolean, "expected_current_digest": .string],
+      required: ["id"], readOnly: false),
+    ControlToolContract(
+      "mcp.disable",
+      arguments: ["id": .string, "apply": .boolean, "expected_current_digest": .string],
+      required: ["id"], readOnly: false),
+    ControlToolContract(
+      "mcp.remove",
+      arguments: ["id": .string, "apply": .boolean, "expected_current_digest": .string],
+      required: ["id"], readOnly: false),
+    ControlToolContract(
+      "plugin.artifacts",
+      arguments: [
+        "repository": .string, "repository_id": .integer, "tag": .string, "page": .integer,
+      ],
+      required: ["repository", "repository_id"], readOnly: true),
+    ControlToolContract(
+      "plugin.install_release", arguments: ["artifact": .object, "expected_revision": .integer],
+      required: ["artifact", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.install",
+      arguments: [
+        "archive": .string, "sha256": .string, "id": .string, "version": .string,
+        "expected_revision": .integer,
+      ],
+      required: ["archive", "sha256", "id", "version", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.uninstall", arguments: ["installation_id": .string, "expected_revision": .integer],
+      required: ["installation_id", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.recover", arguments: ["expected_revision": .integer],
+      required: ["expected_revision"], readOnly: false),
+    ControlToolContract("plugin.list", readOnly: true),
+    ControlToolContract(
+      "plugin.doctor", arguments: ["id": .string], required: ["id"], readOnly: true),
+    ControlToolContract(
+      "plugin.search",
+      arguments: ["query": .string, "kind": .string, "page": .integer, "refresh": .boolean],
+      readOnly: true),
+    ControlToolContract(
+      "plugin.show", arguments: ["id": .string], required: ["id"], readOnly: true),
+    ControlToolContract(
+      "plugin.register", arguments: ["path": .string, "expected_revision": .integer],
+      required: ["path", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.configure",
+      arguments: ["id": .string, "settings": .object, "expected_revision": .integer],
+      required: ["id", "settings", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.enable", arguments: ["id": .string, "expected_revision": .integer],
+      required: ["id", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.disable", arguments: ["id": .string, "expected_revision": .integer],
+      required: ["id", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.select",
+      arguments: ["id": .string, "installation_id": .string, "expected_revision": .integer],
+      required: ["id", "expected_revision"], readOnly: false),
+    ControlToolContract(
+      "plugin.remove", arguments: ["installation_id": .string, "expected_revision": .integer],
+      required: ["installation_id", "expected_revision"], readOnly: false),
     ControlToolContract("app.capabilities", readOnly: true),
     ControlToolContract("app.status", readOnly: true),
     ControlToolContract("app.start", readOnly: false),

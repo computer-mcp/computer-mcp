@@ -46,6 +46,7 @@ package actor AppGatewayService {
   private var profileID: GatewayProfileID?
   private var startedAt: Date?
   private var lastError: String?
+  private var pluginChangeInProgress = false
 
   package init(
     controlPlane: AppControlPlaneService,
@@ -69,6 +70,7 @@ package actor AppGatewayService {
   }
 
   package func start(profile requestedProfile: GatewayProfileID? = nil) async throws {
+    guard !pluginChangeInProgress else { throw PluginHostError.changeInProgress }
     guard state != .running && state != .starting else {
       return
     }
@@ -160,6 +162,32 @@ package actor AppGatewayService {
       connectionCount: await server?.connectionCount() ?? 0,
       lastError: lastError
     )
+  }
+
+  /// The listener remains bound, but admission is paused while an idle gateway adopts new registrations.
+  package func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> PluginHostSnapshot
+  {
+    guard !pluginChangeInProgress, state != .starting, state != .stopping else {
+      throw PluginHostError.changeInProgress
+    }
+    pluginChangeInProgress = true
+    let activeServer = server
+    if let activeServer, !(await activeServer.reserveIdleConfigurationChange()) {
+      pluginChangeInProgress = false
+      throw PluginHostError.connectedClients
+    }
+    do {
+      let result = try await controlPlane.applyPluginChange(
+        change, expectedRevision: expectedRevision)
+      await activeServer?.finishConfigurationChange()
+      pluginChangeInProgress = false
+      return result
+    } catch {
+      await activeServer?.finishConfigurationChange()
+      pluginChangeInProgress = false
+      throw error
+    }
   }
 
   private static func stableDescription(_ error: Error) -> String {

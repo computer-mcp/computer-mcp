@@ -8,6 +8,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
   case workspaces
   case profiles
   case providers
+  case plugins
   case tunnels
   case permissions
   case audit
@@ -24,6 +25,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
       case .workspaces: "Workspaces"
       case .profiles: "Profiles"
       case .providers: "Providers"
+      case .plugins: "Plugins"
       case .tunnels: "Tunnels"
       case .permissions: "Permissions"
       case .audit: "Audit"
@@ -40,6 +42,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
     case .workspaces: "folder"
     case .profiles: "person.badge.key"
     case .providers: "shippingbox"
+    case .plugins: "puzzlepiece.extension"
     case .tunnels: "point.3.connected.trianglepath.dotted"
     case .permissions: "hand.raised"
     case .audit: "list.bullet.rectangle"
@@ -50,7 +53,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
   var group: AppWorkspaceGroup {
     switch self {
     case .home, .chatgpt, .cloudflare: .getStarted
-    case .workspaces, .profiles, .providers, .tunnels, .permissions: .configure
+    case .workspaces, .profiles, .providers, .plugins, .tunnels, .permissions: .configure
     case .audit: .activity
     case .diagnostics: .support
     }
@@ -397,7 +400,7 @@ struct DiagnosticsSnapshot: Sendable {
 }
 
 @MainActor
-protocol AppControlPlane: AnyObject {
+protocol AppControlPlane: PluginManaging, MCPRegistrationManaging {
   func startApplication() async throws
   func maintainApplication() async
   func stopApplication() async
@@ -492,6 +495,36 @@ final class UnavailableControlPlane: AppControlPlane {
   func fetchWorkspaces() async throws -> [WorkspaceSummary] { throw unavailable() }
   func fetchProfiles() async throws -> [ProfileSummary] { throw unavailable() }
   func fetchProviders() async throws -> [ProviderSummary] { throw unavailable() }
+  func fetchMCPRegistrations() async throws -> MCPRegistrationSnapshot { throw unavailable() }
+  func mcpCredentialStatus(id: String) async throws -> MCPRegistrationCredentialStatus {
+    throw unavailable()
+  }
+  func changeMCPCredential(id: String, expectedBindingDigest: String, token: String?) async throws {
+    throw unavailable()
+  }
+  func doctorMCPRegistration(id: String, workspaceID: String) async throws
+    -> MCPRegistrationDoctorReport
+  {
+    throw unavailable()
+  }
+  func recoverMCPProcessReceipt(
+    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    expectedCurrentDigest: String
+  ) async throws { throw unavailable() }
+  func changeMCPRegistration(
+    _ change: MCPRegistrationChange, apply: Bool, expectedCurrentDigest: String?
+  ) async throws -> MCPRegistrationChangePreview { throw unavailable() }
+  func fetchPlugins() async throws -> PluginHostSnapshot { throw unavailable() }
+  func doctorPlugin(id: String) async throws -> PluginDoctorReport { throw unavailable() }
+  func pluginReleaseArtifacts(repository: String, repositoryID: Int64, tag: String?, page: Int)
+    async throws -> GitHubPluginReleaseArtifacts
+  { throw unavailable() }
+  func searchPlugins(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
+    -> PluginCatalogSearchResult
+  { throw unavailable() }
+  func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> PluginHostSnapshot
+  { throw unavailable() }
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] { throw unavailable() }
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] { throw unavailable() }
   func fetchPermissions() async throws -> [PermissionSummary] { throw unavailable() }

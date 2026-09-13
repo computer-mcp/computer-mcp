@@ -68,6 +68,8 @@ struct AppShellView: View {
       ProfilesView()
     case .providers:
       ProvidersView()
+    case .plugins:
+      PluginsView(model: model.pluginManagement)
     case .tunnels:
       TunnelsView()
     case .permissions:

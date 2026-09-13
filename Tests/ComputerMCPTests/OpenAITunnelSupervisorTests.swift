@@ -7,6 +7,20 @@ import Testing
 
 final class OpenAITunnelSupervisorTests {
   @Test
+  func resolverRejectsAFailedVersionProbe() {
+    let runner = OpenAITunnelCommandRunner(exitCode: 64)
+    let configuration = GatewayConfiguration(
+      mcp: .init(servers: [
+        .init(id: "tunnel-client", transport: .stdio, command: "/bin/echo")
+      ]))
+    #expect(throws: (any Error).self) {
+      try OpenAITunnelClientResolver(commandRunner: runner).resolve(
+        requestedPath: nil, configuration: configuration)
+    }
+    #expect(runner.allArguments == [["--version"]])
+  }
+
+  @Test
   func testProfileRejectsAnIDOutsideTheSchemaIdentifierContract() throws {
     var profile = tunnelProfile(reference: nil)
     profile.id = "../primary"

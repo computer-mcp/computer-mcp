@@ -1,6 +1,673 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Recover released record" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Recover released record"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"恢复已释放记录"}}}},
+    "Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"恢复要求进程锁已释放，并且宿主授权清理已确认。损坏或未确认的记录仍会阻止启动。"}}}},
+    "Process record recovered. Check the connection again when ready; no process was started." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Process record recovered. Check the connection again when ready; no process was started."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"进程记录已恢复。准备好后可再次检查连接；本次未启动进程。"}}}},
+    "Only this reviewed record will be retired. No process or downstream action will be started." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Only this reviewed record will be retired. No process or downstream action will be started."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅清理这条已查看的记录，不会启动进程或执行下游操作。"}}}},
+    "Previous MCP cleanup is unconfirmed. Review the process records before starting another connection." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Previous MCP cleanup is unconfirmed. Review the process records before starting another connection."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"之前的 MCP 清理尚未确认。请先查看进程记录，再启动连接。"}}}},
+    "Host session is active" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Host session is active"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"宿主会话活跃"}}}},
+    "Process has stopped" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Process has stopped"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"进程已停止"}}}},
+    "Waiting for process cleanup" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Waiting for process cleanup"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"等待进程清理"}}}},
+    "Process cleanup needs recovery" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Process cleanup needs recovery"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"进程清理需要恢复"}}}},
+    "Host authorization cleanup is unconfirmed" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Host authorization cleanup is unconfirmed"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"宿主授权清理尚未确认"}}}},
+    "Process record is damaged" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Process record is damaged"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"进程记录已损坏"}}}},
+    "HTTP bearer authentication" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"HTTP bearer authentication"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"HTTP Bearer 认证"}}}},
+    "Credential endpoint" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Credential endpoint"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"凭据绑定地址"}}}},
+    "Keychain account" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Keychain account"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"钥匙串账户"}}}},
+    "HTTP only. Bind the exact server URL and save these settings, then use Manage credential to store the token. An endpoint change requires a new binding; redirects are rejected." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"HTTP only. Bind the exact server URL and save these settings, then use Manage credential to store the token. An endpoint change requires a new binding; redirects are rejected."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅适用于 HTTP。绑定完整服务器地址并保存设置，再通过“管理凭据”保存令牌。地址变更需要重新绑定；不接受重定向。"}}}},
+    "Manage credential" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Manage credential"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"管理凭据"}}}},
+    "Credential is stored." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Credential is stored."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"凭据已保存。"}}}},
+    "Credential is missing." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Credential is missing."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"缺少凭据。"}}}},
+    "Bearer token" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Bearer token"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"Bearer 令牌"}}}},
+    "The token is stored only in the host Keychain. New requests read the current value; changing it does not cancel already issued requests." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The token is stored only in the host Keychain. New requests read the current value; changing it does not cancel already issued requests."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"令牌仅保存在宿主钥匙串中。新请求读取当前值；更改凭据不会取消已发出的请求。"}}}},
+    "Remove credential" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Remove credential"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"删除凭据"}}}},
+    "MCP credentials require an exact endpoint binding using HTTPS or loopback HTTP, and a valid Keychain account." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"MCP credentials require an exact endpoint binding using HTTPS or loopback HTTP, and a valid Keychain account."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"MCP 凭据必须绑定完整的 HTTPS 或本机回环 HTTP 地址，并使用有效的钥匙串账户。"}}}},
+    "The host cannot access the MCP credential. Check the App's Keychain identity and unlock state." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The host cannot access the MCP credential. Check the App's Keychain identity and unlock state."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"宿主无法访问 MCP 凭据。请检查应用的钥匙串身份和解锁状态。"}}}},
+    "The MCP credential is missing. Save it through the host before connecting." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The MCP credential is missing. Save it through the host before connecting."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"缺少 MCP 凭据。请先通过宿主保存，再连接。"}}}},
+    "The MCP bearer token must be nonempty printable ASCII without whitespace, at most 16 KiB." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The MCP bearer token must be nonempty printable ASCII without whitespace, at most 16 KiB."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"MCP Bearer 令牌必须为不含空白的非空可打印 ASCII，且不超过 16 KiB。"}}}},
+    "Workspace" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Workspace" } },
+      "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "工作区" } }
+    } },
+    "Check connection" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Check connection"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"检查连接"}}}},
+    "Choose a workspace" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose a workspace"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择工作区"}}}},
+    "Register a workspace before checking a connection." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Register a workspace before checking a connection."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请先注册工作区，再检查连接。"}}}},
+    "Server version" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Server version"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"服务器版本"}}}},
+    "Starts only this enabled MCP to check its connection and catalog. No tools are called, dependencies installed or grants changed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Starts only this enabled MCP to check its connection and catalog. No tools are called, dependencies installed or grants changed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅启动当前已启用的 MCP，检查连接和工具目录。不调用工具、不安装依赖，也不更改授权。"}}}},
+    "Not verified: tool execution, remote profile permissions, system permissions and persistent host services." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not verified: tool execution, remote profile permissions, system permissions and persistent host services."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未验证：工具执行、远程配置权限、系统权限及持久化宿主服务。"}}}},
+    "The registration is disabled; no connection was started." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The registration is disabled; no connection was started."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此注册已禁用，未启动连接。"}}}},
+    "The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"所选 MCP 已初始化并返回工具目录。尚未检查工具执行和生产权限。"}}}},
+    "The selected MCP did not complete connection and catalog discovery. Check the launch configuration, endpoint authentication and system permissions." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The selected MCP did not complete connection and catalog discovery. Check the launch configuration, endpoint authentication and system permissions."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"所选 MCP 未完成连接和目录发现。请检查启动配置、端点认证及系统权限。"}}}},
+    "Outstanding calls may have an unknown outcome. Reconnect and inspect before retrying." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Outstanding calls may have an unknown outcome. Reconnect and inspect before retrying." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未完成调用的结果可能不明。重新连接后，请先核验结果再决定是否重试。" } }
+      }
+    },
+    "Apply" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apply" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用" } }
+      }
+    },
+    "Streamable HTTP" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Streamable HTTP" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "流式 HTTP" } }
+      }
+    },
+    "MCP Registrations": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MCP Registrations"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MCP 注册"
+          }
+        }
+      }
+    },
+    "Add MCP": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add MCP"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加 MCP"
+          }
+        }
+      }
+    },
+    "Edit MCP": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit MCP"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑 MCP"
+          }
+        }
+      }
+    },
+    "Manage MCP": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage MCP"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "管理 MCP"
+          }
+        }
+      }
+    },
+    "Plugin settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "插件设置"
+          }
+        }
+      }
+    },
+    "Manual registration": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manual registration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手动注册"
+          }
+        }
+      }
+    },
+    "Selected tools only": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected tools only"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅选定工具"
+          }
+        }
+      }
+    },
+    "Review MCP change": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review MCP change"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "核对 MCP 变更"
+          }
+        }
+      }
+    },
+    "Registration will be enabled.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registration will be enabled."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此注册将被启用。"
+          }
+        }
+      }
+    },
+    "Registration will be disabled.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registration will be disabled."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此注册将被禁用。"
+          }
+        }
+      }
+    },
+    "The registration will be removed. External dependencies are retained.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The registration will be removed. External dependencies are retained."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此注册将被移除，外部依赖会保留。"
+          }
+        }
+      }
+    },
+    "Profile grants are unchanged. A registration cannot grant itself permissions.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile grants are unchanged. A registration cannot grant itself permissions."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "权限配置的授权保持不变，注册不能自行获取权限。"
+          }
+        }
+      }
+    },
+    "Applying this change reconnects the running gateway.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applying this change reconnects the running gateway."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用此变更会重新连接运行中的网关。"
+          }
+        }
+      }
+    },
+    "Local process": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local process"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本地进程"
+          }
+        }
+      }
+    },
+    "Arguments (JSON array)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments (JSON array)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参数（JSON 数组）"
+          }
+        }
+      }
+    },
+    "Server URL": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server URL"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务地址"
+          }
+        }
+      }
+    },
+    "Tool exposure": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tool exposure"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工具暴露方式"
+          }
+        }
+      }
+    },
+    "An empty prefix preserves original tool names. Conflicts are rejected.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An empty prefix preserves original tool names. Conflicts are rejected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前缀留空可保留工具原名，名称冲突时拒绝应用。"
+          }
+        }
+      }
+    },
+    "Allowed tool names, one per line": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allowed tool names, one per line"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许的工具名称，每行一个"
+          }
+        }
+      }
+    },
+    "An empty selection exposes no tools.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An empty selection exposes no tools."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择为空时不暴露任何工具。"
+          }
+        }
+      }
+    },
+    "Environment (JSON object)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Environment (JSON object)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "环境变量（JSON 对象）"
+          }
+        }
+      }
+    },
+    "Host risk classifications (JSON object)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host risk classifications (JSON object)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "宿主风险分类（JSON 对象）"
+          }
+        }
+      }
+    },
+    "Scoped host services": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scoped host services"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "受限宿主服务"
+          }
+        }
+      }
+    },
+    "External dependencies are user-managed. Host services do not grant local administration.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External dependencies are user-managed. Host services do not grant local administration."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部依赖由用户管理，宿主服务不授予本地管理权限。"
+          }
+        }
+      }
+    },
+    "Preserve downstream tool names": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve downstream tool names"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留下游工具原名"
+          }
+        }
+      }
+    },
+    "Allow scoped host services": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow scoped host services"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许调用限定作用域的宿主服务"
+          }
+        }
+      }
+    },
+    "For trusted stdio adapters only. Calls retain this connection's workspace and grants; local approval authority is not delegated.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For trusted stdio adapters only. Calls retain this connection's workspace and grants; local approval authority is not delegated."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅适用于可信的标准输入输出适配器。调用沿用当前连接的工作区和授权，不会获得本机审批权。"
+          }
+        }
+      }
+    },
+    "Override process arguments" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Override process arguments"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"自定义启动参数"}}}},
+    "Argument" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Argument"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"参数"}}}},
+    "Remove argument" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Remove argument"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"移除参数"}}}},
+    "Add argument" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Add argument"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"添加参数"}}}},
+    "Each row is one exact argument. No rows means no arguments. Do not enter secrets." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Each row is one exact argument. No rows means no arguments. Do not enter secrets."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"每行原样传入一个参数。没有行表示不传参数。请勿填写密钥。"}}}},
+    "Uses the package's startup arguments." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Uses the package's startup arguments."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用插件包的默认启动参数。"}}}},
+    "Host binding" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Host binding"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"宿主绑定"}}}},
+    "Found in installed application" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Found in installed application"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"在已安装应用中找到"}}}},
+    "Found in host PATH" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Found in host PATH"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"在宿主 PATH 中找到"}}}},
+    "Not resolved" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not resolved"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未找到"}}}},
+    "Check package" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Check package"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"检查插件包"}}}},
+    "Checks include disabled contributions. Nothing is enabled, executed or installed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Checks include disabled contributions. Nothing is enabled, executed or installed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"检查包含已禁用的贡献，不会启用、执行或安装任何内容。"}}}},
+    "Revision" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revision"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"修订号"}}}},
+    "Checked at" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Checked at"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"检查时间"}}}},
+    "Some package checks failed" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Some package checks failed"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"部分插件包检查失败"}}}},
+    "Package checks finished" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Package checks finished"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件包检查已结束"}}}},
+    "Working directory" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Working directory"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"工作目录"}}}},
+    "Not checked" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not checked"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未检查"}}}},
+    "File checks do not confirm a working integration." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"File checks do not confirm a working integration."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"文件检查不能证明集成已完整可用。"}}}},
+    "Check again" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Check again"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"重新检查"}}}},
+    "Passed" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Passed"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"通过"}}}},
+    "Not verified" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not verified"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未验证"}}}},
+    "Source" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Source"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"来源"}}}},
+    "Host compatibility" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Host compatibility"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"宿主兼容性"}}}},
+    "Executable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Executable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可执行文件"}}}},
+    "Runtime version" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Runtime version"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"运行时版本"}}}},
+    "Binary compatibility" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Binary compatibility"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"二进制兼容性"}}}},
+    "Connections" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Connections"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"连接"}}}},
+    "System permissions" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"System permissions"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"系统权限"}}}},
+    "Selected package and declaration identity were validated." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Selected package and declaration identity were validated."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已验证所选插件包及清单身份。"}}}},
+    "The declaration permits this host version and architecture." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The declaration permits this host version and architecture."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"清单允许当前宿主版本与架构。"}}}},
+    "The declaration excludes this host version or architecture. Select a compatible package." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The declaration excludes this host version or architecture. Select a compatible package."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"清单不支持当前宿主版本或架构，请选择兼容的插件包。"}}}},
+    "No executable was resolved for this dependency. Follow its setup instructions or set a host binding." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No executable was resolved for this dependency. Follow its setup instructions or set a host binding."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未能为此依赖找到可执行文件，请按依赖说明配置，或在宿主中绑定路径。"}}}},
+    "The declared Skills directory passed package path validation. Skill contents and scripts were not executed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The declared Skills directory passed package path validation. Skill contents and scripts were not executed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"声明的技能目录已通过插件包路径验证，未执行技能内容或脚本。"}}}},
+    "No selected or bundled source is available. Select an installed source or register a package." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No selected or bundled source is available. Select an installed source or register a package."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"没有可用的所选来源或内置来源，请选择已安装的来源或注册插件包。"}}}},
+    "File and interpreter checks passed; actual startup has not been verified." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"File and interpreter checks passed; actual startup has not been verified."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"文件与解释器检查通过，尚未验证实际启动。"}}}},
+    "The executable was not found in the configured location or launch search path." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The executable was not found in the configured location or launch search path."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"在配置位置或启动搜索路径中未找到可执行文件。"}}}},
+    "The executable path is empty, too long or contains NUL." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The executable path is empty, too long or contains NUL."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可执行文件路径为空、过长或含有 NUL 字符。"}}}},
+    "The executable path does not identify a regular file." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The executable path does not identify a regular file."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可执行文件路径未指向普通文件。"}}}},
+    "The current user cannot execute this file." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The current user cannot execute this file."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"当前用户无法执行此文件。"}}}},
+    "The executable header could not be safely read; check access and retry." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The executable header could not be safely read; check access and retry."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法安全读取可执行文件头，请检查访问权限后重试。"}}}},
+    "The script has an invalid interpreter declaration for macOS." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The script has an invalid interpreter declaration for macOS."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"脚本的解释器声明在 macOS 上无效。"}}}},
+    "A script interpreter is unavailable in the launch environment. Check its path and runtime installation." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"A script interpreter is unavailable in the launch environment. Check its path and runtime installation."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"启动环境中缺少可用的脚本解释器，请检查其路径与运行时安装状态。"}}}},
+    "This interpreter invocation needs further verification; no script or probe was executed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This interpreter invocation needs further verification; no script or probe was executed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此解释器调用仍需进一步验证，本次文件检查未执行脚本或探测程序。"}}}},
+    "Close" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Close"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"关闭"}}}},
+    "The operation was cancelled. Check the selected source before retrying." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The operation was cancelled. Check the selected source before retrying."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"操作已取消。重试前请先检查当前选中的来源。"}}}},
+    "Cancelling and checking the result…" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cancelling and checking the result…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"正在取消并核对结果…"}}}},
+    "Cancel installation" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cancel installation"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"取消安装"}}}},
+    "Choose release archive" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose release archive"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择发布归档包"}}}},
+    "Release tag (blank for latest stable)" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Release tag (blank for latest stable)"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"发布标签（留空使用最新稳定版）"}}}},
+    "Load release" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Load release"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"加载发布版本"}}}},
+    "Loading release archives" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Loading release archives"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"正在加载发布归档包"}}}},
+    "Prerelease" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Prerelease"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"预发布版本"}}}},
+    "Some release archives lack a valid size or SHA-256 and cannot be installed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Some release archives lack a valid size or SHA-256 and cannot be installed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"部分发布归档包缺少有效的大小或 SHA-256，无法安装。"}}}},
+    "No installable archives on this release page." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No installable archives on this release page."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本发布页没有可安装的归档包。"}}}},
+    "Asset page %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Asset page %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"归档页 %@"}}}},
+    "Choose an archive for your Mac. The App checks compatibility and source again before installation. Publisher provenance is not a signature." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose an archive for your Mac. The App checks compatibility and source again before installation. Publisher provenance is not a signature."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请选择适合此 Mac 的归档包。安装前会重新检查兼容性和来源；发布者来源证明不等于签名。"}}}},
+    "New plugins start disabled. Updates keep host settings and earlier versions. External dependencies are not installed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"New plugins start disabled. Updates keep host settings and earlier versions. External dependencies are not installed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"新插件默认停用。更新会保留宿主设置和先前版本，不会安装外部依赖。"}}}},
+    "Plugin settings changed. Close and reopen this window before installing." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin settings changed. Close and reopen this window before installing."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件设置已变更。请关闭并重新打开此窗口后再安装。"}}}},
+    "Downloading, checking and installing…" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Downloading, checking and installing…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"正在下载、检查并安装…"}}}},
+    "Download and install" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Download and install"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"下载并安装"}}}},
+    "Release tag" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Release tag"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"发布标签"}}}},
+    "Release ID" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Release ID"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"发布版本 ID"}}}},
+    "Asset ID" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Asset ID"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"归档 ID"}}}},
+    "Install archive" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Install archive"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"安装归档包"}}}},
+    "Choose archive" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose archive"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择归档包"}}}},
+    "Retry file recovery" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Retry file recovery"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"重试文件恢复"}}}},
+    "Plugin ID" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin ID"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件标识"}}}},
+    "SHA-256" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"SHA-256"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"SHA-256 摘要"}}}},
+    "Uninstall" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Uninstall"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"卸载"}}}},
+    "Uninstall this archive?" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Uninstall this archive?"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"卸载此归档包？"}}}},
+    "Only this installation's owned files will be removed. Host settings, other versions and external dependencies will be kept." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Only this installation's owned files will be removed. Host settings, other versions and external dependencies will be kept."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"只移除此安装记录所属的文件，保留宿主设置、其他版本和外部依赖。"}}}},
+    "Choose a ZIP, TAR or gzip package and enter its expected identity and SHA-256 from a trusted source." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose a ZIP, TAR or gzip package and enter its expected identity and SHA-256 from a trusted source."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择 ZIP、TAR 或 gzip 包，并填入从可信来源获得的预期标识和 SHA-256。"}}}},
+    "A matching digest verifies the archive bytes, not an official publisher. New plugins start disabled. Updates keep host settings and earlier versions." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"A matching digest verifies the archive bytes, not an official publisher. New plugins start disabled. Updates keep host settings and earlier versions."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"摘要匹配只能验证归档文件内容，不能证明官方发布者身份。新插件默认停用；更新保留宿主设置及先前版本。"}}}},
+    "External dependencies are not installed. Use an earlier source in the plugin details to roll back." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"External dependencies are not installed. Use an earlier source in the plugin details to roll back."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"不会安装外部依赖。如需回滚，请在插件详情中选择先前版本。"}}}},
+    "Plugin file recovery could not finish. Check the App-owned storage and retry recovery." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin file recovery could not finish. Check the App-owned storage and retry recovery."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件文件恢复未能完成。请检查应用管理的存储目录后重试恢复。"}}}},
+    "A plugin installation or recovery is still running. Retry when it finishes." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"A plugin installation or recovery is still running. Retry when it finishes."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件安装或恢复仍在运行，请等待其结束后重试。"}}}},
+    "The App's embedded plugin archive worker is unavailable. Check the App installation; no PATH executable was used." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The App's embedded plugin archive worker is unavailable. Check the App installation; no PATH executable was used."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"应用内置的归档检查程序不可用。请检查应用安装；未使用 PATH 中的其他程序。"}}}},
+    "Plugin file recovery is incomplete. Missing, unverified or still-referenced directories require attention." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin file recovery is incomplete. Missing, unverified or still-referenced directories require attention."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件文件恢复尚未完成。请检查缺失、无法验证或仍被引用的目录。"}}}},
+    "GitHub requested authentication. Public plugin requests do not use host credentials." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"GitHub requested authentication. Public plugin requests do not use host credentials."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"GitHub 要求身份验证。公开插件请求不会使用宿主凭据。"}}}},
+    "Some repositories could not be checked. Results may be incomplete." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Some repositories could not be checked. Results may be incomplete."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"部分仓库无法检查，搜索结果可能不完整。"}}}},
+    "Official plugin search" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Official plugin search"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"官方插件搜索"}}}},
+    "Search" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Search"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"搜索"}}}},
+    "Status" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Status"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"状态"}}}},
+    "Search official plugins" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Search official plugins"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"搜索官方插件"}}}},
+    "Search public repositories published by computer-mcp on GitHub." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Search public repositories published by computer-mcp on GitHub."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"搜索 GitHub 上 computer-mcp 组织发布的公开仓库。"}}}},
+    "Search names, descriptions, or repositories" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Search names, descriptions, or repositories"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"搜索名称、描述或仓库"}}}},
+    "Contribution" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Contribution"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"集成类型"}}}},
+    "All contributions" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"All contributions"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"全部类型"}}}},
+    "Previous results are shown below; the latest request failed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Previous results are shown below; the latest request failed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"最近一次请求失败，下面保留此前的结果。"}}}},
+    "Searching GitHub" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Searching GitHub"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"正在搜索 GitHub"}}}},
+    "Cancel search" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cancel search"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"取消搜索"}}}},
+    "Discovery does not install packages or grant access." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Discovery does not install packages or grant access."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"搜索不会安装插件包或授予权限。"}}}},
+    "Repository page %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Repository page %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仓库第 %@ 页"}}}},
+    "Cached" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cached"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"缓存结果"}}}},
+    "Fetched from GitHub" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Fetched from GitHub"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"从 GitHub 获取"}}}},
+    "Results for" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Results for"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"搜索条件"}}}},
+    "No matching plugins on this repository page." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No matching plugins on this repository page."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本页仓库中没有匹配的插件。"}}}},
+    "Repositories with discovery issues" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Repositories with discovery issues"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法正常读取的仓库"}}}},
+    "Previous page" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Previous page"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"上一页"}}}},
+    "Next page" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Next page"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"下一页"}}}},
+    "Refresh page" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Refresh page"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"刷新本页"}}}},
+    "Each page checks up to 10 repositories. Continue to the next page even if this page has no matches." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Each page checks up to 10 repositories. Continue to the next page even if this page has no matches."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"每页检查最多 10 个仓库。本页没有匹配项时，仍可继续查看下一页。"}}}},
+    "Official source identifies the publisher, not a verified artifact or signature. Discovery does not install packages or grant access." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Official source identifies the publisher, not a verified artifact or signature. Discovery does not install packages or grant access."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"官方来源用于确认发布者，不代表安装包或签名已通过验证。搜索不会安装插件包或授予权限。"}}}},
+    "Source details" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Source details"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"来源详情"}}}},
+    "Repository ID" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Repository ID"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仓库标识"}}}},
+    "Publisher ID" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Publisher ID"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"发布者标识"}}}},
+    "Commit" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Commit"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"提交"}}}},
+    "Manifest SHA-256" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Manifest SHA-256"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"清单 SHA-256"}}}},
+    "Open pinned declaration" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Open pinned declaration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"查看固定提交的清单"}}}},
+    "GitHub request failed with HTTP %@." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"GitHub request failed with HTTP %@."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"GitHub 请求失败，HTTP 状态码为 %@。"}}}},
+    "Invalid plugin request. Check repository identity, tag, query length and page bounds." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Invalid plugin request. Check repository identity, tag, query length and page bounds."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件请求无效。请检查仓库标识、发布标签、搜索长度及页码范围。"}}}},
+    "Another official plugin search is in progress. Try again when it finishes." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Another official plugin search is in progress. Try again when it finishes."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"另一个官方插件搜索正在进行，请稍后重试。"}}}},
+    "GitHub returned an invalid plugin catalog response." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"GitHub returned an invalid plugin catalog response."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"GitHub 返回的插件目录数据无效。"}}}},
+    "The repository's plugin declaration is invalid." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The repository's plugin declaration is invalid."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仓库中的插件清单无效。"}}}},
+    "The plugin's GitHub publisher, repository or release does not match the selected source." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The plugin's GitHub publisher, repository or release does not match the selected source."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件的 GitHub 发布者、仓库或发布版本与所选来源不一致。"}}}},
+    "The plugin catalog response exceeded its size limit." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The plugin catalog response exceeded its size limit."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件目录响应超过大小限制。"}}}},
+    "The plugin request was refused because its destination is not allowed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The plugin request was refused because its destination is not allowed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件请求的目标地址不在允许范围内，已拒绝访问。"}}}},
+    "GitHub has limited plugin requests. Wait before trying again." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"GitHub has limited plugin requests. Wait before trying again."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"GitHub 已限制插件请求，请稍后重试。"}}}},
+    "GitHub plugin request timed out. Check the connection and try again." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"GitHub plugin request timed out. Check the connection and try again."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"GitHub 插件请求超时，请检查网络连接后重试。"}}}},
+    "GitHub is unavailable. Check the connection and try again." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"GitHub is unavailable. Check the connection and try again."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法连接 GitHub，请检查网络连接后重试。"}}}},
+    "Plugins" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugins"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件"}}}},
+    "Plugin" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件"}}}},
+    "Packages that contribute MCP, CLI, and skills" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Packages that contribute MCP, CLI, and skills"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"组合 MCP、命令行与技能的插件包"}}}},
+    "Add local package" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Add local package"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"添加本地包"}}}},
+    "No plugins registered" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No plugins registered"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"尚未注册插件"}}}},
+    "Add a local package to review its contributions before enabling it." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Add a local package to review its contributions before enabling it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"添加本地包，查看其集成内容后再启用。"}}}},
+    "Loading plugins" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Loading plugins"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"正在加载插件"}}}},
+    "Enable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Enable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"启用"}}}},
+    "Disable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Disable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"停用"}}}},
+    "Remove local registration?" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Remove local registration?"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"移除本地注册？"}}}},
+    "Package files and saved host settings will be kept." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Package files and saved host settings will be kept."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"将保留插件包文件和已保存的宿主设置。"}}}},
+    "Remove registration" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Remove registration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"移除注册"}}}},
+    "Edit settings" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Edit settings"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"编辑设置"}}}},
+    "Sources" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Sources"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"来源"}}}},
+    "Selected" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Selected"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已选择"}}}},
+    "Source repository" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Source repository"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"来源仓库"}}}},
+    "Use this source" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Use this source"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用此来源"}}}},
+    "Refresh registration" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Refresh registration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"刷新注册"}}}},
+    "Use bundled fallback" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Use bundled fallback"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"恢复内置来源"}}}},
+    "Without a matching bundled package, contributions remain unavailable." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Without a matching bundled package, contributions remain unavailable."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"若没有匹配的内置包，集成功能将保持不可用。"}}}},
+    "Registration diagnostics" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Registration diagnostics"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"注册诊断"}}}},
+    "Resolved registrations do not confirm a working connection. Caller permissions still apply." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Resolved registrations do not confirm a working connection. Caller permissions still apply."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"解析成功不代表连接可用。调用方仍须具备相应权限。"}}}},
+    "Dependency unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Dependency unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"依赖不可用"}}}},
+    "Executable unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Executable unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可执行文件不可用"}}}},
+    "Executable needs verification" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Executable needs verification"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可执行文件有待验证"}}}},
+    "Host incompatible" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Host incompatible"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"宿主不兼容"}}}},
+    "Resolved component" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Resolved component"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已解析的组件"}}}},
+    "Local development" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Local development"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本地开发"}}}},
+    "Bundled" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Bundled"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"内置"}}}},
+    "Installed archive" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Installed archive"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已安装的归档包"}}}},
+    "CLI enabled" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"CLI enabled"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"启用命令行集成"}}}},
+    "Registration ID" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Registration ID"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"注册标识"}}}},
+    "Allow arbitrary raw arguments" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow arbitrary raw arguments"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许任意原始参数"}}}},
+    "Only grant raw arguments to a trusted CLI. Structured command trees reject this setting." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Only grant raw arguments to a trusted CLI. Structured command trees reject this setting."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅为可信命令行程序授权任意参数。结构化命令树不接受此设置。"}}}},
+    "Skills enabled" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Skills enabled"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"启用技能"}}}},
+    "Reading skills does not execute scripts or grant tool access." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Reading skills does not execute scripts or grant tool access."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"读取技能不会执行脚本，也不会授予工具权限。"}}}},
+    "External executables" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"External executables"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"外部可执行程序"}}}},
+    "Dependency ID" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Dependency ID"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"依赖标识"}}}},
+    "Absolute executable path" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Absolute executable path"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可执行程序的绝对路径"}}}},
+    "Remove binding" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Remove binding"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"移除绑定"}}}},
+    "Add executable binding" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Add executable binding"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"添加程序绑定"}}}},
+    "Bindings select existing executables. Computer MCP does not install or update external dependencies." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Bindings select existing executables. Computer MCP does not install or update external dependencies."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"绑定用于选择已有程序。Computer MCP 不安装或更新外部依赖。"}}}},
+    "Changes apply only if the saved configuration has not changed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Changes apply only if the saved configuration has not changed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅在已保存的配置未被他人修改时应用更改。"}}}},
+    "MCP enabled" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"MCP enabled"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"启用 MCP 集成"}}}},
+    "Tool prefix" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Tool prefix"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"工具前缀"}}}},
+    "Exposure" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Exposure"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"暴露方式"}}}},
+    "Gateway calls" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Gateway calls"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"网关调用"}}}},
+    "Reexport tools" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Reexport tools"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"对外暴露工具"}}}},
+    "Allowed tools" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allowed tools"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许的工具"}}}},
+    "Explicit whitelist" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Explicit whitelist"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"明确白名单"}}}},
+    "All current and future tools" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"All current and future tools"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"当前及未来的全部工具"}}}},
+    "Tool names, one per line" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Tool names, one per line"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"工具名称，每行一个"}}}},
+    "An empty whitelist permits no tools." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"An empty whitelist permits no tools."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"空白名单不允许任何工具。"}}}},
+    "All also includes tools added by future server updates." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"All also includes tools added by future server updates."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"“全部”也包括服务端未来更新时新增的工具。"}}}},
+    "Dependency names must be unique." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Dependency names must be unique."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"依赖标识不能重复。"}}}},
+    "Plugin settings changed. Reload before applying this change." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin settings changed. Reload before applying this change."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件设置已变更。请重新打开编辑窗口，核对后再保存。"}}}},
+    "Gateway clients are connected or connecting. Disconnect them before changing plugin registrations; active tasks were not interrupted." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Gateway clients are connected or connecting. Disconnect them before changing plugin registrations; active tasks were not interrupted."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"有客户端已连接或正在连接网关。请先断开连接再修改插件注册；当前任务未被中断。"}}}},
+    "Another gateway configuration change is in progress. Retry after it finishes." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Another gateway configuration change is in progress. Retry after it finishes."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"另一项网关配置变更正在进行。请待其完成后重试。"}}}},
     "Accessibility" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Accessibility" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "辅助功能" } } } },
     "Activity" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Activity" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "活动" } } } },
     "Add ChatGPT Connection" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add ChatGPT Connection" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加 ChatGPT 连接" } } } },

@@ -1,0 +1,69 @@
+{
+  "sql": "PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCREATE TABLE IF NOT EXISTS \"codexApprovals\" (\"id\" TEXT PRIMARY KEY, \"upstreamRequestID\" TEXT NOT NULL, \"kind\" TEXT NOT NULL, \"risk\" TEXT NOT NULL, \"state\" TEXT NOT NULL, \"workspaceID\" TEXT, \"workspacePath\" TEXT NOT NULL, \"runtimeID\" TEXT NOT NULL, \"threadID\" TEXT, \"turnID\" TEXT, \"itemID\" TEXT, \"correlationID\" TEXT NOT NULL, \"socketConnectionID\" TEXT, \"tunnelInstanceID\" TEXT, \"detailsJSON\" TEXT NOT NULL, \"proposedActionJSON\" TEXT NOT NULL, \"createdAt\" DATETIME NOT NULL, \"expiresAt\" DATETIME NOT NULL, \"resolvedAt\" DATETIME, \"decision\" TEXT, \"scope\" TEXT, \"resolutionReason\" TEXT);\nINSERT INTO codexApprovals VALUES('migration-approval','fixture-request','command_execution','workspace-write','interrupted','69101195-660A-4F22-A5F5-002753753BA9','__SQL_ROOT__/source','F9FBE552-862D-4CEB-828A-E13AF97E515B','thread_bound',NULL,NULL,'fixture-correlation','services-origin',NULL,'{\"text\":\"保留历史审批\"}','{}','2026-09-12 14:59:26.070','2026-09-12 15:59:26.070','2026-09-12 14:59:26.070',NULL,NULL,'Fixture request interrupted');\nCREATE TABLE IF NOT EXISTS \"codexRuntimeLeases\" (\"id\" TEXT PRIMARY KEY, \"workspaceID\" TEXT, \"state\" TEXT NOT NULL, \"updatedAt\" DATETIME NOT NULL, \"payloadJSON\" TEXT NOT NULL);\nINSERT INTO codexRuntimeLeases VALUES('F9FBE552-862D-4CEB-828A-E13AF97E515B','69101195-660A-4F22-A5F5-002753753BA9','stopped','2026-09-12 14:59:26.066','{\"connectionState\":\"stopped\",\"createdAt\":810917964.779856,\"currentRequestState\":\"idle\",\"id\":\"F9FBE552-862D-4CEB-828A-E13AF97E515B\",\"lastRequestFailure\":{\"connection_generation\":1,\"kind\":\"request_failed\",\"message\":\"codex.app.runtime_stopped: Runtime ''F9FBE552-862D-4CEB-828A-E13AF97E515B'' has been stopped. Create a new gateway session to start a new generation.\",\"occurred_at\":810917966.066174,\"recoverable\":false},\"owner\":{\"caller\":\"secure-tunnel\",\"profile_id\":\"chatgpt-operate\",\"socket_connection_id\":\"services-origin\",\"transport\":\"gateway_socket\",\"workspace_id\":\"69101195-660A-4F22-A5F5-002753753BA9\"},\"process\":{\"exit_code\":0,\"parent_process_id\":2147483000,\"process_group_id\":2147483000,\"process_id\":2147483000,\"started_at\":810917964.802145,\"state\":\"stopped\",\"stopped_at\":810917966.043598,\"supervisor_process_id\":2147483000,\"termination_escalated\":false},\"processState\":\"stopped\",\"runtimeState\":\"stopped\",\"state\":\"stopped\",\"updatedAt\":810917966.066236,\"workspacePath\":\"__JSON_ROOT__\\/source\"}');\nCREATE TABLE IF NOT EXISTS \"codexOrchestrationRuns\" (\"id\" TEXT PRIMARY KEY, \"workspaceID\" TEXT NOT NULL, \"state\" TEXT NOT NULL, \"updatedAt\" DATETIME NOT NULL, \"payloadJSON\" TEXT NOT NULL);\nINSERT INTO codexOrchestrationRuns VALUES('64294ADE-7E86-44DB-A4B6-81E4DB1EA39A','69101195-660A-4F22-A5F5-002753753BA9','active','2026-09-12 14:59:24.848','{\"acceptanceCriteria\":[{\"description\":\"State survives transfer\",\"evidenceIDs\":[],\"id\":\"criterion-1\",\"state\":\"open\"}],\"acceptedScope\":[\"fixture\"],\"blockers\":[],\"budget\":{\"maxDurationSeconds\":86400,\"maxNoProgressSeconds\":900,\"maxRepeatedFailures\":3,\"maxTurns\":100},\"createdAt\":810917964.847668,\"currentPhase\":\"delivery\",\"diagnostics\":[],\"evidence\":[],\"id\":\"64294ADE-7E86-44DB-A4B6-81E4DB1EA39A\",\"lastMeaningfulProgressAt\":810917964.847668,\"objective\":\"Continue migrated work\",\"officialGoalLinked\":true,\"repeatedFailureCount\":0,\"repeatedPlanningCount\":0,\"requiredEvidenceKinds\":[\"build\",\"git_status\",\"test\"],\"revision\":1,\"state\":\"active\",\"threadID\":\"thread_bound\",\"turnsUsed\":0,\"updatedAt\":810917964.847668,\"workspaceID\":\"69101195-660A-4F22-A5F5-002753753BA9\",\"workspacePath\":\"__JSON_ROOT__\\/source\"}');\nCREATE TABLE IF NOT EXISTS \"codexWorktreeLeases\" (\"id\" TEXT PRIMARY KEY, \"workspaceID\" TEXT NOT NULL, \"state\" TEXT NOT NULL, \"heartbeatAt\" DATETIME NOT NULL, \"payloadJSON\" TEXT NOT NULL);\nINSERT INTO codexWorktreeLeases VALUES('993A4065-1836-4BBB-8D15-468A62D605AE','69101195-660A-4F22-A5F5-002753753BA9','active','2026-09-12 14:59:24.849','{\"agentID\":\"migration-parent\",\"createdAt\":810917964.849291,\"expiresAt\":__LEASE_EXPIRES__,\"heartbeatAt\":810917964.849291,\"id\":\"993A4065-1836-4BBB-8D15-468A62D605AE\",\"mode\":\"exclusive\",\"revision\":1,\"state\":\"active\",\"workspaceID\":\"69101195-660A-4F22-A5F5-002753753BA9\",\"workspacePath\":\"__JSON_ROOT__\\/source\"}');\nCREATE TABLE IF NOT EXISTS \"codexManagedWorktrees\" (\"id\" TEXT PRIMARY KEY, \"sourceWorkspaceID\" TEXT NOT NULL, \"workspaceID\" TEXT NOT NULL UNIQUE, \"state\" TEXT NOT NULL, \"updatedAt\" DATETIME NOT NULL, \"payloadJSON\" TEXT NOT NULL);\nINSERT INTO codexManagedWorktrees VALUES('a57c596c-914e-4d58-b2ca-6015017f2456','69101195-660A-4F22-A5F5-002753753BA9','codex-worktree-a57c596c-914e-4d58-b2ca-6015017f2456','planned','2026-09-12 14:59:24.851','{\"agent_id\":\"migration-child\",\"branch\":\"migration-child\",\"caller\":\"secure-tunnel\",\"created_at\":810917964.850705,\"git_common_directory\":\"__JSON_ROOT__\\/source\\/.git\",\"head_oid\":\"__HEAD_OID__\",\"id\":\"a57c596c-914e-4d58-b2ca-6015017f2456\",\"parent_lease_id\":\"993A4065-1836-4BBB-8D15-468A62D605AE\",\"path\":\"__JSON_ROOT__\\/Managed Worktrees\\/6fcf1bcbaeda4a13aa068df2\\/a57c596c-914e-4d58-b2ca-6015017f2456\",\"plan_expires_at\":__PLAN_EXPIRES__,\"profile_id\":\"chatgpt-operate\",\"revision\":1,\"source_repository_root\":\"__JSON_ROOT__\\/source\",\"source_workspace_id\":\"69101195-660A-4F22-A5F5-002753753BA9\",\"start_point\":\"HEAD\",\"state\":\"planned\",\"ttl_seconds\":900,\"updated_at\":810917964.850705,\"workspace_id\":\"codex-worktree-a57c596c-914e-4d58-b2ca-6015017f2456\"}');\nCREATE TABLE IF NOT EXISTS \"codexThreadOwnership\" (\"threadID\" TEXT PRIMARY KEY, \"workspaceID\" TEXT, \"workspacePath\" TEXT NOT NULL, \"runtimeID\" TEXT NOT NULL, \"state\" TEXT NOT NULL, \"createdAt\" DATETIME NOT NULL, \"updatedAt\" DATETIME NOT NULL);\nINSERT INTO codexThreadOwnership VALUES('thread_bound','69101195-660A-4F22-A5F5-002753753BA9','__SQL_ROOT__/source','F9FBE552-862D-4CEB-828A-E13AF97E515B','released','2026-09-12 14:59:24.844','2026-09-12 14:59:26.057');\nCREATE TABLE IF NOT EXISTS \"codexElevationGrants\" (\"id\" TEXT PRIMARY KEY, \"workspaceID\" TEXT NOT NULL, \"profileID\" TEXT NOT NULL, \"requestingCaller\" TEXT NOT NULL, \"requestingConnectionID\" TEXT, \"threadID\" TEXT, \"state\" TEXT NOT NULL, \"createdAt\" DATETIME NOT NULL, \"updatedAt\" DATETIME NOT NULL, \"payloadJSON\" TEXT NOT NULL);\nINSERT INTO codexElevationGrants VALUES('17D99B26-3541-4534-81FC-FAAA4D8E16DC','69101195-660A-4F22-A5F5-002753753BA9','chatgpt-operate','secure-tunnel','services-origin',NULL,'pending','2026-09-12 14:59:26.074','2026-09-12 14:59:26.074','{\"canonical_root\":\"__JSON_ROOT__\\/source\",\"consumed_runtime_ids\":[],\"consumed_turn_count\":0,\"consumed_turn_ids\":[],\"created_at\":810917966.07396,\"id\":\"17D99B26-3541-4534-81FC-FAAA4D8E16DC\",\"maximum_duration_seconds\":300,\"mode\":\"bounded-time\",\"profile_id\":\"chatgpt-operate\",\"reason\":\"Disposable host-service validation\",\"request_correlation_id\":\"C17ECC32-95F1-44F6-86C1-0DC8672B8349\",\"request_expires_at\":810918866.07396,\"requested_sandbox\":\"danger-full-access\",\"requesting_caller\":\"secure-tunnel\",\"requesting_connection_id\":\"services-origin\",\"state\":\"pending\",\"updated_at\":810917966.07396,\"workspace_id\":\"69101195-660A-4F22-A5F5-002753753BA9\"}');\nCREATE TABLE IF NOT EXISTS \"codexOwnershipReconciliationReceipts\" (\"id\" TEXT PRIMARY KEY, \"planDigest\" TEXT NOT NULL, \"appliedAt\" DATETIME NOT NULL, \"payloadJSON\" TEXT NOT NULL);\nINSERT INTO codexOwnershipReconciliationReceipts VALUES('7E7BC30A-E4A1-49A6-97DC-424B6A324E1B','a61c80884510f207198036c94b977283a0ee05fcde034959a7a8ece76429e09e','2026-09-12 14:59:26.057','{\"applied_at\":810917966.056889,\"external_state_mutated\":false,\"plan_digest\":\"a61c80884510f207198036c94b977283a0ee05fcde034959a7a8ece76429e09e\",\"receipt_id\":\"7E7BC30A-E4A1-49A6-97DC-424B6A324E1B\",\"released_thread_ids\":[\"thread_bound\"],\"schema_version\":1,\"signals_sent\":false}');\nINSERT INTO codexOwnershipReconciliationReceipts VALUES('6E0D6FA2-8616-44A2-BF12-3A8E574506AB','4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945','2026-09-12 14:59:26.072','{\"applied_at\":810917966.072139,\"external_state_mutated\":false,\"plan_digest\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"receipt_id\":\"6E0D6FA2-8616-44A2-BF12-3A8E574506AB\",\"released_thread_ids\":[],\"schema_version\":1,\"signals_sent\":false}');\nCREATE INDEX \"codexApprovals_on_workspace_state_createdAt\" ON \"codexApprovals\"(\"workspaceID\", \"state\", \"createdAt\");\nCREATE INDEX \"codexApprovals_on_runtimeID\" ON \"codexApprovals\"(\"runtimeID\");\nCREATE INDEX \"codexApprovals_on_correlationID\" ON \"codexApprovals\"(\"correlationID\");\nCREATE INDEX \"codexRuntimeLeases_on_workspace_state_updatedAt\" ON \"codexRuntimeLeases\"(\"workspaceID\", \"state\", \"updatedAt\");\nCREATE INDEX \"codexOrchestrationRuns_on_workspace_state_updatedAt\" ON \"codexOrchestrationRuns\"(\"workspaceID\", \"state\", \"updatedAt\");\nCREATE INDEX \"codexWorktreeLeases_on_workspace_state_heartbeatAt\" ON \"codexWorktreeLeases\"(\"workspaceID\", \"state\", \"heartbeatAt\");\nCREATE INDEX \"codexManagedWorktrees_on_source_state_updatedAt\" ON \"codexManagedWorktrees\"(\"sourceWorkspaceID\", \"state\", \"updatedAt\");\nCREATE INDEX \"codexThreadOwnership_on_workspace_state_updatedAt\" ON \"codexThreadOwnership\"(\"workspaceID\", \"state\", \"updatedAt\");\nCREATE INDEX \"codexElevationGrants_on_workspace_profile_state_updatedAt\" ON \"codexElevationGrants\"(\"workspaceID\", \"profileID\", \"state\", \"updatedAt\");\nCREATE INDEX \"codexElevationGrants_on_thread_state\" ON \"codexElevationGrants\"(\"threadID\", \"state\");\nCOMMIT;\n",
+  "workspace_id": "69101195-660A-4F22-A5F5-002753753BA9",
+  "runtime_id": "F9FBE552-862D-4CEB-828A-E13AF97E515B",
+  "run": {
+    "updatedAt": 810917964.847668,
+    "evidence": [],
+    "threadID": "thread_bound",
+    "id": "64294ADE-7E86-44DB-A4B6-81E4DB1EA39A",
+    "currentPhase": "delivery",
+    "createdAt": 810917964.847668,
+    "acceptedScope": [
+      "fixture"
+    ],
+    "requiredEvidenceKinds": [
+      "build",
+      "git_status",
+      "test"
+    ],
+    "revision": 1,
+    "repeatedFailureCount": 0,
+    "objective": "Continue migrated work",
+    "acceptanceCriteria": [
+      {
+        "description": "State survives transfer",
+        "state": "open",
+        "id": "criterion-1",
+        "evidenceIDs": []
+      }
+    ],
+    "budget": {
+      "maxDurationSeconds": 86400,
+      "maxRepeatedFailures": 3,
+      "maxTurns": 100,
+      "maxNoProgressSeconds": 900
+    },
+    "diagnostics": [],
+    "workspacePath": "__ROOT__/source",
+    "state": "active",
+    "officialGoalLinked": true,
+    "blockers": [],
+    "workspaceID": "69101195-660A-4F22-A5F5-002753753BA9",
+    "repeatedPlanningCount": 0,
+    "lastMeaningfulProgressAt": 810917964.847668,
+    "turnsUsed": 0
+  },
+  "lease_id": "993A4065-1836-4BBB-8D15-468A62D605AE",
+  "plan": {
+    "caller": "secure-tunnel",
+    "path": "__ROOT__/Managed Worktrees/6fcf1bcbaeda4a13aa068df2/a57c596c-914e-4d58-b2ca-6015017f2456",
+    "id": "a57c596c-914e-4d58-b2ca-6015017f2456",
+    "updated_at": 810917964.850705,
+    "agent_id": "migration-child",
+    "ttl_seconds": 900,
+    "revision": 1,
+    "workspace_id": "codex-worktree-a57c596c-914e-4d58-b2ca-6015017f2456",
+    "source_repository_root": "__ROOT__/source",
+    "plan_expires_at": "__PLAN_EXPIRES__",
+    "start_point": "HEAD",
+    "parent_lease_id": "993A4065-1836-4BBB-8D15-468A62D605AE",
+    "profile_id": "chatgpt-operate",
+    "created_at": 810917964.850705,
+    "branch": "migration-child",
+    "head_oid": "__HEAD_OID__",
+    "state": "planned",
+    "source_workspace_id": "69101195-660A-4F22-A5F5-002753753BA9",
+    "git_common_directory": "__ROOT__/source/.git"
+  }
+}

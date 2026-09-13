@@ -38,7 +38,7 @@ ChatGPT · Codex · another MCP client
  caller → profile → registered workspace → policy → approval when required
                  │
                  ▼
- Builtin · Skill · CLI · MCP · Computer Use · Git · Shell · Codex adapter
+ Builtin · Skills · CLI · MCP · AX fallback · Git · Shell
                  │
                  ▼
        local execution → bounded result → redacted audit receipt
@@ -47,6 +47,37 @@ ChatGPT · Codex · another MCP client
 Every call is tied to a caller, profile, capability, and—when relevant—a
 registered workspace. Unknown tools, ungranted workspaces, unsafe paths, and
 unsupported ownership claims fail closed.
+
+## Plugins and direct integrations
+
+A plugin is a package combining MCP, CLI and Skills contributions. Native MCP
+servers and local CLI/Skill registrations can also be added directly; both
+paths use the same host policy, workspace scope and audit.
+
+Use the App's plugin management pages, or the owner CLI:
+
+```sh
+computer-mcp plugins search --refresh
+computer-mcp plugins list
+```
+
+Official packages include [Codex](https://github.com/computer-mcp/plugin-codex),
+[Computer Use](https://github.com/computer-mcp/plugin-computer-use) and
+[Swift Format](https://github.com/computer-mcp/plugin-swift-format). Select a
+release artifact to install, review its dependencies and tool exposure, then
+enable it. Installation starts disabled and grants no permissions. Bundled
+packages use the same lifecycle; external tools remain user/vendor-owned.
+
+Codex execution lives in its independent MCP adapter. Upgrading an embedded
+Codex configuration requires the explicit
+[configuration and offline state migration](Documentation/Reference/CodexMigration.md).
+Do not switch the backend currently performing the migration.
+Native Computer Use also depends on vendor caller authentication, not just
+macOS privacy grants; native AX tools remain available as fallback.
+
+See [Plugin Packages](Documentation/Reference/PluginPackages.md) for installation,
+upgrades and recovery, and [CLI Trees](Documentation/Reference/CLITrees.md) for
+verified command projection and structured-coverage limits.
 
 ## What it enables
 
@@ -81,7 +112,7 @@ unless the active configuration grants the exact path. Credentials stay in the
 signed App's macOS Data Protection Keychain; examples, diagnostics, logs, and
 audit rows keep only placeholders or redacted summaries.
 
-The optional Codex provider has one narrower exception to its safe
+The optional Codex plugin has one narrower exception to its safe
 `workspace-write` default: a caller can request a workspace/profile/caller-bound
 temporary Full Access grant, but only a local administrator can approve it. It
 applies to a future eligible thread or turn, expires or can be revoked, and
@@ -97,9 +128,10 @@ vulnerability.
 | --- | --- | --- |
 | Stable | App-owned local gateway, workspace registration, profiles, policy, operation tickets, and redacted audit | Default product control plane on macOS 14+ |
 | Stable | Local MCP, ChatGPT through OpenAI Secure MCP Tunnel, and Cloudflare named-tunnel connections | Each remote path has its own caller and profile boundary |
-| Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and Computer Use adapters | Availability still depends on the selected profile, workspace, dependency, and macOS permission |
+| Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and native AX fallback | Availability still depends on the selected profile, workspace, dependency, and macOS permission |
 | Stable | Governed workspace and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
-| Experimental | Codex App Server, Exec, and MCP provider paths | Opt-in, disabled by default, and dependent on an installed authenticated Codex |
+| Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and Skills | Host grants remain separate; external dependencies are not installed automatically |
+| Experimental | Codex plugin App Server, Exec, and MCP provider paths | Opt-in, disabled by default, and dependent on an installed authenticated Codex |
 | Experimental | Native Codex Goal passthrough, Computer MCP acceptance runs, deterministic thread handoff, bounded recent-thread supervision, scoped local Codex elevation, and managed child worktrees | The product keeps official Goal state, Computer MCP acceptance, Codex sandbox elevation, gateway capabilities, and external-client ownership distinct |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
 

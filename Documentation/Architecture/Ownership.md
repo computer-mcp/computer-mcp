@@ -9,7 +9,8 @@ bounded execution, or a deliberate safety gate.
 | Owner | Responsibilities |
 | --- | --- |
 | Computer MCP core | MCP transports, App socket, profiles, workspace grants, audit, operation tickets, CLI/MCP bridges, Skills, typed workspace/file/Git/structured/system tools, Shell, and generic Computer Use |
-| Codex provider | App Server, Exec, and MCP session lifecycles through `swift-codex` |
+| Independent Codex adapter plugin | App Server, Exec and Codex MCP lifecycles through `swift-codex`; domain state, native approvals, thread/Goal and worktree receipts |
+| Host elevation tools | Local approval and connection-bound sandbox grants; durable authority in the Gateway Database |
 | `apple-cli` / `apple-cli-mcp` | Clipboard, notifications, Finder, application launching, URL opening, and Apple application/domain workflows |
 | Browser provider | Browser engine, page lifecycle, selectors, and browser automation |
 | Other downstream MCP providers | Their own business schemas, authentication, and side-effect contracts |
@@ -24,14 +25,17 @@ primitives. They do not form a general Finder or application automation API.
 ## Codex Boundaries
 
 Computer MCP does not maintain a hand-written coding agent or shell-based
-`coding.*` provider. It integrates the installed Codex through:
+`coding.*` provider. The independent `plugin-codex` package integrates the installed vendor through:
 
 - App Server for stateful threads and turns;
 - Exec for isolated JSONL jobs;
 - MCP for the upstream `codex` and `codex-reply` tools.
 
-The gateway fixes cwd, sandbox, approval policy, output limits, and session
-ownership. Authentication mutation, config writes, marketplace mutation, and
+The host fixes caller/profile/workspace scope and approval authority. The
+adapter binds that scope to its configured sandbox, approval policy, output
+limits and vendor session ownership. Domain persistence belongs to the adapter;
+host grants, workspace registrations, tickets and audit remain in the Gateway
+Database. Authentication mutation, config writes, marketplace mutation, and
 remote-control pairing remain local Codex/App control-plane operations.
 
 There are six deliberately distinct ownership concepts:
@@ -101,7 +105,7 @@ workspace and never treats equal-looking path text as sufficient ownership.
 An allowed capability and an approved action are not the same decision. The
 gateway first decides whether the caller, profile, registered workspace, path,
 and capability permit the proposed operation. When the permitted Codex action
-requires consent, the durable approval broker records the redacted request and
+requires consent, the adapter's durable native-approval broker records the redacted request and
 the user or authorized caller decides whether to approve it now.
 
 Approve-once, upstream-bounded session approval, denial, timeout, and restart
@@ -138,8 +142,9 @@ otherwise unreceipted worktree cannot be selected for removal.
 For `apple-cli-mcp` or another local MCP provider:
 
 1. Register it under `[[mcp.servers]]`.
-2. Declare the exact `allowed_tools` for remote profiles. Use
-   `allow_any_tool = true` only in a trusted local-admin manifest.
+2. Select exact `allowed_tools` or explicitly choose `allow_any_tool = true`.
+   Grant the registration to the intended profile through `mcp_servers`, or
+   grant particular tool capabilities. Registration policy remains host-owned.
 3. Check `mcp.servers.status`.
 4. Inspect `mcp.tools.list` and `mcp.tools.describe`.
 5. Invoke through `mcp.tools.call`, or opt into a reviewed pinned/reexported

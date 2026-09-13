@@ -94,8 +94,11 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package var tools: [ToolConfig]
   package var builtin: BuiltinConfig
   package var skills: SkillsConfig
-  package var codex: CodexConfig
+  /// Embedded-provider settings retained for explicit offline migration.
+  package var codex: CodexConfigurationImport?
   package var workspaceDirectory: URL
+  /// Host-owned identities remain referenceable while their contributions are disabled or unavailable.
+  package var knownPluginMCPServerIDs: Set<String> = []
 
   package init(
     schemaVersion: Int = 1,
@@ -110,7 +113,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     tools: [ToolConfig] = [],
     builtin: BuiltinConfig = BuiltinConfig(),
     skills: SkillsConfig = SkillsConfig(),
-    codex: CodexConfig = CodexConfig(),
+    codex: CodexConfigurationImport? = nil,
     workspaceDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
   ) {
     self.schemaVersion = schemaVersion
@@ -129,24 +132,30 @@ package struct GatewayConfiguration: Equatable, Sendable {
     self.workspaceDirectory = workspaceDirectory
   }
 
-  package static func load(path: String) throws -> GatewayConfiguration {
+  package static func load(path: String, knownPluginMCPServerIDs: Set<String> = []) throws
+    -> GatewayConfiguration
+  {
     let url = URL(fileURLWithPath: path)
     let data = try Data(contentsOf: url)
     guard let text = String(data: data, encoding: .utf8) else {
       throw ConfigurationError.invalid("Config file is not valid UTF-8: \(path)")
     }
-    return try load(text: text, baseURL: url.deletingLastPathComponent())
+    return try load(
+      text: text, baseURL: url.deletingLastPathComponent(),
+      knownPluginMCPServerIDs: knownPluginMCPServerIDs)
   }
 
   package static func load(
     text: String,
-    baseURL: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    baseURL: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+    knownPluginMCPServerIDs: Set<String> = []
   ) throws -> GatewayConfiguration {
     let decoder = TOMLDecoder()
     let inputShape = try decoder.decode(ConfigurationNode.self, from: text)
     var configuration = try decoder.decode(GatewayConfiguration.self, from: text)
     let base = baseURL.standardizedFileURL
     configuration.workspaceDirectory = base
+    configuration.knownPluginMCPServerIDs = knownPluginMCPServerIDs
     configuration.workspaces = configuration.workspaces.map { $0.resolved(base: base) }
     configuration.skills = configuration.skills.resolved(base: base)
     try configuration.validate()
@@ -172,7 +181,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     try runtime.validate()
     try policy.validate()
     try skills.validate()
-    try codex.validate()
+    try codex?.validate()
     try validateUniqueIDs(workspaces.map(\.id), label: "workspace")
     try validateUniqueIDs(profiles.map { $0.id.rawValue }, label: "profile")
     try validateUniqueIDs(transports.openAI.map(\.id), label: "OpenAI transport")
@@ -182,7 +191,9 @@ package struct GatewayConfiguration: Equatable, Sendable {
     }
     let workspaceIDs = Set(workspaces.map(\.id))
     for profile in profiles {
-      try profile.validate(knownWorkspaceIDs: workspaceIDs)
+      try profile.validate(
+        knownWorkspaceIDs: workspaceIDs,
+        knownMCPServerIDs: Set(mcp.servers.map(\.id)).union(knownPluginMCPServerIDs))
     }
     try transports.validate()
     for transport in transports.openAI {
@@ -225,23 +236,12 @@ package struct GatewayConfiguration: Equatable, Sendable {
     var reexportPrefixes = Set<String>()
     for server in mcp.servers {
       try server.validate()
-      if runtime.caller.isRemote && server.allowAnyTool {
-        throw ConfigurationError.invalid(
-          "MCP server '\(server.id)' cannot set allow_any_tool for remote caller "
-            + "'\(runtime.caller.rawValue)'. Review allowed_tools or use pinned [[tools]]."
-        )
-      }
       if server.exposure.includesReexport {
-        guard let prefix = server.prefix, !prefix.isEmpty else {
+        guard let prefix = server.prefix else {
           throw ConfigurationError.invalid(
             "MCP server '\(server.id)' uses reexport exposure but has no prefix.")
         }
-        guard server.allowAnyTool || !server.allowedTools.isEmpty else {
-          throw ConfigurationError.invalid(
-            "MCP server '\(server.id)' reexport requires allowed_tools or local allow_any_tool."
-          )
-        }
-        guard reexportPrefixes.insert(prefix).inserted else {
+        guard prefix.isEmpty || reexportPrefixes.insert(prefix).inserted else {
           throw ConfigurationError.invalid("Duplicate MCP reexport prefix: \(prefix)")
         }
       }
@@ -305,7 +305,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "computer.accessibility.query",
       "computer.accessibility.action",
       "computer.verify",
-      "codex.app.status",
       "codex.app.elevation.request",
       "codex.app.elevation.list",
       "codex.app.elevation.read",
@@ -313,81 +312,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "codex.app.elevation.deny",
       "codex.app.elevation.revoke",
       "codex.app.elevation.effective",
-      "codex.diagnostics.snapshot",
-      "codex.app.runtimes.list",
-      "codex.app.runtimes.history",
-      "codex.app.runtimes.cleanup.preview",
-      "codex.app.runtimes.cleanup.perform",
-      "codex.app.ownership.reconcile.preview",
-      "codex.app.ownership.reconcile.perform",
-      "codex.app.runtimes.inspect",
-      "codex.app.runtimes.stop",
-      "codex.app.methods.list",
-      "codex.app.methods.describe",
-      "codex.app.methods.call",
-      "codex.app.thread.start",
-      "codex.app.thread.list",
-      "codex.app.thread.loaded.list",
-      "codex.app.thread.read",
-      "codex.app.thread.recent",
-      "codex.app.thread.fork",
-      "codex.app.thread.reclaim",
-      "codex.app.thread.release",
-      "codex.app.handoff.diagnose",
-      "codex.app.goal.get",
-      "codex.app.goal.set",
-      "codex.app.goal.clear",
-      "codex.app.runtime.stop",
-      "codex.app.turn.start",
-      "codex.app.turn.steer",
-      "codex.app.turn.interrupt",
-      "codex.app.review.start",
-      "codex.app.models.list",
-      "codex.app.skills.list",
-      "codex.app.apps.list",
-      "codex.app.events.read",
-      "codex.app.requests.list",
-      "codex.app.requests.respond",
-      "codex.app.approvals.list",
-      "codex.app.approvals.read",
-      "codex.app.approvals.respond",
-      "codex.run.create",
-      "codex.run.list",
-      "codex.run.read",
-      "codex.run.record",
-      "codex.run.evaluate",
-      "codex.run.accept",
-      "codex.run.transition",
-      "codex.run.reconcile",
-      "codex.worktree.leases.acquire",
-      "codex.worktree.leases.list",
-      "codex.worktree.leases.read",
-      "codex.worktree.leases.heartbeat",
-      "codex.worktree.leases.release",
-      "codex.worktree.leases.cleanup.preview",
-      "codex.worktree.leases.cleanup.perform",
-      "codex.worktree.managed.list",
-      "codex.worktree.managed.read",
-      "codex.worktree.provision.plan",
-      "codex.worktree.provision.perform",
-      "codex.worktree.remove.plan",
-      "codex.worktree.remove.perform",
-      "codex.exec.start",
-      "codex.exec.resume",
-      "codex.exec.list",
-      "codex.exec.events",
-      "codex.exec.result",
-      "codex.exec.cancel",
-      "codex.mcp.status",
-      "codex.mcp.tools.list",
-      "codex.mcp.run",
-      "codex.mcp.reply",
-      "codex.mcp.calls.list",
-      "codex.mcp.events",
-      "codex.mcp.result",
-      "codex.mcp.approvals.list",
-      "codex.mcp.approval.respond",
-      "codex.mcp.cancel",
       "workspace.info",
       "workspace.status",
       "workspace.manifests",
@@ -595,6 +519,20 @@ package struct GatewayConfiguration: Equatable, Sendable {
           throw ConfigurationError.invalid(
             "Configured tool '\(tool.name)' references unknown MCP source: \(tool.source)")
         }
+      }
+    }
+
+    for server in mcp.servers {
+      var risks = server.toolRisks
+      for mapping in tools where mapping.source == server.id {
+        guard let name = mapping.tool, let rawRisk = mapping.risk,
+          let risk = CapabilityRisk(rawValue: rawRisk)
+        else { continue }
+        if let existing = risks[name], existing != risk {
+          throw ConfigurationError.invalid(
+            "MCP server '\(server.id)' has conflicting host risk declarations for '\(name)'.")
+        }
+        risks[name] = risk
       }
     }
 
@@ -846,6 +784,25 @@ package struct GatewayConfiguration: Equatable, Sendable {
     return try encoder.encodeToString(self)
   }
 
+  package func mcpRisk(for reference: MCPToolReference) -> CapabilityRisk {
+    let server = mcp.servers.first { $0.id == reference.serverID }
+    let mappingRisk = tools.first {
+      $0.source == reference.serverID && $0.tool == reference.toolName && $0.risk != nil
+    }?.risk.flatMap(CapabilityRisk.init(rawValue:))
+    return server?.toolRisks[reference.toolName] ?? mappingRisk ?? .externalWrite
+  }
+
+  package func mcpCapabilityIDs(for reference: MCPToolReference) -> [String] {
+    var names = tools.filter { $0.source == reference.serverID && $0.tool == reference.toolName }
+      .map(\.name)
+    if let server = mcp.servers.first(where: { $0.id == reference.serverID }),
+      server.exposure.includesReexport, let prefix = server.prefix
+    {
+      names.append(prefix.isEmpty ? reference.toolName : "\(prefix).\(reference.toolName)")
+    }
+    return Array(Set(names)).sorted()
+  }
+
   private func validateUniqueIDs(_ ids: [String], label: String) throws {
     var seen = Set<String>()
     for id in ids {
@@ -917,9 +874,25 @@ extension GatewayConfiguration: Codable {
       try container.decodeIfPresent(SkillsConfig.self, forKey: .skills)
       ?? SkillsConfig()
     self.codex =
-      try container.decodeIfPresent(CodexConfig.self, forKey: .codex)
-      ?? CodexConfig()
+      try container.decodeIfPresent(CodexConfigurationImport.self, forKey: .codex)
     self.workspaceDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    migrateImplicitMCPApprovals(from: try ConfigurationNode(from: decoder))
+  }
+
+  private mutating func migrateImplicitMCPApprovals(from shape: ConfigurationNode) {
+    guard case .object(let root) = shape,
+      case .object(let section) = root["mcp"],
+      case .array(let servers) = section["servers"]
+    else { return }
+    for (index, shape) in servers.enumerated() {
+      guard case .object(let fields) = shape,
+        fields["allowed_tools"] == nil, fields["allow_any_tool"] == nil
+      else { continue }
+      let serverID = mcp.servers[index].id
+      mcp.servers[index].allowedTools = Array(
+        Set(tools.filter { $0.source == serverID }.compactMap(\.tool))
+      ).sorted()
+    }
   }
 
   package func encode(to encoder: any Encoder) throws {
@@ -936,7 +909,7 @@ extension GatewayConfiguration: Codable {
     try container.encode(tools, forKey: .tools)
     try container.encode(builtin, forKey: .builtin)
     try container.encode(skills, forKey: .skills)
-    try container.encode(codex, forKey: .codex)
+    try container.encodeIfPresent(codex, forKey: .codex)
   }
 }
 
@@ -1459,19 +1432,22 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   package var workspaces: [String]
   package var allowedCallers: [GatewayCallerKind]
   package var fullShellEnabled: Bool
+  package var mcpServers: [String]
 
   package init(
     id: GatewayProfileID,
     capabilities: [String] = [],
     workspaces: [String] = [],
     allowedCallers: [GatewayCallerKind]? = nil,
-    fullShellEnabled: Bool = false
+    fullShellEnabled: Bool = false,
+    mcpServers: [String] = []
   ) {
     self.id = id
     self.capabilities = capabilities
     self.workspaces = workspaces
     self.allowedCallers = allowedCallers ?? Self.defaultAllowedCallers(for: id)
     self.fullShellEnabled = fullShellEnabled
+    self.mcpServers = mcpServers
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -1480,6 +1456,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     case workspaces
     case allowedCallers = "allowed_callers"
     case fullShellEnabled = "full_shell_enabled"
+    case mcpServers = "mcp_servers"
   }
 
   package init(from decoder: any Decoder) throws {
@@ -1497,6 +1474,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     }
     fullShellEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .fullShellEnabled) ?? false
+    mcpServers = try container.decodeIfPresent([String].self, forKey: .mcpServers) ?? []
   }
 
   package func encode(to encoder: any Encoder) throws {
@@ -1506,9 +1484,19 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     try container.encode(workspaces, forKey: .workspaces)
     try container.encode(allowedCallers, forKey: .allowedCallers)
     try container.encode(fullShellEnabled, forKey: .fullShellEnabled)
+    try container.encode(mcpServers, forKey: .mcpServers)
   }
 
-  fileprivate func validate(knownWorkspaceIDs: Set<String>) throws {
+  fileprivate func validate(knownWorkspaceIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
+    guard Set(mcpServers).count == mcpServers.count else {
+      throw ConfigurationError.invalid("Profile '\(id.rawValue)' has duplicate mcp_servers.")
+    }
+    for serverID in mcpServers {
+      guard knownMCPServerIDs.contains(serverID) else {
+        throw ConfigurationError.invalid(
+          "Profile '\(id.rawValue)' references unknown MCP server '\(serverID)'.")
+      }
+    }
     var capabilityIDs = Set<String>()
     for capability in capabilities {
       if capability != "*" {
@@ -1547,7 +1535,8 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
       capabilityIDs: Set(capabilities),
       workspaceIDs: Set(workspaces),
       allowedCallers: Set(allowedCallers),
-      fullShellEnabled: fullShellEnabled
+      fullShellEnabled: fullShellEnabled,
+      mcpServerIDs: Set(mcpServers)
     )
   }
 
@@ -1743,6 +1732,7 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
   package var discovery: [String]
   package var defaultTimeoutMs: Int?
   package var interface: CLIInterfaceConfig?
+  package var tree: CLITreeSource?
 
   package init(
     id: String,
@@ -1754,7 +1744,8 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
     risk: String? = nil,
     discovery: [String] = [],
     defaultTimeoutMs: Int? = nil,
-    interface: CLIInterfaceConfig? = nil
+    interface: CLIInterfaceConfig? = nil,
+    tree: CLITreeSource? = nil
   ) {
     self.id = id
     self.executable = executable
@@ -1766,6 +1757,7 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
     self.discovery = discovery
     self.defaultTimeoutMs = defaultTimeoutMs
     self.interface = interface
+    self.tree = tree
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -1779,6 +1771,7 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
     case discovery
     case defaultTimeoutMs = "default_timeout_ms"
     case interface
+    case tree
   }
 
   package init(from decoder: any Decoder) throws {
@@ -1793,6 +1786,7 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
     self.discovery = try container.decodeIfPresent([String].self, forKey: .discovery) ?? []
     self.defaultTimeoutMs = try container.decodeIfPresent(Int.self, forKey: .defaultTimeoutMs)
     self.interface = try container.decodeIfPresent(CLIInterfaceConfig.self, forKey: .interface)
+    self.tree = try container.decodeIfPresent(CLITreeSource.self, forKey: .tree)
   }
 
   fileprivate func validate() throws {
@@ -1809,6 +1803,11 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
       }
     }
     try interface?.validate(commandID: id)
+    try tree?.validate()
+    if tree != nil, allowAnyArgs {
+      throw ConfigurationError.invalid(
+        "CLI '\(id)' declares a command tree and cannot grant unrestricted arguments.")
+    }
   }
 
   package func resolvedWorkingDirectory(base: URL) -> URL? {
@@ -1921,6 +1920,7 @@ package struct MCPSectionConfig: Codable, Equatable, Sendable {
 
 package struct MCPServerConfig: Codable, Equatable, Sendable {
   package var id: String
+  package var enabled: Bool
   package var transport: MCPTransport
   package var url: String?
   package var command: String?
@@ -1932,8 +1932,11 @@ package struct MCPServerConfig: Codable, Equatable, Sendable {
   package var capabilities: [String]
   package var allowedTools: [String]
   package var allowAnyTool: Bool
+  package var toolRisks: [String: CapabilityRisk]
   package var startupTimeoutMs: Int?
   package var requestTimeoutMs: Int?
+  package var hostServices: Bool
+  package var authentication: MCPHTTPAuthentication?
 
   package init(
     id: String,
@@ -1949,7 +1952,11 @@ package struct MCPServerConfig: Codable, Equatable, Sendable {
     allowedTools: [String] = [],
     allowAnyTool: Bool = false,
     startupTimeoutMs: Int? = nil,
-    requestTimeoutMs: Int? = nil
+    requestTimeoutMs: Int? = nil,
+    toolRisks: [String: CapabilityRisk] = [:],
+    hostServices: Bool = false,
+    enabled: Bool = true,
+    authentication: MCPHTTPAuthentication? = nil
   ) {
     self.id = id
     self.transport = transport
@@ -1963,11 +1970,15 @@ package struct MCPServerConfig: Codable, Equatable, Sendable {
     self.capabilities = capabilities
     self.allowedTools = allowedTools
     self.allowAnyTool = allowAnyTool
+    self.toolRisks = toolRisks
     self.startupTimeoutMs = startupTimeoutMs
     self.requestTimeoutMs = requestTimeoutMs
+    self.hostServices = hostServices
+    self.enabled = enabled
+    self.authentication = authentication
   }
 
-  private enum CodingKeys: String, CodingKey {
+  private enum CodingKeys: String, CodingKey, CaseIterable {
     case id
     case transport
     case url
@@ -1980,14 +1991,25 @@ package struct MCPServerConfig: Codable, Equatable, Sendable {
     case capabilities
     case allowedTools = "allowed_tools"
     case allowAnyTool = "allow_any_tool"
+    case toolRisks = "tool_risks"
     case startupTimeoutMs = "startup_timeout_ms"
     case requestTimeoutMs = "request_timeout_ms"
+    case hostServices = "host_services"
+    case authentication
+    case enabled
   }
 
   package init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.id = try container.decode(String.self, forKey: .id)
     self.transport = try container.decode(MCPTransport.self, forKey: .transport)
+    let keys = try decoder.container(keyedBy: ConfigurationCodingKey.self).allKeys.map(
+      \.stringValue)
+    let unknown = Set(keys).subtracting(CodingKeys.allCases.map(\.stringValue)).sorted()
+    guard unknown.isEmpty else {
+      throw ConfigurationError.invalid(
+        "Unknown MCP registration fields: \(unknown.joined(separator: ", "))")
+    }
     self.url = try container.decodeIfPresent(String.self, forKey: .url)
     self.command = try container.decodeIfPresent(String.self, forKey: .command)
     self.args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
@@ -2006,9 +2028,19 @@ package struct MCPServerConfig: Codable, Equatable, Sendable {
       ?? false
     self.startupTimeoutMs = try container.decodeIfPresent(Int.self, forKey: .startupTimeoutMs)
     self.requestTimeoutMs = try container.decodeIfPresent(Int.self, forKey: .requestTimeoutMs)
+    self.hostServices = try container.decodeIfPresent(Bool.self, forKey: .hostServices) ?? false
+    self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    self.authentication = try container.decodeIfPresent(
+      MCPHTTPAuthentication.self, forKey: .authentication)
+    self.toolRisks =
+      try container.decodeIfPresent([String: CapabilityRisk].self, forKey: .toolRisks) ?? [:]
   }
 
   fileprivate func validate() throws {
+    try authentication?.validate(endpoint: url, transport: transport)
+    guard !hostServices || transport == .stdio else {
+      throw ConfigurationError.invalid("Host services require an owned stdio MCP process.")
+    }
     switch transport {
     case .stdio:
       guard let command, !command.isEmpty else {
@@ -2028,17 +2060,26 @@ package struct MCPServerConfig: Codable, Equatable, Sendable {
     guard Set(allowedTools).count == allowedTools.count else {
       throw ConfigurationError.invalid("MCP server '\(id)' allowed_tools contains duplicates.")
     }
-    for name in allowedTools {
+    guard !allowAnyTool || allowedTools.isEmpty else {
+      throw ConfigurationError.invalid(
+        "MCP server '\(id)' cannot combine allow_any_tool with nonempty allowed_tools.")
+    }
+    for name in allowedTools + toolRisks.keys {
       guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
         throw ConfigurationError.invalid(
-          "MCP server '\(id)' allowed_tools entries must not be empty."
+          "MCP server '\(id)' names in allowed_tools and tool_risks must not be empty."
         )
       }
     }
   }
 
   package func permitsTool(_ name: String) -> Bool {
-    allowAnyTool || allowedTools.contains(name)
+    enabled && (allowAnyTool || allowedTools.contains(name))
+  }
+
+  package func resolvedWorkingDirectory(base: URL) -> URL {
+    guard let cwd, !cwd.isEmpty, cwd != "workspace" else { return base }
+    return cwd.hasPrefix("/") ? URL(fileURLWithPath: cwd) : base.appendingPathComponent(cwd)
   }
 }
 
@@ -2133,6 +2174,10 @@ package struct ToolConfig: Codable, Equatable, Sendable {
       }
     }
 
+    if let risk, CapabilityRisk(rawValue: risk) == nil {
+      throw ConfigurationError.invalid("Configured tool '\(name)' has an unsupported risk value.")
+    }
+
     _ = try inputSchemaValue()
   }
 
@@ -2167,184 +2212,6 @@ package struct ToolConfig: Codable, Equatable, Sendable {
 
 package enum ToolAdapter: String, Codable, Equatable, Sendable {
   case mcp
-}
-
-package struct CodexConfig: Codable, Equatable, Sendable {
-  package var enabled: Bool
-  package var executable: String
-  package var appServerEnabled: Bool
-  package var execEnabled: Bool
-  package var mcpEnabled: Bool
-  package var experimentalAPI: Bool
-  package var appServerRequestTimeoutSeconds: Int
-  package var appServerAppListTimeoutSeconds: Int
-  package var appServerTerminationGraceMilliseconds: Int
-  package var appServerKillGraceMilliseconds: Int
-  package var appServerApprovalTimeoutSeconds: Int
-  package var appServerAutoApproveWorkspaceWrites: Bool
-  package var sandbox: CodexSandboxMode
-  package var approvalPolicy: CodexApprovalPolicy
-  package var maxSessions: Int
-  package var maxEventsPerSession: Int
-
-  package init(
-    enabled: Bool = false,
-    executable: String = "codex",
-    appServerEnabled: Bool = true,
-    execEnabled: Bool = true,
-    mcpEnabled: Bool = true,
-    experimentalAPI: Bool = true,
-    appServerRequestTimeoutSeconds: Int = 30,
-    appServerAppListTimeoutSeconds: Int = 120,
-    appServerTerminationGraceMilliseconds: Int = 1_000,
-    appServerKillGraceMilliseconds: Int = 2_000,
-    appServerApprovalTimeoutSeconds: Int = 300,
-    appServerAutoApproveWorkspaceWrites: Bool = false,
-    sandbox: CodexSandboxMode = .workspaceWrite,
-    approvalPolicy: CodexApprovalPolicy = .never,
-    maxSessions: Int = 8,
-    maxEventsPerSession: Int = 1_024
-  ) {
-    self.enabled = enabled
-    self.executable = executable
-    self.appServerEnabled = appServerEnabled
-    self.execEnabled = execEnabled
-    self.mcpEnabled = mcpEnabled
-    self.experimentalAPI = experimentalAPI
-    self.appServerRequestTimeoutSeconds = appServerRequestTimeoutSeconds
-    self.appServerAppListTimeoutSeconds = appServerAppListTimeoutSeconds
-    self.appServerTerminationGraceMilliseconds = appServerTerminationGraceMilliseconds
-    self.appServerKillGraceMilliseconds = appServerKillGraceMilliseconds
-    self.appServerApprovalTimeoutSeconds = appServerApprovalTimeoutSeconds
-    self.appServerAutoApproveWorkspaceWrites = appServerAutoApproveWorkspaceWrites
-    self.sandbox = sandbox
-    self.approvalPolicy = approvalPolicy
-    self.maxSessions = maxSessions
-    self.maxEventsPerSession = maxEventsPerSession
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case enabled
-    case executable
-    case appServerEnabled = "app_server_enabled"
-    case execEnabled = "exec_enabled"
-    case mcpEnabled = "mcp_enabled"
-    case experimentalAPI = "experimental_api"
-    case appServerRequestTimeoutSeconds = "app_server_request_timeout_seconds"
-    case appServerAppListTimeoutSeconds = "app_server_app_list_timeout_seconds"
-    case appServerTerminationGraceMilliseconds = "app_server_termination_grace_milliseconds"
-    case appServerKillGraceMilliseconds = "app_server_kill_grace_milliseconds"
-    case appServerApprovalTimeoutSeconds = "app_server_approval_timeout_seconds"
-    case appServerAutoApproveWorkspaceWrites = "app_server_auto_approve_workspace_writes"
-    case sandbox
-    case approvalPolicy = "approval_policy"
-    case maxSessions = "max_sessions"
-    case maxEventsPerSession = "max_events_per_session"
-  }
-
-  package init(from decoder: any Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-    executable = try container.decodeIfPresent(String.self, forKey: .executable) ?? "codex"
-    appServerEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .appServerEnabled) ?? true
-    execEnabled = try container.decodeIfPresent(Bool.self, forKey: .execEnabled) ?? true
-    mcpEnabled = try container.decodeIfPresent(Bool.self, forKey: .mcpEnabled) ?? true
-    experimentalAPI =
-      try container.decodeIfPresent(Bool.self, forKey: .experimentalAPI) ?? true
-    appServerRequestTimeoutSeconds =
-      try container.decodeIfPresent(Int.self, forKey: .appServerRequestTimeoutSeconds) ?? 30
-    appServerAppListTimeoutSeconds =
-      try container.decodeIfPresent(Int.self, forKey: .appServerAppListTimeoutSeconds) ?? 120
-    appServerTerminationGraceMilliseconds =
-      try container.decodeIfPresent(Int.self, forKey: .appServerTerminationGraceMilliseconds)
-      ?? 1_000
-    appServerKillGraceMilliseconds =
-      try container.decodeIfPresent(Int.self, forKey: .appServerKillGraceMilliseconds) ?? 2_000
-    appServerApprovalTimeoutSeconds =
-      try container.decodeIfPresent(Int.self, forKey: .appServerApprovalTimeoutSeconds) ?? 300
-    appServerAutoApproveWorkspaceWrites =
-      try container.decodeIfPresent(Bool.self, forKey: .appServerAutoApproveWorkspaceWrites)
-      ?? false
-    sandbox =
-      try container.decodeIfPresent(CodexSandboxMode.self, forKey: .sandbox)
-      ?? .workspaceWrite
-    approvalPolicy =
-      try container.decodeIfPresent(CodexApprovalPolicy.self, forKey: .approvalPolicy)
-      ?? .never
-    maxSessions = try container.decodeIfPresent(Int.self, forKey: .maxSessions) ?? 8
-    maxEventsPerSession =
-      try container.decodeIfPresent(Int.self, forKey: .maxEventsPerSession) ?? 1_024
-  }
-
-  fileprivate func validate() throws {
-    guard !executable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw ConfigurationError.invalid("codex.executable must not be empty.")
-    }
-    guard maxSessions > 0 && maxSessions <= 64 else {
-      throw ConfigurationError.invalid("codex.max_sessions must be between 1 and 64.")
-    }
-    guard appServerRequestTimeoutSeconds >= 1 && appServerRequestTimeoutSeconds <= 300 else {
-      throw ConfigurationError.invalid(
-        "codex.app_server_request_timeout_seconds must be between 1 and 300."
-      )
-    }
-    guard appServerAppListTimeoutSeconds >= 1 && appServerAppListTimeoutSeconds <= 300 else {
-      throw ConfigurationError.invalid(
-        "codex.app_server_app_list_timeout_seconds must be between 1 and 300."
-      )
-    }
-    guard
-      appServerTerminationGraceMilliseconds >= 0
-        && appServerTerminationGraceMilliseconds <= 30_000
-    else {
-      throw ConfigurationError.invalid(
-        "codex.app_server_termination_grace_milliseconds must be between 0 and 30000."
-      )
-    }
-    guard appServerKillGraceMilliseconds >= 100 && appServerKillGraceMilliseconds <= 30_000 else {
-      throw ConfigurationError.invalid(
-        "codex.app_server_kill_grace_milliseconds must be between 100 and 30000."
-      )
-    }
-    guard appServerApprovalTimeoutSeconds >= 1 && appServerApprovalTimeoutSeconds <= 3_600 else {
-      throw ConfigurationError.invalid(
-        "codex.app_server_approval_timeout_seconds must be between 1 and 3600."
-      )
-    }
-    guard maxEventsPerSession >= 64 && maxEventsPerSession <= 16_384 else {
-      throw ConfigurationError.invalid(
-        "codex.max_events_per_session must be between 64 and 16384."
-      )
-    }
-    if enabled && !appServerEnabled && !execEnabled && !mcpEnabled {
-      throw ConfigurationError.invalid(
-        "At least one Codex path must be enabled when [codex].enabled is true."
-      )
-    }
-    guard sandbox != .dangerFullAccess else {
-      throw ConfigurationError.invalid(
-        "codex.sandbox cannot be danger-full-access."
-      )
-    }
-  }
-
-  package var executableURL: URL? {
-    executable.contains("/") ? URL(fileURLWithPath: executable).standardizedFileURL : nil
-  }
-}
-
-package enum CodexSandboxMode: String, Codable, Equatable, Sendable {
-  case readOnly = "read-only"
-  case workspaceWrite = "workspace-write"
-  case dangerFullAccess = "danger-full-access"
-}
-
-package enum CodexApprovalPolicy: String, Codable, Equatable, Sendable {
-  case untrusted
-  case onFailure = "on-failure"
-  case onRequest = "on-request"
-  case never
 }
 
 package struct BuiltinConfig: Codable, Equatable, Sendable {

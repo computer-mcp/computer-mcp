@@ -7,7 +7,7 @@ import Testing
 
 final class SubprocessProcessRegistryTests {
   @Test
-  func testSpawnReadAndListUseSubprocessSessionRuntime() throws {
+  func testSpawnReadAndListUseSubprocessSessionRuntime() async throws {
     let registry = SubprocessProcessRegistry()
     let id = try registry.spawn(
       executable: "/bin/sh",
@@ -17,7 +17,7 @@ final class SubprocessProcessRegistryTests {
       maxOutputBytes: 4_096
     )
 
-    let snapshot = try waitForExit(id: id, registry: registry)
+    let snapshot = try await waitForSnapshot(id: id, registry: registry) { $0.exitCode != nil }
     #expect(!(snapshot.isRunning))
     #expect((snapshot.exitCode) == (0))
     #expect((snapshot.stdout) == ("process-ready"))
@@ -25,7 +25,7 @@ final class SubprocessProcessRegistryTests {
   }
 
   @Test
-  func testCancelTerminatesProcessGroupSession() throws {
+  func testCancelTerminatesProcessGroupSession() async throws {
     let registry = SubprocessProcessRegistry()
     let id = try registry.spawn(
       executable: "/bin/sh",
@@ -38,7 +38,8 @@ final class SubprocessProcessRegistryTests {
     let result = try registry.cancel(processID: id)
     #expect((result.processID) == (id))
     #expect(result.cancelled)
-    #expect(!(try waitForExit(id: id, registry: registry).isRunning))
+    let snapshot = try await waitForSnapshot(id: id, registry: registry) { !$0.isRunning }
+    #expect(!snapshot.isRunning)
   }
 
   @Test
@@ -50,19 +51,20 @@ final class SubprocessProcessRegistryTests {
     }
   }
 
-  private func waitForExit(
+  private func waitForSnapshot(
     id: String,
-    registry: SubprocessProcessRegistry
-  ) throws -> ManagedProcessSnapshot {
-    let deadline = Date().addingTimeInterval(5)
-    while Date() < deadline {
+    registry: SubprocessProcessRegistry,
+    matches: (ManagedProcessSnapshot) -> Bool
+  ) async throws -> ManagedProcessSnapshot {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
       let snapshot = try registry.read(processID: id)
-      if !snapshot.isRunning {
+      if matches(snapshot) {
         return snapshot
       }
-      Thread.sleep(forTimeInterval: 0.02)
+      try await Task.sleep(for: .milliseconds(20))
     }
-    Issue.record("Process did not exit before the test deadline.")
+    Issue.record("Process did not reach the expected snapshot before the test deadline.")
     return try registry.read(processID: id)
   }
 }

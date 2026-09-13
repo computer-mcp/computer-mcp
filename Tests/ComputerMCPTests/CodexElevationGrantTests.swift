@@ -373,6 +373,37 @@ final class CodexElevationGrantTests {
   }
 
   @Test
+  func nextTurnClaimExcludesCompetingRuntimesAndCommitsOnlyOnce() throws {
+    let fixture = try makeFixture()
+    let requester = secureRequester(workspaceID: fixture.workspace.id)
+    let grant = try approvedGrant(
+      fixture: fixture, requester: requester, threadID: "thread-1", mode: .nextTurn)
+    func claim(_ runtime: String) throws -> CodexElevationClaim? {
+      try fixture.database.claimCodexElevationGrant(
+        workspaceID: fixture.workspace.id,
+        canonicalRoot: canonicalRoot(fixture.workspace.rootPath),
+        profileID: requester.profileID ?? "", requestingCaller: requester.caller ?? "",
+        requestingConnectionID: requester.socketConnectionID,
+        threadID: "thread-1", runtimeID: runtime, action: .turnStart, now: fixture.now)
+    }
+    let first = try #require(try claim("runtime-first"))
+    #expect(try claim("runtime-competing") == nil)
+    let committed = try fixture.database.commitCodexElevationClaim(
+      first, runtimeID: "runtime-first", threadID: "thread-1",
+      turnID: "turn-first", now: fixture.now)
+    #expect(committed.id == grant.id && committed.state == .consumed)
+    #expect(committed.consumedTurnCount == 1 && committed.consumedTurnIDs == ["turn-first"])
+    #expect(try claim("runtime-later") == nil)
+    #expect(throws: (any Error).self) {
+      try fixture.database.commitCodexElevationClaim(
+        first, runtimeID: "runtime-first", threadID: "thread-1",
+        turnID: "turn-replayed", now: fixture.now)
+    }
+    #expect(
+      try fixture.database.codexElevationGrant(id: grant.id)?.consumedTurnIDs == ["turn-first"])
+  }
+
+  @Test
   func testExpiredRevokedAndStaleClaimsCannotLeakElevation() throws {
     let fixture = try makeFixture()
     let requester = secureRequester(workspaceID: fixture.workspace.id)
@@ -470,43 +501,16 @@ final class CodexElevationGrantTests {
   }
 
   @Test
-  func testDiagnosticsReportRequestedAndEffectivePermission() async throws {
-    let fixture = try makeFixture()
-    let requester = secureRequester(workspaceID: fixture.workspace.id)
-    _ = try approvedGrant(
-      fixture: fixture,
-      requester: requester,
-      threadID: nil,
-      mode: .boundedTime,
-      maximumDurationSeconds: 300
-    )
-
-    let snapshot = try await CodexOperationalDiagnostics.snapshot(
-      database: fixture.database,
-      owner: requester,
-      configuredSandbox: .workspaceWrite,
-      limit: 100,
-      now: fixture.now
-    )
-    let elevation = snapshot.objectValue?["elevation"]?.objectValue
-    #expect(elevation?["configured_default_sandbox"] == .string("workspace-write"))
-    #expect(elevation?["requested_sandbox"] == .string("danger-full-access"))
-    #expect(elevation?["effective_next_eligible_start"] == .string("danger-full-access"))
-    #expect(elevation?["active_turn_unchanged"] == .bool(true))
-  }
-
-  @Test
-  func testEffectivePermissionUsesConfiguredSafeSandboxAndRemainingGrants() throws {
+  func testEffectiveElevationReportsRemainingGrants() throws {
     let fixture = try makeFixture()
     let requester = secureRequester(workspaceID: fixture.workspace.id)
     let safe = try CodexElevationGrantService.effective(
       owner: requester,
       database: fixture.database,
       threadID: "thread-1",
-      configuredSandbox: .readOnly,
       now: fixture.now
     )
-    #expect(safe.objectValue?["effective_sandbox"] == .string("read-only"))
+    #expect(safe.objectValue?["effective_sandbox"] == .null)
     #expect(safe.objectValue?["effective_next_turn"] == .bool(false))
 
     let first = try approvedGrant(
@@ -532,7 +536,6 @@ final class CodexElevationGrantTests {
       owner: requester,
       database: fixture.database,
       threadID: "thread-1",
-      configuredSandbox: .readOnly,
       now: fixture.now.addingTimeInterval(1)
     )
     #expect(
@@ -567,17 +570,15 @@ final class CodexElevationGrantTests {
       owner: localAdministrator(workspaceID: fixture.workspace.id),
       database: fixture.database,
       threadID: "thread-1",
-      configuredSandbox: .readOnly,
       now: fixture.now
     )
-    #expect(administratorView.objectValue?["effective_sandbox"] == .string("read-only"))
+    #expect(administratorView.objectValue?["effective_sandbox"] == .null)
     #expect(administratorView.objectValue?["matching_grants"] == .array([]))
 
     let requesterView = try CodexElevationGrantService.effective(
       owner: requester,
       database: fixture.database,
       threadID: "thread-1",
-      configuredSandbox: .readOnly,
       now: fixture.now
     )
     #expect(requesterView.objectValue?["effective_sandbox"] == .string("danger-full-access"))
@@ -585,48 +586,16 @@ final class CodexElevationGrantTests {
   }
 
   @Test
-  func testHandoffAndConnectionShutdownInvalidateBoundElevation() async throws {
+  func testConnectionShutdownInvalidatesBoundElevation() async throws {
     let fixture = try makeFixture()
     let requester = secureRequester(workspaceID: fixture.workspace.id)
-    let handoffGrant = try approvedGrant(
-      fixture: fixture,
-      requester: requester,
-      threadID: "thread-handoff",
-      mode: .threadScopedTTL
-    )
-    try fixture.database.saveCodexThreadOwnership(
-      CodexThreadOwnershipRecord(
-        threadID: "thread-handoff",
-        workspaceID: fixture.workspace.id,
-        workspacePath: fixture.workspace.rootPath,
-        runtimeID: "runtime-gone",
-        state: .loaded,
-        createdAt: fixture.now,
-        updatedAt: fixture.now
-      )
-    )
-    _ = try await CodexThreadHandoffService.release(
-      threadID: "thread-handoff",
-      workspaceID: fixture.workspace.id,
-      mode: .graceful,
-      interruptActiveTurn: false,
-      database: fixture.database
-    )
-    #expect(
-      try fixture.database.codexElevationGrant(id: handoffGrant.id)?.state == .invalidated
-    )
-
     let disconnectGrant = try approvedGrant(
       fixture: fixture,
       requester: requester,
       threadID: nil,
       mode: .boundedTime
     )
-    let provider = CodexGatewayProvider(
-      configuration: CodexConfig(enabled: true, appServerEnabled: false),
-      appServer: nil,
-      exec: nil,
-      mcp: nil,
+    let provider = CodexElevationTools(
       owner: requester,
       database: fixture.database
     )

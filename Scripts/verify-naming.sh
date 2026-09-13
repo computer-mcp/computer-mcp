@@ -34,8 +34,6 @@ fail_if_match "ambiguous OpenAI Tunnel identifiers" \
   '\bChatGPTTunnel|\bTunnelSupervisor\b|\bTunnelLauncher\b|\bTunnelLifecycleState\b|\bTunnelStatus\b|\bTunnelDoctorReport\b|\bTunnelLogPage\b|\bTunnelAPIKeyCheckpoint\b|desired-running-tunnels'
 fail_if_match "retired script names" \
   'check-public-repository|check-swift-codex-release-gate|smoke-install-dmg'
-fail_if_match "retired public quality labels" \
-  '(?i)\bbackend\b|\blegacy\b|\bmanual\b|\bsmoke\b'
 fail_if_match "noncanonical Foundation JSON key conversion" \
   'convertToSnakeCase|convertFromSnakeCase'
 

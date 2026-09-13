@@ -7,6 +7,39 @@ import Testing
 
 final class MCPProxyClientTests {
   @Test
+  func testPaginatedCatalogReexportsOnlyAllowedToolsFromLaterPages() async throws {
+    try await runBlockingTest {
+      let script = try self.fakeLineDelimitedMCPServer(paginated: true)
+      defer { try? FileManager.default.removeItem(at: script.deletingLastPathComponent()) }
+      let server = MCPServerConfig(
+        id: "paged", transport: .stdio, command: script.path,
+        exposure: .reexport, prefix: "paged", allowedTools: ["sample"],
+        requestTimeoutMs: 5_000)
+      let client = MCPProxyClient()
+      let discovered = try client.listTools(server: server)
+      #expect(discovered.map(\.name) == ["hidden", "sample"])
+      #expect(discovered.last?.title == "Sample Tool")
+      #expect(discovered.last?.annotations?.readOnlyHint == true)
+      #expect(discovered.last?.outputSchema?.objectValue?["type"] == .string("object"))
+
+      let registry = GatewayToolRegistry(
+        configuration: .fixture(mcp: MCPSectionConfig(servers: [server])), mcpClient: client)
+      let exposed = try registry.listTools().map(\.name)
+      #expect(exposed.contains("paged.sample"))
+      #expect(!exposed.contains("paged.hidden"))
+      let result = try registry.callTool(name: "paged.sample", arguments: .object([:]))
+      #expect(result.objectValue?["structuredContent"] == .object(["answer": .string("called")]))
+      expectThrows(
+        try registry.callTool(
+          name: "mcp.tools.call",
+          arguments: .object([
+            "server": .string("paged"), "tool": .string("hidden"), "arguments": .object([:]),
+          ])))
+      expectThrows(try registry.callTool(name: "paged.hidden", arguments: .object([:])))
+    }
+  }
+
+  @Test
   func testStdioProxyUsesLineDelimitedMCPMessages() async throws {
     try await runBlockingTest {
       let script = try self.fakeLineDelimitedMCPServer()
@@ -114,31 +147,34 @@ final class MCPProxyClientTests {
   @Test
   func testTimedOutToolCallSendsDownstreamCancellation() async throws {
     try await runBlockingTest {
-      let fixture = try self.fakePersistentMCPServer()
+      let fixture = try self.fakePersistentMCPServer(startupDelaySeconds: 0.3)
       let server = MCPServerConfig(
         id: "cancel",
         transport: .stdio,
         command: fixture.script.path,
         args: [fixture.startMarker.path, fixture.cancelMarker.path],
+        startupTimeoutMs: 5_000,
         requestTimeoutMs: 150
       )
       let client = MCPProxyClient()
 
-      expectThrows(
+      #expect(throws: GatewayToolError.executionFailed("MCP server 'cancel' request timed out.")) {
         try client.callTool(
           server: server,
           name: "hang",
           arguments: .object([:]),
           requestID: "cancel-me"
         )
-      )
+      }
 
       #expect(
         !(try self.waitForNonemptyFile(at: fixture.cancelMarker)
           .trimmingCharacters(in: .whitespacesAndNewlines)
           .isEmpty))
 
-      #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
+      var recoveryServer = server
+      recoveryServer.requestTimeoutMs = 5_000
+      #expect((try client.listTools(server: recoveryServer).map(\.name)) == (["sample", "hang"]))
       let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
       #expect((starts) == ("started\nstarted\n"))
     }
@@ -196,6 +232,26 @@ final class MCPProxyClientTests {
   }
 
   @Test
+  func testStartupDeadlineIsIndependentOfLongRequestBudget() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakePersistentMCPServer(startupDelaySeconds: 0.5)
+      let server = MCPServerConfig(
+        id: "slow-startup", transport: .stdio, command: fixture.script.path,
+        args: [fixture.startMarker.path, fixture.cancelMarker.path],
+        startupTimeoutMs: 100, requestTimeoutMs: 5_000)
+      let client = MCPProxyClient()
+      #expect(
+        throws: GatewayToolError.executionFailed("MCP server 'slow-startup' startup timed out.")
+      ) {
+        try client.listTools(server: server)
+      }
+      let state = try client.connectionStatus(server: server).objectValue?["state"]
+      #expect(state == .string("retiring") || state == .string("not_started"))
+      #expect(!FileManager.default.fileExists(atPath: fixture.cancelMarker.path))
+    }
+  }
+
+  @Test
   func testHTTPProxyPreservesNegotiatedSessionAcrossRequests() async throws {
     try await runBlockingTest {
       let fixture = try self.fakeHTTPMCPServer()
@@ -233,8 +289,10 @@ final class MCPProxyClientTests {
 
   @Test
   func testExitedStdioProviderCannotTerminateGatewayAndNextCallReconnects() async throws {
-    try await runBlockingTest {
-      let fixture = try self.fakeExitingMCPServer()
+    let fixture = try fakeExitingMCPServer()
+    defer { try? FileManager.default.removeItem(at: fixture.script.deletingLastPathComponent()) }
+    let client = MCPProxyClient()
+    do {
       let server = MCPServerConfig(
         id: "exiting",
         transport: .stdio,
@@ -242,21 +300,31 @@ final class MCPProxyClientTests {
         args: [fixture.startMarker.path],
         requestTimeoutMs: 5_000
       )
-      let client = MCPProxyClient()
-
-      #expect((try client.listTools(server: server).map(\.name)) == (["crash"]))
-      _ = try client.callTool(
-        server: server,
-        name: "crash",
-        arguments: .object([:])
-      )
-      Thread.sleep(forTimeInterval: 0.1)
-
-      expectThrows(try client.listTools(server: server))
-      #expect((try client.listTools(server: server).map(\.name)) == (["crash"]))
+      let evidence = try await BlockingOperationExecutor(label: "exiting-provider-test").perform {
+        let initialCatalog = try client.listTools(server: server).map(\.name)
+        let response = try client.callTool(server: server, name: "crash", arguments: .object([:]))
+        let deadline = ContinuousClock.now + .seconds(2)
+        var state = try client.connectionStatus(server: server).objectValue?["state"]
+        while state == .string("connected"), ContinuousClock.now < deadline {
+          Thread.sleep(forTimeInterval: 0.02)
+          state = try client.connectionStatus(server: server).objectValue?["state"]
+        }
+        let reconnectedCatalog = try client.listTools(server: server).map(\.name)
+        let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
+        return (initialCatalog, response, state, reconnectedCatalog, starts)
+      }
+      #expect(evidence.0 == ["crash"])
       #expect(
-        (try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\nstarted\n"))
+        evidence.1.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]
+          == .string("exiting"))
+      #expect(evidence.2 != .string("connected"))
+      #expect(evidence.3 == ["crash"])
+      #expect(evidence.4 == "started\nstarted\n")
+    } catch {
+      await client.shutdown()
+      throw error
     }
+    await client.shutdown()
   }
 
   private func runBlockingTest(_ operation: @escaping () throws -> Void) async throws {
@@ -268,7 +336,7 @@ final class MCPProxyClientTests {
     }
   }
 
-  private func fakeLineDelimitedMCPServer() throws -> URL {
+  private func fakeLineDelimitedMCPServer(paginated: Bool = false) throws -> URL {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -278,6 +346,7 @@ final class MCPProxyClientTests {
       import json
       import sys
 
+      paginated = \(paginated ? "True" : "False")
       for line in sys.stdin:
           message = json.loads(line)
           method = message.get("method")
@@ -291,6 +360,18 @@ final class MCPProxyClientTests {
                   "serverInfo": {"name": "fake", "version": "1"},
               }
           elif method == "tools/list":
+              cursor = message.get("params", {}).get("cursor")
+              if paginated and cursor is None:
+                  response["result"] = {
+                      "tools": [{"name": "hidden", "inputSchema": {"type": "object"}}],
+                      "nextCursor": "",
+                  }
+                  print(json.dumps(response), flush=True)
+                  continue
+              if paginated and cursor == "":
+                  response["result"] = {"tools": [], "nextCursor": "page-two"}
+                  print(json.dumps(response), flush=True)
+                  continue
               response["result"] = {
                   "tools": [
                       {
@@ -330,7 +411,7 @@ final class MCPProxyClientTests {
     return script
   }
 
-  private func fakePersistentMCPServer() throws -> (
+  private func fakePersistentMCPServer(startupDelaySeconds: Double = 0) throws -> (
     script: URL,
     startMarker: URL,
     cancelMarker: URL
@@ -345,6 +426,7 @@ final class MCPProxyClientTests {
       #!/usr/bin/env python3
       import json
       import sys
+      import time
 
       start_marker = sys.argv[1]
       cancel_marker = sys.argv[2]
@@ -363,6 +445,7 @@ final class MCPProxyClientTests {
 
           response = {"jsonrpc": "2.0", "id": message.get("id")}
           if method == "initialize":
+              time.sleep(\(startupDelaySeconds))
               response["result"] = {
                   "protocolVersion": "2025-11-25",
                   "capabilities": {

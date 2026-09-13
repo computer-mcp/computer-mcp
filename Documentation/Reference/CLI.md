@@ -32,6 +32,7 @@ computer-mcp config show
 computer-mcp config defaults
 computer-mcp config validate [--config <config>] [--connect]
 computer-mcp config export [--output <output>]
+computer-mcp config migrate-codex --config <config> --adapter-config <adapter-config> --state-directory <state-directory> [--known-plugin-mcp-server <known-plugin-mcp-server> ...]
 computer-mcp config import --input <input> [--apply] [--expected-current-digest <expected-current-digest>]
 computer-mcp config history [--limit <limit>]
 computer-mcp config rollback <revision-id>
@@ -81,6 +82,34 @@ computer-mcp audit export --database <database> [--request-id <request-id>] [--l
 computer-mcp providers list
 computer-mcp providers doctor [<id>]
 computer-mcp providers discover --config <config>
+computer-mcp mcp list [--control-socket <control-socket>]
+computer-mcp mcp show [--control-socket <control-socket>] <id>
+computer-mcp mcp doctor <id> --workspace-id <workspace-id> [--control-socket <control-socket>]
+computer-mcp mcp recover-process <id> --workspace-id <workspace-id> --receipt-id <receipt-id> --expected-receipt-digest <expected-receipt-digest> --expected-current-digest <expected-current-digest> [--control-socket <control-socket>]
+computer-mcp mcp credential <subcommand>
+computer-mcp mcp credential status <id> [--control-socket <control-socket>]
+computer-mcp mcp credential set <id> --expected-binding-digest <expected-binding-digest> [--control-socket <control-socket>] [--stdin]
+computer-mcp mcp credential remove <id> --expected-binding-digest <expected-binding-digest> [--control-socket <control-socket>]
+computer-mcp mcp add --registration-file <registration-file> [--control-socket <control-socket>] [--apply] [--expected-current-digest <expected-current-digest>]
+computer-mcp mcp configure --registration-file <registration-file> [--control-socket <control-socket>] [--apply] [--expected-current-digest <expected-current-digest>]
+computer-mcp mcp enable <id> [--control-socket <control-socket>] [--apply] [--expected-current-digest <expected-current-digest>]
+computer-mcp mcp disable <id> [--control-socket <control-socket>] [--apply] [--expected-current-digest <expected-current-digest>]
+computer-mcp mcp remove <id> [--control-socket <control-socket>] [--apply] [--expected-current-digest <expected-current-digest>]
+computer-mcp plugins list [--control-socket <control-socket>]
+computer-mcp plugins show [--control-socket <control-socket>] <id>
+computer-mcp plugins doctor [--control-socket <control-socket>] <id>
+computer-mcp plugins register <path> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins configure <id> --settings-file <settings-file> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins enable <id> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins disable <id> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins select <id> [--installation-id <installation-id>] [--bundled] [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins remove <installation-id> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins search [<query>] [--kind <kind>] [--page <page>] [--refresh] [--control-socket <control-socket>]
+computer-mcp plugins artifacts <repository> --repository-id <repository-id> [--tag <tag>] [--page <page>] [--control-socket <control-socket>]
+computer-mcp plugins install-release <selection-file> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins install <archive> --id <id> --version <version> --sha256 <sha256> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins uninstall <installation-id> [--control-socket <control-socket>] --expected-revision <expected-revision>
+computer-mcp plugins recover [--control-socket <control-socket>] --expected-revision <expected-revision>
 computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
 computer-mcp install codex [--config <config>] [--app] [--name <name>] [--codex-cli <codex-cli>] [--server-executable <server-executable>] [--dry-run]
@@ -104,6 +133,145 @@ status, checks, an optional redacted next action, and an optional redacted
 verified request. If the App or owner-only Control Socket is unavailable, the
 same parseable contract reports a blocked `app.control_socket` check. Internal
 errors and credential values are not copied into the fallback result.
+
+## Manual MCP registrations
+
+HTTP bearer credentials use the same owner control plane for both manual and
+plugin registrations. Configure the [endpoint and Keychain reference](Config.md#http-credentials)
+first, then read `mcp credential status <id>`. It returns presence and the binding
+digest, never the token. `set` requires that digest and `--stdin`; read the token
+from a pipe or redirected secret source, not a command argument or interactive
+terminal. Input is bounded to 16 KiB, with an optional trailing newline. `remove`
+requires the same digest and deletes only the selected Keychain item.
+
+Credential commands return JSON. A mutation failure exits nonzero; an unknown
+outcome must be inspected before retrying. Tokens are excluded from output,
+configuration and credential-operation audit digests. Subsequent HTTP exchanges
+read the current token; changing it does not cancel an already issued request
+or perform OAuth login, refresh or server-side revocation. The App exposes the
+same operations through **Manage credential** in the MCP registrations list.
+
+The App's Providers → Manage MCP panel and `mcp` commands use the same
+App-owned manifest operations. `list` includes manual and resolved plugin
+contributions; `show <id>` returns one entry and the current manifest digest.
+Plugin-owned contributions are edited through plugin settings.
+
+`mcp doctor <id> --workspace-id <id>` and the App's **Check connection** action
+actively initialize the selected enabled registration in an explicitly selected
+registered workspace, retrieve its catalog, and close the probe. They use the
+resolved launch configuration and the standard MCP connection path, including
+timeouts and scoped host callbacks. Other registrations are not started. Disabled
+registrations are reported without launching; external dependencies are never
+installed. Starting a third-party executable still runs that executable's startup
+code; this check is not a process sandbox.
+
+The JSON report records the configuration digest, observation time, status,
+failure stage, executable/interpreter inspection, catalog receipt and negotiated
+versions. Exit status is zero for a verified connection/catalog and one for a
+failed or disabled check. Configuration/control errors use the usual CLI error
+path. The report omits launch environment values and raw downstream errors.
+It does not invoke downstream tools or change registration/profile grants.
+Its ephemeral host callback scope is read-only and has no persistence authority.
+Success does not prove tool execution, remote profile access, system permissions
+or persistent host services. Recheck after configuration or environment changes.
+
+For stdio registrations, `process_receipts` reports host-local process cleanup
+state before connecting and after closing the probe. The check uses the same
+database-adjacent ownership storage as the App runtime, while its host callback
+scope retains no database authority. Inspection may initialize private empty
+bookkeeping directories; it does not launch processes or retire failed records.
+A blocking record produces the `cleanup` stage and prevents the probe launch.
+Records identify their receipt, digest, owner PID, state, launch blocking and
+whether recovery is currently safe. `running` is an independent live session;
+`stopped` can be reconciled by the next launch. `cleanup_pending` means an
+orphaned process lock is still held. `cleanup_failed` requires inspection;
+`host_cleanup_unconfirmed` and `invalid` cannot be cleared through recovery.
+
+After reviewing a record with `recoverable: true`, use **Recover released
+record** in the App, or `mcp recover-process` with its ID and digest plus the
+report's `current_digest`. The host rechecks both the configuration and the
+exact receipt under its storage lock. Recovery requires all inherited process
+locks released and recorded confirmation of host authorization cleanup. It
+retires that receipt and returns `{"recovered":true}`; it does not launch a
+replacement, change grants, signal a process or replay calls. Configuration
+changes, damaged records and unconfirmed cleanup fail closed. Check again
+before retrying; never remove these files merely because a PID is absent.
+
+Normal HTTP shutdown makes one best-effort session termination request with a
+two-second request timeout. A server may refuse termination or be unreachable;
+connection health is not proof that the remote server deleted its session state.
+
+`add` and `configure` read a JSON object of at most 1 MiB using the
+[`mcp.servers` fields](Config.md). `configure` replaces the entire registration:
+copy the `server` object from `show`, retain fields you want to preserve, and
+edit that object. Unknown fields are rejected. For example:
+
+```json
+{
+  "id": "design",
+  "enabled": false,
+  "transport": "streamable_http",
+  "url": "https://mcp.example.com/mcp",
+  "exposure": "reexport",
+  "prefix": "design",
+  "allowed_tools": ["get_screenshot"]
+}
+```
+
+All five mutation commands preview by default. Review the proposed settings
+and reconnect warning, then repeat the same command with `--apply` and
+`--expected-current-digest <current_digest>` from that preview. A stale digest
+rejects the change; obtain and review a fresh preview. Applying reconnects an
+already running gateway and closes its clients' existing sessions. Clients
+must reconnect and complete or cancel their pending request waits. A lost
+response does not prove an operation failed: inspect its outcome before
+retrying, especially for writes. Adding or enabling a registration does not grant
+profile permissions, install dependencies, or prove connection health.
+
+Disabling retains launch settings, selection and profile references while
+excluding the registration from discovery and execution. Removal rejects
+registrations still referenced by tool mappings or profile grants; disable
+them or explicitly review those references first. External executables and
+registration input files are retained.
+
+Use `--control-socket <path>` on any `mcp` command to select an isolated
+owner-only App instance. Without it, the command addresses the production App.
+The CLI can be run from any working directory; a relative registration file
+path is interpreted relative to the invoking directory.
+
+## External provider diagnostics
+
+`config validate --config <config> --connect` actively initializes downstream
+MCP sessions and lists their tools. Relative launch directories are based on
+the specified configuration directory. It closes its client after successful
+validation and after a connection error. This is distinct from static manifest
+validation and from the external-provider probes below. Disabled registrations
+are reported as `state: "disabled", checked: false` without connecting them.
+
+`providers list` reads the App's recorded provider health. `providers doctor`
+runs version and diagnostic probes through the App-owned control plane and
+records their results. `providers discover --config <config>` runs probes
+locally against the specified manifest and emits a JSON report; it does not
+contact the running App or change its provider records.
+
+Configured MCP and CLI probes use the registration's working directory and
+environment overrides. An absent, empty, or `workspace` directory selects the
+configuration workspace; a relative directory is based there. Relative
+executables and relative or empty PATH entries resolve in the selected launch
+directory. Executable and shebang-interpreter checks precede execution.
+
+When several registrations match a provider, discovery selects the first in
+this order: enabled Codex configuration, enabled MCP registrations, then CLI
+registrations, preserving registration order. An unavailable selected launch
+is reported directly, not replaced by another installation. PATH and common
+installation locations are searched when no registration matches. A symlink's
+launch path is retained. Truncated probe output cannot establish success.
+
+These commands execute external version/help/diagnostic code. They do not
+open an MCP session, exercise GUI actions, install dependencies, or grant
+permissions. Their results establish only the reported probe scope, not full
+integration readiness. For non-executing package checks, use
+`plugins doctor <id>`; see [Plugin Packages](PluginPackages.md).
 
 ## Codex consumer registration
 
@@ -220,6 +388,52 @@ references.
 
 ## App-owned operation
 
+`plugins list/show/register/configure/enable/disable/select/remove` manage local
+development registrations and host-owned plugin settings through this same
+control plane. Mutations require the `state.revision` returned by list/show.
+They preflight configuration conflicts and do not interrupt connected Gateway
+clients. See [Plugin Packages](PluginPackages.md#management-cli) for source
+selection, exact settings fields, diagnostics, and isolated control sockets.
+
+`plugins doctor <id>` checks the selected package, including disabled
+contributions, through the same read-only use case as the App's **Check package**
+action. JSON includes the configuration revision, checked time, dependencies,
+per-check results, `scope` and `notChecked`. Exit 1 indicates a failed check or
+control error; exit 0 can include explicitly unverified checks. It does not
+enable contributions, execute probes, connect to servers, install dependencies,
+prompt for permissions or change settings. File checks do not prove working
+runtime health. See [Explicit Package Checks](PluginPackages.md#explicit-package-checks).
+
+`plugins install <archive> --id <id> --version <version> --sha256 <digest>`
+installs or updates a local package through the App's bounded worker.
+`plugins uninstall <installation-id>` revokes one artifact and cleans only its
+owned files; `plugins recover` retries pending owned-file cleanup. All three
+require `--expected-revision`. Successful JSON may include cleanup `issues`;
+runtime failures return structured errors and nonzero status. Previous versions
+remain selectable for rollback. Neither archive installation nor digest checking
+establishes official publisher provenance or installs external dependencies.
+
+`plugins search [query] --kind mcp|cli|skills --page <number> --refresh`
+reads public official GitHub plugin declarations through the same service as
+the App. It returns JSON metadata, not an installation or a permission grant.
+Follow `next_page` even when a filtered repository page has no matches. Runtime
+failures return a JSON `error` object and a nonzero exit status; argument parsing
+errors use the standard CLI usage diagnostics. See
+[Official Search](PluginPackages.md#official-search) for provenance, caching,
+network limits, and failure behavior.
+
+`plugins artifacts <owner/repository> --repository-id <id> [--tag <tag>]`
+lists installable release archives, defaulting to the latest stable release.
+Use the repository name and numeric identity from search, and follow `next_page`
+even on empty asset pages. Save one complete `artifacts` entry as a JSON file;
+`plugins install-release <selection.json> --expected-revision <revision>`
+revalidates that selection, downloads its bytes and installs it through the
+same App-owned transaction. The selection file is bounded to 256 KiB. New
+plugins remain disabled, and updates retain settings and older versions.
+Runtime and selection-file failures return JSON errors with a nonzero exit
+status. Metadata, downloads and archive checks have separate bounded deadlines;
+connection loss does not prove rollback. Read list/show before retrying a write.
+
 `app`, `workspace`, `profile`, `tunnel`, and `tools` use the App control plane.
 If the App is not running, the CLI fails with actionable startup guidance; it
 does not silently create another database or gateway.
@@ -281,6 +495,13 @@ bookmarks, the App database, or App Keychain transport credentials. An explicit
 `--database <path>` may preserve a disposable Gateway audit database for a
 Validation Run; omitting it keeps the database in memory. Never point this
 option at the App database or run standalone mode as a second service owner.
+
+Standalone `tools list`, `tools inspect`, and `tools call` close their owned
+Gateway connections before returning, including when an operation fails.
+`tools call` prints the tool's JSON result and exits with status 1 when
+`isError` is true, in both standalone and App-owned modes. An unknown tool
+passed to `tools inspect` is a command validation error (exit status 64).
+An unsuccessful call does not authorize an automatic retry of a write.
 
 ## Computer MCP Validation Suite
 

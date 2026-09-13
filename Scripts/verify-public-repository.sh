@@ -68,6 +68,10 @@ large_files=(${(f)$(find . \
   -path './.git' -prune -o \
   -path '*/.build' -prune -o \
   -path './dist' -prune -o \
+  -path './.agent' -prune -o \
+  -path './.codex' -prune -o \
+  -path './.computer-mcp' -prune -o \
+  -path './.local' -prune -o \
   -type f -size +10M -print)})
 if (( ${#large_files[@]} > 0 )); then
   print -l -- $large_files >&2

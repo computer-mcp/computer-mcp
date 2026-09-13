@@ -13,7 +13,7 @@ the files are alternatives, not fragments to merge.
 | `computer-mcp.toml` | Default standalone development configuration | Local development; shell remains disabled |
 | `computer-mcp-chatgpt-tunnel.toml` | ChatGPT observe surface | Read-only Secure MCP Tunnel development |
 | `computer-mcp-chatgpt-operate.toml` | ChatGPT operate surface | Write and Computer Use review; grant only intended workspaces |
-| `computer-mcp-codex-dogfood.toml` | Local Codex provider dogfood | High risk: enables shell and broad `local-admin` capabilities |
+| `codex-configuration-import.toml` | Offline input for `config migrate-codex` | Migration example, not a startup configuration; includes shell and broad local grants to verify preservation |
 | `computer-mcp-local-providers.toml` | Local downstream provider integration | Requires separately installed provider CLIs |
 | `mcp-inspector.json` | MCP Inspector fixture | Test/development data, not an App configuration |
 | `sample.json`, `sample.plist`, `sample.toml` | Structured-data fixtures | Test data only |

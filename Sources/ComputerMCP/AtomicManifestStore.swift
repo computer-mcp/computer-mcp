@@ -18,8 +18,18 @@ internal protocol ManifestConfigurationLoading: Sendable {
 }
 
 internal struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading {
+  var database: GatewayDatabase? = nil
+  var bundledPlugins: BundledPlugins = .current
   internal func load(path: String) throws -> GatewayConfiguration {
-    try GatewayConfiguration.load(path: path)
+    let state = try (database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
+      .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
+    let configuration = try GatewayConfiguration.load(
+      path: path,
+      knownPluginMCPServerIDs: state.knownMCPRegistrationIDs)
+    _ = try GatewayPluginComposition(
+      configuration: configuration,
+      plugins: PluginHost.resolve(state, bundled: bundledPlugins).plugins)
+    return configuration
   }
 }
 
@@ -30,6 +40,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   private let loader: any ManifestConfigurationLoading
   private let fileManager: FileManager
   private let lock = NSLock()
+  private let writeLock = NSLock()
   private var continuations: [UUID: AsyncStream<ManifestChange>.Continuation] = [:]
   private var directorySource: DispatchSourceFileSystemObject?
   private var directoryDescriptor: Int32 = -1
@@ -38,12 +49,12 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   internal init(
     manifestURL: URL,
     database: GatewayDatabase,
-    loader: any ManifestConfigurationLoading = GatewayManifestConfigurationLoader(),
+    loader: (any ManifestConfigurationLoading)? = nil,
     fileManager: FileManager = .default
   ) throws {
     self.manifestURL = manifestURL.standardizedFileURL
     self.database = database
-    self.loader = loader
+    self.loader = loader ?? GatewayManifestConfigurationLoader(database: database)
     self.fileManager = fileManager
     try Self.ensureDirectory(
       self.manifestURL.deletingLastPathComponent(),
@@ -78,8 +89,10 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   }
 
   @discardableResult
-  internal func activate(manifest: String) throws -> ConfigurationRevision {
-    try write(manifest: manifest, reason: .activated)
+  internal func activate(manifest: String, expectedDigest: String? = nil) throws
+    -> ConfigurationRevision
+  {
+    try write(manifest: manifest, reason: .activated, expectedDigest: expectedDigest)
   }
 
   internal func activeConfiguration() throws -> GatewayConfiguration {
@@ -151,9 +164,17 @@ internal final class AtomicManifestStore: @unchecked Sendable {
     source?.cancel()
   }
 
-  private func write(manifest: String, reason: ManifestChangeReason) throws
+  private func write(manifest: String, reason: ManifestChangeReason, expectedDigest: String? = nil)
+    throws
     -> ConfigurationRevision
   {
+    writeLock.lock()
+    defer { writeLock.unlock() }
+    if let expectedDigest {
+      guard try Self.digest(of: Data(contentsOf: manifestURL)) == expectedDigest else {
+        throw AtomicManifestStoreError.staleDigest
+      }
+    }
     guard let data = manifest.data(using: .utf8), !data.isEmpty else {
       throw AtomicManifestStoreError.invalidManifestEncoding
     }
@@ -347,6 +368,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
 }
 
 internal enum AtomicManifestStoreError: Error, LocalizedError, Equatable {
+  case staleDigest
   case invalidManifestEncoding
   case manifestMissing
   case unknownRevision(String)
@@ -356,6 +378,8 @@ internal enum AtomicManifestStoreError: Error, LocalizedError, Equatable {
 
   internal var errorDescription: String? {
     switch self {
+    case .staleDigest:
+      return "The active manifest changed after preview; refresh and review the change again."
     case .invalidManifestEncoding:
       return "The manifest must be non-empty UTF-8."
     case .manifestMissing:

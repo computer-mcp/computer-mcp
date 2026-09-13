@@ -7,6 +7,161 @@ import Testing
 @Suite(.serialized)
 final class CloudflareTunnelTests {
   @Test
+  func truncatedVersionCannotAuthorizeTunnelStartup() async throws {
+    let fixture = try CloudflareControlPlaneFixture()
+    defer { fixture.cleanup() }
+    let root = fixture.temporaryDirectory.url
+    let executable = root.appendingPathComponent("truncated-cloudflared")
+    try Data(
+      """
+      #!/usr/bin/python3
+      import sys
+      if sys.argv[1] == "version":
+          print("cloudflared version 2026.8.0" + " " * 20000)
+      else:
+          raise RuntimeError("A truncated probe must not launch the tunnel")
+      """.utf8
+    ).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let ports = try availableLoopbackPorts(count: 2)
+    let profile = CloudflareTunnelConfiguration(
+      id: "truncated", tunnelName: "truncated", publicHostname: "mcp.example.com",
+      localPort: ports[0], metricsPort: ports[1], cloudflaredPath: executable.path,
+      tunnelTokenReference: try SecretReference(account: "cloudflare.truncated.tunnel-token"),
+      accessTokenReference: try SecretReference(account: "cloudflare.truncated.access-token"))
+    _ = try await fixture.controlPlane.saveCloudflareTunnelConfiguration(
+      profile, tunnelToken: "fixture-token")
+    let doctor = try await fixture.controlPlane.doctorCloudflareTunnel(profileID: profile.id)
+    #expect(!doctor.passed)
+    #expect(doctor.version == nil)
+    await #expect(throws: CloudflareTunnelError.unsupportedCloudflaredVersion(nil)) {
+      _ = try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
+    }
+    #expect(await fixture.controlPlane.cloudflareTunnelStatuses().first?.state == .stopped)
+    #expect(try await fixture.controlPlane.desiredCloudflareProfileIDs().isEmpty)
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: fixture.directories.runtime.appendingPathComponent("cloudflare-truncated-token")
+          .path))
+  }
+
+  @Test(arguments: [false, true])
+  func pendingOriginDiscoveryRejectsReplacementAndJoinsStopOrConfigurationChange(stop: Bool)
+    async throws
+  {
+    let fixture = try CloudflareControlPlaneFixture()
+    defer { fixture.cleanup() }
+    let controlPlane = fixture.controlPlane
+    let root = fixture.temporaryDirectory.url
+    let ports = try availableLoopbackPorts(count: 2)
+    let profile = CloudflareTunnelConfiguration(
+      id: "pending", tunnelName: "pending", publicHostname: "mcp.example.com",
+      localPort: ports[0], metricsPort: ports[1],
+      cloudflaredPath: try fixture.makeFakeCloudflared().path,
+      tunnelTokenReference: try SecretReference(account: "cloudflare.pending.tunnel-token"),
+      accessTokenReference: try SecretReference(account: "cloudflare.pending.access-token"))
+    _ = try await controlPlane.saveCloudflareTunnelConfiguration(
+      profile, tunnelToken: "fixture-token")
+    let script = root.appendingPathComponent("gated-mcp.py")
+    try Data(Self.gatedMCPScript.utf8).write(to: script)
+    var configuration = try await controlPlane.activeConfiguration()
+    configuration.mcp.servers = [
+      .init(
+        id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+        args: [script.path, root.path], exposure: .reexport, prefix: "fixture", allowAnyTool: true,
+        startupTimeoutMs: 5000, requestTimeoutMs: 5000, toolRisks: ["inspect": .readOnly])
+    ]
+    configuration.profiles.removeAll { $0.id == .cloudflareObserve }
+    configuration.profiles.append(
+      .init(
+        id: .cloudflareObserve, capabilities: ["workspace.list", "fixture.inspect"],
+        workspaces: ["fixture"], allowedCallers: [.cloudflareTunnel], mcpServers: ["fixture"]))
+    _ = try await controlPlane.activateManifest(configuration.exportedTOML())
+    try fixture.database.saveWorkspace(
+      RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path))
+    let pending = Task { try await controlPlane.startCloudflareTunnel(profileID: profile.id) }
+    let release = root.appendingPathComponent("release")
+    do {
+      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+      while !FileManager.default.fileExists(atPath: root.appendingPathComponent("waiting").path),
+        ContinuousClock.now < deadline
+      {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      try #require(
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("waiting").path))
+      #expect(await controlPlane.cloudflareTunnelStatuses().first?.state == .starting)
+      await #expect(throws: CloudflareTunnelError.alreadyRunning(profile.id)) {
+        _ = try await controlPlane.startCloudflareTunnel(profileID: profile.id)
+      }
+      if stop {
+        let first = Task { try await controlPlane.stopCloudflareTunnel(profileID: profile.id) }
+        let second = Task { try await controlPlane.stopCloudflareTunnel(profileID: profile.id) }
+        while await controlPlane.cloudflareTunnelStatuses().first?.state != .stopping,
+          ContinuousClock.now < deadline
+        {
+          await Task.yield()
+        }
+        #expect(await controlPlane.cloudflareTunnelStatuses().first?.state == .stopping)
+        try Data().write(to: release)
+        #expect(try await first.value.state == .stopped)
+        #expect(try await second.value.state == .stopped)
+      } else {
+        configuration.server.name = "changed-during-origin-start"
+        _ = try await controlPlane.activateManifest(configuration.exportedTOML())
+        try Data().write(to: release)
+      }
+      switch await pending.result {
+      case .success: Issue.record("Obsolete origin startup must not launch cloudflared")
+      case .failure(let error):
+        if stop {
+          #expect(error is CancellationError)
+        } else {
+          #expect(error as? AppControlPlaneServiceError == .gatewayInputsChanged)
+        }
+      }
+      #expect(await controlPlane.cloudflareTunnelStatuses().first?.state == .stopped)
+      #expect(try await controlPlane.desiredCloudflareProfileIDs().isEmpty)
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: fixture.directories.runtime.appendingPathComponent("cloudflare-pending-token")
+            .path))
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: fixture.directories.logs.appendingPathComponent("cloudflare-pending.stdout.log")
+            .path))
+      let pidText = try String(contentsOf: root.appendingPathComponent("pid"), encoding: .utf8)
+      let pid = try #require(Int32(pidText))
+      #expect(kill(pid, 0) == -1 && errno == ESRCH)
+    } catch {
+      pending.cancel()
+      try? Data().write(to: release)
+      _ = await pending.result
+      _ = try? await controlPlane.stopCloudflareTunnel(profileID: profile.id)
+      throw error
+    }
+  }
+
+  private static let gatedMCPScript = #"""
+    import json, os, pathlib, sys, time
+    root = pathlib.Path(sys.argv[1])
+    (root / "pid").write_text(str(os.getpid()))
+    for line in sys.stdin:
+        request = json.loads(line)
+        if request.get("method") == "initialize":
+            result = {"protocolVersion":"2025-11-25", "capabilities":{"tools":{}}, "serverInfo":{"name":"gated", "version":"1"}}
+        elif request.get("method") == "tools/list":
+            (root / "waiting").touch()
+            deadline = time.monotonic() + 3
+            while not (root / "release").exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            result = {"tools":[{"name":"inspect", "inputSchema":{"type":"object"}}]}
+        else:
+            continue
+        print(json.dumps({"jsonrpc":"2.0", "id":request["id"], "result":result}), flush=True)
+    """#
+
+  @Test
   func testProfileRequiresNamedRemoteTunnelBoundaries() throws {
     let token = try SecretReference(account: "cloudflare.primary.tunnel-token")
     let accessToken = try SecretReference(account: "cloudflare.primary.access-token")

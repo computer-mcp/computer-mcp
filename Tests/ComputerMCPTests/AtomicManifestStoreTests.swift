@@ -74,6 +74,42 @@ final class AtomicManifestStoreTests {
   }
 
   private func validManifest(name: String) -> String {
+    Self.manifest(name: name)
+  }
+
+  @Test
+  func concurrentReviewedChangesOnlyActivateOneRevision() async throws {
+    let fixture = try ManifestStoreFixture()
+    defer { fixture.cleanup() }
+    let store = fixture.store
+    let original = try store.activate(manifest: Self.manifest(name: "original"))
+    let winners = try await withThrowingTaskGroup(of: String?.self) { group in
+      for name in ["first", "second"] {
+        group.addTask {
+          do {
+            _ = try store.activate(
+              manifest: Self.manifest(name: name), expectedDigest: original.digest)
+            return name
+          } catch AtomicManifestStoreError.staleDigest {
+            return nil
+          }
+        }
+      }
+      var winners: [String] = []
+      for try await name in group { if let name { winners.append(name) } }
+      return winners
+    }
+    try #require(winners.count == 1)
+    #expect(try store.activeConfiguration().server.name == winners[0])
+    #expect(try store.history().count == 2)
+    #expect(throws: AtomicManifestStoreError.staleDigest) {
+      try store.activate(manifest: original.manifest, expectedDigest: original.digest)
+    }
+    #expect(try store.activeConfiguration().server.name == winners[0])
+    #expect(try store.history().count == 2)
+  }
+
+  private static func manifest(name: String) -> String {
     """
     schema_version = 1
 

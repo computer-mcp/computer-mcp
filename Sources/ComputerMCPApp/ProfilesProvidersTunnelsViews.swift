@@ -148,6 +148,7 @@ struct ProfilesView: View {
 
 struct ProvidersView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
+  @State private var showingMCPRegistrations = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -155,6 +156,7 @@ struct ProvidersView: View {
         "Providers",
         subtitle: "CLI, MCP, Codex, Computer Use, and external runtimes"
       ) {
+        Button(AppLocalization.string("Manage MCP")) { showingMCPRegistrations = true }
         RefreshButton {
           model.refresh(.providers)
         }
@@ -185,6 +187,12 @@ struct ProvidersView: View {
           }
           .padding(.horizontal, 16)
         }
+      }
+    }
+    .sheet(isPresented: $showingMCPRegistrations) {
+      MCPRegistrationsView(model: model.mcpRegistrations) { pluginID in
+        model.pluginManagement.selectedID = pluginID
+        model.selectedWorkspace = .plugins
       }
     }
   }

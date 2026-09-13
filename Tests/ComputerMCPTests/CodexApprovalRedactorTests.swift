@@ -3,6 +3,22 @@ import Testing
 @testable import ComputerMCP
 
 struct CodexApprovalRedactorTests {
+  @Test(arguments: [
+    ("Authorization: Bearer example-value", "Authorization: Bearer [REDACTED]"),
+    ("密码 token=example-value; next", "密码 token=[REDACTED]; next"),
+    ("API_KEY: example-value, password=example-value", "API_KEY: [REDACTED], password=[REDACTED]"),
+    ("credential=例子🧪 secret=example-value", "credential=[REDACTED] secret=[REDACTED]"),
+    ("ordinary Unicode 文本 👩🏽‍💻", "ordinary Unicode 文本 👩🏽‍💻"),
+  ])
+  func repeatedRedactionPreservesUnicodeBoundariesAndAllPatterns(input: String, expected: String) {
+    for _ in 0..<1_000 {
+      #expect(CodexApprovalRedactor.redactString(input) == expected)
+      #expect(
+        CodexApprovalRedactor.redactString(input, maximumCharacters: 8)
+          == String(expected.prefix(8)))
+    }
+  }
+
   @Test
   func testRedactionBoundsStringsCollectionsAndDepth() {
     var nested: JSONValue = .string("leaf")

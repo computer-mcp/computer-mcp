@@ -75,6 +75,10 @@ package struct AppControlPlaneServiceDirectories: Codable, Equatable, Sendable {
     runtime.appendingPathComponent("control.sock")
   }
 
+  package var plugins: URL {
+    applicationSupport.appendingPathComponent("Plugins", isDirectory: true)
+  }
+
   package var openAITunnelGatewayCredential: URL {
     runtime.appendingPathComponent("gateway.sock.openai-tunnel-auth")
   }

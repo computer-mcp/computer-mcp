@@ -21,6 +21,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
   internal var shell: String?
   internal var workingDirectory: String?
   internal var environment: [String: String]
+  internal var inheritsEnvironment: Bool?
 
   internal init(
     mode: ShellLaunchMode = .shell,
@@ -29,7 +30,8 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
     argv: [String] = [],
     shell: String? = nil,
     workingDirectory: String? = nil,
-    environment: [String: String] = [:]
+    environment: [String: String] = [:],
+    inheritsEnvironment: Bool = true
   ) {
     self.mode = mode
     self.command = command
@@ -38,6 +40,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
     self.shell = shell
     self.workingDirectory = workingDirectory
     self.environment = environment
+    self.inheritsEnvironment = inheritsEnvironment
   }
 
   fileprivate func resolved(defaultShell: String, defaultWorkingDirectory: URL) throws
@@ -78,7 +81,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
         executable: shell,
         arguments: ["-lc", command],
         workingDirectory: directory.standardizedFileURL,
-        environment: environment
+        environment: environment, inheritsEnvironment: inheritsEnvironment != false
       )
 
     case .argv:
@@ -94,7 +97,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
         executable: executable,
         arguments: argv,
         workingDirectory: directory.standardizedFileURL,
-        environment: environment
+        environment: environment, inheritsEnvironment: inheritsEnvironment != false
       )
     }
   }
@@ -261,17 +264,25 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
     } catch ShellRuntimeError.sessionNotRunning where standardInput.isEmpty {
       // A command that never reads stdin may finish before the close reaches its pipe.
     }
-    let session = try requireSession(sessionID)
     let waitMilliseconds = timeoutMilliseconds + max(terminationGraceMilliseconds, 250) + 2_000
-    if !session.waitForCompletion(timeoutMilliseconds: waitMilliseconds) {
+    return try wait(
+      sessionID: sessionID, timeoutMilliseconds: waitMilliseconds,
+      maxReadBytes: maxOutputBytes, encoding: .utf8)
+  }
+
+  internal func wait(
+    sessionID: String, timeoutMilliseconds: Int, maxReadBytes: Int, encoding: ShellStreamEncoding
+  ) throws -> ShellSessionSnapshot {
+    let session = try requireSession(sessionID)
+    if !session.waitForCompletion(timeoutMilliseconds: timeoutMilliseconds) {
       _ = try? cancel(sessionID: sessionID)
       throw ShellRuntimeError.timeoutWaitingForTermination(sessionID)
     }
     return session.snapshot(
       stdoutCursor: 0,
       stderrCursor: 0,
-      maxReadBytes: maxOutputBytes,
-      encoding: .utf8
+      maxReadBytes: maxReadBytes,
+      encoding: encoding
     )
   }
 
@@ -408,7 +419,9 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
       let outcome = try await Subprocess.run(
         executable,
         arguments: Arguments(launch.arguments),
-        environment: .inherit.updating(environmentOverrides),
+        environment: launch.inheritsEnvironment
+          ? .inherit.updating(environmentOverrides)
+          : .custom(environmentOverrides.compactMapValues { $0 }),
         workingDirectory: FilePath(launch.workingDirectory.path),
         platformOptions: platformOptions,
         // DispatchIO waits for the preferred size before yielding while the
@@ -454,6 +467,7 @@ private struct ResolvedShellLaunch: Sendable {
   var arguments: [String]
   var workingDirectory: URL
   var environment: [String: String]
+  var inheritsEnvironment: Bool
 }
 
 private final class ShellSession: @unchecked Sendable {

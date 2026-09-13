@@ -8,7 +8,7 @@ internal protocol ControlPlaneProviderDiscovering: Sendable {
 internal struct AppControlPlaneProviderDiscovery: ControlPlaneProviderDiscovering {
   private let commandRunner: any CommandRunning
 
-  internal init(commandRunner: any CommandRunning = ProcessCommandRunner()) {
+  internal init(commandRunner: any CommandRunning = ManagedCommandRunner()) {
     self.commandRunner = commandRunner
   }
 
@@ -35,8 +35,13 @@ package struct AppControlPlaneServiceSnapshot: Codable, Equatable, Sendable {
 }
 
 package actor AppControlPlaneService {
+  private let gatewayOperations = BlockingOperationExecutor(
+    label: "computer-mcp.control-plane-gateways", serial: false)
+  let providerProbeOperations = BlockingOperationExecutor(
+    label: "computer-mcp.provider-probes")
   package nonisolated let directories: AppControlPlaneServiceDirectories
-  package nonisolated let openAITunnelGatewayExecutablePath: String
+  /// Host-selected CLI used by owned workers and tunnel bridges, never supplied by plugin metadata.
+  package nonisolated let gatewayExecutablePath: String
 
   let database: GatewayDatabase
   let manifestStore: AtomicManifestStore
@@ -50,10 +55,19 @@ package actor AppControlPlaneService {
   )
   let bookmarkService: any WorkspaceBookmarkServicing
   var cloudflareRuntimes: [String: CloudflareRuntimeState] = [:]
+  var cloudflareStartTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
+  var cloudflareStopTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
   private var cachedLaunchAtLoginState: LaunchAtLoginState = .unavailable
   private var launchAtLoginRefreshInProgress = false
   private var launchAtLoginGeneration: UInt64 = 0
-  private var ownershipReconciliationTask: Task<Void, Never>?
+  var pluginMutationInProgress = false
+  var pluginRecoveryAttempted = false
+  var pluginRecoveryIssues: [PluginStoreIssue] = []
+  var pluginRecoveryError: String?
+  let pluginCatalog: any PluginCatalogSearching
+  let pluginReleases: GitHubPluginReleases
+  let pluginDownload: GitHubPluginDownload
+  let bundledPlugins: BundledPlugins
 
   internal init(
     directories: AppControlPlaneServiceDirectories,
@@ -61,15 +75,19 @@ package actor AppControlPlaneService {
     manifestStore: AtomicManifestStore,
     secretStore: KeychainSecretStore,
     openAITunnelSupervisor: OpenAITunnelSupervisor,
-    openAITunnelGatewayExecutablePath: String = "computer-mcp",
+    gatewayExecutablePath: String = "computer-mcp",
     providerDiscovery: any ControlPlaneProviderDiscovering =
       AppControlPlaneProviderDiscovery(),
     launchAtLoginController: any LaunchAtLoginControlling =
       SMAppServiceLaunchAtLoginController(),
-    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService()
+    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
+    pluginCatalog: any PluginCatalogSearching = GitHubPluginCatalog(),
+    pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
+    pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
+    bundledPlugins: BundledPlugins = .current
   ) {
     self.directories = directories
-    self.openAITunnelGatewayExecutablePath = openAITunnelGatewayExecutablePath
+    self.gatewayExecutablePath = gatewayExecutablePath
     self.database = database
     self.manifestStore = manifestStore
     self.secretStore = secretStore
@@ -77,11 +95,15 @@ package actor AppControlPlaneService {
     self.providerDiscovery = providerDiscovery
     self.launchAtLoginController = launchAtLoginController
     self.bookmarkService = bookmarkService
+    self.pluginCatalog = pluginCatalog
+    self.pluginReleases = pluginReleases
+    self.pluginDownload = pluginDownload
+    self.bundledPlugins = bundledPlugins
   }
 
   package static func live(
     directories: AppControlPlaneServiceDirectories? = nil,
-    openAITunnelGatewayExecutablePath: String = "computer-mcp",
+    gatewayExecutablePath: String = "computer-mcp",
     keychainService: String,
     keychainAccessGroup: String
   ) throws -> AppControlPlaneService {
@@ -89,9 +111,11 @@ package actor AppControlPlaneService {
     try resolvedDirectories.prepare()
     let database = try GatewayDatabase(path: resolvedDirectories.database.path)
     try resolvedDirectories.secureDatabaseFiles()
+    let bundledPlugins = BundledPlugins.current
     let manifestStore = try AtomicManifestStore(
       manifestURL: resolvedDirectories.manifest,
-      database: database
+      database: database,
+      loader: GatewayManifestConfigurationLoader(database: database, bundledPlugins: bundledPlugins)
     )
     let secretStore = try KeychainSecretStore(
       service: keychainService,
@@ -107,37 +131,26 @@ package actor AppControlPlaneService {
       manifestStore: manifestStore,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
-      openAITunnelGatewayExecutablePath: openAITunnelGatewayExecutablePath
+      gatewayExecutablePath: gatewayExecutablePath,
+      bundledPlugins: bundledPlugins
     )
   }
 
   package static let defaultManifest = DefaultGatewayConfiguration.manifest
 
-  package func start() throws {
+  package func start() async throws {
     try directories.prepare()
     try directories.secureDatabaseFiles()
+    try await recoverPluginsAtStartup()
     try manifestStore.startHotReloadMonitoring()
-    _ = try CodexThreadOwnershipReconciliation.reconcileSafely(database: database)
-    if ownershipReconciliationTask == nil {
-      let database = database
-      ownershipReconciliationTask = Task {
-        while !Task.isCancelled {
-          do {
-            try await Task.sleep(for: .seconds(60))
-          } catch {
-            return
-          }
-          _ = try? CodexThreadOwnershipReconciliation.reconcileSafely(database: database)
-        }
-      }
-    }
+
   }
 
   package func stop() async throws {
-    ownershipReconciliationTask?.cancel()
-    ownershipReconciliationTask = nil
     manifestStore.stopHotReloadMonitoring()
-    for profileID in cloudflareRuntimes.keys.sorted() {
+    let cloudflareIDs = Set(cloudflareRuntimes.keys)
+      .union(cloudflareStartTasks.keys).union(cloudflareStopTasks.keys)
+    for profileID in cloudflareIDs.sorted() {
       _ = try? await stopCloudflareTunnel(profileID: profileID)
     }
     for status in await openAITunnelSupervisor.statusesSnapshot()
@@ -165,15 +178,19 @@ package actor AppControlPlaneService {
   }
 
   @discardableResult
-  package func activateManifest(_ manifest: String) throws -> ConfigurationRevision {
-    try manifestStore.activate(manifest: manifest)
+  package func activateManifest(_ manifest: String, expectedDigest: String? = nil) throws
+    -> ConfigurationRevision
+  {
+    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    return try manifestStore.activate(manifest: manifest, expectedDigest: expectedDigest)
   }
 
   package func activeConfiguration() throws -> GatewayConfiguration {
     try manifestStore.activeConfiguration()
   }
 
-  package func effectiveConfigurationForExport() throws -> GatewayConfiguration {
+  package func effectiveConfigurationForExport() async throws -> GatewayConfiguration {
+    let grants = try await profileGrants()
     var configuration = try manifestStore.activeConfiguration()
     configuration.workspaces = try workspaces().map { workspace in
       WorkspaceManifestConfig(
@@ -182,13 +199,14 @@ package actor AppControlPlaneService {
         path: workspace.rootPath
       )
     }.sorted { $0.id < $1.id }
-    configuration.profiles = try profileGrants().map { grant in
+    configuration.profiles = grants.map { grant in
       ProfileGrantConfig(
         id: grant.id,
         capabilities: grant.capabilityIDs.sorted(),
         workspaces: grant.workspaceIDs.sorted(),
         allowedCallers: grant.allowedCallers.sorted { $0.rawValue < $1.rawValue },
-        fullShellEnabled: grant.fullShellEnabled
+        fullShellEnabled: grant.fullShellEnabled,
+        mcpServers: grant.mcpServerIDs.sorted()
       )
     }.sorted { $0.id.rawValue < $1.id.rawValue }
     try configuration.validate()
@@ -249,8 +267,9 @@ package actor AppControlPlaneService {
     try database.deleteWorkspace(id: canonicalID)
   }
 
-  package func profileGrants() throws -> [ProfileGrant] {
-    let configuration = try manifestStore.activeConfiguration()
+  package func profileGrants() async throws -> [ProfileGrant] {
+    let inputs = try gatewayInputs()
+    let configuration = inputs.configuration
     let configuredProfileIDs = Set(configuration.profiles.map(\.id))
     let profileIDs = Array(
       Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id))
@@ -260,48 +279,35 @@ package actor AppControlPlaneService {
         ($0, configuration.profileGrant(for: $0))
       }
     )
-    let persistedProfiles = try database.profiles()
-    if !configuredProfileIDs.contains(.chatGPTObserve) {
-      let workspaces = try database.workspaces()
-      let gateway = try GatewayRuntime(
-        configuration: configuration,
-        context: configuration.executionContext(
-          caller: .secureTunnel,
-          profileID: .chatGPTObserve
-        ),
-        registeredWorkspaces: workspaces,
-        bookmarkService: bookmarkService
-      )
-      grants[.chatGPTObserve] = ProfileGrant(
-        id: .chatGPTObserve,
-        capabilityIDs: Set(try gateway.listTools().map(\.name)),
-        workspaceIDs: Set(workspaces.map(\.id)),
-        allowedCallers: [.secureTunnel]
-      )
-    }
     for (profileID, caller) in [
-      (GatewayProfileID.cloudflareObserve, GatewayCallerKind.cloudflareTunnel)
+      (GatewayProfileID.chatGPTObserve, GatewayCallerKind.secureTunnel),
+      (GatewayProfileID.cloudflareObserve, GatewayCallerKind.cloudflareTunnel),
     ] where !configuredProfileIDs.contains(profileID) {
-      let workspaces = try database.workspaces()
-      let gateway = try GatewayRuntime(
-        configuration: configuration,
-        context: configuration.executionContext(caller: caller, profileID: profileID),
-        registeredWorkspaces: workspaces,
-        bookmarkService: bookmarkService
-      )
+      let gateway = try await makeGateway(
+        inputs: inputs, caller: caller, profileID: profileID, persistentState: false)
+      let tools: [MCPTool]
+      do {
+        tools = try gateway.listTools()
+      } catch {
+        await gateway.shutdown()
+        throw error
+      }
+      await gateway.shutdown()
+      try requireCurrentGatewayInputs(inputs)
       grants[profileID] = ProfileGrant(
         id: profileID,
-        capabilityIDs: Set(try gateway.listTools().map(\.name)),
-        workspaceIDs: Set(workspaces.map(\.id)),
+        capabilityIDs: Set(tools.map(\.name)),
+        workspaceIDs: Set(inputs.workspaces.map(\.id)),
         allowedCallers: [caller]
       )
     }
-    for persisted in persistedProfiles {
+    for persisted in inputs.profiles {
       guard let configured = grants[persisted.id] else {
         continue
       }
       grants[persisted.id] = configured.applyingPersistedRuntimeState(persisted)
     }
+    try requireCurrentGatewayInputs(inputs)
     return profileIDs.compactMap { grants[$0] }
   }
 
@@ -310,11 +316,12 @@ package actor AppControlPlaneService {
     _ enabled: Bool,
     workspaceID: String,
     profileID: GatewayProfileID
-  ) throws -> ProfileGrant {
+  ) async throws -> ProfileGrant {
     guard try database.workspaces().contains(where: { $0.id == workspaceID }) else {
       throw AppControlPlaneServiceError.unknownWorkspace(workspaceID)
     }
-    guard var grant = try profileGrants().first(where: { $0.id == profileID }) else {
+    let grants = try await profileGrants()
+    guard var grant = grants.first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
     if enabled {
@@ -348,7 +355,11 @@ package actor AppControlPlaneService {
     guard profile != .localAdmin else {
       throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
     }
-    guard try profileGrants().contains(where: { $0.id == profile }) else {
+    let configuration = try manifestStore.activeConfiguration()
+    guard
+      GatewayProfileID.builtIns.contains(profile)
+        || configuration.profiles.contains(where: { $0.id == profile })
+    else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue)
     }
     let previous = try activeGatewayProfile()
@@ -382,15 +393,21 @@ package actor AppControlPlaneService {
   package func setFullShellEnabled(
     _ enabled: Bool,
     profileID: GatewayProfileID
-  ) throws -> ProfileGrant {
+  ) async throws -> ProfileGrant {
     guard profileID.supportsFullShell else {
       throw AppControlPlaneServiceError.fullShellProfileNotAllowed(profileID.rawValue)
     }
+    if enabled {
+      guard try manifestStore.activeConfiguration().policy.shellEnabled else {
+        throw AppControlPlaneServiceError.fullShellManifestDisabled
+      }
+    }
+    let grants = try await profileGrants()
     let configuration = try manifestStore.activeConfiguration()
     if enabled && !configuration.policy.shellEnabled {
       throw AppControlPlaneServiceError.fullShellManifestDisabled
     }
-    guard var grant = try profileGrants().first(where: { $0.id == profileID }) else {
+    guard var grant = grants.first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
     grant.fullShellEnabled = enabled
@@ -438,22 +455,20 @@ package actor AppControlPlaneService {
     if caller.isRemote && profileID == .localAdmin {
       throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
     }
-    let configuration = try manifestStore.activeConfiguration()
-    let gateway = try GatewayRuntime(
-      configuration: configuration,
-      context: configuration.executionContext(
-        caller: caller,
-        profileID: profileID,
-        transportTrace: transportTrace
-      ),
-      database: database,
-      registeredWorkspaces: try database.workspaces(),
-      bookmarkService: bookmarkService
-    )
+    let inputs = try gatewayInputs()
+    let gateway = try await makeGateway(
+      inputs: inputs, caller: caller, profileID: profileID, transportTrace: transportTrace)
     let server = await MCPRuntimeAdapter.makeGatewayServer(
-      configuration: configuration,
+      configuration: inputs.configuration,
       registry: gateway
     )
+    do {
+      try requireCurrentGatewayInputs(inputs)
+    } catch {
+      await server.stop()
+      await gateway.shutdown()
+      throw error
+    }
     return GatewaySocketServerSession(server: server) {
       await gateway.shutdown()
     }
@@ -461,8 +476,19 @@ package actor AppControlPlaneService {
 
   func localAdminTools(
     transportTrace: GatewayTransportTrace
-  ) throws -> [MCPTool] {
-    try makeLocalAdminGateway(transportTrace: transportTrace).listTools()
+  ) async throws -> [MCPTool] {
+    let inputs = try gatewayInputs()
+    let gateway = try await makeGateway(
+      inputs: inputs, caller: .localCLI, profileID: .localAdmin, transportTrace: transportTrace)
+    do {
+      let tools = try gateway.listTools()
+      await gateway.shutdown()
+      try requireCurrentGatewayInputs(inputs)
+      return tools
+    } catch {
+      await gateway.shutdown()
+      throw error
+    }
   }
 
   func callLocalAdminTool(
@@ -470,7 +496,9 @@ package actor AppControlPlaneService {
     arguments: JSONValue?,
     transportTrace: GatewayTransportTrace
   ) async throws -> JSONValue {
-    let gateway = try makeLocalAdminGateway(transportTrace: transportTrace)
+    let gateway = try await makeGateway(
+      inputs: gatewayInputs(), caller: .localCLI, profileID: .localAdmin,
+      transportTrace: transportTrace)
     do {
       let result = try await gateway.callToolForMCPAsync(name: name, arguments: arguments)
       await gateway.shutdown()
@@ -481,21 +509,54 @@ package actor AppControlPlaneService {
     }
   }
 
-  private func makeLocalAdminGateway(
-    transportTrace: GatewayTransportTrace
-  ) throws -> GatewayRuntime {
-    let configuration = try manifestStore.activeConfiguration()
-    return try GatewayRuntime(
-      configuration: configuration,
-      context: configuration.executionContext(
-        caller: .localCLI,
-        profileID: .localAdmin,
-        transportTrace: transportTrace
-      ),
-      database: database,
-      registeredWorkspaces: try database.workspaces(),
-      bookmarkService: bookmarkService
-    )
+  /// Values whose changes invalidate a pending catalog or session construction.
+  struct GatewayInputs: Equatable, Sendable {
+    let configuration: GatewayConfiguration
+    let workspaces: [RegisteredWorkspace]
+    let profiles: [ProfileGrant]
+    let plugins: PluginStoreSnapshot
+  }
+
+  func gatewayInputs() throws -> GatewayInputs {
+    try GatewayInputs(
+      configuration: manifestStore.activeConfiguration(), workspaces: database.workspaces(),
+      profiles: database.profiles(), plugins: database.pluginStoreSnapshot())
+  }
+
+  func requireCurrentGatewayInputs(_ inputs: GatewayInputs) throws {
+    try Task.checkCancellation()
+    guard try gatewayInputs() == inputs else {
+      throw AppControlPlaneServiceError.gatewayInputsChanged
+    }
+  }
+
+  private func makeGateway(
+    inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
+    transportTrace: GatewayTransportTrace? = nil, persistentState: Bool = true
+  ) async throws -> GatewayRuntime {
+    try requireCurrentGatewayInputs(inputs)
+    let database = persistentState ? database : nil
+    let bookmarkService = bookmarkService
+    let bundledPlugins = bundledPlugins
+    let secretStore = secretStore
+    let plugins: [ResolvedPlugin]? = try await gatewayOperations.perform {
+      try persistentState
+        ? nil : PluginHost.resolve(inputs.plugins, bundled: bundledPlugins).plugins
+    }
+    let gateway = try await GatewayRuntime.make(
+      configuration: inputs.configuration,
+      context: inputs.configuration.executionContext(
+        caller: caller, profileID: profileID, transportTrace: transportTrace),
+      database: database, registeredWorkspaces: inputs.workspaces,
+      bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
+      plugins: plugins, bundledPlugins: bundledPlugins)
+    do {
+      try requireCurrentGatewayInputs(inputs)
+      return gateway
+    } catch {
+      await gateway.shutdown()
+      throw error
+    }
   }
 
   package func configurationHistory(limit: Int = 50) throws -> [ConfigurationRevision] {
@@ -504,13 +565,23 @@ package actor AppControlPlaneService {
 
   @discardableResult
   package func rollbackManifest(to revisionID: String) throws -> ConfigurationRevision {
-    try manifestStore.rollback(to: revisionID)
+    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    return try manifestStore.rollback(to: revisionID)
   }
 
   @discardableResult
-  package func refreshProviders() throws -> [ProviderState] {
+  package func refreshProviders() async throws -> [ProviderState] {
+    try Task.checkCancellation()
     let configuration = try manifestStore.activeConfiguration()
-    let states = try providerDiscovery.discover(configuration: configuration).map {
+    let discovery = providerDiscovery
+    let results = try await providerProbeOperations.perform {
+      try discovery.discover(configuration: configuration)
+    }
+    try Task.checkCancellation()
+    guard try manifestStore.activeConfiguration() == configuration else {
+      throw AtomicManifestStoreError.staleDigest
+    }
+    let states = results.map {
       ProviderState(
         id: $0.providerID,
         kind: $0.kind.rawValue,
@@ -542,9 +613,6 @@ package actor AppControlPlaneService {
     }
     identifiers.formUnion(configuration.cli.commands.map { "cli:\($0.id)" })
     identifiers.formUnion(configuration.mcp.servers.map { "mcp:\($0.id)" })
-    if configuration.codex.enabled {
-      identifiers.insert("codex")
-    }
     identifiers.formUnion(try database.providerStates().map(\.id))
     return identifiers.count
   }
@@ -561,7 +629,7 @@ package actor AppControlPlaneService {
         tunnelID: definition.tunnelID,
         gatewayProfile: definition.gatewayProfile,
         manifestPath: directories.manifest.path,
-        gatewayExecutablePath: openAITunnelGatewayExecutablePath,
+        gatewayExecutablePath: gatewayExecutablePath,
         gatewaySocketPath: directories.gatewaySocket.path,
         profileDirectory: definition.profileDirectory ?? directories.tunnelClientProfiles.path,
         tunnelClientPath: definition.tunnelClientPath,
@@ -639,7 +707,7 @@ package actor AppControlPlaneService {
     -> OpenAITunnelDoctorReport
   {
     let profile = try requireOpenAITunnelConfiguration(profileID)
-    try validateOpenAITunnelSurface(profile)
+    try await validateOpenAITunnelSurface(profile)
     return try await openAITunnelSupervisor.provision(
       profile,
       configuration: manifestStore.activeConfiguration(),
@@ -649,7 +717,7 @@ package actor AppControlPlaneService {
 
   package func doctorOpenAITunnel(profileID: String) async throws -> OpenAITunnelDoctorReport {
     let profile = try requireOpenAITunnelConfiguration(profileID)
-    try validateOpenAITunnelSurface(profile)
+    try await validateOpenAITunnelSurface(profile)
     return try await openAITunnelSupervisor.doctor(
       profile,
       configuration: manifestStore.activeConfiguration()
@@ -661,7 +729,7 @@ package actor AppControlPlaneService {
     allowKeychainAuthenticationUI: Bool = true
   ) async throws -> OpenAITunnelStatus {
     let profile = try requireOpenAITunnelConfiguration(profileID)
-    try validateOpenAITunnelSurface(profile)
+    try await validateOpenAITunnelSurface(profile)
     let status = try await openAITunnelSupervisor.start(
       profile,
       configuration: manifestStore.activeConfiguration(),
@@ -681,7 +749,7 @@ package actor AppControlPlaneService {
     allowKeychainAuthenticationUI: Bool = true
   ) async throws -> OpenAITunnelStatus {
     let profile = try requireOpenAITunnelConfiguration(profileID)
-    try validateOpenAITunnelSurface(profile)
+    try await validateOpenAITunnelSurface(profile)
     let status = try await openAITunnelSupervisor.reconnect(
       profile,
       configuration: manifestStore.activeConfiguration(),
@@ -803,23 +871,23 @@ package actor AppControlPlaneService {
     _ = try manifestStore.activate(manifest: configuration.exportedTOML())
   }
 
-  private func validateOpenAITunnelSurface(_ profile: OpenAITunnelConfiguration) throws {
-    let configuration = try manifestStore.activeConfiguration()
-    let gateway = try GatewayRuntime(
-      configuration: configuration,
-      context: configuration.executionContext(
-        caller: .secureTunnel,
-        profileID: profile.gatewayProfile
-      ),
-      database: database,
-      registeredWorkspaces: try database.workspaces(),
-      bookmarkService: bookmarkService
-    )
-    _ = try ChatGPTProfileAuditor().audit(
-      configuration: configuration,
-      registry: gateway,
-      allowWriteTools: profile.gatewayProfile == .chatGPTOperate
-    )
+  private func validateOpenAITunnelSurface(_ profile: OpenAITunnelConfiguration) async throws {
+    let inputs = try gatewayInputs()
+    let gateway = try await makeGateway(
+      inputs: inputs, caller: .secureTunnel, profileID: profile.gatewayProfile)
+    do {
+      _ = try ChatGPTProfileAuditor().audit(
+        configuration: inputs.configuration, registry: gateway,
+        allowWriteTools: profile.gatewayProfile == .chatGPTOperate)
+      await gateway.shutdown()
+      try requireCurrentGatewayInputs(inputs)
+      guard try requireOpenAITunnelConfiguration(profile.id) == profile else {
+        throw AppControlPlaneServiceError.gatewayInputsChanged
+      }
+    } catch {
+      await gateway.shutdown()
+      throw error
+    }
   }
 
   private func setOpenAITunnelDesiredRunning(_ desiredRunning: Bool, profileID: String) throws {
@@ -897,6 +965,7 @@ package enum AppControlPlaneServiceError: Error, LocalizedError, Equatable {
   case fullShellProfileNotAllowed(String)
   case fullShellManifestDisabled
   case invalidDesiredOpenAITunnelState
+  case gatewayInputsChanged
 
   package var errorDescription: String? {
     switch self {
@@ -929,6 +998,9 @@ package enum AppControlPlaneServiceError: Error, LocalizedError, Equatable {
       return "Enable policy.shell_enabled in the active manifest before enabling Full Shell."
     case .invalidDesiredOpenAITunnelState:
       return "The persisted Tunnel runtime state is invalid."
+    case .gatewayInputsChanged:
+      return
+        "Gateway configuration, workspaces, profiles, or plugins changed during discovery. Refresh before trying again."
     }
   }
 }

@@ -47,10 +47,20 @@ enum AppLocalization {
     )
   }
 
-  static func formatted(_ key: String, _ arguments: CVarArg...) -> String {
-    String(
-      format: string(key),
-      locale: Locale.current,
+  static func formatted(_ key: String, locale: Locale? = nil, _ arguments: CVarArg...) -> String {
+    let format: String
+    if let locale {
+      let localization =
+        Bundle.preferredLocalizations(
+          from: ["en", "zh-Hans"], forPreferences: [locale.identifier]
+        ).first ?? "en"
+      format = localizedString(key, localization: localization, localizationBundle: nil)
+    } else {
+      format = string(key)
+    }
+    return String(
+      format: format,
+      locale: locale ?? .current,
       arguments: arguments
     )
   }

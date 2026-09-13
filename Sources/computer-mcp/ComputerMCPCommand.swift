@@ -21,6 +21,10 @@ struct ComputerMCPCommand: AsyncParsableCommand {
       Tools.self,
       Audit.self,
       Providers.self,
+      MCPRegistrations.self,
+      Plugins.self,
+      PluginArchiveCommand.self,
+      BundlePluginsCommand.self,
       Install.self,
       Uninstall.self,
       Serve.self,
@@ -73,17 +77,20 @@ struct ServeStdio: AsyncParsableCommand {
   @OptionGroup var runtime: StandaloneRuntimeOptions
 
   func run() async throws {
-    let gateway = try GatewayConfiguration.load(path: runtime.config)
+    let database = try runtime.makeDatabase()
+    let gateway = try GatewayConfiguration.load(
+      path: runtime.config,
+      knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
     let context = gateway.executionContext(
       caller: runtime.caller,
       profileID: runtime.profile,
       workspaceID: runtime.workspaceID,
       transportTrace: GatewayTransportTrace(transport: "stdio")
     )
-    let registry = try GatewayRuntime(
+    let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,
-      database: try runtime.makeDatabase()
+      database: database
     )
     try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: registry)
   }
@@ -101,8 +108,11 @@ struct ServeHTTP: AsyncParsableCommand {
   @Option(name: .long, help: "Public base URL override.") var publicBaseURL: String?
 
   func run() async throws {
-    let gateway = try GatewayConfiguration.load(path: runtime.config)
-    let registry = try GatewayRuntime(
+    let database = try runtime.makeDatabase()
+    let gateway = try GatewayConfiguration.load(
+      path: runtime.config,
+      knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
+    let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: gateway.executionContext(
         caller: runtime.caller,
@@ -110,7 +120,7 @@ struct ServeHTTP: AsyncParsableCommand {
         workspaceID: runtime.workspaceID,
         transportTrace: GatewayTransportTrace(transport: "streamable_http")
       ),
-      database: try runtime.makeDatabase()
+      database: database
     )
     try await MCPRuntimeAdapter.runHTTPGateway(
       configuration: gateway,
@@ -226,22 +236,14 @@ struct ToolsList: AsyncParsableCommand {
 
   func run() async throws {
     try connection.validateMode()
-    guard let config = connection.config else {
+    guard connection.config != nil else {
       printJSON(try await AppControlPlaneServiceClient.live().call("tools.list"))
       return
     }
-    let gateway = try GatewayConfiguration.load(path: config)
-    let registry = try GatewayRuntime(
-      configuration: gateway,
-      context: gateway.executionContext(
-        caller: connection.caller,
-        profileID: connection.profile,
-        workspaceID: connection.workspaceID
-      ),
-      database: GatewayDatabase(inMemory: ())
-    )
-    let surface = GatewayMCPToolSurface(registry: registry)
-    printJSON(.object(["tools": .array(try surface.listTools().map(\.json))]))
+    printJSON(
+      try await withStandaloneToolSurface(connection) { surface in
+        .object(["tools": .array(try surface.listTools().map(\.json))])
+      })
   }
 }
 
@@ -261,11 +263,13 @@ struct ToolsInspect: AsyncParsableCommand {
       )
       return
     }
-    let surface = try standaloneToolSurface(connection)
-    guard let tool = try surface.listTools().first(where: { $0.name == name }) else {
-      throw ValidationError("Unknown tool: \(name)")
-    }
-    printJSON(tool.json)
+    printJSON(
+      try await withStandaloneToolSurface(connection) { surface in
+        guard let tool = try surface.listTools().first(where: { $0.name == name }) else {
+          throw ValidationError("Unknown tool: \(name)")
+        }
+        return tool.json
+      })
   }
 }
 
@@ -292,22 +296,23 @@ struct ToolsCall: AsyncParsableCommand {
       }
       return
     }
-    printJSON(
-      try await standaloneToolSurface(connection).callToolAsync(
-        name: name,
-        arguments: arguments
-      ))
+    let result = try await withStandaloneToolSurface(connection) { surface in
+      try await surface.callToolAsync(name: name, arguments: arguments)
+    }
+    printJSON(result)
+    if result.objectValue?["isError"]?.boolValue == true { throw ExitCode.failure }
   }
 }
 
-private func standaloneToolSurface(
-  _ options: ToolConnectionOptions
-) throws -> GatewayMCPToolSurface {
+private func withStandaloneToolSurface(
+  _ options: ToolConnectionOptions,
+  operation: (GatewayMCPToolSurface) async throws -> JSONValue
+) async throws -> JSONValue {
   guard let config = options.config else {
     throw ValidationError("A standalone tool surface requires --config.")
   }
   let gateway = try GatewayConfiguration.load(path: config)
-  let registry = try GatewayRuntime(
+  let registry = try await GatewayRuntime.make(
     configuration: gateway,
     context: gateway.executionContext(
       caller: options.caller,
@@ -316,7 +321,14 @@ private func standaloneToolSurface(
     ),
     database: GatewayDatabase(inMemory: ())
   )
-  return GatewayMCPToolSurface(registry: registry)
+  do {
+    let result = try await operation(GatewayMCPToolSurface(registry: registry))
+    await registry.shutdown()
+    return result
+  } catch {
+    await registry.shutdown()
+    throw error
+  }
 }
 
 extension GatewayCallerKind: ExpressibleByArgument {}
@@ -332,6 +344,7 @@ struct Config: ParsableCommand {
       ConfigDefaults.self,
       Validate.self,
       ConfigExport.self,
+      ConfigMigrateCodex.self,
       ConfigImport.self,
       ConfigHistory.self,
       ConfigRollback.self,
@@ -360,16 +373,8 @@ struct Validate: AsyncParsableCommand {
     try gateway.validate()
     var object: [String: JSONValue] = ["ok": .bool(true)]
     if connect {
-      let client = MCPProxyClient()
-      object["mcp"] = .array(
-        try gateway.mcp.servers.map { server in
-          let tools = try client.listTools(server: server)
-          return .object([
-            "id": .string(server.id),
-            "ok": .bool(true),
-            "tools": .array(tools.map(\.json)),
-          ])
-        })
+      object["mcp"] = try await ComputerMCPProductContracts.validateMCPConnections(
+        configuration: gateway)
     }
     printJSON(.object(object))
   }

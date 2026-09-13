@@ -37,7 +37,7 @@ ChatGPT · Codex · 其他 MCP 客户端
  调用方 → Profile → 已注册工作区 → 策略 → 必要时审批
                  │
                  ▼
- Builtin · Skill · CLI · MCP · Computer Use · Git · Shell · Codex Adapter
+ Builtin · Skills · CLI · MCP · AX 兜底 · Git · Shell
                  │
                  ▼
         本地执行 → 有界结果 → 脱敏审计凭据
@@ -45,6 +45,32 @@ ChatGPT · Codex · 其他 MCP 客户端
 
 每次调用都绑定到调用方、Profile、能力和相关的已注册工作区。未知工具、未授权
 工作区、不安全路径和无法验证的所有权声明都会 fail closed。
+
+## 插件与直接集成
+
+Plugin 是可以组合 MCP、CLI 和 Skills 的分发包。原生 MCP、本地 CLI 与 Skill
+也支持直接注册；两种来源共用宿主策略、工作区范围和审计。
+
+可以使用 App 的插件管理页面，或本机管理 CLI：
+
+```sh
+computer-mcp plugins search --refresh
+computer-mcp plugins list
+```
+
+官方包包括 [Codex](https://github.com/computer-mcp/plugin-codex)、
+[Computer Use](https://github.com/computer-mcp/plugin-computer-use) 和
+[Swift Format](https://github.com/computer-mcp/plugin-swift-format)。选择发布附件安装，
+检查依赖和工具暴露范围后再启用。新安装默认停用，不自动授予权限。Bundled 包
+走相同生命周期，外部工具仍由用户或厂商管理。
+
+Codex 执行位于独立 MCP adapter。升级已有内置 Codex 配置时，需要执行显式的
+[配置与离线状态迁移](Documentation/Reference/CodexMigration.md)，不能热替换正在
+执行迁移任务的后端。原生 Computer Use 还受厂商调用者认证限制，并非仅授予
+macOS 隐私权限即可保证可用；原生 AX 工具继续作为兜底路径。
+
+安装、升级与恢复见[插件包](Documentation/Reference/PluginPackages.md)；经过验证的
+命令投影和结构化覆盖范围见 [CLI Trees](Documentation/Reference/CLITrees.md)。
 
 ## 能做什么
 
@@ -82,9 +108,10 @@ Computer MCP 始终把两个决定分开：
 | --- | --- | --- |
 | 稳定 | App-owned 本地网关、工作区注册、Profile、策略、Operation Ticket 和脱敏审计 | macOS 14+ 默认产品控制平面 |
 | 稳定 | 本地 MCP、经 OpenAI Secure MCP Tunnel 连接 ChatGPT、Cloudflare Named Tunnel | 每条远程路径都有独立 Caller 与 Profile 边界 |
-| 稳定 | Builtin、Skill、已注册 CLI、下游 MCP、Shell 与 Computer Use Adapter | 是否可用仍取决于 Profile、工作区、依赖和 macOS 权限 |
+| 稳定 | Builtin、Skill、已注册 CLI、下游 MCP、Shell 与原生 AX 兜底 | 是否可用仍取决于 Profile、工作区、依赖和 macOS 权限 |
 | 稳定 | 受治理的工作区与 Git 操作 | 写入需要策略授权；破坏性原子操作使用经审查的一次性 Ticket；不会隐式 Push |
-| 实验性 | Codex App Server、Exec 与 MCP Provider | 选择性启用、默认关闭，并依赖已安装且完成认证的 Codex |
+| 稳定 | 插件包生命周期、直接／插件 MCP 注册、经过验证的 CLI Tree 与 Skills | 宿主授权独立，不自动安装外部依赖 |
+| 实验性 | Codex 插件的 App Server、Exec 与 MCP Provider | 选择性启用、默认关闭，并依赖已安装且完成认证的 Codex |
 | 实验性 | 原生 Codex Goal 透传、Computer MCP 验收 Run、线程占用诊断和受管子 Worktree | 官方 Goal、Computer MCP 验收与外部客户端所有权始终分开 |
 | 规划中 | 更广的平台支持和更完整的高级编排 UI | 暂无承诺日期；当前签名 App 仅支持 macOS |
 

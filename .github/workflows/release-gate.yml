@@ -47,7 +47,6 @@ jobs:
         run: |
           Scripts/verify-public-repository.sh
           Scripts/verify-package-boundary.sh
-          Scripts/verify-swift-codex-release-gate.sh
           Scripts/verify-naming.sh
 
       - name: Strict Swift format

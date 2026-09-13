@@ -83,7 +83,7 @@ final class GatewayRuntimeTests {
   }
 
   @Test
-  func testFullShellRequiresBothManifestAndProfileEnablement() throws {
+  func testFullShellRequiresBothManifestAndProfileEnablement() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let workspace = workspace(id: "root", root: root)
@@ -113,7 +113,7 @@ final class GatewayRuntimeTests {
       profileID: .localAdmin
     )
     #expect(try enabled.listTools().contains(where: { $0.name == "shell.run" }))
-    let result = try enabled.callTool(
+    let result = try await enabled.callToolAsync(
       name: "shell.run",
       arguments: .object([
         "workspace_id": .string("root"),
@@ -126,7 +126,7 @@ final class GatewayRuntimeTests {
   }
 
   @Test
-  func testChatGPTOperateCanUseExplicitlyEnabledFullShell() throws {
+  func testChatGPTOperateCanUseExplicitlyEnabledFullShell() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let gateway = try makeGateway(
@@ -142,7 +142,7 @@ final class GatewayRuntimeTests {
     )
 
     #expect(try gateway.listTools().contains { $0.name == "shell.run" })
-    let result = try gateway.callTool(
+    let result = try await gateway.callToolAsync(
       name: "shell.run",
       arguments: .object([
         "workspace_id": .string("root"),

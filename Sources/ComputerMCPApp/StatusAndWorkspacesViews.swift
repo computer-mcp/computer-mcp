@@ -173,7 +173,11 @@ struct HomeView: View {
 
       Section("Command line tool") {
         if let cli = model.cliInstallationStatus {
-          LabeledContent("~/.local/bin/computer-mcp", value: cli.state.localizedLabel)
+          LabeledContent {
+            Text(verbatim: cli.state.localizedLabel)
+          } label: {
+            Text(verbatim: "~/.local/bin/computer-mcp")
+          }
           if !cli.destinationDirectoryIsOnPath {
             Label(
               "Add ~/.local/bin to PATH to invoke computer-mcp by name.",

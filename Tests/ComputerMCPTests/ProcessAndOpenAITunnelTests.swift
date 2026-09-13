@@ -373,6 +373,29 @@ final class ProcessAndOpenAITunnelTests {
         == (["/bin/cat", "serve", "--config", "\(cwd)/Examples/computer-mcp.toml"]))
   }
 
+  @Test(arguments: [false, true], [false, true])
+  func installPlanRejectsUnusableExecutables(codex: Bool, directory: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = directory ? root : root.appendingPathComponent("missing-interpreter")
+    if !directory {
+      try Data("#!/nonexistent/computer-mcp-interpreter\nexit 0\n".utf8).write(to: executable)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    }
+    #expect(throws: (any Error).self) {
+      try CodexMCPInstaller().planApp(
+        codexCLI: codex ? executable.path : "/bin/echo", serverName: "fixture",
+        executablePath: codex ? "/bin/cat" : executable.path)
+    }
+    #expect(throws: (any Error).self) {
+      try OpenAITunnelClientResolver().resolve(
+        requestedPath: executable.path,
+        configuration: GatewayConfiguration(workspaceDirectory: root))
+    }
+  }
+
   @Test
   func testCodexAppInstallPlanUsesTheAppOwnedBridgeWithoutAConfigPath() throws {
     let invocation = try CodexMCPInstaller().planApp(

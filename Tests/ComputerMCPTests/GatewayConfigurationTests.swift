@@ -223,7 +223,7 @@ final class GatewayConfigurationTests {
   }
 
   @Test
-  func testRemoteMCPRequiresReviewedToolAllowlist() throws {
+  func testRemoteMCPAcceptsHostAllSelectionAndEmptyReexport() throws {
     var remote = GatewayConfiguration(
       runtime: RuntimeBindingConfig(
         caller: .secureTunnel,
@@ -231,7 +231,7 @@ final class GatewayConfigurationTests {
       ),
       mcp: MCPSectionConfig(servers: [
         MCPServerConfig(
-          id: "unsafe",
+          id: "remote",
           transport: .stdio,
           command: "/bin/cat",
           allowAnyTool: true
@@ -239,23 +239,19 @@ final class GatewayConfigurationTests {
       ])
     )
 
-    expectThrows(try remote.validate()) { error in
-      #expect(error.localizedDescription.contains("allow_any_tool"))
-      #expect(error.localizedDescription.contains("remote caller"))
-    }
+    expectNoThrow(try remote.validate())
 
     remote.mcp.servers = [
       MCPServerConfig(
-        id: "reviewed",
+        id: "remote",
         transport: .stdio,
         command: "/bin/cat",
         exposure: .reexport,
-        prefix: "reviewed"
+        prefix: "remote"
       )
     ]
-    expectThrows(try remote.validate()) { error in
-      #expect(error.localizedDescription.contains("reexport requires allowed_tools"))
-    }
+    expectNoThrow(try remote.validate())
+    #expect(!remote.mcp.servers[0].permitsTool("read"))
 
     remote.mcp.servers[0].allowedTools = ["read"]
     expectNoThrow(try remote.validate())

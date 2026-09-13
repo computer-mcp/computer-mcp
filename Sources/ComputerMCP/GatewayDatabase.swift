@@ -10,33 +10,152 @@ package final class GatewayDatabase: @unchecked Sendable {
   private let writer: any DatabaseWriter
   let fileURL: URL?
 
+  var mcpProcessOwnershipRoot: URL? {
+    fileURL.map {
+      $0.deletingLastPathComponent().appendingPathComponent(
+        $0.lastPathComponent + ".mcp-processes", isDirectory: true)
+    }
+  }
+
   package init(path: String) throws {
     self.fileURL = URL(fileURLWithPath: path).standardizedFileURL
-    self.writer = try DatabaseQueue(path: path)
+    var configuration = Configuration()
+    // Independent management connections must acquire the write lock before checking revisions.
+    configuration.busyMode = .timeout(5)
+    self.writer = try DatabaseQueue(path: path, configuration: configuration)
     try Self.migrator.migrate(writer)
-    try reconcileCodexRuntimeLeaseSemantics()
   }
 
   package init(inMemory: Void) throws {
     self.fileURL = nil
     self.writer = try DatabaseQueue()
     try Self.migrator.migrate(writer)
-    try reconcileCodexRuntimeLeaseSemantics()
+  }
+
+  package func pluginStoreSnapshot() throws -> PluginStoreSnapshot {
+    try writer.read { database in
+      guard
+        let row = try Row.fetchOne(
+          database, sql: "SELECT revision, payloadJSON FROM pluginState WHERE id = 1")
+      else {
+        return PluginStoreSnapshot()
+      }
+      let payload: String = row["payloadJSON"]
+      guard payload.utf8.count <= 4_194_304 else { throw PluginStoreError.invalidState }
+      let state = try JSONDecoder().decode(PluginStoreSnapshot.self, from: Data(payload.utf8))
+      let revision: Int64 = row["revision"]
+      guard state.revision == revision else { throw PluginStoreError.invalidState }
+      try state.validate()
+      return state
+    }
+  }
+
+  func savePluginStoreSnapshot(_ state: PluginStoreSnapshot, expectedRevision: Int64) throws {
+    try state.validate()
+    guard expectedRevision >= 0, expectedRevision < Int64.max,
+      state.revision == expectedRevision + 1
+    else {
+      throw PluginStoreError.invalidState
+    }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(state)
+    guard data.count <= 4_194_304, let payload = String(data: data, encoding: .utf8) else {
+      throw PluginStoreError.invalidState
+    }
+    try writer.write { database in
+      let current =
+        try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
+      guard current == expectedRevision else {
+        throw PluginStoreError.staleRevision(expected: expectedRevision, actual: current)
+      }
+      try database.execute(
+        sql: """
+          INSERT INTO pluginState (id, revision, payloadJSON) VALUES (1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, payloadJSON = excluded.payloadJSON
+          """, arguments: [state.revision, payload])
+    }
   }
 
   package func saveWorkspace(_ workspace: RegisteredWorkspace) throws {
     try writer.write { database in
-      try WorkspaceRecord(workspace).save(database)
-      let canonicalRoot = Self.canonicalWorkspaceRoot(workspace.rootPath)
-      try WorkspaceCanonicalRootRecord
-        .filter(Column("workspaceID") == workspace.id)
-        .filter(Column("canonicalRootPath") != canonicalRoot)
-        .deleteAll(database)
-      try WorkspaceCanonicalRootRecord(
-        canonicalRootPath: canonicalRoot,
-        workspaceID: workspace.id,
-        createdAt: workspace.createdAt
-      ).insert(database, onConflict: .ignore)
+      try Self.saveWorkspace(workspace, in: database)
+    }
+  }
+
+  /// Bookmark resolution must not overwrite a concurrent edit or recreate a removed registration.
+  @discardableResult
+  func saveWorkspace(_ workspace: RegisteredWorkspace, replacing expected: RegisteredWorkspace)
+    throws -> Bool
+  {
+    try writer.write { database in
+      guard workspace.id == expected.id,
+        try WorkspaceRecord.fetchOne(database, key: expected.id)?.value == expected
+      else { return false }
+      try Self.saveWorkspace(workspace, in: database)
+      return true
+    }
+  }
+
+  private static func saveWorkspace(_ workspace: RegisteredWorkspace, in database: Database) throws
+  {
+    try WorkspaceRecord(workspace).save(database)
+    let canonicalRoot = Self.canonicalWorkspaceRoot(workspace.rootPath)
+    try WorkspaceCanonicalRootRecord
+      .filter(Column("workspaceID") == workspace.id)
+      .filter(Column("canonicalRootPath") != canonicalRoot)
+      .deleteAll(database)
+    try WorkspaceCanonicalRootRecord(
+      canonicalRootPath: canonicalRoot,
+      workspaceID: workspace.id,
+      createdAt: workspace.createdAt
+    ).insert(database, onConflict: .ignore)
+  }
+
+  /// Local recovery ownership is separate from exported plugin settings.
+  func pluginOwnedDirectories() throws -> [PluginOwnedDirectory] {
+    try writer.read { database in
+      let rows = try Row.fetchAll(
+        database, sql: "SELECT id, payloadJSON FROM pluginOwnedDirectories LIMIT 4097")
+      guard rows.count <= 4096 else { throw PluginStoreError.invalidState }
+      return try rows.map { row in
+        let payload: String = row["payloadJSON"]
+        guard payload.utf8.count <= 16_384 else { throw PluginStoreError.invalidState }
+        let record = try JSONDecoder().decode(PluginOwnedDirectory.self, from: Data(payload.utf8))
+        let id: String = row["id"]
+        guard id == record.installationID else { throw PluginStoreError.invalidState }
+        try record.validate()
+        return record
+      }
+    }
+  }
+
+  func recordPluginDirectory(_ record: PluginOwnedDirectory) throws {
+    try record.validate()
+    let payload = try JSONEncoder().encode(record)
+    guard payload.count <= 16_384 else { throw PluginStoreError.invalidState }
+    try writer.write { database in
+      let count =
+        try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM pluginOwnedDirectories") ?? 0
+      guard count < 4096 else { throw PluginStoreError.invalidState }
+      try database.execute(
+        sql: "INSERT INTO pluginOwnedDirectories (id, payloadJSON) VALUES (?, ?)",
+        arguments: [record.installationID, String(decoding: payload, as: UTF8.self)])
+    }
+  }
+
+  func forgetPluginDirectory(_ record: PluginOwnedDirectory) throws {
+    try writer.write { database in
+      guard
+        let payload = try String.fetchOne(
+          database, sql: "SELECT payloadJSON FROM pluginOwnedDirectories WHERE id = ?",
+          arguments: [record.installationID])
+      else { return }
+      guard payload.utf8.count <= 16_384,
+        try JSONDecoder().decode(PluginOwnedDirectory.self, from: Data(payload.utf8)) == record
+      else { throw PluginStoreError.invalidState }
+      try database.execute(
+        sql: "DELETE FROM pluginOwnedDirectories WHERE id = ?", arguments: [record.installationID])
     }
   }
 
@@ -318,134 +437,6 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
-  func saveCodexApproval(_ approval: CodexApprovalRecord) throws {
-    try writer.write { database in
-      try CodexApprovalRecordRow(approval).save(database)
-    }
-  }
-
-  func codexApproval(id: String) throws -> CodexApprovalRecord? {
-    try writer.read { database in
-      try CodexApprovalRecordRow.fetchOne(database, key: id)?.value()
-    }
-  }
-
-  func codexApprovals(
-    workspaceID: String? = nil,
-    limit: Int = 500
-  ) throws -> [CodexApprovalRecord] {
-    try writer.read { database in
-      var request =
-        CodexApprovalRecordRow
-        .order(Column("createdAt").desc, Column("id").desc)
-      if let workspaceID {
-        request = request.filter(Column("workspaceID") == workspaceID)
-      }
-      return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
-        try $0.value()
-      }
-    }
-  }
-
-  func saveCodexRuntimeLease(_ lease: CodexRuntimeLeaseRecord) throws {
-    try writer.write { database in
-      try CodexRuntimeLeaseRow(lease).save(database)
-    }
-  }
-
-  func codexRuntimeLeases(limit: Int = 500) throws -> [CodexRuntimeLeaseRecord] {
-    try writer.read { database in
-      try CodexRuntimeLeaseRow
-        .order(Column("updatedAt").desc, Column("id").desc)
-        .limit(max(1, min(limit, 5_000)))
-        .fetchAll(database)
-        .map { try $0.value().reconciledStateSemantics() }
-    }
-  }
-
-  private func reconcileCodexRuntimeLeaseSemantics() throws {
-    try writer.write { database in
-      for row in try CodexRuntimeLeaseRow.fetchAll(database) {
-        let current = try row.value()
-        let reconciled = current.reconciledStateSemantics()
-        if reconciled != current {
-          try CodexRuntimeLeaseRow(reconciled).save(database)
-        }
-      }
-    }
-  }
-
-  func saveCodexThreadOwnership(_ ownership: CodexThreadOwnershipRecord) throws {
-    try writer.write { database in
-      try CodexThreadOwnershipRow(ownership).save(database)
-    }
-  }
-
-  func codexThreadOwnership(threadID: String) throws -> CodexThreadOwnershipRecord? {
-    try writer.read { database in
-      try CodexThreadOwnershipRow.fetchOne(database, key: threadID)?.value()
-    }
-  }
-
-  func codexThreadOwnerships(
-    workspaceID: String? = nil,
-    limit: Int = 500
-  ) throws -> [CodexThreadOwnershipRecord] {
-    try writer.read { database in
-      var request = CodexThreadOwnershipRow.order(
-        Column("updatedAt").desc,
-        Column("threadID").desc
-      )
-      if let workspaceID {
-        request = request.filter(Column("workspaceID") == workspaceID)
-      }
-      return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
-        try $0.value()
-      }
-    }
-  }
-
-  func applyCodexThreadOwnershipReconciliation(
-    plan: CodexThreadOwnershipReconciliationPlan,
-    now: Date
-  ) throws -> CodexThreadOwnershipReconciliationResult {
-    try writer.write { database in
-      var releasedThreadIDs: [String] = []
-      for candidate in plan.candidates {
-        guard var row = try CodexThreadOwnershipRow.fetchOne(database, key: candidate.threadID),
-          row.runtimeID == candidate.runtimeID,
-          row.state == CodexThreadOwnershipState.loaded.rawValue
-        else {
-          throw CodexThreadOwnershipReconciliationError.planChanged(
-            expected: plan.planDigest,
-            actual: "ownership-state-changed"
-          )
-        }
-        row.state = CodexThreadOwnershipState.released.rawValue
-        row.updatedAt = now
-        try row.save(database)
-        releasedThreadIDs.append(candidate.threadID)
-      }
-      let result = CodexThreadOwnershipReconciliationResult(
-        schemaVersion: 1,
-        receiptID: UUID().uuidString,
-        planDigest: plan.planDigest,
-        releasedThreadIDs: releasedThreadIDs.sorted(),
-        appliedAt: now,
-        signalsSent: false,
-        externalStateMutated: false
-      )
-      let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
-      try CodexThreadOwnershipReconciliationReceiptRow(
-        id: result.receiptID,
-        planDigest: result.planDigest,
-        appliedAt: now,
-        payloadJSON: String(decoding: try encoder.encode(result), as: UTF8.self)
-      ).insert(database)
-      return result
-    }
-  }
-
   func saveCodexElevationGrant(_ grant: CodexElevationGrantRecord) throws {
     try writer.write { database in
       try CodexElevationGrantRow(grant).save(database)
@@ -461,6 +452,7 @@ package final class GatewayDatabase: @unchecked Sendable {
   func codexElevationGrants(
     workspaceID: String? = nil,
     state: CodexElevationGrantState? = nil,
+    requester: CodexRuntimeOwner? = nil,
     limit: Int = 500
   ) throws -> [CodexElevationGrantRecord] {
     try writer.read { database in
@@ -473,6 +465,12 @@ package final class GatewayDatabase: @unchecked Sendable {
       }
       if let state {
         request = request.filter(Column("state") == state.rawValue)
+      }
+      if let requester {
+        guard let profile = requester.profileID, let caller = requester.caller else { return [] }
+        request = request.filter(Column("profileID") == profile)
+          .filter(Column("requestingCaller") == caller)
+          .filter(Column("requestingConnectionID") == requester.elevationConnectionID)
       }
       return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
         try $0.value()
@@ -539,15 +537,17 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
+  @discardableResult
   func invalidateCodexElevationGrants(
     workspaceID: String? = nil,
     profileID: String? = nil,
     requestingConnectionID: String? = nil,
+    requestingCaller: String? = nil,
     threadID: String? = nil,
     consumedRuntimeIDs: Set<String> = [],
     reason: String,
     now: Date = Date()
-  ) throws {
+  ) throws -> Int {
     try writer.write { database in
       var request = CodexElevationGrantRow.filter(
         [
@@ -564,8 +564,10 @@ package final class GatewayDatabase: @unchecked Sendable {
       if let requestingConnectionID {
         request = request.filter(Column("requestingConnectionID") == requestingConnectionID)
       }
+      var count = 0
       for row in try request.fetchAll(database) {
         var grant = try row.value()
+        if let requestingCaller, grant.requestingCaller != requestingCaller { continue }
         if let threadID, grant.threadID != threadID {
           if consumedRuntimeIDs.isEmpty
             || consumedRuntimeIDs.isDisjoint(with: grant.consumedRuntimeIDs)
@@ -587,7 +589,9 @@ package final class GatewayDatabase: @unchecked Sendable {
         grant.inFlightAction = nil
         grant.updatedAt = now
         try CodexElevationGrantRow(grant).save(database)
+        count += 1
       }
+      return count
     }
   }
 
@@ -719,230 +723,6 @@ package final class GatewayDatabase: @unchecked Sendable {
       grant.inFlightClaimID = nil
       grant.inFlightAction = nil
       grant.updatedAt = now
-    }
-  }
-
-  func saveCodexOrchestrationRun(_ run: CodexOrchestrationRun) throws {
-    try writer.write { database in
-      try CodexOrchestrationRunRow(run).save(database)
-    }
-  }
-
-  func codexOrchestrationRun(id: String) throws -> CodexOrchestrationRun? {
-    try writer.read { database in
-      try CodexOrchestrationRunRow.fetchOne(database, key: id)?.value()
-    }
-  }
-
-  func codexOrchestrationRuns(
-    workspaceID: String? = nil,
-    limit: Int = 500
-  ) throws -> [CodexOrchestrationRun] {
-    try writer.read { database in
-      var request =
-        CodexOrchestrationRunRow
-        .order(Column("updatedAt").desc, Column("id").desc)
-      if let workspaceID {
-        request = request.filter(Column("workspaceID") == workspaceID)
-      }
-      return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
-        try $0.value()
-      }
-    }
-  }
-
-  func updateCodexOrchestrationRun(
-    id: String,
-    workspaceID: String?,
-    expectedRevision: Int,
-    mutate: (inout CodexOrchestrationRun) throws -> Void
-  ) throws -> CodexOrchestrationRun {
-    try writer.write { database in
-      guard let row = try CodexOrchestrationRunRow.fetchOne(database, key: id) else {
-        throw CodexOrchestrationError.unknown(id)
-      }
-      var run = try row.value()
-      guard workspaceID == nil || run.workspaceID == workspaceID else {
-        throw CodexOrchestrationError.unknown(id)
-      }
-      guard run.revision == expectedRevision else {
-        throw CodexOrchestrationError.revisionConflict(
-          expected: expectedRevision,
-          actual: run.revision
-        )
-      }
-      try mutate(&run)
-      run.revision += 1
-      try CodexOrchestrationRunRow(run).save(database)
-      return run
-    }
-  }
-
-  func codexWorktreeLease(id: String) throws -> CodexWorktreeLease? {
-    try writer.read { database in
-      try CodexWorktreeLeaseRow.fetchOne(database, key: id)?.value()
-    }
-  }
-
-  func codexWorktreeLeases(
-    workspaceID: String? = nil,
-    states: Set<CodexWorktreeLeaseState> = [],
-    limit: Int = 500
-  ) throws -> [CodexWorktreeLease] {
-    try writer.read { database in
-      var request =
-        CodexWorktreeLeaseRow
-        .order(Column("heartbeatAt").desc, Column("id").desc)
-      if let workspaceID {
-        request = request.filter(Column("workspaceID") == workspaceID)
-      }
-      if !states.isEmpty {
-        request = request.filter(states.map(\.rawValue).contains(Column("state")))
-      }
-      return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
-        try $0.value()
-      }
-    }
-  }
-
-  func acquireCodexWorktreeLease(
-    workspaceID: String,
-    workspacePath: String,
-    mode: CodexWorktreeLeaseMode,
-    agentID: String,
-    threadID: String?,
-    runID: String?,
-    parentLeaseID: String?,
-    branch: String?,
-    ttlSeconds: Int,
-    now: Date
-  ) throws -> CodexWorktreeLease {
-    try writer.write { database in
-      let rows =
-        try CodexWorktreeLeaseRow
-        .filter(Column("workspaceID") == workspaceID)
-        .filter(Column("state") == CodexWorktreeLeaseState.active.rawValue)
-        .fetchAll(database)
-      for row in rows {
-        var existing = try row.value()
-        if existing.expiresAt <= now {
-          existing.state = .expired
-          existing.releasedAt = now
-          existing.releaseReason = "lease_ttl_expired"
-          existing.revision += 1
-          try CodexWorktreeLeaseRow(existing).save(database)
-          continue
-        }
-        if existing.agentID == agentID, existing.threadID == threadID,
-          existing.runID == runID
-        {
-          return existing
-        }
-        throw CodexWorktreeLeaseError.conflict(existing)
-      }
-      let lease = CodexWorktreeLease(
-        id: UUID().uuidString,
-        workspaceID: workspaceID,
-        workspacePath: workspacePath,
-        mode: mode,
-        agentID: agentID,
-        threadID: threadID,
-        runID: runID,
-        parentLeaseID: parentLeaseID,
-        branch: branch,
-        state: .active,
-        createdAt: now,
-        heartbeatAt: now,
-        expiresAt: now.addingTimeInterval(TimeInterval(ttlSeconds)),
-        releasedAt: nil,
-        releaseReason: nil,
-        revision: 1
-      )
-      try CodexWorktreeLeaseRow(lease).save(database)
-      return lease
-    }
-  }
-
-  func updateCodexWorktreeLease(
-    id: String,
-    workspaceID: String?,
-    expectedRevision: Int,
-    mutate: (inout CodexWorktreeLease) throws -> Void
-  ) throws -> CodexWorktreeLease {
-    try writer.write { database in
-      guard let row = try CodexWorktreeLeaseRow.fetchOne(database, key: id) else {
-        throw CodexWorktreeLeaseError.unknown(id)
-      }
-      var lease = try row.value()
-      guard workspaceID == nil || lease.workspaceID == workspaceID else {
-        throw CodexWorktreeLeaseError.unknown(id)
-      }
-      guard lease.revision == expectedRevision else {
-        throw CodexWorktreeLeaseError.revisionConflict(
-          expected: expectedRevision,
-          actual: lease.revision
-        )
-      }
-      try mutate(&lease)
-      lease.revision += 1
-      try CodexWorktreeLeaseRow(lease).save(database)
-      return lease
-    }
-  }
-
-  func saveCodexManagedWorktree(_ worktree: CodexManagedWorktree) throws {
-    try writer.write { database in
-      try CodexManagedWorktreeRow(worktree).save(database)
-    }
-  }
-
-  func codexManagedWorktree(id: String) throws -> CodexManagedWorktree? {
-    try writer.read { database in
-      try CodexManagedWorktreeRow.fetchOne(database, key: id)?.value()
-    }
-  }
-
-  func codexManagedWorktrees(
-    sourceWorkspaceID: String? = nil,
-    limit: Int = 100
-  ) throws -> [CodexManagedWorktree] {
-    try writer.read { database in
-      var request =
-        CodexManagedWorktreeRow
-        .order(Column("updatedAt").desc, Column("id").desc)
-      if let sourceWorkspaceID {
-        request = request.filter(Column("sourceWorkspaceID") == sourceWorkspaceID)
-      }
-      return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
-        try $0.value()
-      }
-    }
-  }
-
-  func updateCodexManagedWorktree(
-    id: String,
-    sourceWorkspaceID: String?,
-    expectedRevision: Int,
-    mutate: (inout CodexManagedWorktree) throws -> Void
-  ) throws -> CodexManagedWorktree {
-    try writer.write { database in
-      guard let row = try CodexManagedWorktreeRow.fetchOne(database, key: id) else {
-        throw CodexManagedWorktreeError.unknown(id)
-      }
-      var worktree = try row.value()
-      guard sourceWorkspaceID == nil || worktree.sourceWorkspaceID == sourceWorkspaceID else {
-        throw CodexManagedWorktreeError.unknown(id)
-      }
-      guard worktree.revision == expectedRevision else {
-        throw CodexManagedWorktreeError.revisionConflict(
-          expected: expectedRevision,
-          actual: worktree.revision
-        )
-      }
-      try mutate(&worktree)
-      worktree.revision += 1
-      try CodexManagedWorktreeRow(worktree).save(database)
-      return worktree
     }
   }
 
@@ -1360,6 +1140,34 @@ package final class GatewayDatabase: @unchecked Sendable {
         table.column("payloadJSON", .text).notNull()
       }
     }
+    migrator.registerMigration("profile-mcp-server-grants") { database in
+      try database.alter(table: "profiles") { table in
+        table.add(column: "mcpServerIDsJSON", .text).notNull().defaults(to: "[]")
+      }
+    }
+    migrator.registerMigration("plugin-installation-state") { database in
+      try database.create(table: "pluginState") { table in
+        table.column("id", .integer).primaryKey()
+        table.column("revision", .integer).notNull()
+        table.column("payloadJSON", .text).notNull()
+      }
+    }
+    migrator.registerMigration("plugin-owned-directories") { database in
+      try database.create(table: "pluginOwnedDirectories") { table in
+        table.column("id", .text).primaryKey()
+        table.column("payloadJSON", .text).notNull()
+      }
+    }
+    migrator.registerMigration("plugin-derived-workspaces") { database in
+      try database.create(table: "pluginDerivedWorkspaces") { table in
+        table.column("workspaceID", .text).primaryKey()
+        table.column("origin", .text).notNull()
+        table.column("sourceWorkspaceID", .text).notNull()
+        table.column("receiptID", .text).notNull()
+        table.column("payloadJSON", .text).notNull()
+        table.uniqueKey(["origin", "sourceWorkspaceID", "receiptID"])
+      }
+    }
     return migrator
   }()
 
@@ -1509,6 +1317,7 @@ private struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
 
   var id: String
   var capabilityIDsJSON: String
+  var mcpServerIDsJSON: String
   var workspaceIDsJSON: String
   var allowedCallersJSON: String
   var fullShellEnabled: Bool
@@ -1517,6 +1326,7 @@ private struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
   init(_ value: ProfileGrant, updatedAt: Date) throws {
     self.id = value.id.rawValue
     self.capabilityIDsJSON = try Self.encode(value.capabilityIDs)
+    self.mcpServerIDsJSON = try Self.encode(value.mcpServerIDs)
     self.workspaceIDsJSON = try Self.encode(value.workspaceIDs)
     self.allowedCallersJSON = try Self.encode(Set(value.allowedCallers.map(\.rawValue)))
     self.fullShellEnabled = value.fullShellEnabled
@@ -1540,7 +1350,8 @@ private struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
       capabilityIDs: try Self.decode(capabilityIDsJSON),
       workspaceIDs: try Self.decode(workspaceIDsJSON),
       allowedCallers: callers,
-      fullShellEnabled: fullShellEnabled
+      fullShellEnabled: fullShellEnabled,
+      mcpServerIDs: try Self.decode(mcpServerIDsJSON)
     )
   }
 
@@ -1782,196 +1593,6 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
   }
 }
 
-private struct CodexApprovalRecordRow: Codable, FetchableRecord, PersistableRecord {
-  static let databaseTableName = "codexApprovals"
-
-  var id: String
-  var upstreamRequestID: String
-  var kind: String
-  var risk: String
-  var state: String
-  var workspaceID: String?
-  var workspacePath: String
-  var runtimeID: String
-  var threadID: String?
-  var turnID: String?
-  var itemID: String?
-  var correlationID: String
-  var socketConnectionID: String?
-  var tunnelInstanceID: String?
-  var detailsJSON: String
-  var proposedActionJSON: String
-  var createdAt: Date
-  var expiresAt: Date
-  var resolvedAt: Date?
-  var decision: String?
-  var scope: String?
-  var resolutionReason: String?
-
-  init(_ value: CodexApprovalRecord) throws {
-    id = value.id
-    upstreamRequestID = value.upstreamRequestID
-    kind = value.kind.rawValue
-    risk = value.risk.rawValue
-    state = value.state.rawValue
-    workspaceID = value.workspaceID
-    workspacePath = value.workspacePath
-    runtimeID = value.runtimeID
-    threadID = value.threadID
-    turnID = value.turnID
-    itemID = value.itemID
-    correlationID = value.correlationID
-    socketConnectionID = value.socketConnectionID
-    tunnelInstanceID = value.tunnelInstanceID
-    detailsJSON = try Self.encode(value.details)
-    proposedActionJSON = try Self.encode(value.proposedAction)
-    createdAt = value.createdAt
-    expiresAt = value.expiresAt
-    resolvedAt = value.resolvedAt
-    decision = value.decision?.rawValue
-    scope = value.scope
-    resolutionReason = value.resolutionReason
-  }
-
-  func value() throws -> CodexApprovalRecord {
-    guard let kind = CodexApprovalKind(rawValue: kind),
-      let risk = CapabilityRisk(rawValue: risk),
-      let state = CodexApprovalState(rawValue: state)
-    else {
-      throw GatewayDatabaseError.invalidStoredValue(
-        "Codex approval contains unknown enum values."
-      )
-    }
-    let decision = try decision.map { rawValue in
-      guard let value = CodexApprovalDecision(rawValue: rawValue) else {
-        throw GatewayDatabaseError.invalidStoredValue(
-          "Codex approval contains an unknown decision."
-        )
-      }
-      return value
-    }
-    return CodexApprovalRecord(
-      id: id,
-      upstreamRequestID: upstreamRequestID,
-      kind: kind,
-      risk: risk,
-      state: state,
-      workspaceID: workspaceID,
-      workspacePath: workspacePath,
-      runtimeID: runtimeID,
-      threadID: threadID,
-      turnID: turnID,
-      itemID: itemID,
-      correlationID: correlationID,
-      socketConnectionID: socketConnectionID,
-      tunnelInstanceID: tunnelInstanceID,
-      details: try Self.decode(detailsJSON),
-      proposedAction: try Self.decode(proposedActionJSON),
-      createdAt: createdAt,
-      expiresAt: expiresAt,
-      resolvedAt: resolvedAt,
-      decision: decision,
-      scope: scope,
-      resolutionReason: resolutionReason
-    )
-  }
-
-  private static func encode(_ value: JSONValue) throws -> String {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    let data = try encoder.encode(value)
-    guard let result = String(data: data, encoding: .utf8) else {
-      throw GatewayDatabaseError.invalidStoredValue("Could not encode Codex approval JSON.")
-    }
-    return result
-  }
-
-  private static func decode(_ value: String) throws -> JSONValue {
-    guard let data = value.data(using: .utf8) else {
-      throw GatewayDatabaseError.invalidStoredValue("Codex approval JSON is not UTF-8.")
-    }
-    return try JSONDecoder().decode(JSONValue.self, from: data)
-  }
-}
-
-private struct CodexRuntimeLeaseRow: Codable, FetchableRecord, PersistableRecord {
-  static let databaseTableName = "codexRuntimeLeases"
-
-  var id: String
-  var workspaceID: String?
-  var state: String
-  var updatedAt: Date
-  var payloadJSON: String
-
-  init(_ value: CodexRuntimeLeaseRecord) throws {
-    id = value.id
-    workspaceID = value.owner?.workspaceID
-    state = value.state
-    updatedAt = value.updatedAt
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    let data = try encoder.encode(value)
-    payloadJSON = String(decoding: data, as: UTF8.self)
-  }
-
-  func value() throws -> CodexRuntimeLeaseRecord {
-    guard let data = payloadJSON.data(using: .utf8) else {
-      throw GatewayDatabaseError.invalidStoredValue("Codex runtime lease is not UTF-8.")
-    }
-    return try JSONDecoder().decode(CodexRuntimeLeaseRecord.self, from: data)
-  }
-}
-
-private struct CodexThreadOwnershipRow: Codable, FetchableRecord, PersistableRecord {
-  static let databaseTableName = "codexThreadOwnership"
-
-  var threadID: String
-  var workspaceID: String?
-  var workspacePath: String
-  var runtimeID: String
-  var state: String
-  var createdAt: Date
-  var updatedAt: Date
-
-  init(_ value: CodexThreadOwnershipRecord) {
-    threadID = value.threadID
-    workspaceID = value.workspaceID
-    workspacePath = value.workspacePath
-    runtimeID = value.runtimeID
-    state = value.state.rawValue
-    createdAt = value.createdAt
-    updatedAt = value.updatedAt
-  }
-
-  func value() throws -> CodexThreadOwnershipRecord {
-    guard let state = CodexThreadOwnershipState(rawValue: state) else {
-      throw GatewayDatabaseError.invalidStoredValue(
-        "Codex thread ownership contains an unknown state."
-      )
-    }
-    return CodexThreadOwnershipRecord(
-      threadID: threadID,
-      workspaceID: workspaceID,
-      workspacePath: workspacePath,
-      runtimeID: runtimeID,
-      state: state,
-      createdAt: createdAt,
-      updatedAt: updatedAt
-    )
-  }
-}
-
-private struct CodexThreadOwnershipReconciliationReceiptRow: Codable, FetchableRecord,
-  PersistableRecord
-{
-  static let databaseTableName = "codexOwnershipReconciliationReceipts"
-
-  var id: String
-  var planDigest: String
-  var appliedAt: Date
-  var payloadJSON: String
-}
-
 private struct CodexElevationGrantRow: Codable, FetchableRecord, PersistableRecord {
   static let databaseTableName = "codexElevationGrants"
 
@@ -2009,89 +1630,6 @@ private struct CodexElevationGrantRow: Codable, FetchableRecord, PersistableReco
   }
 }
 
-private struct CodexOrchestrationRunRow: Codable, FetchableRecord, PersistableRecord {
-  static let databaseTableName = "codexOrchestrationRuns"
-
-  var id: String
-  var workspaceID: String
-  var state: String
-  var updatedAt: Date
-  var payloadJSON: String
-
-  init(_ value: CodexOrchestrationRun) throws {
-    id = value.id
-    workspaceID = value.workspaceID
-    state = value.state.rawValue
-    updatedAt = value.updatedAt
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    payloadJSON = String(decoding: try encoder.encode(value), as: UTF8.self)
-  }
-
-  func value() throws -> CodexOrchestrationRun {
-    guard let data = payloadJSON.data(using: .utf8) else {
-      throw GatewayDatabaseError.invalidStoredValue("Codex orchestration run is not UTF-8.")
-    }
-    return try JSONDecoder().decode(CodexOrchestrationRun.self, from: data)
-  }
-}
-
-private struct CodexWorktreeLeaseRow: Codable, FetchableRecord, PersistableRecord {
-  static let databaseTableName = "codexWorktreeLeases"
-
-  var id: String
-  var workspaceID: String
-  var state: String
-  var heartbeatAt: Date
-  var payloadJSON: String
-
-  init(_ value: CodexWorktreeLease) throws {
-    id = value.id
-    workspaceID = value.workspaceID
-    state = value.state.rawValue
-    heartbeatAt = value.heartbeatAt
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    payloadJSON = String(decoding: try encoder.encode(value), as: UTF8.self)
-  }
-
-  func value() throws -> CodexWorktreeLease {
-    guard let data = payloadJSON.data(using: .utf8) else {
-      throw GatewayDatabaseError.invalidStoredValue("Codex worktree lease is not UTF-8.")
-    }
-    return try JSONDecoder().decode(CodexWorktreeLease.self, from: data)
-  }
-}
-
-private struct CodexManagedWorktreeRow: Codable, FetchableRecord, PersistableRecord {
-  static let databaseTableName = "codexManagedWorktrees"
-
-  var id: String
-  var sourceWorkspaceID: String
-  var workspaceID: String
-  var state: String
-  var updatedAt: Date
-  var payloadJSON: String
-
-  init(_ value: CodexManagedWorktree) throws {
-    id = value.id
-    sourceWorkspaceID = value.sourceWorkspaceID
-    workspaceID = value.workspaceID
-    state = value.state.rawValue
-    updatedAt = value.updatedAt
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    payloadJSON = String(decoding: try encoder.encode(value), as: UTF8.self)
-  }
-
-  func value() throws -> CodexManagedWorktree {
-    guard let data = payloadJSON.data(using: .utf8) else {
-      throw GatewayDatabaseError.invalidStoredValue("Codex managed worktree is not UTF-8.")
-    }
-    return try JSONDecoder().decode(CodexManagedWorktree.self, from: data)
-  }
-}
-
 package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
   case invalidStoredValue(String)
   case invalidOperationTicketTransition(String)
@@ -2115,5 +1653,151 @@ package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
     case .operationTicketUnavailable(let id, let state):
       return "Operation ticket '\(id)' cannot be claimed from state '\(state)'."
     }
+  }
+}
+
+extension GatewayDatabase {
+  func hostDiagnosticAudits(context: ExecutionContext, limit: Int) throws -> [AuditEvent] {
+    try writer.read { database in
+      var request = AuditEventRecord.filter(Column("workspaceID") == context.workspaceID)
+        .filter(Column("profileID") == context.profileID.rawValue)
+        .filter(Column("caller") == context.caller.rawValue)
+      if let connection = context.transportTrace?.socketConnectionID {
+        request = request.filter(Column("socketConnectionID") == connection)
+      } else {
+        request = request.filter(Column("socketConnectionID") == nil)
+      }
+      return try request.order(Column("occurredAt").desc, Column("id").desc)
+        .limit(max(1, min(1_000, limit))).fetchAll(database).map { try $0.value() }
+    }
+  }
+
+  func derivedWorkspaceRegistration(id: String) throws -> MCPDerivedWorkspaceRegistration? {
+    try writer.read { try Self.derivedRegistration(id: id, database: $0) }
+  }
+
+  /// Registration and the single host-added grant are committed together.
+  func registerDerivedWorkspace(_ registration: MCPDerivedWorkspaceRegistration) throws {
+    let payload = try JSONEncoder().encode(registration)
+    guard payload.count <= 32_768 else {
+      throw MCPHostServiceError.denied("Registration exceeds its bound.")
+    }
+    try writer.write { database in
+      if let old = try Self.derivedRegistration(id: registration.workspace.id, database: database) {
+        guard old.origin == registration.origin, old.receiptDigest == registration.receiptDigest,
+          old.sourceWorkspaceID == registration.sourceWorkspaceID,
+          let workspace = try WorkspaceRecord.fetchOne(database, key: old.workspace.id),
+          Self.sameDerivedWorkspace(workspace.value, old.workspace)
+        else { throw MCPHostServiceError.denied("Existing derived registration changed.") }
+        return
+      }
+      guard try WorkspaceRecord.fetchOne(database, key: registration.workspace.id) == nil,
+        try WorkspaceAliasRecord.fetchOne(database, key: registration.workspace.id) == nil,
+        let source = try WorkspaceRecord.fetchOne(database, key: registration.sourceWorkspaceID),
+        Self.canonicalWorkspaceRoot(source.rootPath) == registration.sourceRoot,
+        let profileRow = try ProfileRecord.fetchOne(database, key: registration.profileID.rawValue)
+      else {
+        throw MCPHostServiceError.denied("Derived identity or source registration is unavailable.")
+      }
+      var profile = try profileRow.value()
+      guard
+        try !ProfileRecord.fetchAll(database).contains(where: {
+          try $0.value().workspaceIDs.contains(registration.workspace.id)
+        })
+      else {
+        throw MCPHostServiceError.denied(
+          "The derived identity already has an independently owned grant.")
+      }
+      guard profile.workspaceIDs.contains(registration.sourceWorkspaceID),
+        profile.allowedCallers.contains(registration.caller), profile.permitsRisk(.workspaceWrite)
+      else {
+        throw MCPHostServiceError.denied(
+          "The persisted source grant no longer permits derived registration.")
+      }
+      let root = Self.canonicalWorkspaceRoot(registration.workspace.rootPath)
+      guard try WorkspaceCanonicalRootRecord.fetchOne(database, key: root) == nil else {
+        throw MCPHostServiceError.denied(
+          "The directory already belongs to an independent registration.")
+      }
+      try WorkspaceRecord(registration.workspace).insert(database)
+      try WorkspaceCanonicalRootRecord(
+        canonicalRootPath: root, workspaceID: registration.workspace.id,
+        createdAt: registration.workspace.createdAt
+      ).insert(database)
+      profile.workspaceIDs.insert(registration.workspace.id)
+      try ProfileRecord(profile, updatedAt: registration.workspace.createdAt).update(database)
+      try database.execute(
+        sql:
+          "INSERT INTO pluginDerivedWorkspaces (workspaceID, origin, sourceWorkspaceID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
+        arguments: [
+          registration.workspace.id, registration.origin, registration.sourceWorkspaceID,
+          registration.receiptID, String(decoding: payload, as: UTF8.self),
+        ])
+    }
+  }
+
+  /// Does not remove independently edited registrations, aliases, or grants.
+  func unregisterDerivedWorkspace(_ registration: MCPDerivedWorkspaceRegistration) throws {
+    try writer.write { database in
+      guard
+        let old = try Self.derivedRegistration(id: registration.workspace.id, database: database)
+      else { return }
+      guard old == registration,
+        let workspace = try WorkspaceRecord.fetchOne(database, key: old.workspace.id),
+        Self.sameDerivedWorkspace(workspace.value, old.workspace),
+        try WorkspaceAliasRecord.filter(Column("canonicalWorkspaceID") == old.workspace.id)
+          .fetchCount(database) == 0
+      else { throw MCPHostServiceError.denied("The derived registration has independent changes.") }
+      let profiles = try ProfileRecord.fetchAll(database)
+      for row in profiles {
+        var profile = try row.value()
+        guard profile.workspaceIDs.contains(old.workspace.id) else { continue }
+        guard profile.id == old.profileID else {
+          throw MCPHostServiceError.denied(
+            "Another profile now holds an independent workspace grant.")
+        }
+        profile.workspaceIDs.remove(old.workspace.id)
+        try ProfileRecord(profile, updatedAt: Date()).update(database)
+      }
+      try WorkspaceCanonicalRootRecord.filter(Column("workspaceID") == old.workspace.id).deleteAll(
+        database)
+      _ = try WorkspaceRecord.deleteOne(database, key: old.workspace.id)
+      try database.execute(
+        sql: "DELETE FROM pluginDerivedWorkspaces WHERE workspaceID = ?",
+        arguments: [old.workspace.id])
+    }
+  }
+
+  private static func sameDerivedWorkspace(
+    _ current: RegisteredWorkspace, _ expected: RegisteredWorkspace
+  ) -> Bool {
+    // Compare timestamps at the database's exact serialization precision, not a time tolerance.
+    current.id == expected.id && current.displayName == expected.displayName
+      && current.rootPath == expected.rootPath && current.bookmarkData == expected.bookmarkData
+      && current.bookmarkIsStale == expected.bookmarkIsStale
+      && current.createdAt.databaseValue == expected.createdAt.databaseValue
+      && current.updatedAt.databaseValue == expected.updatedAt.databaseValue
+  }
+
+  private static func derivedRegistration(id: String, database: Database) throws
+    -> MCPDerivedWorkspaceRegistration?
+  {
+    guard
+      let row = try Row.fetchOne(
+        database, sql: "SELECT * FROM pluginDerivedWorkspaces WHERE workspaceID = ?",
+        arguments: [id])
+    else { return nil }
+    let payload: String = row["payloadJSON"]
+    guard payload.utf8.count <= 32_768 else {
+      throw MCPHostServiceError.denied("Invalid stored derived registration.")
+    }
+    let record = try JSONDecoder().decode(
+      MCPDerivedWorkspaceRegistration.self, from: Data(payload.utf8))
+    guard record.workspace.id == id, record.origin == row["origin"],
+      record.sourceWorkspaceID == row["sourceWorkspaceID"], record.receiptID == row["receiptID"]
+    else {
+      throw MCPHostServiceError.denied("Stored registration identity differs from its record.")
+    }
+    return record
   }
 }

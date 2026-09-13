@@ -117,6 +117,60 @@ final class GatewaySocketTests {
     #expect((await shutdownProbe.count) == 1)
   }
 
+  @Test(arguments: [false, true])
+  func testStopJoinsSessionCreationAndCleanup(pauseCreation: Bool) async throws {
+    let fixture = try SocketFixture()
+    let creation = SocketLifecycleGate()
+    let cleanup = SocketLifecycleGate()
+    let server = GatewaySocketServer(
+      configuration: fixture.configuration,
+      sessionFactory: { _ in
+        if pauseCreation { await creation.wait() }
+        return GatewaySocketServerSession(
+          server: Server(name: "socket-fixture", version: "1"),
+          shutdown: { await cleanup.wait() })
+      })
+    try await server.start()
+    let client = Client(name: "socket-test", version: "1")
+    let connecting = Task {
+      try await client.connect(
+        transport: GatewaySocketTransport(configuration: fixture.configuration))
+    }
+    do {
+      if pauseCreation {
+        try await waitUntil { await creation.entered }
+      } else {
+        _ = try await connecting.value
+        await client.disconnect()
+        try await waitUntil { await cleanup.entered }
+      }
+      #expect(await server.connectionCount() == 1)
+      #expect(await server.reserveIdleConfigurationChange() == false)
+      let stopping = Task { await server.stop() }
+      await server.waitUntilClosed()
+      let secondStop = Task { await server.stop() }
+      await creation.release()
+      try await waitUntil { await cleanup.entered }
+      #expect(await server.connectionCount() == 1)
+      #expect(await server.reserveIdleConfigurationChange() == false)
+      await cleanup.release()
+      await stopping.value
+      await secondStop.value
+      #expect(await cleanup.calls == 1)
+      #expect(await server.connectionCount() == 0)
+      #expect(!FileManager.default.fileExists(atPath: fixture.configuration.socketURL.path))
+    } catch {
+      await creation.release()
+      await cleanup.release()
+      await client.disconnect()
+      _ = await connecting.result
+      await server.stop()
+      throw error
+    }
+    await client.disconnect()
+    _ = await connecting.result
+  }
+
   @Test
   func testAuthenticatesSecureTunnelSeparatelyFromOrdinarySameUserClients() async throws {
     let fixture = try SocketFixture()
@@ -546,6 +600,26 @@ private actor CancellationProbe {
 
   func markCancelled() {
     wasCancelled = true
+  }
+}
+
+private actor SocketLifecycleGate {
+  private(set) var calls = 0
+  var entered: Bool { calls > 0 }
+  private var released = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    calls += 1
+    guard !released else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func release() {
+    released = true
+    let pending = waiters
+    waiters.removeAll()
+    for waiter in pending { waiter.resume() }
   }
 }
 

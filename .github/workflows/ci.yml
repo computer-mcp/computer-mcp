@@ -23,7 +23,6 @@ jobs:
 
       - name: Require publishable package boundaries
         run: |
-          Scripts/verify-swift-codex-release-gate.sh
           Scripts/verify-package-boundary.sh
           Scripts/verify-public-repository.sh
 

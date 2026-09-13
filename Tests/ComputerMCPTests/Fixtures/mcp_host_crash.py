@@ -306,6 +306,20 @@ def startup_driver(root, executable, manifest, stage, failure):
         print(json.dumps({"stage": stage, "failure": failure, "generations": 2,
                           "writes": 0, "initial_catalog_published": False,
                           "owned_processes_exited": True, "receipts_remaining": 0}))
+    except Exception:
+        pids = {client.process.pid for client in clients}
+        for entry in watched:
+            pids.update(entry[key] for key in ("server", "supervisor", "worker", "watchdog")
+                        if key in entry)
+        if pids:
+            state = subprocess.run(
+                ["/bin/ps", "-p", ",".join(str(pid) for pid in sorted(pids)),
+                 "-o", "pid,ppid,pgid,stat,etime,comm"],
+                capture_output=True, text=True, timeout=5)
+            print("Startup failure process state:\n" + state.stdout + state.stderr, file=sys.stderr)
+        for client in clients:
+            print("Host stderr:\n" + Path(client.error.name).read_text(), file=sys.stderr)
+        raise
     finally:
         cleanup_fixture(root, clients, watched, paused)
 

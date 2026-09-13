@@ -43,15 +43,18 @@ receipt_line=$(line_for "$WORKFLOW" 'Scripts/write-artifact-provenance.sh \')
 verify_line=$(line_for "$WORKFLOW" 'VERIFY_GIT_TAG=1 Scripts/verify-artifact-provenance.sh \')
 identity_line=$(line_for "$WORKFLOW" 'BUILD_IDENTITY_PATH="dist/Computer MCP.app/Contents/Resources/ComputerMCPBuildIdentity.plist" \')
 upload_line=$(line_for "$WORKFLOW" 'gh release upload "$GITHUB_REF_NAME" "$published_receipt"')
-publish_line=$(line_for "$WORKFLOW" 'gh release edit "$GITHUB_REF_NAME" --draft=false')
 
 [[ "$draft_line" -lt "$download_line" \
   && "$download_line" -lt "$compare_line" \
   && "$compare_line" -lt "$receipt_line" \
   && "$receipt_line" -lt "$verify_line" \
   && "$identity_line" -lt "$verify_line" \
-  && "$verify_line" -lt "$upload_line" \
-  && "$upload_line" -lt "$publish_line" ]] \
-  || fail "GitHub release must remain draft until uploaded bytes and the published receipt verify."
+  && "$verify_line" -lt "$upload_line" ]] \
+  || fail "GitHub draft upload must verify uploaded bytes and the provenance receipt in order."
+
+if /usr/bin/grep -Eq 'gh release edit|draft[=:][[:space:]]*false' "$WORKFLOW"; then
+  fail "Release preparation must stop at a draft for local installation acceptance."
+fi
+require_text "$WORKFLOW" 'Draft ready for local installation acceptance.'
 
 echo "Artifact provenance boundary passed."

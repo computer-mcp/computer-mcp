@@ -23,13 +23,13 @@ The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
    notarization receipts, renders artifact-bound release records, assembles
    checksummed assets, uploads them to a draft GitHub Release, downloads the
    same DMG, proves byte identity, writes the published-artifact provenance
-   receipt, and only then makes the Release public.
+   receipt, and leaves the Release as a draft for local installation acceptance.
 
 All product, security, real App Server, handoff, elevation, vehicleOS,
 cold-start, and local package acceptance must be complete before the signed tag
-is pushed. The draft is an internal atomic publication stage, not a second
-human acceptance cycle. A tag never causes a local machine to package or upload
-an official artifact.
+is pushed. The final signed and notarized draft must also pass local installation
+acceptance before an operator makes it public. A tag never automatically
+publishes a Release or causes a local machine to package an official artifact.
 
 ## One-time GitHub configuration
 
@@ -93,7 +93,8 @@ Protection Keychain; they are never inputs to the release workflow.
 An operator needs to understand these roles, but does not need to memorize
 secret values or type a release password for each tag. The normal human actions
 are to merge a verified release PR, create the SSH-signed annotated tag, and
-approve the protected `production` job. Store the original `.p12`, its export
+approve the protected `production` job, accept the final installed package,
+and publish the accepted draft. Store the original `.p12`, its export
 password, and the original `.p8` in a recovery-capable secrets manager because
 GitHub does not reveal Secret values after they are saved.
 
@@ -182,7 +183,7 @@ gh release create --draft
 gh release download
 cmp candidate and uploaded DMG bytes
 write and verify exact-published provenance
-gh release edit --draft=false
+stop with an unpublished draft
 ```
 
 `build-app.sh` resolves the locked SwiftPM graph, compiles optimized arm64 and
@@ -235,12 +236,35 @@ over the complete upload set.
 An independently generated summary-only Evidence Manifest can be required with
 `INCLUDE_EVIDENCE_MANIFEST=1`; private raw evidence is never uploaded.
 
-## Atomic publication and installed verification
+## Local installation acceptance and publication
 
 Before tagging, run the complete local acceptance described above. The
-protected workflow then verifies every file in its staged draft and refuses to
-publish until the uploaded DMG is byte-identical to the already verified
-candidate. It does not rebuild, re-sign, or repair an uploaded asset.
+protected workflow then verifies every file in its staged draft and proves the
+uploaded DMG is byte-identical to the signed candidate. It stops at the draft.
+The operator retrieves this exact package and installs it locally before
+publication, preserving existing production data and the control session.
+Run the installed App outside the source and build directories, with the
+producer's build directories unavailable. Changing the working directory alone
+does not prevent an absolute SwiftPM fallback from hiding missing resources.
+
+Record the tag, source commit, build identity, DMG SHA-256, installed App identity,
+test outcomes, and recovery result in the acceptance evidence. Exercise every
+management page, localized labels, workspace registration, MCP registration and
+connection checks, plugin search/install/configuration/enable/disable/update/
+rollback/uninstall, gateway startup, and process cleanup. Include both isolated
+first launch and preserved-state migration. A failed or unverified required
+check keeps the draft unpublished. Build, signing, notarization, and unit-test
+success are not substitutes for installed acceptance.
+
+After acceptance, recheck that the draft is still unpublished and its asset
+checksums and identities match the accepted package, then publish that draft:
+
+```sh
+gh release edit "$release_tag" --draft=false
+```
+
+Publication does not rebuild, re-sign, or replace assets. Any package change
+requires installation acceptance of the changed package before publication.
 
 After publication, download every file and verify the immutable release record:
 
@@ -263,7 +287,7 @@ deployment is a user-owned deployment check, not a publisher credential or
 release gate. Do not rebuild or replace individual assets after publication.
 
 Workspace acceptance is local and independent of network providers. Before
-publication, the locally signed validation App's **Workspaces > Add** action
+publication, the final installed App's **Workspaces > Add** action
 must open the native macOS directory panel, register a new fixture directory
 with a non-stale bookmark, and refresh the existing page in place. A website
 challenge, provider response, or Shell policy cannot be used to classify or

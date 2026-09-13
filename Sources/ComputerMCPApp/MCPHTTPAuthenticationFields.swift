@@ -24,7 +24,7 @@ struct MCPHTTPAuthenticationFields: View {
           set: { authentication?.keychainAccount = $0 }))
       Text(
         "HTTP only. Bind the exact server URL and save these settings, then use Manage credential to store the token. An endpoint change requires a new binding; redirects are rejected.",
-        bundle: .module
+        bundle: AppLocalization.resourceBundle
       )
       .font(.caption).foregroundStyle(.secondary)
     }

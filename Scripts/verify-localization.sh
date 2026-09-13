@@ -106,8 +106,12 @@ allowed_stable_literals = [
 missing_literals = []
 unlocalized_error_sites = []
 interpolated_swiftui_sites = []
+unpackaged_bundle_sites = []
 Dir.glob(File.join(root, "Sources/ComputerMCPApp/*.swift")).sort.each do |path|
   source = File.read(path)
+  if File.basename(path) != "AppLocalization.swift" && source.match?(/(?:\bBundle|\bbundle\s*:)\s*\.\s*module\b/)
+    unpackaged_bundle_sites << path.delete_prefix(root + "/")
+  end
   if File.basename(path) != "AppLocalization.swift" && source.match?(/error\.localizedDescription/)
     unlocalized_error_sites << path.delete_prefix(root + "/")
   end
@@ -138,6 +142,10 @@ Dir.glob(File.join(root, "Sources/ComputerMCPApp/*.swift")).sort.each do |path|
   end
 end
 
+unless unpackaged_bundle_sites.empty?
+  abort "error: App localization must resolve packaged resources through AppLocalization.resourceBundle:\n" \
+    + unpackaged_bundle_sites.uniq.sort.join("\n")
+end
 unless missing_literals.empty?
   abort "error: Product-authored App strings are missing from the String Catalog:\n" \
     + missing_literals.uniq.sort.join("\n")

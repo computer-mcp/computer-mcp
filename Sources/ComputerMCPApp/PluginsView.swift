@@ -176,17 +176,17 @@ struct PluginsView: View {
               LabeledContent {
                 Text(verbatim: release.tag)
               } label: {
-                Text("Release tag", bundle: .module)
+                Text("Release tag", bundle: AppLocalization.resourceBundle)
               }
               LabeledContent {
                 Text(verbatim: String(release.releaseID))
               } label: {
-                Text("Release ID", bundle: .module)
+                Text("Release ID", bundle: AppLocalization.resourceBundle)
               }
               LabeledContent {
                 Text(verbatim: String(release.assetID))
               } label: {
-                Text("Asset ID", bundle: .module)
+                Text("Asset ID", bundle: AppLocalization.resourceBundle)
               }
               Text(verbatim: release.declaration.revision).font(.caption.monospaced())
                 .textSelection(.enabled)
@@ -234,7 +234,7 @@ struct PluginsView: View {
         Button {
           sheet = .doctor(PluginDoctorModel(controlPlane: model.controlPlane, pluginID: id))
         } label: {
-          Text("Check package", bundle: .module)
+          Text("Check package", bundle: AppLocalization.resourceBundle)
         }
         Text(
           "Resolved registrations do not confirm a working connection. Caller permissions still apply."

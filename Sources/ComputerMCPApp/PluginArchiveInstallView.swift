@@ -18,30 +18,30 @@ struct PluginArchiveInstallView: View {
         Section {
           Text(
             "Choose a ZIP, TAR or gzip package and enter its expected identity and SHA-256 from a trusted source.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           )
           .foregroundStyle(.secondary)
           Button {
             importing = true
           } label: {
-            Text("Choose archive", bundle: .module)
+            Text("Choose archive", bundle: AppLocalization.resourceBundle)
           }
           if let archive { Text(verbatim: archive.path).textSelection(.enabled) }
-          TextField(text: $pluginID) { Text("Plugin ID", bundle: .module) }
-          TextField(text: $version) { Text("Version", bundle: .module) }
-          TextField(text: $sha256) { Text("SHA-256", bundle: .module) }
+          TextField(text: $pluginID) { Text("Plugin ID", bundle: AppLocalization.resourceBundle) }
+          TextField(text: $version) { Text("Version", bundle: AppLocalization.resourceBundle) }
+          TextField(text: $sha256) { Text("SHA-256", bundle: AppLocalization.resourceBundle) }
             .font(.system(.body, design: .monospaced))
         } header: {
-          Text("Install archive", bundle: .module)
+          Text("Install archive", bundle: AppLocalization.resourceBundle)
         }
         Section {
           Text(
             "A matching digest verifies the archive bytes, not an official publisher. New plugins start disabled. Updates keep host settings and earlier versions.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           )
           Text(
             "External dependencies are not installed. Use an earlier source in the plugin details to roll back.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           )
         }.foregroundStyle(.secondary)
       }
@@ -57,13 +57,13 @@ struct PluginArchiveInstallView: View {
         Button {
           dismiss()
         } label: {
-          Text("Cancel", bundle: .module)
+          Text("Cancel", bundle: AppLocalization.resourceBundle)
         }
         .keyboardShortcut(.cancelAction)
         Button {
           install()
         } label: {
-          Text("Install", bundle: .module)
+          Text("Install", bundle: AppLocalization.resourceBundle)
         }
         .keyboardShortcut(.defaultAction)
         .disabled(archive == nil || pluginID.isEmpty || version.isEmpty || sha256.isEmpty)

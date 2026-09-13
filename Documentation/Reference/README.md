@@ -27,6 +27,9 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
+- [1.1.1 Release Notes](ReleaseNotes-1.1.1.md) and
+  [Production Readiness Report](ProductionReadinessReport-1.1.1.md):
+  packaged management-page resources and local installation acceptance before publication.
 - [1.1.0 Release Notes](ReleaseNotes-1.1.0.md) and
   [Production Readiness Report](ProductionReadinessReport-1.1.0.md):
   plugin distribution, Gateway integration, Codex migration, and exact-artifact

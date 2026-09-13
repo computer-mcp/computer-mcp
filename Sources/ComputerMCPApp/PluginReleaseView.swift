@@ -19,29 +19,29 @@ struct PluginReleaseView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Choose release archive", bundle: .module).font(.title2.bold())
+      Text("Choose release archive", bundle: AppLocalization.resourceBundle).font(.title2.bold())
       Text(verbatim: selection.entry.repository).foregroundStyle(.secondary)
       HStack {
         TextField(text: $model.tag) {
-          Text("Release tag (blank for latest stable)", bundle: .module)
+          Text("Release tag (blank for latest stable)", bundle: AppLocalization.resourceBundle)
         }
         .textFieldStyle(.roundedBorder)
         .onSubmit { load() }
         Button {
           load()
         } label: {
-          Text("Load release", bundle: .module)
+          Text("Load release", bundle: AppLocalization.resourceBundle)
         }
       }.disabled(model.isLoading || management.isSaving)
       if model.isLoading {
         HStack {
           ProgressView().controlSize(.small)
-          Text("Loading release archives", bundle: .module)
+          Text("Loading release archives", bundle: AppLocalization.resourceBundle)
           Spacer()
           Button {
             model.cancel()
           } label: {
-            Text("Cancel", bundle: .module)
+            Text("Cancel", bundle: AppLocalization.resourceBundle)
           }
         }
       }
@@ -55,12 +55,14 @@ struct PluginReleaseView: View {
           Text(
             verbatim:
               "\(result.declaration.pluginID) · \(result.declaration.version) · \(result.tag)")
-          if result.prerelease { Text("Prerelease", bundle: .module).foregroundStyle(.orange) }
+          if result.prerelease {
+            Text("Prerelease", bundle: AppLocalization.resourceBundle).foregroundStyle(.orange)
+          }
         }
         if !result.issues.isEmpty {
           Text(
             "Some release archives lack a valid size or SHA-256 and cannot be installed.",
-            bundle: .module
+            bundle: AppLocalization.resourceBundle
           )
           .foregroundStyle(.orange)
         }
@@ -74,19 +76,20 @@ struct PluginReleaseView: View {
           }.padding(.vertical, 4).tag(artifact.id)
         }.disabled(management.isSaving || !model.canInstall)
         if result.artifacts.isEmpty {
-          Text("No installable archives on this release page.", bundle: .module)
+          Text(
+            "No installable archives on this release page.", bundle: AppLocalization.resourceBundle)
         }
         HStack {
           Button {
             page(result.page - 1)
           } label: {
-            Text("Previous page", bundle: .module)
+            Text("Previous page", bundle: AppLocalization.resourceBundle)
           }
           .disabled(result.page <= 1)
           Button {
             if let next = result.nextPage { page(next) }
           } label: {
-            Text("Next page", bundle: .module)
+            Text("Next page", bundle: AppLocalization.resourceBundle)
           }.disabled(result.nextPage == nil)
           Spacer()
           Text(verbatim: pageLabel)
@@ -95,25 +98,25 @@ struct PluginReleaseView: View {
           LabeledContent {
             Text(verbatim: String(result.declaration.repositoryID))
           } label: {
-            Text("Repository ID", bundle: .module)
+            Text("Repository ID", bundle: AppLocalization.resourceBundle)
           }
           LabeledContent {
             Text(verbatim: String(result.releaseID))
           } label: {
-            Text("Release ID", bundle: .module)
+            Text("Release ID", bundle: AppLocalization.resourceBundle)
           }
           LabeledContent {
             Text(verbatim: result.declaration.revision)
           } label: {
-            Text("Commit", bundle: .module)
+            Text("Commit", bundle: AppLocalization.resourceBundle)
           }
           LabeledContent {
             Text(verbatim: result.declaration.manifestSHA256)
           } label: {
-            Text("Manifest SHA-256", bundle: .module)
+            Text("Manifest SHA-256", bundle: AppLocalization.resourceBundle)
           }
         } label: {
-          Text("Source details", bundle: .module)
+          Text("Source details", bundle: AppLocalization.resourceBundle)
         }
         .font(.caption).textSelection(.enabled)
       } else {
@@ -121,12 +124,12 @@ struct PluginReleaseView: View {
       }
       Text(
         "Choose an archive for your Mac. The App checks compatibility and source again before installation. Publisher provenance is not a signature.",
-        bundle: .module
+        bundle: AppLocalization.resourceBundle
       )
       .font(.caption).foregroundStyle(.secondary)
       Text(
         "New plugins start disabled. Updates keep host settings and earlier versions. External dependencies are not installed.",
-        bundle: .module
+        bundle: AppLocalization.resourceBundle
       )
       .font(.caption).foregroundStyle(.secondary)
       if let error = management.errorMessage {
@@ -135,7 +138,7 @@ struct PluginReleaseView: View {
       if stale {
         Text(
           "Plugin settings changed. Close and reopen this window before installing.",
-          bundle: .module
+          bundle: AppLocalization.resourceBundle
         )
         .foregroundStyle(.orange)
       }
@@ -144,14 +147,14 @@ struct PluginReleaseView: View {
         if management.isSaving {
           ProgressView().controlSize(.small)
           if management.isCancelling {
-            Text("Cancelling and checking the result…", bundle: .module)
+            Text("Cancelling and checking the result…", bundle: AppLocalization.resourceBundle)
           } else {
-            Text("Downloading, checking and installing…", bundle: .module)
+            Text("Downloading, checking and installing…", bundle: AppLocalization.resourceBundle)
           }
           Button {
             management.cancelChange()
           } label: {
-            Text("Cancel installation", bundle: .module)
+            Text("Cancel installation", bundle: AppLocalization.resourceBundle)
           }
           .disabled(management.isCancelling)
         }
@@ -159,14 +162,14 @@ struct PluginReleaseView: View {
         Button {
           dismiss()
         } label: {
-          Text("Close", bundle: .module)
+          Text("Close", bundle: AppLocalization.resourceBundle)
         }
         .keyboardShortcut(.cancelAction)
         .disabled(management.isSaving)
         Button {
           install()
         } label: {
-          Text("Download and install", bundle: .module)
+          Text("Download and install", bundle: AppLocalization.resourceBundle)
         }
         .keyboardShortcut(.defaultAction)
         .disabled(selectedArtifact == nil || !model.canInstall || stale || management.isSaving)

@@ -371,6 +371,8 @@ final class AppControlPlaneServiceTests {
       .appendingPathComponent(".build/out/Products/Debug/computer-mcp")
     let fixture = try AppControlPlaneServiceFixture(gatewayExecutablePath: executable.path)
     defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(
+      GatewayConfiguration(workspaceDirectory: fixture.root).exportedTOML())
     let gateway = AppGatewayService.live(
       controlPlane: fixture.controlPlane, directories: fixture.directories)
     let socket = ControlSocketService(

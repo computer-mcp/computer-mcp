@@ -7,9 +7,36 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct MCPBoundHostServicesTests {
-  @Test(arguments: ["release", "wrong-thread", "wrong-method", "no-invocation"])
-  func threadReleaseInvalidatesUnusedGrantsOnlyWithinItsLiveScope(mode: String) async throws {
+  @Test
+  func genericHostCallbackRequiresWorkspaceWhenSelectionIsAmbiguous() async throws {
+    let fixture = try HostAuthorityFixture(additionalWorkspace: true)
+    defer { fixture.remove() }
+    do {
+      _ = try await fixture.genericRelease(workspaceID: nil)
+      Issue.record("An ambiguous workspace must be rejected before invoking the plugin.")
+    } catch {
+      #expect(String(describing: error).contains("workspace_required"))
+    }
+    await fixture.close()
+  }
+
+  @Test(arguments: [false, true])
+  func genericReleaseBindsHostCallbackWorkspace(explicitWorkspace: Bool) async throws {
     let fixture = try HostAuthorityFixture()
+    defer { fixture.remove() }
+    let target = try fixture.approved(threadID: "thread-1")
+    let result = try await fixture.genericRelease(
+      workspaceID: explicitWorkspace ? "scope" : nil)
+    #expect(result.objectValue?["isError"] == .bool(false))
+    #expect(try fixture.database.codexElevationGrant(id: target.id)?.state == .invalidated)
+    await fixture.close()
+  }
+
+  @Test(arguments: ["release", "wrong-thread", "wrong-method", "no-invocation"], [false, true])
+  func threadReleaseInvalidatesUnusedGrantsOnlyWithinItsLiveScope(
+    mode: String, persistedProfile: Bool
+  ) async throws {
+    let fixture = try HostAuthorityFixture(persistedProfile: persistedProfile)
     defer { fixture.remove() }
     let target = try fixture.approved(threadID: "thread-1")
     let otherThread = try fixture.approved(threadID: "thread-2")
@@ -313,17 +340,27 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   let runtime: GatewayRuntime
   let service: MCPBoundHostServices
   let peer = HostServiceProbe()
-  init(worktrees: Bool = false) throws {
+  init(
+    worktrees: Bool = false, persistedProfile: Bool = true, additionalWorkspace: Bool = false
+  ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     database = try GatewayDatabase(inMemory: ())
     let workspace = RegisteredWorkspace(id: "scope", displayName: "Fixture", rootPath: root.path)
     try database.saveWorkspace(workspace)
+    var workspaces = [workspace]
+    if additionalWorkspace {
+      let other = RegisteredWorkspace(id: "other", displayName: "Other", rootPath: root.path)
+      try database.saveWorkspace(other)
+      workspaces.append(other)
+    }
     let caps = ["mcp.tools.call", "operations.prepare", "operations.commit"]
-    try database.saveProfile(
-      .init(
-        id: .chatGPTOperate, capabilityIDs: Set(caps), workspaceIDs: ["scope"],
-        allowedCallers: [.secureTunnel]))
+    if persistedProfile {
+      try database.saveProfile(
+        .init(
+          id: .chatGPTOperate, capabilityIDs: Set(caps), workspaceIDs: ["scope"],
+          allowedCallers: [.secureTunnel]))
+    }
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
@@ -343,7 +380,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate,
         transportTrace: .init(transport: "gateway_socket", socketConnectionID: "connection")),
-      database: database, registeredWorkspaces: [workspace], mcpClient: peer)
+      database: database, registeredWorkspaces: workspaces, mcpClient: peer)
     let captured = try #require(peer.context)
     if worktrees {
       let managed = root.resolvingSymlinksInPath().appendingPathComponent("managed")
@@ -411,6 +448,25 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   }
   func direct(_ name: String, _ arguments: [String: JSONValue]) async throws -> JSONValue {
     try await .encoded(service.call(name: name, arguments: arguments))
+  }
+  func genericRelease(workspaceID: String?) async throws -> JSONValue {
+    let service = service
+    peer.setHandler {
+      try await .encoded(
+        service.call(
+          name: "host.elevation.invalidate",
+          arguments: [
+            "runtime_ids": .array([]), "thread_id": .string("thread-1"),
+            "reason": .string("Thread released"),
+          ]))
+    }
+    defer { peer.setHandler(nil) }
+    var arguments: [String: JSONValue] = [
+      "server": .string("probe"), "tool": .string("codex.app.thread.release"),
+      "arguments": .object(["thread_id": .string("thread-1")]),
+    ]
+    if let workspaceID { arguments["workspace_id"] = .string(workspaceID) }
+    return try await runtime.callToolAsync(name: "mcp.tools.call", arguments: .object(arguments))
   }
   func payload(_ value: JSONValue) -> [String: JSONValue] {
     value.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue ?? [:]

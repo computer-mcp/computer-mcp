@@ -12,6 +12,12 @@ plugin's host-owned MCP settings use `"hostServices": true`; the App presents
 **Allow scoped host services**. Both default to false. HTTP registrations reject
 this option. Changing a package's manifest cannot enable it.
 
+Calls to these registrations require a workspace. With one registered workspace,
+the Gateway selects it automatically and still checks the caller's grant. With
+multiple workspaces, provide `workspace_id` or use a workspace-bound connection.
+For `mcp.tools.call`, `workspace_id` belongs in the outer Gateway arguments beside
+`server`, `tool` and `arguments`, not inside the downstream `arguments` object.
+
 Enable this only for an adapter trusted to use the already authorized scope.
 The adapter inherits a connected Unix stream descriptor identified by
 `COMPUTER_MCP_HOST_FD`. It receives no control-socket pathname, credential, or
@@ -36,6 +42,11 @@ execution. Aliases, nested policy/ticket targets and other callback-enabled MCP
 registrations cannot create a recursive route or widen the workspace.
 Destructive tools keep the ordinary `operations.prepare` / `operations.commit`
 contract; the adapter does not bypass tickets.
+
+Configuration and builtin profile grants do not require a persisted profile
+record. If the runtime was initialized with a persisted profile, deleting that
+record revokes host access instead of restoring configuration authority.
+Existing persisted restrictions are checked again during callback authorization.
 
 Private `host.*` tools are listed only on this inherited connection, never as
 northbound Gateway tools. Dynamic tool requests from a vendor cannot target the

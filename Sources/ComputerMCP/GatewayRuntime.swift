@@ -5,6 +5,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let configuration: GatewayConfiguration
   private let context: ExecutionContext
   private let grant: ProfileGrant
+  private let requiresPersistedGrant: Bool
   private let policyEvaluator: GatewayPolicyEvaluator
   private let database: GatewayDatabase?
   private let workspaces: [String: RegisteredWorkspace]
@@ -215,6 +216,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.configuration = configuration
     self.context = effectiveContext
     self.grant = effectiveGrant
+    self.requiresPersistedGrant = persistedGrant != nil
     self.policyEvaluator = policyEvaluator
     self.database = database
     self.workspaces = workspaceByID
@@ -314,6 +316,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func currentHostGrant() throws -> ProfileGrant {
     guard let database else { return grant }
     guard let persisted = try database.profiles().first(where: { $0.id == grant.id }) else {
+      // Configuration and builtin grants do not require a database record. A runtime
+      // initialized with persisted authority must not recover it after revocation.
+      guard requiresPersistedGrant else { return grant }
       throw Self.invalid(
         code: "policy.host_grant_revoked",
         message: "The persisted host profile is no longer available.")
@@ -1259,6 +1264,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "mcp.tool_not_approved",
         message: "The host has not approved this downstream MCP tool.")
     }
+    if server.hostServices { descriptor.workspaceRequirement = .required }
     return descriptor
   }
 

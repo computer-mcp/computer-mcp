@@ -313,6 +313,13 @@ Private services match that reference, current grants and, for destructive
 removal, the executing operation ticket. Binding is lazy so plugin catalog
 startup does not depend on a partially constructed Gateway runtime.
 
+Callback-enabled calls require a bound workspace, including the generic MCP
+entry point. A sole registered workspace can be selected automatically;
+multiple registrations require an explicit selection. Host authorization keeps
+its initialization source: configuration and builtin grants can exist without
+a profile row, while runtimes initialized with persisted authority require that
+row to remain present. Current persisted restrictions are reapplied to callbacks.
+
 `MCPBoundHostServices` consumes existing approved elevation records, owns the
 atomic derived-workspace registration ledger and projects bounded diagnostics.
 It cannot issue local approval through the plugin connection. Failed owned

@@ -28412,6 +28412,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
           properties: [
             "server": stringSchema("Registered MCP server id."),
             "tool": stringSchema("Downstream tool name."),
+            "workspace_id": stringSchema(
+              "Stable workspace id returned by workspace.list. Required for host-service calls when multiple workspaces are registered."
+            ),
             "request_id": stringSchema(
               "Optional caller-stable request id used by mcp.requests.list and mcp.requests.cancel."
             ),

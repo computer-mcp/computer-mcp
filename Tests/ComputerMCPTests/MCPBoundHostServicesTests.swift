@@ -11,6 +11,9 @@ struct MCPBoundHostServicesTests {
   func genericHostCallbackRequiresWorkspaceWhenSelectionIsAmbiguous() async throws {
     let fixture = try HostAuthorityFixture(additionalWorkspace: true)
     defer { fixture.remove() }
+    let tool = try #require(fixture.runtime.listTools().first { $0.name == "mcp.tools.call" })
+    let properties = try #require(tool.inputSchema.objectValue?["properties"]?.objectValue)
+    #expect(properties["workspace_id"]?.objectValue?["type"] == .string("string"))
     do {
       _ = try await fixture.genericRelease(workspaceID: nil)
       Issue.record("An ambiguous workspace must be rejected before invoking the plugin.")

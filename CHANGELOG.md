@@ -4,6 +4,13 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.1.3 — 2026-09-14
+
+- Declare the workspace selector in the generic MCP tool-call schema so clients
+  can supply the workspace required by host-service calls.
+- Validate discovered input fields through native thread execution, Goal
+  preservation and release using both direct and generic tool routes.
+
 ## 1.1.2 — 2026-09-14
 
 - Preserve configuration-backed host callback authority for local plugin

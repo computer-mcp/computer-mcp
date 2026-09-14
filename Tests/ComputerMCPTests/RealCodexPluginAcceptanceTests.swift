@@ -144,9 +144,11 @@ struct RealCodexPluginAcceptanceTests {
     }
   }
 
-  @Test
-  func threeIndependentConnectionsHandoffTheSameNativeThreadAndGoalWithoutOrphans() async throws {
-    let fixture = try await NativeCodexFixture()
+  @Test(arguments: [false, true])
+  func threeIndependentConnectionsHandoffTheSameNativeThreadAndGoalWithoutOrphans(
+    genericCalls: Bool
+  ) async throws {
+    let fixture = try await NativeCodexFixture(genericCalls: genericCalls)
     var current: GatewayRuntime?
     do {
       var thread: String?
@@ -186,7 +188,7 @@ struct RealCodexPluginAcceptanceTests {
         current = nil
       }
       let receipts = try fixture.runtimeReceipts()
-      #expect(receipts.count == 3)
+      #expect(receipts.count == (genericCalls ? 6 : 3))
       #expect(receipts.allSatisfy { $0.objectValue?["state"] == .string("stopped") })
       let receiptedPIDs = Set(
         receipts.compactMap {
@@ -276,8 +278,10 @@ private final class NativeCodexFixture: Sendable {
   private let adapter: String
   private let config: URL
   private let home: URL
+  private let genericCalls: Bool
 
-  init() async throws {
+  init(genericCalls: Bool = false) async throws {
+    self.genericCalls = genericCalls
     let environment = ProcessInfo.processInfo.environment
     adapter = try #require(environment["COMPUTER_MCP_TEST_CODEX_PLUGIN"])
     let codex = try #require(environment["COMPUTER_MCP_REAL_CODEX_EXECUTABLE"])
@@ -367,6 +371,15 @@ private final class NativeCodexFixture: Sendable {
       "codex.app.turn.start": .workspaceWrite, "codex.app.goal.set": .workspaceWrite,
       "codex.app.goal.get": .readOnly, "codex.app.events.read": .readOnly,
     ]
+    var registeredWorkspaces = [workspace]
+    if genericCalls {
+      let otherRoot = root.appendingPathComponent("other-workspace")
+      try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+      let other = RegisteredWorkspace(
+        id: UUID().uuidString, displayName: "Unselected workspace", rootPath: otherRoot.path)
+      try database.saveWorkspace(other)
+      registeredWorkspaces.append(other)
+    }
     return try await GatewayRuntime.make(
       configuration: .init(
         profiles: [
@@ -389,17 +402,36 @@ private final class NativeCodexFixture: Sendable {
         caller: .secureTunnel, profileID: .chatGPTOperate,
         transportTrace: .init(
           transport: "gateway_socket", socketConnectionID: "native-\(connection)")),
-      database: database, registeredWorkspaces: [workspace])
+      database: database, registeredWorkspaces: registeredWorkspaces)
   }
 
   func call(_ gateway: GatewayRuntime, _ name: String, _ arguments: [String: JSONValue] = [:])
     async throws -> JSONValue
   {
-    var arguments = arguments
-    arguments["workspace_id"] = .string(workspace.id)
-    let result = try await gateway.callToolAsync(
-      name: "codex.app." + name, arguments: .object(arguments))
+    let toolName = "codex.app." + name
+    var callName = toolName
+    var input = arguments
+    if genericCalls {
+      callName = "mcp.tools.call"
+      input = [
+        "server": .string("native-codex"), "tool": .string(toolName),
+        "arguments": .object(arguments),
+      ]
+    }
+    input["workspace_id"] = .string(workspace.id)
+    let catalog = try gateway.listTools()
+    let tool = try #require(catalog.first { $0.name == callName })
+    let properties = try #require(tool.inputSchema.objectValue?["properties"]?.objectValue)
+    try #require(
+      Set(input.keys).isSubset(of: Set(properties.keys)), "Undeclared input: \(callName)")
+    try #require(properties["workspace_id"]?.objectValue?["type"] == .string("string"))
+    var result = try await gateway.callToolAsync(
+      name: callName, arguments: .object(input))
     try #require(result.objectValue?["isError"] != .bool(true), "\(name): \(result)")
+    if genericCalls {
+      result = try #require(result.objectValue?["structuredContent"]?.objectValue?["result"])
+      try #require(result.objectValue?["isError"] != .bool(true), "\(name): \(result)")
+    }
     return try #require(result.objectValue?["structuredContent"]?.objectValue?["result"])
   }
 
@@ -643,7 +675,7 @@ private final class NativeCodexFixture: Sendable {
     if let receipts = try? runtimeReceipts() {
       let stopped = receipts.allSatisfy { receipt in
         guard let process = receipt.objectValue?["process"]?.objectValue
-        else { return false }
+        else { return receipt.objectValue?["state"] == .string("stopped") }
         return ["process_id", "supervisor_process_id", "parent_process_id"].allSatisfy {
           guard let pid = process[$0]?.numberValue else { return false }
           return Self.exited(Int32(pid))

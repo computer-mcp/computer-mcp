@@ -252,7 +252,8 @@ struct CLIExecutableCheckTests {
     try fixture.script(
       """
       if [ "$1" = "--version" ]; then
-        echo $$ > pid
+        echo $$ > pid.pending
+        /bin/mv pid.pending pid
         exec /bin/sleep 30
       fi
       printf target > action

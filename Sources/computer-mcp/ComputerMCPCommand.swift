@@ -85,7 +85,8 @@ struct ServeStdio: AsyncParsableCommand {
       caller: runtime.caller,
       profileID: runtime.profile,
       workspaceID: runtime.workspaceID,
-      transportTrace: GatewayTransportTrace(transport: "stdio")
+      transportTrace: GatewayTransportTrace(
+        transport: "stdio", socketConnectionID: UUID().uuidString)
     )
     let registry = try await GatewayRuntime.make(
       configuration: gateway,

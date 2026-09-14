@@ -248,7 +248,10 @@ struct CLITreeTests {
       try await execution.runAsync(
         executable: "/bin/sh",
         invocation: .init(
-          arguments: ["-c", "echo $$ > \"$1\"; exec /bin/sleep 30", "fixture", marker.path],
+          arguments: [
+            "-c", "echo $$ > \"$1.pending\"; /bin/mv \"$1.pending\" \"$1\"; exec /bin/sleep 30",
+            "fixture", marker.path,
+          ],
           standardInput: Data()),
         cwd: fixture.root, environment: [:], timeoutMilliseconds: 30_000, maxOutputBytes: 1_024)
     }

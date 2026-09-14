@@ -25,9 +25,11 @@ The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
    same DMG, proves byte identity, writes the published-artifact provenance
    receipt, and leaves the Release as a draft for local installation acceptance.
 
-All product, security, real App Server, handoff, elevation, vehicleOS,
+All release-blocking product, security, real App Server, handoff, elevation,
 cold-start, and local package acceptance must be complete before the signed tag
-is pushed. The final signed and notarized draft must also pass local installation
+is pushed. Use isolated targets or the exact workspaces separately authorized
+for that release; a previous release's live workspace is not standing permission
+to reuse it. The final signed and notarized draft must also pass local installation
 acceptance before an operator makes it public. A tag never automatically
 publishes a Release or causes a local machine to package an official artifact.
 
@@ -293,13 +295,19 @@ with a non-stale bookmark, and refresh the existing page in place. A website
 challenge, provider response, or Shell policy cannot be used to classify or
 interrupt this check.
 
-The exhaustive tool run still calls every advertised catalog entry and
-requires exact audit correlation. Only a structured
-`codex.app.request_failed` HTTP 403 from `codex.app.apps.list`, paired with a
-failed `gateway.execution_failed` audit row, is admissible as a reviewed
-upstream expected failure. It is the ChatGPT connector-directory endpoint's
-response, not a local anti-scraping classification. Any different network,
-provider, semantic, Shell, workspace, or audit failure blocks publication.
+Tool acceptance starts from the advertised catalog, validates the arguments
+clients can construct from it, and follows affected routes through execution,
+events, release and cleanup with exact audit correlation. Native acceptance
+through `Scripts/verify-codex-plugin-host.sh` includes a separate stdio client;
+set `COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE` to the signed App's embedded CLI to
+exercise the packaged entry point. Fixture execution and installed-package
+execution must be labeled separately.
+
+Record vendor authentication or availability limitations separately from local
+failures and use an alternative only when the applicable acceptance requirement
+explicitly permits it. A local schema, policy, workspace, lifecycle, or audit
+failure is not a vendor limitation and keeps the release unpublished. A test
+must not invoke user-owned destructive tools merely to cover a catalog entry.
 
 ## Supported local scope
 

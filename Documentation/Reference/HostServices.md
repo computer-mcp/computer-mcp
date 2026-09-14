@@ -18,6 +18,13 @@ multiple workspaces, provide `workspace_id` or use a workspace-bound connection.
 For `mcp.tools.call`, `workspace_id` belongs in the outer Gateway arguments beside
 `server`, `tool` and `arguments`, not inside the downstream `arguments` object.
 
+Standalone manifest workspaces retain their configuration-owned scope even when
+the Gateway uses a database for audit or plugin state. Database-owned workspaces
+are checked against their current registration on every callback; deleting or
+changing that registration revokes the original scope.
+Each standalone stdio server run owns one connection identity for callback,
+audit and release attribution; a new server run receives a new identity.
+
 Enable this only for an adapter trusted to use the already authorized scope.
 The adapter inherits a connected Unix stream descriptor identified by
 `COMPUTER_MCP_HOST_FD`. It receives no control-socket pathname, credential, or

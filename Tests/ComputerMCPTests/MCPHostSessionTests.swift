@@ -8,6 +8,20 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct MCPHostSessionTests {
+  @Test(arguments: [false, true])
+  func manifestWorkspaceHostCallbacksDoNotRequirePersistedRegistration(fileBacked: Bool)
+    async throws
+  {
+    let fixture = try HostFixture(fileBacked: fileBacked, persistWorkspaces: false)
+    defer { fixture.remove() }
+    #expect(try fixture.database.workspaces().isEmpty)
+    let result = try await fixture.call("file.read", ["path": .string("value.txt")])
+    #expect(result.objectValue?["isError"] != .bool(true))
+    #expect(fixture.payload(result)["content"] == .string("first"))
+    #expect(try fixture.database.workspaces().isEmpty)
+    await fixture.runtime.shutdown()
+  }
+
   @Test
   func deletingPersistedAuthorityDoesNotRestoreConfiguredHostAccess() async throws {
     let fixture = try HostFixture(fileBacked: true)
@@ -137,7 +151,9 @@ struct MCPHostSessionTests {
     await fixture.runtime.shutdown()
   }
 
-  @Test(arguments: ["observe", "grant-revoked", "workspace-removed", "shutdown"])
+  @Test(arguments: [
+    "observe", "grant-revoked", "workspace-removed", "workspace-changed", "shutdown",
+  ])
   func liveScopeAndReadOnlyDenialsRemainAuthoritative(reason: String) async throws {
     let fixture = try HostFixture(observe: reason == "observe")
     defer { fixture.remove() }
@@ -147,6 +163,11 @@ struct MCPHostSessionTests {
       try fixture.database.saveProfile(grant)
     } else if reason == "workspace-removed" {
       try fixture.database.deleteWorkspace(id: "first")
+    } else if reason == "workspace-changed" {
+      try fixture.database.saveWorkspace(
+        .init(
+          id: "first", displayName: "Changed",
+          rootPath: fixture.root.appendingPathComponent("second").path))
     } else if reason == "shutdown" {
       await fixture.runtime.shutdown()
     }
@@ -242,7 +263,7 @@ private final class HostFixture: Sendable {
   let context: ExecutionContext
   let registration: MCPServerConfig
 
-  init(observe: Bool = false, fileBacked: Bool = false) throws {
+  init(observe: Bool = false, fileBacked: Bool = false, persistWorkspaces: Bool = true) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "host-fixture-" + UUID().uuidString)
     first = root.appendingPathComponent("first")
@@ -260,7 +281,9 @@ private final class HostFixture: Sendable {
       RegisteredWorkspace(
         id: $0.lastPathComponent, displayName: $0.lastPathComponent, rootPath: $0.path)
     }
-    for workspace in workspaces { try database.saveWorkspace(workspace) }
+    if persistWorkspaces {
+      for workspace in workspaces { try database.saveWorkspace(workspace) }
+    }
     let profile: GatewayProfileID = observe ? .chatGPTObserve : .chatGPTOperate
     let capabilities = [
       "workspace.list", "workspace.describe", "policy.probe", "operations.prepare",
@@ -281,6 +304,9 @@ private final class HostFixture: Sendable {
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: profile),
+        workspaces: workspaces.map {
+          .init(id: $0.id, displayName: $0.displayName, path: $0.rootPath)
+        },
         profiles: [
           .init(
             id: profile, capabilities: capabilities, workspaces: ["first", "second"],
@@ -289,7 +315,8 @@ private final class HostFixture: Sendable {
         mcp: .init(servers: [registration]),
         tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],
         builtin: .init(enabled: ["file.read", "file.replace_text"])),
-      context: context, database: database, registeredWorkspaces: workspaces, mcpClient: downstream)
+      context: context, database: database,
+      registeredWorkspaces: persistWorkspaces ? workspaces : nil, mcpClient: downstream)
   }
 
   func session() throws -> MCPHostSession {

@@ -8,6 +8,10 @@ All notable user-visible changes to Computer MCP are documented here.
 
 - Declare the workspace selector in the generic MCP tool-call schema so clients
   can supply the workspace required by host-service calls.
+- Preserve manifest-owned workspace scope for standalone host-service calls
+  while enforcing revocation of database-owned registrations.
+- Bind standalone stdio calls to their server connection for thread release and
+  host callback attribution.
 - Validate discovered input fields through native thread execution, Goal
   preservation and release using both direct and generic tool routes.
 

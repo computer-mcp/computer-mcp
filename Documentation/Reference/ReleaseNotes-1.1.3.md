@@ -7,6 +7,10 @@ must pass local installation acceptance before its draft is made public.
 
 - Expose `workspace_id` in the `mcp.tools.call` input schema. Clients can
   select the workspace required by downstream host-service invocations.
+- Support host callbacks from standalone manifest workspaces with an audit or
+  plugin database; persisted workspace changes continue to revoke the old scope.
+- Keep a connection identity for each standalone stdio run so callback and
+  thread-release attribution remains bound to that run.
 - Exercise discovered argument fields through native execution, Goal
   preservation, release and reconnection with direct and generic tool routes.
 

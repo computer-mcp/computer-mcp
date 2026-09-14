@@ -6,6 +6,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let context: ExecutionContext
   private let grant: ProfileGrant
   private let requiresPersistedGrant: Bool
+  private let persistedWorkspaceIDs: Set<String>
   private let policyEvaluator: GatewayPolicyEvaluator
   private let database: GatewayDatabase?
   private let workspaces: [String: RegisteredWorkspace]
@@ -217,6 +218,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.context = effectiveContext
     self.grant = effectiveGrant
     self.requiresPersistedGrant = persistedGrant != nil
+    self.persistedWorkspaceIDs = Set(persistedWorkspaces.map(\.id))
     self.policyEvaluator = policyEvaluator
     self.database = database
     self.workspaces = workspaceByID
@@ -302,7 +304,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "policy.host_scope_unavailable",
         message: "The originating host scope is no longer available.")
     }
-    if let database {
+    if persistedWorkspaceIDs.contains(workspaceID), let database {
       guard let current = try database.workspace(id: workspaceID), current.id == workspaceID,
         current.rootPath == workspace.rootPath
       else {

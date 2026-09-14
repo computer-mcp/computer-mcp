@@ -164,7 +164,9 @@ struct PluginArchivePreparationTests {
       import os, signal, time
       signal.alarm(15)
       os.mkdir('partial')
-      with open(\(try fixture.literal(report.path)), 'w') as f: f.write(str(os.getpid()))
+      report = \(try fixture.literal(report.path))
+      with open(report + '.pending', 'w') as f: f.write(str(os.getpid()))
+      os.replace(report + '.pending', report)
       time.sleep(30)
       """)
     let task = Task {

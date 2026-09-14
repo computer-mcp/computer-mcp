@@ -156,7 +156,9 @@ struct PluginStoreInstallationTests {
       """
       import os, signal, time
       signal.alarm(15)
-      with open(\(try fixture.literal(ready.path)), 'w') as f: f.write(str(os.getpid()))
+      ready = \(try fixture.literal(ready.path))
+      with open(ready + '.pending', 'w') as f: f.write(str(os.getpid()))
+      os.replace(ready + '.pending', ready)
       time.sleep(30)
       """)
     let installing = Task { try await fixture.install(into: store, revision: 0, worker: worker) }

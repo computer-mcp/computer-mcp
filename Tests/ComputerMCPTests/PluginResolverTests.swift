@@ -5,6 +5,44 @@ import Testing
 
 struct PluginResolverTests {
   @Test
+  func hostSettingsKeepTheirPortableFormatInsideCanonicalReports() throws {
+    let settings = PluginSettings(
+      enabled: true,
+      mcp: [
+        "native_tools": .init(
+          registrationID: "native_registration", exposure: .reexport, prefix: "",
+          allowedTools: ["inspect_with_underscores"],
+          toolRisks: ["inspect_with_underscores": .readOnly],
+          args: ["", "--", "参数"], hostServices: true),
+        "http_tools": .init(
+          allowAnyTool: true,
+          authentication: .init(
+            endpoint: "http://127.0.0.1:1/mcp", keychainAccount: "fixture-credential")),
+      ],
+      cli: ["format_swift": .init(registrationID: "format_registration", allowAnyArgs: true)],
+      skills: ["skill_guidance": .init(registrationID: "guidance_registration")],
+      dependencyExecutables: ["native_vendor": "/usr/bin/printf"])
+    let data = try CanonicalJSONCoding.encoder().encode(["sample_plugin": settings])
+    let report = try JSONDecoder().decode(JSONValue.self, from: data)
+    let document = try #require(report.objectValue?["sample_plugin"])
+    #expect(document == (try JSONValue.encoded(settings)))
+    #expect(
+      document.objectValue?["dependencyExecutables"]?.objectValue?["native_vendor"]
+        == .string("/usr/bin/printf"))
+    let native = try #require(
+      document.objectValue?["mcp"]?.objectValue?["native_tools"]?.objectValue)
+    #expect(native["registrationID"] == .string("native_registration"))
+    #expect(native["hostServices"] == .bool(true))
+    #expect(native["allowedTools"] == .array([.string("inspect_with_underscores")]))
+    #expect(
+      document.objectValue?["mcp"]?.objectValue?["http_tools"]?.objectValue?["authentication"]?
+        .objectValue?["keychain_account"] == .string("fixture-credential"))
+    let restored = try JSONDecoder().decode(
+      PluginSettings.self, from: JSONEncoder().encode(document))
+    #expect(restored == settings)
+  }
+
+  @Test
   func httpContributionRejectsProcessArguments() throws {
     let fixture = try CompositionFixture(
       text: PluginManifestTests.header + """

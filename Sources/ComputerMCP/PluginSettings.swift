@@ -23,6 +23,17 @@ package struct PluginSettings: Codable, Equatable, Sendable {
     try validate()
   }
 
+  /// Settings are portable documents; enclosing reports must preserve their field names.
+  package func encode(to encoder: any Encoder) throws {
+    try JSONValue.object([
+      "enabled": .bool(enabled),
+      "mcp": .encoded(mcp),
+      "cli": .encoded(cli),
+      "skills": .encoded(skills),
+      "dependencyExecutables": .encoded(dependencyExecutables),
+    ]).encode(to: encoder)
+  }
+
   package init(
     enabled: Bool = false,
     mcp: [String: PluginMCPSettings] = [:],

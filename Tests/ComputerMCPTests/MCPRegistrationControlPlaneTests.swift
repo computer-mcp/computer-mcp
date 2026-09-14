@@ -473,6 +473,8 @@ struct MCPRegistrationControlPlaneTests {
       let entry = try #require(shown.objectValue?["registrations"]?.arrayValue?.first?.objectValue)
       #expect(entry["origin"] == nil)
       #expect(entry["server"]?.objectValue?["enabled"] == .bool(false))
+      #expect(entry["server"] == (try JSONValue.encoded(server)))
+      var exportedServer = try #require(entry["server"]?.objectValue)
       let duplicated = try await fixture.cli(add)
       #expect(duplicated.exitCode != 0)
       let stale = try await fixture.cli([
@@ -487,7 +489,10 @@ struct MCPRegistrationControlPlaneTests {
       #expect(try fixture.configuration().mcp.servers == [enabled])
       enabled.allowAnyTool = true
       enabled.allowedTools = []
-      try JSONEncoder().encode(enabled).write(to: input)
+      exportedServer["enabled"] = .bool(true)
+      exportedServer["allow_any_tool"] = .bool(true)
+      exportedServer["allowed_tools"] = .array([])
+      try JSONEncoder().encode(JSONValue.object(exportedServer)).write(to: input)
       try await fixture.apply(["configure", "--registration-file", input.path])
       #expect(try fixture.configuration().mcp.servers == [enabled])
       try await fixture.apply(["disable", "manual"])

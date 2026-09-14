@@ -679,7 +679,9 @@ Settings JSON uses the model field names `enabled`, `mcp`, `cli`, `skills`, and
 `registrationID`. Unknown fields fail. Omitted settings use the defaults described
 above. `configure` replaces rather than merges settings: start from the current
 `state.settings[<id>]` object to preserve other choices. The file is limited to
-4 MiB and must not contain secrets.
+4 MiB and must not contain secrets. Settings embedded in list/show and mutation
+reports retain these same field names, including nested contribution settings,
+so they can be copied directly into `configure`.
 
 For stdio MCP contributions, omitted or null `args` follows the package's default
 arguments. An array replaces the complete argument list; `[]` explicitly passes

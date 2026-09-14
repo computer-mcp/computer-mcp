@@ -13,5 +13,15 @@ fi
 cd "$ROOT_DIR"
 # Only this test process receives the explicitly supplied independent artifact.
 export COMPUTER_MCP_TEST_CODEX_PLUGIN="$1"
-exec /usr/bin/swift test --force-resolved-versions --no-parallel \
+/usr/bin/swift test --force-resolved-versions --no-parallel \
   --filter 'CodexPluginHostIntegrationTests|CodexPluginBoundServicesTests|CodexPluginConnectionTests|RealCodexPluginAcceptanceTests'
+
+if [[ "${COMPUTER_MCP_REAL_CODEX_ACCEPTANCE:-0}" == "1" ]]; then
+  gateway_executable=${COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE:-}
+  if [[ -z "$gateway_executable" ]]; then
+    gateway_executable="$(/usr/bin/swift build --show-bin-path)/computer-mcp"
+  fi
+  /usr/bin/python3 "$ROOT_DIR/Scripts/verify-codex-gateway-flow.py" \
+    "$gateway_executable" "$1" "$COMPUTER_MCP_REAL_CODEX_EXECUTABLE" \
+    "$ROOT_DIR/Tests/ComputerMCPTests/Fixtures/NativeCodex/ModelServer.py"
+fi

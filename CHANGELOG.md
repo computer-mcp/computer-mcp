@@ -4,6 +4,13 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.1.4 — 2026-09-15
+
+- Preserve portable plugin settings field names in control reports so exported
+  settings can be saved unchanged through the App-owned management CLI.
+- Verify settings round trips through the installed management paths, including
+  nested HTTP authentication references and manual MCP registration.
+
 ## 1.1.3 — 2026-09-14
 
 - Declare the workspace selector in the generic MCP tool-call schema so clients

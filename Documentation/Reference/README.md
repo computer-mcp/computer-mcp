@@ -27,6 +27,9 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
+- [1.1.4 Release Notes](ReleaseNotes-1.1.4.md) and
+  [Production Readiness Report](ProductionReadinessReport-1.1.4.md):
+  portable plugin settings and management round trips.
 - [1.1.3 Release Notes](ReleaseNotes-1.1.3.md) and
   [Production Readiness Report](ProductionReadinessReport-1.1.3.md):
   generic MCP workspace discovery and complete invocation acceptance.

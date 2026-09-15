@@ -532,9 +532,33 @@ final class AppControlPlaneServiceTests {
       let inspected = try await client.call(
         "plugin.show", arguments: .object(["id": .string("test-package")]))
       #expect(inspected.objectValue?["contributions"]?.arrayValue?.count == 2)
+      let exportedSettings = try #require(
+        inspected.objectValue?["state"]?.objectValue?["settings"]?.objectValue?["test-package"])
+      #expect(exportedSettings == (try JSONValue.encoded(settings)))
+      #expect(
+        inspected.objectValue?["effective_settings"]?.objectValue?["test-package"]
+          == exportedSettings)
+      let settingsFile = fixture.root.appendingPathComponent("settings.json")
+      try JSONEncoder().encode(exportedSettings).write(to: settingsFile)
+      let configured = try ProcessCommandRunner().run(
+        executable: executable.path,
+        arguments: [
+          "plugins", "configure", "test-package", "--settings-file", settingsFile.path,
+          "--expected-revision", "2", "--control-socket", fixture.directories.controlSocket.path,
+        ],
+        workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 15_000,
+        maxOutputBytes: 1_048_576)
+      #expect(configured.exitCode == 0, "\(configured.stderr)")
+      let configuredReport = try JSONDecoder().decode(
+        JSONValue.self, from: Data(configured.stdout.utf8))
+      #expect(
+        configuredReport.objectValue?["state"]?.objectValue?["settings"]?.objectValue?[
+          "test-package"]
+          == exportedSettings)
+      #expect(try fixture.database.pluginStoreSnapshot().settings["test-package"] == settings)
       _ = try await client.call(
         "plugin.disable",
-        arguments: .object(["id": .string("test-package"), "expected_revision": .number(2)]))
+        arguments: .object(["id": .string("test-package"), "expected_revision": .number(3)]))
       let disabled = try fixture.database.pluginStoreSnapshot()
       #expect(disabled.settings["test-package"]?.enabled == false)
       #expect(

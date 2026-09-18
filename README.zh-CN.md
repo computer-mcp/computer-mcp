@@ -1,29 +1,26 @@
+![Computer MCP — 你的工具，一个对话。](Assets/Brand/social.png)
+
 # Computer MCP
 
-**面向 AI Agent、由策略控制且限定工作区的本地执行网关。**
+**让 ChatGPT，用上你的本机工具。**
 
-Computer MCP 把 ChatGPT、Codex 和其他兼容 MCP 的客户端连接到已注册的工作区、
-CLI、桌面应用、开发工具，以及可选的 Codex Runtime，同时不会把整台 Mac 变成一个
-不受约束的远程 Shell。
-
-当 Agent 需要在你的电脑上完成真实工作，而访问仍需明确所有者、范围、审批边界和
-审计记录时，就适合使用 Computer MCP。
+连接 CLI、Codex、MCP 和 Skills，在对话里推进实际工作。读本地项目、改代码、
+处理文件、运行 Mac 上的工具，再把结果带回任务——权限由你配置。
 
 [快速开始](#快速开始) · [产品官网](https://computer-mcp.github.io/) ·
 [文档](Documentation/README.md) ·
 [最新版本](https://github.com/computer-mcp/computer-mcp/releases/latest) ·
 [English](README.md)
 
-Computer MCP 面向希望使用本地执行能力、但不愿把整台机器交给 AI 客户端的开发者和
-技术团队。它提供：
+- **接上你的 CLI 工具。** 注册命令或安装 CLI 插件，让 ChatGPT 调用已开放的工具、
+  读取执行结果。
+- **在对话里调用 Codex 写代码。** 使用独立 Codex 插件启动任务、跟进进度、查看结果。
+- **用 MCP 和 Skills 扩展工作方式。** 直接接入 MCP 服务与可复用说明，或通过插件组合。
+- **开放什么，由你决定。** 配置工具、工作区与确认策略，在本机批准需要确认的宿主操作。
 
-- 以已注册文件夹替代无边界文件系统访问；
-- 以能力范围明确的 Profile 替代一套共享权限；
-- 类型化工具、已注册 CLI、下游 MCP、Skills、Computer Use、受治理 Git 和可选
-  Codex 执行；
-- 本地策略校验，以及对高风险操作的显式同意；
-- 对请求和结果进行脱敏、关联的审计记录；
-- 本地、ChatGPT 和经过审查的远程连接路径。
+Computer MCP 支持 macOS 14 或更新系统，可供 ChatGPT 和其他兼容 MCP 的客户端使用。
+工具需安装并配置。Codex 需要对应插件与本机 Codex，高级编排为实验能力。
+Skills 提供说明和资源，实际执行使用已授权的工具。
 
 ## 30 秒理解工作方式
 
@@ -74,19 +71,16 @@ macOS 隐私权限即可保证可用；原生 AX 工具继续作为兜底路径�
 
 ## 能做什么
 
-- 让 ChatGPT 查看已注册项目、使用本地研究工具，并把实现任务交给 Codex，而不是
-  暴露整个用户目录。
-- 让 Agent 通过受审查的路径编辑、暂存、执行仓库 Hook、提交、检查结果并证明
-  Worktree 干净，同时默认不授予宽泛 Shell。
-- 让确定性的本地 CLI、下游 MCP Server 和可复用 Skill Package 共用同一套策略与
-  审计平面。
-- 通过有界 Computer Use 能力观察或控制桌面 UI，并在执行前检查相应 macOS 权限。
-- 让 ChatGPT 通过 OpenAI Secure MCP Tunnel，或让经过审查的远程客户端通过
-  Cloudflare Named Tunnel，访问同一个本地执行网关。
-- 可选运行 Codex App Server、Exec 或 MCP 生命周期，并明确 Runtime、Thread、
-  Approval、Goal 与 Worktree 所有权。
+- 让 ChatGPT 查看本地项目、调用已接入的资料工具，再把实现任务交给 Codex。
+- 运行已注册的格式化工具、检查 Git diff，或通过已授权的本机命令处理文件，
+  根据结果继续下一步。
+- 围绕一个任务，组合 CLI 命令、下游 MCP 服务与可复用 Skills。
+- 通过 Secure MCP Tunnel 从 ChatGPT 接入，或通过 Cloudflare Named Tunnel
+  接入经过审查的远程客户端，具体取决于客户端及账号支持。
+- 通过 Computer Use 插件或原生 AX 工具接入桌面操作，实际可用性受相应 macOS
+  权限和厂商调用者认证约束。
 
-## 为什么比直接开放 Shell 更安全
+## 决定 Agent 能使用什么
 
 Computer MCP 始终把两个决定分开：
 

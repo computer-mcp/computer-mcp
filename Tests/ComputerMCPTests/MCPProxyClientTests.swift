@@ -212,8 +212,16 @@ final class MCPProxyClientTests {
         requestID: "started-cancel-me",
         reason: "test cancellation"
       )
-      #expect((cancelled.objectValue?["cancelled"]) == (.bool(true)))
-      #expect((try client.activeRequests(server: server).objectValue?["requests"]) == (.array([])))
+      #expect(cancelled.objectValue?["cancellation_requested"] == .bool(true))
+      #expect(cancelled.objectValue?["execution_stopped"] == .null)
+      #expect(cancelled.objectValue?["cancelled"] == nil)
+      let pending = try client.activeRequests(server: server).objectValue?["requests"]?.arrayValue
+      #expect(pending?.count == 1)
+      #expect(pending?.first?.objectValue?["state"] == .string("cancellation_requested"))
+      #expect(throws: (any Error).self) {
+        try client.startToolCall(
+          server: server, name: "sample", arguments: .object([:]), requestID: "started-cancel-me")
+      }
 
       #expect(
         !(try self.waitForNonemptyFile(at: fixture.cancelMarker)
@@ -225,10 +233,78 @@ final class MCPProxyClientTests {
         $0.objectValue?["kind"]?.stringValue
       }
       #expect(kinds?.contains("request.started") == true)
-      #expect(kinds?.contains("request.cancelled") == true)
+      #expect(kinds?.contains("request.cancellation_requested") == true)
+      #expect(kinds?.contains("request.cancellation_sent") == true)
+      #expect(kinds?.contains("request.cancelled") == false)
+      #expect(
+        events.objectValue?["events"]?.arrayValue?.filter {
+          $0.objectValue?["kind"]?.stringValue?.hasPrefix("request.") == true
+        }.allSatisfy { $0.objectValue?["request_id"] == .string("started-cancel-me") } == true)
       #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
       #expect((try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\n"))
     }
+  }
+
+  @Test
+  func testLateCompletionAfterStopRequestRemainsObservable() async throws {
+    let fixture = try fakePersistentMCPServer()
+    defer { try? FileManager.default.removeItem(at: fixture.script.deletingLastPathComponent()) }
+    let server = MCPServerConfig(
+      id: "late-completion", transport: .stdio, command: fixture.script.path,
+      args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
+    let client = MCPProxyClient()
+    do {
+      try await runBlockingTest {
+        _ = try client.startToolCall(
+          server: server, name: "hang", arguments: .object([:]), requestID: "late")
+        _ = try client.cancelRequest(server: server, requestID: "late", reason: "stop")
+        _ = try client.cancelRequest(server: server, requestID: "late", reason: "stop again")
+        #expect(
+          try client.activeRequests(server: server).objectValue?["requests"]?.arrayValue?.count == 1
+        )
+
+        // The fixture only sends the original result after this explicit checkpoint.
+        _ = try client.callTool(
+          server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]))
+        let deadline = ContinuousClock.now + .seconds(2)
+        var completed = false
+        repeat {
+          let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+          completed =
+            events.objectValue?["events"]?.arrayValue?.contains {
+              $0.objectValue?["kind"] == .string("request.completed")
+                && $0.objectValue?["request_id"] == .string("late")
+            } == true
+          if !completed { Thread.sleep(forTimeInterval: 0.01) }
+        } while !completed && ContinuousClock.now < deadline
+        #expect(completed)
+        let receipt = try client.readRequest(
+          server: server, requestID: "late", offset: 0, maxBytes: 4096)
+        #expect(receipt.objectValue?["state"] == .string("succeeded"))
+        #expect(receipt.objectValue?["output_state"] == .string("available"))
+        #expect(receipt.objectValue?["result"] != nil)
+        #expect(
+          try client.startToolCall(
+            server: server, name: "hang", arguments: .object([:]), requestID: "late") == receipt)
+        #expect(
+          try client.callTool(
+            server: server, name: "hang", arguments: .object([:]), requestID: "late")
+            == receipt.objectValue?["result"])
+        #expect(throws: (any Error).self) {
+          try client.callTool(
+            server: server, name: "sample", arguments: .object([:]), requestID: "late")
+        }
+        #expect(try client.activeRequests(server: server).objectValue?["requests"] == .array([]))
+        #expect(
+          try String(contentsOf: fixture.cancelMarker, encoding: .utf8).split(separator: "\n").count
+            == 1)
+        #expect(try String(contentsOf: fixture.startMarker, encoding: .utf8) == "started\n")
+      }
+    } catch {
+      await client.shutdown()
+      throw error
+    }
+    await client.shutdown()
   }
 
   @Test
@@ -249,6 +325,67 @@ final class MCPProxyClientTests {
       #expect(state == .string("retiring") || state == .string("not_started"))
       #expect(!FileManager.default.fileExists(atPath: fixture.cancelMarker.path))
     }
+  }
+
+  @Test func testSynchronousDeduplicationAndReadAfterRestartDoNotDispatchAgain() async throws {
+    let fixture = try fakePersistentMCPServer()
+    defer { try? FileManager.default.removeItem(at: fixture.script.deletingLastPathComponent()) }
+    let databasePath = fixture.script.deletingLastPathComponent().appendingPathComponent(
+      "receipts.sqlite"
+    ).path
+    let database = try GatewayDatabase(path: databasePath)
+    let server = MCPServerConfig(
+      id: "retained", transport: .stdio, command: fixture.script.path,
+      args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
+    let client = MCPProxyClient(executionDatabase: database, executionScope: "owner/workspace")
+    do {
+      try await runBlockingTest {
+        let result = try client.callTool(
+          server: server, name: "counter", arguments: .object([:]), requestID: "once")
+        #expect(result.objectValue?["structuredContent"]?.objectValue?["dispatches"] == .number(1))
+        #expect(
+          try client.callTool(
+            server: server, name: "counter", arguments: .object([:]), requestID: "once") == result)
+        #expect(
+          try client.startToolCall(
+            server: server, name: "counter", arguments: .object([:]), requestID: "once"
+          ).objectValue?["result"] == result)
+        let next = try client.callTool(
+          server: server, name: "counter", arguments: .object([:]), requestID: "second")
+        #expect(next.objectValue?["structuredContent"]?.objectValue?["dispatches"] == .number(2))
+        _ = try client.startToolCall(
+          server: server, name: "hang", arguments: .object([:]), requestID: "unresolved")
+      }
+    } catch {
+      await client.shutdown()
+      throw error
+    }
+    await client.shutdown()
+    let restored = MCPProxyClient(
+      executionDatabase: try GatewayDatabase(path: databasePath), executionScope: "owner/workspace")
+    do {
+      try await runBlockingTest {
+        let read = try restored.readRequest(
+          server: server, requestID: "once", offset: 0, maxBytes: 4096)
+        #expect(read.objectValue?["state"] == .string("succeeded"))
+        #expect(
+          try restored.callTool(
+            server: server, name: "counter", arguments: .object([:]), requestID: "once")
+            == read.objectValue?["result"])
+        let unknown = try restored.startToolCall(
+          server: server, name: "hang", arguments: .object([:]), requestID: "unresolved")
+        #expect(unknown.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(unknown.objectValue?["cleanup"] == .string("confirmed"))
+        #expect(
+          try restored.connectionStatus(server: server).objectValue?["state"]
+            == .string("not_started"))
+        #expect(try String(contentsOf: fixture.startMarker, encoding: .utf8) == "started\n")
+      }
+    } catch {
+      await restored.shutdown()
+      throw error
+    }
+    await restored.shutdown()
   }
 
   @Test
@@ -432,6 +569,8 @@ final class MCPProxyClientTests {
       cancel_marker = sys.argv[2]
       with open(start_marker, "a", encoding="utf-8") as marker:
           marker.write("started\\n")
+      pending = []
+      dispatches = 0
 
       for line in sys.stdin:
           message = json.loads(line)
@@ -463,12 +602,22 @@ final class MCPProxyClientTests {
                   ]
               }
           elif method == "tools/call":
+              dispatches += 1
               if message.get("params", {}).get("name") == "hang":
+                  pending.append(message["id"])
                   continue
+              if message.get("params", {}).get("arguments", {}).get("complete_pending"):
+                  for pending_id in pending:
+                      print(json.dumps({"jsonrpc": "2.0", "id": pending_id, "result": {
+                          "content": [{"type": "text", "text": "completed after stop request"}]
+                      }}), flush=True)
+                  pending.clear()
               response["result"] = {
                   "content": [{"type": "text", "text": "called"}],
                   "isError": False,
               }
+              if message.get("params", {}).get("name") == "counter":
+                  response["result"]["structuredContent"] = {"dispatches": dispatches}
           elif method == "resources/list":
               response["result"] = {
                   "resources": [
@@ -549,7 +698,59 @@ final class MCPProxyClientTests {
     return try String(contentsOf: url, encoding: .utf8)
   }
 
-  private func fakeHTTPMCPServer() throws -> (
+  @Test
+  func failedCancellationDeliveryRetainsUnknownReceiptAndCannotReplayTheWrite() async throws {
+    let fixture = try fakeHTTPMCPServer(failCancellation: true)
+    let directory = fixture.sessionMarker.deletingLastPathComponent()
+    defer {
+      if fixture.process.isRunning { fixture.process.terminate() }
+      fixture.process.waitUntilExit()
+      try? FileManager.default.removeItem(at: directory)
+    }
+    let database = try GatewayDatabase(inMemory: ())
+    let client = MCPProxyClient(executionDatabase: database, executionScope: "cancel-failure")
+    let server = MCPServerConfig(
+      id: "cancel-failure", transport: .http,
+      url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
+    let waiting = Task {
+      try await client.callToolAsync(
+        server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+    }
+    do {
+      let marker = directory.appendingPathComponent("call-started.txt")
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      #expect(FileManager.default.fileExists(atPath: marker.path))
+      waiting.cancel()
+      await #expect(throws: (any Error).self) { _ = try await waiting.value }
+      let receipt = try client.readRequest(
+        server: server, requestID: "write-once", offset: 0, maxBytes: 4096)
+      #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
+      #expect(receipt.objectValue?["cancellation"] == .string("failed"))
+      #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
+      #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
+      #expect(throws: (any Error).self) {
+        try client.callTool(
+          server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+      }
+      let repeated = try client.startToolCall(
+        server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+      #expect(repeated.objectValue?["state"] == .string("outcome_unknown"))
+      #expect(try String(contentsOf: marker, encoding: .utf8) == "called\n")
+      try Data().write(to: directory.appendingPathComponent("release.txt"))
+      await client.shutdown()
+    } catch {
+      waiting.cancel()
+      try? Data().write(to: directory.appendingPathComponent("release.txt"))
+      await client.shutdown()
+      _ = await waiting.result
+      throw error
+    }
+  }
+
+  private func fakeHTTPMCPServer(failCancellation: Bool = false) throws -> (
     process: Process,
     port: Int,
     sessionMarker: URL
@@ -564,11 +765,15 @@ final class MCPProxyClientTests {
       #!/usr/bin/env python3
       import json
       import sys
+      import pathlib
+      import time
       from http.server import BaseHTTPRequestHandler
       from socketserver import ThreadingTCPServer
 
       port_file = sys.argv[1]
       session_marker = sys.argv[2]
+      fail_cancellation = sys.argv[3] == "true"
+      root = pathlib.Path(session_marker).parent
 
       class Handler(BaseHTTPRequestHandler):
           protocol_version = "HTTP/1.1"
@@ -585,6 +790,12 @@ final class MCPProxyClientTests {
               if method == "notifications/initialized":
                   self.send_response(202)
                   self.send_header("Mcp-Session-Id", "session-1")
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+                  return
+
+              if method == "notifications/cancelled" and fail_cancellation:
+                  self.send_response(500)
                   self.send_header("Content-Length", "0")
                   self.end_headers()
                   return
@@ -607,6 +818,12 @@ final class MCPProxyClientTests {
                       ]
                   }
               elif method == "tools/call":
+                  if fail_cancellation:
+                      with (root / "call-started.txt").open("a") as marker:
+                          marker.write("called\\n")
+                      deadline = time.monotonic() + 10
+                      while not (root / "release.txt").exists() and time.monotonic() < deadline:
+                          time.sleep(0.01)
                   response["result"] = {
                       "content": [{"type": "text", "text": "http-called"}],
                       "isError": False,
@@ -636,7 +853,10 @@ final class MCPProxyClientTests {
     let process = Process()
     let errorPipe = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["python3", script.path, portFile.path, sessionMarker.path]
+    process.arguments = [
+      "python3", script.path, portFile.path, sessionMarker.path,
+      failCancellation ? "true" : "false",
+    ]
     process.standardOutput = FileHandle.nullDevice
     process.standardError = errorPipe
     try process.run()

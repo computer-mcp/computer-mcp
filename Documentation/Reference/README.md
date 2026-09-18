@@ -20,7 +20,7 @@ This directory contains detailed operational reference material.
 - [Plugin Packages](PluginPackages.md): immutable manifests, contribution
   sources, and package-directory validation boundaries.
 - [Tools](Tools.md): complete gateway tool families, including deterministic
-  Codex handoff, scoped local elevation, bounded recent-thread reads, and
+  Codex handoff, native execution permissions, bounded recent-thread reads, and
   ownership reconciliation.
 - [ChatGPT Web Runbook](ChatGPTWebRunbook.md): App-managed Secure MCP Tunnel setup.
 - [Cloudflare Runbook](CloudflareRunbook.md): named-tunnel onboarding,

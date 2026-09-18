@@ -276,7 +276,7 @@ struct Profile: ParsableCommand {
     commandName: "profile",
     subcommands: [
       ProfileList.self, ProfileShow.self, ProfileActivate.self, ProfileGrant.self,
-      ProfileShell.self,
+      ProfileShell.self, ProfilePermissions.self,
     ]
   )
 }
@@ -284,10 +284,11 @@ struct Profile: ParsableCommand {
 struct ProfileActivate: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "activate")
   @Argument var id: String
+  @OptionGroup var connection: AppControlConnectionOptions
 
   func run() async throws {
     printJSON(
-      try await AppControlPlaneServiceClient.live().call(
+      try await connection.client().call(
         "profile.activate",
         arguments: .object(["profile": .string(id)])
       )
@@ -297,17 +298,19 @@ struct ProfileActivate: AsyncParsableCommand {
 
 struct ProfileList: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "list")
+  @OptionGroup var connection: AppControlConnectionOptions
   func run() async throws {
-    printJSON(try await AppControlPlaneServiceClient.live().call("profile.list"))
+    printJSON(try await connection.client().call("profile.list"))
   }
 }
 
 struct ProfileShow: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "show")
   @Argument var id: String
+  @OptionGroup var connection: AppControlConnectionOptions
   func run() async throws {
     printJSON(
-      try await AppControlPlaneServiceClient.live().call(
+      try await connection.client().call(
         "profile.show", arguments: .object(["profile": .string(id)])
       )
     )
@@ -319,9 +322,10 @@ struct ProfileGrant: AsyncParsableCommand {
   @Argument var id: String
   @Option(name: .long) var workspace: String
   @Flag(name: .long, inversion: .prefixedNo) var enabled = true
+  @OptionGroup var connection: AppControlConnectionOptions
   func run() async throws {
     printJSON(
-      try await AppControlPlaneServiceClient.live().call(
+      try await connection.client().call(
         "profile.grant",
         arguments: .object([
           "profile": .string(id), "workspace_id": .string(workspace),
@@ -335,15 +339,16 @@ struct ProfileGrant: AsyncParsableCommand {
 struct ProfileShell: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "shell",
-    abstract: "Enable or disable Full Shell for an eligible profile."
+    abstract: "Separately allow or revoke arbitrary execution in local-full-access mode."
   )
 
   @Argument var id: String
   @Flag(name: .long, inversion: .prefixedNo) var enabled = true
+  @OptionGroup var connection: AppControlConnectionOptions
 
   func run() async throws {
     printJSON(
-      try await AppControlPlaneServiceClient.live().call(
+      try await connection.client().call(
         "profile.shell",
         arguments: .object([
           "profile": .string(id), "enabled": .bool(enabled),
@@ -352,6 +357,69 @@ struct ProfileShell: AsyncParsableCommand {
     )
   }
 }
+
+struct ProfilePermissions: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "permissions",
+    abstract: "Update host permissions without restarting the gateway or stopping active work.",
+    discussion:
+      "Unspecified settings are preserved. Run profile show first; use --expected-revision to reject a stale edit. Full Access does not automatically grant arbitrary execution or change Codex's native permissions."
+  )
+
+  @Argument(help: "Profile ID from profile list.") var id: String
+  @OptionGroup var connection: AppControlConnectionOptions
+  @Option(name: .long) var mode: GatewayPermissionMode?
+  @Option(name: .long) var confirmationPolicy: GatewayConfirmationPolicy?
+  @Flag(name: .long, inversion: .prefixedNo) var arbitraryExecution: Bool?
+  @Option(
+    name: .long, help: "Replace tool grants with comma-separated IDs; an empty value clears them.")
+  var capabilities: String?
+  @Option(name: .long, help: "Replace granted workspace IDs; comma-separated, empty clears them.")
+  var workspaces: String?
+  @Option(name: .long, help: "Replace MCP registration grants; comma-separated, empty clears them.")
+  var mcpServers: String?
+  @Option(
+    name: .long, help: "Replace allowed caller kinds; comma-separated, empty denies all callers.")
+  var allowedCallers: String?
+  @Option(name: .long, help: "Authorization revision returned by profile show.")
+  var expectedRevision: Int64?
+
+  func run() async throws {
+    var arguments: [String: JSONValue] = ["profile": .string(id)]
+    if let mode { arguments["mode"] = .string(mode.rawValue) }
+    if let confirmationPolicy {
+      arguments["confirmation_policy"] = .string(confirmationPolicy.rawValue)
+    }
+    if let arbitraryExecution { arguments["full_shell_enabled"] = .bool(arbitraryExecution) }
+    for (key, value) in [
+      ("capabilities", capabilities), ("workspaces", workspaces),
+      ("mcp_servers", mcpServers), ("allowed_callers", allowedCallers),
+    ] {
+      if let value {
+        arguments[key] = .array(
+          value.split(separator: ",").map {
+            .string($0.trimmingCharacters(in: .whitespacesAndNewlines))
+          })
+      }
+    }
+    guard arguments.count > 1 else {
+      throw ValidationError(
+        "Provide at least one permission setting; use profile show to read settings.")
+    }
+    if let expectedRevision {
+      guard expectedRevision >= 0 else {
+        throw ValidationError("--expected-revision must not be negative.")
+      }
+      arguments["expected_revision"] = .number(Double(expectedRevision))
+    }
+    printJSON(
+      try await connection.client().call(
+        "profile.permissions", arguments: .object(arguments)))
+  }
+}
+
+extension GatewayPermissionMode: ExpressibleByArgument {}
+extension GatewayConfirmationPolicy: ExpressibleByArgument {}
 
 struct Tunnel: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -540,16 +608,62 @@ struct CloudflareTunnelRemove: AsyncParsableCommand {
 struct Permissions: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "permissions",
-    abstract: "Inspect macOS permissions without prompting.",
-    subcommands: [PermissionsStatus.self]
+    abstract: "Inspect macOS permissions and resolve host operation approvals locally.",
+    subcommands: [PermissionsStatus.self, PermissionApprovals.self]
   )
 }
 
 struct PermissionsStatus: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "status")
+  @OptionGroup var connection: AppControlConnectionOptions
 
   func run() async throws {
-    printJSON(try await AppControlPlaneServiceClient.live().call("permissions.status"))
+    printJSON(try await connection.client().call("permissions.status"))
+  }
+}
+
+struct PermissionApprovals: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "approvals",
+    abstract: "Review and resolve host approvals; does not change Codex native approvals.",
+    subcommands: [List.self, Approve.self, Deny.self])
+
+  struct List: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "list")
+    @Option(name: .long) var limit = 100
+    @OptionGroup var connection: AppControlConnectionOptions
+    func run() async throws {
+      guard (1...500).contains(limit) else {
+        throw ValidationError("--limit must be between 1 and 500.")
+      }
+      printJSON(
+        try await connection.client().call(
+          "approvals.list", arguments: .object(["limit": .number(Double(limit))])))
+    }
+  }
+
+  struct Approve: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "approve",
+      abstract: "Approve one exact pending host operation after reviewing its details.")
+    @Argument(help: "Ticket ID from approvals list.") var id: String
+    @OptionGroup var connection: AppControlConnectionOptions
+    func run() async throws {
+      printJSON(
+        try await connection.client().call(
+          "approvals.approve", arguments: .object(["id": .string(id)])))
+    }
+  }
+
+  struct Deny: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "deny")
+    @Argument(help: "Ticket ID from approvals list.") var id: String
+    @OptionGroup var connection: AppControlConnectionOptions
+    func run() async throws {
+      printJSON(
+        try await connection.client().call(
+          "approvals.deny", arguments: .object(["id": .string(id)])))
+    }
   }
 }
 

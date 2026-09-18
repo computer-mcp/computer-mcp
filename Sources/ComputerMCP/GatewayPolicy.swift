@@ -42,10 +42,6 @@ package struct GatewayProfileID: RawRepresentable, Codable, Hashable, Sendable {
     .localAdmin,
   ]
 
-  package var supportsFullShell: Bool {
-    self == .chatGPTOperate || self == .localAdmin
-  }
-
   private static func isValid(_ value: String) -> Bool {
     guard !value.isEmpty, value.utf8.count <= 128 else {
       return false
@@ -96,6 +92,38 @@ package enum CapabilityRisk: String, Codable, Equatable, Sendable {
   case fullShell = "full-shell"
 }
 
+package enum GatewayPermissionMode: String, Codable, CaseIterable, Sendable {
+  case readOnly = "read-only"
+  case workspaceOperations = "workspace-operations"
+  case localFullAccess = "local-full-access"
+
+  /// The source configuration granted risk ceilings by built-in profile identity.
+  package static func legacy(profileID: GatewayProfileID, fullShellEnabled: Bool) -> Self {
+    if profileID == .chatGPTObserve || profileID == .cloudflareObserve { return .readOnly }
+    if fullShellEnabled && (profileID == .chatGPTOperate || profileID == .localAdmin) {
+      return .localFullAccess
+    }
+    return .workspaceOperations
+  }
+}
+
+package enum GatewayConfirmationPolicy: String, Codable, CaseIterable, Sendable {
+  case riskBased = "risk-based"
+  case allWrites = "all-writes"
+  case never
+
+  package func requiresConfirmation(for risk: CapabilityRisk) -> Bool {
+    switch self {
+    case .riskBased:
+      risk == .externalWrite || risk == .destructive || risk == .fullShell
+    case .allWrites:
+      risk != .readOnly
+    case .never:
+      false
+    }
+  }
+}
+
 package enum WorkspaceRequirement: String, Codable, Sendable {
   case none
   case optional
@@ -139,19 +167,28 @@ package struct ExecutionContext: Codable, Equatable, Sendable {
   package var profileID: GatewayProfileID
   package var workspaceID: String?
   package var transportTrace: GatewayTransportTrace?
+  /// Established by the host's authenticated admission path, never by tool arguments.
+  package var trustedPrincipalID: String?
+
+  package var principalID: String {
+    if let trustedPrincipalID, !trustedPrincipalID.isEmpty { return trustedPrincipalID }
+    return "\(caller.rawValue):\(profileID.rawValue)"
+  }
 
   package init(
     requestID: String = UUID().uuidString,
     caller: GatewayCallerKind,
     profileID: GatewayProfileID,
     workspaceID: String? = nil,
-    transportTrace: GatewayTransportTrace? = nil
+    transportTrace: GatewayTransportTrace? = nil,
+    trustedPrincipalID: String? = nil
   ) {
     self.requestID = requestID
     self.caller = caller
     self.profileID = profileID
     self.workspaceID = workspaceID
     self.transportTrace = transportTrace
+    self.trustedPrincipalID = trustedPrincipalID
   }
 }
 
@@ -162,6 +199,11 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   package var allowedCallers: Set<GatewayCallerKind>
   package var fullShellEnabled: Bool
   package var mcpServerIDs: Set<String>
+  package var mode: GatewayPermissionMode
+  package var confirmationPolicy: GatewayConfirmationPolicy
+  package var authorizationRevision: Int64
+
+  package var supportsFullShell: Bool { mode == .localFullAccess }
 
   package init(
     id: GatewayProfileID,
@@ -169,7 +211,10 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     workspaceIDs: Set<String> = [],
     allowedCallers: Set<GatewayCallerKind>,
     fullShellEnabled: Bool = false,
-    mcpServerIDs: Set<String> = []
+    mcpServerIDs: Set<String> = [],
+    mode: GatewayPermissionMode = .readOnly,
+    confirmationPolicy: GatewayConfirmationPolicy = .riskBased,
+    authorizationRevision: Int64 = 1
   ) {
     self.id = id
     self.capabilityIDs = capabilityIDs
@@ -177,10 +222,14 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     self.allowedCallers = allowedCallers
     self.fullShellEnabled = fullShellEnabled
     self.mcpServerIDs = mcpServerIDs
+    self.mode = mode
+    self.confirmationPolicy = confirmationPolicy
+    self.authorizationRevision = authorizationRevision
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, capabilityIDs, workspaceIDs, allowedCallers, fullShellEnabled, mcpServerIDs
+    case mode, confirmationPolicy, authorizationRevision
   }
 
   package init(from decoder: any Decoder) throws {
@@ -191,6 +240,14 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     allowedCallers = try container.decode(Set<GatewayCallerKind>.self, forKey: .allowedCallers)
     fullShellEnabled = try container.decode(Bool.self, forKey: .fullShellEnabled)
     mcpServerIDs = try container.decodeIfPresent(Set<String>.self, forKey: .mcpServerIDs) ?? []
+    mode =
+      try container.decodeIfPresent(GatewayPermissionMode.self, forKey: .mode)
+      ?? .legacy(profileID: id, fullShellEnabled: fullShellEnabled)
+    confirmationPolicy =
+      try container.decodeIfPresent(GatewayConfirmationPolicy.self, forKey: .confirmationPolicy)
+      ?? .riskBased
+    authorizationRevision =
+      try container.decodeIfPresent(Int64.self, forKey: .authorizationRevision) ?? 0
   }
 
   package static let observe = ProfileGrant(
@@ -202,7 +259,8 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   package static let operate = ProfileGrant(
     id: .chatGPTOperate,
     capabilityIDs: [],
-    allowedCallers: [.secureTunnel]
+    allowedCallers: [.secureTunnel],
+    mode: .workspaceOperations
   )
 
   package static let cloudflareObserve = ProfileGrant(
@@ -214,14 +272,17 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   package static let cloudflareOperate = ProfileGrant(
     id: .cloudflareOperate,
     capabilityIDs: [],
-    allowedCallers: [.cloudflareTunnel]
+    allowedCallers: [.cloudflareTunnel],
+    mode: .workspaceOperations
   )
 
   package static let localAdmin = ProfileGrant(
     id: .localAdmin,
     capabilityIDs: ["*"],
+    workspaceIDs: ["*"],
     allowedCallers: [.localApp, .localCLI, .localMCP],
-    fullShellEnabled: true
+    fullShellEnabled: true,
+    mode: .localFullAccess
   )
 
   package static let fullShellCapabilities: Set<String> = [
@@ -239,7 +300,8 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     guard persisted.id == id else {
       return self
     }
-    let effectiveFullShellEnabled = persisted.fullShellEnabled && id.supportsFullShell
+    if persisted.authorizationRevision > 0 { return persisted }
+    let effectiveFullShellEnabled = persisted.fullShellEnabled && persisted.supportsFullShell
     var effectiveCapabilities = capabilityIDs
     if effectiveFullShellEnabled {
       effectiveCapabilities.formUnion(Self.fullShellCapabilities)
@@ -250,7 +312,10 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
       workspaceIDs: persisted.workspaceIDs,
       allowedCallers: allowedCallers,
       fullShellEnabled: effectiveFullShellEnabled,
-      mcpServerIDs: mcpServerIDs
+      mcpServerIDs: mcpServerIDs,
+      mode: persisted.mode,
+      confirmationPolicy: persisted.confirmationPolicy,
+      authorizationRevision: 0
     )
   }
 
@@ -258,16 +323,17 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     if id == .localAdmin && allowedCallers.contains(where: \.isRemote) {
       throw GatewayPolicyConfigurationError.localAdminCannotBeRemote
     }
-    if id == .chatGPTObserve && fullShellEnabled {
-      throw GatewayPolicyConfigurationError.observeCannotEnableFullShell
-    }
-    if fullShellEnabled && !id.supportsFullShell {
-      throw GatewayPolicyConfigurationError.fullShellProfileNotAllowed(id)
+    if fullShellEnabled && !supportsFullShell {
+      throw GatewayPolicyConfigurationError.fullShellRequiresFullAccess
     }
   }
 
   package func permitsRisk(_ risk: CapabilityRisk) -> Bool {
-    !(id == .chatGPTObserve || id == .cloudflareObserve) || risk == .readOnly
+    switch mode {
+    case .readOnly: risk == .readOnly
+    case .workspaceOperations: risk != .fullShell
+    case .localFullAccess: true
+    }
   }
 
   package func grants(_ capability: CapabilityDescriptor) -> Bool {
@@ -289,23 +355,21 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
     "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
     "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
-    "mcp.requests.list", "mcp.requests.cancel",
+    "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel",
   ]
 }
 
 package enum GatewayPolicyConfigurationError: Error, LocalizedError, Equatable {
   case localAdminCannotBeRemote
-  case observeCannotEnableFullShell
-  case fullShellProfileNotAllowed(GatewayProfileID)
+  case fullShellRequiresFullAccess
 
   package var errorDescription: String? {
     switch self {
     case .localAdminCannotBeRemote:
       return "local-admin must never allow a remote caller."
-    case .observeCannotEnableFullShell:
-      return "chatgpt-observe cannot enable Full Shell."
-    case .fullShellProfileNotAllowed(let profile):
-      return "Full Shell is not allowed for profile '\(profile.rawValue)'."
+    case .fullShellRequiresFullAccess:
+      return
+        "Arbitrary execution requires local-full-access mode and separate Full Shell permission."
     }
   }
 }
@@ -375,17 +439,18 @@ package struct GatewayPolicyEvaluator: Sendable {
       )
     }
 
+    if capability.risk == .fullShell && (!grant.supportsFullShell || !grant.fullShellEnabled) {
+      return .deny(
+        code: .fullShellDisabled,
+        message:
+          "Arbitrary execution requires local-full-access mode and separate Full Shell permission."
+      )
+    }
+
     guard grant.permitsRisk(capability.risk) else {
       return .deny(
         code: .readOnlyProfile,
-        message: "Observe profiles require a host-classified read-only capability.")
-    }
-
-    if capability.risk == .fullShell && !grant.fullShellEnabled {
-      return .deny(
-        code: .fullShellDisabled,
-        message: "Full Shell must be enabled for the active profile in Computer MCP."
-      )
+        message: "Read-only mode requires a host-classified read-only capability.")
     }
 
     if capability.workspaceRequirement == .required {
@@ -396,7 +461,7 @@ package struct GatewayPolicyEvaluator: Sendable {
         )
       }
       guard registeredWorkspaceIDs.contains(workspaceID),
-        grant.workspaceIDs.contains(workspaceID) || grant.capabilityIDs.contains("*")
+        grant.workspaceIDs.contains(workspaceID) || grant.workspaceIDs.contains("*")
       else {
         return .deny(
           code: .workspaceDenied,
@@ -405,7 +470,7 @@ package struct GatewayPolicyEvaluator: Sendable {
       }
     } else if let workspaceID = context.workspaceID {
       guard registeredWorkspaceIDs.contains(workspaceID),
-        grant.workspaceIDs.contains(workspaceID) || grant.capabilityIDs.contains("*")
+        grant.workspaceIDs.contains(workspaceID) || grant.workspaceIDs.contains("*")
       else {
         return .deny(
           code: .workspaceDenied,

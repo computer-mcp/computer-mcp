@@ -109,9 +109,6 @@ final class CapabilityFixturePlanTests {
       "codex.app.status",
       "codex.app.thread.list",
       "codex.exec.list",
-      "codex.mcp.calls.list",
-      "codex.mcp.status",
-      "codex.mcp.tools.list",
     ]
 
     #expect((supported.filter { plan.invocation(for: $0) == nil }) == ([]))

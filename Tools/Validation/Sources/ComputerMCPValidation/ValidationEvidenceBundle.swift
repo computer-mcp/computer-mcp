@@ -207,7 +207,6 @@ public enum ValidationReviewedOutcomePolicy {
   private static let reviewedExpectedFailureTools: Set<String> = [
     "codex.app.apps.list",
     "codex.app.requests.respond",
-    "codex.mcp.approval.respond",
   ]
 }
 

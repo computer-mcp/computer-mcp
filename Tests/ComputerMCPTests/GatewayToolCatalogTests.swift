@@ -314,6 +314,7 @@ struct GatewayToolCatalogTests {
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       workspaces: [.init(id: "fixture", path: fixture.root.path)],
+      profiles: [Self.catalogProfile],
       mcp: .init(servers: [fixture.server]), workspaceDirectory: fixture.root)
     let manifest = fixture.root.appendingPathComponent("gateway.toml")
     try Data(configuration.exportedTOML().utf8).write(to: manifest)
@@ -364,6 +365,7 @@ struct GatewayToolCatalogTests {
     defer { fixture.cleanup() }
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
+      profiles: [Self.catalogProfile],
       mcp: .init(servers: [fixture.server]))
     let nativeConfiguration = configuration
     let nativeRuntime = try await BlockingOperationExecutor(label: "catalog-test-native").perform {
@@ -525,6 +527,14 @@ struct GatewayToolCatalogTests {
       await nativeRuntime.shutdown()
       throw error
     }
+  }
+
+  private static var catalogProfile: ProfileGrantConfig {
+    .init(
+      id: .localAdmin,
+      capabilities: ["native.advance", "native.sample", "native.added"],
+      workspaces: ["fixture"], allowedCallers: [.localMCP],
+      mode: .workspaceOperations, confirmationPolicy: .never)
   }
 
   private static func nextEvent(_ stream: AsyncStream<Void>) async throws -> Bool {

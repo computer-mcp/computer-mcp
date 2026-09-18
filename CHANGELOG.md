@@ -4,6 +4,18 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.2.0 — 2026-09-19
+
+- Add independent host permission modes, revision-bound grants, local approval
+  previews and immediate revocation through the App and management CLI.
+- Preserve caller identity, scoped plugin state and execution receipts across
+  reconnections, with bounded events, deduplication and explicit unknown outcomes.
+- Align the independent Codex adapter with native configuration, permissions,
+  approvals, thread ownership, worktree leases and execution lifecycles.
+- Fix workspace availability, process cleanup and offline state migration.
+- Unify the bilingual product manual and website around the Computer MCP
+  organization and its CLI, Codex, MCP and Skills integrations.
+
 ## 1.1.4 — 2026-09-15
 
 - Preserve portable plugin settings field names in control reports so exported

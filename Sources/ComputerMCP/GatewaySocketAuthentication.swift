@@ -11,17 +11,21 @@ package enum GatewaySocketConnectionOrigin: String, Codable, Equatable, Sendable
 
 package struct GatewaySocketConnectionIdentity: Codable, Equatable, Sendable {
   package var connectionID: String
+  /// Shared by every connection authenticated as the same local user or credential.
+  package let trustedPrincipalID: String
   package var origin: GatewaySocketConnectionOrigin
   package var tunnelInstanceID: String?
   package var tunnelProfileID: String?
 
   package init(
     connectionID: String = UUID().uuidString,
+    trustedPrincipalID: String,
     origin: GatewaySocketConnectionOrigin,
     tunnelInstanceID: String? = nil,
     tunnelProfileID: String? = nil
   ) {
     self.connectionID = connectionID
+    self.trustedPrincipalID = trustedPrincipalID
     self.origin = origin
     self.tunnelInstanceID = tunnelInstanceID
     self.tunnelProfileID = tunnelProfileID
@@ -180,7 +184,8 @@ enum GatewaySocketAuthenticator {
   static func resolve(
     firstFrame: Data,
     expectedCredentialFile: URL?,
-    expectedUserID: uid_t
+    expectedUserID: uid_t,
+    registeredTunnelPrincipalID: String? = nil
   ) throws -> GatewaySocketHandshakeResolution {
     guard
       let handshake = try? JSONDecoder().decode(
@@ -190,7 +195,8 @@ enum GatewaySocketAuthenticator {
       handshake.protocolName == GatewaySocketHandshake.protocolName
     else {
       return GatewaySocketHandshakeResolution(
-        identity: GatewaySocketConnectionIdentity(origin: .localMCP),
+        identity: GatewaySocketConnectionIdentity(
+          trustedPrincipalID: "local-user:\(expectedUserID)", origin: .localMCP),
         forwardFrame: firstFrame
       )
     }
@@ -211,7 +217,8 @@ enum GatewaySocketAuthenticator {
         )
       }
       return GatewaySocketHandshakeResolution(
-        identity: GatewaySocketConnectionIdentity(origin: handshake.origin),
+        identity: GatewaySocketConnectionIdentity(
+          trustedPrincipalID: "local-user:\(expectedUserID)", origin: handshake.origin),
         forwardFrame: nil
       )
 
@@ -241,6 +248,9 @@ enum GatewaySocketAuthenticator {
       }
       return GatewaySocketHandshakeResolution(
         identity: GatewaySocketConnectionIdentity(
+          trustedPrincipalID: registeredTunnelPrincipalID
+            ?? "credential:sha256:"
+            + SHA256.hash(data: expectedCredential).map { String(format: "%02x", $0) }.joined(),
           origin: .secureTunnel,
           tunnelInstanceID: tunnelInstanceID,
           tunnelProfileID: tunnelProfileID
@@ -324,7 +334,7 @@ package struct GatewaySocketMCPResponseCorrelation: Equatable, Sendable {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if !trimmed.isEmpty, trimmed == value, value.utf8.count <= 1_024,
       value.rangeOfCharacter(from: .controlCharacters) == nil,
-      CodexApprovalRedactor.redactString(value, maximumCharacters: 1_024) == value
+      HostApprovalRedactor.redactString(value, maximumCharacters: 1_024) == value
     {
       return value
     }

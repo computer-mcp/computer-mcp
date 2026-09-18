@@ -946,23 +946,15 @@ final class GatewayConfigurationTests {
     }
   }
 
-  @Test
-  func testSchemaV1AllowsExplicitOperateShellAndRejectsOtherRemoteProfiles() throws {
-    let observeShell = try writeConfig(
-      """
-      schema_version = 1
-
-      [[profiles]]
-      id = "chatgpt-observe"
-      capabilities = ["shell.run"]
-      full_shell_enabled = true
-      """
-    )
-    expectThrows(try GatewayConfiguration.load(path: observeShell)) { error in
-      #expect(error.localizedDescription.contains("chatgpt-observe"))
-    }
-
-    let operateShell = try writeConfig(
+  @Test(
+    arguments: [
+      GatewayProfileID.chatGPTObserve, .chatGPTOperate, .cloudflareObserve, .cloudflareOperate,
+      GatewayProfileID(rawValue: "custom-shell")!,
+    ], GatewayPermissionMode.allCases)
+  func testSchemaV1FullShellEligibilityDependsOnMode(
+    profileID: GatewayProfileID, mode: GatewayPermissionMode
+  ) throws {
+    let manifest = try writeConfig(
       """
       schema_version = 1
 
@@ -970,30 +962,32 @@ final class GatewayConfigurationTests {
       shell_enabled = true
 
       [[profiles]]
-      id = "chatgpt-operate"
+      id = "\(profileID.rawValue)"
       capabilities = ["shell.run"]
+      allowed_callers = ["secure-tunnel", "cloudflare-tunnel"]
+      mode = "\(mode.rawValue)"
       full_shell_enabled = true
       """
     )
-    let operateConfig = try GatewayConfiguration.load(path: operateShell)
-    #expect(operateConfig.policy.shellEnabled)
-    #expect(operateConfig.profileGrant(for: .chatGPTOperate).fullShellEnabled)
-    #expect(operateConfig.profileGrant(for: .chatGPTOperate).capabilityIDs.contains("shell.run"))
-
-    let cloudflareShell = try writeConfig(
-      """
-      schema_version = 1
-
-      [[profiles]]
-      id = "cloudflare-operate"
-      capabilities = ["shell.run"]
-      full_shell_enabled = true
-      """
-    )
-    expectThrows(try GatewayConfiguration.load(path: cloudflareShell)) { error in
-      #expect(error.localizedDescription.contains("cloudflare-operate"))
+    if mode == .localFullAccess {
+      let configuration = try GatewayConfiguration.load(path: manifest)
+      let grant = configuration.profileGrant(for: profileID)
+      #expect(configuration.policy.shellEnabled)
+      #expect(grant.mode == .localFullAccess)
+      #expect(grant.fullShellEnabled)
+      #expect(grant.capabilityIDs == ["shell.run"])
+      #expect(grant.allowedCallers == [.secureTunnel, .cloudflareTunnel])
+    } else {
+      expectThrows(try GatewayConfiguration.load(path: manifest)) { error in
+        #expect(
+          error.localizedDescription.contains(
+            GatewayPolicyConfigurationError.fullShellRequiresFullAccess.localizedDescription))
+      }
     }
+  }
 
+  @Test
+  func testSchemaV1RejectsRemoteCallersForLocalAdministrationProfile() throws {
     let remoteAdmin = try writeConfig(
       """
       schema_version = 1

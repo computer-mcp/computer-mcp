@@ -124,7 +124,11 @@ package enum AppControlCapabilityCatalog {
       "Grant or revoke one workspace for one profile."),
     item(
       "profile.shell", "computer-mcp profile shell",
-      "Enable or disable Full Shell for an eligible profile."),
+      "Separately allow or revoke arbitrary execution in local-full-access mode."),
+    item(
+      "profile.permissions", "computer-mcp profile permissions",
+      "Update explicit permission mode, confirmation policy and advanced grants without restarting."
+    ),
     item(
       "provider.list", "computer-mcp providers list", "List recorded provider health.",
       readOnly: true),
@@ -134,6 +138,15 @@ package enum AppControlCapabilityCatalog {
     item(
       "permissions.status", "computer-mcp permissions status",
       "Read current macOS permission status without prompting.", readOnly: true),
+    item(
+      "approvals.list", "computer-mcp permissions approvals list",
+      "List host operation approval requests and outcomes.", readOnly: true),
+    item(
+      "approvals.approve", "computer-mcp permissions approvals approve",
+      "Approve one pending host operation for its exact request and authorization revision."),
+    item(
+      "approvals.deny", "computer-mcp permissions approvals deny",
+      "Deny one pending host operation."),
     item(
       "plugin.list", "computer-mcp plugins list",
       "Read plugin source selections, settings and resolution diagnostics.",

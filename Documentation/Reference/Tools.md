@@ -209,9 +209,17 @@ Calls wait for the downstream result by default. For a long-running request
 that must remain controllable by a sequential MCP consumer, set
 `wait_for_result` to `false` and supply a nonempty caller-stable `request_id`.
 The call then returns as soon as the downstream request is running. Use
-`mcp.requests.list` to observe it and `mcp.requests.cancel` to send the MCP
-cancellation notification. The persistent provider session remains usable
-after cancellation.
+`mcp.requests.list` for live activity, `mcp.requests.read` for its retained
+result, and `mcp.requests.cancel` to request cancellation.
+
+A supplied `request_id` deduplicates both waiting and start-only calls for the
+same verified principal/profile/workspace and server. It must be nonempty and
+at most 256 UTF-8 bytes. The same id with identical target, input and provider
+configuration refers to the original dispatch; a different input is rejected.
+A waiting retry returns an available complete result or directs the caller to
+the receipt; it never dispatches again because output is missing. Calls without
+an id have no durable deduplication contract. Unknown outcomes must be queried,
+not replayed with a new id as an automatic recovery action.
 
 Arguments:
 
@@ -238,6 +246,26 @@ Start-only arguments:
 }
 ```
 
+## `mcp.events.read`
+
+Reads the retained connection and catalog-change events for one registered
+downstream server. The query never starts or reconnects that server. Events are
+in-memory observations of a particular session, with the latest 512 retained.
+
+Pass `server`, optional `after_cursor` (default `0`), and `max_results` (1–500,
+default `100`). Continue a page using both its `session_id` and `next_cursor`.
+The response includes `oldest_available_cursor`, `latest_event_cursor`,
+`has_more`, and `missed_events`; `cursor_state: "truncated"` reports an evicted
+prefix. A continuation without `session_id` is unbound to an instance and
+reports `session_verified: false`.
+
+A session mismatch, a cursor beyond the current tail, or a continuation whose
+session is unavailable returns an explicit `cursor.*` error. Start again at
+`after_cursor: 0` without `session_id` to inspect the currently retained range;
+this does not recover missing events. With no existing session, an initial read
+returns `not_started` or `unavailable`, `session_id: null`, and an unknown missing
+count (`missed_events: null`), rather than launching a provider.
+
 ## `mcp.requests.list`
 
 Lists active downstream tool requests for one persistent provider session.
@@ -246,8 +274,37 @@ The `request_id` values are the caller-stable identifiers supplied to
 
 ## `mcp.requests.cancel`
 
-Cancels one active downstream request by its caller-stable `request_id`. This
-is a write-capability call and follows the configured operations-ticket policy.
+Requests cancellation of one active downstream request by its caller-stable
+`request_id`. This is a write-capability call and follows host policy. Delivery
+does not prove that downstream execution stopped. Active tracking remains
+until the real response or loss of the executing instance; late completion
+remains queryable. Cancellation status, terminal outcome and cleanup are
+reported separately. Only an owned process whose exit has been observed can
+have confirmed cleanup; remote HTTP cleanup can remain unknown.
+
+## `mcp.requests.read`
+
+Reads the original request receipt without starting a connection or model run.
+Required arguments are `server` and `request_id`; `offset` defaults to zero and
+`max_bytes` defaults to 32768 (range 4–65536). Continue with `next_offset` to read
+bounded UTF-8 JSON fragments. The receipt includes `state`, `cancellation`,
+`cleanup`, `output_state`, byte counts, `has_more` and `truncated`. A complete
+untruncated first page contains `result`; other pages use
+`output_json_fragment`. Out-of-range and non-UTF-8-boundary cursors fail
+explicitly. Reads are repeatable and still require the current tool grant.
+
+Execution states are `dispatching`, `running`, `succeeded`, `failed` and
+`outcome_unknown`. A lost instance cannot turn an unfinished receipt into
+success or regain authority to replay it. `output_state` distinguishes
+`pending`, `available`, `truncated`, `expired` and `unavailable`; a successful
+empty result is not a missing result.
+
+Retention is at most 256 KiB per result for 24 hours, with a 16 MiB aggregate
+output budget. Old output may become unavailable earlier under this budget.
+Up to 10,000 deduplication identities are retained; reaching the limit rejects
+new dispatches before execution instead of evicting identities and risking
+replay. These receipts are not a cross-restart scheduler. Stdio/HTTP providers
+may not support execution recovery, and result loss is reported honestly.
 
 ## `mcp.resources.list`
 
@@ -368,10 +425,14 @@ For prompts, use `mcp.prompts.list` and `mcp.prompts.get`.
 
 Spawn, list, inspect, and cancel long-running commands by registered CLI id.
 `process.list` reports only sessions created through `process.spawn`; it is not
-a macOS process-table tool. The `chatgpt-operate` profile exposes only the
-read-only `process.list` surface. `process.spawn` remains Full Shell-equivalent
-and is never tunnel-exposed; use `policy.probe` when acceptance testing its
-audited denial.
+a macOS process-table tool. The default `chatgpt-operate` grant exposes only
+the read-only `process.list` surface. `process.spawn` is arbitrary execution:
+it requires an explicit capability grant, `local-full-access` mode, separate
+Full Shell permission, and the grant's confirmation policy. These checks apply
+equally to local and Tunnel callers; a Profile's name does not grant access.
+Use `policy.probe` to inspect the effective authorization without execution.
+`process.cancel` reports the owned process lifecycle; downstream MCP cancellation
+uses the separate `mcp.requests.cancel` and receipt-query surfaces.
 
 ## `policy.probe`
 
@@ -391,30 +452,37 @@ Remote workspace tools never register an authorization root. Add or remove a
 workspace through the local App or `computer-mcp workspace …` CLI. Do not use
 Computer Use to operate Computer MCP's own UI as an administration fallback.
 
-`operations.prepare` creates a short-lived, single-use ticket for a configured
-destructive atomic. `operations.commit` executes the exact canonical tool name
-and arguments bound into that ticket. Tickets do not grant capabilities or
-expand a workspace.
+`operations.prepare` creates a short-lived, single-use ticket for an authorized
+write. Depending on the profile's confirmation policy it returns `prepared`
+or `pending_approval`. A direct call requiring confirmation also returns an
+`operations.approval_required` error with the ticket id before any target side
+effect. The local App or `computer-mcp permissions approvals` commands approve
+or deny the request; a remote `confirm` argument cannot do so.
+
+`operations.commit` executes the exact canonical tool name and arguments bound
+into a prepared or locally approved ticket. It checks principal, profile,
+workspace, arguments, target state, expiry and grant revision, then consumes
+the ticket once. Parameter/target changes, rejection, expiry, revocation or
+reuse fail before execution. Tickets do not grant capabilities or expand a
+workspace. A preview that cannot safely fit the review budget is rejected
+instead of presenting an incomplete approval.
 
 ## Codex Provider Tools
 
-The independent Codex MCP plugin exposes five execution and management families.
+The independent Codex MCP plugin exposes four execution and management families.
 The host selects their tool exposure and grants through the MCP registration;
 the adapter owns domain execution and persistence. See
 [Codex migration](CodexMigration.md) for configuration and offline state transfer.
 The execution names below are adapter-native; the MCP registration's prefix
-determines their exported names. The `codex.app.elevation.*` authority tools
-remain host-owned and keep their host names.
+determines their exported names.
 
 - `codex.app.*`: App Server status, reviewed method discovery/call, runtime
   ownership and cleanup, stale ownership reconciliation, thread
-  start/list/read/recent/fork/release/reclaim, handoff diagnosis, scoped
-  execution elevation, native Goal get/set/clear, turns and steering, reviews,
+  start/list/read/recent/fork/release/reclaim, handoff diagnosis,
+  native Goal get/set/clear, turns and steering, reviews,
   models, Skills, apps, events, ordinary user-input requests, and durable
   approvals.
 - `codex.exec.*`: start, resume, list, cursor events, result, and cancel.
-- `codex.mcp.*`: status, upstream tools, run/reply, calls, cursor events,
-  result, approvals, approval response, and cancel.
 - `codex.run.*`: adapter-owned acceptance runs, evidence, evaluation,
   explicit acceptance, state transitions, and selected child reconciliation.
 - `codex.worktree.leases.*`: durable mutation ownership, heartbeat, release,
@@ -450,23 +518,6 @@ safe actions. Product surfaces describe those actions and ownership states in
 natural, contextual language; “重新接管线程” and “检查线程占用” are illustrative
 labels rather than fixed interface copy.
 
-`codex.app.elevation.request|list|read|approve|deny|revoke|effective` is a
-host-owned tool family available under gateway policy independently of the
-Codex execution provider. It manages a separate, durable execution-sandbox
-grant in the Gateway Database. A request does not elevate anything;
-approve/deny are local-admin-only, and an approved grant is atomically consumed
-only by an eligible future thread/turn start. Next-turn, exact-thread TTL, and
-bounded-time modes remain bound to the original workspace canonical root,
-profile, caller, connection, and optional thread. Expiry, revocation,
-workspace/profile disablement, gateway connection closure, and handoff remove future
-effect. The grant changes only Codex's sandbox and does not add Computer MCP
-tools or capabilities.
-
-The host's `effective_sandbox` reports available elevation for a future start:
-`danger-full-access` with a matching grant, otherwise `null`. The adapter owns
-the configured baseline and reports applied runtime permissions; the host does
-not infer them from configuration-import records.
-
 `codex.app.thread.recent` reads a snapshot-bounded tail of a persisted rollout
 and returns metadata, official Goal state, active/recent turns, messages, items,
 and compact progress. Cursor, page bytes, Goal-scan bytes, output bytes, and
@@ -480,18 +531,18 @@ budgets, pause/cancel behavior, contradictions, and acceptance without
 representing those fields as native Codex Goal state. A turn can finish while
 either remains active.
 
-App Server approvals are also separate from the `codex.mcp.*` upstream tool
-approval flow. `codex.app.approvals.list|read|respond` operates the durable
-broker for command, file, permissions, apply-patch, exec-command, and registered
-tool requests. Gateway policy decides whether an operation is eligible before
-approve-once, bounded session approval, denial, or timeout is offered.
-Capability permission and consent remain separate: an allowed mutation can
-still require consent. For gateway-owned builtins with a reviewed non-mutating
-dry-run implementation, invocation preflight reports read-only consent risk;
-for example, `git.add` with `dry_run=true` executes without creating a mutation
-approval. Actual writes retain their original risk. Configured and downstream
-tools are never downgraded from an unverified `dry_run` argument, and no
-remembered decision crosses tool, workspace, profile, caller, or path scope.
+Native `codex.app.approvals.list|read|respond` preserves the official request
+kind, response shape, decision and scope. Respond with `approval_id` and the
+complete native `response` object. A permission response may carry a turn or
+session scope; command and file-change decisions retain their official
+acceptance, rejection and cancellation meanings. Requests for interaction use
+the native user-input surface.
+
+Codex calls to host tools use the host's own permission and operation-ticket
+flow. A native Codex approval does not grant host capabilities or approve a
+host ticket. For host builtins with a verified non-mutating dry-run path,
+preflight uses read-only risk; downstream tools cannot lower their risk by
+supplying an unverified `dry_run` argument.
 
 Managed worktree provisioning is intentionally two step. The plan validates
 the repository, parent lease, branch, start commit, derived path, profile, and
@@ -507,16 +558,16 @@ requires confirmation and, through the Gateway, `operations.prepare` followed
 by `operations.commit`. The workspace registration and profile grant are
 removed, but the branch remains available for review or reconciliation.
 
-All paths use the gateway-selected workspace and audit context, with sandbox,
-approval policy and output bounds configured by the adapter. Raw argv, arbitrary Codex configuration, unscoped or
-caller-supplied `danger-full-access`, login/token mutation, marketplace
-mutation, and remote pairing are not part of this tool surface.
+The host checks tool admission and binds execution ownership to a registered
+workspace. Codex owns its execution configuration: omitted parameters inherit
+the user's configuration; supported explicit parameters retain their native
+meaning, including Full Access. The initial directory is not a containment
+boundary for native arbitrary execution. Account, marketplace, and remote
+pairing management are outside this coding tool surface.
 
-`codex.exec.*` invokes the upstream official `--ignore-user-config` mode. It
-still uses the local user's existing Codex authentication, but does not load
-user-global MCP servers, models, hooks, profiles, or other `config.toml`
-settings. This makes the embedded Exec result depend on the reviewed Gateway
-request instead of unrelated interactive Codex customization.
+`codex.exec.*` reads the user's provider, MCP, Skills and hooks configuration.
+Authentication remains owned by Codex. Native overrides belong in the request's
+`options` object. Host tool callbacks retain their independent host authority.
 
 ## Skills Gateway Contract
 
@@ -5066,8 +5117,10 @@ filtering occurs before truncation.
 ## Full Shell
 
 `shell.run`, `shell.spawn`, `shell.list`, `shell.read`, `shell.write`, and
-`shell.cancel` are available only when the manifest enables Shell and the
-eligible `chatgpt-operate` or `local-admin` profile grant enables Full Shell.
+`shell.cancel` require a profile whose permission mode allows local full
+access, the corresponding capabilities and Full Shell grant, and an enabled
+manifest Shell policy. Profile names and connection channels do not select
+the permission mode.
 
 The plane supports explicit argv or shell-script mode, selected environment,
 workspace/cwd binding, stdin, separate stdout/stderr cursors, timeout,
@@ -5078,6 +5131,8 @@ Full Shell gives the caller the current macOS user's effective terminal
 authority. Prefer typed tools or registered CLI argv execution when that
 authority is unnecessary.
 
-For App-managed profiles, use `computer-mcp profile shell chatgpt-operate` to
-enable the persisted grant after activating a manifest with
-`policy.shell_enabled = true`. Use `--no-enabled` to disable it again.
+For App-managed profiles, configure the permission mode and confirmation policy
+through the local App or management CLI. Shell also requires
+`policy.shell_enabled = true`. Risk-based confirmation requests local approval
+for arbitrary execution; changing its working directory is not process
+sandboxing.

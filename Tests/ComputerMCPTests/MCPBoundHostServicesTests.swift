@@ -15,7 +15,7 @@ struct MCPBoundHostServicesTests {
     let properties = try #require(tool.inputSchema.objectValue?["properties"]?.objectValue)
     #expect(properties["workspace_id"]?.objectValue?["type"] == .string("string"))
     do {
-      _ = try await fixture.genericRelease(workspaceID: nil)
+      _ = try await fixture.genericDiagnostics(workspaceID: nil)
       Issue.record("An ambiguous workspace must be rejected before invoking the plugin.")
     } catch {
       #expect(String(describing: error).contains("workspace_required"))
@@ -24,50 +24,77 @@ struct MCPBoundHostServicesTests {
   }
 
   @Test(arguments: [false, true])
-  func genericReleaseBindsHostCallbackWorkspace(explicitWorkspace: Bool) async throws {
+  func genericDiagnosticsBindTheHostWorkspace(explicitWorkspace: Bool) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let target = try fixture.approved(threadID: "thread-1")
-    let result = try await fixture.genericRelease(
+    let result = try await fixture.genericDiagnostics(
       workspaceID: explicitWorkspace ? "scope" : nil)
     #expect(result.objectValue?["isError"] == .bool(false))
-    #expect(try fixture.database.codexElevationGrant(id: target.id)?.state == .invalidated)
+    #expect(fixture.payload(result)["owner"]?.objectValue?["workspace_id"] == .string("scope"))
     await fixture.close()
   }
 
-  @Test(arguments: ["release", "wrong-thread", "wrong-method", "no-invocation"], [false, true])
-  func threadReleaseInvalidatesUnusedGrantsOnlyWithinItsLiveScope(
-    mode: String, persistedProfile: Bool
-  ) async throws {
-    let fixture = try HostAuthorityFixture(persistedProfile: persistedProfile)
+  @Test(arguments: ["no-invocation", "wrong-method", "extra-owner", "caller-time"])
+  func diagnosticCallbacksRequireAnExactLiveInvocation(attack: String) async throws {
+    let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let target = try fixture.approved(threadID: "thread-1")
-    let otherThread = try fixture.approved(threadID: "thread-2")
-    let otherConnection = try fixture.approved(threadID: "thread-1", connection: "other")
-    let unbound = try fixture.approved(threadID: nil)
-    let arguments: [String: JSONValue] = [
-      "runtime_ids": .array([]), "thread_id": .string("thread-1"),
-      "reason": .string("Thread released"),
-    ]
+    var arguments: [String: JSONValue] = ["limit": .number(1)]
+    if attack == "extra-owner" { arguments["profile_id"] = .string("local-admin") }
+    if attack == "caller-time" { arguments["now"] = .number(1) }
     let result: JSONValue
-    if mode == "no-invocation" {
-      result = try await fixture.direct("host.elevation.invalidate", arguments)
+    if attack == "no-invocation" {
+      result = try await fixture.direct("host.diagnostics.snapshot", arguments)
     } else {
+      let args = arguments
       result = try await fixture.during(
-        mode == "wrong-method" ? "codex.app.turn.start" : "codex.app.thread.release",
-        ["thread_id": .string(mode == "wrong-thread" ? "thread-2" : "thread-1")]
+        attack == "wrong-method" ? "codex.app.thread.start" : "codex.diagnostics.snapshot",
+        ["limit": .number(1)]
       ) { service in
-        try await .encoded(service.call(name: "host.elevation.invalidate", arguments: arguments))
+        try await .encoded(service.call(name: "host.diagnostics.snapshot", arguments: args))
       }
     }
-    #expect(result.objectValue?["isError"] == .bool(mode != "release"))
-    #expect(
-      try fixture.database.codexElevationGrant(id: target.id)?.state
-        == (mode == "release" ? .invalidated : .approved))
-    for grant in [otherThread, otherConnection, unbound] {
-      #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .approved)
+    #expect(result.objectValue?["isError"] == .bool(true))
+    await fixture.close()
+  }
+
+  @Test
+  func invocationEndsOnBothSuccessAndError() async throws {
+    let fixture = try HostAuthorityFixture()
+    defer { fixture.remove() }
+    for fails in [false, true] {
+      if fails {
+        await #expect(throws: (any Error).self) {
+          try await fixture.during("codex.diagnostics.snapshot") { _ in
+            throw MCPHostServiceError.denied("Fixture failure")
+          }
+        }
+      } else {
+        _ = try await fixture.during("codex.diagnostics.snapshot") { _ in .object([:]) }
+      }
+      let result = try await fixture.direct("host.diagnostics.snapshot", ["limit": .number(1)])
+      #expect(result.objectValue?["isError"] == .bool(true))
     }
     await fixture.close()
+  }
+
+  @Test
+  func privateServiceSurfaceIsNotExposedUpstream() async throws {
+    let fixture = try HostAuthorityFixture()
+    defer { fixture.remove() }
+    #expect(try !fixture.runtime.listTools().contains { $0.name.hasPrefix("host.") })
+    #expect(
+      Set(MCPBoundHostServices.tools.map(\.name)) == [
+        "host.workspaces.register", "host.workspaces.authorize_removal",
+        "host.workspaces.unregister", "host.diagnostics.snapshot",
+      ])
+    let result = try await fixture.direct("host.unknown", [:])
+    #expect(result.objectValue?["isError"] == .bool(true))
+    await fixture.close()
+    #expect(await fixture.service.cleanupConfirmed)
+    await #expect(throws: (any Error).self) {
+      try await fixture.service.call(
+        name: "host.diagnostics.snapshot", arguments: ["limit": .number(1)])
+    }
   }
 
   @Test
@@ -125,214 +152,56 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["no-invocation", "wrong-thread", "extra-owner", "caller-time", "wrong-action"])
-  func activationCannotInventAnInvocationOrScope(attack: String) async throws {
-    let fixture = try HostAuthorityFixture()
+  @Test(arguments: ["missing", "other-principal"])
+  func derivedReceiptMustBelongToTheVerifiedPrincipal(principal: String) async throws {
+    let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
-    let grant = try fixture.approved(threadID: "thread-1")
-    var arguments: [String: JSONValue] = [
-      "runtime_id": .string("runtime"), "action": .string("turn-start"),
-      "thread_id": .string("thread-1"),
-    ]
-    if attack == "wrong-thread" { arguments["thread_id"] = .string("thread-other") }
-    if attack == "extra-owner" { arguments["profile_id"] = .string("local-admin") }
-    if attack == "caller-time" { arguments["now"] = .number(1) }
-    if attack == "wrong-action" { arguments["action"] = .string("thread-start") }
-    let result: JSONValue
-    if attack == "no-invocation" {
-      result = try await fixture.direct("host.elevation.claim", arguments)
-    } else {
-      let args = arguments
-      result = try await fixture.during("codex.app.turn.start", ["thread_id": .string("thread-1")])
-      { service in
-        try await .encoded(service.call(name: "host.elevation.claim", arguments: args))
-      }
-    }
-    #expect(result.objectValue?["isError"] == .bool(true))
-    let stored = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-    #expect(stored.state == .approved && stored.inFlightClaimID == nil)
-    await fixture.close()
-  }
-
-  @Test
-  func claimCannotBeReplayedInLaterOrDifferentNativeInvocation() async throws {
-    let fixture = try HostAuthorityFixture()
-    defer { fixture.remove() }
-    let grant = try fixture.approved(threadID: nil)
-    let claimed = try await fixture.during("codex.app.thread.start") { service in
+    var receipt = try fixture.worktreeReceipt()
+    receipt["principal_id"] = principal == "missing" ? nil : .string(principal)
+    let wireReceipt = receipt
+    let result = try await fixture.during(
+      "codex.worktree.provision.perform",
+      [
+        "plan_id": receipt["id"]!, "expected_revision": .number(1),
+        "confirm_provision": .bool(true),
+      ]
+    ) { service in
       try await .encoded(
         service.call(
-          name: "host.elevation.claim",
-          arguments: ["runtime_id": .string("runtime"), "action": .string("thread-start")]))
+          name: "host.workspaces.register", arguments: ["worktree": .object(wireReceipt)]))
     }
-    let id = try #require(fixture.payload(claimed)["id"]?.stringValue)
-    for runtime in ["other-runtime", "runtime"] {
-      let result = try await fixture.during("codex.app.thread.start") { service in
-        try await .encoded(
-          service.call(
-            name: "host.elevation.commit",
-            arguments: [
-              "claim_id": .string(id), "runtime_id": .string(runtime),
-              "thread_id": .string("thread-new"),
-            ]))
-      }
-      #expect(result.objectValue?["isError"] == .bool(true))
-    }
-    #expect(try fixture.database.codexElevationGrant(id: grant.id)?.inFlightClaimID == id)
-    let invalidated = try await fixture.direct(
-      "host.elevation.invalidate_claim",
-      ["claim_id": .string(id), "reason": .string("Original start failed")])
-    #expect(invalidated.objectValue?["isError"] == .bool(false))
-    #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .invalidated)
+    #expect(result.objectValue?["isError"] == .bool(true))
+    #expect(
+      try fixture.database.derivedWorkspaceRegistration(id: receipt["workspace_id"]!.stringValue!)
+        == nil)
     await fixture.close()
   }
 
   @Test
-  func closingConnectionInvalidatesOnlyItsOwnCommittedGrant() async throws {
-    let fixture = try HostAuthorityFixture()
+  func receiptCallerIsProvenanceRatherThanResourceOwnership() async throws {
+    let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
-    let grant = try fixture.approved(threadID: nil)
-    let unrelated = try fixture.approved(threadID: nil, connection: "other-connection")
-    let result = try await fixture.during("codex.app.thread.start") { service in
-      let response = try await service.call(
-        name: "host.elevation.claim",
-        arguments: ["runtime_id": .string("runtime"), "action": .string("thread-start")])
-      let id = try #require(
-        response.structuredContent?.objectValue?["result"]?.objectValue?["id"]?.stringValue)
-      return try await .encoded(
+    var receipt = try fixture.worktreeReceipt()
+    receipt["caller"] = .string("local-cli")
+    let wireReceipt = receipt
+    let result = try await fixture.during(
+      "codex.worktree.provision.perform",
+      [
+        "plan_id": receipt["id"]!, "expected_revision": .number(1),
+        "confirm_provision": .bool(true),
+      ]
+    ) { service in
+      try await .encoded(
         service.call(
-          name: "host.elevation.commit",
-          arguments: [
-            "claim_id": .string(id), "runtime_id": .string("runtime"),
-            "thread_id": .string("thread-bound"),
-          ]))
+          name: "host.workspaces.register", arguments: ["worktree": .object(wireReceipt)]))
     }
     #expect(result.objectValue?["isError"] == .bool(false))
-    #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .active)
-    await fixture.close()
-    #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .invalidated)
-    #expect(try fixture.database.codexElevationGrant(id: unrelated.id)?.state == .approved)
-  }
-
-  @Test
-  func unsuccessfulGrantCleanupRemainsUnconfirmedAndCanBeRetried() async throws {
-    let fixture = try HostAuthorityFixture()
-    defer { fixture.remove() }
-    let grant = try fixture.approved(threadID: nil)
-    _ = try await fixture.during("codex.app.thread.start") { service in
-      let response = try await service.call(
-        name: "host.elevation.claim",
-        arguments: ["runtime_id": .string("runtime"), "action": .string("thread-start")])
-      let id = try #require(
-        response.structuredContent?.objectValue?["result"]?.objectValue?["id"]?.stringValue)
-      return try await .encoded(
-        service.call(
-          name: "host.elevation.commit",
-          arguments: [
-            "claim_id": .string(id), "runtime_id": .string("runtime"),
-            "thread_id": .string("thread-bound"),
-          ]))
-    }
-    _ = try fixture.database.updateCodexElevationGrant(id: grant.id) { value in
-      value.consumedRuntimeIDs = ["independent-runtime"]
-    }
-    await fixture.service.close()
-    #expect(await !fixture.service.cleanupConfirmed)
-    #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .active)
-    _ = try fixture.database.updateCodexElevationGrant(id: grant.id) { value in
-      value.consumedRuntimeIDs = ["runtime"]
-    }
-    await fixture.service.close()
-    #expect(await fixture.service.cleanupConfirmed)
-    #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .invalidated)
-    await fixture.close()
-  }
-
-  @Test
-  func unrelatedRecentGrantsDoNotConsumeTheRequestersPage() async throws {
-    let fixture = try HostAuthorityFixture()
-    defer { fixture.remove() }
-    let own = try fixture.approved(threadID: nil)
-    _ = try fixture.approved(threadID: nil, connection: "newer-other-connection")
-    let owner = CodexRuntimeOwner(
-      workspaceID: "scope", profileID: "chatgpt-operate",
-      caller: "secure-tunnel", transport: "gateway_socket", socketConnectionID: "connection",
-      tunnelInstanceID: nil, tunnelProfileID: nil)
-    let grants = try CodexElevationGrantService.visibleGrants(
-      owner: owner,
-      database: fixture.database, limit: 1)
-    #expect(grants.map(\.id) == [own.id])
     #expect(
-      try CodexElevationGrantService.visibleGrants(
-        owner: nil,
-        database: fixture.database, limit: 1
-      ).isEmpty)
+      try fixture.database.derivedWorkspaceRegistration(id: receipt["workspace_id"]!.stringValue!)?
+        .principalID == "fixture-principal")
     await fixture.close()
   }
 
-  @Test
-  func invocationEndsOnBothSuccessAndError() async throws {
-    let fixture = try HostAuthorityFixture()
-    defer { fixture.remove() }
-    for fails in [false, true] {
-      if fails {
-        await #expect(throws: (any Error).self) {
-          try await fixture.during("codex.app.thread.start") { _ in
-            throw MCPHostServiceError.denied("Fixture failure")
-          }
-        }
-      } else {
-        _ = try await fixture.during("codex.app.thread.start") { _ in .object([:]) }
-      }
-      let result = try await fixture.direct(
-        "host.elevation.claim",
-        ["runtime_id": .string("runtime"), "action": .string("thread-start")])
-      #expect(result.objectValue?["isError"] == .bool(true))
-    }
-    await fixture.close()
-  }
-
-  @Test
-  func privateServiceSurfaceIsNotExposedUpstreamAndDoesNotApproveGrants() async throws {
-    let fixture = try HostAuthorityFixture()
-    defer { fixture.remove() }
-    #expect(try !fixture.runtime.listTools().contains { $0.name.hasPrefix("host.") })
-    #expect(
-      !MCPBoundHostServices.tools.contains {
-        $0.name.contains("approve") || $0.name.contains("request")
-      })
-    let result = try await fixture.direct("host.elevation.approve", ["id": .string("unowned")])
-    #expect(result.objectValue?["isError"] == .bool(true))
-    await fixture.close()
-  }
-
-  @Test
-  func expiredGrantCannotCommitUsingACallerSuppliedEarlierClock() async throws {
-    let fixture = try HostAuthorityFixture()
-    defer { fixture.remove() }
-    let grant = try fixture.approved(threadID: nil)
-    let database = fixture.database
-    let result = try await fixture.during("codex.app.thread.start") { service in
-      let claimed = try await service.call(
-        name: "host.elevation.claim",
-        arguments: ["runtime_id": .string("runtime"), "action": .string("thread-start")])
-      let id = try #require(
-        claimed.structuredContent?.objectValue?["result"]?.objectValue?["id"]?.stringValue)
-      _ = try database.updateCodexElevationGrant(id: grant.id) { record in
-        record.expiresAt = Date().addingTimeInterval(-1)
-      }
-      return try await .encoded(
-        service.call(
-          name: "host.elevation.commit",
-          arguments: [
-            "claim_id": .string(id), "runtime_id": .string("runtime"),
-            "thread_id": .string("thread"),
-          ]))
-    }
-    #expect(result.objectValue?["isError"] == .bool(true))
-    #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .expired)
-    await fixture.close()
-  }
 }
 
 /// Explicit protocol peer substitute for negative host authorization tests.
@@ -362,7 +231,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       try database.saveProfile(
         .init(
           id: .chatGPTOperate, capabilityIDs: Set(caps), workspaceIDs: ["scope"],
-          allowedCallers: [.secureTunnel]))
+          allowedCallers: [.secureTunnel], mode: .workspaceOperations))
     }
     runtime = try GatewayRuntime(
       configuration: .init(
@@ -370,7 +239,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         profiles: [
           .init(
             id: .chatGPTOperate, capabilities: caps, workspaces: ["scope"],
-            allowedCallers: [.secureTunnel])
+            allowedCallers: [.secureTunnel], mode: .workspaceOperations)
         ],
         mcp: .init(servers: [
           .init(
@@ -382,7 +251,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         ])),
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate,
-        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "connection")),
+        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "connection"),
+        trustedPrincipalID: "fixture-principal"),
       database: database, registeredWorkspaces: workspaces, mcpClient: peer)
     let captured = try #require(peer.context)
     if worktrees {
@@ -392,7 +262,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         runtimeID: captured.runtimeID,
         context: .init(
           caller: captured.caller, profileID: captured.profileID,
-          transportTrace: captured.transportTrace),
+          transportTrace: captured.transportTrace, trustedPrincipalID: captured.principalID),
         workspaceID: captured.workspace.id,
         rootURL: URL(fileURLWithPath: captured.workspace.rootPath),
         readOnly: captured.readOnly, tools: captured.tools, managedWorkspaceRoot: managed)
@@ -419,24 +289,9 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       "git_common_directory": .string(source.appendingPathComponent(".git").path),
       "path": .string(path.path), "branch": .string("fixture-" + id),
       "parent_lease_id": .string("fixture-parent"), "profile_id": .string("chatgpt-operate"),
+      "principal_id": .string("fixture-principal"),
       "caller": .string("secure-tunnel"), "state": .string("provisioning"), "revision": .number(2),
     ]
-  }
-  func approved(threadID: String?, connection: String = "connection") throws
-    -> CodexElevationGrantRecord
-  {
-    let grant = try CodexElevationGrantService.request(
-      owner: .init(
-        workspaceID: "scope", profileID: "chatgpt-operate", caller: "secure-tunnel",
-        transport: "gateway_socket",
-        socketConnectionID: connection, tunnelInstanceID: nil, tunnelProfileID: nil),
-      database: database, threadID: threadID, mode: .boundedTime,
-      reason: "Fixture authority", maximumDurationSeconds: 300, maximumTurnCount: nil)
-    return try CodexElevationGrantService.approve(
-      id: grant.id,
-      owner: .init(
-        workspaceID: "scope", profileID: "local-admin", caller: "local-cli", transport: "fixture",
-        socketConnectionID: nil, tunnelInstanceID: nil, tunnelProfileID: nil), database: database)
   }
   func during(
     _ method: String, _ arguments: [String: JSONValue] = [:],
@@ -452,27 +307,25 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   func direct(_ name: String, _ arguments: [String: JSONValue]) async throws -> JSONValue {
     try await .encoded(service.call(name: name, arguments: arguments))
   }
-  func genericRelease(workspaceID: String?) async throws -> JSONValue {
+  func genericDiagnostics(workspaceID: String?) async throws -> JSONValue {
     let service = service
     peer.setHandler {
       try await .encoded(
         service.call(
-          name: "host.elevation.invalidate",
-          arguments: [
-            "runtime_ids": .array([]), "thread_id": .string("thread-1"),
-            "reason": .string("Thread released"),
-          ]))
+          name: "host.diagnostics.snapshot",
+          arguments: ["limit": .number(1)]))
     }
     defer { peer.setHandler(nil) }
     var arguments: [String: JSONValue] = [
-      "server": .string("probe"), "tool": .string("codex.app.thread.release"),
-      "arguments": .object(["thread_id": .string("thread-1")]),
+      "server": .string("probe"), "tool": .string("codex.diagnostics.snapshot"),
+      "arguments": .object(["limit": .number(1)]),
     ]
     if let workspaceID { arguments["workspace_id"] = .string(workspaceID) }
     return try await runtime.callToolAsync(name: "mcp.tools.call", arguments: .object(arguments))
   }
   func payload(_ value: JSONValue) -> [String: JSONValue] {
-    value.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue ?? [:]
+    let downstream = value.objectValue?["structuredContent"]?.objectValue?["result"]
+    return downstream?.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue ?? [:]
   }
   func close() async {
     await service.close()

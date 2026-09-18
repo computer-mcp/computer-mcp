@@ -3,9 +3,12 @@ import MCP
 
 /// Runs the gateway through the official MCP Swift SDK.
 package enum MCPRuntimeAdapter: Sendable {
+  @TaskLocal static var requestTrace: GatewayTransportTrace?
+
   package static func makeGatewayServer(
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing
+    registry: any GatewayToolServing,
+    transportTrace: GatewayTransportTrace? = nil
   ) async -> MCP.Server {
     let instructions = serverInstructions(for: configuration)
     let server = MCP.Server(
@@ -19,7 +22,8 @@ package enum MCPRuntimeAdapter: Sendable {
     await registerGatewayHandlers(
       server: server,
       configuration: configuration,
-      registry: registry
+      registry: registry,
+      transportTrace: transportTrace
     )
     return server
   }
@@ -61,7 +65,8 @@ package enum MCPRuntimeAdapter: Sendable {
   private static func registerGatewayHandlers(
     server: MCP.Server,
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing
+    registry: any GatewayToolServing,
+    transportTrace: GatewayTransportTrace?
   ) async {
     let surface = GatewayMCPToolSurface(registry: registry)
     let changes = registry.toolChanges()
@@ -86,10 +91,9 @@ package enum MCPRuntimeAdapter: Sendable {
       }
 
       do {
-        let result = try await registry.callToolForMCPAsync(
-          name: params.name,
-          arguments: arguments
-        )
+        let result = try await $requestTrace.withValue(transportTrace) {
+          try await registry.callToolForMCPAsync(name: params.name, arguments: arguments)
+        }
         try Task.checkCancellation()
         return try result.sdkCallToolResult()
       } catch GatewayToolError.invalidArguments(let message) {

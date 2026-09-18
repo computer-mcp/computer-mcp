@@ -104,6 +104,7 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
 
 private actor GatewayHTTPApp {
   private struct SessionContext {
+    let principalID: String
     let server: MCP.Server
     let transport: StatefulHTTPServerTransport
     let eventTransport: MCPHTTPEventSubscriptionTransport
@@ -125,6 +126,7 @@ private actor GatewayHTTPApp {
   private var channel: Channel?
   private var eventLoopGroup: MultiThreadedEventLoopGroup?
   private var sessions: [String: SessionContext] = [:]
+  private var principalRegistries: [String: any GatewayToolServing] = [:]
   private var pendingSessionIDs = Set<String>()
   private var pendingSessionWaiters: [CheckedContinuation<Void, Never>] = []
   private var retiringSessions: [String: Task<Void, Never>] = [:]
@@ -264,6 +266,9 @@ private actor GatewayHTTPApp {
       eventLoopGroup = nil
       try? await group.shutdownGracefully()
     }
+    let admittedRegistries = principalRegistries.values
+    principalRegistries.removeAll()
+    for admitted in admittedRegistries { await admitted.shutdown() }
     await registry.shutdown()
     stopCompleted = true
   }
@@ -288,11 +293,14 @@ private actor GatewayHTTPApp {
       return cors(authError, request: request)
     }
 
-    let response = await handleMCP(request)
+    let principalID =
+      authenticator.authenticatedPrincipalID(for: request)
+      ?? "http-anonymous:\(generation.uuidString)"
+    let response = await handleMCP(request, principalID: principalID)
     return cors(response, request: request)
   }
 
-  private func handleMCP(_ request: HTTPRequest) async -> HTTPResponse {
+  private func handleMCP(_ request: HTTPRequest, principalID: String) async -> HTTPResponse {
     guard !isStopping, channel != nil else {
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
@@ -303,6 +311,9 @@ private actor GatewayHTTPApp {
     let sessionID = request.header(HTTPHeaderName.sessionID)
 
     if let sessionID, var session = sessions[sessionID] {
+      guard session.principalID == principalID else {
+        return gatewayHTTPError(statusCode: 403, code: "session_principal_mismatch")
+      }
       session.lastAccessedAt = Date()
       sessions[sessionID] = session
       let response = await session.transport.handleRequest(request)
@@ -325,7 +336,7 @@ private actor GatewayHTTPApp {
     }
 
     if request.method.uppercased() == "POST", isInitializeRequest(request.body) {
-      return await createSessionAndHandle(request)
+      return await createSessionAndHandle(request, principalID: principalID)
     }
 
     if sessionID != nil {
@@ -337,7 +348,9 @@ private actor GatewayHTTPApp {
     )
   }
 
-  private func createSessionAndHandle(_ request: HTTPRequest) async -> HTTPResponse {
+  private func createSessionAndHandle(_ request: HTTPRequest, principalID: String) async
+    -> HTTPResponse
+  {
     let sessionID = UUID().uuidString
     let admittedIDs = Set(sessions.keys).union(pendingSessionIDs).union(retiringSessions.keys)
     guard admittedIDs.count < limits.maxSessions else {
@@ -362,9 +375,25 @@ private actor GatewayHTTPApp {
       retryInterval: 1_000,
       logger: logger
     )
+    let admittedRegistry: any GatewayToolServing
+    do {
+      if let existing = principalRegistries[principalID] {
+        admittedRegistry = existing
+      } else if let gateway = registry as? GatewayRuntime {
+        let admitted = try gateway.authenticatedSession(
+          principalID: principalID,
+          transportTrace: GatewayTransportTrace(transport: "http"))
+        principalRegistries[principalID] = admitted
+        admittedRegistry = admitted
+      } else {
+        admittedRegistry = registry
+      }
+    } catch {
+      return gatewayHTTPError(statusCode: 500, code: "principal_runtime_unavailable")
+    }
     let server = await MCPRuntimeAdapter.makeGatewayServer(
       configuration: configuration,
-      registry: registry
+      registry: admittedRegistry
     )
     let eventTransport = MCPHTTPEventSubscriptionTransport(wrapping: transport, logger: logger)
     let normalizationTransport = MCPInitializeNormalizationTransport(wrapping: eventTransport)
@@ -381,6 +410,7 @@ private actor GatewayHTTPApp {
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
     sessions[sessionID] = SessionContext(
+      principalID: principalID,
       server: server,
       transport: transport,
       eventTransport: eventTransport,
@@ -614,6 +644,14 @@ internal struct HTTPBearerAuthenticator: Sendable {
       return unauthorized()
     }
     return nil
+  }
+
+  /// A credential identifies one shared principal, regardless of the HTTP session or client name.
+  func authenticatedPrincipalID(for request: HTTPRequest) -> String? {
+    guard authenticationRequired, authorizationError(for: request) == nil,
+      let expectedDigest
+    else { return nil }
+    return "credential:sha256:" + expectedDigest.map { String(format: "%02x", $0) }.joined()
   }
 
   private func accessToken(from request: HTTPRequest) -> String? {

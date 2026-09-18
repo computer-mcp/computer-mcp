@@ -218,12 +218,32 @@ package protocol DownstreamMCPClient: Sendable {
     -> JSONValue
   func connectionStatus(server: MCPServerConfig) throws -> JSONValue
   func readEvents(server: MCPServerConfig, afterCursor: Int, maxResults: Int) throws -> JSONValue
+  func readEvents(
+    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
+  ) throws -> JSONValue
   func activeRequests(server: MCPServerConfig) throws -> JSONValue
+  func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int) throws
+    -> JSONValue
   func cancelRequest(server: MCPServerConfig, requestID: String, reason: String?) throws
     -> JSONValue
 }
 
 extension DownstreamMCPClient {
+  package func readEvents(
+    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
+  ) throws -> JSONValue {
+    guard sessionID == nil else {
+      throw GatewayToolError.invalidArguments(
+        "[cursor.session_unavailable] This downstream client cannot validate event session cursors."
+      )
+    }
+    return try readEvents(server: server, afterCursor: afterCursor, maxResults: maxResults)
+  }
+  package func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int)
+    throws -> JSONValue
+  {
+    throw GatewayToolError.disabled("Downstream MCP client does not retain execution results.")
+  }
   package func callToolAsync(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
   ) async throws -> JSONValue {
@@ -275,12 +295,19 @@ extension DownstreamMCPClient {
     afterCursor: Int,
     maxResults: Int
   ) throws -> JSONValue {
-    .object([
+    guard afterCursor == 0 else {
+      throw GatewayToolError.invalidArguments(
+        "[cursor.session_unavailable] This downstream client has no retained event session.")
+    }
+    return .object([
       "server": .string(server.id),
       "after_cursor": .number(Double(afterCursor)),
       "next_cursor": .number(Double(afterCursor)),
       "events": .array([]),
-      "missed_events": .number(0),
+      "missed_events": .null,
+      "session_id": .null, "session_verified": .bool(false),
+      "cursor_state": .string("unavailable"), "reset_required": .bool(afterCursor > 0),
+      "oldest_available_cursor": .null, "latest_event_cursor": .null, "has_more": .bool(false),
       "persistent_session": .bool(false),
     ])
   }
@@ -1780,6 +1807,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     case "mcp.requests.list":
       try requireMCPProviders()
       return try textResult(listDownstreamMCPRequests(arguments: object))
+
+    case "mcp.requests.read":
+      try requireMCPProviders()
+      return try textResult(readDownstreamMCPRequest(arguments: object))
 
     case "mcp.requests.cancel":
       try requireMCPProviders()
@@ -5866,7 +5897,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return try mcpClient.readEvents(
       server: mcpServer(id),
       afterCursor: afterCursor,
-      maxResults: maxResults
+      maxResults: maxResults,
+      sessionID: try optionalString("session_id", in: object)
     )
   }
 
@@ -5886,6 +5918,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       requestID: requestID,
       reason: try optionalString("reason", in: object)
     )
+  }
+
+  private func readDownstreamMCPRequest(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let id = try requiredString("server", in: object)
+    let requestID = try requiredString("request_id", in: object)
+    return try mcpClient.readRequest(
+      server: mcpServer(id), requestID: requestID,
+      offset: optionalInt("offset", in: object) ?? 0,
+      maxBytes: optionalInt("max_bytes", in: object) ?? 32_768)
   }
 
   private func listDownstreamMCPResources(arguments object: [String: JSONValue]) throws
@@ -28407,7 +28448,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       MCPTool(
         name: "mcp.tools.call",
         description:
-          "Call a tool on one registered downstream MCP server. Set wait_for_result to false with an explicit request_id to start a long-running request, then inspect or cancel it with mcp.requests.list or mcp.requests.cancel.",
+          "Call a tool on one registered downstream MCP server. A request_id deduplicates the exact input across synchronous and asynchronous calls. Set wait_for_result to false to return after dispatch; query the retained result with mcp.requests.read or request cancellation with mcp.requests.cancel.",
         inputSchema: objectSchema(
           properties: [
             "server": stringSchema("Registered MCP server id."),
@@ -28416,7 +28457,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
               "Stable workspace id returned by workspace.list. Required for host-service calls when multiple workspaces are registered."
             ),
             "request_id": stringSchema(
-              "Optional caller-stable request id used by mcp.requests.list and mcp.requests.cancel."
+              "Optional caller-stable deduplication id, at most 256 UTF-8 bytes. Reuse only for identical inputs; query using mcp.requests.read. Required when wait_for_result is false."
             ),
             "wait_for_result": boolSchema(
               "Whether to wait for the downstream result. Defaults to true. When false, request_id is required and the call returns after the request starts."
@@ -28509,6 +28550,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         inputSchema: objectSchema(
           properties: [
             "server": stringSchema("Registered MCP server id."),
+            "session_id": stringSchema(
+              "Session identity from a previous event page. Supply it when continuing a cursor so a replaced session cannot be mistaken for the original. Reading events never starts a server."
+            ),
             "after_cursor": integerSchema(
               "Return events after this cursor. Defaults to 0."
             ),
@@ -28548,6 +28592,20 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         ),
         meta: toolMeta
       ),
+      MCPTool(
+        name: "mcp.requests.read",
+        description:
+          "Read a retained MCP execution result without starting a connection or replaying work. Continue with next_offset for bounded JSON output; expired, unavailable and unknown outcomes are explicit.",
+        inputSchema: objectSchema(
+          properties: [
+            "server": stringSchema("Registered MCP server id."),
+            "request_id": stringSchema("Caller-stable request id supplied to mcp.tools.call."),
+            "offset": integerSchema("UTF-8 byte offset returned as next_offset. Defaults to zero."),
+            "max_bytes": integerSchema(
+              "Maximum output bytes from 4 through 65536. Defaults to 32768."),
+          ],
+          required: ["server", "request_id"]),
+        meta: toolMeta),
       MCPTool(
         name: "process.spawn",
         description: "Spawn a registered CLI command for long-running work.",
@@ -33122,7 +33180,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
       "mcp.tools.find", "mcp.resources.list", "mcp.resources.templates.list",
       "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
-      "mcp.requests.list", "process.list",
+      "mcp.requests.list", "mcp.requests.read", "process.list",
       "process.read", "shell.list", "shell.read":
       return MCPToolAnnotations(
         readOnlyHint: true,

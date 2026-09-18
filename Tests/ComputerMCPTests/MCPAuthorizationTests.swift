@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import os
 
 @testable import ComputerMCP
 
@@ -12,20 +13,22 @@ struct MCPAuthorizationTests {
     let server = MCPServerConfig(
       id: "remote", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "remote", allowedTools: ["inspect"], toolRisks: ["inspect": .destructive])
+    let database = try GatewayDatabase(inMemory: ())
+    let client = CatalogClient()
     let runtime = try GatewayRuntime(
       configuration: GatewayConfiguration(
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
-        mcp: .init(servers: [server])), database: GatewayDatabase(inMemory: ()),
+        mcp: .init(servers: [server])), database: database,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      mcpClient: CatalogClient())
+      mcpClient: client)
     let arguments: JSONValue = .object([
       "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
     ])
     expectThrows(try runtime.callTool(name: "mcp.tools.call", arguments: arguments)) { error in
-      #expect(error.localizedDescription.contains("operations.ticket_required"))
+      #expect(error.localizedDescription.contains("operations.approval_required"))
     }
     expectThrows(try runtime.callTool(name: "remote.inspect", arguments: .object([:]))) { error in
-      #expect(error.localizedDescription.contains("operations.ticket_required"))
+      #expect(error.localizedDescription.contains("operations.approval_required"))
     }
     for name in ["mcp.tools.call", "remote.inspect"] {
       await #expect(throws: (any Error).self) {
@@ -39,11 +42,22 @@ struct MCPAuthorizationTests {
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
         .stringValue)
+    #expect(try database.operationTicket(id: ticket)?.state == .pendingApproval)
+    #expect(throws: (any Error).self) {
+      try runtime.callTool(
+        name: "operations.commit",
+        arguments: .object([
+          "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
+        ]))
+    }
+    #expect(client.callCount == 0)
+    try database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
     _ = try runtime.callTool(
       name: "operations.commit",
       arguments: .object([
         "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
       ]))
+    #expect(client.callCount == 1)
     await runtime.shutdown()
   }
 
@@ -147,10 +161,11 @@ struct MCPAuthorizationTests {
     }
   }
 
-  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve])
-  func observeRejectsWriteRiskEvenWithWildcardGrant(profileID: GatewayProfileID) {
+  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve, .chatGPTOperate])
+  func readOnlyModeRejectsWriteRiskEvenWithWildcardGrant(profileID: GatewayProfileID) {
     let caller: GatewayCallerKind = profileID == .chatGPTObserve ? .secureTunnel : .cloudflareTunnel
-    let grant = ProfileGrant(id: profileID, capabilityIDs: ["*"], allowedCallers: [caller])
+    let grant = ProfileGrant(
+      id: profileID, capabilityIDs: ["*"], allowedCallers: [caller], mode: .readOnly)
     let decision = GatewayPolicyEvaluator().evaluate(
       capability: .init(id: "remote.inspect", risk: .externalWrite),
       context: .init(caller: caller, profileID: profileID), grant: grant,
@@ -159,7 +174,7 @@ struct MCPAuthorizationTests {
       decision
         == .deny(
           code: .readOnlyProfile,
-          message: "Observe profiles require a host-classified read-only capability."))
+          message: "Read-only mode requires a host-classified read-only capability."))
   }
 
   @Test
@@ -217,6 +232,8 @@ struct MCPAuthorizationTests {
 }
 
 private struct CatalogClient: DownstreamMCPClient {
+  private let calls = OSAllocatedUnfairLock(initialState: 0)
+  var callCount: Int { calls.withLock { $0 } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   )
@@ -232,7 +249,8 @@ private struct CatalogClient: DownstreamMCPClient {
   }
 
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    .string("\(server.id):\(name)")
+    calls.withLock { $0 += 1 }
+    return .string("\(server.id):\(name)")
   }
 
   func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }

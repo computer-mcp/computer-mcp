@@ -83,7 +83,8 @@ independent result evidence. Local component tests and probes are auxiliary.
 
 ## Codex and Skills
 
-Codex App Server, Exec, and MCP are separate `swift-codex` provider lifecycles.
+The independent Codex plugin adapts App Server and Exec through `swift-codex`.
+Codex retains its native configuration, execution permissions and approvals.
 Skills are gateway capabilities independent of Codex. Generic CLI execution,
-process spawning, and Full Shell remain off by default and require an explicit
-`chatgpt-operate` or `local-admin` grant.
+process spawning and Full Shell require explicit host capability authorization
+and the corresponding permission mode; profile names do not grant access.

@@ -184,6 +184,7 @@ def driver(root, executable, manifest, pause_cleanup=False):
         prepared = first.call("tools/call", {"name": "operations.prepare", "arguments": {
             "tool": "owned.write", "arguments": arguments}})
         assert not prepared.get("isError", False), prepared
+        assert prepared["structuredContent"]["result"]["state"] == "prepared", prepared
         ticket = prepared["structuredContent"]["result"]["ticket_id"]
         commit = {"name": "operations.commit", "arguments": {
             "ticket_id": ticket, "tool": "owned.write", "arguments": arguments}}

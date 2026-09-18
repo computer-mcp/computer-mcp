@@ -24,6 +24,18 @@ Fresh installation is a valid fail-closed server with no workspace. It supports
 MCP initialization and workspace onboarding tools without granting filesystem
 access.
 
+Workspace registrations and live access are separate. A missing directory or
+failed bookmark affects that workspace, not initialization or other healthy
+workspaces. `workspace.list` and `workspace.describe` expose `access.status`
+and a stable resolution error for workspaces visible to the caller. Management
+CLI and App health checks resolve access explicitly and close their temporary
+scope. No provider is created for an inaccessible workspace; if all are
+inaccessible, core diagnostics remain available. Explicit workspace selection
+never falls back to another directory, and grants are checked before revealing
+access errors. Reconnect after restoring the directory or renewing its access.
+Duplicate registration IDs and invalid provider configuration still reject
+construction.
+
 The control socket and gateway socket are distinct and mode `0600`. CLI
 administration binds `local-cli`; MCP bridge clients bind `local-mcp` or an
 authenticated transport caller. Static definitions live in the schema 1
@@ -120,7 +132,7 @@ OpenAI Tunnel definitions persist only transport identity and policy fields.
 They may include a credential-free HTTP proxy URL; when absent, the runtime
 resolves the active fixed macOS HTTPS/HTTP proxy at launch. Proxy credentials
 remain outside the product configuration contract.
-The independent Codex adapter's App Server, Exec, and MCP lifecycles map the active
+The independent Codex adapter's App Server and Exec lifecycles map the active
 fixed macOS HTTP, HTTPS, and SOCKS proxies into their child process
 environments, while preserving an explicitly inherited proxy environment and
 direct loopback access. This derived environment is never persisted or logged,
@@ -196,7 +208,7 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   preflight, main-thread AX action dispatch, host-process self-target denial,
   and post-action verification.
 - Codex: an independent standard MCP adapter package owns App Server, Exec,
-  Codex MCP, domain persistence and `swift-codex`. Gateway registration and
+  domain persistence and `swift-codex`. Gateway registration and
   routing use the same downstream MCP plane as other providers.
 
 Downstream MCP initialization and ready-session requests have independent
@@ -320,18 +332,17 @@ its initialization source: configuration and builtin grants can exist without
 a profile row, while runtimes initialized with persisted authority require that
 row to remain present. Current persisted restrictions are reapplied to callbacks.
 
-`MCPBoundHostServices` consumes existing approved elevation records, owns the
-atomic derived-workspace registration ledger and projects bounded diagnostics.
-It cannot issue local approval through the plugin connection. Failed owned
-grant invalidation leaves retirement unconfirmed. The independent Codex adapter
+`MCPBoundHostServices` owns the atomic derived-workspace registration ledger
+and projects bounded diagnostics. Its private namespace permits only
+workspace registration, verified removal, and diagnostic reads for matching
+live invocations. The independent Codex adapter
 implements its host interfaces through this endpoint while retaining separate
-App Server, Exec and Codex MCP lifecycles. Imported embedded Codex configuration
+App Server and Exec lifecycles. Imported embedded Codex configuration
 requires the reviewed [configuration migration](../Reference/CodexMigration.md)
 before runtime creation. The optional import record preserves the old format
-for offline export; the adapter owns the resulting execution settings. Host
-elevation reports connection-bound grant eligibility, while applied sandbox
-state is reported by the adapter. Grants and historical database migration
-records remain host-owned.
+for offline export; the adapter owns the resulting execution settings.
+Applied Codex configuration is reported by the adapter, while host operation
+tickets and workspace grants remain in the Gateway Database.
 
 See [Scoped host services](../Reference/HostServices.md) for configuration,
 wire surface, scope checks, bounds and recovery behavior.
@@ -410,7 +421,7 @@ machine-wide singleton:
 ```text
 gateway socket or HTTP session
   -> GatewayRuntime (caller + profile + transport generation)
-    -> one provider router per registered workspace
+    -> one provider router per accessible registered workspace
       -> ordinary owned MCP connection to the Codex adapter
         -> adapter-owned lazy App Server runtime
           -> one current JSONL/stdio connection generation
@@ -505,11 +516,14 @@ heuristic.
 
 ## Policy And Results
 
-Every call is bound to `ExecutionContext` containing caller, profile, and
-optional workspace id. `GatewayPolicy` checks the provider's
-`CapabilityDescriptor` before execution. Destructive configured atomics require
-`operations.prepare` followed by a single-use, short-lived
-`operations.commit` ticket.
+Every call is bound to `ExecutionContext` containing a verified authorization
+principal, caller provenance, profile, and optional workspace id. `GatewayPolicy`
+checks the provider's `CapabilityDescriptor` against the explicit grant mode,
+capabilities, workspace access, and confirmation policy. `operations.prepare`
+binds the exact arguments and supported target state to a short-lived,
+single-use ticket. A `pending_approval` ticket requires local App or management
+CLI approval before `operations.commit`; preparing a ticket or supplying a
+model-authored confirmation flag is not approval.
 
 MCP tools advertise a title, input schema, output schema, standard annotations,
 and return the bounded JSON value as both compatible text and structured

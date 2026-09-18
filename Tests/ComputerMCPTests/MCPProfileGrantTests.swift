@@ -20,7 +20,8 @@ struct MCPProfileGrantTests {
         .init(
           id: .chatGPTOperate,
           capabilities: grantAlias ? ["review.inspect", "mcp.tools.list"] : [],
-          workspaces: ["fixture"], mcpServers: grantAlias ? [] : ["alpha"])
+          workspaces: ["fixture"], allowedCallers: [.secureTunnel],
+          mcpServers: grantAlias ? [] : ["alpha"])
       ],
       mcp: .init(
         servers: ["alpha", "beta"].map {
@@ -105,7 +106,9 @@ struct MCPProfileGrantTests {
     defer { fixture.cleanup() }
     var configuration = Self.configuration()
     configuration.profiles = [
-      .init(id: .chatGPTOperate, workspaces: ["fixture"], mcpServers: ["alpha"])
+      .init(
+        id: .chatGPTOperate, workspaces: ["fixture"], allowedCallers: [.secureTunnel],
+        mcpServers: ["alpha"])
     ]
     let runtime = try fixture.runtime(configuration: configuration)
     let names = Set(try runtime.listTools().map(\.name))
@@ -148,7 +151,7 @@ struct MCPProfileGrantTests {
         id: .chatGPTOperate,
         capabilities: [
           "alpha_alias.inspect", "mcp.tools.list", "mcp.tools.find", "mcp.tools.describe",
-        ], workspaces: ["fixture"])
+        ], workspaces: ["fixture"], allowedCallers: [.secureTunnel])
     ]
     let runtime = try fixture.runtime(configuration: configuration)
     let names = Set(try runtime.listTools().map(\.name))
@@ -194,7 +197,9 @@ struct MCPProfileGrantTests {
     let fixture = try ProfileRuntimeFixture()
     defer { fixture.cleanup() }
     var configuration = Self.configuration()
-    configuration.profiles = [.init(id: .chatGPTOperate, mcpServers: ["alpha"])]
+    configuration.profiles = [
+      .init(id: .chatGPTOperate, allowedCallers: [.secureTunnel], mcpServers: ["alpha"])
+    ]
     configuration.mcp.servers[1].allowAnyTool = false
     configuration.mcp.servers[1].allowedTools = ["inspect"]
     let runtime = try fixture.runtime(configuration: configuration)
@@ -243,15 +248,17 @@ struct MCPProfileGrantTests {
     #expect(!policy.permitsServer(configuration.mcp.servers[0], capability: "mcp.resources.read"))
   }
 
-  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve])
-  func registrationGrantCannotExpandObserveRisk(profile: GatewayProfileID) throws {
+  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve, .chatGPTOperate])
+  func registrationGrantCannotExpandReadOnlyMode(profile: GatewayProfileID) throws {
     var configuration = Self.configuration()
     configuration.mcp.servers[0].toolRisks = ["inspect": .readOnly]
     let client = AuthorizedMCPClient(
       base: ProfileCatalogClient(),
       policy: .init(
         configuration: configuration,
-        grant: .init(id: profile, capabilityIDs: [], allowedCallers: [], mcpServerIDs: ["alpha"]),
+        grant: .init(
+          id: profile, capabilityIDs: [], allowedCallers: [], mcpServerIDs: ["alpha"],
+          mode: .readOnly),
         derivesObserveGrant: false))
     #expect(try client.listTools(server: configuration.mcp.servers[0]).map(\.name) == ["inspect"])
     #expect(throws: (any Error).self) {
@@ -272,6 +279,10 @@ struct MCPProfileGrantTests {
     #expect(!policy.allows(.init(serverID: "alpha", toolName: "inspect")))
     var enabled = grant
     enabled.fullShellEnabled = true
+    let flagWithoutFullAccess = MCPToolAccessPolicy(
+      configuration: configuration, grant: enabled, derivesObserveGrant: false)
+    #expect(!flagWithoutFullAccess.allows(.init(serverID: "alpha", toolName: "inspect")))
+    enabled.mode = .localFullAccess
     let enabledPolicy = MCPToolAccessPolicy(
       configuration: configuration, grant: enabled, derivesObserveGrant: false)
     #expect(enabledPolicy.allows(.init(serverID: "alpha", toolName: "inspect")))
@@ -284,24 +295,57 @@ struct MCPProfileGrantTests {
     defer { fixture.cleanup() }
     let database = try GatewayDatabase(inMemory: ())
     var persisted = Self.grant(servers: ["beta"])
+    persisted.capabilityIDs = ["operations.prepare", "operations.commit"]
     persisted.workspaceIDs = ["fixture"]
     persisted.fullShellEnabled = true
+    persisted.mode = .localFullAccess
     try database.saveProfile(persisted)
     var configuration = Self.configuration()
     configuration.policy.shellEnabled = true
-    configuration.profiles = [.init(id: .chatGPTOperate, mcpServers: ["alpha"])]
-    configuration.mcp.servers[0].toolRisks = ["inspect": .fullShell]
+    configuration.profiles = [
+      .init(id: .chatGPTOperate, allowedCallers: [.secureTunnel], mcpServers: ["alpha"])
+    ]
+    configuration.mcp.servers[1].toolRisks = ["inspect": .fullShell]
+    let client = ProfileCatalogClient()
     let runtime = try GatewayRuntime(
       configuration: configuration, database: database,
       registeredWorkspaces: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
-      mcpClient: ProfileCatalogClient())
-    #expect(try runtime.listTools().contains { $0.name == "alpha.inspect" })
-    #expect(try !runtime.listTools().contains { $0.name == "beta.inspect" })
-    _ = try runtime.callTool(name: "alpha.inspect", arguments: .object([:]))
-    _ = try runtime.callTool(
-      name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "inspect"))
+      mcpClient: client)
+    #expect(try !runtime.listTools().contains { $0.name == "alpha.inspect" })
+    #expect(try runtime.listTools().contains { $0.name == "beta.inspect" })
+    for (name, arguments) in [
+      ("beta.inspect", JSONValue.object([:])),
+      ("mcp.tools.call", Self.callArguments(server: "beta", tool: "inspect")),
+    ] {
+      expectThrows(try runtime.callTool(name: name, arguments: arguments)) { error in
+        #expect(error.localizedDescription.contains("operations.approval_required"))
+      }
+      let prepared = try Self.result(
+        runtime.callTool(
+          name: "operations.prepare",
+          arguments: .object(["tool": .string(name), "arguments": arguments])))
+      let ticket = try #require(prepared.objectValue?["ticket_id"]?.stringValue)
+      #expect(try database.operationTicket(id: ticket)?.state == .pendingApproval)
+      let callsBeforeApproval = client.calledServers.count
+      #expect(throws: (any Error).self) {
+        try runtime.callTool(
+          name: "operations.commit",
+          arguments: .object([
+            "ticket_id": .string(ticket), "tool": .string(name), "arguments": arguments,
+          ]))
+      }
+      #expect(client.calledServers.count == callsBeforeApproval)
+      try database.resolveOperationApproval(id: ticket, approved: true, resolver: .localApp)
+      _ = try runtime.callTool(
+        name: "operations.commit",
+        arguments: .object([
+          "ticket_id": .string(ticket), "tool": .string(name), "arguments": arguments,
+        ]))
+      #expect(client.calledServers.count == callsBeforeApproval + 1)
+    }
+    #expect(client.calledServers == ["beta", "beta"])
     await runtime.shutdown()
   }
 
@@ -316,8 +360,12 @@ struct MCPProfileGrantTests {
     var persisted = Self.grant(servers: ["beta"])
     persisted.workspaceIDs = ["fixture"]
     let effective = grant.applyingPersistedRuntimeState(persisted)
-    #expect(effective.mcpServerIDs == ["alpha"])
+    #expect(effective.mcpServerIDs == ["beta"])
     #expect(effective.workspaceIDs == ["fixture"])
+    persisted.authorizationRevision = 0
+    let legacy = grant.applyingPersistedRuntimeState(persisted)
+    #expect(legacy.mcpServerIDs == ["alpha"])
+    #expect(legacy.workspaceIDs == ["fixture"])
   }
 
   @Test
@@ -381,7 +429,7 @@ struct MCPProfileGrantTests {
         servers: ["alpha", "beta"].map {
           .init(
             id: $0, transport: .stdio, command: "/bin/cat", exposure: .reexport, prefix: $0,
-            allowAnyTool: true)
+            allowAnyTool: true, toolRisks: ["inspect": .readOnly, "future": .readOnly])
         }),
       tools: ["alpha", "beta"].map {
         .init(name: "\($0)_alias.inspect", adapter: .mcp, source: $0, tool: "inspect")
@@ -393,7 +441,7 @@ struct MCPProfileGrantTests {
   {
     .init(
       id: .chatGPTOperate, capabilityIDs: capabilities, allowedCallers: [.secureTunnel],
-      mcpServerIDs: servers)
+      mcpServerIDs: servers, mode: .workspaceOperations)
   }
 
   private static func callArguments(server: String, tool: String) -> JSONValue {
@@ -424,6 +472,9 @@ private struct ProfileRuntimeFixture {
 }
 
 private struct ProfileCatalogClient: DownstreamMCPClient {
+  private let calls = OSAllocatedUnfairLock(initialState: [String]())
+  var calledServers: [String] { calls.withLock { $0 } }
+
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   )
@@ -431,6 +482,8 @@ private struct ProfileCatalogClient: DownstreamMCPClient {
   { self }
 
   var names = ["inspect", "future"]
+
+  init(names: [String] = ["inspect", "future"]) { self.names = names }
 
   func listTools(server: MCPServerConfig) throws -> [MCPTool] {
     names.map {
@@ -441,7 +494,8 @@ private struct ProfileCatalogClient: DownstreamMCPClient {
   }
 
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    .object([
+    calls.withLock { $0.append(server.id) }
+    return .object([
       "content": .array([
         .object(["type": .string("text"), "text": .string("\(server.id):\(name)")])
       ])

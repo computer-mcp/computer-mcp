@@ -19,9 +19,9 @@ list.
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
 | Workspaces | list, canonical add, remove, profile enable/disable, deduplication | `workspace …` | Workspaces |
-| Profiles | list, show, activate, workspace grant/revoke, Full Shell | `profile …` | Profiles |
+| Profiles | list, show, activate, workspace grant/revoke, permission mode, confirmation policy, Full Shell | `profile …` | Profiles |
 | Providers | recorded health and bounded Doctor refresh | `providers list|doctor` | Providers |
-| Permissions | non-prompting TCC status | `permissions status` | Permissions; prompting remains an explicit local UI action |
+| Permissions | non-prompting TCC status; list, approve, or deny exact host operation tickets | `permissions status`, `permissions approvals …` | Permissions and pending host approvals; TCC prompting remains an explicit local UI action |
 | Audit | bounded redacted event list | `audit list` | Audit |
 | Gateway tools | list, inspect, and policy-controlled local-admin call | `tools …` | CLI-only diagnostic escape hatch |
 | OpenAI Tunnel | list, Doctor, start, reconnect, stop, provision, logs, save, remove | `tunnel openai …` | Tunnels |

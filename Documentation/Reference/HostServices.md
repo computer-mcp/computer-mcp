@@ -22,8 +22,10 @@ Standalone manifest workspaces retain their configuration-owned scope even when
 the Gateway uses a database for audit or plugin state. Database-owned workspaces
 are checked against their current registration on every callback; deleting or
 changing that registration revokes the original scope.
-Each standalone stdio server run owns one connection identity for callback,
-audit and release attribution; a new server run receives a new identity.
+The host supplies an authenticated authorization subject independently of
+connection tracking. Reconnecting with the same credential retains that
+subject; a new transport connection receives a new tracking identity. Clients
+sharing a credential also share its subject and grants.
 
 Enable this only for an adapter trusted to use the already authorized scope.
 The adapter inherits a connected Unix stream descriptor identified by
@@ -43,12 +45,13 @@ channel is not an OS sandbox for malicious plugin code.
 
 ## Tool execution and private services
 
-Ordinary callbacks use the Gateway's current profile, caller, connection and
-workspace. The host filters discovery against the live grant and reauthorizes
+Ordinary callbacks use the Gateway's authenticated subject, current profile,
+caller and workspace. Connection IDs correlate requests, not authority. The
+host filters discovery against the live grant and reauthorizes
 execution. Aliases, nested policy/ticket targets and other callback-enabled MCP
 registrations cannot create a recursive route or widen the workspace.
-Destructive tools keep the ordinary `operations.prepare` / `operations.commit`
-contract; the adapter does not bypass tickets.
+Risky tools keep the ordinary `operations.prepare` / local approval /
+`operations.commit` contract. The adapter cannot approve its own pending ticket.
 
 Configuration and builtin profile grants do not require a persisted profile
 record. If the runtime was initialized with a persisted profile, deleting that
@@ -65,40 +68,16 @@ returns or fails and is never sent as a reusable capability token.
 
 | Private tool | Required inputs | Purpose |
 | --- | --- | --- |
-| `host.elevation.claim` | `runtime_id`, `action`; optional `thread_id` | Claim an existing locally approved grant for an eligible live start |
-| `host.elevation.commit` | `claim_id`, `runtime_id`, `thread_id`; optional `turn_id` | Activate that claim during its original authorized invocation |
-| `host.elevation.invalidate_claim` | `claim_id`, `reason` | Invalidate this connection's uncommitted claim |
-| `host.elevation.invalidate` | `runtime_ids`, `reason`; optional `thread_id` | Invalidate consumed runtime grants; a thread selector requires the matching live release invocation and also invalidates its unused grants |
 | `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source profile grant atomically |
 | `host.workspaces.authorize_removal` | `worktree` | Check the live destructive operation ticket before removal |
 | `host.workspaces.unregister` | `worktree` | Remove the unchanged owned registration, or confirm an ownership-free no-op |
-| `host.diagnostics.snapshot` | `limit` | Read bounded host receipts for the exact caller/profile/workspace/connection |
+| `host.diagnostics.snapshot` | `limit` | Read bounded host receipts for the verified subject/profile/workspace |
 
 These tools return `structuredContent.result`; rejected calls return `isError`
-and a bounded error. They do not accept caller-supplied clocks, grant approvals
+and a bounded error. They do not accept caller-supplied identity, local approval authority
 or arbitrary database operations. Inspect their actual MCP schemas for input
 constraints. They require host persistence; directory metadata alone is not a
 host-service implementation.
-
-## Elevation ownership
-
-Local approval stays in the host's existing approval workflow. The adapter can
-consume a matching approved grant but cannot request approval on behalf of a
-local administrator or create a grant. The host checks current time, workspace,
-caller, profile, connection, optional thread and the live start operation.
-Pending, revoked and expired records cannot establish full access. A claim
-cannot be committed by a later invocation or another runtime.
-
-A next-turn grant is consumed once. Connection cleanup invalidates only records
-claimed or consumed by that adapter connection. Thread release additionally
-invalidates pending and approved grants for the exact thread, originating host
-connection, workspace, profile and caller. Unbound grants and other threads or
-connections retain their state. The thread selector must match the host's live
-`codex.app.thread.release` invocation; a plugin assertion is insufficient.
-If invalidation fails, the exact owned
-records remain available for a bounded cleanup retry and session retirement
-stays unconfirmed; process exit alone is not reported as successful cleanup.
-Persistent recovery across a host crash is a separate lifecycle obligation.
 
 ## Derived workspaces and recovery
 
@@ -106,7 +85,10 @@ The plugin owns Git and domain lease/plan records. The host independently
 checks the source repository, exact derived path, directory ownership, and Git
 common directory before adding registration authority. Its
 `pluginDerivedWorkspaces` ledger binds the receipt, source, publisher registration,
-profile and workspace snapshot. Workspace registration, canonical-path ownership
+verified principal, profile and workspace snapshot. Caller records remain
+provenance: the same principal can reconnect through another authorized channel.
+Receipts without a verified principal remain historical records and cannot be
+adopted or removed through a new caller. Workspace registration, canonical-path ownership
 and the added profile grant commit in one transaction. Existing identities,
 pre-existing grants or independent path registrations are not adopted.
 
@@ -132,10 +114,12 @@ advanced independently is not removed by the rollback's compare-and-delete.
 
 ## Diagnostic and transport bounds
 
-Diagnostics filter workspace, profile, caller and connection before applying
-`limit` (1–1000). They return receipt identities and digests, not command bodies
-or raw output. In-flight grant handles are redacted while preserving the fact
-that a claim is pending. Missing host data is unknown, not a zero-grant snapshot.
+Diagnostics report the immutable host subject and filter its verified digest,
+workspace and profile before applying `limit` (1–1000). The same subject can
+query its records after reconnecting; connection IDs only correlate individual
+calls. Historical records without a verified subject remain stored but are not
+exposed through this service. They return receipt identities and digests, not command bodies
+or raw output. Missing host data is reported as unavailable.
 Private service audits retain the originating request/ticket relationship when
 one is present.
 

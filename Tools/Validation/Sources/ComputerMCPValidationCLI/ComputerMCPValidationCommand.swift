@@ -1213,6 +1213,7 @@ struct MCPFixtureServe: AsyncParsableCommand {
     if let startMarker {
       try appendFixtureLine("started", to: URL(fileURLWithPath: startMarker))
     }
+    let cancellationMarker = startMarker.map { URL(fileURLWithPath: $0 + ".cancelled") }
 
     let state = DownstreamFixtureState()
     let server = MCP.Server(
@@ -1257,7 +1258,17 @@ struct MCPFixtureServe: AsyncParsableCommand {
         )
 
       case "fixture_hang":
-        try await Task.sleep(for: .seconds(300))
+        do {
+          try await Task.sleep(for: .seconds(300))
+        } catch is CancellationError {
+          if let cancellationMarker,
+            let marker = params.arguments?["request_marker"]?.stringValue,
+            UUID(uuidString: marker) != nil
+          {
+            try appendFixtureLine(marker, to: cancellationMarker)
+          }
+          throw CancellationError()
+        }
         return MCP.CallTool.Result(
           content: [.text(text: "unexpected", annotations: nil, _meta: nil)],
           isError: false
@@ -1378,7 +1389,10 @@ private func downstreamFixtureTools() -> [MCP.Tool] {
     MCP.Tool(
       name: "fixture_hang",
       description: "Wait until the caller cancels the request.",
-      inputSchema: .object(["type": .string("object")])
+      inputSchema: .object([
+        "type": .string("object"),
+        "properties": .object(["request_marker": .object(["type": .string("string")])]),
+      ])
     ),
     MCP.Tool(
       name: "fixture_enable_drift",
@@ -1453,6 +1467,11 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
   var observations: String?
 
   mutating func run() async throws {
+    try await run(localApprovalResolver: nil)
+  }
+
+  // The management channel is supplied explicitly by an isolated acceptance fixture.
+  mutating func run(localApprovalResolver: ValidationLocalApprovalResolver?) async throws {
     guard (endpoint == nil) != (socket == nil) else {
       throw ValidationError("Provide exactly one of --endpoint or --socket.")
     }
@@ -1476,7 +1495,8 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
       }
       session = try await GatewayClientSession.connectHTTP(
         endpoint: endpointURL,
-        accessToken: accessToken
+        accessToken: accessToken,
+        localApprovalResolver: localApprovalResolver
       )
     } else if let socket {
       guard socket.hasPrefix("/") else {
@@ -1489,7 +1509,8 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
         socketURL: URL(fileURLWithPath: socket)
       )
       session = try await GatewayClientSession.connectSocket(
-        configuration: socketConfiguration
+        configuration: socketConfiguration,
+        localApprovalResolver: localApprovalResolver
       )
     } else {
       throw ValidationError("Provide exactly one of --endpoint or --socket.")
@@ -1503,7 +1524,7 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
         stdioStartMarker: URL(fileURLWithPath: stdioStartMarker)
       )
       let report = try await runner.run()
-      await session.disconnect()
+      try await session.disconnect()
       try writeJSONValue(report, destination: json)
       if let observations {
         guard let runID, !runID.isEmpty else {
@@ -1518,8 +1539,7 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
         try bundle.encodedJSON().write(to: destination, options: .atomic)
       }
     } catch {
-      await session.disconnect()
-      throw error
+      throw await session.disconnect(after: error)
     }
   }
 }
@@ -2025,10 +2045,12 @@ private struct DownstreamProbeVerifyRunner {
 
   private mutating func exerciseCancellation() async throws -> JSONValue {
     let requestID = "fixture-hang-\(UUID().uuidString)"
+    let requestMarker = UUID().uuidString
     let server = stdioServer
     let targetArguments: [String: JSONValue] = [
       "server": .string(server),
       "tool": .string("fixture_hang"),
+      "arguments": .object(["request_marker": .string(requestMarker)]),
       "request_id": .string(requestID),
       "wait_for_result": .bool(false),
     ]
@@ -2044,6 +2066,7 @@ private struct DownstreamProbeVerifyRunner {
     guard let ticketID = prepared.objectValue?["ticket_id"]?.stringValue else {
       throw ValidationError("The hanging downstream call received no operation ticket.")
     }
+    try await session.resolvePreparedOperation(prepared)
     let started = try payload(
       await call(
         "operations.commit",
@@ -2086,17 +2109,43 @@ private struct DownstreamProbeVerifyRunner {
         ]
       )
     )
-    guard cancelled.objectValue?["cancelled"]?.boolValue == true else {
+    guard cancelled.objectValue?["cancellation_requested"]?.boolValue == true else {
       throw ValidationError("The downstream cancellation request was not accepted.")
     }
+
+    let markerURL = URL(fileURLWithPath: stdioStartMarker.path + ".cancelled")
+    let deadline = ContinuousClock.now + .seconds(5)
+    var fixtureCancellationObserved = false
+    while ContinuousClock.now < deadline {
+      if let content = try? String(contentsOf: markerURL, encoding: .utf8),
+        content.split(whereSeparator: \.isNewline).contains(Substring(requestMarker))
+      {
+        fixtureCancellationObserved = true
+        break
+      }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    guard fixtureCancellationObserved else {
+      throw ValidationError(
+        "Cancellation was requested, but the fixture did not confirm its task stopped; execution outcome remains unverified."
+      )
+    }
+    let receipt = try payload(
+      await call(
+        "mcp.requests.read",
+        arguments: [
+          "server": .string(stdioServer), "request_id": .string(requestID),
+          "offset": .number(0), "max_bytes": .number(8192),
+        ]))
 
     _ = try payload(
       await call("mcp.tools.list", arguments: ["server": .string(stdioServer)])
     )
     return .object([
       "active_request_observed": .bool(observedActive),
-      "cancelled": .bool(true),
-      "terminal": .string("cancelled"),
+      "cancellation_requested": .bool(true),
+      "fixture_task_stopped": .bool(fixtureCancellationObserved),
+      "execution_receipt": receipt,
       "provider_usable_after_cancel": .bool(true),
     ])
   }
@@ -2176,6 +2225,7 @@ private struct DownstreamProbeVerifyRunner {
     guard let ticketID = prepared.objectValue?["ticket_id"]?.stringValue else {
       throw ValidationError("operations.prepare returned no ticket for \(tool).")
     }
+    try await session.resolvePreparedOperation(prepared)
     return try await call(
       "operations.commit",
       arguments: [
@@ -2258,7 +2308,7 @@ private struct DownstreamProbeVerifyRunner {
 struct CodexProbeVerify: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "verify",
-    abstract: "Exercise Codex App Server, Exec, and MCP through one persistent MCP session."
+    abstract: "Exercise Codex App Server and Exec through one persistent MCP session."
   )
 
   @Option(name: .long, help: "Absolute MCP Streamable HTTP endpoint URL.")
@@ -2370,11 +2420,10 @@ struct CodexProbeVerify: AsyncParsableCommand {
         databasePath: databasePath
       )
       let report = try await runner.run()
-      await session.disconnect()
+      try await session.disconnect()
       try writeJSONValue(report, destination: json)
     } catch {
-      await session.disconnect()
-      throw error
+      throw await session.disconnect(after: error)
     }
   }
 }
@@ -2412,7 +2461,6 @@ private struct CodexProbeVerifyRunner {
   mutating func run() async throws -> JSONValue {
     let app = try await exerciseAppServer()
     let exec = try await exerciseExec()
-    let mcp = try await exerciseMCP()
     let audit = try auditCorrelation()
     let verificationComplete =
       app.objectValue?["verification_complete"]?.boolValue == true
@@ -2431,7 +2479,6 @@ private struct CodexProbeVerifyRunner {
       "correlation_complete": .bool(audit.complete),
       "app_server": app,
       "exec": exec,
-      "mcp": mcp,
     ])
   }
 
@@ -2700,97 +2747,6 @@ private struct CodexProbeVerifyRunner {
     ])
   }
 
-  private mutating func exerciseMCP() async throws -> JSONValue {
-    let tools = try await call("codex.mcp.tools.list")
-    let marker = "CMCP_CODEX_MCP_OK"
-    let started = try await call(
-      "codex.mcp.run",
-      arguments: [
-        "prompt": .string(
-          "Reply with exactly \(marker). Do not call tools and do not modify files."
-        )
-      ]
-    )
-    let callID = try requiredString(
-      in: payload(started),
-      path: ["call_id"],
-      label: "Codex MCP call id"
-    )
-    let first = try await waitForMCP(callID: callID, marker: marker)
-    let threadID = try requiredString(
-      in: first.result,
-      path: ["result", "thread_id"],
-      label: "Codex MCP thread id"
-    )
-
-    let replyMarker = "CMCP_CODEX_MCP_REPLY_OK"
-    let replied = try await call(
-      "codex.mcp.reply",
-      arguments: [
-        "thread_id": .string(threadID),
-        "prompt": .string(
-          "Reply with exactly \(replyMarker). Do not call tools and do not modify files."
-        ),
-      ]
-    )
-    let replyCallID = try requiredString(
-      in: payload(replied),
-      path: ["call_id"],
-      label: "Codex MCP reply call id"
-    )
-    let second = try await waitForMCP(
-      callID: replyCallID,
-      marker: replyMarker
-    )
-
-    let cancellationStarted = try await call(
-      "codex.mcp.run",
-      arguments: [
-        "prompt": .string(
-          "Use the terminal to run `sleep 60`, then reply with CMCP_MCP_CANCEL_MISSED. "
-            + "Do not modify files."
-        )
-      ]
-    )
-    let cancellationCallID = try requiredString(
-      in: payload(cancellationStarted),
-      path: ["call_id"],
-      label: "Codex MCP cancellation call id"
-    )
-    let cancellation = payload(
-      try await call(
-        "codex.mcp.cancel",
-        arguments: ["call_id": .string(cancellationCallID)]
-      )
-    )
-    guard cancellation.objectValue?["cancellation_requested"]?.boolValue == true else {
-      throw ValidationError("Codex MCP did not accept the cancellation request.")
-    }
-    let cancelled = try await waitForMCPTerminal(
-      callID: cancellationCallID,
-      requiredEvent: "cancellation_requested"
-    )
-
-    return .object([
-      "tool_count": .number(Double(arrayCount(in: payload(tools), keys: ["tools"]))),
-      "call_id": .string(callID),
-      "thread_id": .string(threadID),
-      "state": .string(first.state),
-      "event_count": .number(Double(first.eventCount)),
-      "marker": .string(marker),
-      "marker_observed": .bool(contains(marker, in: first.result)),
-      "reply_call_id": .string(replyCallID),
-      "reply_state": .string(second.state),
-      "reply_event_count": .number(Double(second.eventCount)),
-      "reply_marker": .string(replyMarker),
-      "reply_marker_observed": .bool(contains(replyMarker, in: second.result)),
-      "cancellation_call_id": .string(cancellationCallID),
-      "cancellation_state": .string(cancelled.state),
-      "cancellation_event_count": .number(Double(cancelled.eventCount)),
-      "cancellation_event_observed": .bool(cancelled.observedEvent),
-    ])
-  }
-
   private mutating func waitForAppInterruption(
     turnID: String,
     afterCursor: Int
@@ -2866,90 +2822,6 @@ private struct CodexProbeVerifyRunner {
       try await Task.sleep(for: .milliseconds(500))
     }
     throw ValidationError("Codex Exec session \(sessionID) timed out.")
-  }
-
-  private mutating func waitForMCP(
-    callID: String,
-    marker: String
-  ) async throws -> (state: String, eventCount: Int, result: JSONValue) {
-    var cursor = 0
-    var eventCount = 0
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
-      let events = try await call(
-        "codex.mcp.events",
-        arguments: [
-          "call_id": .string(callID),
-          "after_cursor": .number(Double(cursor)),
-          "max_results": .number(100),
-        ]
-      )
-      let eventPayload = payload(events)
-      cursor = eventPayload.objectValue?["next_cursor"]?.intValue ?? cursor
-      eventCount += eventPayload.objectValue?["returned_events"]?.intValue ?? 0
-
-      let result = payload(
-        try await call(
-          "codex.mcp.result",
-          arguments: ["call_id": .string(callID)]
-        )
-      )
-      let state = value(in: result, path: ["call", "state"])?.stringValue ?? "unknown"
-      if ["cancelled", "completed", "failed"].contains(state) {
-        guard state == "completed", contains(marker, in: result) else {
-          throw ValidationError(
-            "Codex MCP call \(callID) ended as \(state) without \(marker)."
-          )
-        }
-        return (state, eventCount, result)
-      }
-      try await Task.sleep(for: .milliseconds(500))
-    }
-    throw ValidationError("Codex MCP call \(callID) timed out.")
-  }
-
-  private mutating func waitForMCPTerminal(
-    callID: String,
-    requiredEvent: String
-  ) async throws -> (state: String, eventCount: Int, observedEvent: Bool) {
-    var cursor = 0
-    var eventCount = 0
-    var observedEvent = false
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
-      let events = try await call(
-        "codex.mcp.events",
-        arguments: [
-          "call_id": .string(callID),
-          "after_cursor": .number(Double(cursor)),
-          "max_results": .number(100),
-        ]
-      )
-      let eventPayload = payload(events)
-      cursor = eventPayload.objectValue?["next_cursor"]?.intValue ?? cursor
-      eventCount += eventPayload.objectValue?["returned_events"]?.intValue ?? 0
-      observedEvent = observedEvent || contains(requiredEvent, in: eventPayload)
-
-      let result = payload(
-        try await call(
-          "codex.mcp.result",
-          arguments: ["call_id": .string(callID)]
-        )
-      )
-      let state = value(in: result, path: ["call", "state"])?.stringValue ?? "unknown"
-      if ["cancelled", "completed", "failed"].contains(state) {
-        guard observedEvent else {
-          throw ValidationError(
-            "Codex MCP call \(callID) became terminal without \(requiredEvent)."
-          )
-        }
-        return (state, eventCount, observedEvent)
-      }
-      try await Task.sleep(for: .milliseconds(250))
-    }
-    throw ValidationError("Codex MCP cancellation for \(callID) timed out.")
   }
 
   private mutating func call(

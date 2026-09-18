@@ -4,6 +4,11 @@ import Foundation
 struct AuthorizedMCPClient: DownstreamMCPClient {
   let base: any DownstreamMCPClient
   let policy: MCPToolAccessPolicy
+  var policyProvider: (@Sendable () throws -> MCPToolAccessPolicy)? = nil
+
+  private var currentPolicy: MCPToolAccessPolicy {
+    get throws { try policyProvider?() ?? policy }
+  }
 
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
@@ -13,15 +18,18 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     Self(
       base: base.makeScopedClient(
         workingDirectory: workingDirectory, environment: environment, hostContext: hostContext),
-      policy: policy)
+      policy: policy, policyProvider: policyProvider)
   }
 
   func toolChanges() -> AsyncStream<Void> { base.toolChanges() }
   func shutdown() async { await base.shutdown() }
 
-  func isServerVisible(_ server: MCPServerConfig) -> Bool { policy.isVisible(server) }
+  func isServerVisible(_ server: MCPServerConfig) -> Bool {
+    (try? currentPolicy.isVisible(server)) ?? false
+  }
 
   func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+    let policy = try currentPolicy
     guard policy.canDiscoverTools(on: server) else { return [] }
     return try base.listTools(server: server).filter {
       policy.allows(.init(serverID: server.id, toolName: $0.name))
@@ -94,6 +102,14 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     return try base.readEvents(server: server, afterCursor: afterCursor, maxResults: maxResults)
   }
 
+  func readEvents(
+    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
+  ) throws -> JSONValue {
+    try requireServer(server, capability: "mcp.events.read")
+    return try base.readEvents(
+      server: server, afterCursor: afterCursor, maxResults: maxResults, sessionID: sessionID)
+  }
+
   func activeRequests(server: MCPServerConfig) throws -> JSONValue {
     try requireServer(server, capability: "mcp.requests.list")
     return try base.activeRequests(server: server)
@@ -107,14 +123,28 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
   }
 
   private func requireTool(_ name: String, server: MCPServerConfig) throws {
-    guard policy.allows(.init(serverID: server.id, toolName: name)) else {
+    guard try currentPolicy.allows(.init(serverID: server.id, toolName: name)) else {
       throw GatewayToolError.invalidArguments(
         "[policy.capability_denied] The profile does not grant this downstream MCP tool.")
     }
   }
 
+  func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int) throws
+    -> JSONValue
+  {
+    try requireServer(server, capability: "mcp.requests.read")
+    let result = try base.readRequest(
+      server: server, requestID: requestID, offset: offset, maxBytes: maxBytes)
+    guard let tool = result.objectValue?["tool"]?.stringValue else {
+      throw GatewayToolError.executionFailed(
+        "Execution receipt is missing its original tool identity.")
+    }
+    try requireTool(tool, server: server)
+    return result
+  }
+
   private func requireServer(_ server: MCPServerConfig, capability: String) throws {
-    guard policy.permitsServer(server, capability: capability) else {
+    guard try currentPolicy.permitsServer(server, capability: capability) else {
       throw GatewayToolError.invalidArguments(
         "[policy.capability_denied] The profile does not grant this downstream MCP surface.")
     }

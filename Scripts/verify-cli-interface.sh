@@ -21,6 +21,11 @@ rg() {
 
 ROOT_DIR=${0:A:h:h}
 SWIFT_EXECUTABLE=${SWIFT_EXECUTABLE:-/usr/bin/swift}
+VALIDATION_CONTROL_SOCKET=${COMPUTER_MCP_TEST_CONTROL_SOCKET:-}
+if [[ -n "$VALIDATION_CONTROL_SOCKET" && "$VALIDATION_CONTROL_SOCKET" != /* ]]; then
+  echo "CLI interface verification failed: COMPUTER_MCP_TEST_CONTROL_SOCKET must be an absolute isolated test Control Socket path; production defaults are not used." >&2
+  exit 1
+fi
 
 ROOT_BIN_DIR=$("$SWIFT_EXECUTABLE" build \
   --package-path "$ROOT_DIR" \
@@ -65,7 +70,7 @@ verify_help "$ROOT_CLI" tunnel
 verify_help "$ROOT_CLI" tunnel openai
 verify_help "$ROOT_CLI" tunnel cloudflare
 verify_help "$ROOT_CLI" codex
-verify_help "$ROOT_CLI" codex elevation
+verify_help "$ROOT_CLI" permissions approvals
 verify_help "$ROOT_CLI" tools
 verify_help "$ROOT_CLI" audit
 verify_help "$ROOT_CLI" providers
@@ -102,6 +107,7 @@ public_leaf_commands=(
   "profile activate"
   "profile grant"
   "profile shell"
+  "profile permissions"
   "tunnel openai list"
   "tunnel openai doctor"
   "tunnel openai start"
@@ -122,17 +128,14 @@ public_leaf_commands=(
   "codex diagnostics"
   "codex release-thread"
   "codex recent-thread"
-  "codex elevation list"
-  "codex elevation read"
-  "codex elevation approve"
-  "codex elevation deny"
-  "codex elevation revoke"
-  "codex elevation effective"
   "tools list"
   "tools inspect"
   "tools call"
   "tools inventory"
   "permissions status"
+  "permissions approvals list"
+  "permissions approvals approve"
+  "permissions approvals deny"
   "audit list"
   "audit export"
   "providers list"
@@ -244,6 +247,7 @@ verify_help "$VALIDATION_CLI" report release-manifest
 verify_help "$VALIDATION_CLI" report verify-release-manifest
 
 OUTSIDE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-cli.XXXXXX")
+VALIDATION_CONTROL_SOCKET=${VALIDATION_CONTROL_SOCKET:-"$OUTSIDE_DIR/control.sock"}
 FIXTURE_MANIFEST="$OUTSIDE_DIR/validation-fixture.toml"
 FIXTURE_MARKER="$OUTSIDE_DIR/provider-starts.log"
 DOCTOR_JSON="$OUTSIDE_DIR/doctor.json"
@@ -327,12 +331,21 @@ if rg 'downstream-fixture' "$FIXTURE_MANIFEST" >/dev/null; then
 fi
 
 doctor_exit=0
-"$ROOT_CLI" doctor --journey local --json >"$DOCTOR_JSON" || doctor_exit=$?
+"$ROOT_CLI" doctor --control-socket "$VALIDATION_CONTROL_SOCKET" \
+  --journey local --json >"$DOCTOR_JSON" || doctor_exit=$?
 if [[ "$doctor_exit" != "0" && "$doctor_exit" != "1" ]]; then
   echo "CLI interface verification failed: doctor returned $doctor_exit." >&2
   exit 1
 fi
 /usr/bin/plutil -convert xml1 -o /dev/null "$DOCTOR_JSON"
+if [[ -z "${COMPUTER_MCP_TEST_CONTROL_SOCKET:-}" ]]; then
+  [[ "$doctor_exit" == "1" ]] || {
+    echo "CLI interface verification failed: an absent test Control Socket must report unavailable." >&2
+    exit 1
+  }
+  /usr/bin/jq -e '.status == "blocked" and any(.checks[]; .id == "app.control_socket" and .status == "fail")' \
+    "$DOCTOR_JSON" >/dev/null
+fi
 [[ $(/usr/bin/plutil -extract schema_version raw -o - "$DOCTOR_JSON") == "1" ]] \
   || { echo "CLI interface verification failed: doctor schema changed." >&2; exit 1; }
 rg '"generated_at"[[:space:]]*:[[:space:]]*"[0-9]{4}-' "$DOCTOR_JSON" >/dev/null

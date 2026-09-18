@@ -20,7 +20,7 @@ Use this guide for agent work in this repository.
 - Keep execution side effects behind gateway adapters such as CLI, Shell,
   process, MCP proxy, HTTP transport, Secure MCP Tunnel, Codex, Computer Use,
   and builtin runtimes.
-- The independent Codex adapter owns App Server, Exec and Codex MCP lifecycles
+- The independent Codex adapter owns App Server and Exec lifecycles
   through `swift-codex`; the host owns generic MCP routing and approval authority.
 - Treat local tokens, CLI credentials, and downstream MCP authentication as
   user-owned secrets. Do not log, expose, or copy them into examples.

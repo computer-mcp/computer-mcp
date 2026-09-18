@@ -18,6 +18,11 @@ struct MCPUpstreamCancellationTests {
     try Data(Self.script.utf8).write(to: script)
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
+      profiles: [
+        .init(
+          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
+          allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
+      ],
       mcp: .init(servers: [
         .init(
           id: "native", transport: .stdio, command: "/usr/bin/python3",

@@ -7,6 +7,84 @@ import Testing
 @Suite(.serialized)
 struct GatewayHTTPRuntimeTests {
   @Test
+  func testCredentialPrincipalOwnsOperationAcrossReconnectButNotAnotherCredential() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let database = try GatewayDatabase(inMemory: ())
+    let configuration = GatewayConfiguration(
+      runtime: RuntimeBindingConfig(caller: .secureTunnel, profileID: .chatGPTOperate),
+      profiles: [
+        ProfileGrantConfig(
+          id: .chatGPTOperate,
+          capabilities: ["operations.prepare", "operations.commit", "file.write"],
+          workspaces: ["fixture"], allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+      ], builtin: BuiltinConfig(enabled: ["file.write"]))
+    func runtime(token: String) throws -> GatewayHTTPRuntime {
+      GatewayHTTPRuntime(
+        configuration: configuration,
+        registry: try GatewayRuntime(
+          configuration: configuration, database: database,
+          registeredWorkspaces: [
+            RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path)
+          ]), host: "127.0.0.1", port: 0, publicBaseURL: nil, accessToken: token)
+    }
+    let first = try runtime(token: "first-fixture-credential")
+    let other = try runtime(token: "other-fixture-credential")
+    try await first.startListening()
+    do {
+      try await other.startListening()
+      let firstPort = try #require(await first.boundPort())
+      let otherPort = try #require(await other.boundPort())
+      let endpoint = try #require(URL(string: "http://127.0.0.1:\(firstPort)/mcp"))
+      let firstSession = try await GatewayClientSession.connectHTTP(
+        endpoint: endpoint, accessToken: "first-fixture-credential")
+      let target: JSONValue = .object([
+        "path": .string("owned.txt"), "content": .string("verified owner"),
+        "dry_run": .bool(false), "confirm": .bool(true),
+      ])
+      let prepared = try await firstSession.call(
+        toolName: "operations.prepare",
+        arguments: .object([
+          "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
+        ]))
+      let ticketID = try #require(
+        prepared.result.objectValue?["structuredContent"]?.objectValue?["result"]?
+          .objectValue?["ticket_id"]?.stringValue)
+      try database.resolveOperationApproval(id: ticketID, approved: true, resolver: .localCLI)
+      await firstSession.disconnect()
+
+      let otherSession = try await GatewayClientSession.connectHTTP(
+        endpoint: try #require(URL(string: "http://127.0.0.1:\(otherPort)/mcp")),
+        accessToken: "other-fixture-credential")
+      let commit: JSONValue = .object([
+        "workspace_id": .string("fixture"), "ticket_id": .string(ticketID),
+        "tool": .string("file.write"), "arguments": target,
+      ])
+      let denied = try await otherSession.call(toolName: "operations.commit", arguments: commit)
+      #expect(denied.result.objectValue?["isError"] == .bool(true))
+      #expect(
+        !FileManager.default.fileExists(atPath: root.appendingPathComponent("owned.txt").path))
+      await otherSession.disconnect()
+
+      let reconnected = try await GatewayClientSession.connectHTTP(
+        endpoint: endpoint, accessToken: "first-fixture-credential")
+      let completed = try await reconnected.call(toolName: "operations.commit", arguments: commit)
+      #expect(completed.result.objectValue?["isError"] != .bool(true))
+      #expect(
+        try String(contentsOf: root.appendingPathComponent("owned.txt"), encoding: .utf8)
+          == "verified owner")
+      await reconnected.disconnect()
+      await other.stop()
+      await first.stop()
+    } catch {
+      await other.stop()
+      await first.stop()
+      throw error
+    }
+  }
+
+  @Test
   func testV1SecurityLimitsAreFixed() {
     #expect(GatewayHTTPLimits.v1.maxHeaderBytes == 16 * 1_024)
     #expect(GatewayHTTPLimits.v1.maxBodyBytes == 8 * 1_024 * 1_024)

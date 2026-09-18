@@ -304,7 +304,14 @@ struct CLITreeTests {
       RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
     ]
     let configuration = GatewayConfiguration(
-      runtime: .init(caller: .localCLI, profileID: .localAdmin))
+      runtime: .init(caller: .localCLI, profileID: .localAdmin),
+      // This fixture compares registration routes without a persistence or approval service.
+      profiles: [
+        .init(
+          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
+          allowedCallers: [.localCLI], fullShellEnabled: true,
+          mode: .localFullAccess, confirmationPolicy: .never)
+      ])
     let runtime = try GatewayRuntime(
       configuration: configuration, registeredWorkspaces: workspaces, plugins: [plugin])
     let tool = try #require(runtime.listTools().first { $0.name.hasPrefix("cli_") })

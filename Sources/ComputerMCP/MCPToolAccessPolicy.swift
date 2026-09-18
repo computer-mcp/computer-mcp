@@ -59,6 +59,7 @@ struct MCPToolAccessPolicy: Sendable {
     "mcp.servers.list", "mcp.servers.status",
     "mcp.resources.list", "mcp.resources.templates.list", "mcp.resources.read",
     "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read", "mcp.requests.list",
+    "mcp.requests.read",
     "mcp.requests.cancel",
   ]
 

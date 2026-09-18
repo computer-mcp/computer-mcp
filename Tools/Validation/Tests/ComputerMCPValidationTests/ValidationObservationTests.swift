@@ -20,12 +20,6 @@ struct ValidationObservationTests {
       )
     )
     #expect(
-      ValidationReviewedOutcomePolicy.permitsExpectedFailure(
-        testCaseID: "catalog.dynamic_full_coverage",
-        toolName: "codex.mcp.approval.respond"
-      )
-    )
-    #expect(
       !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
         testCaseID: "catalog.dynamic_full_coverage",
         toolName: "system.time"

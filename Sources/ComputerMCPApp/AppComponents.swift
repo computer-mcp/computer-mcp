@@ -138,7 +138,7 @@ extension WorkspaceHealth {
     switch self {
     case .available: .green
     case .bookmarkStale: .orange
-    case .missing: .red
+    case .missing, .unavailable: .red
     }
   }
 }

@@ -117,8 +117,6 @@ public struct CapabilityFixturePlan: Sendable {
       return primary([:])
     case "codex.exec.list":
       return primary([:])
-    case "codex.mcp.status", "codex.mcp.tools.list", "codex.mcp.calls.list":
-      return primary([:])
 
     case "mcp.servers.list":
       return invocation([:], marker: "fixture-stdio")

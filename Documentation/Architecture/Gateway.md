@@ -44,17 +44,34 @@ workspace scope, caller restrictions, and MCP metadata.
 
 The execution sequence is:
 
-1. Resolve the exact tool name.
-2. Bind the configured caller, profile, and explicit `workspace_id`.
-3. Check capability grant, caller eligibility, Full Shell state, path/network
+1. Resolve the exact tool name and host-owned provider identity.
+2. Bind the verified principal, configured caller, profile and `workspace_id`.
+3. Read the current grant revision and check mode, capability, caller, Full Shell, path/network
    policy, and TCC requirements.
-4. Require an operation ticket for configured destructive atomics.
+4. Apply the confirmation policy and validate/consume an approved operation
+   ticket when required. Only local administration resolves approval.
 5. Dispatch to one provider.
 6. Bound output and return structured content or a stable error.
 7. Persist a redacted audit decision.
 
 Unknown tools, workspaces and providers fail closed. Domain adapters validate
 their own protocol methods inside the scope delegated by the host.
+
+Profile permission updates apply to subsequent discovery and calls without
+restarting unrelated transports. A profile change invalidates its outstanding
+approvals. Existing sessions retain their verified principal and profile;
+selecting the default profile affects new admissions. Disconnecting a client
+does not stop owned execution. Revocation and explicit cancellation are
+separate operations.
+
+MCP requests with a caller-stable id reserve a durable receipt before dispatch.
+Synchronous and asynchronous routes use the same identity and input digest.
+Duplicate inputs observe the original execution; conflicting inputs fail.
+Results are bounded and can be read without starting a provider. After loss of
+an executing instance, an unresolved receipt reports an unknown outcome and
+does not authorize replay. Cancellation delivery, execution outcome and
+process cleanup are separate facts. This is a receipt layer, not a scheduler
+or a promise that arbitrary downstream work survives a host restart.
 
 ## Workspace Model
 
@@ -102,7 +119,7 @@ Neither can use local Codex MCP configuration or directly reach localhost.
 Codex has two distinct relationships:
 
 - Computer MCP can invoke the independent Codex plugin, which owns the separate
-  App Server, Exec and Codex MCP provider lifecycles.
+  App Server and Exec provider lifecycles.
 - Codex can use Computer MCP as an external MCP server through
   `computer-mcp install codex`.
 

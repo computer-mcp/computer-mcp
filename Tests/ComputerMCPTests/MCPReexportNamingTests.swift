@@ -27,7 +27,8 @@ struct MCPReexportNamingTests {
 
   @Test
   func explicitNativeCapabilityEnablesDiscoveryWithoutGenericPermission() throws {
-    let server = Self.server("first", prefix: "")
+    var server = Self.server("first", prefix: "")
+    server.toolRisks = ["codex.app.status": .readOnly]
     let configuration = GatewayConfiguration(mcp: .init(servers: [server]))
     let policy = MCPToolAccessPolicy(
       configuration: configuration,

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct CommandResult: Codable, Equatable, Sendable {
@@ -9,6 +10,7 @@ public struct CommandResult: Codable, Equatable, Sendable {
   public var stderr: String
   public var stdoutTruncated: Bool
   public var stderrTruncated: Bool
+  public var cleanupError: String? = nil
 }
 
 public protocol CommandRunning: Sendable {
@@ -27,6 +29,7 @@ public enum ValidationProcessError: Error, LocalizedError, Equatable, Sendable {
   case launchFailed(String)
   case timedOut(String)
   case nonzeroExit(executable: String, code: Int32, stderr: String)
+  case cleanupFailed(primary: String?, detail: String)
 
   public var errorDescription: String? {
     switch self {
@@ -38,24 +41,9 @@ public enum ValidationProcessError: Error, LocalizedError, Equatable, Sendable {
       return "Validation subprocess timed out: \(executable)"
     case .nonzeroExit(let executable, let code, let stderr):
       return "Validation subprocess failed (\(code)): \(executable): \(stderr)"
+    case .cleanupFailed(let primary, let detail):
+      return (primary.map { "\($0)\n" } ?? "") + "Validation cleanup failed: \(detail)"
     }
-  }
-}
-
-private final class ValidationDataBox: @unchecked Sendable {
-  private let lock = NSLock()
-  private var value = Data()
-
-  func replace(with data: Data) {
-    lock.lock()
-    value = data
-    lock.unlock()
-  }
-
-  func snapshot() -> Data {
-    lock.lock()
-    defer { lock.unlock() }
-    return value
   }
 }
 
@@ -80,22 +68,16 @@ public struct ProcessCommandRunner: CommandRunning, Sendable {
     let stderrPipe = Pipe()
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
-    let stdout = ValidationDataBox()
-    let stderr = ValidationDataBox()
-    let outputDone = DispatchGroup()
-    outputDone.enter()
-    Thread.detachNewThread {
-      stdout.replace(with: stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-      outputDone.leave()
+    defer {
+      for pipe in [stdoutPipe, stderrPipe] {
+        try? pipe.fileHandleForReading.close()
+        try? pipe.fileHandleForWriting.close()
+      }
     }
-    outputDone.enter()
-    Thread.detachNewThread {
-      stderr.replace(with: stderrPipe.fileHandleForReading.readDataToEndOfFile())
-      outputDone.leave()
-    }
-
-    let terminated = DispatchSemaphore(value: 0)
-    process.terminationHandler = { _ in terminated.signal() }
+    let stdout = try ValidationPipeCapture(
+      handle: stdoutPipe.fileHandleForReading, limit: max(1, maxOutputBytes))
+    let stderr = try ValidationPipeCapture(
+      handle: stderrPipe.fileHandleForReading, limit: max(1, maxOutputBytes))
     do {
       try process.run()
     } catch {
@@ -105,26 +87,43 @@ public struct ProcessCommandRunner: CommandRunning, Sendable {
     }
     try? stdoutPipe.fileHandleForWriting.close()
     try? stderrPipe.fileHandleForWriting.close()
-    let wait = terminated.wait(timeout: .now() + .milliseconds(max(1, timeoutMilliseconds)))
-    let timedOut = wait == .timedOut
-    if timedOut {
-      process.terminate()
-      _ = terminated.wait(timeout: .now() + .seconds(5))
+    let deadline = ContinuousClock.now + .milliseconds(max(1, timeoutMilliseconds))
+    var cleanupError: String?
+    while process.isRunning && ContinuousClock.now < deadline {
+      do {
+        try stdout.drain()
+        try stderr.drain()
+      } catch {
+        cleanupError = error.localizedDescription
+        break
+      }
+      usleep(5_000)
     }
-    outputDone.wait()
-
-    let outputLimit = max(1, maxOutputBytes)
-    let stdoutData = stdout.snapshot()
-    let stderrData = stderr.snapshot()
+    let timedOut = process.isRunning && ContinuousClock.now >= deadline
+    do { try ValidationProcessCleanup.stop(process) } catch {
+      cleanupError = error.localizedDescription
+    }
+    let drainDeadline = ContinuousClock.now + .seconds(1)
+    do {
+      while (!stdout.reachedEOF || !stderr.reachedEOF) && ContinuousClock.now < drainDeadline {
+        try stdout.drain()
+        try stderr.drain()
+        if !stdout.reachedEOF || !stderr.reachedEOF { usleep(5_000) }
+      }
+      if !stdout.reachedEOF || !stderr.reachedEOF {
+        cleanupError = cleanupError ?? "Output pipes did not reach EOF before the drain deadline."
+      }
+    } catch { cleanupError = error.localizedDescription }
     return CommandResult(
       executable: executable,
       arguments: arguments,
       exitCode: process.isRunning ? nil : process.terminationStatus,
       timedOut: timedOut,
-      stdout: String(decoding: stdoutData.prefix(outputLimit), as: UTF8.self),
-      stderr: String(decoding: stderrData.prefix(outputLimit), as: UTF8.self),
-      stdoutTruncated: stdoutData.count > outputLimit,
-      stderrTruncated: stderrData.count > outputLimit
+      stdout: String(decoding: stdout.data, as: UTF8.self),
+      stderr: String(decoding: stderr.data, as: UTF8.self),
+      stdoutTruncated: stdout.truncated,
+      stderrTruncated: stderr.truncated,
+      cleanupError: cleanupError
     )
   }
 }
@@ -194,6 +193,15 @@ public struct ValidationProductCommand: Sendable {
       timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes
     )
+    if let cleanupError = result.cleanupError {
+      let primary =
+        result.timedOut
+        ? ValidationProcessError.timedOut(executableURL.path).localizedDescription
+        : result.exitCode == 0
+          ? nil
+          : "Validation subprocess exited with code \(result.exitCode.map(String.init) ?? "unknown")."
+      throw ValidationProcessError.cleanupFailed(primary: primary, detail: cleanupError)
+    }
     if result.timedOut {
       throw ValidationProcessError.timedOut(executableURL.path)
     }

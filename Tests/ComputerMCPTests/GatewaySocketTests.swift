@@ -210,6 +210,8 @@ final class GatewaySocketTests {
       let observed = await identities.values
       #expect((observed.map(\.origin)) == ([.localMCP, .secureTunnel]))
       #expect((observed[0].connectionID) != (observed[1].connectionID))
+      #expect(observed[0].trustedPrincipalID == "local-user:\(getuid())")
+      #expect(observed[0].trustedPrincipalID != observed[1].trustedPrincipalID)
       #expect((observed[1].tunnelInstanceID) == ("tunnel-instance-1"))
       #expect((observed[1].tunnelProfileID) == ("computer-mcp"))
     } catch {
@@ -218,6 +220,85 @@ final class GatewaySocketTests {
     }
 
     await server.stop()
+  }
+
+  @Test
+  func testLocalPrincipalUsesVerifiedUserNotOriginOrClaimedIdentity() throws {
+    let frame = try jsonData([
+      "protocol": GatewaySocketHandshake.protocolName,
+      "schema_version": GatewaySocketHandshake.schemaVersion,
+      "origin": "local-cli",
+      "trustedPrincipalID": "another-user",
+      "connection_id": "model-supplied-connection",
+    ])
+    let cli = try GatewaySocketAuthenticator.resolve(
+      firstFrame: frame, expectedCredentialFile: nil, expectedUserID: getuid())
+    let mcp = try GatewaySocketAuthenticator.resolve(
+      firstFrame: jsonData(["jsonrpc": "2.0", "id": 1, "method": "ping"]),
+      expectedCredentialFile: nil, expectedUserID: getuid())
+    #expect(cli.identity.trustedPrincipalID == "local-user:\(getuid())")
+    #expect(cli.identity.trustedPrincipalID == mcp.identity.trustedPrincipalID)
+    #expect(cli.identity.connectionID != mcp.identity.connectionID)
+    #expect(cli.identity.connectionID != "model-supplied-connection")
+    #expect(cli.identity.caller == .localCLI)
+    #expect(mcp.identity.caller == .localMCP)
+  }
+
+  @Test
+  func testCredentialPrincipalSurvivesReconnectAndIgnoresTunnelClaims() throws {
+    let fixture = try SocketFixture()
+    let credentialURL = fixture.rootURL.appendingPathComponent("tunnel-auth")
+    try GatewaySocketCredentialStore.create(at: credentialURL)
+    func resolve(instance: String, profile: String) throws -> GatewaySocketConnectionIdentity {
+      let handshake = try GatewaySocketAuthenticator.clientHandshake(
+        identity: .secureTunnel(
+          credentialFile: credentialURL, tunnelInstanceID: instance, tunnelProfileID: profile),
+        expectedUserID: getuid())
+      return try GatewaySocketAuthenticator.resolve(
+        firstFrame: handshake, expectedCredentialFile: credentialURL, expectedUserID: getuid()
+      ).identity
+    }
+    let first = try resolve(instance: "first-connection", profile: "first-profile")
+    let second = try resolve(instance: "new-connection", profile: "another-profile")
+    #expect(first.connectionID != second.connectionID)
+    #expect(first.trustedPrincipalID == second.trustedPrincipalID)
+    #expect(first.trustedPrincipalID.hasPrefix("credential:sha256:"))
+
+    try GatewaySocketCredentialStore.create(at: credentialURL)
+    let rotated = try resolve(instance: "new-connection", profile: "another-profile")
+    #expect(rotated.trustedPrincipalID != first.trustedPrincipalID)
+  }
+
+  @Test
+  func testRegisteredTunnelPrincipalSurvivesCredentialRotationAndStillRequiresAuthentication()
+    throws
+  {
+    let fixture = try SocketFixture()
+    let credentialURL = fixture.rootURL.appendingPathComponent("tunnel-auth")
+    try GatewaySocketCredentialStore.create(at: credentialURL)
+    func handshake() throws -> Data {
+      try GatewaySocketAuthenticator.clientHandshake(
+        identity: .secureTunnel(
+          credentialFile: credentialURL, tunnelInstanceID: "claimed-instance",
+          tunnelProfileID: "claimed-profile"), expectedUserID: getuid())
+    }
+    let firstFrame = try handshake()
+    let principal = "tunnel-bridge:host-registration"
+    let first = try GatewaySocketAuthenticator.resolve(
+      firstFrame: firstFrame, expectedCredentialFile: credentialURL, expectedUserID: getuid(),
+      registeredTunnelPrincipalID: principal)
+    try GatewaySocketCredentialStore.create(at: credentialURL)
+    let second = try GatewaySocketAuthenticator.resolve(
+      firstFrame: handshake(), expectedCredentialFile: credentialURL, expectedUserID: getuid(),
+      registeredTunnelPrincipalID: principal)
+    #expect(first.identity.connectionID != second.identity.connectionID)
+    #expect(first.identity.trustedPrincipalID == principal)
+    #expect(second.identity.trustedPrincipalID == principal)
+    #expect(throws: GatewaySocketError.self) {
+      try GatewaySocketAuthenticator.resolve(
+        firstFrame: firstFrame, expectedCredentialFile: credentialURL, expectedUserID: getuid(),
+        registeredTunnelPrincipalID: principal)
+    }
   }
 
   @Test

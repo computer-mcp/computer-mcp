@@ -6,23 +6,24 @@ authority, not sandboxing an arbitrary remote shell.
 
 ## Authority Boundaries
 
-- `chatgpt-observe` is read-only and cannot use Codex, writes, CLI execution, or
-  Shell.
-- `chatgpt-operate` receives only locally configured capabilities and
-  workspaces. Its local operator may explicitly enable Full Shell for the
-  profile; the manifest policy and persisted profile grant must both opt in.
-- `cloudflare-observe` and `cloudflare-operate` use separate caller grants and
-  never inherit ChatGPT authority.
+- Each profile explicitly defines permission mode, capabilities, workspaces,
+  allowed callers and confirmation policy. Its name and transport do not
+  determine its permission mode.
+- `read-only` permits host-classified reads. `workspace-operations` permits
+  granted typed operations, subject to their path and confirmation rules.
+  `local-full-access` additionally permits separately enabled arbitrary
+  execution; choosing this mode alone does not enable Shell or grant tools.
 - `local-admin` is local-only and rejected for remote callers.
 - All workspace operations resolve a stable registered id and normalized path.
 - More than one workspace requires explicit selection.
 - Unknown tools, providers, Codex RPC methods, paths, and capabilities fail
   closed.
-- ChatGPT cannot request or wait for a permission expansion.
+- Remote callers cannot approve host tickets or expand their own grants.
 
 Full Shell is equivalent to the current user's effective terminal authority.
-It is available only to `chatgpt-operate` and `local-admin`, remains off by
-default, and can be enabled only through the local control plane. If enabled,
+It requires `local-full-access`, the separate Full Shell grant, and the static
+Shell policy. It remains off by default and is enabled through local
+administration. If enabled,
 workspace bookmarks are routing and audit context, not containment.
 
 Downstream MCP annotations are presentation hints, not host authorization.
@@ -31,7 +32,7 @@ neither a tool-name prefix nor downstream `_meta` can supply that identity.
 Host risk classification and tool selection apply to configured aliases,
 reexports, and generic calls. A generic invocation resolves its target's host
 risk before policy, consent preflight, or operation-ticket handling. A
-destructive target requires the same ticket through every calling path.
+target requiring confirmation uses the same ticket through every calling path.
 
 Profiles may receive an entire MCP registration through host-owned
 `mcp_servers`, including remote profiles. Registration selection and profile
@@ -40,9 +41,35 @@ selection follows future tools without copying a static capability list.
 Exact alias and reexport grants refer to the same underlying tool. The explicit
 generic `mcp.tools.call` capability grants host-selected tools across
 registrations; generic discovery alone grants no tool authority. Catalog
-counts and definitions are filtered before exposure. Observe and Full Shell
-boundaries still apply, and persisted runtime settings cannot substitute a
-different registration grant for the manifest's grant.
+counts and definitions are filtered before exposure. Permission-mode and
+Full Shell boundaries still apply. App-managed grants are versioned in the
+database and reread for calls and discovery; a change invalidates the affected
+pending approvals without restarting unrelated Gateways or tunnels.
+
+## Principals And Local Confirmation
+
+Verified local peer credentials establish the local-user principal. Secure
+Tunnel admission binds the registered bridge identity; authenticated HTTP
+binds the validated credential. A connection id is tracing information, not
+authority. Reconnection with the same credential retains the same principal;
+clients sharing a credential share authority and cannot be distinguished by
+client-supplied labels. Profile, workspace and caller checks still apply.
+
+The default `risk-based` policy requires local confirmation for host-classified
+destructive, external-write and arbitrary-execution operations. `all-writes`
+also confirms workspace writes; `never` is an explicit local operator choice.
+Classification cannot inspect all effects hidden inside an arbitrary script.
+Workspace checks remain application-level validation, not an OS sandbox.
+
+A ticket moves through `pending_approval`, `approved`, `denied` or `expired`;
+an operation not requiring confirmation starts `prepared`. Approval is an
+owner-only App/management CLI action. A model-supplied `confirm` field is not
+approval. Commit binds the verified principal, exact arguments, workspace,
+reviewed target state and authorization revision, then consumes the ticket
+once. Approval does not grant a missing capability. Changing the grant
+invalidates its pending tickets and prevents newly unauthorized calls;
+stopping owned in-flight work is a separate action, not a side effect of
+revocation or client disconnection.
 
 ## Transport And Secrets
 
@@ -108,68 +135,37 @@ SwiftUI adapter or owner-only `computer-mcp` control CLI.
 
 ## Codex
 
-Codex App Server, Exec, and MCP use gateway-owned workspace, sandbox, approval,
-session, and output policy. An unscoped `danger-full-access` value, raw remote
-argv/config overrides, authentication mutation, marketplace mutation, and
-remote-control pairing are rejected. The configured default sandbox remains
-`workspace-write`; callers cannot replace it in a thread or turn request.
+The host authorizes access to the Codex plugin using the authenticated caller,
+profile and registered workspace. The plugin and `swift-codex` preserve native
+App Server and Exec semantics. Omitted execution settings inherit Codex
+configuration; explicit supported settings retain their official meaning.
+Provider, MCP, Skills, hooks and authentication remain Codex-owned.
 
-An authorized caller may request a separately persisted Codex execution
-elevation. The request itself grants nothing. It is bound to the registered
-workspace id and canonical root, profile, caller, connection, optional exact
-thread, requested mode, duration/turn limits, and redacted reason. Approval and
-denial require a local caller using the `local-admin` profile. The supported
-modes are one next eligible turn, an exact thread with a TTL, and bounded time
-with an optional turn limit. Pending requests expire after 15 minutes; approved
-grants expire, can be revoked, and are invalidated by a matching workspace or
-profile disable/removal, gateway connection closure, or thread handoff. These
-approval tools and receipts belong to the host and are available under gateway
-policy independently of the Codex execution provider.
+Native Full Access may be the user's configured default or an explicit request.
+It carries the operating-system permissions of the executing user. A workspace
+is an initial directory and ownership reference, not containment for arbitrary
+execution. The host does not silently lower an accepted native mode. A denied
+host capability is rejected before invoking the plugin.
 
-An approved grant never hot-switches an active turn. The runtime claims it
-atomically for an eligible future `thread/start` or `turn/start`, applies the
-official `dangerFullAccess` sandbox to that start, and commits consumption only
-after the upstream start succeeds. If a start cannot produce both a confirmed
-response and durable consumption receipt, its claim is invalidated and its
-exact owned runtime is stopped; ambiguous access never becomes reusable.
-One-turn grants cannot be consumed twice, including across restart. Revocation
-leaves an already active turn unchanged and restores the configured safe
-sandbox for future starts.
+Native execution approval requests retain their official response shapes,
+decision scopes and cancellation semantics. The adapter preserves correlation,
+deadline and terminal state so a lost connection is not mistaken for approval
+or replay authorization. Account management, marketplace management and remote
+pairing are outside the coding surface.
 
-Codex sandbox elevation is not Computer MCP capability elevation. It does not
-add gateway tools, profile grants, registered workspaces, Full Shell, operation
-tickets, TCC permissions, downstream MCP tools, or approval authority. In
-particular, an elevated Codex turn cannot invoke a Computer MCP capability such
-as `file.write` unless that capability was already granted independently.
+Dynamic Codex requests for Computer MCP tools are independently subject to
+host policy. Local control-plane confirmation applies to host operation
+tickets; a native Codex approval does not resolve such a ticket or expand host
+tool, workspace, profile, path or system permissions. Builtin dry-run paths
+whose implementation is known not to mutate state have read-only consent risk.
+Unverified downstream `dry_run` arguments do not lower risk.
 
-Codex App Server approval is a two-level boundary. Gateway policy first
-authorizes the capability for the bound caller, profile, and registered
-workspace. A supported higher-risk request then enters the durable consent
-broker for approve-once, an official protocol-bounded session approval, denial,
-or timeout. Policy authorization never implies consent, and consent cannot
-expand policy. Automatic approval is off by default and, when explicitly
-enabled, applies only to the bounded low-risk workspace-write class.
-For registered Computer MCP tools, the gateway authorizes the static tool
-capability first and then derives consent risk from the reviewed invocation.
-A built-in dry-run path whose implementation is known not to mutate state is
-treated as read-only for consent, so repeated previews such as
-`git.add` with `dry_run=true` do not create mutation approvals. The downgrade
-does not apply to configured or downstream tools and does not widen the tool,
-workspace, profile, caller, or path grant.
-
-Approval records contain normalized redacted details, risk, workspace,
-runtime, thread, turn, request correlation, deadline, decision, and terminal
-reason. Credential-like fields and sensitive free text are redacted and
-bounded before persistence. A restart marks an unresolved live request as
-interrupted; the receipt remains auditable, but Computer MCP does not claim the
-upstream request can be replayed.
-
-Codex event buffers are count- and byte-bounded, and every retained event is
-redacted before it becomes observable. Interactive requests and both App Server
-and MCP approval views apply the same redactor. Credential-like or oversized
-protocol request identifiers are represented by a SHA-256 digest instead of
-being copied into runtime state, diagnostics, or persistence. JSONL protocol
-lines are bounded in both directions.
+Host approval previews and audit summaries redact credentials and bound their
+size before persistence. Complete canonical inputs are bound to the operation
+ticket, not copied into its human-facing preview. Protocol output and retained
+events are bounded; consumers must distinguish native payloads from sanitized
+diagnostic summaries. Unresolved native approvals after restart remain
+auditable receipts, not reusable authority.
 
 Runtime cleanup is receipt- and ownership-based. Computer MCP may unsubscribe
 threads and signal only the exact process group created by the current owned
@@ -200,14 +196,9 @@ Representative codes include:
 
 - `policy.workspace_denied` for traversal, symlink escape, and cross-workspace
   access;
-- `operations.ticket_required`, `operations.ticket_invalid`, and
-  `operations.ticket_expired_or_used` for two-phase operation enforcement;
-- `mcp.tool_not_approved` for downstream catalog drift;
-- `codex.app.override_denied`, `codex.app.danger_full_access_denied`, and
-  `codex.app.workspace_override_denied` for rejected Codex App authority
-  changes. `codex.app.danger_full_access_denied` continues to cover raw or
-  mismatched overrides; an effective scoped grant is consumed internally and
-  does not weaken this validation rule.
+- `operations.approval_required`, `operations.ticket_invalid`, and
+  `operations.ticket_expired_or_used` for operation approval and consumption;
+- `mcp.tool_not_approved` for downstream catalog drift.
 
 Malformed arguments and provider/runtime failures remain `failed`. Acceptance
 tests must correlate the client-visible code, Gateway request ID, and exact
@@ -216,14 +207,17 @@ audit row rather than inferring a denial from message text alone.
 ## Persistence And Logging
 
 GRDB stores workspaces, profiles, provider health, manifest revisions,
-operation tickets, and redacted audit metadata. The Data Protection Keychain
+operation tickets, bounded MCP execution receipts and redacted audit metadata. The Data Protection Keychain
 stores transport keys and access token values.
 App logs are JSONL, mode `0600`, rotated, bounded, and redact secret-like
 fields.
 
-The App does not intentionally persist full command output, file contents,
-screenshots, or credentials. Tool results can still contain sensitive user
-data while in transit and must be treated accordingly by the MCP client.
+Execution receipts retain bounded downstream results for reconnect queries;
+these can contain sensitive command output, file contents or provider data.
+Their local storage is private user data, not a redacted audit log. Output
+expires after 24 hours and is subject to per-result and aggregate budgets;
+deduplication metadata remains when output expires. See the
+[request result contract](../Reference/Tools.md#mcprequestsread).
 
 ## Main Risks
 
@@ -235,7 +229,7 @@ data while in transit and must be treated accordingly by the MCP client.
   configured remote surface.
 - Provider output may itself contain secrets despite audit redaction.
 
-Minimize enabled capabilities, use `chatgpt-observe` first, keep Full Shell off
+Minimize enabled capabilities, use read-only mode first, keep Full Shell off
 unless the target ChatGPT workspace is trusted for terminal-equivalent access,
 review Tunnel tool snapshots after metadata changes, and remove sensitive data
 from diagnostics before sharing it.

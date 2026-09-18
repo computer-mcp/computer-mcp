@@ -43,6 +43,12 @@ struct GatewayHostRecoveryTests {
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin),
       workspaces: [.init(id: "fixture", path: workspace.path)],
+      // This standalone operator fixture tests crash recovery after a permitted write.
+      profiles: [
+        .init(
+          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
+          allowedCallers: [.localCLI], mode: .localFullAccess, confirmationPolicy: .never)
+      ],
       mcp: .init(servers: [
         .init(
           id: "owned", transport: .stdio, command: "/usr/bin/python3",

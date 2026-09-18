@@ -4,12 +4,13 @@ import SwiftUI
 
 struct PermissionsView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
+  @State private var showsApprovals = true
 
   var body: some View {
     VStack(spacing: 0) {
       WorkspaceHeader(
         "Permissions",
-        subtitle: "macOS privacy access used by enabled endpoints"
+        subtitle: "Host operation approvals and macOS privacy access"
       ) {
         RefreshButton {
           model.refresh(.permissions)
@@ -18,30 +19,126 @@ struct PermissionsView: View {
 
       Divider()
 
-      switch model.permissions {
-      case .idle, .loading:
-        LoadingWorkspaceView(title: "Checking permissions")
-      case .failed(let message):
-        FailedWorkspaceView(message: message) {
-          model.refresh(.permissions)
-        }
-      case .loaded(let permissions) where permissions.isEmpty:
-        EmptyWorkspaceView(
-          title: "No permission checks available",
-          detail: "Enabled providers have not reported any macOS permission requirements.",
-          systemImage: "hand.raised"
-        )
-      case .loaded(let permissions):
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(permissions) { permission in
-              PermissionRow(permission: permission)
-              Divider()
-            }
+      Picker("Permissions", selection: $showsApprovals) {
+        Text("Operation approvals", bundle: AppLocalization.resourceBundle).tag(true)
+        Text("macOS privacy", bundle: AppLocalization.resourceBundle).tag(false)
+      }
+      .pickerStyle(.segmented).padding(16)
+
+      if showsApprovals {
+        OperationApprovalsView()
+      } else {
+        switch model.permissions {
+        case .idle, .loading:
+          LoadingWorkspaceView(title: "Checking permissions")
+        case .failed(let message):
+          FailedWorkspaceView(message: message) {
+            model.refresh(.permissions)
           }
-          .padding(.horizontal, 16)
+        case .loaded(let permissions) where permissions.isEmpty:
+          EmptyWorkspaceView(
+            title: "No permission checks available",
+            detail: "Enabled providers have not reported any macOS permission requirements.",
+            systemImage: "hand.raised"
+          )
+        case .loaded(let permissions):
+          ScrollView {
+            LazyVStack(spacing: 0) {
+              ForEach(permissions) { permission in
+                PermissionRow(permission: permission)
+                Divider()
+              }
+            }
+            .padding(.horizontal, 16)
+          }
         }
       }
+    }
+  }
+}
+
+private struct OperationApprovalsView: View {
+  @EnvironmentObject private var model: ComputerMCPAppModel
+
+  var body: some View {
+    switch model.operationApprovals {
+    case .idle, .loading:
+      LoadingWorkspaceView(title: "Loading operation approvals")
+    case .failed(let message):
+      FailedWorkspaceView(message: message) { model.refresh(.permissions) }
+    case .loaded(let tickets) where tickets.isEmpty:
+      EmptyWorkspaceView(
+        title: "No operation approvals",
+        detail:
+          "Requests that need your approval appear here. Codex native approvals stay with Codex.",
+        systemImage: "checkmark.shield")
+    case .loaded(let tickets):
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 16) {
+          ForEach(tickets) { ticket in
+            VStack(alignment: .leading, spacing: 8) {
+              HStack {
+                Text(verbatim: ticket.capabilityID).font(.headline)
+                Spacer()
+                Text(verbatim: AppLocalization.string(ticket.state.approvalLabel))
+                  .foregroundStyle(.secondary)
+              }
+              LabeledContent("Profile", value: ticket.profileID.rawValue)
+              LabeledContent("Workspace", value: ticket.workspaceID ?? "—")
+              LabeledContent("Caller", value: ticket.caller.rawValue)
+              LabeledContent("Client", value: ticket.principalID)
+              LabeledContent("Request ID", value: ticket.id)
+              if let summary = ticket.reviewSummary {
+                Text(verbatim: summary).font(.system(.caption, design: .monospaced))
+                  .textSelection(.enabled)
+              }
+              LabeledContent(
+                "Expires", value: ticket.expiresAt.formatted(date: .abbreviated, time: .shortened)
+              )
+              .font(.caption).foregroundStyle(.secondary)
+              if ticket.state == .pendingApproval {
+                HStack {
+                  Button(role: .cancel) {
+                    model.resolveOperationApproval(id: ticket.id, approved: false)
+                  } label: {
+                    Text("Deny", bundle: AppLocalization.resourceBundle)
+                  }
+                  .accessibilityIdentifier("approval.\(ticket.id).deny")
+                  Button {
+                    model.resolveOperationApproval(id: ticket.id, approved: true)
+                  } label: {
+                    Text("Approve once", bundle: AppLocalization.resourceBundle)
+                  }
+                  .buttonStyle(.borderedProminent)
+                  .accessibilityIdentifier("approval.\(ticket.id).approve")
+                }
+                .disabled(
+                  ticket.expiresAt <= Date()
+                    || model.isActionRunning("approval.resolve.\(ticket.id)"))
+              }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("approval.\(ticket.id)")
+            Divider()
+          }
+        }
+        .padding(16)
+      }
+    }
+  }
+}
+
+extension OperationTicketState {
+  fileprivate var approvalLabel: String {
+    switch self {
+    case .prepared: "Prepared"
+    case .pendingApproval: "Waiting for your approval"
+    case .approved: "Approved"
+    case .denied: "Denied"
+    case .expired: "Expired"
+    case .executing: "Executing"
+    case .succeeded: "Succeeded"
+    case .failed: "Failed"
     }
   }
 }

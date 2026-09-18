@@ -76,6 +76,11 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
   var strict = false
 
   mutating func run() async throws {
+    try await run(localApprovalResolver: nil)
+  }
+
+  // Approval authority is an explicit fixture dependency, never inferred from the active socket.
+  mutating func run(localApprovalResolver: ValidationLocalApprovalResolver?) async throws {
     let home = FileManager.default.homeDirectoryForCurrentUser
     let socketURL =
       socket.map { URL(fileURLWithPath: $0) }
@@ -111,7 +116,8 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
     let fixtureReport = try loadFixtureReport()
     let socketConfiguration = try socketIdentity.configuration(socketURL: socketURL)
     let session = try await GatewayClientSession.connectSocket(
-      configuration: socketConfiguration
+      configuration: socketConfiguration,
+      localApprovalResolver: localApprovalResolver
     )
     do {
       var runner = AppFullCatalogProbeRunner(
@@ -139,7 +145,7 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
         runID: runID
       )
       let report = try await runner.run()
-      await session.disconnect()
+      try await session.disconnect()
       try writeAppFullCatalogProbeJSON(report, destination: json)
       if let observations {
         let bundle = try report.observationBundle()
@@ -154,8 +160,7 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
         throw ExitCode.failure
       }
     } catch {
-      await session.disconnect()
-      throw error
+      throw await session.disconnect(after: error)
     }
   }
 
@@ -432,12 +437,9 @@ private final class ComputerUseValidationSurfaceProcess: @unchecked Sendable {
   }
 
   @MainActor
-  func close() {
-    if process.isRunning {
-      process.terminate()
-      process.waitUntilExit()
-    }
-    previousApplication?.activate(options: [])
+  func close() throws {
+    defer { previousApplication?.activate(options: []) }
+    try ValidationProcessCleanup.stop(process)
   }
 }
 
@@ -481,7 +483,7 @@ private struct AppFullCatalogProbeRunner {
     do {
       report = try await runCatalog()
     } catch let executionError {
-      await session.disconnect()
+      let executionError = await session.disconnect(after: executionError)
       do {
         try await archiveValidationCodexThreads()
       } catch let cleanupError {
@@ -492,7 +494,7 @@ private struct AppFullCatalogProbeRunner {
       }
       throw executionError
     }
-    await session.disconnect()
+    try await session.disconnect()
     try await archiveValidationCodexThreads()
     return report
   }
@@ -534,7 +536,7 @@ private struct AppFullCatalogProbeRunner {
     let workspaceList = await call("workspace.list", invocation: workspaceListInvocation)
     results.append(workspaceList.result)
 
-    var lifecycleResults = await callComputerUseLifecycle(enabledTools: catalogSet)
+    var lifecycleResults = try await callComputerUseLifecycle(enabledTools: catalogSet)
     lifecycleResults.merge(await callExecutionLifecycle(enabledTools: catalogSet)) { current, _ in
       current
     }
@@ -542,9 +544,6 @@ private struct AppFullCatalogProbeRunner {
       current
     }
     lifecycleResults.merge(await callCodexExecLifecycle(enabledTools: catalogSet)) { current, _ in
-      current
-    }
-    lifecycleResults.merge(await callCodexMCPLifecycle(enabledTools: catalogSet)) { current, _ in
       current
     }
 
@@ -876,6 +875,15 @@ private struct AppFullCatalogProbeRunner {
       )
     }
 
+    do {
+      let payload = preparedReport.result.objectValue?["structuredContent"]?.objectValue?["result"]
+      try await session.resolvePreparedOperation(payload ?? .null)
+    } catch {
+      return (
+        target: failedCommittedTarget(tool: tool, detail: error.localizedDescription),
+        prepare: prepared.result, commit: nil, report: nil
+      )
+    }
     operationArguments.removeValue(forKey: "ttl_ms")
     operationArguments["ticket_id"] = .string(ticketID)
     let committed = await call(
@@ -969,7 +977,7 @@ private struct AppFullCatalogProbeRunner {
           "request_id": .string(requestID),
           "reason": .string("Validation Suite lifecycle verification"),
         ],
-        expectedMarker: "cancelled",
+        expectedMarker: "cancellation_requested",
         execution: .committed
       )
     )
@@ -1340,7 +1348,7 @@ private struct AppFullCatalogProbeRunner {
 
   private func callComputerUseLifecycle(
     enabledTools: Set<String>
-  ) async -> [String: AppFullCatalogProbeToolResult] {
+  ) async throws -> [String: AppFullCatalogProbeToolResult] {
     let lifecycleTools: Set<String> = [
       "computer.accessibility.action",
       "computer.accessibility.query",
@@ -1531,7 +1539,7 @@ private struct AppFullCatalogProbeRunner {
       ).result
     }
 
-    await surface.close()
+    try await surface.close()
     return completingLifecycleFailures(
       results,
       tools: requiredTools,
@@ -1701,156 +1709,6 @@ private struct AppFullCatalogProbeRunner {
     )
   }
 
-  private mutating func callCodexMCPLifecycle(
-    enabledTools: Set<String>
-  ) async -> [String: AppFullCatalogProbeToolResult] {
-    let lifecycleTools: Set<String> = [
-      "codex.mcp.approval.respond",
-      "codex.mcp.approvals.list",
-      "codex.mcp.cancel",
-      "codex.mcp.events",
-      "codex.mcp.reply",
-      "codex.mcp.result",
-      "codex.mcp.run",
-    ]
-    let requiredTools = lifecycleTools.intersection(enabledTools)
-    guard !requiredTools.isEmpty else {
-      return [:]
-    }
-
-    var results: [String: AppFullCatalogProbeToolResult] = [:]
-    let workspaceArguments: [String: JSONValue] = [
-      "workspace_id": .string(fixturePlan.workspaceID)
-    ]
-    let started = await call(
-      "codex.mcp.run",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArguments.merging([
-          "prompt": .string("Reply exactly CMCP VALIDATION MCP. Do not modify files or call tools.")
-        ]) { current, _ in current },
-        expectedMarker: "running"
-      )
-    )
-    results["codex.mcp.run"] = started.result
-    guard started.result.status == "passed", let startedReport = started.report,
-      let callID = structuredResult(from: startedReport)?.objectValue?["call_id"]?.stringValue
-    else {
-      return completingLifecycleFailures(
-        results,
-        tools: requiredTools,
-        detail: "codex.mcp.run did not return a running call id."
-      )
-    }
-
-    let events = await call(
-      "codex.mcp.events",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArguments.merging([
-          "call_id": .string(callID),
-          "after_cursor": .number(0),
-          "max_results": .number(100),
-        ]) { current, _ in current }
-      )
-    )
-    results["codex.mcp.events"] = events.result
-
-    let approvals = await call(
-      "codex.mcp.approvals.list",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArguments.merging(["call_id": .string(callID)]) {
-          current, _ in current
-        },
-        expectedMarker: "approvals"
-      )
-    )
-    results["codex.mcp.approvals.list"] = approvals.result
-
-    var terminalResult:
-      (
-        result: AppFullCatalogProbeToolResult,
-        report: GatewayCallReport?
-      )?
-    var threadID = events.report.flatMap {
-      firstStringValue(named: "thread_id", in: structuredResult(from: $0) ?? .null)
-    }
-    for _ in 0..<240 {
-      let current = await call(
-        "codex.mcp.result",
-        invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging(["call_id": .string(callID)]) {
-            current, _ in current
-          }
-        )
-      )
-      terminalResult = current
-      if let report = current.report,
-        let resolvedThreadID = firstStringValue(
-          named: "thread_id",
-          in: structuredResult(from: report) ?? .null
-        )
-      {
-        threadID = resolvedThreadID
-        break
-      }
-      try? await Task.sleep(for: .milliseconds(250))
-    }
-    if let terminalResult {
-      results["codex.mcp.result"] = terminalResult.result
-    }
-
-    if let threadID {
-      let replied = await call(
-        "codex.mcp.reply",
-        invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
-            "thread_id": .string(threadID),
-            "prompt": .string("Wait before replying. Do not modify files or call tools."),
-          ]) { current, _ in current },
-          expectedMarker: "running"
-        )
-      )
-      results["codex.mcp.reply"] = replied.result
-      if replied.result.status == "passed", let report = replied.report,
-        let replyCallID = structuredResult(from: report)?.objectValue?["call_id"]?.stringValue
-      {
-        let cancelled = await call(
-          "codex.mcp.cancel",
-          invocation: CapabilityFixtureInvocation(
-            arguments: workspaceArguments.merging(["call_id": .string(replyCallID)]) {
-              current, _ in current
-            },
-            expectedMarker: "cancellation_requested"
-          )
-        )
-        results["codex.mcp.cancel"] = cancelled.result
-      }
-    }
-
-    if let threadID {
-      codexThreadsToArchive.insert(threadID)
-    }
-
-    if requiredTools.contains("codex.mcp.approval.respond") {
-      results["codex.mcp.approval.respond"] = await callExpectedProviderFailure(
-        "codex.mcp.approval.respond",
-        invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
-            "call_id": .string("validation-no-active-call"),
-            "approval_id": .string("validation-no-active-approval"),
-            "decision": .string("deny"),
-          ]) { current, _ in current }
-        ),
-        expectedMarker: "codex.mcp.call_unknown"
-      )
-    }
-
-    return completingLifecycleFailures(
-      results,
-      tools: requiredTools,
-      detail: "The Codex MCP lifecycle fixture did not reach this capability."
-    )
-  }
-
   private mutating func archiveValidationCodexThreads() async throws {
     guard !codexThreadsToArchive.isEmpty else {
       return
@@ -1889,10 +1747,10 @@ private struct AppFullCatalogProbeRunner {
       }
       codexThreadsToArchive.remove(threadID)
     }
-    await cleanupSession.disconnect()
     if let cleanupError {
-      throw cleanupError
+      throw await cleanupSession.disconnect(after: cleanupError)
     }
+    try await cleanupSession.disconnect()
   }
 
   private func completingLifecycleFailures(

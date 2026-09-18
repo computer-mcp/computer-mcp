@@ -1,10 +1,11 @@
 import Foundation
 
-enum CodexApprovalRedactor {
+enum HostApprovalRedactor {
   // Foundation regular expressions are immutable; compile the fixed policy once.
   private static let valuePatterns = [
     #"(?i)(authorization\s*:\s*bearer\s+)[^\s]+"#,
-    #"(?i)((?:api[_-]?key|token|credential|password|secret)\s*[=:]\s*)[^\s,;]+"#,
+    #"(?i)((?:api[_-]?key|token|credential|password|secret)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)"#,
+    #"(?i)(--(?:[a-z0-9_-]*(?:token|credential|password|secret|authorization)|api[_-]?key)(?:\s+|=))(?:"[^"]*"|'[^']*'|[^\s]+)"#,
   ].map { try! NSRegularExpression(pattern: $0) }
 
   static func redact(_ value: JSONValue) -> JSONValue {
@@ -30,20 +31,35 @@ enum CodexApprovalRedactor {
           break
         }
         let safeKey = redactString(key, maximumCharacters: 256)
-        result[safeKey] =
-          isSensitiveKey(key)
-          ? .string("[REDACTED]")
-          : redact(object[key] ?? .null, depth: depth + 1, remainingEntries: &remainingEntries)
+        if isSensitiveKey(key) {
+          remainingEntries -= 1
+          result[safeKey] = .string("[REDACTED]")
+        } else {
+          result[safeKey] = redact(
+            object[key] ?? .null, depth: depth + 1, remainingEntries: &remainingEntries)
+        }
       }
       return .object(result)
     case .array(let values):
       var result: [JSONValue] = []
+      var redactsNextArgument = false
       for value in values {
         guard remainingEntries > 0 else {
           result.append(.string("[TRUNCATED]"))
           break
         }
-        result.append(redact(value, depth: depth + 1, remainingEntries: &remainingEntries))
+        if redactsNextArgument {
+          remainingEntries -= 1
+          result.append(.string("[REDACTED]"))
+          redactsNextArgument = false
+        } else {
+          result.append(redact(value, depth: depth + 1, remainingEntries: &remainingEntries))
+          if let argument = value.stringValue, argument.hasPrefix("--"),
+            !argument.contains("=")
+          {
+            redactsNextArgument = isSensitiveKey(String(argument.dropFirst(2)))
+          }
+        }
       }
       return .array(result)
     case .string(let value):
@@ -63,8 +79,10 @@ enum CodexApprovalRedactor {
 
   private static func isSensitiveKey(_ key: String) -> Bool {
     let normalized = key.lowercased()
-    return ["authorization", "credential", "password", "secret", "token"]
-      .contains { normalized.contains($0) }
+    return [
+      "authorization", "credential", "password", "secret", "token", "api_key", "api-key", "apikey",
+    ]
+    .contains { normalized.contains($0) }
   }
 
   private static func redactedString(_ value: String) -> String {

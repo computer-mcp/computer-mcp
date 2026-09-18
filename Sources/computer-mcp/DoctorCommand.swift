@@ -31,10 +31,12 @@ struct Doctor: AsyncParsableCommand {
   @Flag(name: .long, help: "Emit the stable schema-1 JSON readiness contract.")
   var json = false
 
+  @OptionGroup var connection: AppControlConnectionOptions
+
   func run() async throws {
     let snapshot: ProductReadinessSnapshot
     do {
-      let value = try await AppControlPlaneServiceClient.live().call(
+      let value = try await connection.client().call(
         "readiness",
         arguments: .object(["journey": .string(journey.rawValue)]),
         timeout: .seconds(5)

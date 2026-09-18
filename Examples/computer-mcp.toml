@@ -75,10 +75,10 @@ dry_run_flag = "--dry-run"
 # reachable in the environment that launches computer-mcp.
 #
 # [[mcp.servers]]
-# id = "codex"
+# id = "provider"
 # transport = "stdio"
-# command = "codex"
-# args = ["mcp-server"]
+# command = "/absolute/path/to/mcp-provider"
+# args = []
 # exposure = "gateway"
 # capabilities = ["tools"]
 # startup_timeout_ms = 30000

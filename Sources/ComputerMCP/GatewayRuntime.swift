@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
@@ -12,8 +13,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let workspaces: [String: RegisteredWorkspace]
   private let workspaceOrder: [String]
   private let workspaceAccesses: [String: ResolvedWorkspaceAccess]
+  private let workspaceErrors: [String: WorkspaceBookmarkError]
   private let providerRouters: [String: GatewayProviderRouter]
   private let lifetime: GatewayRuntimeLifetime
+  private let authenticatedSessionFactory:
+    @Sendable (String, GatewayTransportTrace?) throws -> GatewayRuntime
   private static let construction = BlockingOperationExecutor(
     label: "computer-mcp.gateway-construction", serial: false)
   private let hostToolDirectory = MCPHostToolDirectory()
@@ -75,6 +79,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
     plugins: [ResolvedPlugin]?, bundledPlugins: BundledPlugins, lifetime: GatewayRuntimeLifetime
   ) throws {
+    let initializationConfiguration = configuration
     self.lifetime = lifetime
     var initialized = false
     defer { if !initialized { _ = lifetime.beginShutdown() } }
@@ -110,7 +115,17 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       policy: MCPToolAccessPolicy(
         configuration: configuration,
         grant: persistedGrant.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
-        derivesObserveGrant: derivesObserveGrant))
+        derivesObserveGrant: derivesObserveGrant),
+      policyProvider: {
+        let persisted = try database?.profiles().first { $0.id == effectiveContext.profileID }
+        guard persistedGrant == nil || persisted != nil else {
+          throw GatewayToolError.disabled("The profile authorization was revoked.")
+        }
+        return MCPToolAccessPolicy(
+          configuration: configuration,
+          grant: persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
+          derivesObserveGrant: derivesObserveGrant && (persisted?.authorizationRevision ?? 0) == 0)
+      })
 
     let persistedWorkspaces = try database?.workspaces() ?? []
     let configuredWorkspaces =
@@ -119,6 +134,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
     var workspaceByID: [String: RegisteredWorkspace] = [:]
     var accessByID: [String: ResolvedWorkspaceAccess] = [:]
+    var errorByID: [String: WorkspaceBookmarkError] = [:]
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
     let commandRunner = ProcessCommandRunner()
     let runtimeID = UUID()
@@ -127,7 +143,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       guard workspaceByID[workspace.id] == nil else {
         throw GatewayRuntimeError.duplicateWorkspaceID(workspace.id)
       }
-      let access = try bookmarkService.resolve(workspace)
+      workspaceByID[workspace.id] = workspace
+      let access: ResolvedWorkspaceAccess
+      do {
+        access = try bookmarkService.resolve(workspace)
+      } catch let error as WorkspaceBookmarkError {
+        errorByID[workspace.id] = error
+        continue
+      }
       lifetime.onShutdown { access.close() }
       var workspaceConfiguration = configuration
       workspaceConfiguration.workspaceDirectory = access.rootURL.standardizedFileURL
@@ -151,21 +174,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           tools: hostToolDirectory,
           managedWorkspaceRoot: database?.fileURL?.deletingLastPathComponent()
             .appendingPathComponent("Managed Worktrees", isDirectory: true),
-          processOwnershipRoot: database?.mcpProcessOwnershipRoot)
+          processOwnershipRoot: database?.mcpProcessOwnershipRoot, executionDatabase: database)
       )
       let registryCleanup = lifetime.onShutdown { await registry.shutdown() }
-      let codexOwner = CodexRuntimeOwner(
-        workspaceID: workspace.id,
-        profileID: effectiveContext.profileID.rawValue,
-        caller: effectiveContext.caller.rawValue,
-        transport: effectiveContext.transportTrace?.transport,
-        socketConnectionID: effectiveContext.transportTrace?.socketConnectionID,
-        tunnelInstanceID: effectiveContext.transportTrace?.tunnelInstanceID,
-        tunnelProfileID: effectiveContext.transportTrace?.tunnelProfileID
-      )
       let additionalProviders: [any GatewayToolProvider] = [
-        ComputerUseGatewayProvider(),
-        CodexElevationTools(owner: codexOwner, database: database),
+        ComputerUseGatewayProvider()
       ]
       let router = try GatewayProviderRouter(
         registry: registry,
@@ -188,8 +201,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       var readOnlyCapabilities: Set<String> = ["workspace.list", "workspace.describe"]
       // The observe risk boundary independently limits this to host-classified read-only targets.
       readOnlyCapabilities.insert("mcp.tools.call")
-      if let firstWorkspaceID = configuredWorkspaces.first?.id,
-        let providerRouter = providerRouterByID[firstWorkspaceID]
+      if let providerRouter = configuredWorkspaces.lazy.compactMap({ providerRouterByID[$0.id] })
+        .first
       {
         readOnlyCapabilities.formUnion(
           try providerRouter.listTools()
@@ -209,14 +222,32 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     } else {
       baseGrant = configuration.profileGrant(for: effectiveContext.profileID)
     }
-    let effectiveGrant =
+    var effectiveGrant =
       persistedGrant.map(baseGrant.applyingPersistedRuntimeState)
       ?? baseGrant
+    if persistedGrant?.authorizationRevision == 0, let database {
+      if effectiveGrant.capabilityIDs.contains("*") {
+        effectiveGrant.workspaceIDs = Set(workspaceByID.keys)
+      }
+      try database.saveProfile(effectiveGrant, expectedRevision: 0)
+      effectiveGrant =
+        try database.profiles().first { $0.id == effectiveGrant.id } ?? effectiveGrant
+    }
     try effectiveGrant.validate()
 
     self.configuration = configuration
     self.context = effectiveContext
     self.grant = effectiveGrant
+    self.authenticatedSessionFactory = { principalID, trace in
+      var bound = effectiveContext
+      bound.trustedPrincipalID = principalID
+      bound.transportTrace = trace
+      return try GatewayRuntime(
+        configuration: initializationConfiguration, context: bound, database: database,
+        registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
+        policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
+        bundledPlugins: bundledPlugins)
+    }
     self.requiresPersistedGrant = persistedGrant != nil
     self.persistedWorkspaceIDs = Set(persistedWorkspaces.map(\.id))
     self.policyEvaluator = policyEvaluator
@@ -224,6 +255,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.workspaces = workspaceByID
     self.workspaceOrder = configuredWorkspaces.map(\.id)
     self.workspaceAccesses = accessByID
+    self.workspaceErrors = errorByID
     self.providerRouters = providerRouterByID
     hostToolDirectory.attach(self)
     initialized = true
@@ -431,12 +463,36 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     await lifetime.beginShutdown().value
   }
 
+  package func authenticatedSession(
+    principalID: String, transportTrace: GatewayTransportTrace?
+  ) throws -> GatewayRuntime {
+    try authenticatedSessionFactory(principalID, transportTrace)
+  }
+
   package func listTools() throws -> [MCPTool] {
     try listTools(context: context)
   }
 
   package func toolChanges() -> AsyncStream<Void> {
-    firstProviderRouter?.toolChanges() ?? AsyncStream { $0.finish() }
+    guard let database else {
+      return firstProviderRouter?.toolChanges() ?? AsyncStream { $0.finish() }
+    }
+    let sources = [firstProviderRouter?.toolChanges(), database.profileChanges(for: grant.id)]
+    let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let tasks = sources.enumerated().compactMap { index, source -> Task<Void, Never>? in
+      guard let source else { return nil }
+      return Task { [weak self] in
+        for await _ in source {
+          guard !Task.isCancelled else { break }
+          if index == 1 { try? await self?.refreshTools() }
+          continuation.yield(())
+        }
+      }
+    }
+    continuation.onTermination = { _ in
+      for task in tasks { task.cancel() }
+    }
+    return stream
   }
 
   package func refreshTools() async throws {
@@ -474,11 +530,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     try await callToolAsync(name: name, arguments: arguments, context: contextForCall())
   }
 
-  private static func effectiveOperationDescriptor(
+  private func effectiveOperationDescriptor(
     _ descriptor: CapabilityDescriptor,
     arguments: [String: JSONValue]
   ) -> CapabilityDescriptor {
-    guard let defaultDryRun = reviewedDryRunCapabilities[descriptor.id] else {
+    guard descriptor.mcpReference == nil,
+      configuration.builtin.enabled.contains(descriptor.id),
+      !configuration.tools.contains(where: { $0.name == descriptor.id }),
+      let defaultDryRun = Self.reviewedDryRunCapabilities[descriptor.id]
+    else {
       return descriptor
     }
     let dryRun: Bool
@@ -614,12 +674,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
       auditContext = routed.context
       inputDigest = try Self.inputDigest(tool: name, arguments: routed.arguments)
-      try authorize(descriptor, context: routed.context)
-      if descriptor.risk == .destructive && !bypassOperationTicket {
+      let authorizedGrant = try authorize(descriptor, context: routed.context)
+      if !bypassOperationTicket, name != "operations.commit", name != "operations.prepare",
+        authorizedGrant.confirmationPolicy.requiresConfirmation(
+          for: effectiveOperationDescriptor(descriptor, arguments: routed.arguments).risk)
+      {
+        let pending = try prepareOperation(
+          arguments: ["tool": .string(name), "arguments": .object(routed.arguments)],
+          context: routed.context)
         throw Self.invalid(
-          code: "operations.ticket_required",
+          code: "operations.approval_required",
           message:
-            "Destructive capability '\(name)' requires operations.prepare followed by operations.commit."
+            "Pending local approval ticket \(pending.ticketID) for '\(name)'. After local approval, call operations.commit with this ticket, tool and the exact original arguments. No operation was executed."
         )
       }
 
@@ -726,12 +792,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
       auditContext = routed.context
       inputDigest = try Self.inputDigest(tool: name, arguments: routed.arguments)
-      try authorize(descriptor, context: routed.context)
-      if descriptor.risk == .destructive && !bypassOperationTicket {
+      let authorizedGrant = try authorize(descriptor, context: routed.context)
+      if !bypassOperationTicket, name != "operations.commit", name != "operations.prepare",
+        authorizedGrant.confirmationPolicy.requiresConfirmation(
+          for: effectiveOperationDescriptor(descriptor, arguments: routed.arguments).risk)
+      {
+        let pending = try prepareOperation(
+          arguments: ["tool": .string(name), "arguments": .object(routed.arguments)],
+          context: routed.context)
         throw Self.invalid(
-          code: "operations.ticket_required",
+          code: "operations.approval_required",
           message:
-            "Destructive capability '\(name)' requires operations.prepare followed by operations.commit."
+            "Pending local approval ticket \(pending.ticketID) for '\(name)'. After local approval, call operations.commit with this ticket, tool and the exact original arguments. No operation was executed."
         )
       }
 
@@ -834,7 +906,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
     let targetDescriptor = try invocationDescriptor(named: toolName, arguments: targetArguments)
-    guard targetDescriptor.risk == .destructive else {
+    let effectiveRisk = effectiveOperationDescriptor(
+      targetDescriptor, arguments: targetArguments
+    ).risk
+    guard effectiveRisk != .readOnly else {
       throw Self.invalid(
         code: "operations.not_required",
         message: "Capability '\(toolName)' does not require an operation ticket."
@@ -845,7 +920,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       arguments: targetArguments,
       context: context
     )
-    try authorize(targetDescriptor, context: routed.context)
+    let currentGrant = try authorize(targetDescriptor, context: routed.context)
+    let requiresApproval = currentGrant.confirmationPolicy.requiresConfirmation(for: effectiveRisk)
     let now = Date()
     let ttlMilliseconds = min(
       max(arguments["ttl_ms"]?.intValue ?? 30_000, 1_000),
@@ -876,11 +952,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       profileID: routed.context.profileID,
       principalID: Self.principalID(for: routed.context),
       workspaceID: routed.context.workspaceID,
-      inputDigest: try Self.inputDigest(tool: toolName, arguments: routed.arguments),
+      inputDigest: try operationInputDigest(
+        descriptor: targetDescriptor, arguments: routed.arguments),
       stateDigest: stateDigest,
+      state: requiresApproval ? .pendingApproval : .prepared,
       prepareRequestID: routed.context.requestID,
       createdAt: now,
-      expiresAt: now.addingTimeInterval(Double(ttlMilliseconds) / 1_000)
+      expiresAt: now.addingTimeInterval(Double(ttlMilliseconds) / 1_000),
+      authorizationRevision: currentGrant.authorizationRevision,
+      reviewSummary: try Self.operationReviewSummary(routed.arguments)
     )
     try database.saveOperationTicket(ticket)
     return PreparedOperation(
@@ -892,6 +972,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         "state_digest": ticket.stateDigest.map(JSONValue.string) ?? .null,
         "expires_at": .string(Self.iso8601(ticket.expiresAt)),
         "single_use": .bool(true),
+        "state": .string(ticket.state.rawValue),
+        "requires_local_approval": .bool(requiresApproval),
       ])
     )
   }
@@ -920,7 +1002,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "decision": .string("allowed"),
       "risk": .string(targetDescriptor.risk.rawValue),
       "effective_risk": .string(
-        Self.effectiveOperationDescriptor(targetDescriptor, arguments: routed.arguments).risk
+        effectiveOperationDescriptor(targetDescriptor, arguments: routed.arguments).risk
           .rawValue),
       "workspace_id": routed.context.workspaceID.map(JSONValue.string) ?? .null,
     ])
@@ -959,12 +1041,20 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       arguments: targetArguments,
       context: context
     )
+    let currentGrant = try authorize(targetDescriptor, context: routed.context)
+    guard ticket.authorizationRevision == currentGrant.authorizationRevision else {
+      throw Self.invalid(
+        code: "operations.authorization_changed",
+        message: "Authorization changed after this operation was prepared.")
+    }
     guard routed.context.workspaceID == ticket.workspaceID,
-      try Self.inputDigest(tool: toolName, arguments: routed.arguments) == ticket.inputDigest
+      try operationInputDigest(descriptor: targetDescriptor, arguments: routed.arguments)
+        == ticket.inputDigest
     else {
       throw Self.invalid(
         code: "operations.ticket_arguments_mismatch",
-        message: "The committed arguments or workspace do not match the prepared operation."
+        message:
+          "The committed arguments, provider identity or workspace do not match the prepared operation."
       )
     }
     if let expectedStateDigest = ticket.stateDigest {
@@ -1079,9 +1169,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private func workspaceList(context: ExecutionContext) -> JSONValue {
+    let current = try? currentHostGrant()
     let rows = workspaceOrder.compactMap { id -> JSONValue? in
       guard let workspace = workspaces[id],
-        grant.capabilityIDs.contains("*") || grant.workspaceIDs.contains(id)
+        current?.workspaceIDs.contains("*") == true || current?.workspaceIDs.contains(id) == true
       else {
         return nil
       }
@@ -1089,6 +1180,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         "id": .string(workspace.id),
         "display_name": .string(workspace.displayName),
         "bookmark_stale": .bool(workspace.bookmarkIsStale),
+        "access": WorkspaceAccessReport(workspace: workspace, error: workspaceErrors[id]).json,
         "selected": .bool(context.workspaceID == id),
       ])
     }
@@ -1106,6 +1198,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "root_path": .string(workspace.rootPath),
       "bookmark_backed": .bool(workspace.bookmarkData != nil),
       "bookmark_stale": .bool(workspace.bookmarkIsStale),
+      "access": WorkspaceAccessReport(workspace: workspace, error: workspaceErrors[id]).json,
       "created_at": .string(Self.iso8601(workspace.createdAt)),
       "updated_at": .string(Self.iso8601(workspace.updatedAt)),
     ])
@@ -1159,7 +1252,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
     }
 
-    let registryWorkspaceID = routedContext.workspaceID ?? workspaceOrder.first
+    let registryWorkspaceID =
+      routedContext.workspaceID
+      ?? workspaceOrder.first { providerRouters[$0] != nil }
     if let registryWorkspaceID, workspaces[registryWorkspaceID] == nil {
       throw GatewayRuntimeError.workspaceNotFound(registryWorkspaceID)
     }
@@ -1170,14 +1265,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     )
   }
 
+  @discardableResult
   private func authorize(
     _ descriptor: CapabilityDescriptor,
     context: ExecutionContext
-  ) throws {
+  ) throws -> ProfileGrant {
     if descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp.") {
       guard context.caller == self.context.caller,
         context.profileID == self.context.profileID,
-        context.transportTrace == self.context.transportTrace
+        context.principalID == self.context.principalID
       else {
         throw Self.invalid(
           code: PolicyDenialCode.callerDenied.rawValue,
@@ -1185,10 +1281,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
             "Downstream MCP calls must retain their gateway connection's caller and provenance.")
       }
     }
+    let authorizedGrant = try currentHostGrant()
     let decision = policyEvaluator.evaluate(
       capability: descriptor,
       context: context,
-      grant: grant,
+      grant: authorizedGrant,
       registeredWorkspaceIDs: Set(workspaceOrder)
     )
     guard case .allow = decision else {
@@ -1197,18 +1294,34 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       }
       throw Self.invalid(code: "policy.denied", message: "The capability was denied.")
     }
+    if let workspaceID = context.workspaceID, let error = workspaceErrors[workspaceID],
+      !Self.coreTools(databaseEnabled: database != nil).contains(where: { $0.name == descriptor.id }
+      )
+    {
+      throw Self.invalid(code: error.code, message: error.localizedDescription)
+    }
     if descriptor.id.hasPrefix("shell.") && !configuration.policy.shellEnabled {
       throw Self.invalid(
         code: PolicyDenialCode.fullShellDisabled.rawValue,
         message: "Full Shell is disabled by the active gateway manifest."
       )
     }
+    return authorizedGrant
   }
 
   private func isVisible(
     _ descriptor: CapabilityDescriptor,
     context: ExecutionContext
   ) -> Bool {
+    guard let grant = try? currentHostGrant() else { return false }
+    if context.workspaceID != nil,
+      !policyEvaluator.evaluate(
+        capability: descriptor, context: context, grant: grant,
+        registeredWorkspaceIDs: Set(workspaceOrder)
+      ).isAllowed
+    {
+      return false
+    }
     guard context.profileID == grant.id else {
       return false
     }
@@ -1253,7 +1366,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     descriptor.equivalentCapabilityIDs = configuration.mcpCapabilityIDs(for: reference)
     descriptor.risk = configuration.mcpRisk(for: reference)
     // Denial must not reveal whether an out-of-scope registration or selection exists.
-    guard grant.grants(descriptor) else {
+    guard try currentHostGrant().grants(descriptor) else {
       throw Self.invalid(
         code: PolicyDenialCode.capabilityDenied.rawValue,
         message: "The profile does not grant this downstream MCP tool.")
@@ -1271,12 +1384,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private var firstProviderRouter: GatewayProviderRouter? {
-    workspaceOrder.first.flatMap { providerRouters[$0] }
+    workspaceOrder.lazy.compactMap { self.providerRouters[$0] }.first
   }
 
   private func contextForCall() -> ExecutionContext {
     var callContext = context
     callContext.requestID = UUID().uuidString
+    if let trace = MCPRuntimeAdapter.requestTrace { callContext.transportTrace = trace }
     return callContext
   }
 
@@ -1302,6 +1416,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           ? nil : operationLinkage?.parentRequestID,
         ticketID: operationLinkage?.ticketID,
         caller: context.caller,
+        principalDigest: AuditEvent.verifiedPrincipalDigest(context.trustedPrincipalID),
         transport: context.transportTrace?.transport,
         socketConnectionID: context.transportTrace?.socketConnectionID,
         tunnelInstanceID: context.transportTrace?.tunnelInstanceID,
@@ -1583,6 +1698,19 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: [String: JSONValue],
     context: ExecutionContext
   ) throws -> String? {
+    let reviewedTargets: Set<String> = [
+      "archive.create", "archive.extract", "file.append", "file.chmod", "file.copy",
+      "file.download", "file.insert_text", "file.mkdir", "file.move", "file.remove_xattr",
+      "file.replace_lines", "file.replace_text", "file.symlink", "file.touch", "file.trash",
+      "file.write", "file.write_files", "git.add", "git.branch_create", "git.branch_delete",
+      "git.branch_rename", "git.branch_switch", "git.clean", "git.commit",
+      "git.restore_worktree", "git.stash_push", "git.tag_create", "git.tag_delete", "git.unstage",
+      "json.write", "plist.write",
+    ]
+    guard reviewedTargets.contains(tool), configuration.builtin.enabled.contains(tool),
+      !configuration.tools.contains(where: { $0.name == tool }),
+      try invocationDescriptor(named: tool, arguments: arguments).mcpReference == nil
+    else { return nil }
     guard let workspaceID = context.workspaceID,
       let rootURL = workspaceAccesses[workspaceID]?.rootURL.standardizedFileURL
     else {
@@ -1601,6 +1729,32 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     for path in paths.sorted() {
       let url = try Self.operationStateURL(path: path, rootURL: rootURL)
       records.append(contentsOf: try Self.operationStateRecords(url: url, rootURL: rootURL))
+      if tool == "file.remove_xattr", let name = arguments["name"]?.stringValue {
+        let count = getxattr(url.path, name, nil, 0, 0, 0)
+        if count == -1, errno == ENOATTR {
+          records.append(.object(["xattr": .string(name), "present": .bool(false)]))
+        } else {
+          guard count >= 0, count <= 1_048_576 else {
+            throw Self.invalid(
+              code: "operations.state_unavailable",
+              message: "Cannot bind the extended attribute within its byte limit.")
+          }
+          var value = Data(count: count)
+          let read = value.withUnsafeMutableBytes {
+            getxattr(url.path, name, $0.baseAddress, count, 0, 0)
+          }
+          guard read == count else {
+            throw Self.invalid(
+              code: "operations.state_changed",
+              message: "The extended attribute changed while binding approval state.")
+          }
+          records.append(
+            .object([
+              "xattr": .string(name), "present": .bool(true),
+              "sha256": .string(Self.digest(value)),
+            ]))
+        }
+      }
     }
     let data = try Self.encoder.encode(
       JSONValue.object([
@@ -1700,6 +1854,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         "type": .string(type),
         "size": .number(Double(size)),
         "modified_at": .number(modified),
+        "permissions": .number(Double((attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0)),
       ]
       if type == FileAttributeType.typeRegular.rawValue {
         totalRegularFileBytes += size
@@ -1741,10 +1896,51 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private static func principalID(for context: ExecutionContext) -> String {
-    let value = "\(context.caller.rawValue):\(context.profileID.rawValue)"
+    let value = context.principalID
     return SHA256.hash(data: Data(value.utf8))
       .map { String(format: "%02x", $0) }
       .joined()
+  }
+
+  static func operationReviewSummary(_ arguments: [String: JSONValue]) throws -> String {
+    func exceedsBudget() -> GatewayToolError {
+      invalid(
+        code: "operations.review_too_large",
+        message:
+          "This request exceeds the local approval preview budget; split it into reviewable operations."
+      )
+    }
+    var remainingEntries = 1_000
+    func validate(_ value: JSONValue, depth: Int) throws {
+      guard depth <= 12, remainingEntries > 0 else { throw exceedsBudget() }
+      remainingEntries -= 1
+      switch value {
+      case .object(let object):
+        var displayedKeys = Set<String>()
+        for (key, child) in object {
+          guard key.utf8.count <= 256 else { throw exceedsBudget() }
+          let displayedKey = HostApprovalRedactor.redactString(key, maximumCharacters: 256)
+          guard displayedKeys.insert(displayedKey).inserted else {
+            throw invalid(
+              code: "operations.review_ambiguous",
+              message: "Redaction would merge distinct argument names; simplify the request.")
+          }
+          try validate(child, depth: depth + 1)
+        }
+      case .array(let children):
+        for child in children { try validate(child, depth: depth + 1) }
+      case .string(let text):
+        guard text.utf8.count <= 8_192 else { throw exceedsBudget() }
+      case .number, .bool, .null: break
+      }
+    }
+    let value = JSONValue.object(arguments)
+    try validate(value, depth: 0)
+    guard try encoder.encode(value).count <= 16_384 else { throw exceedsBudget() }
+    // Approval previews may redact secrets but must never silently omit or truncate arguments.
+    let data = try encoder.encode(HostApprovalRedactor.redact(value))
+    guard data.count <= 16_384 else { throw exceedsBudget() }
+    return String(decoding: data, as: UTF8.self)
   }
 
   private static func operationLinkageFromArguments(
@@ -1793,6 +1989,32 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
+  private func operationInputDigest(
+    descriptor: CapabilityDescriptor, arguments: [String: JSONValue]
+  ) throws -> String {
+    var binding: [String: JSONValue] = [
+      "capability": try .encoded(descriptor), "arguments": .object(arguments),
+    ]
+    if let reference = descriptor.mcpReference {
+      guard let server = configuration.mcp.servers.first(where: { $0.id == reference.serverID })
+      else {
+        throw Self.invalid(
+          code: "operations.provider_unavailable", message: "The operation provider is unavailable."
+        )
+      }
+      // Registration launch/authentication inputs and plugin provenance are approval identity.
+      // Only their digest is stored; credentials never become a review or audit preview.
+      binding["registration"] = try .encoded(server)
+      if let origin = pluginOrigins[.init(kind: .mcp, id: reference.serverID)] {
+        binding["plugin"] = try .encoded(origin)
+      }
+    } else if descriptor.risk == .fullShell {
+      binding["execution_configuration"] = try .encoded(configuration.cli)
+      binding["shell_policy"] = .bool(configuration.policy.shellEnabled)
+    }
+    return MCPExecutionRecord.digest(.object(binding))
+  }
+
   private static func inputDigest(
     tool: String,
     arguments: [String: JSONValue]
@@ -1837,9 +2059,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "[policy.",
       "[operations.state_path_escape]",
       "[operations.ticket_",
-      "[codex.app.override_denied]",
-      "[codex.app.danger_full_access_denied]",
-      "[codex.app.workspace_override_denied]",
       "[mcp.tool_not_approved]",
     ]
     return deniedPrefixes.contains(where: message.hasPrefix) ? .denied : .failed

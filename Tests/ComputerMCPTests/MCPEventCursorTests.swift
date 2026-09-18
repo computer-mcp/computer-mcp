@@ -36,7 +36,10 @@ struct MCPEventCursorTests {
     defer { fixture.remove() }
     let client = MCPProxyClient(workingDirectory: fixture.root)
     do {
-      _ = try client.callTool(server: fixture.server, name: "stream", arguments: .object([:]))
+      // Responses drain each burst below the transport queue bound before sending more events.
+      for _ in 0..<100 {
+        _ = try client.callTool(server: fixture.server, name: "stream", arguments: .object([:]))
+      }
       let clock = ContinuousClock()
       let deadline = clock.now.advanced(by: .seconds(5))
       var page = try client.readEvents(server: fixture.server, afterCursor: 0, maxResults: 7)
@@ -148,7 +151,7 @@ private struct EventFixture {
   func remove() { try? FileManager.default.removeItem(at: root) }
 
   private static let script = #"""
-    import json, sys, time
+    import json, sys
     with open(sys.argv[1], "a") as marker:
         marker.write("started\n")
     for line in sys.stdin:
@@ -162,9 +165,8 @@ private struct EventFixture {
         elif method == "tools/list":
             result = {"tools":[{"name":"stream", "inputSchema":{"type":"object"}}]}
         elif method == "tools/call":
-            for _ in range(700):
+            for _ in range(7):
                 print(json.dumps({"jsonrpc":"2.0", "method":"notifications/tools/list_changed"}), flush=True)
-                time.sleep(0.005)
             result = {"content":[]}
         print(json.dumps({"jsonrpc":"2.0", "id":message["id"], "result":result}), flush=True)
     """#

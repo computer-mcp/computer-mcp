@@ -15,26 +15,36 @@ struct PluginControlPlaneTests {
       fileURLWithPath: try #require(environment["COMPUTER_MCP_CODEX_PLUGIN_ARCHIVE"]))
     let driver = try #require(environment["COMPUTER_MCP_CODEX_WORKFLOW_DRIVER"])
     let codex = try #require(environment["COMPUTER_MCP_CODEX_EXECUTABLE"])
-    let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let version = try #require(environment["COMPUTER_MCP_CODEX_PLUGIN_VERSION"])
+    let defaultExecutable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent(".build/debug/computer-mcp")
+    let executable =
+      environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"].map {
+        URL(fileURLWithPath: $0)
+      } ?? defaultExecutable
     let digest = SHA256.hash(data: try Data(contentsOf: archive))
       .map { String(format: "%02x", $0) }.joined()
-    let fixture = try PluginControlFixture(worker: executable.path)
+    let fixture = try PluginControlFixture(worker: executable.path, cliExecutable: executable)
     defer { fixture.remove() }
     try fixture.database.saveWorkspace(
       .init(id: "workflow-fixture", displayName: "Disposable workflow", rootPath: fixture.root.path)
     )
+    try fixture.database.saveProfile(
+      .init(
+        id: .localAdmin, capabilityIDs: ["mcp.tools.call"], workspaceIDs: ["workflow-fixture"],
+        allowedCallers: [.localCLI], mode: .workspaceOperations, confirmationPolicy: .never))
     try await fixture.socket.start()
     do {
       let installed = try await fixture.cli([
-        "install", archive.path, "--id", "codex", "--version", "0.1.0", "--sha256", digest,
+        "install", archive.path, "--id", "codex", "--version", version, "--sha256", digest,
         "--expected-revision", "0",
       ])
       try #require(installed.exitCode == 0, "\(installed.stdout)\n\(installed.stderr)")
       let snapshot = try CanonicalJSONCoding.decoder().decode(
         PluginHostSnapshot.self, from: Data(installed.stdout.utf8))
       let record = try #require(snapshot.state.installations.first)
+      #expect(record.version == (try PluginVersion(version)))
       #expect(!snapshot.settings(for: "codex").enabled && snapshot.contributions.isEmpty)
       #expect(record.source.kind == .artifact && record.source.artifactSHA256 == digest)
       let adapter = record.source.root.appendingPathComponent("bin/codex-mcp-adapter")
@@ -590,12 +600,19 @@ struct PluginControlFixture: Sendable {
   let host: AppControlPlaneService
   let gateway: AppGatewayService
   let socket: ControlSocketService
+  let cliExecutable: URL
 
   init(
     worker: String = "computer-mcp", releases: GitHubPluginReleases = GitHubPluginReleases(),
     download: GitHubPluginDownload = GitHubPluginDownload(),
-    bundled: BundledPlugins = .current
+    bundled: BundledPlugins = .current,
+    cliExecutable: URL? = nil
   ) throws {
+    self.cliExecutable =
+      cliExecutable
+      ?? URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent(".build/debug/computer-mcp")
     root = URL(fileURLWithPath: "/private/tmp/cm-pc-\(UUID().uuidString.prefix(8))")
     directories = AppControlPlaneServiceDirectories(
       applicationSupport: root.appendingPathComponent("support"),
@@ -619,9 +636,7 @@ struct PluginControlFixture: Sendable {
   }
 
   func cli(_ arguments: [String]) async throws -> CommandResult {
-    let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
-        ".build/debug/computer-mcp")
+    let executable = cliExecutable
     return try await BlockingOperationExecutor(label: "plugin-cli-test").perform {
       try ProcessCommandRunner().run(
         executable: executable.path,

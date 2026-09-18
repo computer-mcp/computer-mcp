@@ -189,6 +189,29 @@ Successful cleanup removes the private state; failure retains isolated evidence
 and reports its path. Native sandbox tool errors can lack a command-execution
 event, so denial checks also require the exact native function-call result.
 
+To verify installation, execution and removal of a packaged adapter through the
+owner CLI, provide the archive's manifest version and the matching plugin
+repository's workflow driver:
+
+```sh
+COMPUTER_MCP_CODEX_PLUGIN_ARCHIVE=/absolute/codex-plugin.zip \
+COMPUTER_MCP_CODEX_PLUGIN_VERSION=0.2.0 \
+COMPUTER_MCP_CODEX_WORKFLOW_DRIVER=/absolute/plugin-codex/Scripts/check-workflow.py \
+COMPUTER_MCP_CODEX_EXECUTABLE=/absolute/vendor/codex \
+COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE=/absolute/computer-mcp \
+/usr/bin/swift test --no-parallel \
+  --filter installedCodexPackageCompletesWorkflowAndUninstallsThroughOwnerCLI
+```
+
+The gateway executable override selects the exact packaged CLI for both owner
+commands and gateway workers; omitting it uses `.build/debug/computer-mcp`.
+The test verifies the installed version, archive digest, disabled initial state,
+native approval workflow and uninstall cleanup in disposable host storage.
+Its host grant permits MCP operations only for the temporary workspace and local
+CLI caller, with host confirmation disabled so native approvals can be checked
+independently. Use the native Codex binary; the fixture's minimal `PATH` does not
+include runtimes needed by package-manager launch scripts.
+
 ## Evidence contract
 
 Validation Evidence Bundle schema 2 uses three layers:

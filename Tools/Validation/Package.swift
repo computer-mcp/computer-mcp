@@ -34,7 +34,8 @@ let package = Package(
     .testTarget(
       name: "ComputerMCPValidationTests",
       dependencies: [
-        "ComputerMCPValidation"
+        "ComputerMCPValidation",
+        "ComputerMCPValidationCLI",
       ]
     ),
   ]

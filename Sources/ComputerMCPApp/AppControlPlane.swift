@@ -149,6 +149,7 @@ enum WorkspaceHealth: String, Sendable {
   case available
   case bookmarkStale
   case missing
+  case unavailable
 
   var label: String {
     let key =
@@ -156,6 +157,7 @@ enum WorkspaceHealth: String, Sendable {
       case .available: "Available"
       case .bookmarkStale: "Bookmark stale"
       case .missing: "Missing"
+      case .unavailable: "Unavailable"
       }
     return AppLocalization.string(key)
   }
@@ -170,6 +172,7 @@ struct WorkspaceSummary: Identifiable, Sendable {
   var isEnabled: Bool
   var isSelected: Bool
   var lastResolvedAt: Date?
+  var healthDetail: String? = nil
 }
 
 struct ProfileSummary: Identifiable, Sendable {
@@ -182,6 +185,7 @@ struct ProfileSummary: Identifiable, Sendable {
   var permitsRemoteAccess: Bool
   var supportsFullShell: Bool
   var fullShellEnabled: Bool
+  var permissions: ProfileGrant
 }
 
 enum ProviderKind: String, Sendable {
@@ -413,6 +417,8 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging {
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary]
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary]
   func fetchPermissions() async throws -> [PermissionSummary]
+  func fetchOperationApprovals() async throws -> [OperationTicket]
+  func resolveOperationApproval(id: String, approved: Bool) async throws
   func requestPermission(id: String) async throws -> PermissionRequestOutcome
   func fetchAudit() async throws -> [AuditEntrySummary]
   func fetchDiagnostics() async throws -> DiagnosticsSnapshot
@@ -431,6 +437,7 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging {
 
   func activateProfile(id: String) async throws
   func setFullShellEnabled(_ enabled: Bool, profileID: String) async throws
+  func updateProfilePermissions(_ grant: ProfileGrant) async throws
 
   func startProvider(id: String) async throws
   func stopProvider(id: String) async throws
@@ -528,6 +535,8 @@ final class UnavailableControlPlane: AppControlPlane {
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] { throw unavailable() }
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] { throw unavailable() }
   func fetchPermissions() async throws -> [PermissionSummary] { throw unavailable() }
+  func fetchOperationApprovals() async throws -> [OperationTicket] { throw unavailable() }
+  func resolveOperationApproval(id: String, approved: Bool) async throws { throw unavailable() }
   func requestPermission(id: String) async throws -> PermissionRequestOutcome {
     throw unavailable()
   }
@@ -550,6 +559,7 @@ final class UnavailableControlPlane: AppControlPlane {
   func setFullShellEnabled(_ enabled: Bool, profileID: String) async throws {
     throw unavailable()
   }
+  func updateProfilePermissions(_ grant: ProfileGrant) async throws { throw unavailable() }
   func startProvider(id: String) async throws { throw unavailable() }
   func stopProvider(id: String) async throws { throw unavailable() }
   func doctorProvider(id: String) async throws { throw unavailable() }

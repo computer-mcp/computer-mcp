@@ -11,14 +11,19 @@ import Testing
   .enabled(if: ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_ACCEPTANCE"] == "1"))
 struct RealCodexPluginAcceptanceTests {
   @Test
-  func skillsListCompletesWithinItsDeadlineAndPinsTheWorkspace() async throws {
+  func skillsListCompletesWithinItsDeadlineAndUsesExplicitDirectories() async throws {
     let fixture = try await NativeCodexFixture()
     var active: GatewayRuntime?
     do {
       let gateway = try await fixture.gateway()
       active = gateway
       let started = ContinuousClock.now
-      let result = try await fixture.method(gateway, "skills/list", ["forceReload": .bool(false)])
+      let result = try await fixture.method(
+        gateway, "skills/list",
+        [
+          "forceReload": .bool(false),
+          "cwds": .array([.string(fixture.workspace.rootPath)]),
+        ])
       #expect(started.duration(to: .now) < .seconds(30))
       let entries = try #require(result.objectValue?["data"]?.arrayValue)
       #expect(entries.count == 1)
@@ -54,56 +59,36 @@ struct RealCodexPluginAcceptanceTests {
     }
   }
 
-  @Test
-  func scopedElevationEnablesGitAndLoopbackThenRevocationRestoresTheSandbox() async throws {
-    let fixture = try await NativeCodexFixture()
+  @Test(arguments: [false, true])
+  func nativeFullAccessPermitsGitLoopbackAndAnExplicitOutsideWorkspacePath(
+    explicitOverride: Bool
+  ) async throws {
+    let fixture = try await NativeCodexFixture(
+      defaultSandbox: explicitOverride ? "workspace-write" : "danger-full-access")
     var active: GatewayRuntime?
     do {
       let gateway = try await fixture.gateway()
       active = gateway
-      let start = try await fixture.call(gateway, "thread.start")
+      let start = try await fixture.method(
+        gateway, "thread/start",
+        explicitOverride ? ["sandbox": .string("danger-full-access")] : [:])
       let thread = try #require(start.objectValue?["thread"]?.objectValue?["id"]?.stringValue)
-      #expect(start.objectValue?["sandbox"]?.objectValue?["type"] != .string("dangerFullAccess"))
+      #expect(start.objectValue?["sandbox"]?.objectValue?["type"] == .string("dangerFullAccess"))
       try fixture.response(
-        "safe",
+        "full-access",
         command:
-          "/bin/sleep 2; /usr/bin/touch .git/safe-probe; /usr/bin/curl --silent --show-error --max-time 3 \(fixture.probeURL) > safe-network.txt"
+          "/usr/bin/printf 'native\\n' > native.txt && /usr/bin/git add native.txt && /usr/bin/git commit -m 'Native plugin acceptance' && /usr/bin/curl --silent --show-error --max-time 3 \(fixture.probeURL) > native-network.txt && /usr/bin/printf 'outside' > ../outside-workspace.txt"
       )
-      let safeTurn = try await fixture.startTurn(gateway, thread: thread)
-      try await fixture.waitForModel("safe")
-      let grant = try fixture.approve(thread: thread, mode: .threadScopedTTL)
-      #expect(grant.state == .approved)
-      try await fixture.completed(gateway, thread: thread, turn: safeTurn, commandSuccess: false)
-      try fixture.commandResult("safe", succeeded: false)
-      #expect(!fixture.exists(".git/safe-probe"))
-      #expect(fixture.contents("safe-network.txt") != fixture.networkToken)
-
-      try fixture.response(
-        "elevated",
-        command:
-          "/usr/bin/printf 'elevated\\n' > elevated.txt && /usr/bin/git add elevated.txt && /usr/bin/git commit -m 'Scoped plugin acceptance' && /usr/bin/curl --silent --show-error --max-time 3 \(fixture.probeURL) > elevated-network.txt"
-      )
-      let elevatedTurn = try await fixture.startTurn(gateway, thread: thread)
-      try await fixture.completed(gateway, thread: thread, turn: elevatedTurn, commandSuccess: true)
-      try fixture.commandResult("elevated", succeeded: true)
-      #expect(try fixture.git(["log", "-1", "--pretty=%s"]) == "Scoped plugin acceptance\n")
-      #expect(fixture.contents("elevated-network.txt") == fixture.networkToken)
-      let active = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-      #expect(active.state == .active && active.consumedTurnIDs.contains(elevatedTurn))
-
-      try fixture.revoke(grant.id)
-      try fixture.response(
-        "restored",
-        command:
-          "/usr/bin/touch .git/restored-probe; /usr/bin/curl --silent --show-error --max-time 3 \(fixture.probeURL) > restored-network.txt"
-      )
-      let restored = try await fixture.startTurn(gateway, thread: thread)
-      try await fixture.completed(gateway, thread: thread, turn: restored, commandSuccess: false)
-      try fixture.commandResult("restored", succeeded: false)
-      #expect(!fixture.exists(".git/restored-probe"))
-      #expect(fixture.contents("restored-network.txt") != fixture.networkToken)
+      let turn = try await fixture.startTurn(gateway, thread: thread)
+      try await fixture.completed(gateway, thread: thread, turn: turn, commandSuccess: true)
+      try fixture.commandResult("full-access", succeeded: true)
+      #expect(try fixture.git(["log", "-1", "--pretty=%s"]) == "Native plugin acceptance\n")
+      #expect(fixture.contents("native-network.txt") == fixture.networkToken)
+      #expect(
+        try String(
+          contentsOf: fixture.root.appendingPathComponent("outside-workspace.txt"),
+          encoding: .utf8) == "outside")
       try await fixture.release(gateway, thread: thread)
-      #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .revoked)
       try await fixture.stop(gateway)
       await fixture.remove()
     } catch {
@@ -114,26 +99,22 @@ struct RealCodexPluginAcceptanceTests {
   }
 
   @Test
-  func approvedGrantAppliesAtColdThreadStartAndItsFirstTurn() async throws {
-    let fixture = try await NativeCodexFixture()
+  func explicitNativeReadOnlyOverridesTheConfiguredFullAccessDefault() async throws {
+    let fixture = try await NativeCodexFixture(defaultSandbox: "danger-full-access")
     var active: GatewayRuntime?
     do {
       let gateway = try await fixture.gateway()
       active = gateway
-      let grant = try fixture.approve(thread: nil, mode: .boundedTime)
-      let start = try await fixture.call(gateway, "thread.start")
+      let start = try await fixture.method(
+        gateway, "thread/start",
+        ["sandbox": .string("read-only"), "approvalPolicy": .string("never")])
       let thread = try #require(start.objectValue?["thread"]?.objectValue?["id"]?.stringValue)
-      #expect(start.objectValue?["sandbox"]?.objectValue?["type"] == .string("dangerFullAccess"))
-      let active = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-      #expect(active.state == .active && active.threadID == thread)
+      #expect(start.objectValue?["sandbox"]?.objectValue?["type"] == .string("readOnly"))
+      try fixture.response("read-only", command: "/usr/bin/touch native-denied.txt")
       let turn = try await fixture.startTurn(gateway, thread: thread)
-      try await fixture.completed(gateway, thread: thread, turn: turn)
-      let consumed = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-      #expect(consumed.consumedTurnIDs.contains(turn))
-      let status = try await fixture.call(gateway, "status")
-      let runtime = try #require(status.objectValue?["runtime_id"]?.stringValue)
-      #expect(consumed.consumedRuntimeIDs.contains(runtime))
-      try fixture.revoke(grant.id)
+      try await fixture.completed(gateway, thread: thread, turn: turn, commandSuccess: false)
+      try fixture.commandResult("read-only", succeeded: false)
+      #expect(!fixture.exists("native-denied.txt"))
       try await fixture.release(gateway, thread: thread)
       try await fixture.stop(gateway)
       await fixture.remove()
@@ -280,7 +261,7 @@ private final class NativeCodexFixture: Sendable {
   private let home: URL
   private let genericCalls: Bool
 
-  init(genericCalls: Bool = false) async throws {
+  init(genericCalls: Bool = false, defaultSandbox: String = "workspace-write") async throws {
     self.genericCalls = genericCalls
     let environment = ProcessInfo.processInfo.environment
     adapter = try #require(environment["COMPUTER_MCP_TEST_CODEX_PLUGIN"])
@@ -301,7 +282,7 @@ private final class NativeCodexFixture: Sendable {
     try database.saveProfile(
       .init(
         id: .chatGPTOperate, capabilityIDs: ["mcp.tools.call"], workspaceIDs: [workspace.id],
-        allowedCallers: [.secureTunnel]))
+        allowedCallers: [.secureTunnel], mode: .workspaceOperations, confirmationPolicy: .never))
     config = root.appendingPathComponent("adapter.json")
     let modelSource = try #require(
       Bundle.module.url(
@@ -324,7 +305,7 @@ private final class NativeCodexFixture: Sendable {
         model_provider = "fixture"
         cli_auth_credentials_store = "file"
         approval_policy = "never"
-        sandbox_mode = "workspace-write"
+        sandbox_mode = "\(defaultSandbox)"
         web_search = "disabled"
         [model_providers.fixture]
         name = "Isolated native acceptance"
@@ -345,8 +326,6 @@ private final class NativeCodexFixture: Sendable {
         JSONValue.object([
           "enabled": .bool(true), "executable": .string(codex),
           "app_server_enabled": .bool(true), "exec_enabled": .bool(false),
-          "mcp_enabled": .bool(false),
-          "sandbox": .string("workspace-write"), "approval_policy": .string("never"),
           "app_server_request_timeout_seconds": .number(30),
           "app_server_app_list_timeout_seconds": .number(120),
         ])
@@ -385,7 +364,8 @@ private final class NativeCodexFixture: Sendable {
         profiles: [
           .init(
             id: .chatGPTOperate, capabilities: ["mcp.tools.call"],
-            workspaces: [workspace.id], allowedCallers: [.secureTunnel])
+            workspaces: [workspace.id], allowedCallers: [.secureTunnel],
+            mode: .workspaceOperations, confirmationPolicy: .never)
         ],
         mcp: .init(servers: [
           .init(
@@ -401,7 +381,8 @@ private final class NativeCodexFixture: Sendable {
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate,
         transportTrace: .init(
-          transport: "gateway_socket", socketConnectionID: "native-\(connection)")),
+          transport: "gateway_socket", socketConnectionID: "native-\(connection)"),
+        trustedPrincipalID: "native-codex-acceptance"),
       database: database, registeredWorkspaces: registeredWorkspaces)
   }
 
@@ -493,28 +474,6 @@ private final class NativeCodexFixture: Sendable {
     }
     throw GatewayToolError.executionFailed(
       "Native turn \(turn) did not complete in the fixture deadline.")
-  }
-
-  func approve(thread: String?, mode: CodexElevationGrantMode) throws -> CodexElevationGrantRecord {
-    let pending = try CodexElevationGrantService.request(
-      owner: .init(
-        workspaceID: workspace.id, profileID: "chatgpt-operate", caller: "secure-tunnel",
-        transport: "gateway_socket", socketConnectionID: "native-1", tunnelInstanceID: nil,
-        tunnelProfileID: nil),
-      database: database, threadID: thread, mode: mode, reason: "Isolated native acceptance",
-      maximumDurationSeconds: 300, maximumTurnCount: 5)
-    return try CodexElevationGrantService.approve(
-      id: pending.id, owner: localOwner, database: database)
-  }
-
-  private var localOwner: CodexRuntimeOwner {
-    .init(
-      workspaceID: workspace.id, profileID: "local-admin", caller: "local-cli",
-      transport: "fixture", socketConnectionID: nil, tunnelInstanceID: nil, tunnelProfileID: nil)
-  }
-
-  func revoke(_ id: String) throws {
-    _ = try CodexElevationGrantService.revoke(id: id, owner: localOwner, database: database)
   }
 
   func response(_ id: String, command: String, holdAfterCommand: Bool = false) throws {
@@ -633,13 +592,17 @@ private final class NativeCodexFixture: Sendable {
   func runtimeReceipts() throws -> [JSONValue] {
     var configuration = Configuration()
     configuration.readonly = true
-    let inspection = try DatabaseQueue(
-      path: root.appendingPathComponent("adapter-state/codex.sqlite").path,
-      configuration: configuration)
-    defer { try? inspection.close() }
-    return try inspection.read { db in
-      try String.fetchAll(db, sql: "SELECT payloadJSON FROM codexRuntimeLeases").map {
-        try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+    let subjects = try FileManager.default.contentsOfDirectory(
+      at: root.appendingPathComponent("adapter-state/subjects"),
+      includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+    return try subjects.flatMap { subject in
+      let inspection = try DatabaseQueue(
+        path: subject.appendingPathComponent("codex.sqlite").path, configuration: configuration)
+      defer { try? inspection.close() }
+      return try inspection.read { db in
+        try String.fetchAll(db, sql: "SELECT payloadJSON FROM codexRuntimeLeases").map {
+          try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+        }
       }
     }
   }

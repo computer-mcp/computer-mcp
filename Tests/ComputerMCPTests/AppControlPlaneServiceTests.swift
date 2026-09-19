@@ -9,6 +9,155 @@ import Testing
 @Suite(.serialized)
 
 final class AppControlPlaneServiceTests {
+  @Test
+  func permissionEditsRoundTripAndRejectStaleAuthorization() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let id = GatewayProfileID(rawValue: "custom-client")!
+    let configuration = GatewayConfiguration(
+      profiles: [
+        .init(id: id, capabilities: ["file.read"], allowedCallers: [.localMCP], mode: .readOnly)
+      ],
+      workspaceDirectory: fixture.root)
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    let saved = try await fixture.controlPlane.updateProfilePermissions(
+      profileID: id, mode: .workspaceOperations, confirmationPolicy: .allWrites,
+      capabilityIDs: ["file.read", "file.write"], allowedCallers: [.cloudflareTunnel],
+      expectedRevision: 0)
+    #expect(saved.authorizationRevision == 1)
+    #expect(saved.mode == .workspaceOperations)
+    #expect(saved.allowedCallers == [.cloudflareTunnel])
+    #expect(!saved.fullShellEnabled)
+    let exported = try await fixture.controlPlane.effectiveConfigurationForExport()
+    let reloaded = try GatewayConfiguration.load(
+      text: exported.exportedTOML(), baseURL: fixture.root)
+    let grant = reloaded.profileGrant(for: id)
+    #expect(grant.mode == saved.mode)
+    #expect(grant.confirmationPolicy == saved.confirmationPolicy)
+    #expect(grant.capabilityIDs == saved.capabilityIDs)
+    #expect(grant.allowedCallers == saved.allowedCallers)
+    do {
+      _ = try await fixture.controlPlane.updateProfilePermissions(
+        profileID: id, mode: .localFullAccess, expectedRevision: 0)
+      Issue.record("A stale permission edit overwrote the current authorization.")
+    } catch is GatewayDatabaseError {}
+    #expect(try fixture.database.profiles().first { $0.id == id }?.authorizationRevision == 1)
+  }
+
+  @Test
+  func hostApprovalRequiresLocalResolutionAndPermissionEditsInvalidateIt() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    let grant = try await fixture.controlPlane.updateProfilePermissions(
+      profileID: .chatGPTOperate, mode: .workspaceOperations)
+    let ticket = OperationTicket(
+      capabilityID: "file.remove", caller: .secureTunnel, profileID: .chatGPTOperate,
+      principalID: "registered-client", workspaceID: nil, inputDigest: "digest",
+      state: .pendingApproval, expiresAt: Date().addingTimeInterval(300),
+      authorizationRevision: grant.authorizationRevision, reviewSummary: "fixture target")
+    try fixture.database.saveOperationTicket(ticket)
+    do {
+      _ = try await fixture.controlPlane.resolveOperationApproval(
+        id: ticket.id, approved: true, resolver: .localMCP)
+      Issue.record("An execution client approved its own operation.")
+    } catch is GatewayDatabaseError {}
+    #expect(try fixture.database.operationTicket(id: ticket.id)?.state == .pendingApproval)
+    let approved = try await fixture.controlPlane.resolveOperationApproval(
+      id: ticket.id, approved: true, resolver: .localApp)
+    #expect(approved.state == .approved)
+    _ = try await fixture.controlPlane.updateProfilePermissions(
+      profileID: .chatGPTOperate, mode: .readOnly, expectedRevision: grant.authorizationRevision)
+    #expect(try fixture.database.operationTicket(id: ticket.id)?.state == .denied)
+    #expect(try await fixture.controlPlane.operationApprovals().contains { $0.id == ticket.id })
+  }
+
+  @Test
+  func workspaceRevocationNarrowsAnExplicitWorkspaceWildcard() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    for id in ["one", "two"] {
+      try fixture.database.saveWorkspace(
+        .init(id: id, displayName: id, rootPath: fixture.root.path))
+    }
+    _ = try await fixture.controlPlane.updateProfilePermissions(
+      profileID: .chatGPTOperate, workspaceIDs: ["*"])
+    let grant = try await fixture.controlPlane.setWorkspaceEnabled(
+      false, workspaceID: "one", profileID: .chatGPTOperate)
+    #expect(grant.workspaceIDs == ["two"])
+  }
+
+  @Test
+  func tunnelPrincipalIsStableAcrossControlPlaneReads() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let first = try await fixture.controlPlane.gatewayTunnelPrincipalID()
+    let second = try await fixture.controlPlane.gatewayTunnelPrincipalID()
+    #expect(first.hasPrefix("tunnel-bridge:"))
+    #expect(first == second)
+  }
+
+  @Test
+  func localControlRoundTripsPermissionChangesAndOperationApproval() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let service = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await service.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      let response = try await client.call(
+        "profile.permissions",
+        arguments: .object([
+          "profile": .string("chatgpt-operate"), "mode": .string("workspace-operations"),
+          "confirmation_policy": .string("all-writes"),
+          "capabilities": .array([.string("file.write")]),
+          "allowed_callers": .array([.string("local-mcp")]), "expected_revision": .number(0),
+        ]))
+      #expect(response.objectValue?["mode"] == .string("workspace-operations"))
+      #expect(response.objectValue?["confirmation_policy"] == .string("all-writes"))
+      let grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      #expect(grant.allowedCallers == [.localMCP])
+      for invalid: JSONValue in [
+        .object(["profile": .string("chatgpt-operate")]),
+        .object(["profile": .string("chatgpt-operate"), "mode": .string("unknown")]),
+        .object(["profile": .string("chatgpt-operate"), "capabilities": .array([.number(1)])]),
+        .object([
+          "profile": .string("chatgpt-operate"), "mode": .string("read-only"),
+          "expected_revision": .number(0),
+        ]),
+      ] {
+        await #expect(throws: ControlSocketCallError.self) {
+          _ = try await client.call("profile.permissions", arguments: invalid)
+        }
+      }
+      for approved in [true, false] {
+        let ticket = OperationTicket(
+          capabilityID: "file.write", caller: .localMCP, profileID: .chatGPTOperate,
+          principalID: "local-user:fixture", workspaceID: nil, inputDigest: "test-digest",
+          state: .pendingApproval, expiresAt: Date().addingTimeInterval(300),
+          authorizationRevision: grant.authorizationRevision, reviewSummary: "fixture write")
+        try fixture.database.saveOperationTicket(ticket)
+        let resolved = try await client.call(
+          approved ? "approvals.approve" : "approvals.deny",
+          arguments: .object(["id": .string(ticket.id)]))
+        #expect(resolved.objectValue?["state"] == .string(approved ? "approved" : "denied"))
+      }
+      let listed = try await client.call("approvals.list")
+      #expect(listed.objectValue?["result"]?.arrayValue?.count == 2)
+      #expect((await gateway.snapshot()).state == .stopped)
+      await service.stop()
+    } catch {
+      await service.stop()
+      throw error
+    }
+  }
+
   @Test(
     arguments: [
       "tools", "call", "call-error", "socket", "profiles", "export", "workspace", "shell", "tunnel",
@@ -34,6 +183,13 @@ final class AppControlPlaneServiceTests {
           toolRisks: ["inspect": .readOnly])
       ]), workspaceDirectory: fixture.root)
     configuration.policy.shellEnabled = true
+    if operation == "shell" {
+      configuration.profiles = [
+        .init(
+          id: .chatGPTOperate, capabilities: Array(ProfileGrant.operate.capabilityIDs),
+          allowedCallers: Array(ProfileGrant.operate.allowedCallers), mode: .localFullAccess)
+      ]
+    }
     _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
     let workspace = RegisteredWorkspace(
       id: "fixture", displayName: "Fixture", rootPath: fixture.root.path,
@@ -732,6 +888,9 @@ final class AppControlPlaneServiceTests {
       #expect(workspaceSummaries.count == 1)
       #expect(workspaceSummaries[0].objectValue?["bookmark_data"] == nil)
       #expect(workspaceSummaries[0].objectValue?["display_name"] == .string("Validation Workspace"))
+      #expect(
+        workspaceSummaries[0].objectValue?["access"]?.objectValue?["status"] == .string("available")
+      )
 
       let tools = try await client.call("tools.list")
       let listedTools = try #require(tools.objectValue?["tools"]?.arrayValue)
@@ -751,7 +910,7 @@ final class AppControlPlaneServiceTests {
           "arguments": .object([:]),
         ])
       )
-      #expect(toolCall.objectValue?["isError"] == .bool(false))
+      #expect(toolCall.objectValue?["isError"] == .bool(false), "\(toolCall)")
       let calledToolExecution = try #require(
         toolCall.objectValue?["structuredContent"]?.objectValue?["gateway_execution"]?
           .objectValue
@@ -1006,7 +1165,7 @@ final class AppControlPlaneServiceTests {
         "profile.activate",
         arguments: .object(["profile": .string(GatewayProfileID.chatGPTOperate.rawValue)])
       )
-      #expect(activated.objectValue?["restarted"] == .bool(true))
+      #expect(activated.objectValue?["restarted"] == .bool(false))
       #expect(
         try await fixture.controlPlane.activeGatewayProfile() == GatewayProfileID.chatGPTOperate
       )
@@ -1147,6 +1306,8 @@ final class AppControlPlaneServiceTests {
       at: workspaceURL,
       displayName: "Exported Workspace"
     )
+    _ = try await fixture.controlPlane.updateProfilePermissions(
+      profileID: .chatGPTOperate, mode: .localFullAccess)
     _ = try await fixture.controlPlane.setWorkspaceEnabled(
       true,
       workspaceID: workspace.id,
@@ -1456,6 +1617,8 @@ final class AppControlPlaneServiceTests {
       shell_enabled = true
       """
     )
+    _ = try await fixture.controlPlane.updateProfilePermissions(
+      profileID: .chatGPTOperate, mode: .localFullAccess)
     let grant = try await fixture.controlPlane.setFullShellEnabled(
       true,
       profileID: .chatGPTOperate
@@ -1517,7 +1680,7 @@ final class AppControlPlaneServiceTests {
   }
 
   @Test
-  func testManifestCapabilitiesRemainAuthoritativeAfterWorkspaceGrantPersistence() async throws {
+  func testExplicitPermissionsRemainAuthoritativeAfterManifestUpdates() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
@@ -1550,14 +1713,15 @@ final class AppControlPlaneServiceTests {
       profileGrants.first { $0.id == .chatGPTObserve }
     )
     #expect(grant.workspaceIDs.contains(workspace.id))
-    #expect(grant.capabilityIDs.contains("file.read"))
-    #expect(!(grant.capabilityIDs.contains("file.exists")))
-    #expect(!(grant.allowedCallers.contains(.secureTunnel)))
+    #expect(!grant.capabilityIDs.contains("file.read"))
+    #expect(grant.capabilityIDs.contains("file.exists"))
+    #expect(grant.allowedCallers == [.secureTunnel])
+    #expect(grant.authorizationRevision > 0)
 
     let gateway = try GatewayRuntime(
       configuration: try await fixture.controlPlane.activeConfiguration(),
       context: ExecutionContext(
-        caller: .localApp,
+        caller: .secureTunnel,
         profileID: .chatGPTObserve,
         workspaceID: workspace.id
       ),
@@ -1565,8 +1729,15 @@ final class AppControlPlaneServiceTests {
       registeredWorkspaces: [workspace]
     )
     let toolNames = Set(try gateway.listTools().map(\.name))
-    #expect(toolNames.contains("file.read"))
-    #expect(!(toolNames.contains("file.exists")))
+    #expect(!toolNames.contains("file.read"))
+    #expect(toolNames.contains("file.exists"))
+    let changed = try await fixture.controlPlane.updateProfilePermissions(
+      profileID: .chatGPTObserve,
+      capabilityIDs: ["workspace.list", "workspace.describe", "file.read"],
+      allowedCallers: [.localApp], expectedRevision: grant.authorizationRevision)
+    #expect(changed.authorizationRevision > grant.authorizationRevision)
+    #expect(try gateway.listTools().isEmpty)
+    await gateway.shutdown()
   }
 
   @Test
@@ -1947,84 +2118,6 @@ final class AppControlPlaneServiceTests {
     #expect(try fixture.database.workspace(id: canonical.id) == nil)
     #expect(try fixture.database.workspace(id: duplicate.id) == nil)
     #expect(try fixture.database.profiles().first?.workspaceIDs.isEmpty == true)
-  }
-
-  @Test
-  func testWorkspaceAndProfileDisablementInvalidateElevationGrants() async throws {
-    let fixture = try AppControlPlaneServiceFixture()
-    defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(DefaultGatewayConfiguration.manifest)
-    let workspaceURL = fixture.root.appendingPathComponent("Elevation Workspace")
-    try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
-    let workspace = try await fixture.controlPlane.registerWorkspace(at: workspaceURL)
-    let localAdmin = CodexRuntimeOwner(
-      workspaceID: workspace.id,
-      profileID: GatewayProfileID.localAdmin.rawValue,
-      caller: GatewayCallerKind.localCLI.rawValue,
-      transport: "control_socket",
-      socketConnectionID: "local-control",
-      tunnelInstanceID: nil,
-      tunnelProfileID: nil
-    )
-    let operateOwner = CodexRuntimeOwner(
-      workspaceID: workspace.id,
-      profileID: GatewayProfileID.chatGPTOperate.rawValue,
-      caller: GatewayCallerKind.secureTunnel.rawValue,
-      transport: "gateway_socket",
-      socketConnectionID: "operate-connection",
-      tunnelInstanceID: "tunnel-1",
-      tunnelProfileID: "computer-mcp"
-    )
-    let workspaceGrant = try CodexElevationGrantService.request(
-      owner: operateOwner,
-      database: fixture.database,
-      threadID: nil,
-      mode: .nextTurn,
-      reason: "Workspace disablement fixture.",
-      maximumDurationSeconds: 300,
-      maximumTurnCount: nil
-    )
-    _ = try CodexElevationGrantService.approve(
-      id: workspaceGrant.id,
-      owner: localAdmin,
-      database: fixture.database
-    )
-    _ = try await fixture.controlPlane.setWorkspaceEnabled(
-      false,
-      workspaceID: workspace.id,
-      profileID: .chatGPTOperate
-    )
-    #expect(
-      try fixture.database.codexElevationGrant(id: workspaceGrant.id)?.state == .invalidated
-    )
-
-    let observeOwner = CodexRuntimeOwner(
-      workspaceID: workspace.id,
-      profileID: GatewayProfileID.chatGPTObserve.rawValue,
-      caller: GatewayCallerKind.secureTunnel.rawValue,
-      transport: "gateway_socket",
-      socketConnectionID: "observe-connection",
-      tunnelInstanceID: "tunnel-1",
-      tunnelProfileID: "computer-mcp"
-    )
-    let profileGrant = try CodexElevationGrantService.request(
-      owner: observeOwner,
-      database: fixture.database,
-      threadID: nil,
-      mode: .nextTurn,
-      reason: "Profile change fixture.",
-      maximumDurationSeconds: 300,
-      maximumTurnCount: nil
-    )
-    _ = try CodexElevationGrantService.approve(
-      id: profileGrant.id,
-      owner: localAdmin,
-      database: fixture.database
-    )
-    try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
-    #expect(
-      try fixture.database.codexElevationGrant(id: profileGrant.id)?.state == .invalidated
-    )
   }
 
   private var validManifest: String {

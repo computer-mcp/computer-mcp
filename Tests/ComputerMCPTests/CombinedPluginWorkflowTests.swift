@@ -50,7 +50,8 @@ struct CombinedPluginWorkflowTests {
     configuration.profiles = [
       .init(
         id: .chatGPTOperate, capabilities: ["*"],
-        workspaces: ["fixture"], allowedCallers: [.localCLI])
+        workspaces: ["fixture"], allowedCallers: [.localCLI], mode: .localFullAccess,
+        confirmationPolicy: .never)
     ]
     configuration.mcp.servers = [
       .init(
@@ -71,9 +72,11 @@ struct CombinedPluginWorkflowTests {
     _ = try await fixture.host.activateManifest(configuration.exportedTOML())
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+    // The operator-owned fixture exercises plugin lifecycle, not interactive approval.
     let grant = ProfileGrant(
       id: .chatGPTOperate, capabilityIDs: ["*"], workspaceIDs: ["fixture"],
-      allowedCallers: [.localCLI], fullShellEnabled: true)
+      allowedCallers: [.localCLI], fullShellEnabled: true,
+      mode: .localFullAccess, confirmationPolicy: .never)
     try fixture.database.saveProfile(grant)
     let initialManifest = try Data(contentsOf: fixture.directories.manifest)
     let initialVendor = try Data(contentsOf: vendor)

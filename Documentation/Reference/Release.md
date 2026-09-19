@@ -25,7 +25,7 @@ The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
    same DMG, proves byte identity, writes the published-artifact provenance
    receipt, and leaves the Release as a draft for local installation acceptance.
 
-All release-blocking product, security, real App Server, handoff, elevation,
+All release-blocking product, security, real App Server, handoff, native permission,
 cold-start, and local package acceptance must be complete before the signed tag
 is pushed. Use isolated targets or the exact workspaces separately authorized
 for that release; a previous release's live workspace is not standing permission
@@ -282,7 +282,7 @@ xcrun stapler validate "$release_dmg"
 
 Then install the exact published App, restore the active profile, registered
 workspaces, OpenAI Tunnel, gateway, and launch-at-login state, and run a bounded
-production verification plus ownership/elevation diagnostics. This post-install check
+production verification plus ownership/permission diagnostics. This post-install check
 confirms installation and restored local state; it is not permission to defer a
 release-blocking product test until after publication. A live Cloudflare named
 deployment is a user-owned deployment check, not a publisher credential or

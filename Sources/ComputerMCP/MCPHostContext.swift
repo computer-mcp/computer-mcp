@@ -22,16 +22,21 @@ package struct MCPHostContext: Encodable, Sendable {
   let managedWorkspaceRoot: String?
   /// Host-local recovery storage; never serialized into downstream launch metadata.
   var processOwnershipRoot: URL?
+  /// Host-local execution receipts and identity are never environment credentials.
+  let executionDatabase: GatewayDatabase?
+  let principalID: String
+  /// Verified admission evidence for host ownership writes, never inferred from caller provenance.
+  let verifiedPrincipalID: String?
 
   private enum CodingKeys: String, CodingKey {
     case formatVersion, runtimeID, caller, profileID, workspace, readOnly, transportTrace,
-      managedWorkspaceRoot
+      managedWorkspaceRoot, principalID
   }
 
   package init(
     runtimeID: UUID, context: ExecutionContext, workspaceID: String, rootURL: URL,
     readOnly: Bool, tools: MCPHostToolDirectory? = nil, managedWorkspaceRoot: URL? = nil,
-    processOwnershipRoot: URL? = nil
+    processOwnershipRoot: URL? = nil, executionDatabase: GatewayDatabase? = nil
   ) {
     self.runtimeID = runtimeID
     caller = context.caller
@@ -42,6 +47,9 @@ package struct MCPHostContext: Encodable, Sendable {
     self.tools = tools
     self.managedWorkspaceRoot = managedWorkspaceRoot?.standardizedFileURL.path
     self.processOwnershipRoot = processOwnershipRoot
+    self.executionDatabase = executionDatabase
+    self.principalID = context.principalID
+    self.verifiedPrincipalID = context.trustedPrincipalID
   }
 
   /// Registration overrides and inherited environments cannot assert host provenance.

@@ -12,32 +12,12 @@ import Testing
     if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_CODEX_PLUGIN"] != nil))
 struct CodexPluginHostIntegrationTests {
   @Test(arguments: [
-    "read", "cross-workspace", "recursive", "observe-write", "no-delegation", "elevated-denied",
+    "read", "cross-workspace", "recursive", "observe-write", "no-delegation", "capability-denied",
   ])
   func independentlyBuiltPluginUsesOnlyItsDelegatedHostScope(mode: String) async throws {
     let fixture = try await PluginHostFixture(mode: mode)
     defer { fixture.remove() }
     do {
-      var elevationID: String?
-      if mode == "elevated-denied" {
-        let request = try CodexElevationGrantService.request(
-          owner: .init(
-            workspaceID: "fixture", profileID: "chatgpt-operate",
-            caller: "secure-tunnel", transport: "gateway_socket",
-            socketConnectionID: "fixture-origin",
-            tunnelInstanceID: nil, tunnelProfileID: nil), database: fixture.database,
-          threadID: "fixture-thread", mode: .threadScopedTTL,
-          reason: "Verify independent capability policy",
-          maximumDurationSeconds: 300, maximumTurnCount: nil)
-        let approved = try CodexElevationGrantService.approve(
-          id: request.id,
-          owner: .init(
-            workspaceID: "fixture", profileID: "local-admin", caller: "local-cli",
-            transport: "fixture", socketConnectionID: nil, tunnelInstanceID: nil,
-            tunnelProfileID: nil),
-          database: fixture.database)
-        elevationID = approved.id
-      }
       let tools = try await fixture.runtime.listToolsAsyncForTest()
       #expect(tools.contains { $0.name == "adapter.codex.app.thread.loaded.list" })
       #expect(!FileManager.default.fileExists(atPath: fixture.vendorReceipt.path))
@@ -70,9 +50,6 @@ struct CodexPluginHostIntegrationTests {
             == "owned-fixture-value")
       }
       let receipt = try fixture.receipt()
-      if let elevationID {
-        #expect(try fixture.database.codexElevationGrant(id: elevationID)?.state == .approved)
-      }
       #expect(receipt.objectValue?["inherited_host_env"] == .bool(false))
       #expect(receipt.objectValue?["inherited_host_socket"] == .bool(false))
       await fixture.runtime.shutdown()
@@ -91,7 +68,9 @@ struct CodexPluginHostIntegrationTests {
         name: "adapter.codex.app.thread.loaded.list",
         arguments: .object(["workspace_id": .string("fixture")]))
       let response = try await fixture.callbackResponse()
-      #expect(response.objectValue?["result"]?.objectValue?["success"] == .bool(true))
+      #expect(
+        response.objectValue?["result"]?.objectValue?["success"] == .bool(true),
+        "Dry-run callback response: \(response)")
       let approvals = try await fixture.runtime.callToolAsync(
         name: "adapter.codex.app.approvals.list",
         arguments: .object(["workspace_id": .string("fixture")]))
@@ -111,54 +90,52 @@ struct CodexPluginHostIntegrationTests {
       throw error
     }
   }
-  @Test(arguments: ["approve_once", "deny", "revoke-before-approval"])
-  func writesNeedLiveApprovalAndHostTickets(decision: String) async throws {
+  @Test(arguments: ["approve", "deny", "revoke-before-commit"])
+  func writesRequireLocalHostApprovalForTheExactTicket(decision: String) async throws {
     let fixture = try await PluginHostFixture(mode: "write")
     defer { fixture.remove() }
     do {
       _ = try await fixture.runtime.callToolAsync(
         name: "adapter.codex.app.thread.loaded.list",
         arguments: .object(["workspace_id": .string("fixture")]))
-      let approval = try await fixture.pendingApproval()
-      #expect(approval["risk"] == .string("destructive"))
+      let approval = try await fixture.pendingApproval(capability: "file.replace_text")
+      #expect(approval.state == .pendingApproval)
       #expect(
         try String(contentsOf: fixture.root.appendingPathComponent("value.txt"), encoding: .utf8)
           == "owned-fixture-value")
       #expect(
         try !fixture.database.auditEvents().contains { $0.capabilityID == "operations.commit" })
-      let approvalID = try #require(approval["id"]?.stringValue)
-      if decision == "revoke-before-approval" {
+      _ = try fixture.database.resolveOperationApproval(
+        id: approval.id, approved: decision != "deny", resolver: .localCLI)
+      if decision == "revoke-before-commit" {
         var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
         grant.workspaceIDs.removeAll()
         try fixture.database.saveProfile(grant)
       }
-      _ = try await fixture.runtime.callToolAsync(
-        name: "adapter.codex.app.approvals.respond",
-        arguments: .object([
-          "workspace_id": .string("fixture"), "approval_id": .string(approvalID),
-          "decision": .string(decision == "deny" ? "deny" : "approve_once"),
-        ]))
-      let response = try await fixture.callbackResponse()
+      try fixture.queueCallback(
+        id: 901, tool: "operations.commit",
+        arguments: [
+          "tool": .string("file.replace_text"), "ticket_id": .string(approval.id),
+          "arguments": .object([
+            "path": .string("value.txt"), "search": .string("owned"),
+            "replacement": .string("changed"), "dry_run": .bool(false),
+          ]),
+        ])
+      let response = try await fixture.callbackResponse(id: 901)
       #expect(
-        response.objectValue?["result"]?.objectValue?["success"]
-          == .bool(decision == "approve_once"))
+        response.objectValue?["result"]?.objectValue?["success"] == .bool(decision == "approve"))
       let value = try String(
         contentsOf: fixture.root.appendingPathComponent("value.txt"), encoding: .utf8)
-      #expect(
-        value == (decision == "approve_once" ? "changed-fixture-value" : "owned-fixture-value"))
+      #expect(value == (decision == "approve" ? "changed-fixture-value" : "owned-fixture-value"))
       let audits = try fixture.database.auditEvents()
-      if decision == "approve_once" {
+      if decision == "approve" {
         let target = try #require(
           audits.first { $0.capabilityID == "file.replace_text" && $0.decision == .allowed })
-        let ticketID = try #require(target.ticketID)
-        let ticket = try #require(try fixture.database.operationTicket(id: ticketID))
+        #expect(target.ticketID == approval.id)
+        let ticket = try #require(try fixture.database.operationTicket(id: approval.id))
         #expect(ticket.state == .succeeded)
         #expect(target.invocationID == ticket.invocationID)
         #expect(target.parentRequestID == ticket.parentRequestID)
-        #expect(
-          audits.contains { $0.capabilityID == "operations.prepare" && $0.ticketID == ticketID })
-        #expect(
-          audits.contains { $0.capabilityID == "operations.commit" && $0.ticketID == ticketID })
       } else {
         #expect(
           !audits.contains { $0.capabilityID == "file.replace_text" && $0.decision == .allowed })
@@ -172,16 +149,29 @@ struct CodexPluginHostIntegrationTests {
   }
 
   @Test
-  func governedGitWorkflowCreatesAHookedCommitAndCleanWorktree() async throws {
+  func locallyApprovedGitWorkflowCreatesAHookedCommitAndCleanWorktree() async throws {
     let fixture = try await PluginHostFixture(mode: "governed-git")
     defer { fixture.remove() }
     do {
       _ = try await fixture.runtime.callToolAsync(
         name: "adapter.codex.app.thread.loaded.list",
         arguments: .object(["workspace_id": .string("fixture")]))
-      for (index, capability) in ["file.write", "git.add", "git.commit"].enumerated() {
-        let approval = try await fixture.pendingApproval()
-        let approvalID = try #require(approval["id"]?.stringValue)
+      _ = try await fixture.callbackResponse(id: 900)
+      let steps: [(String, JSONValue)] = [
+        (
+          "file.write",
+          .object(["path": .string("product.txt"), "content": .string("production-ready\n")])
+        ),
+        ("git.add", .object(["paths": .array([.string("product.txt")])])),
+        ("git.commit", .object(["message": .string("Verify governed plugin Git")])),
+      ]
+      for (index, step) in steps.enumerated() {
+        let prepareID = 1_000 + index * 2
+        try fixture.queueCallback(
+          id: prepareID, tool: "operations.prepare",
+          arguments: ["tool": .string(step.0), "arguments": step.1])
+        _ = try await fixture.callbackResponse(id: prepareID)
+        let approval = try await fixture.pendingApproval(capability: step.0)
         if index == 0 {
           #expect(
             !FileManager.default.fileExists(
@@ -193,26 +183,23 @@ struct CodexPluginHostIntegrationTests {
             !FileManager.default.fileExists(
               atPath: fixture.root.appendingPathComponent(".git/hook-ran").path))
         }
-        _ = try await fixture.runtime.callToolAsync(
-          name: "adapter.codex.app.approvals.respond",
-          arguments: .object([
-            "workspace_id": .string("fixture"), "approval_id": .string(approvalID),
-            "decision": .string("approve_once"),
-          ]))
-        let response = try await fixture.callbackResponse(id: 900 + index)
+        _ = try fixture.database.resolveOperationApproval(
+          id: approval.id, approved: true, resolver: .localCLI)
+        try fixture.queueCallback(
+          id: prepareID + 1, tool: "operations.commit",
+          arguments: [
+            "tool": .string(step.0), "arguments": step.1, "ticket_id": .string(approval.id),
+          ])
+        let response = try await fixture.callbackResponse(id: prepareID + 1)
         try #require(response.objectValue?["result"]?.objectValue?["success"] == .bool(true))
         let audits = try fixture.database.auditEvents()
         let target = try #require(
-          audits.first { $0.capabilityID == capability && $0.decision == .allowed })
+          audits.first { $0.capabilityID == step.0 && $0.decision == .allowed })
         #expect(target.workspaceID == "fixture")
         #expect(target.caller == .secureTunnel)
         #expect(target.socketConnectionID == "fixture-origin")
-        if capability != "git.commit" {
-          let ticketID = try #require(target.ticketID)
-          #expect(try fixture.database.operationTicket(id: ticketID)?.state == .succeeded)
-          #expect(
-            audits.contains { $0.capabilityID == "operations.commit" && $0.ticketID == ticketID })
-        }
+        #expect(target.ticketID == approval.id)
+        #expect(try fixture.database.operationTicket(id: approval.id)?.state == .succeeded)
       }
       #expect(
         FileManager.default.fileExists(
@@ -273,8 +260,11 @@ private final class PluginHostFixture: Sendable {
       JSONValue.object([
         "id": .number(900), "method": .string("item/tool/call"),
         "params": .object([
-          "namespace": .string("computer-mcp"), "tool": .string(target),
-          "arguments": .object(arguments),
+          "namespace": .string("computer-mcp"),
+          "tool": .string(mode == "write" ? "operations.prepare" : target),
+          "arguments": mode == "write"
+            ? .object(["tool": .string(target), "arguments": .object(arguments)])
+            : .object(arguments),
           "callId": .string("fixture-call"), "threadId": .string("fixture-thread"),
           "turnId": .string("fixture-turn"),
         ]),
@@ -285,7 +275,6 @@ private final class PluginHostFixture: Sendable {
       JSONValue.object([
         "enabled": .bool(true), "executable": .string(vendor.path),
         "app_server_enabled": .bool(true), "exec_enabled": .bool(false),
-        "mcp_enabled": .bool(false),
         "app_server_request_timeout_seconds": .number(8),
         "app_server_approval_timeout_seconds": .number(8),
       ])
@@ -294,17 +283,21 @@ private final class PluginHostFixture: Sendable {
     let workspace = RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path)
     try database.saveWorkspace(workspace)
     let profile: GatewayProfileID = mode == "observe-write" ? .chatGPTObserve : .chatGPTOperate
+    let permissionMode: GatewayPermissionMode =
+      mode == "observe-write" ? .readOnly : .workspaceOperations
     var capabilities = [
       "workspace.list", "workspace.describe", "policy.probe", "file.read", "file.replace_text",
       "mcp.tools.call", "operations.prepare", "operations.commit",
     ]
-    if mode == "elevated-denied" { capabilities.removeAll { $0 == "file.read" } }
+    if mode == "capability-denied" { capabilities.removeAll { $0 == "file.read" } }
     if mode == "dry-run" { capabilities.append("git.add") }
     if mode == "governed-git" { capabilities += ["file.write", "git.add", "git.commit"] }
     try database.saveProfile(
       .init(
         id: profile, capabilityIDs: Set(capabilities), workspaceIDs: ["fixture"],
-        allowedCallers: [.secureTunnel]))
+        allowedCallers: [.secureTunnel],
+        mode: permissionMode,
+        confirmationPolicy: mode == "governed-git" ? .allWrites : .riskBased))
     let server = MCPServerConfig(
       id: "fixture-plugin", transport: .stdio, command: executable,
       args: [
@@ -326,7 +319,9 @@ private final class PluginHostFixture: Sendable {
         profiles: [
           .init(
             id: profile, capabilities: capabilities, workspaces: ["fixture"],
-            allowedCallers: [.secureTunnel])
+            allowedCallers: [.secureTunnel],
+            mode: permissionMode,
+            confirmationPolicy: mode == "governed-git" ? .allWrites : .riskBased)
         ],
         cli: .init(commands: [.init(id: "git", executable: "/usr/bin/git")]),
         mcp: .init(servers: [server]),
@@ -335,7 +330,8 @@ private final class PluginHostFixture: Sendable {
         ])),
       context: .init(
         caller: .secureTunnel, profileID: profile,
-        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "fixture-origin")),
+        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "fixture-origin"),
+        trustedPrincipalID: "plugin-host-fixture"),
       database: database, registeredWorkspaces: [workspace])
     if mode == "dry-run" { _ = try git(["init", "--quiet"]) }
     if mode == "governed-git" {
@@ -350,26 +346,7 @@ private final class PluginHostFixture: Sendable {
       try "#!/bin/sh\n/usr/bin/touch .git/hook-ran\n".write(
         to: hook, atomically: true, encoding: .utf8)
       try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hook.path)
-      let steps: [(String, JSONValue)] = [
-        (
-          "file.write",
-          .object(["path": .string("product.txt"), "content": .string("production-ready\n")])
-        ),
-        ("git.add", .object(["paths": .array([.string("product.txt")])])),
-        ("git.commit", .object(["message": .string("Verify governed plugin Git")])),
-      ]
-      let requests = steps.enumerated().map { index, step in
-        JSONValue.object([
-          "id": .number(Double(900 + index)), "method": .string("item/tool/call"),
-          "params": .object([
-            "namespace": .string("computer-mcp"), "tool": .string(step.0),
-            "arguments": step.1, "callId": .string("governed-\(index)"),
-            "threadId": .string("fixture-thread"), "turnId": .string("fixture-turn"),
-          ]),
-        ])
-      }
-      try JSONEncoder().encode(requests).write(
-        to: root.appendingPathComponent("callback-sequence.json"))
+
     }
   }
 
@@ -381,23 +358,34 @@ private final class PluginHostFixture: Sendable {
     return result
   }
 
-  func pendingApproval() async throws -> [String: JSONValue] {
+  func pendingApproval(capability: String) async throws -> OperationTicket {
     let deadline = ContinuousClock.now + .seconds(5)
     while ContinuousClock.now < deadline {
-      let result = try await runtime.callToolAsync(
-        name: "adapter.codex.app.approvals.list",
-        arguments: .object([
-          "workspace_id": .string("fixture"), "state": .string("pending"), "limit": .number(10),
-        ]))
-      if let approval = result.objectValue?["structuredContent"]?.objectValue?["result"]?
-        .objectValue?["approvals"]?.arrayValue?.first?.objectValue
-      {
-        return approval
+      if let ticket = try database.operationApprovals(limit: 100).first(where: {
+        $0.capabilityID == capability && $0.state == .pendingApproval
+      }) {
+        return ticket
       }
       try await Task.sleep(for: .milliseconds(10))
     }
+    let response = try? String(contentsOf: responseFile, encoding: .utf8)
     throw GatewayToolError.executionFailed(
-      "The isolated dynamic write did not produce a pending approval.")
+      "The host did not produce a pending operation ticket. Fixture callback: "
+        + String((response ?? "No response received").prefix(4096)))
+  }
+
+  func queueCallback(id: Int, tool: String, arguments: [String: JSONValue]) throws {
+    let request = JSONValue.object([
+      "id": .number(Double(id)), "method": .string("item/tool/call"),
+      "params": .object([
+        "namespace": .string("computer-mcp"), "tool": .string(tool),
+        "arguments": .object(arguments),
+        "callId": .string("callback-\(id)"), "threadId": .string("fixture-thread"),
+        "turnId": .string("fixture-turn"),
+      ]),
+    ])
+    try JSONEncoder().encode(request).write(
+      to: root.appendingPathComponent("queued-\(id).json"), options: .atomic)
   }
 
   func callbackResponse(id: Int? = nil) async throws -> JSONValue {
@@ -430,7 +418,7 @@ private final class PluginHostFixture: Sendable {
 
   private static let vendorSource = #"""
     #!/usr/bin/python3
-    import json, os, pathlib, stat, sys
+    import json, os, pathlib, stat, sys, threading, time
     root = pathlib.Path(__file__).resolve().parent
     def save(name, value):
         target = root / name
@@ -442,34 +430,40 @@ private final class PluginHostFixture: Sendable {
     except OSError:
         inherited_socket = False
     save('vendor.json', {'pid': os.getpid(), 'inherited_host_env': any(k in os.environ for k in ['COMPUTER_MCP_HOST_FD','COMPUTER_MCP_HOST_CONTEXT']), 'inherited_host_socket': inherited_socket})
-    sequence_file = root / 'callback-sequence.json'
-    callbacks = json.loads(sequence_file.read_text()) if sequence_file.exists() else [json.loads((root/'callback-request.json').read_text())]
-    callback_index = 0
+    output_lock = threading.Lock()
+    def emit(value):
+        with output_lock:
+            print(json.dumps(value), flush=True)
+    def queued_callbacks():
+        while True:
+            for path in sorted(root.glob('queued-*.json')):
+                value = json.loads(path.read_text())
+                path.unlink()
+                emit(value)
+            time.sleep(.01)
     for line in sys.stdin:
         request = json.loads(line)
         method = request.get('method')
         if method == 'initialize':
             result = {'codexHome': str(root), 'platformFamily': 'unix', 'platformOs': 'macos', 'userAgent': 'isolated-protocol-fixture'}
         elif method == 'initialized':
-            print(json.dumps(callbacks[callback_index]), flush=True)
+            emit(json.loads((root/'callback-request.json').read_text()))
+            threading.Thread(target=queued_callbacks, daemon=True).start()
             continue
         elif method == 'thread/loaded/list':
             result = {'data': [], 'nextCursor': None}
-        elif method is None and callback_index < len(callbacks) and request.get('id') == callbacks[callback_index]['id']:
+        elif method is None and isinstance(request.get('id'), int) and request['id'] >= 900:
             save('callback.json', request)
             save('callback-' + str(request['id']) + '.json', request)
-            callback_index += 1
-            if callback_index < len(callbacks):
-                print(json.dumps(callbacks[callback_index]), flush=True)
             continue
         elif method == 'thread/unsubscribe':
             result = {'status': 'unsubscribed'}
         elif 'id' not in request:
             continue
         else:
-            print(json.dumps({'id': request['id'], 'error': {'code': -32601, 'message': 'Fixture method not implemented'}}), flush=True)
+            emit({'id': request['id'], 'error': {'code': -32601, 'message': 'Fixture method not implemented'}})
             continue
-        print(json.dumps({'id': request['id'], 'result': result}), flush=True)
+        emit({'id': request['id'], 'result': result})
     """#
 }
 

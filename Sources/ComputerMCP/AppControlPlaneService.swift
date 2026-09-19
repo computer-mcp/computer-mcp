@@ -206,7 +206,9 @@ package actor AppControlPlaneService {
         workspaces: grant.workspaceIDs.sorted(),
         allowedCallers: grant.allowedCallers.sorted { $0.rawValue < $1.rawValue },
         fullShellEnabled: grant.fullShellEnabled,
-        mcpServers: grant.mcpServerIDs.sorted()
+        mcpServers: grant.mcpServerIDs.sorted(),
+        mode: grant.mode,
+        confirmationPolicy: grant.confirmationPolicy
       )
     }.sorted { $0.id.rawValue < $1.id.rawValue }
     try configuration.validate()
@@ -215,6 +217,10 @@ package actor AppControlPlaneService {
 
   package func workspaces() throws -> [RegisteredWorkspace] {
     try database.workspaces()
+  }
+
+  package func workspaceAccessReports() throws -> [WorkspaceAccessReport] {
+    try database.workspaces().map { try bookmarkService.inspect($0) }
   }
 
   @discardableResult
@@ -251,18 +257,19 @@ package actor AppControlPlaneService {
     )
   }
 
-  package func removeWorkspace(id: String) throws {
+  package func removeWorkspace(id: String) async throws {
     guard let workspace = try database.workspace(id: id) else {
       throw AppControlPlaneServiceError.unknownWorkspace(id)
     }
     let canonicalID = workspace.id
-    try database.invalidateCodexElevationGrants(
-      workspaceID: canonicalID,
-      reason: "The registered workspace was removed."
-    )
-    for var profile in try database.profiles() where profile.workspaceIDs.contains(canonicalID) {
+    let persistedProfiles = try database.profiles()
+    let hasLegacyReferences = persistedProfiles.contains {
+      $0.authorizationRevision == 0 && $0.workspaceIDs.contains(canonicalID)
+    }
+    let effectiveProfiles = hasLegacyReferences ? try await profileGrants() : persistedProfiles
+    for var profile in effectiveProfiles where profile.workspaceIDs.contains(canonicalID) {
       profile.workspaceIDs.remove(canonicalID)
-      try database.saveProfile(profile)
+      try database.saveProfile(profile, expectedRevision: profile.authorizationRevision)
     }
     try database.deleteWorkspace(id: canonicalID)
   }
@@ -276,7 +283,9 @@ package actor AppControlPlaneService {
     ).sorted { $0.rawValue < $1.rawValue }
     var grants = Dictionary(
       uniqueKeysWithValues: profileIDs.map {
-        ($0, configuration.profileGrant(for: $0))
+        var grant = configuration.profileGrant(for: $0)
+        grant.authorizationRevision = 0
+        return ($0, grant)
       }
     )
     for (profileID, caller) in [
@@ -298,14 +307,20 @@ package actor AppControlPlaneService {
         id: profileID,
         capabilityIDs: Set(tools.map(\.name)),
         workspaceIDs: Set(inputs.workspaces.map(\.id)),
-        allowedCallers: [caller]
+        allowedCallers: [caller],
+        mode: .readOnly,
+        authorizationRevision: 0
       )
     }
     for persisted in inputs.profiles {
       guard let configured = grants[persisted.id] else {
         continue
       }
-      grants[persisted.id] = configured.applyingPersistedRuntimeState(persisted)
+      var effective = configured.applyingPersistedRuntimeState(persisted)
+      if persisted.authorizationRevision == 0, effective.capabilityIDs.contains("*") {
+        effective.workspaceIDs.formUnion(inputs.workspaces.map(\.id))
+      }
+      grants[persisted.id] = effective
     }
     try requireCurrentGatewayInputs(inputs)
     return profileIDs.compactMap { grants[$0] }
@@ -327,16 +342,14 @@ package actor AppControlPlaneService {
     if enabled {
       grant.workspaceIDs.insert(workspaceID)
     } else {
+      if grant.workspaceIDs.remove("*") != nil {
+        grant.workspaceIDs.formUnion(try database.workspaces().map(\.id))
+      }
       grant.workspaceIDs.remove(workspaceID)
-      try database.invalidateCodexElevationGrants(
-        workspaceID: workspaceID,
-        profileID: profileID.rawValue,
-        reason: "The workspace was disabled for this profile."
-      )
     }
     try grant.validate()
-    try database.saveProfile(grant)
-    return grant
+    try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    return try database.profiles().first { $0.id == profileID } ?? grant
   }
 
   package func activeGatewayProfile() throws -> GatewayProfileID {
@@ -351,6 +364,19 @@ package actor AppControlPlaneService {
     return profile
   }
 
+  package func gatewayTunnelPrincipalID() throws -> String {
+    let key = "gateway-tunnel-registration"
+    if let value = try database.runtimeSetting(key: key) {
+      guard let id = UUID(uuidString: value) else {
+        throw GatewayDatabaseError.invalidStoredValue("The gateway tunnel registration is invalid.")
+      }
+      return "tunnel-bridge:\(id.uuidString.lowercased())"
+    }
+    let id = UUID().uuidString.lowercased()
+    try database.saveRuntimeSetting(key: key, value: id)
+    return "tunnel-bridge:\(id)"
+  }
+
   package func setActiveGatewayProfile(_ profile: GatewayProfileID) throws {
     guard profile != .localAdmin else {
       throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
@@ -361,13 +387,6 @@ package actor AppControlPlaneService {
         || configuration.profiles.contains(where: { $0.id == profile })
     else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue)
-    }
-    let previous = try activeGatewayProfile()
-    if previous != profile {
-      try database.invalidateCodexElevationGrants(
-        profileID: previous.rawValue,
-        reason: "The active gateway profile changed."
-      )
     }
     try database.saveRuntimeSetting(
       key: Self.activeProfileSettingKey,
@@ -394,9 +413,6 @@ package actor AppControlPlaneService {
     _ enabled: Bool,
     profileID: GatewayProfileID
   ) async throws -> ProfileGrant {
-    guard profileID.supportsFullShell else {
-      throw AppControlPlaneServiceError.fullShellProfileNotAllowed(profileID.rawValue)
-    }
     if enabled {
       guard try manifestStore.activeConfiguration().policy.shellEnabled else {
         throw AppControlPlaneServiceError.fullShellManifestDisabled
@@ -410,13 +426,69 @@ package actor AppControlPlaneService {
     guard var grant = grants.first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
+    guard !enabled || grant.supportsFullShell else {
+      throw GatewayPolicyConfigurationError.fullShellRequiresFullAccess
+    }
     grant.fullShellEnabled = enabled
     if enabled {
       grant.capabilityIDs.formUnion(ProfileGrant.fullShellCapabilities)
     }
     try grant.validate()
-    try database.saveProfile(grant)
-    return grant
+    try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    return try database.profiles().first { $0.id == profileID } ?? grant
+  }
+
+  @discardableResult
+  package func updateProfilePermissions(
+    profileID: GatewayProfileID,
+    mode: GatewayPermissionMode? = nil,
+    confirmationPolicy: GatewayConfirmationPolicy? = nil,
+    fullShellEnabled: Bool? = nil,
+    capabilityIDs: Set<String>? = nil,
+    workspaceIDs: Set<String>? = nil,
+    mcpServerIDs: Set<String>? = nil,
+    allowedCallers: Set<GatewayCallerKind>? = nil,
+    expectedRevision: Int64? = nil
+  ) async throws -> ProfileGrant {
+    guard var grant = try await profileGrants().first(where: { $0.id == profileID }) else {
+      throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
+    }
+    let revision = expectedRevision ?? grant.authorizationRevision
+    if let mode {
+      grant.mode = mode
+      if mode != .localFullAccess, fullShellEnabled == nil { grant.fullShellEnabled = false }
+    }
+    if let confirmationPolicy { grant.confirmationPolicy = confirmationPolicy }
+    if let fullShellEnabled { grant.fullShellEnabled = fullShellEnabled }
+    if let capabilityIDs { grant.capabilityIDs = capabilityIDs }
+    if let workspaceIDs { grant.workspaceIDs = workspaceIDs }
+    if let mcpServerIDs { grant.mcpServerIDs = mcpServerIDs }
+    if let allowedCallers { grant.allowedCallers = allowedCallers }
+    let configuration = try manifestStore.activeConfiguration()
+    if grant.fullShellEnabled && !configuration.policy.shellEnabled {
+      throw AppControlPlaneServiceError.fullShellManifestDisabled
+    }
+    let knownWorkspaceIDs = Set(try database.workspaces().map(\.id))
+    if let unknown = grant.workspaceIDs.subtracting(knownWorkspaceIDs).subtracting(["*"]).sorted()
+      .first
+    {
+      throw AppControlPlaneServiceError.unknownWorkspace(unknown)
+    }
+    let pluginState = try database.pluginStoreSnapshot()
+      .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
+    let composition = try GatewayPluginComposition(
+      configuration: configuration,
+      plugins: PluginHost.resolve(pluginState, bundled: bundledPlugins).plugins)
+    try ProfileGrantConfig(
+      id: grant.id, capabilities: grant.capabilityIDs.sorted(),
+      workspaces: grant.workspaceIDs.sorted(), allowedCallers: Array(grant.allowedCallers),
+      fullShellEnabled: grant.fullShellEnabled, mcpServers: grant.mcpServerIDs.sorted(),
+      mode: grant.mode, confirmationPolicy: grant.confirmationPolicy
+    ).validate(
+      knownWorkspaceIDs: knownWorkspaceIDs,
+      knownMCPServerIDs: Set(composition.runtimeConfiguration.mcp.servers.map(\.id)))
+    try database.saveProfile(grant, expectedRevision: revision)
+    return try database.profiles().first { $0.id == profileID } ?? grant
   }
 
   package func auditEvents(limit: Int = 200) throws -> [AuditEvent] {
@@ -447,21 +519,36 @@ package actor AppControlPlaneService {
     ComputerUseService().permissionSnapshot()
   }
 
+  package func operationApprovals(limit: Int = 100) throws -> [OperationTicket] {
+    try database.operationApprovals(limit: limit)
+  }
+
+  @discardableResult
+  package func resolveOperationApproval(
+    id: String, approved: Bool, resolver: GatewayCallerKind
+  ) throws -> OperationTicket {
+    let ticket = try database.resolveOperationApproval(
+      id: id, approved: approved, resolver: resolver)
+    try database.recordAudit(
+      AuditEvent(
+        requestID: UUID().uuidString, ticketID: ticket.id, caller: resolver,
+        profileID: .localAdmin, workspaceID: ticket.workspaceID,
+        capabilityID: approved ? "approvals.approve" : "approvals.deny",
+        decision: .allowed, inputDigest: ticket.inputDigest))
+    return ticket
+  }
+
   package func makeGatewaySocketSession(
     caller: GatewayCallerKind,
     profileID: GatewayProfileID,
-    transportTrace: GatewayTransportTrace? = nil
+    transportTrace: GatewayTransportTrace? = nil,
+    trustedPrincipalID: String? = nil
   ) async throws -> GatewaySocketServerSession {
-    if caller.isRemote && profileID == .localAdmin {
-      throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
-    }
-    let inputs = try gatewayInputs()
-    let gateway = try await makeGateway(
-      inputs: inputs, caller: caller, profileID: profileID, transportTrace: transportTrace)
+    let (inputs, gateway) = try await makeGatewaySocketRuntime(
+      caller: caller, profileID: profileID, transportTrace: transportTrace,
+      trustedPrincipalID: trustedPrincipalID)
     let server = await MCPRuntimeAdapter.makeGatewayServer(
-      configuration: inputs.configuration,
-      registry: gateway
-    )
+      configuration: inputs.configuration, registry: gateway)
     do {
       try requireCurrentGatewayInputs(inputs)
     } catch {
@@ -469,9 +556,23 @@ package actor AppControlPlaneService {
       await gateway.shutdown()
       throw error
     }
-    return GatewaySocketServerSession(server: server) {
-      await gateway.shutdown()
+    return GatewaySocketServerSession(server: server) { await gateway.shutdown() }
+  }
+
+  func makeGatewaySocketRuntime(
+    caller: GatewayCallerKind,
+    profileID: GatewayProfileID,
+    transportTrace: GatewayTransportTrace? = nil,
+    trustedPrincipalID: String? = nil
+  ) async throws -> (inputs: GatewayInputs, gateway: GatewayRuntime) {
+    if caller.isRemote && profileID == .localAdmin {
+      throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
     }
+    let inputs = try gatewayInputs()
+    let gateway = try await makeGateway(
+      inputs: inputs, caller: caller, profileID: profileID, transportTrace: transportTrace,
+      trustedPrincipalID: trustedPrincipalID)
+    return (inputs, gateway)
   }
 
   func localAdminTools(
@@ -532,7 +633,8 @@ package actor AppControlPlaneService {
 
   private func makeGateway(
     inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
-    transportTrace: GatewayTransportTrace? = nil, persistentState: Bool = true
+    transportTrace: GatewayTransportTrace? = nil, persistentState: Bool = true,
+    trustedPrincipalID: String? = nil
   ) async throws -> GatewayRuntime {
     try requireCurrentGatewayInputs(inputs)
     let database = persistentState ? database : nil
@@ -543,10 +645,12 @@ package actor AppControlPlaneService {
       try persistentState
         ? nil : PluginHost.resolve(inputs.plugins, bundled: bundledPlugins).plugins
     }
+    var context = inputs.configuration.executionContext(
+      caller: caller, profileID: profileID, transportTrace: transportTrace)
+    context.trustedPrincipalID = trustedPrincipalID
     let gateway = try await GatewayRuntime.make(
       configuration: inputs.configuration,
-      context: inputs.configuration.executionContext(
-        caller: caller, profileID: profileID, transportTrace: transportTrace),
+      context: context,
       database: database, registeredWorkspaces: inputs.workspaces,
       bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
       plugins: plugins, bundledPlugins: bundledPlugins)
@@ -962,7 +1066,6 @@ package enum AppControlPlaneServiceError: Error, LocalizedError, Equatable {
   )
   case invalidStoredProfile(String)
   case localAdminCannotBeSocketProfile
-  case fullShellProfileNotAllowed(String)
   case fullShellManifestDisabled
   case invalidDesiredOpenAITunnelState
   case gatewayInputsChanged
@@ -992,8 +1095,6 @@ package enum AppControlPlaneServiceError: Error, LocalizedError, Equatable {
       return "The stored active gateway profile is invalid: \(id)"
     case .localAdminCannotBeSocketProfile:
       return "local-admin cannot be bound to the Tunnel-facing local socket."
-    case .fullShellProfileNotAllowed(let id):
-      return "Full Shell cannot be enabled for profile '\(id)'."
     case .fullShellManifestDisabled:
       return "Enable policy.shell_enabled in the active manifest before enabling Full Shell."
     case .invalidDesiredOpenAITunnelState:

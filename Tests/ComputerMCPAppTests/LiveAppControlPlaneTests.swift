@@ -8,6 +8,37 @@ import Testing
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
   @Test
+  func workspaceHealthChecksBookmarkAccessAndMissingFolders() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let database = await fixture.controlPlane.database
+      try database.saveWorkspace(
+        RegisteredWorkspace(
+          id: "available", displayName: "Available", rootPath: fixture.root.path))
+      try database.saveWorkspace(
+        RegisteredWorkspace(
+          id: "missing", displayName: "Missing",
+          rootPath: fixture.root.appendingPathComponent("missing").path))
+      try database.saveWorkspace(
+        RegisteredWorkspace(
+          id: "bad-bookmark", displayName: "Bad bookmark", rootPath: fixture.root.path,
+          bookmarkData: Data("invalid-bookmark".utf8)))
+      let reports = try await fixture.app.fetchWorkspaces()
+      let available = try #require(reports.first { $0.id == "available" })
+      let missing = try #require(reports.first { $0.id == "missing" })
+      let badBookmark = try #require(reports.first { $0.id == "bad-bookmark" })
+      #expect(available.health == .available)
+      #expect(available.lastResolvedAt != nil)
+      #expect(available.healthDetail == nil)
+      #expect(missing.health == .missing)
+      #expect(missing.lastResolvedAt == nil)
+      #expect(missing.healthDetail != nil)
+      #expect(badBookmark.health == .unavailable)
+      #expect(badBookmark.lastResolvedAt == nil)
+      #expect(badBookmark.healthDetail != nil)
+    }
+  }
+
+  @Test
   func testPermissionStateDistinguishesNotGrantedFromNotDetermined() {
     #expect((PermissionState.notGranted.label) == ("Not granted"))
     #expect((PermissionState.notDetermined.label) == ("Not determined"))
@@ -63,7 +94,52 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
-  func testProfileActivationRestartsSocketAndRejectedProfileRollsBack() async throws {
+  func profilePermissionEditorRoundTripsWithoutRestartingTheGateway() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      try await fixture.app.startApplication()
+      let original = await fixture.gatewayService.snapshot()
+      let profile = try #require(
+        try await fixture.app.fetchProfiles().first { $0.id == "chatgpt-operate" })
+      var grant = profile.permissions
+      grant.mode = .readOnly
+      grant.confirmationPolicy = .allWrites
+      grant.capabilityIDs = ["system.time"]
+      grant.allowedCallers = [.localMCP]
+      try await fixture.app.updateProfilePermissions(grant)
+      let updated = try #require(
+        try await fixture.app.fetchProfiles().first { $0.id == profile.id })
+      #expect(updated.permissions.mode == .readOnly)
+      #expect(updated.permissions.confirmationPolicy == .allWrites)
+      #expect(updated.permissions.capabilityIDs == ["system.time"])
+      #expect(updated.permissions.allowedCallers == [.localMCP])
+      #expect(updated.permissions.authorizationRevision > grant.authorizationRevision)
+      let current = await fixture.gatewayService.snapshot()
+      #expect(current.state == .running)
+      #expect(current.startedAt == original.startedAt)
+    }
+  }
+
+  @Test
+  func workspaceWildcardIsShownAsEnabledAndCanBeRevoked() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let database = await fixture.controlPlane.database
+      try database.saveWorkspace(.init(id: "one", displayName: "One", rootPath: fixture.root.path))
+      try database.saveWorkspace(.init(id: "two", displayName: "Two", rootPath: fixture.root.path))
+      _ = try await fixture.controlPlane.updateProfilePermissions(
+        profileID: .chatGPTObserve, workspaceIDs: ["*"])
+      let before = try await fixture.app.fetchWorkspaces()
+      #expect(before.allSatisfy { $0.isSelected && $0.isEnabled })
+      try await fixture.app.setWorkspaceEnabled(
+        false, workspaceID: "one", profileID: GatewayProfileID.chatGPTObserve.rawValue)
+      let after = try await fixture.app.fetchWorkspaces()
+      #expect(after.first { $0.id == "one" }?.isSelected == false)
+      #expect(after.first { $0.id == "one" }?.isEnabled == false)
+      #expect(after.first { $0.id == "two" }?.isSelected == true)
+    }
+  }
+
+  @Test
+  func testProfileActivationUpdatesAdmissionAndRejectedProfileRollsBack() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()
       var status = try await fixture.app.fetchStatus()
@@ -212,6 +288,7 @@ private final class AppControlPlaneFixture {
   let root: URL
   let socketURL: URL
   let controlPlane: AppControlPlaneService
+  let gatewayService: AppGatewayService
   let app: LiveAppControlPlane
 
   init(
@@ -253,7 +330,7 @@ private final class AppControlPlaneFixture {
       openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secretStore),
       launchAtLoginController: AppTestLaunchAtLoginController()
     )
-    let gatewayService = AppGatewayService(
+    gatewayService = AppGatewayService(
       controlPlane: controlPlane,
       socketConfiguration: GatewaySocketConfiguration(socketURL: socketURL)
     )

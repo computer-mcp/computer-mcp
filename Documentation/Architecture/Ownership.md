@@ -9,8 +9,7 @@ bounded execution, or a deliberate safety gate.
 | Owner | Responsibilities |
 | --- | --- |
 | Computer MCP core | MCP transports, App socket, profiles, workspace grants, audit, operation tickets, CLI/MCP bridges, Skills, typed workspace/file/Git/structured/system tools, Shell, and generic Computer Use |
-| Independent Codex adapter plugin | App Server, Exec and Codex MCP lifecycles through `swift-codex`; domain state, native approvals, thread/Goal and worktree receipts |
-| Host elevation tools | Local approval and connection-bound sandbox grants; durable authority in the Gateway Database |
+| Independent Codex adapter plugin | App Server and Exec lifecycles through `swift-codex`; domain state, native approvals, thread/Goal and worktree receipts |
 | `apple-cli` / `apple-cli-mcp` | Clipboard, notifications, Finder, application launching, URL opening, and Apple application/domain workflows |
 | Browser provider | Browser engine, page lifecycle, selectors, and browser automation |
 | Other downstream MCP providers | Their own business schemas, authentication, and side-effect contracts |
@@ -28,12 +27,12 @@ Computer MCP does not maintain a hand-written coding agent or shell-based
 `coding.*` provider. The independent `plugin-codex` package integrates the installed vendor through:
 
 - App Server for stateful threads and turns;
-- Exec for isolated JSONL jobs;
-- MCP for the upstream `codex` and `codex-reply` tools.
+- Exec for isolated JSONL jobs.
 
-The host fixes caller/profile/workspace scope and approval authority. The
-adapter binds that scope to its configured sandbox, approval policy, output
-limits and vendor session ownership. Domain persistence belongs to the adapter;
+The host authorizes the caller, capabilities, and registered workspace.
+The adapter preserves Codex's native execution settings and approval semantics;
+omitted settings inherit the user's Codex configuration. Output bounds and
+vendor session ownership belong to the adapter. Domain persistence belongs to the adapter;
 host grants, workspace registrations, tickets and audit remain in the Gateway
 Database. Authentication mutation, config writes, marketplace mutation, and
 remote-control pairing remain local Codex/App control-plane operations.
@@ -102,16 +101,17 @@ workspace and never treats equal-looking path text as sufficient ownership.
 
 ## Approval Ownership
 
-An allowed capability and an approved action are not the same decision. The
-gateway first decides whether the caller, profile, registered workspace, path,
-and capability permit the proposed operation. When the permitted Codex action
-requires consent, the adapter's durable native-approval broker records the redacted request and
-the user or authorized caller decides whether to approve it now.
+Host capability authorization and human confirmation are separate decisions.
+The host decides whether the authenticated caller may use a capability in a
+registered workspace, then applies its confirmation policy to that operation.
+Only the local control plane resolves pending host approval tickets.
 
-Approve-once, upstream-bounded session approval, denial, timeout, and restart
-interruption are explicit terminal receipts. Automatic approval is limited to
-configured low-risk workspace writes and cannot expand policy. MCP elicitation
-is surfaced as interaction, not treated as permission.
+Codex native execution approvals are owned by Codex and adapted through
+`swift-codex`. The adapter retains official response fields and decision
+scope, including acceptance, denial and cancellation. A native approval does
+not approve a host operation ticket. Dynamic calls from Codex to host tools
+follow the same host authorization and confirmation path as other callers.
+MCP elicitation is interaction, not permission.
 
 ## Multi-executor Worktrees
 

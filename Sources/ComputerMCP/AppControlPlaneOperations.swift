@@ -219,10 +219,6 @@ package struct AppControlPlaneOperations: Sendable {
       workspaceID: workspaceID,
       profileID: profileID
     )
-    let gateway = await gatewayService.snapshot()
-    if gateway.state == .running, gateway.profileID == profileID {
-      _ = try await restartGatewayIfRunning(profile: profileID)
-    }
     return grant
   }
 
@@ -233,12 +229,11 @@ package struct AppControlPlaneOperations: Sendable {
     try await validateDesiredTunnelProfileAlignment(with: profile)
     try await controlPlane.setActiveGatewayProfile(profile)
     do {
-      return try await restartGatewayIfRunning(profile: profile)
+      try await gatewayService.selectProfile(profile)
+      return AppControlPlaneRestartResult(restarted: false, profileID: profile)
     } catch {
       try? await controlPlane.setActiveGatewayProfile(previousProfile)
-      if await gatewayService.snapshot().state == .running {
-        try? await gatewayService.restart(profile: previousProfile)
-      }
+      try? await gatewayService.selectProfile(previousProfile)
       throw error
     }
   }
@@ -248,11 +243,21 @@ package struct AppControlPlaneOperations: Sendable {
     profileID: GatewayProfileID
   ) async throws -> ProfileGrant {
     let grant = try await controlPlane.setFullShellEnabled(enabled, profileID: profileID)
-    let gateway = await gatewayService.snapshot()
-    if gateway.state == .running, gateway.profileID == profileID {
-      _ = try await restartGatewayIfRunning(profile: profileID)
-    }
     return grant
+  }
+
+  package func updateProfilePermissions(
+    profileID: GatewayProfileID, mode: GatewayPermissionMode? = nil,
+    confirmationPolicy: GatewayConfirmationPolicy? = nil, fullShellEnabled: Bool? = nil,
+    capabilityIDs: Set<String>? = nil, workspaceIDs: Set<String>? = nil,
+    mcpServerIDs: Set<String>? = nil, allowedCallers: Set<GatewayCallerKind>? = nil,
+    expectedRevision: Int64? = nil
+  ) async throws -> ProfileGrant {
+    try await controlPlane.updateProfilePermissions(
+      profileID: profileID, mode: mode, confirmationPolicy: confirmationPolicy,
+      fullShellEnabled: fullShellEnabled, capabilityIDs: capabilityIDs,
+      workspaceIDs: workspaceIDs, mcpServerIDs: mcpServerIDs,
+      allowedCallers: allowedCallers, expectedRevision: expectedRevision)
   }
 
   package func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws

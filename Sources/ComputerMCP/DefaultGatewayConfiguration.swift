@@ -200,13 +200,6 @@ package enum DefaultGatewayConfiguration {
     """
     archive.create
     archive.extract
-    codex.app.elevation.approve
-    codex.app.elevation.deny
-    codex.app.elevation.effective
-    codex.app.elevation.list
-    codex.app.elevation.read
-    codex.app.elevation.request
-    codex.app.elevation.revoke
     computer.accessibility.action
     computer.keyboard.key
     computer.keyboard.text
@@ -305,6 +298,8 @@ package enum DefaultGatewayConfiguration {
 
       [[profiles]]
       id = "chatgpt-observe"
+      mode = "read-only"
+      confirmation_policy = "risk-based"
       capabilities = \(tomlArray(observeCapabilities))
       workspaces = []
       allowed_callers = ["secure-tunnel"]
@@ -312,12 +307,16 @@ package enum DefaultGatewayConfiguration {
 
       [[profiles]]
       id = "chatgpt-operate"
+      mode = "workspace-operations"
+      confirmation_policy = "risk-based"
       capabilities = \(tomlArray(operateCapabilities))
       workspaces = []
       allowed_callers = ["secure-tunnel"]
 
       [[profiles]]
       id = "cloudflare-observe"
+      mode = "read-only"
+      confirmation_policy = "risk-based"
       capabilities = \(tomlArray(observeCapabilities))
       workspaces = []
       allowed_callers = ["cloudflare-tunnel"]
@@ -325,6 +324,8 @@ package enum DefaultGatewayConfiguration {
 
       [[profiles]]
       id = "cloudflare-operate"
+      mode = "workspace-operations"
+      confirmation_policy = "risk-based"
       capabilities = \(tomlArray(operateCapabilities))
       workspaces = []
       allowed_callers = ["cloudflare-tunnel"]
@@ -332,8 +333,10 @@ package enum DefaultGatewayConfiguration {
 
       [[profiles]]
       id = "local-admin"
+      mode = "local-full-access"
+      confirmation_policy = "risk-based"
       capabilities = ["*"]
-      workspaces = []
+      workspaces = ["*"]
       allowed_callers = ["local-app", "local-cli", "local-mcp"]
       full_shell_enabled = true
 

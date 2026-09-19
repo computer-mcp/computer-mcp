@@ -46,7 +46,10 @@ struct CodexConfigurationMigrationTests {
     #expect(try GatewayConfiguration.load(text: migration.hostTOML, baseURL: base) == expectedHost)
     #expect(!migration.hostTOML.contains("[codex]"))
     #expect(try GatewayConfiguration.load(text: text, baseURL: base) == original)
-    #expect(migration.adapterConfiguration == original.codex)
+    var expectedAdapter = try JSONDecoder().decode(
+      [String: JSONValue].self, from: JSONEncoder().encode(original.codex))
+    expectedAdapter.removeValue(forKey: "mcp_enabled")
+    #expect(migration.adapterConfiguration == expectedAdapter)
     #expect(migration.pluginSettings.enabled == enabled)
     #expect(migration.configurationDirectory == base.path)
     #expect(migration.sourceSHA256.count == 64)
@@ -56,7 +59,7 @@ struct CodexConfigurationMigrationTests {
     #expect(settings.prefix == "")
     #expect(settings.exposure == .reexport)
     #expect(!settings.allowAnyTool)
-    #expect(settings.allowedTools.count == 76)
+    #expect(settings.allowedTools.count == 66)
     #expect(settings.hostServices)
     #expect(
       settings.args == [
@@ -72,11 +75,11 @@ struct CodexConfigurationMigrationTests {
   }
 
   @Test(arguments: [
-    (true, false, false, 60), (false, true, false, 6), (false, false, true, 10),
-    (true, true, false, 66), (true, false, true, 70), (false, true, true, 16),
-    (true, true, true, 76), (false, false, false, 0),
+    (true, false, false, 60), (false, true, false, 6), (false, false, true, 0),
+    (true, true, false, 66), (true, false, true, 60), (false, true, true, 6),
+    (true, true, true, 66), (false, false, false, 0),
   ])
-  func migrationContractMatchesEmbeddedProvider(
+  func migrationSelectsSupportedEmbeddedCapabilities(
     appServer: Bool, exec: Bool, mcp: Bool, count: Int
   ) async throws {
     let configuration = GatewayConfiguration(
@@ -92,7 +95,7 @@ struct CodexConfigurationMigrationTests {
         CapabilityDescriptor.self, from: JSONEncoder().encode(capability))
       let enabled =
         value.id.hasPrefix("codex.exec.")
-        ? exec : value.id.hasPrefix("codex.mcp.") ? mcp : appServer
+        ? exec : value.id.hasPrefix("codex.mcp.") ? false : appServer
       return enabled ? value : nil
     }
     #expect(settings.allowedTools.count == count)
@@ -101,6 +104,14 @@ struct CodexConfigurationMigrationTests {
       settings.toolRisks == Dictionary(uniqueKeysWithValues: descriptors.map { ($0.id, $0.risk) }))
     #expect(settings.hostServices == appServer)
     #expect(!migration.pluginSettings.enabled)
+  }
+
+  @Test func enabledSourceMustSelectASupportedExecutionPath() {
+    #expect(throws: ConfigurationError.self) {
+      try export(
+        "schema_version = 1\n[codex]\nenabled = true\napp_server_enabled = false\nexec_enabled = false\nmcp_enabled = true\n"
+      )
+    }
   }
 
   @Test(arguments: [

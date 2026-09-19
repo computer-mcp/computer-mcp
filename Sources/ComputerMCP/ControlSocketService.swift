@@ -218,14 +218,16 @@ private struct ControlWorkspaceSummary: Encodable {
   let bookmarkIsStale: Bool
   let createdAt: Date
   let updatedAt: Date
+  let access: JSONValue?
 
-  init(_ workspace: RegisteredWorkspace) {
+  init(_ workspace: RegisteredWorkspace, access: JSONValue? = nil) {
     self.id = workspace.id
     self.displayName = workspace.displayName
     self.rootPath = workspace.rootPath
     self.bookmarkIsStale = workspace.bookmarkIsStale
     self.createdAt = workspace.createdAt
     self.updatedAt = workspace.updatedAt
+    self.access = access
   }
 }
 
@@ -235,6 +237,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     case integer
     case object
     case string
+    case strings
 
     var schema: JSONValue {
       switch self {
@@ -246,6 +249,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         return .object(["type": .string("object")])
       case .string:
         return .object(["type": .string("string")])
+      case .strings:
+        return .object(["type": .string("array"), "items": .object(["type": .string("string")])])
       }
     }
 
@@ -259,6 +264,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         return value.objectValue != nil
       case .string:
         return value.stringValue != nil
+      case .strings:
+        return value.arrayValue?.allSatisfy { $0.stringValue != nil } == true
       }
     }
 
@@ -268,6 +275,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       case .integer: "an integer"
       case .object: "an object"
       case .string: "a string"
+      case .strings: "an array of strings"
       }
     }
   }
@@ -489,7 +497,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
       case "workspace.list":
         payload = try encodedPayload(
-          try await controlPlane.workspaces().map(ControlWorkspaceSummary.init)
+          try await controlPlane.workspaceAccessReports().map {
+            ControlWorkspaceSummary($0.workspace, access: $0.json)
+          }
         )
       case "workspace.add":
         let path = try requiredString("path", in: object)
@@ -540,6 +550,31 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           profileID: profile
         )
         payload = try encodedPayload(grant)
+      case "profile.permissions":
+        guard !Set(object.keys).subtracting(["profile", "expected_revision"]).isEmpty else {
+          throw GatewayToolError.invalidArguments("Provide at least one permission setting.")
+        }
+        let mode: GatewayPermissionMode? = try optionalChoice("mode", in: object)
+        let confirmation: GatewayConfirmationPolicy? = try optionalChoice(
+          "confirmation_policy", in: object)
+        let callerNames = optionalStringSet("allowed_callers", in: object)
+        let callers = try callerNames.map { names in
+          try Set(
+            names.map { name in
+              guard let caller = GatewayCallerKind(rawValue: name) else {
+                throw GatewayToolError.invalidArguments("Unknown caller '\(name)'.")
+              }
+              return caller
+            })
+        }
+        payload = try encodedPayload(
+          try await operations.updateProfilePermissions(
+            profileID: requiredProfile(in: object), mode: mode, confirmationPolicy: confirmation,
+            fullShellEnabled: object["full_shell_enabled"]?.boolValue,
+            capabilityIDs: optionalStringSet("capabilities", in: object),
+            workspaceIDs: optionalStringSet("workspaces", in: object),
+            mcpServerIDs: optionalStringSet("mcp_servers", in: object), allowedCallers: callers,
+            expectedRevision: object["expected_revision"]?.intValue.map(Int64.init)))
       case "provider.list":
         payload = try encodedPayload(try await controlPlane.providerStates())
       case "provider.doctor":
@@ -548,6 +583,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
       case "permissions.status":
         payload = try encodedPayload(await controlPlane.computerUsePermissions())
+      case "approvals.list":
+        payload = try encodedPayload(
+          try await controlPlane.operationApprovals(
+            limit: boundedLimit(object["limit"], default: 100, maximum: 500)))
+      case "approvals.approve", "approvals.deny":
+        payload = try encodedPayload(
+          try await controlPlane.resolveOperationApproval(
+            id: requiredString("id", in: object), approved: name == "approvals.approve",
+            resolver: .localCLI))
       case "mcp.credential.status":
         payload = try encodedPayload(
           try await controlPlane.mcpCredentialStatus(id: requiredString("id", in: object)))
@@ -938,6 +982,20 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     try requiredProfile("profile", in: object)
   }
 
+  private func optionalChoice<T: RawRepresentable>(_ key: String, in object: [String: JSONValue])
+    throws -> T?
+  where T.RawValue == String {
+    guard let raw = object[key]?.stringValue else { return nil }
+    guard let value = T(rawValue: raw) else {
+      throw GatewayToolError.invalidArguments("Invalid '\(key)' value '\(raw)'.")
+    }
+    return value
+  }
+
+  private func optionalStringSet(_ key: String, in object: [String: JSONValue]) -> Set<String>? {
+    object[key]?.arrayValue.map { Set($0.compactMap(\.stringValue)) }
+  }
+
   private func requiredProfile(
     _ key: String,
     in object: [String: JSONValue]
@@ -1318,6 +1376,14 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       required: ["profile"],
       readOnly: false
     ),
+    ControlToolContract(
+      "profile.permissions",
+      arguments: [
+        "profile": .string, "mode": .string, "confirmation_policy": .string,
+        "full_shell_enabled": .boolean, "capabilities": .strings, "workspaces": .strings,
+        "mcp_servers": .strings, "allowed_callers": .strings, "expected_revision": .integer,
+      ],
+      required: ["profile"], readOnly: false),
     ControlToolContract("provider.list", readOnly: true),
     ControlToolContract(
       "provider.doctor",
@@ -1325,6 +1391,11 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       readOnly: true
     ),
     ControlToolContract("permissions.status", readOnly: true),
+    ControlToolContract("approvals.list", arguments: ["limit": .integer], readOnly: true),
+    ControlToolContract(
+      "approvals.approve", arguments: ["id": .string], required: ["id"], readOnly: false),
+    ControlToolContract(
+      "approvals.deny", arguments: ["id": .string], required: ["id"], readOnly: false),
     ControlToolContract(
       "audit.list",
       arguments: ["limit": .integer],

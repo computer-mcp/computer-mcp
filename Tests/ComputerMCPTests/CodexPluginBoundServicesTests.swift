@@ -12,7 +12,7 @@ import Testing
     if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_CODEX_PLUGIN"] != nil))
 struct CodexPluginBoundServicesTests {
   @Test(arguments: [false, true])
-  func stoppedCoreStateMigratesAndContinuesThroughThePluginAcrossRestart(
+  func stoppedCoreStateMigratesWithoutAdoptingUnboundHistoryAcrossRestart(
     pendingApproval: Bool
   ) async throws {
     let historical = try CodexEmbeddedFixture.read("CodexEmbeddedState-\(pendingApproval)")
@@ -31,7 +31,6 @@ struct CodexPluginBoundServicesTests {
     let leaseID = try #require(state.objectValue?["lease_id"]?.stringValue)
     var current: GatewayRuntime?
     do {
-      let hostGrant = try fixture.requestGrant(threadID: nil)
       let source = fixture.root.appendingPathComponent("snapshot.sqlite")
       _ = try fixture.sqlite(source, try #require(state.objectValue?["sql"]?.stringValue))
       let original = try Data(contentsOf: source)
@@ -48,10 +47,22 @@ struct CodexPluginBoundServicesTests {
       _ = try fixture.migrate(source: source, destination: destination, digest: digest)
       for table in tables {
         let name = try #require(table.objectValue?["name"]?.stringValue)
-        // Names originate from the adapter's validated fixed domain-table report.
-        let sql =
-          "SELECT * FROM \"\(name.replacingOccurrences(of: "\"", with: "\"\""))\" ORDER BY 1"
+        let sourceColumns = try fixture.columns(source, table: name)
+        let targetColumns = try fixture.columns(destination, table: name)
+        #expect(Set(sourceColumns).isSubset(of: Set(targetColumns)))
+        func quote(_ name: String) -> String {
+          "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        }
+        let projection = sourceColumns.map(quote).joined(separator: ",")
+        let sql = "SELECT \(projection) FROM \(quote(name)) ORDER BY 1"
         #expect(try fixture.sqlite(source, sql) == fixture.sqlite(destination, sql))
+        let addedColumns = targetColumns.filter { !sourceColumns.contains($0) }
+        if !addedColumns.isEmpty {
+          let filled = addedColumns.map { quote($0) + " IS NOT NULL" }.joined(separator: " OR ")
+          #expect(
+            try fixture.sqlite(destination, "SELECT count(*) FROM \(quote(name)) WHERE \(filled)")
+              .trimmingCharacters(in: .whitespacesAndNewlines) == "0")
+        }
       }
       #expect(
         try fixture.sqlite(
@@ -63,67 +74,59 @@ struct CodexPluginBoundServicesTests {
         source: source, destination: destination, digest: stableDigest)
       #expect(repeated.objectValue?["inserted_rows"]?.intValue == 0)
 
-      for generation in 0..<2 {
+      let migratedBytes = try Data(contentsOf: destination)
+      for _ in 0..<2 {
         let runtime = try await fixture.migratedRuntime()
         current = runtime
-        #expect(
-          try await fixture.call(runtime, "codex.run.read", ["run_id": .string(runID)]) == run)
-        let loadedLease = try await fixture.call(
-          runtime, "codex.worktree.leases.read", ["lease_id": .string(leaseID)])
-        #expect(loadedLease.objectValue?["id"] == .string(leaseID))
-        let loadedPlan = try await fixture.call(
-          runtime, "codex.worktree.managed.read", ["managed_worktree_id": .string(planID)])
-        #expect(loadedPlan == plan)
-        let approval = try await fixture.call(
-          runtime, "codex.app.approvals.read", ["approval_id": .string("migration-approval")])
-        #expect(approval.objectValue?["approval"]?.objectValue?["state"] == .string("interrupted"))
+        let diagnostics = try await fixture.call(runtime, "codex.diagnostics.snapshot")
+        let storage = try #require(diagnostics.objectValue?["state_storage"]?.objectValue)
+        #expect(storage["scope"] == .string("authorization_subject"))
+        #expect(storage["unbound_history_available"] == .bool(true))
+        #expect(storage["unbound_history_adopted"] == .bool(false))
+        for (tool, arguments) in [
+          ("codex.run.read", ["run_id": JSONValue.string(runID)]),
+          ("codex.worktree.leases.read", ["lease_id": .string(leaseID)]),
+          ("codex.worktree.managed.read", ["managed_worktree_id": .string(planID)]),
+          ("codex.app.approvals.read", ["approval_id": .string("migration-approval")]),
+        ] {
+          await #expect(throws: (any Error).self) {
+            try await fixture.call(runtime, tool, arguments)
+          }
+        }
         await #expect(throws: (any Error).self) {
           try await fixture.call(
             runtime, "codex.app.approvals.respond",
             [
-              "approval_id": .string("migration-approval"), "decision": .string("approve_once"),
+              "approval_id": .string("migration-approval"),
+              "response": .object(["decision": .string("accept")]),
             ])
         }
-        _ = try await fixture.call(
-          runtime, "codex.app.thread.reclaim", ["thread_id": .string("thread_bound")])
-        _ = try await fixture.call(
-          runtime, "codex.app.turn.start",
-          [
-            "thread_id": .string("thread_bound"),
-            "prompt": .string("Fixture continuation \(generation)"),
-            "worktree_lease_id": .string(leaseID),
-          ])
-        _ = try await fixture.call(
-          runtime, "codex.app.thread.release", ["thread_id": .string("thread_bound")])
-        if generation == 1 {
-          let provisioned = try await fixture.call(
+        await #expect(throws: (any Error).self) {
+          try await fixture.call(
             runtime, "codex.worktree.provision.perform",
             [
               "plan_id": .string(planID), "expected_revision": plan.objectValue!["revision"]!,
               "confirm_provision": .bool(true),
             ])
-          #expect(provisioned.objectValue?["state"] == .string("active"))
-          let childID = try #require(provisioned.objectValue?["workspace_id"]?.stringValue)
-          #expect(try fixture.database.derivedWorkspaceRegistration(id: childID) != nil)
         }
+        let childID = try #require(plan.objectValue?["workspace_id"]?.stringValue)
+        #expect(try fixture.database.derivedWorkspaceRegistration(id: childID) == nil)
         await runtime.shutdown()
         current = nil
-        try await fixture.requireVendorExit()
       }
       #expect(try Data(contentsOf: source) == original)
+      #expect(try Data(contentsOf: destination) == migratedBytes)
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: fixture.root.appendingPathComponent("vendor.pid").path))
       #expect(
         try fixture.sqlite(
           fixture.root.appendingPathComponent("host.sqlite"),
           "SELECT count(*) FROM codexThreadOwnership"
         ).trimmingCharacters(in: .whitespacesAndNewlines) == "0")
-      #expect(try fixture.database.codexElevationGrant(id: hostGrant.id)?.state == .invalidated)
       let changed = try fixture.migrate(source: source, destination: destination)
-      #expect(changed.objectValue?["can_apply"] == .bool(false))
-      let beforeRejectedImport = try Data(contentsOf: destination)
-      #expect(throws: (any Error).self) {
-        try fixture.migrate(source: source, destination: destination, digest: digest)
-      }
-      #expect(try Data(contentsOf: destination) == beforeRejectedImport)
+      #expect(changed.objectValue?["can_apply"] == .bool(true))
+      #expect(changed.objectValue?["plan_digest"] == .string(stableDigest))
     } catch {
       await current?.shutdown()
       throw error
@@ -131,56 +134,25 @@ struct CodexPluginBoundServicesTests {
   }
 
   @Test
-  func packagedCatalogMatchesTheDomainAndLeavesApprovalsWithTheHost() async throws {
+  func packagedCatalogExposesCodingLifecyclesWithoutStartingVendor() async throws {
     let fixture = try BoundServicesFixture(allCapabilities: true)
     defer { fixture.remove() }
-    do {
-      let entries = try CodexEmbeddedFixture.catalog()
-      let prior = Dictionary(
-        uniqueKeysWithValues: try entries.map { entry in
-          let tool = try #require(entry.objectValue?["tool"])
-          return (try #require(tool.objectValue?["name"]?.stringValue), tool)
-        })
-      let current = Dictionary(
-        uniqueKeysWithValues: try await fixture.completeCatalog().map { ($0.name, $0.json) })
-      let hostApprovalNames = Set(
-        ["request", "list", "read", "approve", "deny", "revoke", "effective"].map {
-          "codex.app.elevation." + $0
-        })
-      let hostTools = try CodexElevationTools(
-        owner: nil, database: nil
-      ).listTools()
-      #expect(Set(hostTools.map(\.name)) == hostApprovalNames)
-      #expect(Set(current.keys).isDisjoint(with: hostApprovalNames))
-      #expect(Set(prior.keys).subtracting(current.keys).isEmpty)
-      #expect(
-        Set(current.keys).subtracting(prior.keys).allSatisfy { $0.hasPrefix("codex.protocol.") })
-      var changed: [String: [String]] = [:]
-      for name in Set(prior.keys).intersection(current.keys).sorted() {
-        let old = prior[name]!
-        let new = current[name]!
-        var fields: [String] = []
-        if old.objectValue?["inputSchema"] != new.objectValue?["inputSchema"] {
-          fields.append("inputSchema")
-        }
-        if old.objectValue?["outputSchema"] != new.objectValue?["outputSchema"] {
-          fields.append("outputSchema")
-        }
-        if old.objectValue?["annotations"] != new.objectValue?["annotations"] {
-          fields.append("annotations")
-        }
-        if !fields.isEmpty { changed[name] = fields }
-      }
-      print(
-        "Codex catalog parity: core=\(prior.count), plugin=\(current.count), hostApproval=\(hostApprovalNames.count), changed=\(changed)"
-      )
-      #expect(changed.isEmpty)
-      #expect(
-        !FileManager.default.fileExists(
-          atPath: fixture.root.appendingPathComponent("vendor.pid").path))
-    } catch {
-      throw error
+    let catalog = try await fixture.completeCatalog()
+    let names = Set(catalog.map(\.name))
+    #expect(names.count == catalog.count)
+    #expect(
+      names.isSuperset(of: [
+        "codex.app.thread.start", "codex.app.thread.read", "codex.app.thread.release",
+        "codex.app.turn.start", "codex.app.approvals.respond", "codex.app.events.read",
+        "codex.exec.start", "codex.exec.result", "codex.exec.cancel",
+        "codex.run.read", "codex.worktree.provision.perform", "codex.worktree.remove.perform",
+      ]))
+    for tool in catalog {
+      #expect(tool.inputSchema.objectValue?["type"] == .string("object"))
     }
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: fixture.root.appendingPathComponent("vendor.pid").path))
   }
 
   @Test(arguments: ["adapter", ""])
@@ -196,7 +168,7 @@ struct CodexPluginBoundServicesTests {
         ),
         (
           fixture.workspace.id, .chatGPTOperate, .secureTunnel, "other-connection",
-          "hidden.connection"
+          "hidden.principal"
         ),
         (fixture.workspace.id, .localAdmin, .localCLI, "services-origin", "hidden.profile"),
         ("other-workspace", .chatGPTOperate, .secureTunnel, "services-origin", "hidden.workspace"),
@@ -205,27 +177,23 @@ struct CodexPluginBoundServicesTests {
           .init(
             requestID: UUID().uuidString,
             parentRequestID: "fixture-parent", caller: caller,
+            principalDigest: AuditEvent.verifiedPrincipalDigest(
+              name == "hidden.principal" ? "another-principal" : "bound-services-fixture"),
             transport: "gateway_socket", socketConnectionID: connection, profileID: profile,
             workspaceID: workspace, capabilityID: name, decision: .allowed,
             durationMilliseconds: 37, outputByteCount: 19, outputTruncated: false))
       }
-      let own = try fixture.requestGrant(threadID: nil)
-      _ = try fixture.approve(own.id)
-      let other = try fixture.requestGrant(threadID: nil, connection: "other-connection")
       let result = try await fixture.call(
         runtime, "codex.diagnostics.snapshot", ["limit": .number(1)])
       let text = String(decoding: try JSONEncoder().encode(result), as: UTF8.self)
       #expect(text.contains("visible.test"))
       #expect(
-        !text.contains("hidden.connection") && !text.contains("hidden.profile")
+        !text.contains("hidden.principal") && !text.contains("hidden.profile")
           && !text.contains("hidden.workspace"))
-      #expect(text.contains(own.id) && !text.contains(other.id))
       #expect(result.objectValue?["host_diagnostics_available"] == .bool(true))
-      let elevation = result.objectValue?["elevation"]?.objectValue
-      #expect(elevation?["configured_default_sandbox"] == .string("workspace-write"))
-      #expect(elevation?["requested_sandbox"] == .string("danger-full-access"))
-      #expect(elevation?["effective_next_eligible_start"] == .string("danger-full-access"))
-      #expect(elevation?["active_turn_unchanged"] == .bool(true))
+      let configuration = result.objectValue?["codex_configuration"]?.objectValue
+      #expect(configuration?["sandbox_override"] == .string("workspace-write"))
+      #expect(configuration?["unspecified_values"] == .string("inherited_from_codex"))
       let audit = try #require(
         result.objectValue?["recent_tool_audits"]?.arrayValue?.first?.objectValue)
       let occurredAt = try #require(audit["occurred_at"]?.stringValue)
@@ -239,224 +207,6 @@ struct CodexPluginBoundServicesTests {
       #expect(
         !FileManager.default.fileExists(
           atPath: fixture.root.appendingPathComponent("vendor.pid").path))
-      await runtime.shutdown()
-    } catch {
-      await runtime.shutdown()
-      throw error
-    }
-  }
-
-  @Test(arguments: [
-    "approved", "pending", "revoked", "expires-before-commit", "revoked-before-commit",
-  ])
-  func nativeActivationUsesOnlyAnExistingLocallyApprovedLiveGrant(state: String) async throws {
-    let fixture = try BoundServicesFixture()
-    defer { fixture.remove() }
-    let runtime = try await fixture.runtime()
-    do {
-      let grant = try fixture.requestGrant(threadID: nil)
-      if state != "pending" { _ = try fixture.approve(grant.id) }
-      if state == "revoked" { try fixture.revoke(grant.id) }
-      let needsPause = state.hasSuffix("before-commit")
-      if needsPause { try Data().write(to: fixture.root.appendingPathComponent("pause-start")) }
-      let call = Task { try await fixture.call(runtime, "codex.app.thread.start") }
-      if needsPause {
-        try await fixture.waitForFile("start-received")
-        let held = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-        #expect(held.inFlightClaimID != nil)
-        if state == "expires-before-commit" {
-          _ = try fixture.database.updateCodexElevationGrant(id: grant.id) { value in
-            value.expiresAt = Date().addingTimeInterval(-1)
-          }
-        } else {
-          try fixture.revoke(grant.id)
-        }
-        try Data().write(to: fixture.root.appendingPathComponent("release-start"))
-      }
-      let response = await call.result
-      if needsPause {
-        if case .success = response {
-          Issue.record("A no-longer-effective elevation was accepted.")
-        }
-        try await fixture.requireVendorExit()
-      } else {
-        let value = try response.get()
-        #expect(value.objectValue?["thread"]?.objectValue?["id"] == .string("thread_bound"))
-      }
-      let requests = try fixture.vendorRequests()
-      let start = try #require(
-        requests.first { $0.objectValue?["method"] == .string("thread/start") })
-      #expect(
-        start.objectValue?["params"]?.objectValue?["sandbox"]
-          == .string(state == "approved" || needsPause ? "danger-full-access" : "workspace-write"))
-      let stored = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-      if state == "approved" {
-        #expect(stored.state == .active)
-        #expect(stored.threadID == "thread_bound")
-        #expect(stored.inFlightClaimID == nil)
-        #expect(!stored.consumedRuntimeIDs.isEmpty)
-      } else if state == "pending" {
-        #expect(stored.state == .pending)
-      } else {
-        #expect(!stored.state.isEffective)
-      }
-      await runtime.shutdown()
-      if state == "approved" {
-        #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .invalidated)
-      }
-      try await fixture.requireVendorExit()
-    } catch {
-      await runtime.shutdown()
-      throw error
-    }
-  }
-
-  @Test
-  func nativeNamesRetainHostActivationAndAuditWithoutAnExtraProviderLayer() async throws {
-    let fixture = try BoundServicesFixture(prefix: "")
-    defer { fixture.remove() }
-    let runtime = try await fixture.runtime()
-    do {
-      let capability = try runtime.capabilityDescriptor(named: "codex.app.thread.start")
-      #expect(
-        capability.mcpReference
-          == .init(serverID: "bound-plugin", toolName: "codex.app.thread.start"))
-      let grant = try fixture.requestGrant(threadID: nil)
-      _ = try fixture.approve(grant.id)
-      let result = try await fixture.call(runtime, "codex.app.thread.start")
-      #expect(result.objectValue?["thread"]?.objectValue?["id"] == .string("thread_bound"))
-      #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .active)
-      #expect(
-        try fixture.database.auditEvents().contains {
-          $0.capabilityID == "codex.app.thread.start" && $0.decision == .allowed
-        })
-      await runtime.shutdown()
-      #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .invalidated)
-      try await fixture.requireVendorExit()
-    } catch {
-      await runtime.shutdown()
-      throw error
-    }
-  }
-
-  @Test
-  func threadReleaseInvalidatesItsHostGrantThroughThePlugin() async throws {
-    let fixture = try BoundServicesFixture(prefix: "")
-    defer { fixture.remove() }
-    let runtime = try await fixture.runtime()
-    do {
-      _ = try await fixture.call(runtime, "codex.app.thread.start")
-      let grant = try fixture.requestGrant(threadID: "thread_bound", mode: .threadScopedTTL)
-      _ = try fixture.approve(grant.id)
-      _ = try await fixture.call(
-        runtime, "codex.app.thread.release", ["thread_id": .string("thread_bound")])
-      #expect(try fixture.database.codexElevationGrant(id: grant.id)?.state == .invalidated)
-      await runtime.shutdown()
-      try await fixture.requireVendorExit()
-    } catch {
-      await runtime.shutdown()
-      throw error
-    }
-  }
-
-  @Test(arguments: ["thread-start", "first-turn", "later-turn"])
-  func nextTurnClaimIsConsumedOnceAndLaterSafeTurnsDoNotReclaimIt(activation: String) async throws {
-    let fixture = try BoundServicesFixture()
-    defer { fixture.remove() }
-    let runtime = try await fixture.runtime()
-    do {
-      if activation != "thread-start" {
-        _ = try await fixture.call(runtime, "codex.app.thread.start")
-      }
-      if activation == "later-turn" {
-        try Data().write(to: fixture.root.appendingPathComponent("active-turn"))
-        _ = try await fixture.call(
-          runtime, "codex.app.turn.start",
-          [
-            "thread_id": .string("thread_bound"), "prompt": .string("Start with safe permissions"),
-          ])
-        let status = try await fixture.call(runtime, "codex.app.status")
-        #expect(
-          status.objectValue?["threads"]?.arrayValue?.first?.objectValue?["active_turn_id"]
-            == .string("turn_1"))
-      }
-      let requestsBeforeApproval = activation == "thread-start" ? [] : try fixture.vendorRequests()
-      let grant = try fixture.requestGrant(
-        threadID: activation == "thread-start" ? nil : "thread_bound", mode: .nextTurn)
-      _ = try fixture.approve(grant.id)
-      if activation == "thread-start" {
-        #expect(
-          !FileManager.default.fileExists(
-            atPath: fixture.root.appendingPathComponent("vendor.jsonl").path))
-      } else {
-        #expect(try fixture.vendorRequests() == requestsBeforeApproval)
-      }
-      if activation == "thread-start" {
-        _ = try await fixture.call(runtime, "codex.app.thread.start")
-        let started = try #require(
-          try fixture.vendorRequests().last { $0.objectValue?["method"] == .string("thread/start") }
-        )
-        #expect(
-          started.objectValue?["params"]?.objectValue?["sandbox"] == .string("danger-full-access"))
-        let bound = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-        #expect(bound.state == .active && bound.threadID == "thread_bound")
-      }
-      _ = try await fixture.call(
-        runtime, "codex.app.turn.start",
-        ["thread_id": .string("thread_bound"), "prompt": .string("Protocol fixture only")])
-      let after = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-      #expect(after.state == .consumed && after.consumedTurnCount == 1)
-      _ = try await fixture.call(
-        runtime, "codex.app.turn.start",
-        ["thread_id": .string("thread_bound"), "prompt": .string("Second fixture turn")])
-      let turns = try fixture.vendorRequests().filter {
-        $0.objectValue?["method"] == .string("turn/start")
-      }
-      let offset = activation == "later-turn" ? 1 : 0
-      #expect(turns.count == 2 + offset)
-      if offset == 1 {
-        #expect(
-          turns[0].objectValue?["params"]?.objectValue?["sandboxPolicy"]?.objectValue?["type"]
-            == .string("workspaceWrite"))
-      }
-      #expect(
-        turns[offset].objectValue?["params"]?.objectValue?["sandboxPolicy"]?.objectValue?["type"]
-          == .string("dangerFullAccess"))
-      #expect(
-        turns[offset + 1].objectValue?["params"]?.objectValue?["sandboxPolicy"]?.objectValue?[
-          "type"]
-          == .string("workspaceWrite"))
-      #expect(try fixture.database.codexElevationGrant(id: grant.id)?.consumedTurnCount == 1)
-      await runtime.shutdown()
-      try await fixture.requireVendorExit()
-    } catch {
-      await runtime.shutdown()
-      throw error
-    }
-  }
-
-  @Test
-  func unconfirmedElevatedTurnInvalidatesItsClaimAndStopsBeforeHostShutdown() async throws {
-    let fixture = try BoundServicesFixture(requestTimeoutSeconds: 1)
-    defer { fixture.remove() }
-    let runtime = try await fixture.runtime()
-    do {
-      _ = try await fixture.call(runtime, "codex.app.thread.start")
-      let grant = try fixture.requestGrant(threadID: "thread_bound", mode: .nextTurn)
-      _ = try fixture.approve(grant.id)
-      try Data().write(to: fixture.root.appendingPathComponent("hang-turn"))
-      await #expect(throws: (any Error).self) {
-        try await fixture.call(
-          runtime, "codex.app.turn.start",
-          [
-            "thread_id": .string("thread_bound"), "prompt": .string("Ambiguous fixture outcome"),
-          ])
-      }
-      let record = try #require(try fixture.database.codexElevationGrant(id: grant.id))
-      #expect(record.state == .invalidated && record.inFlightClaimID == nil)
-      let status = try await fixture.call(runtime, "codex.app.status")
-      #expect(status.objectValue?["runtime_state"] == .string("stopped"))
-      try await fixture.requireVendorExit()
       await runtime.shutdown()
     } catch {
       await runtime.shutdown()
@@ -538,6 +288,8 @@ struct CodexPluginBoundServicesTests {
         let firstTicket = try #require(
           preview.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
             "ticket_id"]?.stringValue)
+        try fixture.database.resolveOperationApproval(
+          id: firstTicket, approved: true, resolver: .localCLI)
         let failed = try await runtime.callToolAsync(
           name: "operations.commit",
           arguments: .object([
@@ -568,6 +320,7 @@ struct CodexPluginBoundServicesTests {
       let ticket = try #require(
         prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
           "ticket_id"]?.stringValue)
+      try fixture.database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
       let removed = try await runtime.callToolAsync(
         name: "operations.commit",
         arguments: .object([
@@ -630,7 +383,7 @@ final class BoundServicesFixture: Sendable {
         capabilityIDs: [
           "mcp.tools.call", "operations.prepare", "operations.commit", "policy.probe",
         ],
-        workspaceIDs: [workspace.id], allowedCallers: [.secureTunnel]))
+        workspaceIDs: [workspace.id], allowedCallers: [.secureTunnel], mode: .workspaceOperations))
     let vendor = root.appendingPathComponent("vendor-fixture")
     try Self.vendor.write(to: vendor, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: vendor.path)
@@ -639,7 +392,7 @@ final class BoundServicesFixture: Sendable {
       JSONValue.object([
         "enabled": .bool(true), "executable": .string(vendor.path),
         "app_server_enabled": .bool(true),
-        "exec_enabled": .bool(allCapabilities), "mcp_enabled": .bool(allCapabilities),
+        "exec_enabled": .bool(allCapabilities),
         "sandbox": .string("workspace-write"),
         "app_server_request_timeout_seconds": .number(Double(requestTimeoutSeconds)),
       ])
@@ -682,7 +435,8 @@ final class BoundServicesFixture: Sendable {
       configuration: configuration(workspaces: [selected]),
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate,
-        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "services-origin")),
+        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "services-origin"),
+        trustedPrincipalID: "bound-services-fixture"),
       database: database, registeredWorkspaces: [selected])
   }
 
@@ -709,7 +463,7 @@ final class BoundServicesFixture: Sendable {
       profiles: [
         .init(
           id: .chatGPTOperate, capabilities: capabilities, workspaces: workspaces.map(\.id),
-          allowedCallers: [.secureTunnel])
+          allowedCallers: [.secureTunnel], mode: .workspaceOperations)
       ],
       mcp: .init(servers: [
         .init(
@@ -736,7 +490,7 @@ final class BoundServicesFixture: Sendable {
           capabilities: [
             "mcp.tools.call", "operations.prepare", "operations.commit", "policy.probe",
           ],
-          workspaces: [workspace.id], allowedCallers: [.secureTunnel])
+          workspaces: [workspace.id], allowedCallers: [.secureTunnel], mode: .workspaceOperations)
       ], codex: adapterConfiguration, workspaceDirectory: root)
     let migration = try CodexConfigurationMigration(
       text: original.exportedTOML(), baseURL: root, adapterConfigurationPath: config.path,
@@ -758,13 +512,22 @@ final class BoundServicesFixture: Sendable {
       configuration: composition.runtimeConfiguration,
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate,
-        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "services-origin")),
+        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "services-origin"),
+        trustedPrincipalID: "bound-services-fixture"),
       database: database, registeredWorkspaces: [workspace])
   }
   func exposed(_ name: String) -> String { prefix.isEmpty ? name : prefix + "." + name }
 
   func sqlite(_ file: URL, _ sql: String) throws -> String {
     try command("/usr/bin/sqlite3", ["-batch", "-quote", file.path, sql]).stdout
+  }
+
+  func columns(_ file: URL, table: String) throws -> [String] {
+    let sql = "PRAGMA table_info(\"\(table.replacingOccurrences(of: "\"", with: "\"\""))\")"
+    let output = try command("/usr/bin/sqlite3", ["-batch", "-json", file.path, sql]).stdout
+    let rows = try #require(
+      JSONDecoder().decode(JSONValue.self, from: Data(output.utf8)).arrayValue)
+    return try rows.map { try #require($0.objectValue?["name"]?.stringValue) }
   }
 
   func migrate(source: URL, destination: URL, digest: String? = nil) throws -> JSONValue {
@@ -801,49 +564,6 @@ final class BoundServicesFixture: Sendable {
         String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
     }
     return value
-  }
-  func requestGrant(
-    threadID: String?, connection: String = "services-origin",
-    mode: CodexElevationGrantMode = .boundedTime
-  ) throws -> CodexElevationGrantRecord {
-    try CodexElevationGrantService.request(
-      owner: .init(
-        workspaceID: workspace.id, profileID: "chatgpt-operate",
-        caller: "secure-tunnel", transport: "gateway_socket", socketConnectionID: connection,
-        tunnelInstanceID: nil, tunnelProfileID: nil), database: database, threadID: threadID,
-      mode: mode,
-      reason: "Disposable host-service validation", maximumDurationSeconds: 300,
-      maximumTurnCount: nil)
-  }
-  func approve(_ id: String) throws -> CodexElevationGrantRecord {
-    try CodexElevationGrantService.approve(
-      id: id,
-      owner: .init(
-        workspaceID: workspace.id,
-        profileID: "local-admin", caller: "local-cli", transport: "fixture",
-        socketConnectionID: nil,
-        tunnelInstanceID: nil, tunnelProfileID: nil), database: database)
-  }
-  func revoke(_ id: String) throws {
-    _ = try database.updateCodexElevationGrant(id: id) { value in
-      value.state = .revoked
-      value.revokedAt = Date()
-      value.updatedAt = Date()
-    }
-  }
-  func waitForFile(_ name: String) async throws {
-    let deadline = ContinuousClock.now + .seconds(8)
-    while ContinuousClock.now < deadline {
-      if FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path) { return }
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    throw GatewayToolError.executionFailed("Fixture did not publish expected protocol checkpoint.")
-  }
-  func vendorRequests() throws -> [JSONValue] {
-    try String(contentsOf: root.appendingPathComponent("vendor.jsonl"), encoding: .utf8).split(
-      separator: "\n"
-    )
-    .map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
   }
   func requireVendorExit() async throws {
     let text = try String(contentsOf: root.appendingPathComponent("vendor.pid"), encoding: .utf8)
@@ -882,7 +602,7 @@ final class BoundServicesFixture: Sendable {
 
   private static let vendor = #"""
     #!/usr/bin/python3
-    import hashlib, json, os, pathlib, sys, time
+    import hashlib, json, os, pathlib, sys
     root = pathlib.Path(__file__).resolve().parent
     cwd = os.getcwd()
     (root/'vendor.pid').write_text(str(os.getpid()))
@@ -900,15 +620,10 @@ final class BoundServicesFixture: Sendable {
         elif method == 'initialized': continue
         elif method in ('thread/start', 'thread/resume'):
             loaded = True
-            (root/'start-received').touch()
-            if (root/'pause-start').exists():
-                deadline = time.monotonic() + 8
-                while not (root/'release-start').exists() and time.monotonic() < deadline: time.sleep(.01)
             result = {'thread':thread,'cwd':cwd,'model':'fixture','modelProvider':'fixture','approvalPolicy':'on-request',
                       'approvalsReviewer':'user','sandbox':{'type':'dangerFullAccess' if request['params'].get('sandbox')=='danger-full-access' else 'workspaceWrite'}}
         elif method == 'turn/start':
             count += 1
-            if (root/'hang-turn').exists(): time.sleep(30)
             result = {'turn':{'id':'turn_'+str(count),'items':[],'status':'inProgress' if count==1 and (root/'active-turn').exists() else 'completed'}}
         elif method == 'thread/read': result = {'thread':thread}
         elif method == 'thread/loaded/list': result = {'data':[thread['id']] if loaded else [],'nextCursor':None}

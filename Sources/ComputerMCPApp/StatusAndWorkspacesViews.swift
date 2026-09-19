@@ -569,6 +569,12 @@ private struct WorkspaceRow: View {
           .font(.caption)
           .foregroundStyle(.tertiary)
         }
+        if let detail = workspace.healthDetail {
+          AppLocalization.verbatimText(detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
       }
 
       Spacer()

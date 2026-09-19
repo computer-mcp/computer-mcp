@@ -7,6 +7,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private let changes: GatewayToolChangeBroadcaster
   private let secretStore: KeychainSecretStore?
   private let processOwnershipRoot: URL?
+  private let journal: MCPExecutionJournal
   private let calls = BlockingOperationExecutor(label: "computer-mcp.mcp-calls", serial: false)
 
   package init(
@@ -14,19 +15,30 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     hostContext: MCPHostContext? = nil,
     secretStore: KeychainSecretStore? = nil,
-    processOwnershipRoot: URL? = nil
+    processOwnershipRoot: URL? = nil,
+    executionDatabase: GatewayDatabase? = nil, executionScope: String? = nil
   ) {
     let changes = GatewayToolChangeBroadcaster()
     self.changes = changes
     self.secretStore = secretStore
     self.processOwnershipRoot = processOwnershipRoot
+    let scope =
+      executionScope ?? hostContext.map {
+        MCPExecutionRecord.digest(
+          .array([
+            .string($0.principalID), .string($0.profileID.rawValue), .string($0.workspace.id),
+          ]))
+      } ?? UUID().uuidString
+    let journal = MCPExecutionJournal(
+      database: executionDatabase ?? hostContext?.executionDatabase, scope: scope)
+    self.journal = journal
     var hostContext = hostContext
     if hostContext?.processOwnershipRoot == nil {
       hostContext?.processOwnershipRoot = processOwnershipRoot
     }
     self.pool = MCPConnectionPool(
       workingDirectory: workingDirectory.standardizedFileURL, environment: environment,
-      hostContext: hostContext, secretStore: secretStore,
+      hostContext: hostContext, secretStore: secretStore, journal: journal,
       toolsChanged: { changes.send() })
   }
 
@@ -109,14 +121,46 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       )
     }
 
+    let retainsResult = requestID != nil
     let requestID = requestID ?? UUID().uuidString
-    return try run(server: server) { connection in
-      try await connection.callTool(
-        name: name,
-        arguments: object,
-        gatewayRequestID: requestID, cancellation: cancellation,
-        cancellationDeliveryFailed: { self.pool.invalidate(server: server, connection: connection) }
-      )
+    if retainsResult {
+      guard !requestID.isEmpty else {
+        throw GatewayToolError.invalidArguments("Downstream MCP request id must not be empty.")
+      }
+      let reservation = try journal.reserve(
+        server: server, tool: name, arguments: arguments, requestID: requestID)
+      if !reservation.inserted {
+        guard reservation.record.state == .succeeded || reservation.record.state == .failed,
+          reservation.record.outputExpiresAt.map({ $0 > Date() }) == true,
+          reservation.record.retainedByteCount == reservation.record.outputByteCount,
+          let output = reservation.record.outputJSON
+        else {
+          throw GatewayToolError.invalidArguments(
+            "[request.already_started] Query mcp.requests.read for this execution; it was not replayed."
+          )
+        }
+        return try JSONDecoder().decode(JSONValue.self, from: Data(output.utf8))
+      }
+    }
+    do {
+      return try run(server: server) { connection in
+        try await connection.callTool(
+          name: name, arguments: object, gatewayRequestID: requestID, cancellation: cancellation,
+          retainsResult: retainsResult,
+          cancellationDeliveryFailed: {
+            self.pool.invalidate(server: server, connection: connection)
+          })
+      }
+    } catch {
+      if retainsResult {
+        try journal.update(serverID: server.id, requestID: requestID) {
+          if !$0.isTerminal {
+            $0.state = .outcomeUnknown
+            $0.completedAt = Date()
+          }
+        }
+      }
+      throw error
     }
   }
 
@@ -137,13 +181,30 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       )
     }
 
-    return try run(server: server) { connection in
-      try await connection.startToolCall(
-        name: name,
-        arguments: object,
-        gatewayRequestID: requestID
-      )
+    let reservation = try journal.reserve(
+      server: server, tool: name, arguments: arguments, requestID: requestID)
+    if !reservation.inserted {
+      return try reservation.record.snapshot(instance: journal.instanceID)
     }
+    do {
+      return try run(server: server) { connection in
+        try await connection.startToolCall(
+          name: name, arguments: object, gatewayRequestID: requestID)
+      }
+    } catch {
+      try journal.update(serverID: server.id, requestID: requestID) {
+        $0.state = .outcomeUnknown
+        $0.completedAt = Date()
+      }
+      throw error
+    }
+  }
+
+  package func readRequest(
+    server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int
+  ) throws -> JSONValue {
+    try journal.read(serverID: server.id, requestID: requestID)
+      .snapshot(instance: journal.instanceID, offset: offset, maxBytes: maxBytes)
   }
 
   package func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
@@ -200,8 +261,38 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     afterCursor: Int,
     maxResults: Int
   ) throws -> JSONValue {
-    try run(server: server) { connection in
-      try await connection.readEvents(afterCursor: afterCursor, maxResults: maxResults)
+    try readEvents(server: server, afterCursor: afterCursor, maxResults: maxResults, sessionID: nil)
+  }
+
+  package func readEvents(
+    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
+  ) throws -> JSONValue {
+    guard afterCursor >= 0, (1...500).contains(maxResults), sessionID?.isEmpty != true else {
+      throw GatewayToolError.invalidArguments(
+        "after_cursor must be nonnegative, max_results must be 1...500, and session_id must not be empty."
+      )
+    }
+    guard let connection = pool.existingConnection(for: server) else {
+      guard afterCursor == 0, sessionID == nil else {
+        throw GatewayToolError.invalidArguments(
+          "[cursor.session_unavailable] The original MCP event session is unavailable. No connection was started and the missing event count is unknown."
+        )
+      }
+      let state = pool.inactiveState(serverID: server.id)
+      return .object([
+        "server": .string(server.id), "state": .string(state),
+        "session_id": .null, "session_verified": .bool(false),
+        "cursor_state": .string(state == "not_started" ? "not_started" : "unavailable"),
+        "reset_required": .bool(false),
+        "after_cursor": .number(0), "next_cursor": .number(0),
+        "oldest_available_cursor": .null, "latest_event_cursor": .null,
+        "events": .array([]), "has_more": .bool(false), "missed_events": .null,
+        "persistent_session": .bool(true),
+      ])
+    }
+    return try runExisting(server: server, connection: connection) { connection in
+      try await connection.readEvents(
+        afterCursor: afterCursor, maxResults: maxResults, sessionID: sessionID)
     }
   }
 
@@ -329,18 +420,20 @@ private final class MCPConnectionPool: @unchecked Sendable {
   private let environment: [String: String]
   private let hostContext: MCPHostContext?
   private let secretStore: KeychainSecretStore?
+  private let journal: MCPExecutionJournal
   private let toolsChanged: @Sendable () -> Void
 
   init(
     workingDirectory: URL, environment: [String: String],
     hostContext: MCPHostContext?,
-    secretStore: KeychainSecretStore?,
+    secretStore: KeychainSecretStore?, journal: MCPExecutionJournal,
     toolsChanged: @escaping @Sendable () -> Void
   ) {
     self.workingDirectory = workingDirectory
     self.environment = environment
     self.hostContext = hostContext
     self.secretStore = secretStore
+    self.journal = journal
     self.toolsChanged = toolsChanged
   }
 
@@ -361,7 +454,8 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
     let connection = try MCPProxyConnection(
       server: server, workingDirectory: workingDirectory, environment: environment,
-      hostContext: hostContext, secretStore: secretStore, predecessor: retirements[server.id]?.task,
+      hostContext: hostContext, secretStore: secretStore, journal: journal,
+      predecessor: retirements[server.id]?.task,
       onTermination: { [weak self] connection in
         self?.invalidate(server: server, connection: connection)
       },
@@ -449,12 +543,14 @@ private actor MCPProxyConnection {
     let cursor: Int
     let kind: String
     let timestamp: Date
+    let requestID: String?
 
     var json: JSONValue {
       .object([
         "cursor": .number(Double(cursor)),
         "kind": .string(kind),
         "timestamp": .number(timestamp.timeIntervalSince1970),
+        "request_id": requestID.map(JSONValue.string) ?? .null,
       ])
     }
   }
@@ -464,6 +560,8 @@ private actor MCPProxyConnection {
     let downstreamRequestID: MCP.ID
     let tool: String
     let startedAt: Date
+    var retainsResult = false
+    var cancellationRequested = false
 
     var json: JSONValue {
       .object([
@@ -471,11 +569,13 @@ private actor MCPProxyConnection {
         "downstream_request_id": .string(downstreamRequestID.description),
         "tool": .string(tool),
         "started_at": .number(startedAt.timeIntervalSince1970),
+        "state": .string(cancellationRequested ? "cancellation_requested" : "running"),
       ])
     }
   }
 
   private let server: MCPServerConfig
+  private let journal: MCPExecutionJournal
   private let onTermination: @Sendable (MCPProxyConnection) -> Void
   private let client: MCP.Client
   private let transport: any MCP.Transport
@@ -491,6 +591,7 @@ private actor MCPProxyConnection {
   private var connected = false
   private var lastError: String?
   private var events: [Event] = []
+  private let eventSessionID = UUID().uuidString
   private var nextEventCursor = 1
   private var activeRequests: [String: ActiveRequest] = [:]
   private let toolsChanged: @Sendable () -> Void
@@ -498,12 +599,13 @@ private actor MCPProxyConnection {
   init(
     server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
     hostContext: MCPHostContext?,
-    secretStore: KeychainSecretStore?,
+    secretStore: KeychainSecretStore?, journal: MCPExecutionJournal,
     predecessor: Task<Bool, Never>? = nil,
     onTermination: @escaping @Sendable (MCPProxyConnection) -> Void,
     toolsChanged: @escaping @Sendable () -> Void
   ) throws {
     self.server = server
+    self.journal = journal
     self.predecessor = predecessor
     self.toolsChanged = toolsChanged
     self.onTermination = onTermination
@@ -546,6 +648,7 @@ private actor MCPProxyConnection {
     arguments: [String: JSONValue],
     gatewayRequestID: String,
     cancellation: MCPCallCancellation? = nil,
+    retainsResult: Bool = false,
     cancellationDeliveryFailed: @escaping @Sendable () -> Void = {}
   ) async throws -> JSONValue {
     try await ensureConnected()
@@ -573,10 +676,36 @@ private actor MCPProxyConnection {
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date()
+      startedAt: Date(), retainsResult: retainsResult
     )
-    cancellation?.install(onDeliveryFailure: cancellationDeliveryFailed) { [client] in
-      try await client.cancelRequest(context.requestID, reason: "Upstream MCP request cancelled.")
+    if retainsResult {
+      try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+        $0.state = .running
+        $0.downstreamRequestID = context.requestID.description
+      }
+    }
+    cancellation?.install(onDeliveryFailure: cancellationDeliveryFailed) {
+      [client, journal, server] in
+      if retainsResult {
+        try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+          $0.cancellation = "requested"
+        }
+      }
+      do {
+        try await client.cancelRequest(context.requestID, reason: "Upstream MCP request cancelled.")
+        if retainsResult {
+          try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+            $0.cancellation = "sent"
+          }
+        }
+      } catch {
+        if retainsResult {
+          try? journal.update(serverID: server.id, requestID: gatewayRequestID) {
+            $0.cancellation = "failed"
+          }
+        }
+        throw error
+      }
     }
     defer {
       if activeRequests[gatewayRequestID]?.downstreamRequestID == context.requestID {
@@ -585,13 +714,19 @@ private actor MCPProxyConnection {
     }
 
     let result = try await context.value
-    try cancellation?.checkCancellation()
-    return try JSONValue.sdkToolResult(
+    let value = try JSONValue.sdkToolResult(
       content: result.content,
       structuredContent: result.structuredContent,
       isError: result.isError,
       meta: result._meta
     )
+    if retainsResult {
+      try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+        try $0.finish(result: value, failed: result.isError == true)
+      }
+    }
+    try cancellation?.checkCancellation()
+    return value
   }
 
   func startToolCall(
@@ -623,27 +758,35 @@ private actor MCPProxyConnection {
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date()
+      startedAt: Date(), retainsResult: true
     )
     activeRequests[gatewayRequestID] = active
-    appendEvent(kind: "request.started")
+    try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+      $0.state = .running
+      $0.downstreamRequestID = context.requestID.description
+    }
+    appendEvent(kind: "request.started", requestID: gatewayRequestID)
 
     observers[context.requestID] = Task { [weak self] in
       do {
         let result = try await context.value
+        let value = try JSONValue.sdkToolResult(
+          content: result.content, structuredContent: result.structuredContent,
+          isError: result.isError, meta: result._meta)
         await self?.finishStartedRequest(
           gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
-          kind: result.isError == true ? "request.error_result" : "request.completed"
+          kind: result.isError == true ? "request.error_result" : "request.completed",
+          result: value, failed: result.isError == true
         )
       } catch is CancellationError {
         await self?.finishStartedRequest(
           gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
-          kind: "request.cancelled"
+          kind: "request.outcome_unknown"
         )
       } catch {
         await self?.finishStartedRequest(
           gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
-          kind: "request.failed"
+          kind: "request.outcome_unknown"
         )
       }
     }
@@ -716,25 +859,40 @@ private actor MCPProxyConnection {
     ])
   }
 
-  func readEvents(afterCursor: Int, maxResults: Int) async throws -> JSONValue {
+  func readEvents(afterCursor: Int, maxResults: Int, sessionID: String?) throws -> JSONValue {
     guard afterCursor >= 0 else {
       throw GatewayToolError.invalidArguments("after_cursor must be zero or greater.")
     }
     guard (1...500).contains(maxResults) else {
       throw GatewayToolError.invalidArguments("max_results must be between 1 and 500.")
     }
-    try await ensureConnected()
-
+    guard sessionID == nil || sessionID == eventSessionID else {
+      throw GatewayToolError.invalidArguments(
+        "[cursor.session_mismatch] This cursor belongs to another MCP session. Read from after_cursor 0 without session_id to obtain the current retained range."
+      )
+    }
+    guard afterCursor < nextEventCursor else {
+      throw GatewayToolError.invalidArguments(
+        "[cursor.out_of_range] after_cursor exceeds the latest event in this MCP session.")
+    }
     let oldestCursor = events.first?.cursor ?? nextEventCursor
     let missedEvents = max(0, oldestCursor - afterCursor - 1)
     let selected = events.filter { $0.cursor > afterCursor }.prefix(maxResults)
     let nextCursor = selected.last?.cursor ?? max(afterCursor, nextEventCursor - 1)
     return .object([
       "server": .string(server.id),
+      "session_id": .string(eventSessionID),
+      "session_verified": .bool(sessionID != nil),
+      "cursor_state": .string(
+        missedEvents > 0 ? "truncated" : (sessionID != nil ? "valid" : "unbound")),
+      "reset_required": .bool(false),
       "after_cursor": .number(Double(afterCursor)),
       "next_cursor": .number(Double(nextCursor)),
+      "oldest_available_cursor": .number(Double(oldestCursor)),
+      "latest_event_cursor": .number(Double(nextEventCursor - 1)),
       "events": .array(selected.map(\.json)),
       "missed_events": .number(Double(missedEvents)),
+      "has_more": .bool(nextCursor < nextEventCursor - 1),
       "persistent_session": .bool(true),
     ])
   }
@@ -750,32 +908,83 @@ private actor MCPProxyConnection {
   }
 
   func cancelRequest(gatewayRequestID: String, reason: String) async throws -> JSONValue {
-    guard let active = activeRequests.removeValue(forKey: gatewayRequestID) else {
+    guard var active = activeRequests[gatewayRequestID] else {
       throw GatewayToolError.invalidArguments(
         "Unknown active downstream MCP request id: \(gatewayRequestID)"
       )
     }
-    try await client.cancelRequest(active.downstreamRequestID, reason: reason)
-    appendEvent(kind: "request.cancelled")
+    if !active.cancellationRequested {
+      let observesResponse = observers[active.downstreamRequestID] != nil
+      active.cancellationRequested = true
+      activeRequests[gatewayRequestID] = active
+      appendEvent(kind: "request.cancellation_requested", requestID: gatewayRequestID)
+      do {
+        if active.retainsResult {
+          try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+            $0.cancellation = "requested"
+          }
+        }
+        if observesResponse {
+          // A detached call remains observable after a stop request. A native
+          // response can establish its outcome, but notification delivery cannot.
+          try await client.notify(
+            CancelledNotification.message(
+              .init(requestId: active.downstreamRequestID, reason: reason)))
+        } else {
+          // End the synchronous wait without claiming that remote execution ended.
+          try await client.cancelRequest(active.downstreamRequestID, reason: reason)
+        }
+        if active.retainsResult {
+          try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+            $0.cancellation = "sent"
+          }
+        }
+        appendEvent(kind: "request.cancellation_sent", requestID: gatewayRequestID)
+      } catch {
+        if activeRequests[gatewayRequestID]?.downstreamRequestID == active.downstreamRequestID {
+          activeRequests[gatewayRequestID]?.cancellationRequested = false
+        }
+        appendEvent(kind: "request.cancellation_failed", requestID: gatewayRequestID)
+        if active.retainsResult {
+          try? journal.update(serverID: server.id, requestID: gatewayRequestID) {
+            $0.cancellation = "failed"
+          }
+        }
+        throw error
+      }
+    }
     return .object([
       "server": .string(server.id),
       "request_id": .string(gatewayRequestID),
-      "cancelled": .bool(true),
-      "reason": .string(reason),
+      "cancellation_requested": .bool(true),
+      "execution_stopped": .null,
     ])
   }
 
   private func finishStartedRequest(
-    gatewayRequestID: String, downstreamRequestID: MCP.ID, kind: String
+    gatewayRequestID: String, downstreamRequestID: MCP.ID, kind: String,
+    result: JSONValue? = nil, failed: Bool = false
   ) {
     observers.removeValue(forKey: downstreamRequestID)
-    // Cancellation releases the gateway ID for reuse. Completion of its old
-    // native request must not remove a later request with that same gateway ID.
+    // Only the matching native request may end this gateway request's observation.
     guard activeRequests[gatewayRequestID]?.downstreamRequestID == downstreamRequestID else {
       return
     }
     activeRequests.removeValue(forKey: gatewayRequestID)
-    appendEvent(kind: kind)
+    do {
+      try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+        if let result {
+          try $0.finish(result: result, failed: failed)
+        } else {
+          $0.state = .outcomeUnknown
+          $0.completedAt = Date()
+        }
+      }
+      appendEvent(kind: kind, requestID: gatewayRequestID)
+    } catch {
+      lastError = "The execution outcome could not be persisted; do not replay this request."
+      appendEvent(kind: "request.storage_failed", requestID: gatewayRequestID)
+    }
   }
 
   func disconnect() async -> Bool {
@@ -785,7 +994,17 @@ private actor MCPProxyConnection {
     startup?.cancel()
     let requests = Array(activeRequests.values)
     let observers = Array(observers.values)
+    let retainedRequests = requests.filter(\.retainsResult)
     connected = false
+    for request in retainedRequests {
+      do {
+        try journal.update(serverID: server.id, requestID: request.gatewayRequestID) {
+          $0.state = .outcomeUnknown
+          $0.completedAt = Date()
+          $0.cleanup = "pending"
+        }
+      } catch { lastError = "Execution receipt storage failed during disconnect." }
+    }
     activeRequests.removeAll()
     let task = Task { [client, transport, predecessor] in
       let cancellation = Task {
@@ -817,6 +1036,13 @@ private actor MCPProxyConnection {
     }
     closeTask = task
     let confirmed = await task.value
+    for request in retainedRequests {
+      do {
+        try journal.update(serverID: server.id, requestID: request.gatewayRequestID) {
+          $0.cleanup = transport is MCPChildProcessTransport && confirmed ? "confirmed" : "unknown"
+        }
+      } catch { lastError = "Execution cleanup could not be persisted." }
+    }
     connectTask = nil
     self.terminationObserver = nil
     self.observers.removeAll()
@@ -924,8 +1150,9 @@ private actor MCPProxyConnection {
     toolsChanged()
   }
 
-  private func appendEvent(kind: String) {
-    events.append(Event(cursor: nextEventCursor, kind: kind, timestamp: Date()))
+  private func appendEvent(kind: String, requestID: String? = nil) {
+    events.append(
+      Event(cursor: nextEventCursor, kind: kind, timestamp: Date(), requestID: requestID))
     nextEventCursor += 1
     if events.count > 512 {
       events.removeFirst(events.count - 512)

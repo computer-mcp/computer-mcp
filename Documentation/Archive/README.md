@@ -3,6 +3,6 @@
 This directory holds retired, non-current documentation retained for historical
 reference.
 
-There is no archived material in the current baseline. Archived documents must
-state that they are no longer authoritative and link to current architecture
-truth when possible.
+- [Productization candidate evidence — 1.0.29](ProductizationCandidateEvidence1.0.29.md):
+  immutable candidate succession and pre-publication audit evidence, not current
+  acceptance status or release authorization.

@@ -15,14 +15,6 @@ actor MCPBoundHostServices {
   private let canonicalRoot: String
   private var closed = false
   private var auditInvocation: MCPHostInvocation?
-  private struct IssuedClaim {
-    let claim: CodexElevationClaim
-    let runtimeID: String
-    let invocationID: UUID
-    let requestedThreadID: String?
-  }
-  private var claims: [String: IssuedClaim] = [:]
-  private var consumedGrants: [String: Set<String>] = [:]
   private var registrations: [String: UUID] = [:]
   private var removalInvocations: [String: UUID] = [:]
 
@@ -46,7 +38,6 @@ actor MCPBoundHostServices {
     let identifier: JSONValue = .object([
       "type": .string("string"), "minLength": .number(1), "maxLength": .number(1024),
     ])
-    let optionalID = identifier
     let worktree: JSONValue = .object(["type": .string("object")])
     func tool(
       _ name: String, _ description: String, _ properties: [String: JSONValue],
@@ -67,35 +58,6 @@ actor MCPBoundHostServices {
     }
     return [
       tool(
-        "host.elevation.claim",
-        "Claim an already locally approved grant for the matching live start invocation. Does not create or approve grants.",
-        [
-          "runtime_id": identifier,
-          "action": .object([
-            "type": .string("string"),
-            "enum": .array([.string("thread-start"), .string("turn-start")]),
-          ]), "thread_id": optionalID,
-        ], ["runtime_id", "action"]),
-      tool(
-        "host.elevation.commit",
-        "Activate this connection's claim while its original gateway invocation remains authorized.",
-        [
-          "claim_id": identifier, "runtime_id": identifier, "thread_id": identifier,
-          "turn_id": optionalID,
-        ], ["claim_id", "runtime_id", "thread_id"]),
-      tool(
-        "host.elevation.invalidate_claim", "Invalidate only a claim issued to this connection.",
-        ["claim_id": identifier, "reason": identifier], ["claim_id", "reason"]),
-      tool(
-        "host.elevation.invalidate",
-        "Invalidate consumed runtime grants or this connection's grants for its live thread-release invocation.",
-        [
-          "runtime_ids": .object([
-            "type": .string("array"), "items": identifier, "maxItems": .number(128),
-            "uniqueItems": .bool(true),
-          ]), "thread_id": optionalID, "reason": identifier,
-        ], ["runtime_ids", "reason"]),
-      tool(
         "host.workspaces.register",
         "Atomically register the verified derived directory and its source profile grant during provisioning.",
         ["worktree": worktree], ["worktree"]),
@@ -109,7 +71,7 @@ actor MCPBoundHostServices {
         ["worktree": worktree], ["worktree"]),
       tool(
         "host.diagnostics.snapshot",
-        "Return bounded audits and grant metadata for the currently executing diagnostic request's immutable scope.",
+        "Return bounded audit metadata for the currently executing diagnostic request's immutable scope.",
         [
           "limit": .object([
             "type": .string("integer"), "minimum": .number(1), "maximum": .number(1000),
@@ -121,7 +83,6 @@ actor MCPBoundHostServices {
   func call(name: String, arguments: [String: JSONValue]) throws -> MCP.CallTool.Result {
     guard !closed else { throw MCPError.connectionClosed }
     // Rollback/removal authority lasts only for its forwarded invocation.
-    // Elevation records remain owned until their database cleanup is confirmed.
     let live = Set(directory.active(workspaceID: context.workspace.id, origin: origin).map(\.id))
     registrations = registrations.filter { live.contains($0.value) }
     removalInvocations = removalInvocations.filter { live.contains($0.value) }
@@ -141,10 +102,6 @@ actor MCPBoundHostServices {
       try validateSourceIdentity()
       let result: JSONValue
       switch name {
-      case "host.elevation.claim": result = try claim(arguments)
-      case "host.elevation.commit": result = try commit(arguments)
-      case "host.elevation.invalidate_claim": result = try invalidateClaim(arguments)
-      case "host.elevation.invalidate": result = try invalidate(arguments)
       case "host.workspaces.register": result = try register(arguments)
       case "host.workspaces.authorize_removal": result = try authorizeRemoval(arguments)
       case "host.workspaces.unregister": result = try unregister(arguments)
@@ -160,7 +117,7 @@ actor MCPBoundHostServices {
         name: name, decision: .allowed, start: started, arguments: arguments, result: payload)
       return try .init(content: [], structuredContent: payload.sdkValue, isError: false)
     } catch {
-      let message = CodexApprovalRedactor.redactString(
+      let message = HostApprovalRedactor.redactString(
         error.localizedDescription, maximumCharacters: 1024)
       try? audit(name: name, decision: .denied, start: started, arguments: arguments, result: nil)
       return .init(
@@ -171,39 +128,21 @@ actor MCPBoundHostServices {
     }
   }
 
-  var cleanupConfirmed: Bool { closed && claims.isEmpty && consumedGrants.isEmpty }
+  var cleanupConfirmed: Bool { closed }
 
   func close() {
     closed = true
-    for (id, issued) in claims {
-      do {
-        try database.invalidateCodexElevationClaim(
-          issued.claim, reason: "Owning plugin connection closed.", now: now())
-        claims.removeValue(forKey: id)
-      } catch {
-        // Keep the exact owned record available for a bounded caller retry.
-      }
-    }
-    for (id, runtimeIDs) in consumedGrants {
-      do {
-        try invalidateOwnedGrant(
-          id: id, runtimeIDs: runtimeIDs, reason: "Owning plugin connection closed.")
-        consumedGrants.removeValue(forKey: id)
-      } catch {
-        // A failed invalidation must not become a successful retirement.
-      }
-    }
     registrations.removeAll()
     removalInvocations.removeAll()
   }
 
-  private var owner: CodexRuntimeOwner {
+  private var owner: MCPHostServiceOwner {
     .init(
       workspaceID: context.workspace.id, profileID: context.profileID.rawValue,
       caller: context.caller.rawValue, transport: context.transportTrace?.transport,
       socketConnectionID: context.transportTrace?.socketConnectionID,
       tunnelInstanceID: context.transportTrace?.tunnelInstanceID,
-      tunnelProfileID: context.transportTrace?.tunnelProfileID)
+      tunnelProfileID: context.transportTrace?.tunnelProfileID, principalID: context.principalID)
   }
 
   private func validateSourceIdentity() throws {
@@ -225,152 +164,6 @@ actor MCPBoundHostServices {
     return invocation
   }
 
-  private func startInvocation(action: CodexElevationAction, threadID: String?) throws
-    -> MCPHostInvocation
-  {
-    guard !context.readOnly else {
-      throw MCPHostServiceError.denied("Read-only host scope cannot consume elevation.")
-    }
-    let method = action == .threadStart ? "thread/start" : "turn/start"
-    let direct = action == .threadStart ? "codex.app.thread.start" : "codex.app.turn.start"
-    return try invocation([direct, "codex.app.methods.call"]) { invocation in
-      let raw = invocation.reference.toolName == "codex.app.methods.call"
-      guard !raw || invocation.arguments["method"] == .string(method) else { return false }
-      let arguments =
-        raw ? invocation.arguments["params"]?.objectValue ?? [:] : invocation.arguments
-      if action == .threadStart { return threadID == nil }
-      return arguments[raw ? "threadId" : "thread_id"] == threadID.map(JSONValue.string)
-    }
-  }
-
-  private func claim(_ args: [String: JSONValue]) throws -> JSONValue {
-    guard claims.count < 128, consumedGrants.count < 128 else {
-      throw MCPHostServiceError.denied("Host claim bound reached.")
-    }
-    let runtime = try Self.string("runtime_id", args)
-    guard let action = CodexElevationAction(rawValue: try Self.string("action", args)) else {
-      throw MCPHostServiceError.denied("Unknown elevation action.")
-    }
-    let thread = try Self.optional("thread_id", args)
-    let current = try startInvocation(action: action, threadID: thread)
-    guard !claims.values.contains(where: { $0.invocationID == current.id }) else {
-      throw MCPHostServiceError.denied("This invocation already holds a claim.")
-    }
-    guard let connection = owner.elevationConnectionID else { return .null }
-    guard
-      let claim = try database.claimCodexElevationGrant(
-        workspaceID: context.workspace.id,
-        canonicalRoot: canonicalRoot, profileID: context.profileID.rawValue,
-        requestingCaller: context.caller.rawValue,
-        requestingConnectionID: connection, threadID: thread, runtimeID: runtime, action: action,
-        now: now())
-    else { return .null }
-    claims[claim.id] = IssuedClaim(
-      claim: claim, runtimeID: runtime, invocationID: current.id, requestedThreadID: thread)
-    return .object([
-      "id": .string(claim.id), "action": .string(claim.action.rawValue), "grant": claim.grant.json,
-    ])
-  }
-
-  private func commit(_ args: [String: JSONValue]) throws -> JSONValue {
-    let id = try Self.string("claim_id", args)
-    let runtime = try Self.string("runtime_id", args)
-    let thread = try Self.string("thread_id", args)
-    let turn = try Self.optional("turn_id", args)
-    guard let issued = claims[id], issued.runtimeID == runtime else {
-      throw MCPHostServiceError.denied("The claim is not owned by this connection/runtime.")
-    }
-    let current = try startInvocation(
-      action: issued.claim.action, threadID: issued.requestedThreadID)
-    guard current.id == issued.invocationID,
-      issued.requestedThreadID == nil || issued.requestedThreadID == thread,
-      issued.claim.action == .threadStart || turn != nil
-    else {
-      throw MCPHostServiceError.denied("The originating invocation or activation response changed.")
-    }
-    try database.reconcileCodexElevationGrants(now: now())
-    let record = try database.commitCodexElevationClaim(
-      issued.claim, runtimeID: runtime,
-      threadID: thread, turnID: turn, now: now())
-    claims.removeValue(forKey: id)
-    consumedGrants[record.id, default: []].insert(runtime)
-    return record.json
-  }
-
-  private func invalidateClaim(_ args: [String: JSONValue]) throws -> JSONValue {
-    let id = try Self.string("claim_id", args)
-    guard let issued = claims[id] else {
-      throw MCPHostServiceError.denied("No matching claim belongs to this connection.")
-    }
-    try database.invalidateCodexElevationClaim(
-      issued.claim, reason: Self.string("reason", args), now: now())
-    claims.removeValue(forKey: id)
-    return .object(["invalidated": .bool(true)])
-  }
-
-  private func invalidate(_ args: [String: JSONValue]) throws -> JSONValue {
-    guard let values = args["runtime_ids"]?.arrayValue, values.count <= 128 else {
-      throw MCPHostServiceError.denied("Invalid runtime selector.")
-    }
-    let runtimes = try Set(
-      values.map { value -> String in
-        guard let id = value.stringValue, Self.valid(id) else {
-          throw MCPHostServiceError.denied("Invalid runtime identity.")
-        }
-        return id
-      })
-    let thread = try Self.optional("thread_id", args)
-    let reason = try Self.string("reason", args)
-    guard !runtimes.isEmpty || thread != nil else {
-      throw MCPHostServiceError.denied("An exact runtime or thread selector is required.")
-    }
-    var count = 0
-    if let thread {
-      _ = try invocation(["codex.app.thread.release"]) {
-        $0.arguments["thread_id"] == .string(thread)
-      }
-      guard let connection = owner.elevationConnectionID else {
-        throw MCPHostServiceError.denied("Thread release requires a bound connection.")
-      }
-      count += try database.invalidateCodexElevationGrants(
-        workspaceID: context.workspace.id, profileID: context.profileID.rawValue,
-        requestingConnectionID: connection, requestingCaller: context.caller.rawValue,
-        threadID: thread, reason: reason, now: now())
-    }
-    for (id, owned) in consumedGrants {
-      guard let record = try database.codexElevationGrant(id: id),
-        (!runtimes.isEmpty && !runtimes.isDisjoint(with: owned))
-          || (thread != nil && record.threadID == thread)
-      else { continue }
-      guard record.state.isEffective else {
-        consumedGrants.removeValue(forKey: id)
-        continue
-      }
-      try invalidateOwnedGrant(id: id, runtimeIDs: owned, reason: reason)
-      consumedGrants.removeValue(forKey: id)
-      count += 1
-    }
-    return .object(["invalidated": .number(Double(count))])
-  }
-
-  private func invalidateOwnedGrant(id: String, runtimeIDs: Set<String>, reason: String) throws {
-    _ = try database.updateCodexElevationGrant(id: id) { grant in
-      guard grant.workspaceID == context.workspace.id,
-        grant.profileID == context.profileID.rawValue,
-        grant.requestingCaller == context.caller.rawValue,
-        grant.requestingConnectionID == owner.elevationConnectionID,
-        !runtimeIDs.isDisjoint(with: grant.consumedRuntimeIDs)
-      else { throw MCPHostServiceError.denied("Grant ownership changed.") }
-      guard grant.state.isEffective else { return }
-      grant.state = .invalidated
-      grant.resolvedAt = now()
-      grant.updatedAt = now()
-      grant.resolutionReason = CodexApprovalRedactor.redactString(reason, maximumCharacters: 512)
-      grant.inFlightClaimID = nil
-      grant.inFlightAction = nil
-    }
-  }
-
   private func snapshot(_ args: [String: JSONValue]) throws -> JSONValue {
     guard let limit = args["limit"]?.intValue, (1...1000).contains(limit) else {
       throw MCPHostServiceError.denied("Diagnostic limit must be 1...1000.")
@@ -379,15 +172,10 @@ actor MCPBoundHostServices {
       ($0.arguments["limit"]?.intValue ?? 100) >= limit
     }
     var execution = ExecutionContext(
-      caller: context.caller, profileID: context.profileID, transportTrace: context.transportTrace)
+      caller: context.caller, profileID: context.profileID, transportTrace: context.transportTrace,
+      trustedPrincipalID: context.verifiedPrincipalID)
     execution.workspaceID = context.workspace.id
     let audits = try database.hostDiagnosticAudits(context: execution, limit: limit)
-    let grants = try CodexElevationGrantService.visibleGrants(
-      owner: owner, database: database, limit: limit, now: now()
-    ).filter {
-      $0.profileID == context.profileID.rawValue && $0.requestingCaller == context.caller.rawValue
-        && $0.requestingConnectionID == owner.elevationConnectionID
-    }
     return .object([
       "owner": try JSONValue.encoded(owner),
       "recent_tool_audits": .array(
@@ -417,20 +205,13 @@ actor MCPBoundHostServices {
             "output_digest": audit.outputDigest.map(JSONValue.string) ?? .null,
           ])
         }),
-      "elevation_grants": .array(
-        grants.map { grant in
-          var value = grant.json.objectValue ?? [:]
-          // Diagnostic readers must not learn an activation handle currently in flight.
-          value["in_flight_claim_id"] = grant.inFlightClaimID == nil ? .null : .string("in-flight")
-          return .object(value)
-        }),
     ])
   }
 
   private func register(_ args: [String: JSONValue]) throws -> JSONValue {
     let record = try derived(args)
     let active = try provisionInvocation(record)
-    guard !context.readOnly, registrations.count < 128 else {
+    guard registrations.count < 128 else {
       throw MCPHostServiceError.denied("Derived registration is unavailable in this scope.")
     }
     try verifyGit(record)
@@ -443,12 +224,13 @@ actor MCPBoundHostServices {
         origin: origin, receiptID: record.id,
         sourceWorkspaceID: context.workspace.id, sourceRoot: canonicalRoot,
         receiptDigest: try record.digest(),
-        profileID: context.profileID, caller: context.caller,
+        profileID: context.profileID, principalID: context.principalID, caller: context.caller,
         workspace: .init(
           id: record.workspaceID, displayName: record.branch, rootPath: record.path,
           createdAt: now(), updatedAt: now()))
     }
-    try database.registerDerivedWorkspace(registration)
+    try database.registerDerivedWorkspace(
+      registration, verifiedPrincipalID: context.principalID, caller: context.caller)
     registrations[record.id] = active.id
     return .object(["registered": .bool(true), "workspace_id": .string(record.workspaceID)])
   }
@@ -511,7 +293,11 @@ actor MCPBoundHostServices {
       try requireTicket(active)
       try verifyRemovedGit(record)
     }
-    if let old { try database.unregisterDerivedWorkspace(old) }
+    if let old {
+      try database.unregisterDerivedWorkspace(
+        old, verifiedPrincipalID: context.principalID, caller: context.caller,
+        allowRevokedSourceForRollback: record.state == "provisioning")
+    }
     return .object(["unregistered": .bool(true), "workspace_id": .string(record.workspaceID)])
   }
 
@@ -530,6 +316,7 @@ actor MCPBoundHostServices {
     guard let id = invocation.ticketID, let ticket = try database.operationTicket(id: id),
       ticket.state == .executing, ticket.invocationID == invocation.ticketInvocationID,
       ticket.parentRequestID == invocation.parentRequestID,
+      invocation.context.principalID == context.principalID,
       ticket.workspaceID == context.workspace.id, ticket.profileID == context.profileID,
       ticket.caller == context.caller, ticket.capabilityID == invocation.upstreamName
     else {
@@ -543,8 +330,9 @@ actor MCPBoundHostServices {
     }
     let record = try DerivedIdentity(object)
     guard let root = context.managedWorkspaceRoot,
+      context.verifiedPrincipalID == context.principalID,
       record.sourceWorkspaceID == context.workspace.id, record.sourceRoot == canonicalRoot,
-      record.profileID == context.profileID.rawValue, record.caller == context.caller.rawValue,
+      record.profileID == context.profileID.rawValue, record.principalID == context.principalID,
       record.workspaceID == "codex-worktree-" + record.id,
       UUID(uuidString: record.id)?.uuidString.lowercased() == record.id
     else {
@@ -566,7 +354,8 @@ actor MCPBoundHostServices {
     throws
   {
     guard old.origin == origin, old.sourceWorkspaceID == context.workspace.id,
-      old.profileID == context.profileID, old.caller == context.caller,
+      old.profileID == context.profileID, old.principalID == context.verifiedPrincipalID,
+      old.principalID != nil,
       old.receiptID == record.id, old.receiptDigest == (try record.digest())
     else {
       throw MCPHostServiceError.denied(
@@ -671,6 +460,7 @@ actor MCPBoundHostServices {
     let branch: String
     let parentLeaseID: String
     let profileID: String
+    let principalID: String
     let caller: String
     let revision: Int
     let state: String
@@ -684,6 +474,7 @@ actor MCPBoundHostServices {
       branch = try string("branch", value)
       parentLeaseID = try string("parent_lease_id", value)
       profileID = try string("profile_id", value)
+      principalID = try string("principal_id", value)
       caller = try string("caller", value)
       state = try string("state", value)
       guard let number = value["revision"]?.intValue, (1...1_000_000).contains(number) else {
@@ -710,10 +501,6 @@ actor MCPBoundHostServices {
     }
     return value
   }
-  private static func optional(_ key: String, _ object: [String: JSONValue]) throws -> String? {
-    guard object[key] != nil else { return nil }
-    return try string(key, object)
-  }
   private static func digest(_ value: JSONValue) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
@@ -724,15 +511,18 @@ actor MCPBoundHostServices {
     arguments: [String: JSONValue], result: JSONValue?
   ) throws {
     let duration = start.duration(to: .now)
+    let trace = auditInvocation?.context.transportTrace ?? context.transportTrace
     try database.recordAudit(
       .init(
         requestID: "host-service:" + UUID().uuidString,
         invocationID: auditInvocation?.ticketInvocationID,
         parentRequestID: auditInvocation?.context.requestID, ticketID: auditInvocation?.ticketID,
-        caller: context.caller, transport: context.transportTrace?.transport,
-        socketConnectionID: context.transportTrace?.socketConnectionID,
-        tunnelInstanceID: context.transportTrace?.tunnelInstanceID,
-        tunnelProfileID: context.transportTrace?.tunnelProfileID, profileID: context.profileID,
+        caller: context.caller,
+        principalDigest: AuditEvent.verifiedPrincipalDigest(context.verifiedPrincipalID),
+        transport: trace?.transport,
+        socketConnectionID: trace?.socketConnectionID,
+        tunnelInstanceID: trace?.tunnelInstanceID,
+        tunnelProfileID: trace?.tunnelProfileID, profileID: context.profileID,
         workspaceID: context.workspace.id, capabilityID: name, decision: decision,
         errorCode: decision == .allowed ? nil : "host.service_denied",
         durationMilliseconds: Int(duration.components.seconds * 1000),

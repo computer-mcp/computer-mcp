@@ -1,20 +1,12 @@
 # Production Productization Acceptance Contract
 
-This document is the normative acceptance contract for the production-grade
-Computer MCP productization batch. It preserves the complete currently accepted
-scope in a repository-owned form so implementation, review, release, and a
-cold-start maintainer can evaluate the same outcome without access to the
-planning conversation.
-
-The focused reliability release following v1.0.27 is one indivisible
-`computer-mcp` source, App, CLI, documentation, validation, and publication
-batch. A passing subset is progress evidence, not permission to publish.
-
-The release does not broaden the product or website. The already accepted
-`computer-mcp.github.io` product site remains a separate repository and is not
-edited, rebound, redeployed, or used as a release gate for this hardening batch
-unless a security or capability statement becomes factually inaccurate.
-v1.0.27 and all rejected historical candidates remain immutable.
+This document states the product's reliability and security acceptance contract.
+The [runtime architecture](../Architecture/Runtime.md) defines implementation
+ownership: the host owns routing, policy, workspace access and audit; the
+independent [Codex plugin](https://github.com/computer-mcp/plugin-codex) owns
+App Server, Exec and their domain lifecycles through `swift-codex`.
+Codex lifecycle and approval tests belong to that plugin; gateway and integrated
+host-boundary tests belong here. A tool schema alone is not execution evidence.
 
 ## Product contract
 
@@ -47,9 +39,10 @@ as experimental.
 The following are observable product failures to prevent, independent of their
 eventual root cause:
 
-- **O1 — orphaned App Server:** a replaced gateway, tunnel, connection, or
-  runtime must not leave an older Computer MCP-owned Codex App Server holding a
-  writer lease or rollout/session file.
+- **O1 — orphaned App Server:** listener shutdown or explicit runtime release
+  must not leave a Computer MCP-owned App Server holding a writer lease or
+  rollout/session file. Transport reconnect retains the verified subject's
+  owned runtime until its explicit lifecycle ends.
 - **O2 — opaque ownership:** an operator must be able to identify the Computer
   MCP runtime, process group, connection generation, thread state, active turn,
   and approval state involved in a handoff.
@@ -64,10 +57,9 @@ eventual root cause:
 - **O6 — false handoff success:** a successful unsubscribe must not be reported
   as a completed handoff while any live Computer MCP runtime still loads or
   owns the thread.
-- **O7 — unusable safe default:** the default Codex sandbox remains
-  `workspace-write`, but a trusted workflow must be able to request a bounded,
-  locally approved Full Access grant that actually applies at a future eligible
-  thread/turn start.
+- **O7 — distorted native permissions:** omitted execution settings must follow
+  Codex configuration, including a native Full Access default; explicit native
+  sandbox and approval settings must reach Codex faithfully.
 - **O8 — unbounded supervision:** ordinary progress checks must not require a
   complete read of a very large persisted rollout.
 - **O9 — ambiguous runtime state:** a request timeout must not become a terminal
@@ -75,7 +67,7 @@ eventual root cause:
 - **O10 — ambiguous artifact identity:** a development or validation DMG must
   never masquerade as the exact published release asset.
 
-## Focused reliability and execution-control contract
+## Reliability and execution-control contract
 
 The handoff operation is a transaction across all matching Computer MCP-owned
 runtimes. It binds workspace and thread, serializes against new starts, requires
@@ -87,19 +79,16 @@ unchanged persisted Goal/history, and immediate claimability by another
 official client. The operation is idempotent and never signals an unverified
 external process.
 
-Codex Full Access is a separate durable grant, not a manifest default and not a
-Computer MCP capability grant. The request binds canonical workspace,
-workspace id, profile, caller, connection, optional exact thread, reason,
-duration, turn count, and mode. Only a local administrator can approve or deny
-the exact request. Approval never changes an active turn; the next eligible
-`thread/start` or `turn/start` atomically claims the grant, uses the official
-`dangerFullAccess` sandbox, and records successful consumption. A start that
-cannot produce a confirmed response and durable consumption receipt invalidates
-the claim and stops its exact owned runtime rather than making ambiguous access
-reusable. Expiry, revocation, restart reconciliation, workspace or
-profile disablement/removal, provider shutdown, and handoff remove future
-effect. Default, mismatched, aliased, nested, or caller-supplied Full Access
-still fails closed.
+Codex owns its native execution configuration and approvals. Omitted settings
+inherit that configuration; explicit supported settings retain their official
+meaning. Full Access can be a native default or an explicit override, and the
+initial workspace directory does not constrain its operating-system access.
+Computer MCP separately authorizes access to the adapter and any host tools
+called by Codex. Host denial is explicit and cannot silently downgrade a native
+request. Host risk approvals bind the verified subject, workspace, arguments,
+provider, target state and authorization revision, with single consumption;
+revocation invalidates pending approvals without implicitly stopping unrelated
+in-flight work.
 
 Long-thread supervision must use a read-only, canonical-workspace-validated,
 bounded rollout-tail reader with snapshot cursors. It returns metadata, native
@@ -158,10 +147,13 @@ Every Computer MCP-owned App Server must satisfy:
 - **B1** stable runtime instance ID;
 - **B2** observable App Server PID, supervisor PID, parent PID, process group,
   workspace, profile, connection, transport, creation time, and state;
-- **B3** normal session closure terminates and reaps the owned process tree;
-- **B4** abnormal socket or tunnel closure terminates and reaps it;
-- **B5** session replacement cannot silently retain the preceding generation;
-- **B6** a timed-out connection is closed and reaped before replacement;
+- **B3** listener shutdown terminates and reaps the owned process tree;
+- **B4** socket or tunnel reconnect retains execution ownership for the same
+  verified subject without granting another subject access;
+- **B5** runtime replacement cannot silently transfer control from an older
+  instance; unresolved receipts remain explicitly unknown;
+- **B6** transport timeout and cancellation delivery remain distinct from
+  execution termination and confirmed process cleanup;
 - **B7** shutdown is idempotent;
 - **B8** Computer MCP parent termination does not orphan the process tree;
 - **B9** a generation cannot control an earlier generation's runtime;
@@ -219,16 +211,15 @@ the broker must:
 - **D2** record request kind, normalized redacted details, risk, workspace,
   runtime, thread, turn, correlation IDs, timeout, and proposed action;
 - **D3** expose list, read, and respond operations;
-- **D4** support approve once;
-- **D5** support upstream-bounded session approval only where policy and the
-  official protocol allow it;
-- **D6** support deny and timeout;
+- **D4** preserve the official acceptance response and its requested scope;
+- **D5** preserve supported upstream session and permission-scope semantics;
+- **D6** support official rejection and cancellation, and report timeout;
 - **D7** retain a terminal audit receipt;
 - **D8** redact credentials and sensitive payloads;
-- **D9** reject requests that expand outside registered workspaces or granted
-  capabilities;
-- **D10** permit automatic approval only for explicitly configured, bounded,
-  low-risk operations;
+- **D9** enforce host capabilities and workspace restrictions when Codex calls
+  host tools; apply Codex's own sandbox semantics to native coding execution;
+- **D10** apply native Codex approval configuration to native requests and the
+  independently configured host confirmation policy to host operations;
 - **D11** surface MCP elicitation without treating it as a permission bypass;
 - **D12** preserve interrupted records across restart while truthfully stating
   that the original live upstream request cannot be resumed.
@@ -414,10 +405,10 @@ interruption/recovery semantics.
 - **T-G4** reject concurrent run or lease revisions;
 - **T-G5** reconcile only selected accepted child evidence.
 
-### Focused hardening matrix
+### Reliability matrix
 
-The follow-up reliability release adds these 44 mandatory automated evidence
-cases. They are one matrix; a passing subset is not a release gate.
+These 44 automated cases define the reliability matrix. A passing subset does
+not establish coverage of the complete matrix.
 
 Handoff and runtime ownership:
 
@@ -435,23 +426,23 @@ Handoff and runtime ownership:
 12. A user-input request does not strand a released runtime.
 13. No external Codex process is signalled.
 
-Scoped execution elevation:
+Native execution permissions and host authority:
 
-14. The safe default still rejects unscoped Full Access.
-15. A Secure Tunnel caller cannot self-approve.
-16. Local-admin approval creates an exact scoped grant.
-17. A wrong workspace, profile, thread, or caller is rejected.
-18. An expired or revoked grant is rejected.
-19. An active turn does not hot-switch.
-20. The next eligible start receives Full Access.
-21. A one-turn grant is consumed atomically once.
-22. A TTL grant expires correctly.
-23. Restart reconciliation preserves truthful grant state.
-24. Workspace/profile disablement invalidates the grant.
-25. Alias or nested configuration cannot bypass sandbox validation.
-26. Elevation does not bypass Computer MCP capability policy.
-27. Diagnostics report requested and effective sandbox accurately.
-28. Handoff/release invalidates and safely cleans matching elevated ownership.
+14. Omitted overrides inherit the user's Codex configuration.
+15. Explicit native Full Access reaches the vendor unchanged.
+16. A configured Full Access default applies at a new thread.
+17. Cross-subject host access is rejected before a side effect.
+18. Expired or revoked host approvals cannot execute.
+19. A configuration change does not claim to alter an already running turn.
+20. Explicit native sandbox and approval parameters are preserved.
+21. A host operation ticket is consumed atomically once.
+22. Host approvals retain their fixed expiration.
+23. Restart leaves unresolved native approvals as non-replayable receipts.
+24. Workspace/profile revocation prevents new host calls.
+25. Direct calls, aliases and generic routes enforce the same host authority.
+26. Native Full Access does not grant additional Computer MCP capabilities.
+27. Diagnostics distinguish native overrides from inherited configuration.
+28. Handoff/release cleans the exact owned runtime and subscription.
 
 Bounded long-thread supervision:
 
@@ -479,10 +470,9 @@ Validation cleanup and artifacts:
 44. A release receipt binds commit, tag, checksum, notarization, stapling, and
     published byte identity.
 
-In addition to case 20, cold-start coverage must prove both eligible paths: an
-approved matching grant applies Full Access to a new thread start and to the
-first eligible turn start; the same requests remain safe without a matching
-grant.
+In addition to case 20, cold-start coverage must prove native configuration
+inheritance and explicit overrides at the supported thread and turn entry
+points, without starting a model turn for a read-only history query.
 
 ### Real focused acceptance
 
@@ -492,17 +482,18 @@ starts work, releases it, has no live owner, another official App Server client
 claims it without a writer conflict, releases it back, Computer MCP reclaims it,
 and all temporary runtimes/processes are reaped.
 
-The same disposable acceptance must prove the safe sandbox first, remote grant
-request, exact local approval, unchanged current turn, effective Full Access on
-the next turn, a real Git commit, a controlled local/test network operation,
-revocation, restoration of `workspace-write` on the next turn, release, and no
-surviving elevated grant/runtime. A synthetic or disposable large rollout must
+The same disposable acceptance must prove inherited Full Access and explicit
+native permission overrides, a real Git commit, a controlled loopback network
+operation, a write outside the initial workspace but inside the disposable
+fixture, native read-only denial, and exact owned-runtime cleanup. Host
+approval denial, expiry and revocation must independently prevent host tool
+side effects. A synthetic or disposable large rollout must
 separately prove bounded recent supervision.
 
 After all automated and disposable checks pass, the existing user-nominated
 real workspace/thread workflow is release-blocking and may be exercised only
 with the user's explicit approval. It must preserve the native Goal and history
-while proving scoped elevation, revocation, handoff to the other official
+while proving native execution permissions, handoff to the other official
 client, handoff back to Computer MCP, and no stale ownership. Repository
 documentation must not publish the user's private identifiers.
 
@@ -540,16 +531,16 @@ It must lead with the product rather than package internals or a tool inventory.
 
 ## Independent public website boundary
 
-The `computer-mcp.github.io` product site is already accepted and remains a
-separate repository without a custom domain. This focused batch does not
-redesign, edit, rebind, deploy, or retest it. If a source change would make an
-existing security or capability statement inaccurate, publication stops until
-an explicitly scoped website correction is reviewed. No such correction is
-currently required. Versioned reports retain their historical website evidence.
+The [product site](https://github.com/computer-mcp/computer-mcp.github.io) is a
+separate repository. Changes to its security or capability statements must
+match verified product behavior. Website checks and deployment authorization
+are separate from App acceptance and release authorization. Versioned reports
+retain their historical website evidence.
 
 ## Repository and release quality
 
-The batch requires:
+Repository changes require Q1 and Q4–Q9. Preparing a public release additionally
+requires the versioning, source and artifact controls below:
 
 - **Q1** current implementation plan and this contract remain aligned;
 - **Q2** backwards compatibility or an accepted migration note;
@@ -561,9 +552,9 @@ The batch requires:
 - **Q8** artifact-provenance and protected release-boundary checks;
 - **Q9** independent defect-first review, fixes, and rerun evidence;
 - **Q10** logical Conventional Commits in the source repository;
-- **Q11** a clean isolated source worktree, with the website left unchanged;
-- **Q12** one release-ready hardening batch with no partial publication;
-- **Q13** the focused release uses one candidate only after every local,
+- **Q11** a clean isolated source worktree;
+- **Q12** an accepted complete release scope;
+- **Q13** release preparation uses a candidate only after every applicable local,
   security, disposable-real, authorized-real, documentation, review, and
   cold-start gate passes; after exact published installation it restores the
   prior App-owned state and leaves the local Computer MCP service running.
@@ -580,11 +571,10 @@ A fresh Codex task with only the source repository must be able to:
 - **CS6** run the complete Swift test suite;
 - **CS7** identify stable, experimental, and planned capabilities;
 - **CS8** update one small capability safely;
-- **CS9** identify the website as a separate, already accepted, unchanged surface;
+- **CS9** identify the website as a separately owned repository and deployment;
 - **CS10** identify the controlled release procedure;
-- **CS11** find the exact local-only elevation approval boundary and prove an
-  approved grant affects a new thread/first eligible turn while the default
-  remains safe;
+- **CS11** distinguish native Codex permissions from host operation approval,
+  and prove inherited defaults and explicit native overrides;
 - **CS12** release a disposable thread and interpret ownership diagnostics
   without relying on fixed UI wording;
 - **CS13** supervise a large thread through the bounded recent reader;
@@ -595,52 +585,11 @@ The audit must succeed without the original conversation. Its source-repository 
 must be reviewed and either accepted as part of the batch or cleanly reverted by
 the audit task before final release preparation.
 
-## Candidate succession
+## Evidence ownership
 
-The signed `v1.0.23`, `v1.0.24`, `v1.0.25`, and `v1.0.26` tags and their draft
-releases are immutable unpublished audit records. They must not be moved,
-deleted, replaced, or published. Exact-artifact acceptance rejected 1.0.25 after its installed
-full-catalog run received the multi-megabyte Codex Apps directory notification
-but exceeded the split 30-second read budget before the bounded page arrived.
-The source regression had incorrectly treated that timeout as passing.
-Exact-artifact acceptance rejected 1.0.26 after its completed catalog calls
-exposed non-idempotent missing-thread cleanup and an unbounded validation
-session disconnect after the final audit event.
-
-Version 1.0.28 is the immutable installed baseline for the 1.0.29 unified
-control-plane release, not a candidate to rebuild, interrupt, or republish. The
-1.0.29 source, shared-control, CLI-contract, documentation, metadata,
-CI-equivalent serial regression, and development Universal 2 distribution gates
-have passed, so the single v1.0.29 candidate may now be created. That exact
-candidate must still pass protected-source, notarized-artifact, installed-App,
-catalog, native, Rosetta, ChatGPT, and controlled-publication gates. Evidence
-from an earlier version or a rejected candidate may explain provenance but
-cannot satisfy a v1.0.29 gate.
-
-## Current evidence ledger
-
-This ledger records current proof, not intent. “Partial” means the listed proof
-exists but one or more requirements in that row still lack direct evidence.
-
-| Scope | Current evidence | State |
-| --- | --- | --- |
-| 1.0.29 local control plane | `AppControlPlaneOperations`; exhaustive `AppControlCapabilityCatalog`; owner-only control Socket and CLI mappings; main-actor Accessibility action dispatch; self-target refusal; bounded standard-input secret handling; App/Socket integration tests; CLI/documentation parity | Implemented, serial-regression tested, documented, and verified in an isolated development Universal 2 App/DMG without changing the installed 1.0.28 baseline |
-| O1, B1–B11 | `CodexAppServerProcessTransport.swift`; lifecycle/process-tree, two-workspace, 4 MiB long-lived-response, and immediate-exit final-line tests; serialized and awaited available-chunk stdout framing; one normal end-to-end request budget with a sole read-only retry; one separately configured `app/list` generation; shared bounded retirement; gated `RealCodexAppServerAcceptanceTests` requiring official `skills/list`, a bounded Apps page, teardown, failure-path process reaping and temporary-thread archival, and the two-client resume/archive lifecycle | Current disposable official-client acceptance passed: `skills/list` in 3.045 seconds, bounded Apps listing in 39.981 seconds, approved Full Access at eligible startup in 37.416 seconds, real Git/loopback/revocation in 87.531 seconds, and three-runtime handoff in 53.056 seconds. Temporary diagnostics were archived and cleaned |
-| O2, O6–O10 focused hardening | Transactional multi-runtime handoff/reclaim/diagnostics; durable scoped Full Access grants; bounded rollout-tail supervision; canonical workspace repair; runtime/request-state separation; stale ownership reconciliation; bounded cleanup; worktree safety; artifact and build-identity provenance | All focused automated cases, disposable official-client acceptance, the 30,000-record bounded-read acceptance, final complete source rerun, defect-first review, cold-start source audit, and authorized real vehicleOS run passed. Exact candidate gates remain open |
-| C1–C14 | `codex.app.runtimes.*`, `thread.release`, `thread.reclaim`, `handoff.diagnose`; durable thread-to-workspace ownership receipts; runtime receipt tests; `computer-mcp codex diagnose-thread` and operator references | Implemented, integration-tested, CLI-verified, and operator-documented |
-| D1–D12 | `CodexApprovalBroker.swift`; persisted database records; per-kind, bounded-session, malformed-request, restart-interruption, redaction, timeout, delivery-failure, and policy-boundary tests | Implemented; focused and complete regression reruns passed |
-| E1–E8 | governed built-in Git tools, dynamic policy dispatch, operation tickets, audit correlation; real hook/commit test | Implemented; focused and complete regression reruns passed |
-| F1–F6 | stable `swift-codex` Goal get/set/clear and turn/steer bindings; explicit Computer MCP run naming; architecture, tool, and operator documentation | Implemented, protocol-tested, and documented |
-| G1–G19 | `CodexOrchestration.swift`; persistence, stall, contradiction, redaction, revision, budget, external-blocker, acceptance, and public-tool-surface completion tests | Implemented; focused and complete regression reruns passed |
-| H1–H9 | durable exclusive/isolated leases, parent lineage, selected child evidence reconciliation, and real Git managed-worktree provision/dirty-refusal/removal/branch-race integration tests | Implemented; focused and complete regression reruns passed |
-| I1–I11 | `codex.diagnostics.snapshot`, handoff diagnosis, runtime/process/thread-ownership/approval/run/lease/audit receipts; `computer-mcp codex diagnose-thread|diagnostics`; architecture and troubleshooting references | Implemented, integration-tested, CLI-verified, and operator-documented |
-| J1–J12 | gateway policy/caller/workspace/ticket/audit suites; App/Exec/MCP bounded-runtime tests; universal event and approval redaction; digest-only unsafe protocol IDs; canonical managed-root and symlink-replacement refusal tests; no external-process-control invariant | Implemented; security review and complete regression reruns passed |
-| Swift regression | Final v1.0.29 source format and strict lint passed; the supported-default build passed; root tests passed 827 tests in 52 suites plus 25 App tests in 4 suites; Validation passed 71 tests in 12 suites. The exact automated total is 923 tests. The development Universal 2 App and provenance-bound DMG package gates also passed | Complete for the pre-candidate local source gate. The later protected candidate must rebuild from the clean signed-tag source and pass its own exact-artifact gates |
-| R1–R15 | Product-first English and Simplified Chinese root manuals cover positioning, the 30-second model, use cases, maturity labels, trust and approval, architecture, quick start, Codex ownership, Codex Remote, limitations, troubleshooting, and development | Implemented; DocC, naming, localization, CLI, example, and repository gates passed |
-| Website boundary | Independent sibling repository `computer-mcp.github.io`; reviewed 1.0.27 site remains the accepted public product surface | Outside this focused batch; no source change requires a website text correction, binding, build, or deployment |
-| Q1–Q13 | Strict format/lint, supported-default root and Validation builds, all 923 automated tests, exact focused cases, disposable real Codex acceptance, development Universal 2 App/DMG verification, documentation, complete executable-derived CLI contract, repository and protected release-boundary regressions | All pre-candidate local, security, disposable-real, documentation, review, and authorized vehicleOS gates passed. The single protected signed-tag candidate, notarized artifact, installed exact-artifact, state restoration, live-service checks, and controlled publication remain required |
-| CS1–CS14 | A fresh read-only v1.0.28 audit reconstructed product/trust positioning, provider lifecycles, ownership/handoff, elevation expiry and local approval, cleanup, workspace repair, provenance, release procedure, and the unchanged website boundary. It reported no implementation defect outside the CLI reference; after the executable-derived CLI contract was installed, a new context-free remediation audit concluded: “The CLI remediation gate passes with no remaining source defect.” | Passed for the pre-candidate source gate; authorized vehicleOS and later exact-artifact release checks are separate gates |
-
-The Goal may be completed only when every row is directly proven, the isolated
-source worktree is clean, the website remains unmodified, and the hardening
-batch is release-ready.
+Each validation run records its own source revision, tested surfaces, outcomes,
+skips and cleanup results. Historical evidence cannot satisfy a current gate.
+The [1.0.29 candidate ledger](../Archive/ProductizationCandidateEvidence1.0.29.md)
+owns the earlier candidate succession and pre-publication audit record.
+Local acceptance, release authorization and production deployment are distinct
+decisions; this contract does not authorize any of them by itself.

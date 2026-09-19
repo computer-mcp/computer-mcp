@@ -46,7 +46,13 @@ struct NativeCLITreeIntegrationTests {
       RegisteredWorkspace(id: "native-fixture", displayName: "Native fixture", rootPath: root.path)
     ]
     let configuration = GatewayConfiguration(
-      runtime: .init(caller: .localCLI, profileID: .localAdmin))
+      runtime: .init(caller: .localCLI, profileID: .localAdmin),
+      profiles: [
+        .init(
+          id: .localAdmin, capabilities: ["*"], workspaces: ["native-fixture"],
+          allowedCallers: [.localCLI], fullShellEnabled: true, mode: .localFullAccess,
+          confirmationPolicy: .never)
+      ])
     let runtime = try GatewayRuntime(
       configuration: configuration, registeredWorkspaces: workspaces, plugins: [plugin])
     do {

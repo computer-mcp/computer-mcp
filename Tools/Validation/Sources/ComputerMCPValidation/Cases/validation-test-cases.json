@@ -674,7 +674,7 @@
       "risk_level": "critical"
     },
     {
-      "id": "codex.authority_override_denied",
+      "id": "codex.native_permissions_and_host_boundary",
       "category": "security",
       "transports": [
         "openai_secure_mcp_tunnel"
@@ -683,16 +683,16 @@
         "chatgpt-operate"
       ],
       "prerequisites": [
-        "Codex App Server, Exec, and MCP providers are separately configured."
+        "The independent Codex plugin uses isolated App Server and Exec state with a local model fixture."
       ],
       "steps": [
         {
           "id": "1",
-          "instruction": "Attempt to override reviewed Codex authority or lifecycle fields from an External Consumer call."
+          "instruction": "Verify native Full Access inheritance and explicit native permission overrides on an authorized Codex tool, then revoke the host tool grant and repeat the invocation."
         }
       ],
       "expected_results": [
-        "The override is rejected and no provider lifecycle is crossed."
+        "Authorized calls preserve native permission configuration and overrides; after host revocation the same tool is rejected before execution without silently lowering Codex permissions."
       ],
       "evidence_requirements": [
         {
@@ -703,12 +703,12 @@
         {
           "kind": "request",
           "correlation_key": "request_id",
-          "description": "Rejected Codex request identifier."
+          "description": "Authorized native requests and the host-denied request identifiers."
         },
         {
           "kind": "audit",
           "correlation_key": "audit_event_id",
-          "description": "Authority-denial audit event."
+          "description": "Correlated host authorization and denial audit events."
         },
         {
           "kind": "result",

@@ -1,30 +1,31 @@
+![Computer MCP — Your tools. One conversation.](Assets/Brand/social.png)
+
 # Computer MCP
 
-**A policy-controlled, workspace-scoped local execution gateway for AI agents.**
+**Let ChatGPT use your local tools.**
 
-Computer MCP connects ChatGPT, Codex, and other MCP-compatible clients to
-registered workspaces, CLIs, desktop applications, development tools, and
-optional Codex runtimes—without turning your Mac into an unrestricted remote
-shell.
-
-Use it when an agent needs to do real work on your computer, but access still
-needs an owner, a scope, an approval boundary, and an audit trail.
+Connect CLI tools, Codex, MCP servers and Skills to your conversations. Work
+with local projects and files, run the tools on your Mac, and bring the results
+back into the task—with permissions you choose.
 
 [Get started](#quick-start) · [Product site](https://computer-mcp.github.io/) ·
 [Documentation](Documentation/README.md) ·
 [Latest release](https://github.com/computer-mcp/computer-mcp/releases/latest) ·
 [简体中文](README.zh-CN.md)
 
-Computer MCP is for developers and technical teams who want local execution
-without granting an AI client the whole machine. It provides:
+- **Put your CLI tools to work.** Register commands or install a CLI plugin so
+  ChatGPT can invoke exposed tools and read their results.
+- **Code with Codex from your conversation.** Use the independent Codex plugin
+  to start coding tasks, follow progress and inspect results.
+- **Connect more with MCP and Skills.** Add MCP services and reusable instructions
+  directly or together in a plugin package.
+- **Choose the access.** Configure tools, workspaces and confirmation policy;
+  review host actions requiring approval locally.
 
-- registered folders instead of an ambient filesystem;
-- capability-scoped profiles instead of one shared permission level;
-- typed tools, registered CLIs, downstream MCP servers, Skills, Computer Use,
-  governed Git, and optional Codex execution;
-- local policy checks plus explicit consent for higher-risk actions;
-- redacted, correlated audit records for requests and results;
-- local, ChatGPT, and reviewed remote connection paths.
+Computer MCP runs on macOS 14 or later and supports ChatGPT and other compatible
+MCP clients. Tools need installation and configuration. Codex requires its
+plugin and local Codex setup; advanced orchestration is experimental. Skills
+provide instructions and resources, while execution uses authorized tools.
 
 ## The 30-second model
 
@@ -81,29 +82,25 @@ verified command projection and structured-coverage limits.
 
 ## What it enables
 
-- Let ChatGPT inspect a registered project, use local research tools, and hand
-  an implementation task to Codex without exposing arbitrary home-directory
-  access.
-- Give an agent a reviewed path to edit, stage, commit with repository hooks,
-  inspect the result, and prove the worktree is clean—without granting a broad
-  shell by default.
-- Connect deterministic local CLIs, downstream MCP servers, and reusable Skill
-  packages through one policy and audit plane.
-- Observe or control desktop UI through bounded Computer Use capabilities that
-  preflight the relevant macOS permission.
-- Reach the same local execution gateway from ChatGPT through OpenAI Secure MCP
-  Tunnel or from a reviewed remote client through a Cloudflare named tunnel.
-- Run optional Codex App Server, Exec, or MCP lifecycles with explicit runtime,
-  thread, approval, Goal, and worktree ownership.
+- Ask ChatGPT to inspect a local project, use connected research tools, and hand
+  implementation work to Codex.
+- Run a registered formatter, inspect a Git diff, or process files through
+  authorized local commands, then use the result in the next step.
+- Combine CLI commands, downstream MCP services and reusable Skills around a
+  task through one gateway.
+- Connect from ChatGPT through Secure MCP Tunnel or from a reviewed remote
+  client through a Cloudflare named tunnel, subject to client and account support.
+- Connect desktop operations through the Computer Use plugin or native AX tools,
+  subject to operation-specific macOS permissions and vendor caller authentication.
 
-## Why it is safer than exposing a shell
+## Choose what your agents can use
 
 Computer MCP makes two separate decisions:
 
 1. **Policy authorization:** Is this caller allowed to use this capability in
    this registered workspace at all?
-2. **Action consent:** If the allowed action is higher risk, does the user or
-   authorized caller approve it now?
+2. **Action consent:** If host policy requires confirmation, has the local user
+   approved this exact operation?
 
 Approval never expands policy. A denied capability cannot become allowed just
 because someone clicks Approve. `shell.run`, generic CLI execution, process
@@ -112,11 +109,12 @@ unless the active configuration grants the exact path. Credentials stay in the
 signed App's macOS Data Protection Keychain; examples, diagnostics, logs, and
 audit rows keep only placeholders or redacted summaries.
 
-The optional Codex plugin has one narrower exception to its safe
-`workspace-write` default: a caller can request a workspace/profile/caller-bound
-temporary Full Access grant, but only a local administrator can approve it. It
-applies to a future eligible thread or turn, expires or can be revoked, and
-never adds Computer MCP tools, workspaces, Full Shell, or approval authority.
+The optional Codex plugin follows Codex's own configuration and approval
+model, including native Full Access defaults and explicit overrides. The host
+decides who may invoke Codex. Calls from Codex back into Computer MCP tools
+still require the corresponding host capabilities and local confirmation.
+Selecting a workspace supplies an initial directory, not an OS sandbox for
+native Full Access.
 
 See [Security and Privacy](Documentation/Architecture/SecurityAndPrivacy.md) for
 the complete trust model and [SECURITY.md](SECURITY.md) for reporting a
@@ -131,8 +129,8 @@ vulnerability.
 | Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and native AX fallback | Availability still depends on the selected profile, workspace, dependency, and macOS permission |
 | Stable | Governed workspace and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
 | Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and Skills | Host grants remain separate; external dependencies are not installed automatically |
-| Experimental | Codex plugin App Server, Exec, and MCP provider paths | Opt-in, disabled by default, and dependent on an installed authenticated Codex |
-| Experimental | Native Codex Goal passthrough, Computer MCP acceptance runs, deterministic thread handoff, bounded recent-thread supervision, scoped local Codex elevation, and managed child worktrees | The product keeps official Goal state, Computer MCP acceptance, Codex sandbox elevation, gateway capabilities, and external-client ownership distinct |
+| Experimental | Codex plugin App Server and Exec provider paths | Opt-in, disabled by default, and dependent on an installed authenticated Codex |
+| Experimental | Native Codex Goal passthrough, Computer MCP acceptance runs, deterministic thread handoff, bounded recent-thread supervision, and managed child worktrees | Official Goal state, Computer MCP acceptance, native Codex permissions, gateway capabilities, and external-client ownership have separate authorities |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
 
 Experimental does not mean unbounded: these paths use the same workspace,
@@ -148,8 +146,8 @@ A representative workflow looks like this:
 2. Computer MCP binds the request to the ChatGPT profile and workspace; policy
    decides which read, Git, CLI, and Codex capabilities are available.
 3. ChatGPT starts or steers a dedicated Codex task for that workspace.
-4. Codex requests a governed mutation. Computer MCP records the redacted
-   approval request; the user or authorized caller approves or denies it.
+4. Codex requests a governed host mutation. Computer MCP records its approval
+   ticket when confirmation is required; the local user approves or denies it.
 5. Codex edits and commits through the governed path. Computer MCP correlates
    the Codex request, approval, operation ticket, gateway invocation, Git
    result, and audit receipt.
@@ -258,8 +256,6 @@ computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
 computer-mcp codex diagnostics --workspace-id <workspace-id>
 computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id>
 computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id>
-computer-mcp codex elevation effective --workspace-id <workspace-id> \
-  --thread-id <thread-id>
 ```
 
 The diagnostic reports verified Computer MCP ownership separately from an
@@ -268,9 +264,8 @@ owned thread, stopping an exact owned runtime, reviewing stale receipts, or
 trying to reclaim a persisted thread. Handoff succeeds only after no owned
 runtime still claims the thread and another official client can immediately
 claim the persisted thread. Long-running supervision reads a bounded recent
-tail instead of loading the whole history. Scoped Full Access is locally
-approved, visible, expiring, and revocable; the configured default remains
-safe.
+tail instead of loading the whole history. Codex's native permission settings
+remain visible in the adapter's configuration and runtime diagnostics.
 
 ## Current limitations
 
@@ -283,9 +278,8 @@ safe.
   Codex version, authentication, and stable protocol support.
 - Computer MCP cannot inspect, unsubscribe, or terminate an external Codex
   Desktop, IDE, CLI, or Remote connection it does not own.
-- Unscoped or caller-supplied `danger-full-access` remains rejected. Scoped
-  elevation requires a matching durable grant and local approval and does not
-  widen Computer MCP capability policy.
+- Native Codex Full Access runs with the current user's operating-system
+  authority; it does not grant access to additional Computer MCP capabilities.
 - Computer MCP does not silently select a workspace when more than one eligible
   workspace exists, does not implicitly push Git commits, and does not turn a
   normal completed turn into accepted Goal completion.

@@ -56,6 +56,7 @@ package struct GatewaySocketConfiguration: Equatable, Sendable {
   package var socketURL: URL
   package var expectedUserID: uid_t
   package var tunnelCredentialFile: URL?
+  package var tunnelPrincipalID: String?
   package var clientIdentity: GatewaySocketClientIdentity
   package var maximumFrameBytes: Int
   package var maximumBufferedMessages: Int
@@ -65,6 +66,7 @@ package struct GatewaySocketConfiguration: Equatable, Sendable {
     socketURL: URL,
     expectedUserID: uid_t = getuid(),
     tunnelCredentialFile: URL? = nil,
+    tunnelPrincipalID: String? = nil,
     clientIdentity: GatewaySocketClientIdentity = .localMCP,
     maximumFrameBytes: Int = Self.defaultMaximumFrameBytes,
     maximumBufferedMessages: Int = Self.defaultBufferedMessages,
@@ -73,6 +75,7 @@ package struct GatewaySocketConfiguration: Equatable, Sendable {
     self.socketURL = socketURL
     self.expectedUserID = expectedUserID
     self.tunnelCredentialFile = tunnelCredentialFile
+    self.tunnelPrincipalID = tunnelPrincipalID
     self.clientIdentity = clientIdentity
     self.maximumFrameBytes = maximumFrameBytes
     self.maximumBufferedMessages = maximumBufferedMessages
@@ -92,6 +95,14 @@ package struct GatewaySocketConfiguration: Equatable, Sendable {
           "tunnelCredentialFile must be a non-empty file URL"
         )
       }
+    }
+    if let tunnelPrincipalID,
+      tunnelCredentialFile == nil || tunnelPrincipalID.isEmpty
+        || tunnelPrincipalID.rangeOfCharacter(from: .controlCharacters) != nil
+    {
+      throw GatewaySocketError.invalidConfiguration(
+        "tunnelPrincipalID requires a credential file and a non-empty identifier"
+      )
     }
     guard maximumFrameBytes > 0, maximumFrameBytes <= Int(UInt32.max) else {
       throw GatewaySocketError.invalidConfiguration(
@@ -420,7 +431,8 @@ final class GatewaySocketFrameHandler: ChannelInboundHandler, @unchecked Sendabl
         let resolution = try GatewaySocketAuthenticator.resolve(
           firstFrame: frame,
           expectedCredentialFile: configuration.tunnelCredentialFile,
-          expectedUserID: configuration.expectedUserID
+          expectedUserID: configuration.expectedUserID,
+          registeredTunnelPrincipalID: configuration.tunnelPrincipalID
         )
         hasResolvedIdentity = true
         _ = identityContinuation.yield(resolution.identity)

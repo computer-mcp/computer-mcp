@@ -6,7 +6,7 @@ package struct CodexConfigurationMigration: Encodable, Sendable {
   package let sourceSHA256: String
   package let configurationDirectory: String
   package let hostTOML: String
-  package let adapterConfiguration: CodexConfigurationImport
+  package let adapterConfiguration: [String: JSONValue]
   package let adapterConfigurationPath: String
   package let stateDirectory: String
   package let pluginID = "codex"
@@ -54,7 +54,6 @@ package struct CodexConfigurationMigration: Encodable, Sendable {
     var risks: [String: CapabilityRisk] = [:]
     if original.appServerEnabled { risks.merge(Self.appServerRisks) { _, new in new } }
     if original.execEnabled { risks.merge(Self.execRisks) { _, new in new } }
-    if original.mcpEnabled { risks.merge(Self.mcpRisks) { _, new in new } }
     pluginSettings = PluginSettings(
       enabled: original.enabled,
       mcp: [
@@ -66,7 +65,14 @@ package struct CodexConfigurationMigration: Encodable, Sendable {
     try pluginSettings.validate()
     host.codex = nil
     hostTOML = try host.exportedTOML()
-    adapterConfiguration = original
+    guard !original.enabled || original.appServerEnabled || original.execEnabled else {
+      throw ConfigurationError.invalid(
+        "Enable App Server or Exec before exporting execution settings.")
+    }
+    let encoded = try JSONEncoder().encode(original)
+    var adapterSettings = try JSONDecoder().decode([String: JSONValue].self, from: encoded)
+    adapterSettings.removeValue(forKey: "mcp_enabled")
+    adapterConfiguration = adapterSettings
     self.adapterConfigurationPath = adapterURL.path
     self.stateDirectory = stateURL.path
     configurationDirectory = baseURL.standardizedFileURL.path
@@ -144,17 +150,5 @@ package struct CodexConfigurationMigration: Encodable, Sendable {
     "codex.exec.events": .readOnly,
     "codex.exec.result": .readOnly,
     "codex.exec.cancel": .workspaceWrite,
-  ]
-  private static let mcpRisks: [String: CapabilityRisk] = [
-    "codex.mcp.status": .readOnly,
-    "codex.mcp.tools.list": .readOnly,
-    "codex.mcp.run": .workspaceWrite,
-    "codex.mcp.reply": .workspaceWrite,
-    "codex.mcp.calls.list": .readOnly,
-    "codex.mcp.events": .readOnly,
-    "codex.mcp.result": .readOnly,
-    "codex.mcp.approvals.list": .readOnly,
-    "codex.mcp.approval.respond": .workspaceWrite,
-    "codex.mcp.cancel": .workspaceWrite,
   ]
 }

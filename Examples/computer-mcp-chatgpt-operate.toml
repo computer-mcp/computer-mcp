@@ -20,6 +20,8 @@ path = ".."
 
 [[profiles]]
 id = "chatgpt-operate"
+mode = "workspace-operations"
+confirmation_policy = "risk-based"
 capabilities = [
   "workspace.list",
   "workspace.describe",

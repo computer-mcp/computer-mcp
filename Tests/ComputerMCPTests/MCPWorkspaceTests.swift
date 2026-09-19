@@ -95,7 +95,7 @@ struct MCPWorkspaceTests {
       profileID: readOnly ? .chatGPTObserve : .localAdmin,
       transportTrace: .init(
         transport: "fixture", socketConnectionID: "socket-owner", tunnelInstanceID: "tunnel-owner",
-        tunnelProfileID: "tunnel-profile"))
+        tunnelProfileID: "tunnel-profile"), trustedPrincipalID: "workspace-session-owner")
     let gateway = try await GatewayRuntime.make(
       configuration: configuration, context: context,
       registeredWorkspaces: [
@@ -143,10 +143,16 @@ struct MCPWorkspaceTests {
       }
       #expect(runtimeIDs.count == 1)
       #expect(runtimeIDs.first.flatMap(UUID.init(uuidString:)) != nil)
-      for changedTrace in [false, true] {
+      var reconnected = context
+      reconnected.transportTrace?.socketConnectionID = "new-connection"
+      let retained = try await gateway.callToolAsync(
+        name: "fixture.context", arguments: .object(["workspace_id": .string("first")]),
+        context: reconnected)
+      #expect(retained.objectValue?["structuredContent"]?.objectValue?["pid"] == values[0]["pid"])
+      for changedPrincipal in [false, true] {
         var changedContext = context
-        if changedTrace {
-          changedContext.transportTrace?.socketConnectionID = "different-owner"
+        if changedPrincipal {
+          changedContext.trustedPrincipalID = "different-owner"
         } else {
           changedContext.caller = .localCLI
         }

@@ -6,6 +6,27 @@ import Testing
 @Suite
 
 final class WorkspaceBookmarkServiceTests {
+  @Test(arguments: [false, true])
+  func inspectionReportsAccessAndClosesOwnedScope(accessAllowed: Bool) throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let adapter = TestWorkspaceBookmarkAdapter(
+      resolution: WorkspaceBookmarkResolution(url: root, isStale: false),
+      accessAllowed: accessAllowed)
+    let service = WorkspaceBookmarkService(adapter: adapter)
+    let workspace = RegisteredWorkspace(
+      id: "inspection", displayName: "Inspection", rootPath: root.path,
+      bookmarkData: Data("bookmark".utf8))
+    let report = try service.inspect(workspace)
+    #expect(report.workspace == workspace)
+    #expect(
+      report.error == (accessAllowed ? nil : .securityScopeAccessDenied(workspaceID: workspace.id)))
+    #expect(
+      report.json.objectValue?["status"] == .string(accessAllowed ? "available" : "unavailable"))
+    #expect(adapter.startCount == 1)
+    #expect(adapter.stopCount == (accessAllowed ? 1 : 0))
+  }
+
   @Test
   func testPathOnlyFallbackResolvesDevelopmentRecordWithoutSecurityScope() throws {
     let root = try temporaryDirectory()

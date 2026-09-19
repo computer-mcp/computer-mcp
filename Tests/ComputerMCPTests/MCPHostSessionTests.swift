@@ -129,6 +129,8 @@ struct MCPHostSessionTests {
     let prepared = try await fixture.call(
       "operations.prepare", ["tool": .string("file.replace_text"), "arguments": target])
     let ticket = try #require(fixture.payload(prepared)["ticket_id"]?.stringValue)
+    #expect(try fixture.database.operationTicket(id: ticket)?.state == .pendingApproval)
+    try fixture.database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
     let arguments: [String: JSONValue] = [
       "tool": .string("file.replace_text"), "arguments": target, "ticket_id": .string(ticket),
     ]
@@ -292,7 +294,7 @@ private final class HostFixture: Sendable {
     ]
     grant = ProfileGrant(
       id: profile, capabilityIDs: Set(capabilities), workspaceIDs: ["first", "second"],
-      allowedCallers: [.secureTunnel])
+      allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .workspaceOperations)
     try database.saveProfile(grant)
     context = ExecutionContext(
       caller: .secureTunnel, profileID: profile,
@@ -310,7 +312,7 @@ private final class HostFixture: Sendable {
         profiles: [
           .init(
             id: profile, capabilities: capabilities, workspaces: ["first", "second"],
-            allowedCallers: [.secureTunnel])
+            allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .workspaceOperations)
         ],
         mcp: .init(servers: [registration]),
         tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],

@@ -4,6 +4,45 @@ import Testing
 
 @Suite("Codex Thread Archive Cleanup")
 struct CodexThreadArchiveCleanupTests {
+  @Test(arguments: [
+    "no rollout found for thread id thread-1234",
+    "no rollout found for thread id thread-12",
+    "no rollout found for thread id thread-123 extra-details",
+    "unrelated no rollout found for thread id thread-123",
+    "no rollout found for thread id ",
+    "",
+  ])
+  func ambiguousMissingRolloutIsNotSuccess(detail: String) {
+    #expect(
+      CodexThreadArchiveCleanupDisposition.classify(
+        status: "failed", detail: detail, threadID: "thread-123") == .failed)
+  }
+
+  @Test(arguments: ["", " ", "thread-123\n"])
+  func malformedTargetIsNotSuccess(threadID: String) {
+    for status in ["passed", "failed"] {
+      #expect(
+        CodexThreadArchiveCleanupDisposition.classify(
+          status: status, detail: "no rollout found for thread id \(threadID)",
+          threadID: threadID) == .failed)
+    }
+  }
+
+  @Test
+  func missingOrUnconfirmedErrorIsNotSuccess() {
+    #expect(
+      CodexThreadArchiveCleanupDisposition.classify(
+        status: "failed", detail: nil, threadID: "thread-123") == .failed)
+    #expect(
+      CodexThreadArchiveCleanupDisposition.classify(
+        status: "unknown", detail: "no rollout found for thread id thread-123",
+        threadID: "thread-123") == .failed)
+    #expect(
+      CodexThreadArchiveCleanupDisposition.classify(
+        status: "failed", detail: "no rollout found for thread id thread-123",
+        threadID: "thread-123") == .alreadyAbsent)
+  }
+
   @Test("successful archive is complete")
   func successfulArchive() {
     #expect(

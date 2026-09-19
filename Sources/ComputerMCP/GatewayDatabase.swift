@@ -3,11 +3,9 @@ import Foundation
 import GRDB
 
 package final class GatewayDatabase: @unchecked Sendable {
-  // Exceeds the maximum 300-second App Server request budget so reconciliation cannot
-  // invalidate a legitimately in-flight elevated start before its request deadline.
-  private static let codexElevationClaimStaleInterval: TimeInterval = 330
-
   private let writer: any DatabaseWriter
+  private let profileChangeLock = NSLock()
+  private var profileChangeBroadcasters: [GatewayProfileID: GatewayToolChangeBroadcaster] = [:]
   let fileURL: URL?
 
   var mcpProcessOwnershipRoot: URL? {
@@ -325,17 +323,162 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
-  package func saveProfile(_ profile: ProfileGrant, updatedAt: Date = Date()) throws {
+  package func saveProfile(
+    _ profile: ProfileGrant, updatedAt: Date = Date(), expectedRevision: Int64? = nil
+  ) throws {
     try profile.validate()
     try writer.write { database in
-      try ProfileRecord(profile, updatedAt: updatedAt).save(database)
+      let current = try ProfileRecord.fetchOne(database, key: profile.id.rawValue)
+      let revision = current?.authorizationRevision ?? 0
+      guard expectedRevision == nil || expectedRevision == revision else {
+        throw GatewayDatabaseError.invalidStoredValue(
+          "Profile authorization changed; reload before saving.")
+      }
+      guard revision < Int64.max else {
+        throw GatewayDatabaseError.invalidStoredValue("Profile authorization revision exhausted.")
+      }
+      var saved = profile
+      saved.authorizationRevision = revision + 1
+      try ProfileRecord(saved, updatedAt: updatedAt).save(database)
+      try database.execute(
+        sql: """
+          UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
+          WHERE profileID = ? AND state IN (?, ?, ?)
+          """,
+        arguments: [
+          OperationTicketState.denied.rawValue, updatedAt,
+          "operations.authorization_changed", profile.id.rawValue,
+          OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
+          OperationTicketState.approved.rawValue,
+        ])
     }
+    profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
+  }
+
+  func profileChanges(for profileID: GatewayProfileID) -> AsyncStream<Void> {
+    let broadcaster = profileChangeLock.withLock {
+      if let existing = profileChangeBroadcasters[profileID] { return existing }
+      let new = GatewayToolChangeBroadcaster()
+      profileChangeBroadcasters[profileID] = new
+      return new
+    }
+    return broadcaster.stream()
   }
 
   package func profiles() throws -> [ProfileGrant] {
     try writer.read { database in
       try ProfileRecord.order(Column("id")).fetchAll(database).map { try $0.value() }
     }
+  }
+
+  func reserveMCPExecution(_ proposed: MCPExecutionRecord) throws
+    -> (record: MCPExecutionRecord, inserted: Bool)
+  {
+    try writer.write { database in
+      try Self.expireMCPOutput(in: database)
+      if let existing = try Self.mcpExecution(key: proposed.key, in: database) {
+        guard existing.inputDigest == proposed.inputDigest else {
+          throw GatewayToolError.invalidArguments(
+            "[request.conflict] This request_id is already bound to different input.")
+        }
+        return (existing, false)
+      }
+      // Keep deduplication receipts even after output expires. Evicting identity would
+      // silently authorize replay; capacity exhaustion instead fails before dispatch.
+      guard try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM mcpExecutions") ?? 0 < 10_000
+      else {
+        throw GatewayToolError.executionFailed(
+          "MCP execution receipt capacity reached; no request was dispatched.")
+      }
+      try Self.saveMCPExecution(proposed, in: database)
+      return (proposed, true)
+    }
+  }
+
+  func mcpExecution(scope: String, serverID: String, requestID: String) throws
+    -> MCPExecutionRecord?
+  {
+    let key = MCPExecutionRecord.digest(
+      .array([.string(scope), .string(serverID), .string(requestID)]))
+    return try writer.write { database in
+      try Self.expireMCPOutput(in: database)
+      return try Self.mcpExecution(key: key, in: database)
+    }
+  }
+
+  func updateMCPExecution(
+    scope: String, serverID: String, requestID: String, instanceID: String,
+    change: (inout MCPExecutionRecord) throws -> Void
+  ) throws {
+    let key = MCPExecutionRecord.digest(
+      .array([.string(scope), .string(serverID), .string(requestID)]))
+    try writer.write { database in
+      guard var record = try Self.mcpExecution(key: key, in: database),
+        record.instanceID == instanceID
+      else {
+        throw GatewayToolError.invalidArguments(
+          "[request.stale_instance] Execution ownership no longer matches.")
+      }
+      try change(&record)
+      try Self.saveMCPExecution(record, in: database)
+      try Self.expireMCPOutput(in: database)
+      // Output has a global bound independent of individual response sizes. Receipt
+      // identity and terminal state survive eviction and remain queryable.
+      var retained =
+        try Int.fetchOne(
+          database,
+          sql: "SELECT COALESCE(SUM(length(CAST(outputJSON AS BLOB))), 0) FROM mcpExecutions") ?? 0
+      if retained > 16_777_216 {
+        let rows = try Row.fetchAll(
+          database,
+          sql:
+            "SELECT id, length(CAST(outputJSON AS BLOB)) AS bytes FROM mcpExecutions WHERE outputJSON IS NOT NULL ORDER BY outputExpiresAt, id"
+        )
+        for row in rows where retained > 16_777_216 {
+          let id: String = row["id"]
+          let count: Int = row["bytes"]
+          try database.execute(
+            sql: "UPDATE mcpExecutions SET outputJSON = NULL WHERE id = ?", arguments: [id])
+          retained -= count
+        }
+      }
+    }
+  }
+
+  private static func expireMCPOutput(in database: Database) throws {
+    try database.execute(
+      sql:
+        "UPDATE mcpExecutions SET outputJSON = NULL WHERE outputExpiresAt <= ? AND outputJSON IS NOT NULL",
+      arguments: [Date().timeIntervalSince1970])
+  }
+
+  private static func mcpExecution(key: String, in database: Database) throws -> MCPExecutionRecord?
+  {
+    guard
+      let row = try Row.fetchOne(
+        database, sql: "SELECT metadataJSON, outputJSON FROM mcpExecutions WHERE id = ?",
+        arguments: [key])
+    else { return nil }
+    let metadata: String = row["metadataJSON"]
+    var record = try JSONDecoder().decode(MCPExecutionRecord.self, from: Data(metadata.utf8))
+    record.outputJSON = row["outputJSON"]
+    return record
+  }
+
+  private static func saveMCPExecution(_ record: MCPExecutionRecord, in database: Database) throws {
+    var metadata = record
+    metadata.outputJSON = nil
+    let encoded = try JSONEncoder().encode(metadata)
+    try database.execute(
+      sql: """
+        INSERT INTO mcpExecutions (id, metadataJSON, outputJSON, outputExpiresAt) VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET metadataJSON = excluded.metadataJSON,
+        outputJSON = excluded.outputJSON, outputExpiresAt = excluded.outputExpiresAt
+        """,
+      arguments: [
+        record.key, String(decoding: encoded, as: UTF8.self), record.outputJSON,
+        record.outputExpiresAt?.timeIntervalSince1970,
+      ])
   }
 
   package func saveProviderState(_ state: ProviderState) throws {
@@ -437,299 +580,66 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
-  func saveCodexElevationGrant(_ grant: CodexElevationGrantRecord) throws {
+  package func operationTicket(id: String) throws -> OperationTicket? {
     try writer.write { database in
-      try CodexElevationGrantRow(grant).save(database)
+      try Self.expireOperationApprovals(in: database, at: Date())
+      return try OperationTicketRecord.fetchOne(database, key: id)?.value()
     }
   }
 
-  func codexElevationGrant(id: String) throws -> CodexElevationGrantRecord? {
-    try writer.read { database in
-      try CodexElevationGrantRow.fetchOne(database, key: id)?.value()
-    }
-  }
-
-  func codexElevationGrants(
-    workspaceID: String? = nil,
-    state: CodexElevationGrantState? = nil,
-    requester: CodexRuntimeOwner? = nil,
-    limit: Int = 500
-  ) throws -> [CodexElevationGrantRecord] {
-    try writer.read { database in
-      var request = CodexElevationGrantRow.order(
-        Column("updatedAt").desc,
-        Column("id").desc
-      )
-      if let workspaceID {
-        request = request.filter(Column("workspaceID") == workspaceID)
-      }
-      if let state {
-        request = request.filter(Column("state") == state.rawValue)
-      }
-      if let requester {
-        guard let profile = requester.profileID, let caller = requester.caller else { return [] }
-        request = request.filter(Column("profileID") == profile)
-          .filter(Column("requestingCaller") == caller)
-          .filter(Column("requestingConnectionID") == requester.elevationConnectionID)
-      }
-      return try request.limit(max(1, min(limit, 5_000))).fetchAll(database).map {
-        try $0.value()
-      }
-    }
-  }
-
-  func updateCodexElevationGrant(
-    id: String,
-    mutate: (inout CodexElevationGrantRecord) throws -> Void
-  ) throws -> CodexElevationGrantRecord {
+  package func operationApprovals(limit: Int = 100) throws -> [OperationTicket] {
     try writer.write { database in
-      guard let row = try CodexElevationGrantRow.fetchOne(database, key: id) else {
-        throw CodexElevationGrantError.unknown(id)
-      }
-      var grant = try row.value()
-      try mutate(&grant)
-      try CodexElevationGrantRow(grant).save(database)
-      return grant
-    }
-  }
-
-  func reconcileCodexElevationGrants(now: Date) throws {
-    try writer.write { database in
-      let rows =
-        try CodexElevationGrantRow
-        .filter(
-          [
-            CodexElevationGrantState.pending.rawValue, CodexElevationGrantState.approved.rawValue,
-            CodexElevationGrantState.active.rawValue,
-          ].contains(Column("state"))
-        )
-        .fetchAll(database)
-      for row in rows {
-        var grant = try row.value()
-        if grant.inFlightClaimID != nil,
-          grant.updatedAt <= now.addingTimeInterval(-Self.codexElevationClaimStaleInterval)
-        {
-          grant.state = .invalidated
-          grant.resolvedAt = now
-          grant.resolutionReason =
-            "An elevated start ended without a durable consumption receipt."
-          grant.inFlightClaimID = nil
-          grant.inFlightAction = nil
-          grant.updatedAt = now
-          try CodexElevationGrantRow(grant).save(database)
-          continue
-        }
-        let wasPending = grant.state == .pending
-        let expired =
-          wasPending
-          ? grant.requestExpiresAt <= now
-          : grant.expiresAt.map { $0 <= now } ?? true
-        guard expired else { continue }
-        grant.state = .expired
-        grant.resolvedAt = now
-        grant.resolutionReason =
-          wasPending ? "Local approval deadline expired." : "Elevation grant expired."
-        grant.inFlightClaimID = nil
-        grant.inFlightAction = nil
-        grant.updatedAt = now
-        try CodexElevationGrantRow(grant).save(database)
-      }
+      try Self.expireOperationApprovals(in: database, at: Date())
+      return
+        try OperationTicketRecord
+        .filter(Column("authorizationRevision") != nil)
+        .order(Column("createdAt").desc, Column("id"))
+        .limit(max(1, min(limit, 500))).fetchAll(database).map { try $0.value() }
     }
   }
 
   @discardableResult
-  func invalidateCodexElevationGrants(
-    workspaceID: String? = nil,
-    profileID: String? = nil,
-    requestingConnectionID: String? = nil,
-    requestingCaller: String? = nil,
-    threadID: String? = nil,
-    consumedRuntimeIDs: Set<String> = [],
-    reason: String,
-    now: Date = Date()
-  ) throws -> Int {
-    try writer.write { database in
-      var request = CodexElevationGrantRow.filter(
-        [
-          CodexElevationGrantState.pending.rawValue, CodexElevationGrantState.approved.rawValue,
-          CodexElevationGrantState.active.rawValue,
-        ].contains(Column("state"))
-      )
-      if let workspaceID {
-        request = request.filter(Column("workspaceID") == workspaceID)
+  package func resolveOperationApproval(
+    id: String, approved: Bool, resolver: GatewayCallerKind, at date: Date = Date()
+  ) throws -> OperationTicket {
+    guard resolver == .localApp || resolver == .localCLI else {
+      throw GatewayDatabaseError.invalidOperationTicketTransition(
+        "Only the local management interface may resolve host approvals.")
+    }
+    return try writer.write { database in
+      try Self.expireOperationApprovals(in: database, at: date)
+      guard var record = try OperationTicketRecord.fetchOne(database, key: id) else {
+        throw GatewayDatabaseError.operationTicketUnknown(id)
       }
-      if let profileID {
-        request = request.filter(Column("profileID") == profileID)
+      guard record.state == OperationTicketState.pendingApproval.rawValue else {
+        throw GatewayDatabaseError.operationTicketUnavailable(id: id, state: record.state)
       }
-      if let requestingConnectionID {
-        request = request.filter(Column("requestingConnectionID") == requestingConnectionID)
+      if let profile = try ProfileRecord.fetchOne(database, key: record.profileID),
+        record.authorizationRevision != profile.authorizationRevision
+      {
+        throw GatewayDatabaseError.invalidOperationTicketTransition(
+          "Authorization changed after approval was requested.")
       }
-      var count = 0
-      for row in try request.fetchAll(database) {
-        var grant = try row.value()
-        if let requestingCaller, grant.requestingCaller != requestingCaller { continue }
-        if let threadID, grant.threadID != threadID {
-          if consumedRuntimeIDs.isEmpty
-            || consumedRuntimeIDs.isDisjoint(with: grant.consumedRuntimeIDs)
-          {
-            continue
-          }
-        } else if threadID == nil, !consumedRuntimeIDs.isEmpty,
-          consumedRuntimeIDs.isDisjoint(with: grant.consumedRuntimeIDs)
-        {
-          continue
-        }
-        grant.state = .invalidated
-        grant.resolvedAt = now
-        grant.resolutionReason = CodexApprovalRedactor.redactString(
-          reason,
-          maximumCharacters: 512
-        )
-        grant.inFlightClaimID = nil
-        grant.inFlightAction = nil
-        grant.updatedAt = now
-        try CodexElevationGrantRow(grant).save(database)
-        count += 1
-      }
-      return count
+      record.state =
+        approved ? OperationTicketState.approved.rawValue : OperationTicketState.denied.rawValue
+      record.completedAt = approved ? nil : date
+      record.failureCode = approved ? nil : "operations.user_denied"
+      try record.update(database)
+      return try record.value()
     }
   }
 
-  func claimCodexElevationGrant(
-    workspaceID: String,
-    canonicalRoot: String,
-    profileID: String,
-    requestingCaller: String,
-    requestingConnectionID: String?,
-    threadID: String?,
-    runtimeID: String,
-    action: CodexElevationAction,
-    now: Date
-  ) throws -> CodexElevationClaim? {
-    try writer.write { database in
-      let rows =
-        try CodexElevationGrantRow
-        .filter(Column("workspaceID") == workspaceID)
-        .filter(Column("profileID") == profileID)
-        .filter(Column("requestingCaller") == requestingCaller)
-        .filter(
-          Column("state") == CodexElevationGrantState.approved.rawValue
-            || Column("state") == CodexElevationGrantState.active.rawValue
-        )
-        .order(Column("createdAt"), Column("id"))
-        .fetchAll(database)
-      for row in rows {
-        var grant = try row.value()
-        if grant.expiresAt.map({ $0 <= now }) ?? true {
-          grant.state = .expired
-          grant.resolvedAt = now
-          grant.resolutionReason = "Elevation grant expired."
-          grant.inFlightClaimID = nil
-          grant.inFlightAction = nil
-          grant.updatedAt = now
-          try CodexElevationGrantRow(grant).save(database)
-          continue
-        }
-        guard grant.canonicalRoot == canonicalRoot,
-          grant.requestingConnectionID == requestingConnectionID,
-          grant.inFlightClaimID == nil
-        else { continue }
-        switch action {
-        case .threadStart:
-          guard grant.threadID == nil else { continue }
-        case .turnStart:
-          guard grant.threadID == nil || grant.threadID == threadID else { continue }
-        }
-        let claimID = UUID().uuidString
-        grant.inFlightClaimID = claimID
-        grant.inFlightAction = action
-        grant.updatedAt = now
-        try CodexElevationGrantRow(grant).save(database)
-        return CodexElevationClaim(id: claimID, action: action, grant: grant)
-      }
-      return nil
-    }
-  }
-
-  func commitCodexElevationClaim(
-    _ claim: CodexElevationClaim,
-    runtimeID: String,
-    threadID: String,
-    turnID: String?,
-    now: Date
-  ) throws -> CodexElevationGrantRecord {
-    try updateCodexElevationGrant(id: claim.grant.id) { grant in
-      guard grant.inFlightClaimID == claim.id, grant.inFlightAction == claim.action,
-        grant.state.isEffective
-      else {
-        throw CodexElevationGrantError.claimMismatch
-      }
-      grant.activationAt = grant.activationAt ?? now
-      if !grant.consumedRuntimeIDs.contains(runtimeID) {
-        grant.consumedRuntimeIDs.append(runtimeID)
-        grant.consumedRuntimeIDs = Array(grant.consumedRuntimeIDs.suffix(128))
-      }
-      switch claim.action {
-      case .threadStart:
-        grant.threadID = threadID
-        grant.state = .active
-      case .turnStart:
-        grant.consumedTurnCount += 1
-        if let turnID, !grant.consumedTurnIDs.contains(turnID) {
-          grant.consumedTurnIDs.append(turnID)
-          grant.consumedTurnIDs = Array(grant.consumedTurnIDs.suffix(128))
-        }
-        if grant.mode == .nextTurn
-          || grant.maximumTurnCount.map({ grant.consumedTurnCount >= $0 }) == true
-        {
-          grant.state = .consumed
-          grant.resolvedAt = now
-          grant.resolutionReason = "The approved turn scope was consumed."
-        } else {
-          grant.state = .active
-        }
-      }
-      grant.inFlightClaimID = nil
-      grant.inFlightAction = nil
-      grant.updatedAt = now
-    }
-  }
-
-  func abortCodexElevationClaim(
-    _ claim: CodexElevationClaim,
-    now: Date
-  ) throws {
-    _ = try updateCodexElevationGrant(id: claim.grant.id) { grant in
-      guard grant.inFlightClaimID == claim.id else { return }
-      grant.inFlightClaimID = nil
-      grant.inFlightAction = nil
-      grant.updatedAt = now
-    }
-  }
-
-  func invalidateCodexElevationClaim(
-    _ claim: CodexElevationClaim,
-    reason: String,
-    now: Date
-  ) throws {
-    _ = try updateCodexElevationGrant(id: claim.grant.id) { grant in
-      guard grant.inFlightClaimID == claim.id else { return }
-      grant.state = .invalidated
-      grant.resolvedAt = now
-      grant.resolutionReason = CodexApprovalRedactor.redactString(
-        reason,
-        maximumCharacters: 512
-      )
-      grant.inFlightClaimID = nil
-      grant.inFlightAction = nil
-      grant.updatedAt = now
-    }
-  }
-
-  package func operationTicket(id: String) throws -> OperationTicket? {
-    try writer.read { database in
-      try OperationTicketRecord.fetchOne(database, key: id)?.value()
-    }
+  private static func expireOperationApprovals(in database: Database, at date: Date) throws {
+    try database.execute(
+      sql: """
+        UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
+        WHERE expiresAt <= ? AND state IN (?, ?, ?)
+        """,
+      arguments: [
+        OperationTicketState.expired.rawValue, date, "operations.ticket_expired", date,
+        OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
+        OperationTicketState.approved.rawValue,
+      ])
   }
 
   package func beginOperationTicket(
@@ -746,7 +656,10 @@ package final class GatewayDatabase: @unchecked Sendable {
       guard record.principalID == principalID else {
         return .rejected(.operationTicketPrincipalMismatch(id))
       }
-      guard record.state == OperationTicketState.prepared.rawValue else {
+      guard
+        record.state == OperationTicketState.prepared.rawValue
+          || record.state == OperationTicketState.approved.rawValue
+      else {
         return .rejected(
           .operationTicketUnavailable(
             id: id,
@@ -755,11 +668,16 @@ package final class GatewayDatabase: @unchecked Sendable {
         )
       }
       guard record.expiresAt > date else {
-        record.state = OperationTicketState.failed.rawValue
+        record.state = OperationTicketState.expired.rawValue
         record.completedAt = date
         record.failureCode = "operations.ticket_expired"
         try record.update(database)
         return .rejected(.operationTicketExpired(id))
+      }
+      if let profile = try ProfileRecord.fetchOne(database, key: record.profileID),
+        let revision = record.authorizationRevision, revision != profile.authorizationRevision
+      {
+        return .rejected(.operationTicketUnavailable(id: id, state: "authorization_changed"))
       }
       record.state = OperationTicketState.executing.rawValue
       record.invocationID = invocationID
@@ -822,7 +740,10 @@ package final class GatewayDatabase: @unchecked Sendable {
       guard record.principalID == principalID else {
         throw GatewayDatabaseError.operationTicketPrincipalMismatch(id)
       }
-      guard record.state == OperationTicketState.prepared.rawValue else {
+      guard
+        [OperationTicketState.prepared, .pendingApproval, .approved].map(\.rawValue).contains(
+          record.state)
+      else {
         throw GatewayDatabaseError.operationTicketUnavailable(
           id: id,
           state: record.state
@@ -1168,6 +1089,36 @@ package final class GatewayDatabase: @unchecked Sendable {
         table.uniqueKey(["origin", "sourceWorkspaceID", "receiptID"])
       }
     }
+    migrator.registerMigration("mcp-execution-receipts") { database in
+      try database.create(table: "mcpExecutions") { table in
+        table.column("id", .text).primaryKey()
+        table.column("metadataJSON", .text).notNull()
+        table.column("outputJSON", .text)
+        table.column("outputExpiresAt", .double)
+      }
+      try database.create(
+        index: "mcpExecutions_on_outputExpiresAt", on: "mcpExecutions", columns: ["outputExpiresAt"]
+      )
+    }
+    migrator.registerMigration("explicit-profile-permissions-and-approvals") { database in
+      try database.alter(table: "profiles") { table in
+        table.add(column: "mode", .text)
+        table.add(column: "confirmationPolicy", .text)
+        table.add(column: "authorizationRevision", .integer).notNull().defaults(to: 0)
+      }
+      try database.alter(table: "operationTickets") { table in
+        table.add(column: "authorizationRevision", .integer)
+        table.add(column: "reviewSummary", .text)
+      }
+    }
+    migrator.registerMigration("audit-verified-principal") { database in
+      try database.alter(table: "auditEvents") { table in
+        table.add(column: "principalDigest", .text)
+      }
+      try database.create(
+        index: "auditEvents_on_verified_scope", on: "auditEvents",
+        columns: ["principalDigest", "profileID", "workspaceID", "occurredAt"])
+    }
     return migrator
   }()
 
@@ -1321,6 +1272,9 @@ private struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
   var workspaceIDsJSON: String
   var allowedCallersJSON: String
   var fullShellEnabled: Bool
+  var mode: String?
+  var confirmationPolicy: String?
+  var authorizationRevision: Int64
   var updatedAt: Date
 
   init(_ value: ProfileGrant, updatedAt: Date) throws {
@@ -1330,6 +1284,9 @@ private struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
     self.workspaceIDsJSON = try Self.encode(value.workspaceIDs)
     self.allowedCallersJSON = try Self.encode(Set(value.allowedCallers.map(\.rawValue)))
     self.fullShellEnabled = value.fullShellEnabled
+    self.mode = value.mode.rawValue
+    self.confirmationPolicy = value.confirmationPolicy.rawValue
+    self.authorizationRevision = value.authorizationRevision
     self.updatedAt = updatedAt
   }
 
@@ -1351,7 +1308,20 @@ private struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
       workspaceIDs: try Self.decode(workspaceIDsJSON),
       allowedCallers: callers,
       fullShellEnabled: fullShellEnabled,
-      mcpServerIDs: try Self.decode(mcpServerIDsJSON)
+      mcpServerIDs: try Self.decode(mcpServerIDsJSON),
+      mode: try mode.map {
+        guard let value = GatewayPermissionMode(rawValue: $0) else {
+          throw GatewayDatabaseError.invalidStoredValue("Invalid profile permission mode.")
+        }
+        return value
+      } ?? .legacy(profileID: profileID, fullShellEnabled: fullShellEnabled),
+      confirmationPolicy: try confirmationPolicy.map {
+        guard let value = GatewayConfirmationPolicy(rawValue: $0) else {
+          throw GatewayDatabaseError.invalidStoredValue("Invalid profile confirmation policy.")
+        }
+        return value
+      } ?? .riskBased,
+      authorizationRevision: authorizationRevision
     )
   }
 
@@ -1447,6 +1417,7 @@ private struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
   var parentRequestID: String?
   var ticketID: String?
   var caller: String
+  var principalDigest: String?
   var transport: String?
   var socketConnectionID: String?
   var tunnelInstanceID: String?
@@ -1471,6 +1442,7 @@ private struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
     self.parentRequestID = value.parentRequestID
     self.ticketID = value.ticketID
     self.caller = value.caller.rawValue
+    self.principalDigest = value.principalDigest
     self.transport = value.transport
     self.socketConnectionID = value.socketConnectionID
     self.tunnelInstanceID = value.tunnelInstanceID
@@ -1503,6 +1475,7 @@ private struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
       parentRequestID: parentRequestID,
       ticketID: ticketID,
       caller: caller,
+      principalDigest: principalDigest,
       transport: transport,
       socketConnectionID: socketConnectionID,
       tunnelInstanceID: tunnelInstanceID,
@@ -1541,6 +1514,8 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
   var executingAt: Date?
   var completedAt: Date?
   var failureCode: String?
+  var authorizationRevision: Int64?
+  var reviewSummary: String?
 
   init(_ value: OperationTicket) {
     self.id = value.id
@@ -1560,6 +1535,8 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
     self.executingAt = value.executingAt
     self.completedAt = value.completedAt
     self.failureCode = value.failureCode
+    self.authorizationRevision = value.authorizationRevision
+    self.reviewSummary = value.reviewSummary
   }
 
   func value() throws -> OperationTicket {
@@ -1588,45 +1565,10 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
       expiresAt: expiresAt,
       executingAt: executingAt,
       completedAt: completedAt,
-      failureCode: failureCode
+      failureCode: failureCode,
+      authorizationRevision: authorizationRevision,
+      reviewSummary: reviewSummary
     )
-  }
-}
-
-private struct CodexElevationGrantRow: Codable, FetchableRecord, PersistableRecord {
-  static let databaseTableName = "codexElevationGrants"
-
-  var id: String
-  var workspaceID: String
-  var profileID: String
-  var requestingCaller: String
-  var requestingConnectionID: String?
-  var threadID: String?
-  var state: String
-  var createdAt: Date
-  var updatedAt: Date
-  var payloadJSON: String
-
-  init(_ value: CodexElevationGrantRecord) throws {
-    id = value.id
-    workspaceID = value.workspaceID
-    profileID = value.profileID
-    requestingCaller = value.requestingCaller
-    requestingConnectionID = value.requestingConnectionID
-    threadID = value.threadID
-    state = value.state.rawValue
-    createdAt = value.createdAt
-    updatedAt = value.updatedAt
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    payloadJSON = String(decoding: try encoder.encode(value), as: UTF8.self)
-  }
-
-  func value() throws -> CodexElevationGrantRecord {
-    guard let data = payloadJSON.data(using: .utf8) else {
-      throw GatewayDatabaseError.invalidStoredValue("Codex elevation grant is not UTF-8.")
-    }
-    return try JSONDecoder().decode(CodexElevationGrantRecord.self, from: data)
   }
 }
 
@@ -1658,15 +1600,13 @@ package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
 
 extension GatewayDatabase {
   func hostDiagnosticAudits(context: ExecutionContext, limit: Int) throws -> [AuditEvent] {
-    try writer.read { database in
-      var request = AuditEventRecord.filter(Column("workspaceID") == context.workspaceID)
+    guard let principal = AuditEvent.verifiedPrincipalDigest(context.trustedPrincipalID) else {
+      return []
+    }
+    return try writer.read { database in
+      let request = AuditEventRecord.filter(Column("workspaceID") == context.workspaceID)
         .filter(Column("profileID") == context.profileID.rawValue)
-        .filter(Column("caller") == context.caller.rawValue)
-      if let connection = context.transportTrace?.socketConnectionID {
-        request = request.filter(Column("socketConnectionID") == connection)
-      } else {
-        request = request.filter(Column("socketConnectionID") == nil)
-      }
+        .filter(Column("principalDigest") == principal)
       return try request.order(Column("occurredAt").desc, Column("id").desc)
         .limit(max(1, min(1_000, limit))).fetchAll(database).map { try $0.value() }
     }
@@ -1677,29 +1617,42 @@ extension GatewayDatabase {
   }
 
   /// Registration and the single host-added grant are committed together.
-  func registerDerivedWorkspace(_ registration: MCPDerivedWorkspaceRegistration) throws {
+  func registerDerivedWorkspace(
+    _ registration: MCPDerivedWorkspaceRegistration, verifiedPrincipalID: String,
+    caller: GatewayCallerKind
+  ) throws {
+    try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
     let payload = try JSONEncoder().encode(registration)
     guard payload.count <= 32_768 else {
       throw MCPHostServiceError.denied("Registration exceeds its bound.")
     }
-    try writer.write { database in
-      if let old = try Self.derivedRegistration(id: registration.workspace.id, database: database) {
-        guard old.origin == registration.origin, old.receiptDigest == registration.receiptDigest,
-          old.sourceWorkspaceID == registration.sourceWorkspaceID,
-          let workspace = try WorkspaceRecord.fetchOne(database, key: old.workspace.id),
-          Self.sameDerivedWorkspace(workspace.value, old.workspace)
-        else { throw MCPHostServiceError.denied("Existing derived registration changed.") }
-        return
-      }
-      guard try WorkspaceRecord.fetchOne(database, key: registration.workspace.id) == nil,
-        try WorkspaceAliasRecord.fetchOne(database, key: registration.workspace.id) == nil,
+    let changed = try writer.write { database in
+      guard
         let source = try WorkspaceRecord.fetchOne(database, key: registration.sourceWorkspaceID),
         Self.canonicalWorkspaceRoot(source.rootPath) == registration.sourceRoot,
         let profileRow = try ProfileRecord.fetchOne(database, key: registration.profileID.rawValue)
       else {
-        throw MCPHostServiceError.denied("Derived identity or source registration is unavailable.")
+        throw MCPHostServiceError.denied("Source registration or profile is unavailable.")
       }
       var profile = try profileRow.value()
+      try Self.requireDerivedSourceGrant(profile, registration: registration, caller: caller)
+      if let old = try Self.derivedRegistration(id: registration.workspace.id, database: database) {
+        try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
+        guard old.origin == registration.origin, old.receiptDigest == registration.receiptDigest,
+          old.receiptID == registration.receiptID, old.profileID == registration.profileID,
+          old.sourceWorkspaceID == registration.sourceWorkspaceID,
+          old.sourceRoot == registration.sourceRoot,
+          Self.sameDerivedWorkspace(old.workspace, registration.workspace),
+          let workspace = try WorkspaceRecord.fetchOne(database, key: old.workspace.id),
+          Self.sameDerivedWorkspace(workspace.value, old.workspace)
+        else { throw MCPHostServiceError.denied("Existing derived registration changed.") }
+        return false
+      }
+      guard try WorkspaceRecord.fetchOne(database, key: registration.workspace.id) == nil,
+        try WorkspaceAliasRecord.fetchOne(database, key: registration.workspace.id) == nil
+      else {
+        throw MCPHostServiceError.denied("Derived identity or source registration is unavailable.")
+      }
       guard
         try !ProfileRecord.fetchAll(database).contains(where: {
           try $0.value().workspaceIDs.contains(registration.workspace.id)
@@ -1707,12 +1660,6 @@ extension GatewayDatabase {
       else {
         throw MCPHostServiceError.denied(
           "The derived identity already has an independently owned grant.")
-      }
-      guard profile.workspaceIDs.contains(registration.sourceWorkspaceID),
-        profile.allowedCallers.contains(registration.caller), profile.permitsRisk(.workspaceWrite)
-      else {
-        throw MCPHostServiceError.denied(
-          "The persisted source grant no longer permits derived registration.")
       }
       let root = Self.canonicalWorkspaceRoot(registration.workspace.rootPath)
       guard try WorkspaceCanonicalRootRecord.fetchOne(database, key: root) == nil else {
@@ -1725,7 +1672,7 @@ extension GatewayDatabase {
         createdAt: registration.workspace.createdAt
       ).insert(database)
       profile.workspaceIDs.insert(registration.workspace.id)
-      try ProfileRecord(profile, updatedAt: registration.workspace.createdAt).update(database)
+      try Self.saveDerivedProfileChange(profile, database: database)
       try database.execute(
         sql:
           "INSERT INTO pluginDerivedWorkspaces (workspaceID, origin, sourceWorkspaceID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
@@ -1733,15 +1680,24 @@ extension GatewayDatabase {
           registration.workspace.id, registration.origin, registration.sourceWorkspaceID,
           registration.receiptID, String(decoding: payload, as: UTF8.self),
         ])
+      return true
+    }
+    if changed {
+      profileChangeLock.withLock { profileChangeBroadcasters[registration.profileID] }?.send()
     }
   }
 
   /// Does not remove independently edited registrations, aliases, or grants.
-  func unregisterDerivedWorkspace(_ registration: MCPDerivedWorkspaceRegistration) throws {
-    try writer.write { database in
+  func unregisterDerivedWorkspace(
+    _ registration: MCPDerivedWorkspaceRegistration, verifiedPrincipalID: String,
+    caller: GatewayCallerKind, allowRevokedSourceForRollback: Bool = false
+  ) throws {
+    try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
+    let changedProfile = try writer.write { database -> Bool in
       guard
         let old = try Self.derivedRegistration(id: registration.workspace.id, database: database)
-      else { return }
+      else { return false }
+      try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
       guard old == registration,
         let workspace = try WorkspaceRecord.fetchOne(database, key: old.workspace.id),
         Self.sameDerivedWorkspace(workspace.value, old.workspace),
@@ -1749,6 +1705,16 @@ extension GatewayDatabase {
           .fetchCount(database) == 0
       else { throw MCPHostServiceError.denied("The derived registration has independent changes.") }
       let profiles = try ProfileRecord.fetchAll(database)
+      if !allowRevokedSourceForRollback {
+        guard let source = try WorkspaceRecord.fetchOne(database, key: old.sourceWorkspaceID),
+          Self.canonicalWorkspaceRoot(source.rootPath) == old.sourceRoot,
+          let profile = try profiles.first(where: { $0.id == old.profileID.rawValue })?.value()
+        else {
+          throw MCPHostServiceError.denied("The source profile is unavailable.")
+        }
+        try Self.requireDerivedSourceGrant(profile, registration: old, caller: caller)
+      }
+      var changed = false
       for row in profiles {
         var profile = try row.value()
         guard profile.workspaceIDs.contains(old.workspace.id) else { continue }
@@ -1757,7 +1723,8 @@ extension GatewayDatabase {
             "Another profile now holds an independent workspace grant.")
         }
         profile.workspaceIDs.remove(old.workspace.id)
-        try ProfileRecord(profile, updatedAt: Date()).update(database)
+        try Self.saveDerivedProfileChange(profile, database: database)
+        changed = true
       }
       try WorkspaceCanonicalRootRecord.filter(Column("workspaceID") == old.workspace.id).deleteAll(
         database)
@@ -1765,7 +1732,61 @@ extension GatewayDatabase {
       try database.execute(
         sql: "DELETE FROM pluginDerivedWorkspaces WHERE workspaceID = ?",
         arguments: [old.workspace.id])
+      return changed
     }
+    if changedProfile {
+      profileChangeLock.withLock { profileChangeBroadcasters[registration.profileID] }?.send()
+    }
+  }
+
+  private static func requireDerivedPrincipal(
+    _ registration: MCPDerivedWorkspaceRegistration, verifiedPrincipalID: String
+  ) throws {
+    guard let principal = registration.principalID, !principal.isEmpty else {
+      throw MCPHostServiceError.denied(
+        "This historical registration has no bound principal; its data is preserved for explicit management."
+      )
+    }
+    guard !verifiedPrincipalID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      principal == verifiedPrincipalID
+    else {
+      throw MCPHostServiceError.denied("The derived registration belongs to another principal.")
+    }
+  }
+
+  private static func requireDerivedSourceGrant(
+    _ profile: ProfileGrant, registration: MCPDerivedWorkspaceRegistration,
+    caller: GatewayCallerKind
+  ) throws {
+    guard
+      profile.workspaceIDs.contains(registration.sourceWorkspaceID)
+        || profile.workspaceIDs.contains("*"),
+      profile.allowedCallers.contains(caller), profile.permitsRisk(.workspaceWrite)
+    else {
+      throw MCPHostServiceError.denied(
+        "The persisted source grant no longer permits derived registration changes.")
+    }
+  }
+
+  private static func saveDerivedProfileChange(_ profile: ProfileGrant, database: Database) throws {
+    guard profile.authorizationRevision < Int64.max else {
+      throw GatewayDatabaseError.invalidStoredValue("Profile authorization revision exhausted.")
+    }
+    var saved = profile
+    saved.authorizationRevision += 1
+    let date = Date()
+    try ProfileRecord(saved, updatedAt: date).update(database)
+    try database.execute(
+      sql: """
+        UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
+        WHERE profileID = ? AND state IN (?, ?, ?)
+        """,
+      arguments: [
+        OperationTicketState.denied.rawValue, date, "operations.authorization_changed",
+        profile.id.rawValue,
+        OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
+        OperationTicketState.approved.rawValue,
+      ])
   }
 
   private static func sameDerivedWorkspace(

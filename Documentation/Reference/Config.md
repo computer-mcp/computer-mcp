@@ -7,7 +7,7 @@ version are rejected.
 | Data | Owner |
 | --- | --- |
 | Static policy, provider, and transport definitions | TOML manifest |
-| Workspace grants, enabled state, and desired transport state | GRDB |
+| App-managed permission grants/revisions, enabled state, and desired transport state | GRDB |
 | Workspace filesystem access | security-scoped bookmarks |
 | Tunnel tokens, Computer MCP Access Tokens, and provider secrets | Keychain |
 
@@ -35,6 +35,8 @@ shell_enabled = false
 
 [[profiles]]
 id = "chatgpt-observe"
+mode = "read-only"
+confirmation_policy = "risk-based"
 capabilities = ["workspace.list", "workspace.describe", "file.read"]
 workspaces = ["primary"]
 allowed_callers = ["secure-tunnel"]
@@ -68,15 +70,36 @@ workspaces, and callers:
 ```toml
 [[profiles]]
 id = "partner-observe"
+mode = "read-only"
+confirmation_policy = "risk-based"
 capabilities = ["workspace.list", "system.time"]
 workspaces = ["primary"]
 allowed_callers = ["cloudflare-tunnel"]
 full_shell_enabled = false
 ```
 
-`local-admin` rejects remote callers. Full Shell is eligible only for
-`chatgpt-operate` and `local-admin`, and requires both static
-`policy.shell_enabled = true` and an explicit local profile grant.
+Profile names do not select permission modes. `local-admin` remains a reserved
+local-only admission identity. Modes are `read-only`, `workspace-operations`
+and `local-full-access`. The first permits only host-classified reads; the
+second permits explicitly granted typed writes; the third also permits
+separately enabled arbitrary execution. Full Shell requires
+`full_shell_enabled = true` and static `policy.shell_enabled = true` in addition
+to `local-full-access`. Mode alone never grants a tool, workspace or caller.
+
+Confirmation policies are `risk-based` (destructive, external-write and
+arbitrary-execution risks), `all-writes`, and `never`. The default for new
+grants is read-only with risk-based confirmation and no implicit caller or
+workspace access. `capabilities = ["*"]` does not grant workspaces;
+`workspaces = ["*"]` explicitly grants all registered workspaces.
+
+Manifests without a mode decode their former risk ceiling and built-in caller
+defaults to preserve existing authorization. Existing database grants at
+revision zero are normalized using their former merge semantics before new
+revisioned updates. This compatibility path does not expand authorization.
+App/CLI edits use the expected authorization revision to reject stale updates,
+invalidate outstanding approvals for that profile and apply to new calls
+without restarting unrelated transports. Export writes explicit mode and
+confirmation policy fields.
 
 `mcp_servers` grants the named registrations' MCP surface, intersected with each
 registration's host tool selection and the profile's risk/workspace boundaries:
@@ -84,6 +107,9 @@ registration's host tool selection and the profile's risk/workspace boundaries:
 ```toml
 [[profiles]]
 id = "chatgpt-operate"
+mode = "workspace-operations"
+confirmation_policy = "risk-based"
+allowed_callers = ["secure-tunnel"]
 mcp_servers = ["design"]
 workspaces = ["primary"]
 ```
@@ -217,7 +243,7 @@ Values are `read-only`, `workspace-write`, `external-write`, `destructive`, or
 when their MCP annotations claim read-only behavior. A configured MCP mapping's
 `risk` applies to the same underlying tool across aliases and reexports;
 conflicting host declarations are rejected. Classification alone does not
-select a tool or grant a profile access. The built-in observe profiles accept
+select a tool or grant a profile access. Profiles in read-only mode accept
 only host-classified read-only capabilities, including when their capability
 grant contains `*`.
 
@@ -301,13 +327,6 @@ omits `[codex]` from `hostTOML`. Ordinary configuration import/export preserves
 an explicitly supplied `[codex]` section until this migration is requested;
 configurations without that section do not acquire one during export.
 
-The host's elevation tools report matching host grants for the next eligible
-start. Their `effective_sandbox` is `null` when no grant matches, and
-`danger-full-access` when a matching grant is available. They do not infer a
-plugin's baseline or a running turn's permissions from imported settings.
-Use the adapter's runtime diagnostics for applied sandbox state. Approval and
-revocation leave an already running turn unchanged.
-
 The importable fields are:
 
 ```toml
@@ -328,9 +347,9 @@ sandbox = "workspace-write"
 approval_policy = "never"
 ```
 
-In the adapter, App Server, Exec, and MCP are separate `swift-codex` lifecycles. Remote callers
-receive only exact granted tool IDs and cannot supply arbitrary Codex argv or
-configuration overrides. `app_server_request_timeout_seconds` bounds a normal
+In the adapter, App Server and Exec are separate `swift-codex` lifecycles. Callers receive
+host-authorized tool IDs. Codex execution settings follow native configuration
+unless a request supplies an explicit supported override. `app_server_request_timeout_seconds` bounds a normal
 complete App Server call, including connection startup, workspace validation,
 the reviewed RPC, and the single fresh-connection retry available to read-only
 calls. The first read-only attempt receives half of that budget; writes are
@@ -350,21 +369,16 @@ approval request (1–3600 seconds). Automatic workspace-write approval is off b
 default; enabling it does not bypass caller, profile, workspace, path, risk, or
 capability policy.
 
-The manifest cannot set `sandbox = "danger-full-access"`, and a caller cannot
-smuggle the value through aliases, spelling changes, nested parameters, or raw
-Codex configuration. Temporary full access is available only through a durable
-`codex.app.elevation.request` followed by an exact local-admin approval. It is
-bound to the requesting workspace/profile/caller/connection and optional
-thread, activates only on a future eligible start, and expires or can be
-revoked. There is deliberately no global or persistent always-full-access
-configuration switch.
+Codex App Server and Exec use the user's Codex configuration for omitted
+settings, including provider, MCP servers, Skills, hooks, authentication, and
+execution permissions. Native Full Access can be configured as the default or
+requested explicitly. The adapter preserves supported native sandbox and
+approval parameters; the host decides whether the caller can invoke the tool.
 
-Exec requests deliberately ignore the user's global Codex `config.toml` while
-continuing to use that user's `CODEX_HOME` authentication. This prevents global
-MCP servers, models, hooks, profiles, or defaults from changing an embedded
-Gateway request. Computer MCP supplies the registered workspace, sandbox, and
-approval policy explicitly. App Server and MCP remain independent provider
-lifecycles and keep their own upstream configuration contracts.
+The registered workspace supplies the initial working directory and execution
+ownership. It is not an operating-system restriction on native Full Access.
+Calls from Codex back into host tools are authorized independently against the
+current host profile, workspace, capability, and confirmation policy.
 
 ## Standalone HTTP
 

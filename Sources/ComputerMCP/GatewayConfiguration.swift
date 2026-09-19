@@ -305,13 +305,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "computer.accessibility.query",
       "computer.accessibility.action",
       "computer.verify",
-      "codex.app.elevation.request",
-      "codex.app.elevation.list",
-      "codex.app.elevation.read",
-      "codex.app.elevation.approve",
-      "codex.app.elevation.deny",
-      "codex.app.elevation.revoke",
-      "codex.app.elevation.effective",
       "workspace.info",
       "workspace.status",
       "workspace.manifests",
@@ -1433,6 +1426,8 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   package var allowedCallers: [GatewayCallerKind]
   package var fullShellEnabled: Bool
   package var mcpServers: [String]
+  package var mode: GatewayPermissionMode
+  package var confirmationPolicy: GatewayConfirmationPolicy
 
   package init(
     id: GatewayProfileID,
@@ -1440,14 +1435,18 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     workspaces: [String] = [],
     allowedCallers: [GatewayCallerKind]? = nil,
     fullShellEnabled: Bool = false,
-    mcpServers: [String] = []
+    mcpServers: [String] = [],
+    mode: GatewayPermissionMode = .readOnly,
+    confirmationPolicy: GatewayConfirmationPolicy = .riskBased
   ) {
     self.id = id
     self.capabilities = capabilities
     self.workspaces = workspaces
-    self.allowedCallers = allowedCallers ?? Self.defaultAllowedCallers(for: id)
+    self.allowedCallers = allowedCallers ?? []
     self.fullShellEnabled = fullShellEnabled
     self.mcpServers = mcpServers
+    self.mode = mode
+    self.confirmationPolicy = confirmationPolicy
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -1457,6 +1456,8 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     case allowedCallers = "allowed_callers"
     case fullShellEnabled = "full_shell_enabled"
     case mcpServers = "mcp_servers"
+    case mode
+    case confirmationPolicy = "confirmation_policy"
   }
 
   package init(from decoder: any Decoder) throws {
@@ -1470,11 +1471,17 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     ) {
       allowedCallers = configured
     } else {
-      allowedCallers = Self.defaultAllowedCallers(for: id)
+      allowedCallers = container.contains(.mode) ? [] : Self.legacyAllowedCallers(for: id)
     }
     fullShellEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .fullShellEnabled) ?? false
     mcpServers = try container.decodeIfPresent([String].self, forKey: .mcpServers) ?? []
+    mode =
+      try container.decodeIfPresent(GatewayPermissionMode.self, forKey: .mode)
+      ?? .legacy(profileID: id, fullShellEnabled: fullShellEnabled)
+    confirmationPolicy =
+      try container.decodeIfPresent(GatewayConfirmationPolicy.self, forKey: .confirmationPolicy)
+      ?? .riskBased
   }
 
   package func encode(to encoder: any Encoder) throws {
@@ -1485,9 +1492,11 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     try container.encode(allowedCallers, forKey: .allowedCallers)
     try container.encode(fullShellEnabled, forKey: .fullShellEnabled)
     try container.encode(mcpServers, forKey: .mcpServers)
+    try container.encode(mode, forKey: .mode)
+    try container.encode(confirmationPolicy, forKey: .confirmationPolicy)
   }
 
-  fileprivate func validate(knownWorkspaceIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
+  func validate(knownWorkspaceIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
     guard Set(mcpServers).count == mcpServers.count else {
       throw ConfigurationError.invalid("Profile '\(id.rawValue)' has duplicate mcp_servers.")
     }
@@ -1510,13 +1519,17 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     }
     var workspaceIDs = Set<String>()
     for workspaceID in workspaces {
-      try validateConfigIdentifier(workspaceID, label: "profiles.workspaces")
+      if workspaceID != "*" {
+        try validateConfigIdentifier(workspaceID, label: "profiles.workspaces")
+      }
       guard workspaceIDs.insert(workspaceID).inserted else {
         throw ConfigurationError.invalid(
           "Profile '\(id.rawValue)' contains duplicate workspace '\(workspaceID)'."
         )
       }
-      guard knownWorkspaceIDs.isEmpty || knownWorkspaceIDs.contains(workspaceID) else {
+      guard
+        workspaceID == "*" || knownWorkspaceIDs.isEmpty || knownWorkspaceIDs.contains(workspaceID)
+      else {
         throw ConfigurationError.invalid(
           "Profile '\(id.rawValue)' references unknown workspace '\(workspaceID)'."
         )
@@ -1536,11 +1549,13 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
       workspaceIDs: Set(workspaces),
       allowedCallers: Set(allowedCallers),
       fullShellEnabled: fullShellEnabled,
-      mcpServerIDs: Set(mcpServers)
+      mcpServerIDs: Set(mcpServers),
+      mode: mode,
+      confirmationPolicy: confirmationPolicy
     )
   }
 
-  private static func defaultAllowedCallers(for id: GatewayProfileID) -> [GatewayCallerKind] {
+  private static func legacyAllowedCallers(for id: GatewayProfileID) -> [GatewayCallerKind] {
     if id == .chatGPTObserve || id == .chatGPTOperate { return [.secureTunnel] }
     if id == .cloudflareObserve || id == .cloudflareOperate { return [.cloudflareTunnel] }
     if id == .localAdmin { return [.localApp, .localCLI, .localMCP] }

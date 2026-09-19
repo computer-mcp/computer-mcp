@@ -52,7 +52,8 @@ final class GatewayDatabaseTests {
     let path = root.appendingPathComponent("gateway.sqlite").path
     let original = ProfileGrant(
       id: .chatGPTOperate, capabilityIDs: ["mcp.tools.call"], workspaceIDs: ["fixture"],
-      allowedCallers: [.secureTunnel])
+      allowedCallers: [.secureTunnel], mode: .workspaceOperations,
+      confirmationPolicy: .allWrites)
     try GatewayDatabase(path: path).saveProfile(original)
     // Recreate the stored shape immediately preceding the registration-grant migration.
     let previous = try DatabaseQueue(path: path)
@@ -68,6 +69,8 @@ final class GatewayDatabaseTests {
     var granted = original
     granted.mcpServerIDs = ["fixture-mcp"]
     try migrated.saveProfile(granted)
+    granted.authorizationRevision = original.authorizationRevision + 1
+    #expect(try migrated.profiles() == [granted])
     #expect(try GatewayDatabase(path: path).profiles() == [granted])
   }
 
@@ -91,7 +94,8 @@ final class GatewayDatabaseTests {
       workspaceIDs: [workspace.id],
       allowedCallers: [],
       fullShellEnabled: true,
-      mcpServerIDs: ["sample-mcp"]
+      mcpServerIDs: ["sample-mcp"],
+      mode: .localFullAccess
     )
     try database.saveProfile(profile)
 
@@ -299,7 +303,7 @@ final class GatewayDatabaseTests {
   }
 
   @Test
-  func testOperationTicketExpiryFailsPreparedTicket() throws {
+  func testOperationTicketExpiryRecordsExpiredState() throws {
     let database = try GatewayDatabase(inMemory: ())
     let now = Date(timeIntervalSince1970: 1_000)
     let expired = OperationTicket(
@@ -323,9 +327,11 @@ final class GatewayDatabaseTests {
       #expect((error as? GatewayDatabaseError) == (.operationTicketExpired(expired.id)))
     }
     let stored = try #require(try database.operationTicket(id: expired.id))
-    #expect((stored.state) == (.failed))
+    #expect((stored.state) == (.expired))
     #expect((stored.completedAt) == (now))
     #expect((stored.failureCode) == ("operations.ticket_expired"))
+    #expect(stored.invocationID == nil)
+    #expect(stored.executingAt == nil)
   }
 
   @Test

@@ -131,7 +131,8 @@ struct MCPConnectionLifecycleTests {
           switch failure {
           case "duplicateID":
             return try client.startToolCall(
-              server: server, name: "hang", arguments: .object([:]), requestID: "sibling")
+              server: server, name: "hang", arguments: .object(["changed": .bool(true)]),
+              requestID: "sibling")
           case "unknownCancel":
             return try client.cancelRequest(server: server, requestID: "absent", reason: nil)
           default:
@@ -186,6 +187,19 @@ struct MCPConnectionLifecycleTests {
         return
       }
       #expect(error is CancellationError)
+      let receipt = try client.readRequest(
+        server: server, requestID: "waited", offset: 0, maxBytes: 4096)
+      #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
+      #expect(receipt.objectValue?["cancellation"] == .string("sent"))
+      #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
+      #expect(throws: (any Error).self) {
+        try client.callTool(
+          server: server, name: "hang", arguments: .object([:]), requestID: "waited")
+      }
+      let observed = try client.startToolCall(
+        server: server, name: "hang", arguments: .object([:]), requestID: "waited")
+      #expect(observed.objectValue?["state"] == .string("outcome_unknown"))
+      #expect(try fixture.calls().count == 2)
       let requests = try await blocking { try client.activeRequests(server: server) }
       #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
       #expect(
@@ -312,7 +326,7 @@ struct MCPConnectionLifecycleTests {
         for await success in group where success { count += 1 }
         return count
       }
-      #expect(accepted == 1)
+      #expect(accepted == 32)
       try await fixture.waitForCalls(1)
       let requests = try await blocking { try client.activeRequests(server: server) }
       #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)

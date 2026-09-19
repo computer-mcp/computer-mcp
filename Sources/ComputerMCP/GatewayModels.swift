@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 package struct RegisteredWorkspace: Codable, Equatable, Sendable, Identifiable {
@@ -96,6 +97,8 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   package var parentRequestID: String?
   package var ticketID: String?
   package var caller: GatewayCallerKind
+  /// Stable verified subject binding. Nil identifies historical or unverified provenance.
+  package var principalDigest: String?
   package var transport: String?
   package var socketConnectionID: String?
   package var tunnelInstanceID: String?
@@ -120,6 +123,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     parentRequestID: String? = nil,
     ticketID: String? = nil,
     caller: GatewayCallerKind,
+    principalDigest: String? = nil,
     transport: String? = nil,
     socketConnectionID: String? = nil,
     tunnelInstanceID: String? = nil,
@@ -143,6 +147,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     self.parentRequestID = parentRequestID
     self.ticketID = ticketID
     self.caller = caller
+    self.principalDigest = principalDigest
     self.transport = transport
     self.socketConnectionID = socketConnectionID
     self.tunnelInstanceID = tunnelInstanceID
@@ -158,10 +163,20 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     self.outputByteCount = outputByteCount
     self.outputTruncated = outputTruncated
   }
+
+  package static func verifiedPrincipalDigest(_ principalID: String?) -> String? {
+    guard let principalID, !principalID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return nil }
+    return SHA256.hash(data: Data(principalID.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
 }
 
 package enum OperationTicketState: String, Codable, Sendable {
   case prepared
+  case pendingApproval = "pending_approval"
+  case approved
+  case denied
+  case expired
   case executing
   case succeeded
   case failed
@@ -185,6 +200,8 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
   package var executingAt: Date?
   package var completedAt: Date?
   package var failureCode: String?
+  package var authorizationRevision: Int64?
+  package var reviewSummary: String?
 
   package init(
     id: String = UUID().uuidString,
@@ -203,7 +220,9 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     expiresAt: Date,
     executingAt: Date? = nil,
     completedAt: Date? = nil,
-    failureCode: String? = nil
+    failureCode: String? = nil,
+    authorizationRevision: Int64? = nil,
+    reviewSummary: String? = nil
   ) {
     self.id = id
     self.capabilityID = capabilityID
@@ -224,5 +243,7 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     self.executingAt = executingAt
     self.completedAt = completedAt
     self.failureCode = failureCode
+    self.authorizationRevision = authorizationRevision
+    self.reviewSummary = reviewSummary
   }
 }

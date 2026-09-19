@@ -11,6 +11,37 @@ package protocol WorkspaceBookmarkServicing: Sendable {
   ) throws -> ResolvedWorkspaceAccess
 }
 
+/// A point-in-time access check, independent of whether a folder is registered or granted.
+package struct WorkspaceAccessReport: Sendable {
+  package let workspace: RegisteredWorkspace
+  package let error: WorkspaceBookmarkError?
+
+  package var json: JSONValue {
+    .object([
+      "status": .string(error == nil ? "available" : "unavailable"),
+      "error": error.map {
+        .object([
+          "code": .string($0.code),
+          "stage": .string("resolve"),
+          "message": .string($0.localizedDescription),
+        ])
+      } ?? .null,
+    ])
+  }
+}
+
+extension WorkspaceBookmarkServicing {
+  func inspect(_ workspace: RegisteredWorkspace) throws -> WorkspaceAccessReport {
+    do {
+      let access = try resolve(workspace)
+      defer { access.close() }
+      return WorkspaceAccessReport(workspace: access.workspace, error: nil)
+    } catch let error as WorkspaceBookmarkError {
+      return WorkspaceAccessReport(workspace: workspace, error: error)
+    }
+  }
+}
+
 package enum WorkspaceBookmarkError: Error, Equatable, Sendable {
   case notFileURL
   case rootDoesNotExist(path: String)

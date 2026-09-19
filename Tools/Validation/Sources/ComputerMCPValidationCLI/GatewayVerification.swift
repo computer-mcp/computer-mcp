@@ -35,6 +35,11 @@ struct GatewayProbeVerify: AsyncParsableCommand {
   var json: String
 
   mutating func run() async throws {
+    try await run(localApprovalResolver: nil)
+  }
+
+  // Approval authority is an explicit fixture dependency, never a parsed command-line option.
+  mutating func run(localApprovalResolver: ValidationLocalApprovalResolver?) async throws {
     guard (1...65_535).contains(port) else {
       throw ValidationError("port must be between 1 and 65535.")
     }
@@ -92,7 +97,8 @@ struct GatewayProbeVerify: AsyncParsableCommand {
 
     do {
       try await host.waitUntilHealthy()
-      let session = try await GatewayClientSession.connectHTTP(endpoint: endpoint)
+      let session = try await GatewayClientSession.connectHTTP(
+        endpoint: endpoint, localApprovalResolver: localApprovalResolver)
       do {
         let toolCatalog = try await session.listTools().map(\.validationTool)
         var runner = GatewayVerificationRunner(
@@ -104,16 +110,17 @@ struct GatewayProbeVerify: AsyncParsableCommand {
           observeToolNames: observeToolNames
         )
         let report = try await runner.run()
-        await session.disconnect()
-        host.stop()
+        try await session.disconnect()
+        try host.stop()
         try writeCoreJSON(report, destination: json)
       } catch {
-        await session.disconnect()
-        host.stop()
-        throw error
+        throw await session.disconnect(after: error)
       }
     } catch {
-      host.stop()
+      do { try host.stop() } catch let cleanupError {
+        throw ValidationProcessError.cleanupFailed(
+          primary: error.localizedDescription, detail: cleanupError.localizedDescription)
+      }
       throw error
     }
   }
@@ -206,20 +213,9 @@ private final class TemporaryGatewayHost {
     )
   }
 
-  func stop() {
-    guard process.isRunning else {
-      try? logHandle.close()
-      return
-    }
-    process.terminate()
-    for _ in 0..<50 where process.isRunning {
-      usleep(20_000)
-    }
-    if process.isRunning {
-      kill(process.processIdentifier, SIGKILL)
-    }
-    process.waitUntilExit()
-    try? logHandle.close()
+  func stop() throws {
+    defer { try? logHandle.close() }
+    try ValidationProcessCleanup.stop(process)
   }
 
   private func boundedLogTail() -> String {
@@ -936,6 +932,7 @@ private struct GatewayVerificationRunner {
       )
     )
     let ticketID = try requiredString("ticket_id", in: prepared)
+    try await session.resolvePreparedOperation(prepared)
     denials["operation_ticket_mismatch"] = await expectedFailure(
       "operations.commit",
       arguments: [
@@ -1703,6 +1700,7 @@ private struct GatewayVerificationRunner {
       )
     )
     let ticketID = try requiredString("ticket_id", in: prepared)
+    try await session.resolvePreparedOperation(prepared)
     let report = try await call(
       "operations.commit",
       arguments: [
@@ -1953,6 +1951,8 @@ private func writeCoreGatewayManifest(
 
     [[profiles]]
     id = "local-admin"
+    mode = "local-full-access"
+    confirmation_policy = "risk-based"
     capabilities = ["*"]
     workspaces = ["fixture", "repository"]
     allowed_callers = ["local-app", "local-cli", "local-mcp"]

@@ -171,7 +171,6 @@ Run Provider Doctor and inspect each path independently:
 
 - `codex.app.status`
 - `codex.exec.list`
-- `codex.mcp.status`
 
 When another official Codex client cannot claim a thread, inspect ownership
 before restarting applications or touching processes:
@@ -211,25 +210,22 @@ digest; this repair changes local receipts only.
 
 ### Full access was requested but did not apply
 
-Check the grant rather than passing a sandbox override:
+Inspect the adapter's configuration and runtime diagnostics:
 
 ```sh
-computer-mcp codex elevation effective --workspace-id <workspace-id> \
-  --thread-id <thread-id>
-computer-mcp codex elevation list --workspace-id <workspace-id>
+computer-mcp codex diagnostics --workspace-id <workspace-id>
 ```
 
-`pending` means the local user has not approved it; remote callers cannot
-self-approve. `approved` applies to an eligible future thread/turn start, never
-the active turn. A wrong workspace, canonical root, profile, caller,
-connection, or thread does not match. `expired`, `revoked`, `consumed`, and
-`invalidated` cannot elevate a new turn. After revocation, the active turn is
-unchanged and the next turn uses `workspace-write`.
+An omitted native setting inherits the user's Codex configuration. Check the
+installed executable, its effective configuration, and any explicit request
+override. Thread and turn responses report the vendor's applied permissions;
+a host profile name is not proof of a particular Codex sandbox mode.
 
-If `effective` reports full access but an MCP tool is still denied, that is
-expected when the profile lacks that Computer MCP capability. Codex sandbox
-access does not grant `file.write`, Full Shell, another workspace, operation
-tickets, TCC, or downstream tools.
+A host permission denial stops the call before execution. It does not silently
+select a narrower native mode. If Codex has Full Access but a callback tool is
+denied, inspect the host capability, workspace and confirmation policy for that
+tool. Native Codex execution permissions do not grant additional Computer MCP
+capabilities, operation tickets or macOS system permissions.
 
 ### A long thread is slow to inspect
 
@@ -248,15 +244,18 @@ Non-Git registered workspaces are supported. The gateway supplies
 `--skip-git-repo-check` to Exec while retaining its registered workspace and
 sandbox policy.
 
-Computer MCP also supplies the official `--ignore-user-config` flag to Exec.
-The user's existing Codex login is still used, but a broken or slow MCP server
-in the user's global Codex configuration is intentionally not started for a
-Gateway call. Diagnose those global integrations in interactive Codex; do not
-copy their credentials or configuration into Computer MCP.
+Exec reads the user's Codex configuration, including the selected provider,
+MCP servers and hooks, and uses Codex-managed authentication. The adapter still
+supplies the registered working directory, sandbox and approval policy as
+explicit launch options. A broken or slow personal integration can therefore
+affect Exec startup; diagnose it in Codex without copying its credentials into
+Computer MCP. Both execution paths resolve the configured program against
+the launch workspace and PATH; an unavailable custom program never falls back
+to a different `codex` executable.
 
 If `codex.app.apps.list` returns HTTP 403 while Safari and interactive Codex
 work, confirm that a fixed macOS HTTP, HTTPS, or SOCKS proxy is enabled, then
-restart Computer MCP so all three Codex provider lifecycles resolve it at
+restart Computer MCP so both Codex provider lifecycles resolve it at
 launch. Computer MCP preserves an explicitly inherited proxy environment,
 otherwise maps the current fixed macOS settings to conventional upper- and
 lowercase child variables with loopback in `NO_PROXY`. It does not persist or

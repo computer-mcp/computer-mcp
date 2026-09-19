@@ -33,6 +33,13 @@ do not install tools or change the user's PATH. A missing executable, failed
 version check or search error fails validation; only ripgrep's ordinary no-match
 status can establish that a forbidden pattern is absent.
 
+`verify-cli-interface.sh` accepts `COMPUTER_MCP_TEST_CONTROL_SOCKET` as an
+absolute isolated test Control Socket path. Without it, Doctor uses an absent
+socket beneath the script's temporary directory and must return the valid
+unavailable JSON contract. It never falls back to the production App. The
+isolated local-permission CLI acceptance test covers a running host's success
+path.
+
 ## Command hierarchy
 
 ```text
@@ -182,6 +189,29 @@ Successful cleanup removes the private state; failure retains isolated evidence
 and reports its path. Native sandbox tool errors can lack a command-execution
 event, so denial checks also require the exact native function-call result.
 
+To verify installation, execution and removal of a packaged adapter through the
+owner CLI, provide the archive's manifest version and the matching plugin
+repository's workflow driver:
+
+```sh
+COMPUTER_MCP_CODEX_PLUGIN_ARCHIVE=/absolute/codex-plugin.zip \
+COMPUTER_MCP_CODEX_PLUGIN_VERSION=0.2.0 \
+COMPUTER_MCP_CODEX_WORKFLOW_DRIVER=/absolute/plugin-codex/Scripts/check-workflow.py \
+COMPUTER_MCP_CODEX_EXECUTABLE=/absolute/vendor/codex \
+COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE=/absolute/computer-mcp \
+/usr/bin/swift test --no-parallel \
+  --filter installedCodexPackageCompletesWorkflowAndUninstallsThroughOwnerCLI
+```
+
+The gateway executable override selects the exact packaged CLI for both owner
+commands and gateway workers; omitting it uses `.build/debug/computer-mcp`.
+The test verifies the installed version, archive digest, disabled initial state,
+native approval workflow and uninstall cleanup in disposable host storage.
+Its host grant permits MCP operations only for the temporary workspace and local
+CLI caller, with host confirmation disabled so native approvals can be checked
+independently. Use the native Codex binary; the fixture's minimal `PATH` does not
+include runtimes needed by package-manager launch scripts.
+
 ## Evidence contract
 
 Validation Evidence Bundle schema 2 uses three layers:
@@ -213,8 +243,7 @@ check passed; it requires one exact `failed` row with a stable error code. A raw
 `failed` outcome never proves acceptance. This keeps lifecycle tools that have
 no outstanding request distinguishable from authorization denials and from
 unexpected failures. The schema-2 validator permits `expected_failure` only for
-the reviewed no-active-request paths of `codex.app.requests.respond` and
-`codex.mcp.approval.respond` in `catalog.dynamic_full_coverage`; every other
+the reviewed paths of `codex.app.requests.respond` and `codex.app.apps.list` in `catalog.dynamic_full_coverage`; every other
 capability fails closed.
 
 The lifecycle is:
@@ -252,6 +281,20 @@ Cloudflare named deployment is deliberately outside the mandatory release
 catalog because its account, domain, public hostname, and runtime token are
 owned by the deploying user. The Cloudflare runbook remains the deployment
 acceptance procedure when a user chooses that transport.
+
+Mutation probes inspect every prepared ticket's state before committing it.
+The default runner never approves a pending ticket: it reports that local
+approval is required and the target was not executed. Isolated acceptance code
+can inject a resolver backed by its explicitly selected owner-only Control
+Socket; the resolver must return the same ticket in `approved` state. There is
+no production auto-approval flag. A standalone probe without a local approval
+path cannot claim complete mutation coverage under a confirmation policy.
+
+Cancellation delivery and downstream execution are distinct observations. The
+downstream lifecycle fixture requires its task's cancellation marker as an
+independent stopping postcondition and records the host execution receipt with
+`mcp.requests.read` separately (`server`, `request_id`, bounded `offset` and
+`max_bytes`); a sent notification alone does not pass that lifecycle case.
 
 The full-catalog probe still calls every advertised tool and requires one
 correlated audit row per call. `codex.app.apps.list` requests a cached bounded

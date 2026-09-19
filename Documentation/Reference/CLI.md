@@ -25,7 +25,7 @@ computer-mcp app start
 computer-mcp app stop
 computer-mcp app restart
 computer-mcp app launch-at-login [--enabled] [--no-enabled]
-computer-mcp doctor [--journey <journey>] [--json]
+computer-mcp doctor [--journey <journey>] [--json] [--control-socket <control-socket>]
 computer-mcp build-info
 computer-mcp config path
 computer-mcp config show
@@ -41,11 +41,12 @@ computer-mcp workspace add <path> [--display-name <display-name>]
 computer-mcp workspace remove <id>
 computer-mcp workspace enable <id> --profile <profile> [--enabled] [--no-enabled]
 computer-mcp workspace deduplicate [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
-computer-mcp profile list
-computer-mcp profile show <id>
-computer-mcp profile activate <id>
-computer-mcp profile grant <id> --workspace <workspace> [--enabled] [--no-enabled]
-computer-mcp profile shell <id> [--enabled] [--no-enabled]
+computer-mcp profile list [--control-socket <control-socket>]
+computer-mcp profile show <id> [--control-socket <control-socket>]
+computer-mcp profile activate <id> [--control-socket <control-socket>]
+computer-mcp profile grant <id> --workspace <workspace> [--enabled] [--no-enabled] [--control-socket <control-socket>]
+computer-mcp profile shell <id> [--enabled] [--no-enabled] [--control-socket <control-socket>]
+computer-mcp profile permissions <id> [--control-socket <control-socket>] [--mode <mode>] [--confirmation-policy <confirmation-policy>] [--arbitrary-execution] [--no-arbitrary-execution] [--capabilities <capabilities>] [--workspaces <workspaces>] [--mcp-servers <mcp-servers>] [--allowed-callers <allowed-callers>] [--expected-revision <expected-revision>]
 computer-mcp tunnel openai list
 computer-mcp tunnel openai doctor <id>
 computer-mcp tunnel openai start <id>
@@ -66,17 +67,14 @@ computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> [--
 computer-mcp codex diagnostics --workspace-id <workspace-id> [--limit <limit>]
 computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id> [--interrupt-active-turn] [--force-owned-runtime]
 computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id> [--before-cursor <before-cursor>] [--max-turns <max-turns>] [--max-messages <max-messages>] [--max-items <max-items>] [--max-bytes <max-bytes>] [--max-output-bytes <max-output-bytes>] [--max-elapsed-milliseconds <max-elapsed-milliseconds>]
-computer-mcp codex elevation list --workspace-id <workspace-id> [--state <state>]
-computer-mcp codex elevation read <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation approve <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation deny <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation revoke <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation effective --workspace-id <workspace-id> [--thread-id <thread-id>]
 computer-mcp tools list [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools inspect <name> [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools call <name> [--arguments-json <arguments-json>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools inventory --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
-computer-mcp permissions status
+computer-mcp permissions status [--control-socket <control-socket>]
+computer-mcp permissions approvals list [--limit <limit>] [--control-socket <control-socket>]
+computer-mcp permissions approvals approve <id> [--control-socket <control-socket>]
+computer-mcp permissions approvals deny <id> [--control-socket <control-socket>]
 computer-mcp audit list [--limit <limit>]
 computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
 computer-mcp providers list
@@ -127,6 +125,9 @@ export are TOML.
 `doctor` reads the App-owned readiness engine. The default journey is `local`.
 It exits 0 only when the selected journey is `ready` or `verified`; all other
 states exit 1.
+
+Use `--control-socket <path>` to check an isolated App control plane. Without
+this option, `doctor` connects to the installed App's default control socket.
 
 `--json` emits `schema_version: 1` with an ISO-8601 `generated_at`, journey,
 status, checks, an optional redacted next action, and an optional redacted
@@ -326,33 +327,6 @@ establish the postcondition. Success requires `final_classification` to be
 writer ownership to remain. The persisted Goal is unchanged and a repeat is
 reported as already released.
 
-## Scoped Codex execution elevation
-
-Remote or ordinary callers request a grant through
-`codex.app.elevation.request`; the CLI intentionally does not turn that request
-into local approval. Review and resolve it from the local App/CLI control plane:
-
-```sh
-computer-mcp codex elevation list --workspace-id <workspace-id>
-computer-mcp codex elevation read <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation approve <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation deny <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation revoke <grant-id> --workspace-id <workspace-id>
-computer-mcp codex elevation effective --workspace-id <workspace-id> \
-  [--thread-id <thread-id>]
-```
-
-Approve and deny require the local caller and `local-admin` profile. A grant is
-bound to its original workspace, canonical root, profile, caller, connection,
-and optional thread. Approval affects only an eligible future thread/turn
-start; it never hot-switches an active turn. `effective` reports requested and
-effective sandbox state without changing it. Revocation restores the configured
-safe sandbox for future turns while leaving an already active turn unchanged.
-List, read, and mutation results include a structured `local_approval_review`
-with the workspace display name/root, exact binding and duration, network,
-filesystem, `.git`, outside-workspace and macOS privacy effects, plus the exact
-revoke tool arguments and CLI argv. Product surfaces may render that structure
-in natural language; the field values, not one fixed sentence, are normative.
 
 ## Bounded recent thread reads
 
@@ -385,6 +359,47 @@ apply the unchanged plan with its digest. `--allow-metadata-conflicts` is an
 explicit choice to keep the oldest registration metadata. The operation never
 deletes the workspace directory; retired ids remain aliases for historical
 references.
+
+## Host permission commands
+
+`profile permissions` updates one profile's host authority. Modes are
+`read-only`, `workspace-operations`, and `local-full-access`; they are independent
+of the profile's name and connection channel. Unspecified options retain their
+current values. `profile show` returns `authorization_revision`; pass it with
+`--expected-revision` to reject an edit based on stale settings.
+
+Every `profile` and `permissions` subcommand accepts `--control-socket <path>`
+for an isolated owner-only App instance. Omitting it selects the production App.
+
+Confirmation policies are `risk-based`, `all-writes`, and `never`. Risk-based
+confirmation covers host-classified destructive actions, external writes, and
+arbitrary execution. Changing confirmation policy does not grant a capability.
+Codex keeps its native sandbox, Full Access, configuration, and approval model;
+these controls govern Computer MCP-owned tools and access to registered tools.
+
+Advanced lists are comma-separated replacements. An empty value clears the
+list. A capability `*` grants tools, not workspaces; the separate workspace `*`
+explicitly grants all registered and future workspaces. MCP registration grants
+include that registration's host-selected tools. Caller kinds are `local-app`,
+`local-cli`, `local-mcp`, `secure-tunnel`, and `cloudflare-tunnel`.
+
+Arbitrary execution requires `local-full-access`, separate execution permission,
+and a corresponding tool grant. Shell tools also require the manifest's
+`policy.shell_enabled`. A working directory does not contain an unsandboxed
+process or isolate it from the current macOS user's other resources.
+
+Permission edits apply to new requests and invalidate pending confirmations.
+They do not restart the gateway or tunnels, or stop existing work. Switching the
+active profile selects the profile for subsequent admissions; established
+connections retain their verified binding.
+
+Use `permissions approvals list` to review exact host requests, their client,
+profile, workspace, arguments summary, expiry, and state. Approve or deny an exact
+ticket through the local App or management CLI. Approval permits the prepared
+operation to be committed once; it does not execute the operation itself.
+Changing arguments, target, authority, or using an expired ticket requires a new
+request. These are host operation approvals; Codex native approvals remain in
+the Codex adapter's native workflow.
 
 ## App-owned operation
 

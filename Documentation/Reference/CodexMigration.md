@@ -33,19 +33,18 @@ the adapter database path.
 | `pluginSettings` | Host-owned settings to review and pass to `plugins configure` |
 
 The plugin settings preserve native `codex.*` names and select the embedded
-provider's finite tool surface for the configured App Server, Exec and MCP
-paths. Risk classification comes from that migration contract, not a plugin's
+provider's finite tool surface for the configured App Server and Exec paths.
+The historical `mcp_enabled` input is omitted from adapter settings and grants;
+an enabled source must select App Server or Exec before export. Risk classification comes from that migration contract, not a plugin's
 annotations. New plugin tools are not implicitly selected. Profile capability
 and registration grants keep their existing meaning; the exporter does not
 add profile grants. In particular, an existing broad `mcp.tools.call` grant
 continues to cover host-selected tools across registrations.
 
-The seven `codex.app.elevation.*` tools and their authority stay with the host.
-App Server integration receives the existing scoped host-service channel.
-The plugin cannot approve its own host grants or change the bound caller.
-Execution defaults, including the sandbox baseline, belong to
-`adapterConfiguration`; host elevation reports grant eligibility rather than
-guessing the adapter's applied permissions. A source with no `[codex]` section
+App Server integration receives the scoped host-service channel. The plugin
+cannot approve host operation tickets or change its authenticated caller.
+Execution settings supplied by the source belong to `adapterConfiguration`;
+omitted native settings follow the user's Codex configuration. A source with no `[codex]` section
 has no execution settings to migrate and is rejected.
 
 If source profiles refer to other plugin registrations, pass each known ID

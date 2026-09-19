@@ -69,6 +69,7 @@ final class ComputerMCPAppModel: ObservableObject {
   @Published private(set) var openAITunnels: LoadState<[OpenAITunnelSummary]> = .idle
   @Published private(set) var cloudflareTunnels: LoadState<[CloudflareTunnelSummary]> = .idle
   @Published private(set) var permissions: LoadState<[PermissionSummary]> = .idle
+  @Published private(set) var operationApprovals: LoadState<[OperationTicket]> = .idle
   @Published private(set) var audit: LoadState<[AuditEntrySummary]> = .idle
   @Published private(set) var diagnostics: LoadState<DiagnosticsSnapshot> = .idle
   @Published private(set) var openAITunnelLogs: [String: LoadState<OpenAITunnelLogSnapshot>] = [:]
@@ -167,6 +168,7 @@ final class ComputerMCPAppModel: ObservableObject {
         await controlPlane.maintainApplication()
         refresh(.home)
         refresh(.tunnels)
+        if selectedWorkspace == .permissions { await loadOperationApprovals() }
       }
     }
   }
@@ -208,7 +210,10 @@ final class ComputerMCPAppModel: ObservableObject {
     case .workspaces:
       Task { await loadWorkspaces() }
     case .profiles:
-      Task { await loadProfiles() }
+      Task {
+        await loadProfiles()
+        await loadWorkspaces()
+      }
     case .providers:
       Task { await loadProviders() }
     case .plugins:
@@ -219,7 +224,10 @@ final class ComputerMCPAppModel: ObservableObject {
         await loadCloudflareTunnels()
       }
     case .permissions:
-      Task { await loadPermissions() }
+      Task {
+        await loadPermissions()
+        await loadOperationApprovals()
+      }
     case .audit:
       Task { await loadAudit() }
     case .diagnostics:
@@ -328,6 +336,15 @@ final class ComputerMCPAppModel: ObservableObject {
     ) {
       try await self.controlPlane.setFullShellEnabled(enabled, profileID: profileID)
     }
+  }
+
+  func updateProfilePermissions(_ grant: ProfileGrant) async throws {
+    let key = "profile.permissions.\(grant.id.rawValue)"
+    runningActions.insert(key)
+    defer { runningActions.remove(key) }
+    try await controlPlane.updateProfilePermissions(grant)
+    await loadProfiles()
+    await loadWorkspaces()
   }
 
   func startProvider(id: String) {
@@ -724,6 +741,22 @@ final class ComputerMCPAppModel: ObservableObject {
       permissions = .loaded(try await controlPlane.fetchPermissions())
     } catch {
       permissions.failRefresh(with: AppLocalization.errorDescription(error))
+    }
+  }
+
+  private func loadOperationApprovals() async {
+    operationApprovals.beginRefresh()
+    do { operationApprovals = .loaded(try await controlPlane.fetchOperationApprovals()) } catch {
+      operationApprovals.failRefresh(with: AppLocalization.errorDescription(error))
+    }
+  }
+
+  func resolveOperationApproval(id: String, approved: Bool) {
+    performAction(
+      key: "approval.resolve.\(id)", title: "Unable to resolve approval",
+      refresh: [.permissions, .audit]
+    ) {
+      try await self.controlPlane.resolveOperationApproval(id: id, approved: approved)
     }
   }
 

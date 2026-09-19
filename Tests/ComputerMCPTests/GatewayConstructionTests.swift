@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayConstructionTests {
-  @Test(arguments: ["catalog", "cli-tree", "duplicate-workspace", "bookmark"])
+  @Test(arguments: ["catalog", "cli-tree", "duplicate-workspace"])
   func failedConstructionJoinsProcessesBeforeRetry(stage: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -25,12 +25,6 @@ struct GatewayConstructionTests {
     let first = RegisteredWorkspace(id: "first", displayName: "First", rootPath: root.path)
     var workspaces = [first]
     if stage == "duplicate-workspace" { workspaces.append(first) }
-    if stage == "bookmark" {
-      workspaces.append(
-        RegisteredWorkspace(
-          id: "missing", displayName: "Missing",
-          rootPath: root.appendingPathComponent("missing").path))
-    }
     if stage == "cli-tree" {
       configuration.cli.commands = [
         .init(
@@ -49,8 +43,6 @@ struct GatewayConstructionTests {
           #expect(error as? GatewayProviderRouterError == .duplicateTool("workspace.list"))
         } else if stage == "duplicate-workspace" {
           #expect(error as? GatewayRuntimeError == .duplicateWorkspaceID("first"))
-        } else if stage == "bookmark" {
-          #expect(error is WorkspaceBookmarkError)
         }
       }
       try expectProcessesExited(root)

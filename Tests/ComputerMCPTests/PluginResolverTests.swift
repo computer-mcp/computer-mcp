@@ -334,7 +334,11 @@ struct PluginResolverTests {
     let plugin = try fixture.resolve(settings: settings)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
-      profiles: [.init(id: .chatGPTOperate, mcpServers: ["native"])],
+      profiles: [
+        .init(
+          id: .chatGPTOperate, allowedCallers: [.secureTunnel], mcpServers: ["native"],
+          mode: .workspaceOperations)
+      ],
       mcp: .init(servers: [
         .init(id: "private", transport: .stdio, command: "/bin/cat", allowAnyTool: true)
       ]))

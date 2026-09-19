@@ -3,10 +3,10 @@ import Foundation
 /// CLI metadata shared by the executable and library documentation.
 package enum ComputerMCPCLI {
   /// Current package CLI version.
-  package static let version = "1.1.4"
+  package static let version = "1.2.0"
 
   /// Current package build number.
-  package static let build = "35"
+  package static let build = "36"
 
   /// Version string exposed by the command-line executable.
   package static let releaseVersion = "\(version) (\(build))"

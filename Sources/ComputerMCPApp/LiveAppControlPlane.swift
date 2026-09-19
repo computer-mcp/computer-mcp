@@ -155,19 +155,16 @@ final class LiveAppControlPlane: AppControlPlane {
   func fetchWorkspaces() async throws -> [WorkspaceSummary] {
     let activeProfile = try await controlPlane.activeGatewayProfile()
     let grant = try await controlPlane.profileGrants().first { $0.id == activeProfile }
-    return try await controlPlane.workspaces().map { workspace in
-      var isDirectory = ObjCBool(false)
-      let exists = FileManager.default.fileExists(
-        atPath: workspace.rootPath,
-        isDirectory: &isDirectory
-      )
+    return try await controlPlane.workspaceAccessReports().map { report in
+      let workspace = report.workspace
       let health: WorkspaceHealth
-      if !exists || !isDirectory.boolValue {
-        health = .missing
-      } else if workspace.bookmarkIsStale {
-        health = .bookmarkStale
-      } else {
+      switch report.error {
+      case nil:
         health = .available
+      case .rootDoesNotExist?, .rootIsNotDirectory?:
+        health = .missing
+      default:
+        health = .unavailable
       }
       return WorkspaceSummary(
         id: workspace.id,
@@ -175,10 +172,12 @@ final class LiveAppControlPlane: AppControlPlane {
         path: workspace.rootPath,
         health: health,
         activeProfileID: activeProfile.rawValue,
-        isEnabled: grant?.capabilityIDs.contains("*") == true
+        isEnabled: grant?.workspaceIDs.contains("*") == true
           || grant?.workspaceIDs.contains(workspace.id) == true,
-        isSelected: grant?.workspaceIDs.contains(workspace.id) == true,
-        lastResolvedAt: workspace.updatedAt
+        isSelected: grant?.workspaceIDs.contains("*") == true
+          || grant?.workspaceIDs.contains(workspace.id) == true,
+        lastResolvedAt: report.error == nil ? Date() : nil,
+        healthDetail: report.error?.localizedDescription
       )
     }
   }
@@ -189,13 +188,14 @@ final class LiveAppControlPlane: AppControlPlane {
       ProfileSummary(
         id: grant.id.rawValue,
         displayName: grant.id.displayName,
-        summary: grant.id.summary,
+        summary: grant.mode.summary,
         isActive: grant.id == activeProfile,
         isEnabled: grant.id != .localAdmin,
-        riskLevel: grant.id.riskLevel,
+        riskLevel: grant.mode.riskLevel,
         permitsRemoteAccess: grant.allowedCallers.contains(where: \.isRemote),
-        supportsFullShell: grant.id.supportsFullShell,
-        fullShellEnabled: grant.fullShellEnabled
+        supportsFullShell: grant.supportsFullShell,
+        fullShellEnabled: grant.fullShellEnabled,
+        permissions: grant
       )
     }
   }
@@ -564,6 +564,25 @@ final class LiveAppControlPlane: AppControlPlane {
       event: enabled ? "profile.full_shell.enabled" : "profile.full_shell.disabled",
       fields: ["profile_id": profile.rawValue]
     )
+  }
+
+  func updateProfilePermissions(_ grant: ProfileGrant) async throws {
+    _ = try await operations.updateProfilePermissions(
+      profileID: grant.id, mode: grant.mode, confirmationPolicy: grant.confirmationPolicy,
+      fullShellEnabled: grant.fullShellEnabled, capabilityIDs: grant.capabilityIDs,
+      workspaceIDs: grant.workspaceIDs, mcpServerIDs: grant.mcpServerIDs,
+      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision)
+    fileLogger.append(
+      .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
+  }
+
+  func fetchOperationApprovals() async throws -> [OperationTicket] {
+    try await controlPlane.operationApprovals()
+  }
+
+  func resolveOperationApproval(id: String, approved: Bool) async throws {
+    _ = try await controlPlane.resolveOperationApproval(
+      id: id, approved: approved, resolver: .localApp)
   }
 
   func startProvider(id: String) async throws {
@@ -1212,23 +1231,24 @@ extension GatewayProfileID {
     return rawValue
   }
 
-  fileprivate var summary: String {
-    if self == .chatGPTObserve || self == .cloudflareObserve {
-      return "Read-only observation, Skills, system state, and workspace inspection."
-    }
-    if self == .chatGPTOperate || self == .cloudflareOperate {
-      return "Locally enabled workspace writes, Codex, and reviewed providers."
-    }
-    if self == .localAdmin {
-      return "Local App and CLI administration. Never exposed through a Tunnel."
-    }
-    return "Custom manifest-defined profile."
-  }
+}
 
+extension GatewayPermissionMode {
+  fileprivate var summary: String {
+    switch self {
+    case .readOnly: "Read selected tools and workspaces without changing them."
+    case .workspaceOperations:
+      "Use selected tools and workspaces under the configured confirmation policy."
+    case .localFullAccess:
+      "Use selected capabilities with this macOS user's access. Arbitrary execution needs separate permission."
+    }
+  }
   fileprivate var riskLevel: RiskLevel {
-    if self == .chatGPTObserve || self == .cloudflareObserve { return .low }
-    if self == .localAdmin { return .high }
-    return .elevated
+    switch self {
+    case .readOnly: .low
+    case .workspaceOperations: .elevated
+    case .localFullAccess: .high
+    }
   }
 }
 

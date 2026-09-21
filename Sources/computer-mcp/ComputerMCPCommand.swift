@@ -207,6 +207,8 @@ struct Tools: ParsableCommand {
 }
 
 struct ToolConnectionOptions: ParsableArguments {
+  @OptionGroup var owner: AppControlConnectionOptions
+
   @Option(
     name: .long,
     help: "Path to a schema-1 TOML manifest for explicit standalone development mode."
@@ -223,6 +225,7 @@ struct ToolConnectionOptions: ParsableArguments {
   var workspaceID: String?
 
   func validateMode() throws {
+    try owner.validateStandalone(config: config)
     guard config == nil else { return }
     let standaloneOptions = caller != nil || profile != nil || workspaceID != nil
     guard !standaloneOptions else {
@@ -238,7 +241,7 @@ struct ToolsList: AsyncParsableCommand {
   func run() async throws {
     try connection.validateMode()
     guard connection.config != nil else {
-      printJSON(try await AppControlPlaneServiceClient.live().call("tools.list"))
+      printJSON(try await connection.owner.client().call("tools.list"))
       return
     }
     printJSON(
@@ -257,7 +260,7 @@ struct ToolsInspect: AsyncParsableCommand {
     try connection.validateMode()
     if connection.config == nil {
       printJSON(
-        try await AppControlPlaneServiceClient.live().call(
+        try await connection.owner.client().call(
           "tools.inspect",
           arguments: .object(["name": .string(name)])
         )
@@ -284,7 +287,7 @@ struct ToolsCall: AsyncParsableCommand {
     try connection.validateMode()
     let arguments = try decodeArguments(argumentsJSON)
     if connection.config == nil {
-      let result = try await AppControlPlaneServiceClient.live().call(
+      let result = try await connection.owner.client().call(
         "tools.call",
         arguments: .object([
           "name": .string(name),
@@ -354,6 +357,8 @@ struct Config: ParsableCommand {
 }
 
 struct Validate: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "validate",
     abstract: "Validate a TOML registry configuration."
@@ -366,8 +371,9 @@ struct Validate: AsyncParsableCommand {
   var connect = false
 
   mutating func run() async throws {
+    try connection.validateStandalone(config: config)
     guard let config else {
-      printJSON(try await AppControlPlaneServiceClient.live().call("config.validate"))
+      printJSON(try await connection.client().call("config.validate"))
       return
     }
     let gateway = try GatewayConfiguration.load(path: config)
@@ -409,6 +415,9 @@ struct Codex: ParsableCommand {
   @Flag(name: .long, help: "Register the App-owned bridge without using a TOML manifest.")
   var app = false
 
+  @Option(name: .long, help: "Path to the App gateway socket; requires --app.")
+  var socket: String?
+
   @Option(name: .long, help: "MCP server name to register in Codex.")
   var name = "computer-mcp"
 
@@ -425,6 +434,9 @@ struct Codex: ParsableCommand {
     guard app != (config != nil) else {
       throw ValidationError("Pass exactly one of --app or --config.")
     }
+    guard app || socket == nil else {
+      throw ValidationError("--socket requires --app.")
+    }
     let executablePath = try serverExecutable ?? currentExecutableURL().path
     let installer = CodexMCPInstaller()
     let invocation: CodexMCPInstallInvocation
@@ -432,7 +444,8 @@ struct Codex: ParsableCommand {
       invocation = try installer.planApp(
         codexCLI: codexCLI,
         serverName: name,
-        executablePath: executablePath
+        executablePath: executablePath,
+        socketPath: socket
       )
     } else {
       guard let config else {
@@ -457,7 +470,8 @@ struct Codex: ParsableCommand {
       result = try installer.installApp(
         codexCLI: codexCLI,
         serverName: name,
-        executablePath: executablePath
+        executablePath: executablePath,
+        socketPath: socket
       )
     } else {
       guard let config else {

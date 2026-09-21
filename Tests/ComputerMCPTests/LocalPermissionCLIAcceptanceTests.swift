@@ -11,6 +11,57 @@ import Testing
   .timeLimit(.minutes(2)))
 struct LocalPermissionCLIAcceptanceTests {
   @Test
+  func managementCommandsTargetOnlyTheSelectedApp() async throws {
+    let executable = try #require(
+      ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"])
+    let first = try PermissionCLIFixture(executable: executable)
+    let second = try PermissionCLIFixture(executable: executable)
+    do {
+      try await first.controlSocket.start()
+      try await second.controlSocket.start()
+      for fixture in [first, second] {
+        let path = try await fixture.run(["config", "path"])
+        #expect(path.exitCode == 0)
+        #expect(path.stdout.contains(fixture.root.path))
+        for arguments in [
+          ["app", "status"], ["workspace", "list"], ["config", "validate"],
+          ["config", "history"], ["providers", "list"], ["audit", "list"],
+          ["tunnel", "openai", "list"], ["tunnel", "cloudflare", "list"],
+        ] {
+          _ = try await fixture.json(arguments)
+        }
+      }
+      _ = try await first.json(["workspace", "remove", "fixture"])
+      #expect(try first.database.workspaces().isEmpty)
+      #expect(try second.database.workspaces().count == 1)
+      _ = try await second.json(["app", "start"])
+      #expect(await second.gatewayService.snapshot().state == .running)
+      #expect(await first.gatewayService.snapshot().state != .running)
+      _ = try await second.json(["tools", "list"])
+      _ = try await second.json(["app", "stop"])
+      #expect(await second.gatewayService.snapshot().state != .running)
+      for arguments in [
+        ["tools", "list"], ["tools", "inspect", "file.read"],
+        ["tools", "call", "file.read"], ["config", "validate"],
+      ] {
+        let result = try await first.run(arguments + ["--config", "absent.toml"])
+        #expect(result.exitCode != 0)
+        #expect(result.stderr.contains("--control-socket cannot be combined with --config"))
+      }
+      await first.controlSocket.stop()
+      let missingOwner = try await first.run(["app", "status"])
+      #expect(missingOwner.exitCode != 0)
+      #expect(try await second.run(["app", "status"]).exitCode == 0)
+      await first.stopAndRemove()
+      await second.stopAndRemove()
+    } catch {
+      await first.stopAndRemove()
+      await second.stopAndRemove()
+      throw error
+    }
+  }
+
+  @Test
   func realCLIControlsExactHostApprovalsWithoutRestartingTheIsolatedGateway() async throws {
     let executable = try #require(
       ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"])
@@ -230,10 +281,11 @@ private struct PermissionCLIFixture: Sendable {
     let result = try await commands.perform {
       try ProcessCommandRunner(environment: ["PATH": "/usr/bin:/bin"]).run(
         executable: executable, arguments: arguments, workingDirectory: root, environment: [:],
-        timeoutMilliseconds: 10_000, maxOutputBytes: 131_072)
+        timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576)
     }
     try #require(!result.timedOut, "CLI timed out: \(arguments)")
-    try #require(!result.stdoutTruncated && !result.stderrTruncated)
+    try #require(
+      !result.stdoutTruncated && !result.stderrTruncated, "CLI output truncated: \(arguments)")
     return result
   }
 

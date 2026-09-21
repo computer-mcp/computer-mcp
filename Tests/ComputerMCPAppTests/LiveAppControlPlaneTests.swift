@@ -8,6 +8,18 @@ import Testing
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
   @Test
+  func localMCPConnectionTargetsTheOwningAppInstance() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let connection = try await fixture.app.localMCPConnection()
+      #expect(connection.command == fixture.controlPlane.gatewayExecutablePath)
+      #expect(
+        connection.arguments == [
+          "bridge", "--client-identity", "local-mcp", "--socket", fixture.socketURL.path,
+        ])
+    }
+  }
+
+  @Test
   func workspaceHealthChecksBookmarkAccessAndMissingFolders() async throws {
     try await withAppControlPlaneFixture { fixture in
       let database = await fixture.controlPlane.database

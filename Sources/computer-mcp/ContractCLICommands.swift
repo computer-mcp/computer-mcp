@@ -127,6 +127,8 @@ struct Audit: ParsableCommand {
 }
 
 struct AuditList: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "list",
     abstract: "List recent redacted audit events from the running App."
@@ -143,7 +145,7 @@ struct AuditList: AsyncParsableCommand {
 
   func run() async throws {
     printJSON(
-      try await AppControlPlaneServiceClient.live().call(
+      try await connection.client().call(
         "audit.list",
         arguments: .object(["limit": .number(Double(limit))])
       )
@@ -199,17 +201,21 @@ struct Providers: ParsableCommand {
 }
 
 struct ProvidersList: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "list",
     abstract: "List provider health recorded by the running App."
   )
 
   func run() async throws {
-    printJSON(try await AppControlPlaneServiceClient.live().call("provider.list"))
+    printJSON(try await connection.client().call("provider.list"))
   }
 }
 
 struct ProvidersDoctor: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "doctor",
     abstract: "Run provider version and diagnostic probes without opening MCP sessions."
@@ -220,7 +226,7 @@ struct ProvidersDoctor: AsyncParsableCommand {
   func run() async throws {
     let arguments: JSONValue = id.map { .object(["id": .string($0)]) } ?? .object([:])
     printJSON(
-      try await AppControlPlaneServiceClient.live().call(
+      try await connection.client().call(
         "provider.doctor",
         arguments: arguments
       )

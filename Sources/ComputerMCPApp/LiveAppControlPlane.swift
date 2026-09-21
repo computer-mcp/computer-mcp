@@ -760,37 +760,38 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func localMCPConnection() async throws -> LocalMCPConnectionSummary {
     let installation = try EmbeddedCLIInstaller().status()
-    let executable: String
-    if installation.state == .installed {
-      executable = installation.destination
-    } else {
-      executable = try Self.embeddedGatewayExecutablePath()
-    }
     return LocalMCPConnectionSummary(
-      command: executable,
-      arguments: ["bridge", "--client-identity", "local-mcp"],
+      command: controlPlane.gatewayExecutablePath,
+      arguments: [
+        "bridge", "--client-identity", "local-mcp", "--socket",
+        gatewayService.socketConfiguration.socketURL.path,
+      ],
       cliInstallation: installation
     )
   }
 
   func previewCodexRegistration() async throws -> CodexMCPInstallInvocation {
     let connection = try await localMCPConnection()
+    let socketPath = gatewayService.socketConfiguration.socketURL.path
     return try await Task.detached {
       try CodexMCPInstaller().planApp(
         codexCLI: nil,
         serverName: "computer-mcp",
-        executablePath: connection.command
+        executablePath: connection.command,
+        socketPath: socketPath
       )
     }.value
   }
 
   func installCodexRegistration() async throws -> CommandResult {
     let connection = try await localMCPConnection()
+    let socketPath = gatewayService.socketConfiguration.socketURL.path
     let result = try await Task.detached {
       try CodexMCPInstaller().installApp(
         codexCLI: nil,
         serverName: "computer-mcp",
-        executablePath: connection.command
+        executablePath: connection.command,
+        socketPath: socketPath
       )
     }.value
     guard result.exitCode == 0 else {

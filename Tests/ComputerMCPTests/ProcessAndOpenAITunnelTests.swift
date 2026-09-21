@@ -365,12 +365,12 @@ final class ProcessAndOpenAITunnelTests {
     #expect(
       (invocation.arguments)
         == ([
-          "mcp", "add", "computer-mcp", "--", "/bin/cat", "serve", "--config",
+          "mcp", "add", "computer-mcp", "--", "/bin/cat", "serve", "stdio", "--config",
           "\(cwd)/Examples/computer-mcp.toml",
         ]))
     #expect(
       (invocation.mcpCommand)
-        == (["/bin/cat", "serve", "--config", "\(cwd)/Examples/computer-mcp.toml"]))
+        == (["/bin/cat", "serve", "stdio", "--config", "\(cwd)/Examples/computer-mcp.toml"]))
   }
 
   @Test(arguments: [false, true], [false, true])
@@ -414,6 +414,26 @@ final class ProcessAndOpenAITunnelTests {
         "/bin/cat", "bridge", "--client-identity", "local-mcp",
       ])
     #expect(invocation.arguments.contains("--config") == false)
+  }
+
+  @Test
+  func codexAppInstallationPreservesTheSelectedSocket() throws {
+    let socket = "/private/tmp/Computer MCP Development/gateway.sock"
+    let installer = CodexMCPInstaller()
+    let invocation = try installer.planApp(
+      codexCLI: "/bin/echo", serverName: "development", executablePath: "/bin/cat",
+      socketPath: socket)
+    let result = try installer.installApp(
+      codexCLI: "/bin/echo", serverName: "development", executablePath: "/bin/cat",
+      socketPath: socket)
+    #expect(
+      invocation.mcpCommand == [
+        "/bin/cat", "bridge", "--client-identity", "local-mcp", "--socket", socket,
+      ])
+    #expect(result.exitCode == 0)
+    #expect(
+      result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        == invocation.arguments.joined(separator: " "))
   }
 
   @Test

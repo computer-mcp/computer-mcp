@@ -4,6 +4,13 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.2.1 — 2026-09-21
+
+- Serialize gateway lifecycle changes so workspace updates and background
+  recovery cannot overlap listener startup with asynchronous shutdown.
+- Keep background maintenance from restoring transports during gateway
+  transitions.
+
 ## 1.2.0 — 2026-09-19
 
 - Add independent host permission modes, revision-bound grants, local approval

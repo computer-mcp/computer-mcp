@@ -10,6 +10,41 @@ import Testing
 
 final class AppControlPlaneServiceTests {
   @Test
+  func startDuringStopWaitsForOwnedListenerCleanup() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    let socketURL = fixture.root.appendingPathComponent("gateway.sock")
+    let service = AppGatewayService(
+      controlPlane: fixture.controlPlane,
+      socketConfiguration: GatewaySocketConfiguration(socketURL: socketURL)
+    )
+    try await service.start()
+    let stopping = Task { await service.stop() }
+    let deadline = ContinuousClock.now + .seconds(3)
+    while await service.snapshot().state != .stopping, ContinuousClock.now < deadline {
+      await Task.yield()
+    }
+    #expect(await service.snapshot().state == .stopping)
+    do {
+      try await service.start()
+      await stopping.value
+      #expect(await service.snapshot().state == .running)
+      let catalog = try await GatewaySocketCatalogInspector().inspect(socketURL: socketURL)
+      #expect(catalog.toolNames.contains("workspace.list"))
+      await service.stop()
+      #expect(await service.snapshot().state == .stopped)
+      #expect(!FileManager.default.fileExists(atPath: socketURL.path))
+      try await service.start()
+      await service.stop()
+    } catch {
+      await stopping.value
+      await service.stop()
+      throw error
+    }
+  }
+
+  @Test
   func permissionEditsRoundTripAndRejectStaleAuthorization() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }

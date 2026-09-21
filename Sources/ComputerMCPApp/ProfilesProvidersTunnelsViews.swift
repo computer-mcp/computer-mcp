@@ -429,12 +429,16 @@ struct ProvidersView: View {
         }
       }
     }
-    .sheet(isPresented: $showingMCPRegistrations) {
-      MCPRegistrationsView(model: model.mcpRegistrations) { pluginID in
-        model.pluginManagement.selectedID = pluginID
-        model.selectedWorkspace = .plugins
+    .sheet(
+      isPresented: $showingMCPRegistrations,
+      onDismiss: { model.refresh(.providers) },
+      content: {
+        MCPRegistrationsView(model: model.mcpRegistrations) { pluginID in
+          model.pluginManagement.selectedID = pluginID
+          model.selectedWorkspace = .plugins
+        }
       }
-    }
+    )
   }
 }
 

@@ -3,7 +3,10 @@
 The signed `computer-mcp` CLI is embedded in `Computer MCP.app`. App-owned
 commands connect to the owner-only control socket under Application Support and
 operate the same manifest, database, bookmarks, Keychain records, providers,
-transports, and audit stream as the App.
+transports, and audit stream as the App. Each App-owned command accepts
+`--control-socket <path>` to select a specific running App instance. An explicit
+socket never falls back to another App. Standalone `--config` and App-owned
+`--control-socket` modes are mutually exclusive.
 
 Install it from the App or from the bundled executable:
 
@@ -20,65 +23,65 @@ replace a regular file or an unrelated valid link. Add that directory to
 
 ```text
 computer-mcp app capabilities
-computer-mcp app status
-computer-mcp app start
-computer-mcp app stop
-computer-mcp app restart
-computer-mcp app launch-at-login [--enabled] [--no-enabled]
+computer-mcp app status [--control-socket <control-socket>]
+computer-mcp app start [--control-socket <control-socket>]
+computer-mcp app stop [--control-socket <control-socket>]
+computer-mcp app restart [--control-socket <control-socket>]
+computer-mcp app launch-at-login [--control-socket <control-socket>] [--enabled] [--no-enabled]
 computer-mcp doctor [--journey <journey>] [--json] [--control-socket <control-socket>]
 computer-mcp build-info
-computer-mcp config path
-computer-mcp config show
+computer-mcp config path [--control-socket <control-socket>]
+computer-mcp config show [--control-socket <control-socket>]
 computer-mcp config defaults
-computer-mcp config validate [--config <config>] [--connect]
-computer-mcp config export [--output <output>]
+computer-mcp config validate [--control-socket <control-socket>] [--config <config>] [--connect]
+computer-mcp config export [--control-socket <control-socket>] [--output <output>]
 computer-mcp config migrate-codex --config <config> --adapter-config <adapter-config> --state-directory <state-directory> [--known-plugin-mcp-server <known-plugin-mcp-server> ...]
-computer-mcp config import --input <input> [--apply] [--expected-current-digest <expected-current-digest>]
-computer-mcp config history [--limit <limit>]
-computer-mcp config rollback <revision-id>
-computer-mcp workspace list
-computer-mcp workspace add <path> [--display-name <display-name>]
-computer-mcp workspace remove <id>
-computer-mcp workspace enable <id> --profile <profile> [--enabled] [--no-enabled]
-computer-mcp workspace deduplicate [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
+computer-mcp config import [--control-socket <control-socket>] --input <input> [--apply] [--expected-current-digest <expected-current-digest>]
+computer-mcp config history [--control-socket <control-socket>] [--limit <limit>]
+computer-mcp config rollback [--control-socket <control-socket>] <revision-id>
+computer-mcp workspace list [--control-socket <control-socket>]
+computer-mcp workspace add [--control-socket <control-socket>] <path> [--display-name <display-name>]
+computer-mcp workspace remove [--control-socket <control-socket>] <id>
+computer-mcp workspace enable [--control-socket <control-socket>] <id> --profile <profile> [--enabled] [--no-enabled]
+computer-mcp workspace deduplicate [--control-socket <control-socket>] [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
 computer-mcp profile list [--control-socket <control-socket>]
 computer-mcp profile show <id> [--control-socket <control-socket>]
 computer-mcp profile activate <id> [--control-socket <control-socket>]
 computer-mcp profile grant <id> --workspace <workspace> [--enabled] [--no-enabled] [--control-socket <control-socket>]
 computer-mcp profile shell <id> [--enabled] [--no-enabled] [--control-socket <control-socket>]
 computer-mcp profile permissions <id> [--control-socket <control-socket>] [--mode <mode>] [--confirmation-policy <confirmation-policy>] [--arbitrary-execution] [--no-arbitrary-execution] [--capabilities <capabilities>] [--workspaces <workspaces>] [--mcp-servers <mcp-servers>] [--allowed-callers <allowed-callers>] [--expected-revision <expected-revision>]
-computer-mcp tunnel openai list
-computer-mcp tunnel openai doctor <id>
-computer-mcp tunnel openai start <id>
-computer-mcp tunnel openai reconnect <id>
-computer-mcp tunnel openai stop <id>
-computer-mcp tunnel openai provision <id> [--force]
-computer-mcp tunnel openai logs <id>
-computer-mcp tunnel openai save <id> --tunnel-client-profile <tunnel-client-profile> --tunnel-id <tunnel-id> --gateway-profile <gateway-profile> [--tunnel-client-path <tunnel-client-path>] [--http-proxy <http-proxy>] [--api-key-stdin]
-computer-mcp tunnel openai remove <id>
-computer-mcp tunnel cloudflare list
-computer-mcp tunnel cloudflare doctor <id>
-computer-mcp tunnel cloudflare start <id>
-computer-mcp tunnel cloudflare stop <id>
-computer-mcp tunnel cloudflare logs <id>
-computer-mcp tunnel cloudflare save <id> --tunnel-name <tunnel-name> --public-hostname <public-hostname> --gateway-profile <gateway-profile> [--local-port <local-port>] [--metrics-port <metrics-port>] [--cloudflared-path <cloudflared-path>] [--tunnel-token-stdin] [--regenerate-access-token]
-computer-mcp tunnel cloudflare remove <id>
-computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> [--observed-error <observed-error>]
-computer-mcp codex diagnostics --workspace-id <workspace-id> [--limit <limit>]
-computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id> [--interrupt-active-turn] [--force-owned-runtime]
-computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id> [--before-cursor <before-cursor>] [--max-turns <max-turns>] [--max-messages <max-messages>] [--max-items <max-items>] [--max-bytes <max-bytes>] [--max-output-bytes <max-output-bytes>] [--max-elapsed-milliseconds <max-elapsed-milliseconds>]
-computer-mcp tools list [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
-computer-mcp tools inspect <name> [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
-computer-mcp tools call <name> [--arguments-json <arguments-json>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp tunnel openai list [--control-socket <control-socket>]
+computer-mcp tunnel openai doctor [--control-socket <control-socket>] <id>
+computer-mcp tunnel openai start [--control-socket <control-socket>] <id>
+computer-mcp tunnel openai reconnect [--control-socket <control-socket>] <id>
+computer-mcp tunnel openai stop [--control-socket <control-socket>] <id>
+computer-mcp tunnel openai provision [--control-socket <control-socket>] <id> [--force]
+computer-mcp tunnel openai logs [--control-socket <control-socket>] <id>
+computer-mcp tunnel openai save [--control-socket <control-socket>] <id> --tunnel-client-profile <tunnel-client-profile> --tunnel-id <tunnel-id> --gateway-profile <gateway-profile> [--tunnel-client-path <tunnel-client-path>] [--http-proxy <http-proxy>] [--api-key-stdin]
+computer-mcp tunnel openai remove [--control-socket <control-socket>] <id>
+computer-mcp tunnel cloudflare list [--control-socket <control-socket>]
+computer-mcp tunnel cloudflare doctor [--control-socket <control-socket>] <id>
+computer-mcp tunnel cloudflare start [--control-socket <control-socket>] <id>
+computer-mcp tunnel cloudflare stop [--control-socket <control-socket>] <id>
+computer-mcp tunnel cloudflare logs [--control-socket <control-socket>] <id>
+computer-mcp tunnel cloudflare save [--control-socket <control-socket>] <id> --tunnel-name <tunnel-name> --public-hostname <public-hostname> --gateway-profile <gateway-profile> [--local-port <local-port>] [--metrics-port <metrics-port>] [--cloudflared-path <cloudflared-path>] [--tunnel-token-stdin] [--regenerate-access-token]
+computer-mcp tunnel cloudflare remove [--control-socket <control-socket>] <id>
+computer-mcp codex diagnose-thread [--control-socket <control-socket>] <thread-id> --workspace-id <workspace-id> [--observed-error <observed-error>]
+computer-mcp codex diagnostics [--control-socket <control-socket>] --workspace-id <workspace-id> [--limit <limit>]
+computer-mcp codex release-thread [--control-socket <control-socket>] <thread-id> --workspace-id <workspace-id> [--interrupt-active-turn] [--force-owned-runtime]
+computer-mcp codex recent-thread [--control-socket <control-socket>] <thread-id> --workspace-id <workspace-id> [--before-cursor <before-cursor>] [--max-turns <max-turns>] [--max-messages <max-messages>] [--max-items <max-items>] [--max-bytes <max-bytes>] [--max-output-bytes <max-output-bytes>] [--max-elapsed-milliseconds <max-elapsed-milliseconds>]
+computer-mcp tools list [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp tools inspect <name> [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp tools call <name> [--arguments-json <arguments-json>] [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools inventory --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp permissions status [--control-socket <control-socket>]
 computer-mcp permissions approvals list [--limit <limit>] [--control-socket <control-socket>]
 computer-mcp permissions approvals approve <id> [--control-socket <control-socket>]
 computer-mcp permissions approvals deny <id> [--control-socket <control-socket>]
-computer-mcp audit list [--limit <limit>]
+computer-mcp audit list [--control-socket <control-socket>] [--limit <limit>]
 computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
-computer-mcp providers list
-computer-mcp providers doctor [<id>]
+computer-mcp providers list [--control-socket <control-socket>]
+computer-mcp providers doctor [--control-socket <control-socket>] [<id>]
 computer-mcp providers discover --config <config>
 computer-mcp mcp list [--control-socket <control-socket>]
 computer-mcp mcp show [--control-socket <control-socket>] <id>
@@ -110,7 +113,7 @@ computer-mcp plugins uninstall <installation-id> [--control-socket <control-sock
 computer-mcp plugins recover [--control-socket <control-socket>] --expected-revision <expected-revision>
 computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
-computer-mcp install codex [--config <config>] [--app] [--name <name>] [--codex-cli <codex-cli>] [--server-executable <server-executable>] [--dry-run]
+computer-mcp install codex [--config <config>] [--app] [--socket <socket>] [--name <name>] [--codex-cli <codex-cli>] [--server-executable <server-executable>] [--dry-run]
 computer-mcp serve stdio --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>]
 computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>]
 computer-mcp bridge [--socket <socket>] [--tunnel-credential-file <tunnel-credential-file>] [--tunnel-profile-id <tunnel-profile-id>] [--client-identity <client-identity>]
@@ -283,6 +286,10 @@ computer-mcp install codex --app --dry-run
 computer-mcp install codex --app
 ```
 
+For a specific App instance, pass `--socket` with `--app` to register its gateway
+socket. The App's local connection command and Codex registration use that App's
+embedded CLI and gateway socket, including when a Development App is running.
+
 Standalone registration remains explicit:
 
 ```sh
@@ -298,9 +305,9 @@ The App-owned diagnostic commands inspect Computer MCP evidence without a
 machine-wide process scan:
 
 ```sh
-computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
-computer-mcp codex diagnostics --workspace-id <workspace-id>
-computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id>
+computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> [--control-socket <control-socket>]
+computer-mcp codex diagnostics --workspace-id <workspace-id> [--control-socket <control-socket>]
+computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id> [--control-socket <control-socket>]
 ```
 
 `diagnose-thread` explains whether a live Computer MCP runtime has the thread
@@ -334,7 +341,7 @@ Use `recent-thread` for supervision instead of a full historical
 `thread/read`:
 
 ```sh
-computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id> \
+computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id> \ [--control-socket <control-socket>]
   --max-turns 10 --max-messages 50 --max-items 100 \
   --max-bytes 262144 --max-output-bytes 524288 \
   --max-elapsed-milliseconds 2000
@@ -351,7 +358,7 @@ opens Codex persistence read-only and never loads the full history by default.
 root. To repair older duplicates, first preview:
 
 ```sh
-computer-mcp workspace deduplicate
+computer-mcp workspace deduplicate [--control-socket <control-socket>]
 ```
 
 Review canonical ids, aliases, profile changes, and metadata conflicts, then
@@ -501,8 +508,8 @@ computer-mcp serve stdio --config Examples/computer-mcp.toml
 COMPUTER_MCP_HTTP_ACCESS_TOKEN=<development-only-value> \
   computer-mcp serve http --config Examples/computer-mcp.toml
 
-computer-mcp tools list --config Examples/computer-mcp.toml
-computer-mcp tools inspect workspace.info --config Examples/computer-mcp.toml
+computer-mcp tools list --config Examples/computer-mcp.toml [--control-socket <control-socket>]
+computer-mcp tools inspect workspace.info --config Examples/computer-mcp.toml [--control-socket <control-socket>]
 ```
 
 Standalone mode uses in-process state and TOML paths. It does not use App

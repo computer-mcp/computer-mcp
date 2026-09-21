@@ -16,6 +16,8 @@ struct CodexControl: ParsableCommand {
 }
 
 struct CodexReleaseThread: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "release-thread",
     abstract: "Release a thread and verify it is immediately claimable by another Codex client."
@@ -38,6 +40,7 @@ struct CodexReleaseThread: AsyncParsableCommand {
 
   func run() async throws {
     try await callCodexDiagnosticTool(
+      connection: connection,
       name: "codex.app.thread.release",
       arguments: .object([
         "workspace_id": .string(workspaceID),
@@ -52,6 +55,8 @@ struct CodexReleaseThread: AsyncParsableCommand {
 }
 
 struct CodexRecentThread: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "recent-thread",
     abstract: "Read bounded recent state without loading a thread's full history."
@@ -86,6 +91,7 @@ struct CodexRecentThread: AsyncParsableCommand {
     ]
     if let beforeCursor { arguments["before_cursor"] = .string(beforeCursor) }
     try await callCodexDiagnosticTool(
+      connection: connection,
       name: "codex.app.thread.recent",
       arguments: .object(arguments)
     )
@@ -93,6 +99,8 @@ struct CodexRecentThread: AsyncParsableCommand {
 }
 
 struct CodexDiagnoseThread: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "diagnose-thread",
     abstract: "Check thread ownership and show safe handoff actions."
@@ -119,6 +127,7 @@ struct CodexDiagnoseThread: AsyncParsableCommand {
       toolArguments["observed_error"] = .string(observedError)
     }
     try await callCodexDiagnosticTool(
+      connection: connection,
       name: "codex.app.handoff.diagnose",
       arguments: .object(toolArguments)
     )
@@ -126,6 +135,8 @@ struct CodexDiagnoseThread: AsyncParsableCommand {
 }
 
 struct CodexDiagnostics: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
   static let configuration = CommandConfiguration(
     commandName: "diagnostics",
     abstract: "Show a redacted operational snapshot for one registered workspace."
@@ -145,6 +156,7 @@ struct CodexDiagnostics: AsyncParsableCommand {
 
   func run() async throws {
     try await callCodexDiagnosticTool(
+      connection: connection,
       name: "codex.diagnostics.snapshot",
       arguments: .object([
         "workspace_id": .string(workspaceID),
@@ -154,8 +166,10 @@ struct CodexDiagnostics: AsyncParsableCommand {
   }
 }
 
-private func callCodexDiagnosticTool(name: String, arguments: JSONValue) async throws {
-  let result = try await AppControlPlaneServiceClient.live().call(
+private func callCodexDiagnosticTool(
+  connection: AppControlConnectionOptions, name: String, arguments: JSONValue
+) async throws {
+  let result = try await connection.client().call(
     "tools.call",
     arguments: .object([
       "name": .string(name),

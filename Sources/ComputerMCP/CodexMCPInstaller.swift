@@ -53,20 +53,25 @@ package struct CodexMCPInstaller: Sendable {
       codexCLI: codexCLI,
       serverName: serverName,
       executablePath: executablePath,
-      serverArguments: ["serve", "--config", resolvedConfigPath]
+      serverArguments: ["serve", "stdio", "--config", resolvedConfigPath]
     )
   }
 
   package func planApp(
     codexCLI: String?,
     serverName: String,
-    executablePath: String
+    executablePath: String,
+    socketPath: String? = nil
   ) throws -> CodexMCPInstallInvocation {
-    try makeInvocation(
+    var serverArguments = ["bridge", "--client-identity", "local-mcp"]
+    if let socketPath {
+      serverArguments += ["--socket", absolutePath(socketPath)]
+    }
+    return try makeInvocation(
       codexCLI: codexCLI,
       serverName: serverName,
       executablePath: executablePath,
-      serverArguments: ["bridge", "--client-identity", "local-mcp"]
+      serverArguments: serverArguments
     )
   }
 
@@ -95,12 +100,14 @@ package struct CodexMCPInstaller: Sendable {
   package func installApp(
     codexCLI: String?,
     serverName: String,
-    executablePath: String
+    executablePath: String,
+    socketPath: String? = nil
   ) throws -> CommandResult {
     let invocation = try planApp(
       codexCLI: codexCLI,
       serverName: serverName,
-      executablePath: executablePath
+      executablePath: executablePath,
+      socketPath: socketPath
     )
     return try run(invocation)
   }

@@ -60,6 +60,8 @@ package actor AppGatewayService {
   private var runtimes: [RuntimeKey: AdmittedRuntime] = [:]
   private var pendingRuntimes: [RuntimeKey: Task<AdmittedRuntime, any Error>] = [:]
   private var retiredRuntimes: [GatewayRuntime] = []
+  private var lifecycleInProgress = false
+  private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
 
   package init(
     controlPlane: AppControlPlaneService,
@@ -83,6 +85,12 @@ package actor AppGatewayService {
   }
 
   package func start(profile requestedProfile: GatewayProfileID? = nil) async throws {
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
+    try await startOwnedRuntime(profile: requestedProfile)
+  }
+
+  private func startOwnedRuntime(profile requestedProfile: GatewayProfileID?) async throws {
     guard !pluginChangeInProgress else { throw PluginHostError.changeInProgress }
     guard state != .running && state != .starting else {
       return
@@ -147,11 +155,19 @@ package actor AppGatewayService {
   }
 
   package func restart(profile: GatewayProfileID? = nil) async throws {
-    await stop()
-    try await start(profile: profile)
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
+    await stopOwnedRuntime()
+    try await startOwnedRuntime(profile: profile)
   }
 
   package func stop() async {
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
+    await stopOwnedRuntime()
+  }
+
+  private func stopOwnedRuntime() async {
     guard state != .stopped && state != .stopping else {
       return
     }
@@ -246,10 +262,12 @@ package actor AppGatewayService {
   package func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
   {
-    guard !pluginChangeInProgress, state != .starting, state != .stopping else {
+    guard !pluginChangeInProgress, !lifecycleInProgress else {
       throw PluginHostError.changeInProgress
     }
     pluginChangeInProgress = true
+    lifecycleInProgress = true
+    defer { releaseLifecycle() }
     let activeServer = server
     if let activeServer, !(await activeServer.reserveIdleConfigurationChange()) {
       pluginChangeInProgress = false
@@ -265,6 +283,23 @@ package actor AppGatewayService {
       await activeServer?.finishConfigurationChange()
       pluginChangeInProgress = false
       throw error
+    }
+  }
+
+  /// Actor reentrancy must not overlap listener binding with asynchronous teardown.
+  private func acquireLifecycle() async {
+    if lifecycleInProgress {
+      await withCheckedContinuation { lifecycleWaiters.append($0) }
+    } else {
+      lifecycleInProgress = true
+    }
+  }
+
+  private func releaseLifecycle() {
+    if lifecycleWaiters.isEmpty {
+      lifecycleInProgress = false
+    } else {
+      lifecycleWaiters.removeFirst().resume()
     }
   }
 

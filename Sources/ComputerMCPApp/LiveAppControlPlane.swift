@@ -89,10 +89,11 @@ final class LiveAppControlPlane: AppControlPlane {
         return
       }
       let service = await gatewayService.snapshot()
-      if service.state != .running && service.state != .starting {
+      if service.state == .stopped || service.state == .failed {
         try await restoreRuntime()
         return
       }
+      guard service.state == .running else { return }
       try await restoreDesiredOpenAITunnels()
       try await restoreDesiredCloudflareTunnels()
     } catch {

@@ -24,52 +24,63 @@ struct MCPRegistrationsView: View {
         Text(verbatim: message).foregroundStyle(.red).textSelection(.enabled).padding()
       }
       if model.isBusy { ProgressView().padding() }
-      List(model.snapshot?.registrations ?? []) { entry in
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            Text(verbatim: entry.id).font(.headline)
-            Text(verbatim: AppLocalization.string(entry.server.enabled ? "Enabled" : "Disabled"))
-              .foregroundStyle(.secondary)
-            Spacer()
-            if entry.server.authentication != nil {
-              Button(AppLocalization.string("Manage credential")) { credential = entry }
+      ScrollView {
+        LazyVStack(spacing: 0) {
+          ForEach(model.snapshot?.registrations ?? []) { entry in
+            VStack(alignment: .leading, spacing: 8) {
+              HStack {
+                Text(verbatim: entry.id).font(.headline)
+                Text(
+                  verbatim: AppLocalization.string(entry.server.enabled ? "Enabled" : "Disabled")
+                )
+                .foregroundStyle(.secondary)
+                Spacer()
+                if entry.server.authentication != nil {
+                  Button(AppLocalization.string("Manage credential")) { credential = entry }
+                }
+                Button(AppLocalization.string("Check connection")) {
+                  model.clearConnectionReport()
+                  checking = entry
+                }
+                if let origin = entry.origin {
+                  Button(AppLocalization.string("Plugin settings")) {
+                    dismiss()
+                    managePlugin(origin.pluginID)
+                  }
+                } else {
+                  Button(AppLocalization.string("Edit")) {
+                    editor = .init(server: entry.server, isNew: false)
+                  }
+                  Button {
+                    Task { _ = await model.review(.enabled(id: entry.id, !entry.server.enabled)) }
+                  } label: {
+                    Text(
+                      verbatim: AppLocalization.string(entry.server.enabled ? "Disable" : "Enable"))
+                  }
+                  Button(AppLocalization.string("Remove"), role: .destructive) {
+                    Task { _ = await model.review(.remove(id: entry.id)) }
+                  }
+                }
+              }
+              Text(
+                verbatim: entry.origin.map { "\($0.pluginID) · \($0.version)" }
+                  ?? AppLocalization.string("Manual registration")
+              )
+              .font(.caption).foregroundStyle(.secondary)
+              Text(verbatim: entry.server.command ?? entry.server.url ?? "")
+                .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+              Text(
+                verbatim: AppLocalization.string(
+                  entry.server.allowAnyTool ? "All current and future tools" : "Selected tools only"
+                )
+              )
+              .font(.caption)
             }
-            Button(AppLocalization.string("Check connection")) {
-              model.clearConnectionReport()
-              checking = entry
-            }
-            if let origin = entry.origin {
-              Button(AppLocalization.string("Plugin settings")) {
-                dismiss()
-                managePlugin(origin.pluginID)
-              }
-            } else {
-              Button(AppLocalization.string("Edit")) {
-                editor = .init(server: entry.server, isNew: false)
-              }
-              Button {
-                Task { _ = await model.review(.enabled(id: entry.id, !entry.server.enabled)) }
-              } label: {
-                Text(verbatim: AppLocalization.string(entry.server.enabled ? "Disable" : "Enable"))
-              }
-              Button(AppLocalization.string("Remove"), role: .destructive) {
-                Task { _ = await model.review(.remove(id: entry.id)) }
-              }
-            }
+            .padding(.vertical, 12)
+            Divider()
           }
-          Text(
-            verbatim: entry.origin.map { "\($0.pluginID) · \($0.version)" }
-              ?? AppLocalization.string("Manual registration")
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          Text(verbatim: entry.server.command ?? entry.server.url ?? "")
-            .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-          Text(
-            verbatim: AppLocalization.string(
-              entry.server.allowAnyTool ? "All current and future tools" : "Selected tools only")
-          )
-          .font(.caption)
-        }.padding(.vertical, 6)
+        }
+        .padding(.horizontal, 16)
       }
       .disabled(model.isBusy || model.preview != nil)
       if let preview = model.preview {

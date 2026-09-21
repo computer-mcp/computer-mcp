@@ -15,6 +15,7 @@ All notable user-visible changes to Computer MCP are documented here.
 - Fix workspace availability, process cleanup and offline state migration.
 - Route generated local-client connections and management commands to the
   selected App instance, including side-by-side development installations.
+- Expose individual MCP registration actions to accessibility navigation.
 - Unify the bilingual product manual and website around the Computer MCP
   organization and its CLI, Codex, MCP and Skills integrations.
 

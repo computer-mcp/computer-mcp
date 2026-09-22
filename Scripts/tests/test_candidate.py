@@ -1,9 +1,11 @@
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -14,6 +16,34 @@ import release
 
 
 class CandidateTrust(unittest.TestCase):
+    def test_interrupted_request_resumes_official_run_without_redispatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            previous, work = root / "previous", root / "work"
+            previous.mkdir()
+            work.mkdir()
+            commit = "a" * 40
+            record = {"source_commit": commit, "request_id": "original", "requested_at": time.time()}
+            release.atomic_json(previous / "request.json", record)
+            run = {"id": 42, "display_title": "Computer MCP candidate original", "head_sha": commit,
+                   "head_branch": "master", "event": "workflow_dispatch", "path": candidate.WORKFLOW,
+                   "head_repository": {"full_name": candidate.REPOSITORY}, "status": "waiting", "html_url": "fixture"}
+            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_INTERRUPTED_WORK_DIR": str(previous)}, clear=True), \
+                    patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \
+                    patch.object(candidate, "api", return_value={"workflow_runs": [run]}) as api:
+                self.assertEqual(candidate.request(), 75)
+                self.assertEqual(api.call_count, 1)
+                self.assertNotIn("dispatches", api.call_args.args[0])
+                self.assertEqual(json.loads((work / "request.json").read_text()), dict(record, run_id=42))
+            record["source_commit"] = "b" * 40
+            release.atomic_json(previous / "request.json", record)
+            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_INTERRUPTED_WORK_DIR": str(previous)}, clear=True), \
+                    patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \
+                    patch.object(candidate, "api") as api:
+                with self.assertRaisesRegex(ValueError, "another commit"):
+                    candidate.request()
+                api.assert_not_called()
+
     def test_only_matching_master_dispatch_is_trusted(self):
         run = {"head_sha": "a" * 40, "head_branch": "master", "event": "workflow_dispatch",
                "path": candidate.WORKFLOW, "head_repository": {"full_name": candidate.REPOSITORY}}

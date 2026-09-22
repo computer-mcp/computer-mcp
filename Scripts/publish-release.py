@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Tag and publish the accepted candidate without rebuilding its binaries."""
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -11,7 +13,41 @@ import sys
 from urllib.parse import quote
 
 from candidate import REPOSITORY, extract_bundle
-from release import ROOT, Runner, atomic_json, file_digest, inventory, output
+from release import ROOT, Runner, atomic_json, canonical, file_digest, inventory, output
+
+
+def assembly_identity(candidate):
+    return {name: candidate[name] for name in ("candidate", "source_commit", "archive_sha256")}
+
+
+def checkpoint_assembly(work, candidate, key):
+    """Seal assembled bytes before the first upload can have a remote effect."""
+    payload = {"identity": assembly_identity(candidate),
+               "record": json.loads((work / "publication-assets.json").read_text()),
+               "dist": inventory(work / "dist")}
+    atomic_json(work / "assembly-checkpoint.json", {
+        "payload": payload, "mac": hmac.new(key, canonical(payload), hashlib.sha256).hexdigest()})
+
+
+def restore_assembly(previous, work, candidate, key):
+    checkpoint = previous / "assembly-checkpoint.json"
+    if not checkpoint.exists():
+        # No upload starts before this checkpoint; reconstruct from the accepted
+        # archive instead of trusting partially assembled recovery files.
+        return False
+    envelope = json.loads(checkpoint.read_text())
+    payload = envelope["payload"]
+    expected = hmac.new(key, canonical(payload), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, envelope["mac"]):
+        raise ValueError("Unauthenticated publication recovery checkpoint")
+    if payload["identity"] != assembly_identity(candidate):
+        raise ValueError("Prior publication belongs to a different candidate")
+    if (payload["record"] != json.loads((previous / "publication-assets.json").read_text())
+            or payload["dist"] != inventory(previous / "dist")):
+        raise ValueError("Prior assembled assets changed")
+    shutil.copytree(previous / "dist", work / "dist", symlinks=True)
+    atomic_json(work / "publication-assets.json", payload["record"])
+    return True
 
 
 def run(arguments, **kwargs):
@@ -44,7 +80,14 @@ def release_view(tag):
                               cwd=ROOT, capture_output=True, text=True, timeout=60)
     if response.returncode:
         if "HTTP 404" in response.stderr:
-            return None
+            # GitHub's tag endpoint omits drafts; the authenticated list includes them.
+            pages = subprocess.check_output(
+                ["gh", "api", "--paginate", "--slurp", f"repos/{REPOSITORY}/releases?per_page=100"],
+                cwd=ROOT, timeout=60)
+            matches = [release for page in json.loads(pages) for release in page if release["tag_name"] == tag]
+            if len(matches) > 1:
+                raise ValueError("Multiple releases have the same tag")
+            return matches[0] if matches else None
         response.check_returncode()
     return json.loads(response.stdout)
 
@@ -100,21 +143,14 @@ def publish(run_dir, work):
     verify_acceptance(candidate, acceptance, run_dir / "work/acceptance")
     version = candidate["version"]["version"]
     tag = "v" + version
-    commit = output(["git", "rev-parse", "HEAD"], ROOT)
+    commit = (checker.candidate_source or checker.source)["commit"]
     if candidate["source_commit"] != commit:
         raise ValueError("Candidate commit differs from the source being tagged")
     if file_digest(candidate_dir / "candidate.tar.gz") != candidate["archive_sha256"]:
         raise ValueError("Candidate archive changed after acceptance")
-    previous = os.environ.get("RELEASE_PREVIOUS_WORK_DIR")
-    if previous and (Path(previous) / "publication-assets.json").is_file():
-        saved = json.loads((Path(previous) / "publication-assets.json").read_text())
-        if saved["candidate"] != candidate["candidate"]:
-            raise ValueError("Prior publication belongs to a different candidate")
-        for name, checksum in saved["assets"].items():
-            if Path(name).name != name or file_digest(Path(previous) / "dist" / name) != checksum:
-                raise ValueError("Prior assembled assets changed")
-        shutil.copytree(Path(previous) / "dist", work / "dist", symlinks=True)
-        atomic_json(work / "publication-assets.json", saved)
+    previous = os.environ.get("RELEASE_PREVIOUS_WORK_DIR") or os.environ.get("RELEASE_INTERRUPTED_WORK_DIR")
+    if previous:
+        restore_assembly(Path(previous), work, candidate, checker.key())
     if not (work / "dist").exists():
         extract_bundle(candidate_dir / "candidate.tar.gz", work)
     dist = work / "dist"
@@ -131,14 +167,15 @@ def publish(run_dir, work):
     if not existing:
         message = work / "tag-message.txt"
         message.write_text(f"Computer MCP {version}\n\nAccepted candidate {candidate['candidate']}\nDMG SHA-256 {expected_dmg}\n")
-        run(["git", "tag", "-s", tag, "--file", str(message)])
+        run(["git", "tag", "-s", tag, commit, "--file", str(message)])
     run(["git", "fetch", "origin", "master"])
-    run(["Scripts/verify-release-ref.sh"], env=dict(os.environ, RELEASE_TAG=tag, REQUIRE_REMOTE_BRANCH="1"))
+    run(["Scripts/verify-release-ref.sh"],
+        env=dict(os.environ, RELEASE_TAG=tag, RELEASE_COMMIT=commit, REQUIRE_REMOTE_BRANCH="1"))
     run(["git", "push", "origin", "refs/tags/" + tag])
     identity = plistlib.loads((dist / "Computer MCP.app/Contents/Resources/ComputerMCPBuildIdentity.plist").read_bytes())
     environment = dict(os.environ, OUTPUT_DIR=str(dist), EXPECTED_TEAM_ID=identity["team_identifier"],
                        GITHUB_SERVER_URL="https://github.com", GITHUB_REPOSITORY=REPOSITORY,
-                       GITHUB_RUN_ID=str(candidate["run_id"]))
+                       GITHUB_RUN_ID=str(candidate["run_id"]), RELEASE_COMMIT=commit)
     if not (work / "publication-assets.json").exists():
         run(["Scripts/assemble-release-assets.sh"], env=environment)
     if file_digest(dmg) != expected_dmg:
@@ -156,6 +193,7 @@ def publish(run_dir, work):
     assets.extend([dist / "SHA256SUMS", website_record])
     atomic_json(work / "publication-assets.json", {"candidate": candidate["candidate"],
                 "assets": {asset.name: file_digest(asset) for asset in assets}})
+    checkpoint_assembly(work, candidate, checker.key())
     synchronize_assets(tag, assets, work)
     atomic_json(work / "delivery.json", {"status": "published", "version": version, "source_commit": commit,
                                         "candidate": candidate["candidate"], "dmg_sha256": expected_dmg,

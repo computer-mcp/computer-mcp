@@ -9,7 +9,7 @@ import subprocess
 import sys
 from urllib.parse import unquote, urlparse
 
-from release import ROOT, atomic_json, file_digest, inventory
+from release import ROOT, atomic_json, file_digest, inventory, source_identity
 
 
 def command(arguments, timeout=60):
@@ -80,6 +80,7 @@ def accept(app, candidate_directory, work):
     if inventory(app) != expected:
         raise ValueError("Installed artifact changed during acceptance")
     receipt = {"schema_version": 1, "status": "passed", "candidate": candidate["candidate"],
+               "checker_source": source_identity(ROOT),
                "source_commit": candidate["source_commit"], "version": version,
                "archive_sha256": candidate["archive_sha256"],
                "cli_sha256": file_digest(cli), "installed_path": str(app),

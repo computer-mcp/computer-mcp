@@ -205,6 +205,23 @@ implicitly. Install the accepted plugin candidate through the App's supported
 plugin operations before combined acceptance; preserve prior installation IDs
 for rollback and never repair an identity mismatch by changing its receipt.
 
+When only the acceptance/publication tooling needs a correction, commit and
+validate that correction independently, then bind it to the existing candidate:
+
+```sh
+python3 Scripts/release.py resume --run candidate --profile acceptance --reuse-candidate
+```
+
+This verifies clean committed checks, candidate ancestry on trusted master,
+the exact changed-file boundary and authenticated candidate outputs. It retains
+the candidate receipt unchanged and reruns acceptance with the new check
+identity. The binding is authenticated in `candidate-reuse.json`; later `status`,
+`resume` and `publish` use it automatically. Changed product/build inputs,
+toolchain, candidate definition or candidate bytes reject reuse with a concrete
+reason. Investigate that reason before choosing a new candidate. An invalid bound
+candidate never causes an automatic dispatch. Product versions and public tags
+are not advanced for check-only changes.
+
 ## Publication
 
 With all candidate and installed acceptance checkpoints valid:

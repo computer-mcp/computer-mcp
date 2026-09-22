@@ -7,6 +7,7 @@ VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
 TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-"v$VERSION"}}
 RELEASE_BRANCH=${RELEASE_BRANCH:-master}
 REQUIRE_REMOTE_BRANCH=${REQUIRE_REMOTE_BRANCH:-0}
+RELEASE_COMMIT=${RELEASE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
 
 fail() {
   echo "Release ref verification failed: $1" >&2
@@ -20,8 +21,9 @@ fail() {
 [[ "$TAG" == "v$VERSION" ]] || fail "$TAG does not match product version $VERSION."
 [[ $(git -C "$ROOT_DIR" cat-file -t "$TAG" 2>/dev/null) == "tag" ]] \
   || fail "$TAG is not an annotated tag."
-[[ $(git -C "$ROOT_DIR" rev-parse "$TAG^{}") == $(git -C "$ROOT_DIR" rev-parse HEAD) ]] \
-  || fail "$TAG does not point to HEAD."
+[[ "$RELEASE_COMMIT" =~ '^[0-9a-f]{40}$' ]] || fail "RELEASE_COMMIT must be a full commit."
+[[ $(git -C "$ROOT_DIR" rev-parse "$TAG^{}") == "$RELEASE_COMMIT" ]] \
+  || fail "$TAG does not point to the accepted source commit."
 git -C "$ROOT_DIR" \
   -c gpg.format=ssh \
   -c gpg.ssh.allowedSignersFile="$ROOT_DIR/.github/signing-allowed-signers" \
@@ -31,7 +33,7 @@ if [[ "$REQUIRE_REMOTE_BRANCH" == "1" ]]; then
   remote_ref="refs/remotes/origin/$RELEASE_BRANCH"
   git -C "$ROOT_DIR" show-ref --verify --quiet "$remote_ref" \
     || fail "Missing $remote_ref; fetch the release branch before verification."
-  git -C "$ROOT_DIR" merge-base --is-ancestor HEAD "$remote_ref" \
+  git -C "$ROOT_DIR" merge-base --is-ancestor "$RELEASE_COMMIT" "$remote_ref" \
     || fail "$TAG is not reachable from origin/$RELEASE_BRANCH."
 fi
 

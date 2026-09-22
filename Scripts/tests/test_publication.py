@@ -151,6 +151,14 @@ class PublicationEvidence(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 publisher.release_view("v1.2.3")
 
+    def test_draft_missing_from_tag_endpoint_is_found_without_creating_another_release(self):
+        missing = subprocess.CompletedProcess([], 1, "", "HTTP 404: Not Found")
+        draft = {"id": 123, "tag_name": "v1.2.3", "draft": True, "assets": []}
+        with patch.object(publisher.subprocess, "run", return_value=missing), \
+                patch.object(publisher.subprocess, "check_output", return_value=json.dumps([[], [draft]]).encode()):
+            self.assertEqual(publisher.release_view("v1.2.3"), draft)
+            self.assertIsNone(publisher.release_view("v1.2.4"))
+
 
 if __name__ == "__main__":
     unittest.main()

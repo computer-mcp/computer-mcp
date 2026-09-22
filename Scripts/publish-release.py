@@ -80,7 +80,14 @@ def release_view(tag):
                               cwd=ROOT, capture_output=True, text=True, timeout=60)
     if response.returncode:
         if "HTTP 404" in response.stderr:
-            return None
+            # GitHub's tag endpoint omits drafts; the authenticated list includes them.
+            pages = subprocess.check_output(
+                ["gh", "api", "--paginate", "--slurp", f"repos/{REPOSITORY}/releases?per_page=100"],
+                cwd=ROOT, timeout=60)
+            matches = [release for page in json.loads(pages) for release in page if release["tag_name"] == tag]
+            if len(matches) > 1:
+                raise ValueError("Multiple releases have the same tag")
+            return matches[0] if matches else None
         response.check_returncode()
     return json.loads(response.stdout)
 

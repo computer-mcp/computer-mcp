@@ -2,9 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR=${0:A:h:h}
-VERSION=$(/usr/libexec/PlistBuddy \
-  -c 'Print :CFBundleShortVersionString' \
-  "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
+python3 "$ROOT_DIR/Scripts/version.py" check
+VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
 RELEASE_NOTES="$ROOT_DIR/Documentation/Reference/ReleaseNotes-$VERSION.md"
 READINESS_REPORT="$ROOT_DIR/Documentation/Reference/ProductionReadinessReport-$VERSION.md"
 

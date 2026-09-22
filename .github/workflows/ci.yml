@@ -2,11 +2,16 @@ name: CI
 
 on:
   push:
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
@@ -17,82 +22,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Install gate tooling
-        run: brew install jq ripgrep
-
-      - name: Require publishable package boundaries
+        with:
+          fetch-depth: 0
+      - name: Verify version advancement
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          Scripts/verify-package-boundary.sh
-          Scripts/verify-public-repository.sh
+          python3 Scripts/version.py check
+          if [[ "$BASE_COMMIT" =~ ^[0-9a-f]{40}$ && "$BASE_COMMIT" != 0000000000000000000000000000000000000000 ]]; then
+            python3 Scripts/version.py check --base "$BASE_COMMIT"
+          fi
 
   validate:
     needs: dependency-gate
     runs-on: macos-26
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
+        with:
+          fetch-depth: 0
       - name: Install gate tooling
         run: brew install actionlint jq ripgrep
-
-      - name: Strict format lint
-        run: |
-          xcrun swift-format lint --strict --recursive --configuration .swift-format \
-            Package.swift Sources Tests
-          xcrun swift-format lint --strict --recursive --configuration .swift-format \
-            Tools/Validation/Package.swift \
-            Tools/Validation/Sources \
-            Tools/Validation/Tests
-
-      - name: Shell workflow syntax
-        run: |
-          zsh -n Scripts/*.sh
-          actionlint .github/workflows/*.yml
-          Scripts/verify-protected-release-boundary.sh
-          Scripts/verify-protected-release-boundary-regression.sh
-          Scripts/verify-dmg-signing-boundary-regression.sh
-          Scripts/verify-developer-id-signature-record-regression.sh
-          Scripts/verify-notarization-record-regression.sh
-          Scripts/verify-artifact-provenance-boundary.sh
-          zsh Scripts/verify-artifact-provenance-boundary-regression.sh
-          Scripts/verify-release-asset-boundary-regression.sh
-          Scripts/write-release-checksums-regression.sh
-          Scripts/verify-release-tag-restoration.sh
-          Scripts/verify-release-record-rendering.sh
-          Scripts/verify-public-repository-worktree-regression.sh
-
-      - name: Root build and Swift Testing
-        run: |
-          /usr/bin/swift build
-          /usr/bin/swift test --no-parallel
-
-      - name: Validation Suite and Test Case catalog
-        run: |
-          /usr/bin/swift build --package-path Tools/Validation
-          /usr/bin/swift test --package-path Tools/Validation \
-            --no-parallel
-          /usr/bin/swift run --package-path Tools/Validation \
-            computer-mcp-validate test-case validate
-
-      - name: CLI hierarchy, examples, and localization
-        run: |
-          Scripts/verify-cli-interface.sh
-          Scripts/verify-examples.sh
-          Scripts/verify-localization.sh
-
-      - name: DocC and deterministic release metadata
-        run: |
-          Scripts/verify-release-metadata.sh
-          Scripts/verify-documentation.sh
-
-      - name: App and DMG distribution verification
-        run: |
-          Scripts/build-app.sh
-          Scripts/package-dmg.sh
-          Scripts/verify-distribution.sh
-
-      - name: Naming and public repository hygiene
-        run: |
-          Scripts/verify-naming.sh
-          Scripts/verify-public-repository.sh
+      - name: Shared release checks
+        run: python3 Scripts/release.py run --run ci --profile ci
+      - name: Preserve check report and failure history
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: check-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .agent/releases/ci/history/
+            .agent/releases/ci/logs/
+          include-hidden-files: true
+          if-no-files-found: warn

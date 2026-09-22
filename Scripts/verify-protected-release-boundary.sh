@@ -25,6 +25,10 @@ fail() {
   || fail "Unable to locate the protected release job."
 
 protected_scripts=(
+  Scripts/verify-candidate-ref.sh
+  Scripts/version.py
+  Scripts/candidate.py
+  Scripts/release.py
   Scripts/restore-release-tag.sh
   Scripts/release-ci.sh
   Scripts/verify-release-ref.sh

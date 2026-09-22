@@ -16,6 +16,8 @@ These documents state the current architecture truth for `computer-mcp`.
   TCC, logging, and Full Shell boundaries.
 - [Documentation](Documentation.md): repository documentation role model.
 - [Naming](Naming.md): frozen product, runtime, protocol, and Validation terms.
+- [Versioning and Release](VersioningAndRelease.md): version authority, upgrade
+  decisions, candidate acceptance, evidence reuse and cleanup.
 
 Decision records in `Documentation/Decisions/` explain why current choices were
 made. They do not replace the current architecture stated here.

@@ -24,31 +24,40 @@ internal actor MCPInitializeNormalizationTransport: Transport {
   }
 
   internal func disconnect() async {
+    initialInitializeID = nil
+    initializeResponse = nil
+    pendingInitializeIDs.removeAll()
     await underlying.disconnect()
   }
 
   internal func send(_ data: Data) async throws {
-    try await underlying.send(data)
-
     guard
       let initialInitializeID,
-      let response = MCPInitializeNormalization.successfulResponse(
+      let response = MCPInitializeNormalization.initializationResponse(
         in: data,
         matching: initialInitializeID
       )
     else {
+      try await underlying.send(data)
       return
     }
 
-    initializeResponse = response
+    // The peer can reuse the ID as soon as bytes arrive, before send resumes.
+    // Commit negotiation state before yielding to the underlying transport.
+    if response.objectValue?["error"] == nil { initializeResponse = response }
     self.initialInitializeID = nil
-
     let pendingIDs = pendingInitializeIDs
     pendingInitializeIDs.removeAll()
-    for id in pendingIDs {
-      try await underlying.send(
-        MCPInitializeNormalization.replay(response: response, with: id)
-      )
+    do {
+      try await underlying.send(data)
+      for id in pendingIDs {
+        try await underlying.send(
+          MCPInitializeNormalization.replay(response: response, with: id)
+        )
+      }
+    } catch {
+      await disconnect()
+      throw error
     }
   }
 
@@ -89,6 +98,9 @@ internal actor MCPInitializeNormalizationTransport: Transport {
         MCPInitializeNormalization.replay(response: initializeResponse, with: requestID)
       )
     } else if initialInitializeID != nil {
+      guard pendingInitializeIDs.count < 128 else {
+        throw MCPError.invalidRequest("Too many concurrent initialization requests.")
+      }
       pendingInitializeIDs.append(requestID)
     } else {
       initialInitializeID = requestID
@@ -139,15 +151,33 @@ enum MCPInitializeNormalization {
   }
 
   static func successfulResponse(in data: Data, matching id: JSONValue) -> JSONValue? {
+    guard let response = initializationResponse(in: data, matching: id),
+      response.objectValue?["error"] == nil
+    else { return nil }
+    return response
+  }
+
+  static func initializationResponse(in data: Data, matching id: JSONValue) -> JSONValue? {
     guard
       let response = try? JSONDecoder().decode(JSONValue.self, from: data),
       let object = response.objectValue,
-      object["id"] == id,
-      object["result"] != nil
+      object["id"] == id
     else {
       return nil
     }
-    return response
+    if let result = object["result"]?.objectValue,
+      result["protocolVersion"]?.stringValue != nil,
+      result["capabilities"]?.objectValue != nil,
+      result["serverInfo"]?.objectValue != nil
+    {
+      return response
+    }
+    if let error = object["error"]?.objectValue,
+      error["code"]?.intValue != nil, error["message"]?.stringValue != nil
+    {
+      return response
+    }
+    return nil
   }
 
   static func replay(response: JSONValue, with id: JSONValue) throws -> Data {

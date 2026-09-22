@@ -287,6 +287,32 @@ struct PluginStoreInstallationTests {
   }
 
   @Test
+  func restoringOriginalDirectoryPreservesItsReceiptAndSelectedInstallation() async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let owned = try #require(database.pluginOwnedDirectories().first)
+    let original = fixture.files.root.appendingPathComponent("original-installation")
+    try FileManager.default.moveItem(at: owned.identity.url, to: original)
+    try FileManager.default.copyItem(at: original, to: owned.identity.url)
+
+    let issues = try await store.recoverInstallations(storageRoot: fixture.installationRoot)
+    #expect(issues.count == 1)
+    #expect(try database.pluginOwnedDirectories() == [owned])
+    #expect(try await store.snapshot() == installed.snapshot)
+
+    let displaced = fixture.files.root.appendingPathComponent("displaced-copy")
+    try FileManager.default.moveItem(at: owned.identity.url, to: displaced)
+    try FileManager.default.moveItem(at: original, to: owned.identity.url)
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(try database.pluginOwnedDirectories() == [owned])
+    #expect(try await store.snapshot() == installed.snapshot)
+    #expect(FileManager.default.fileExists(atPath: displaced.path))
+  }
+
+  @Test
   func postCommitCleanupFailureKeepsInstalledPayloadAndRecoversOnReopen() async throws {
     let fixture = try await PreparationFixture.make()
     defer { fixture.files.remove() }

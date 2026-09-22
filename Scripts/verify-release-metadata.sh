@@ -23,12 +23,9 @@ fail() {
 }
 
 cd "$ROOT_DIR"
-PRODUCT_VERSION=$(/usr/libexec/PlistBuddy \
-  -c 'Print :CFBundleShortVersionString' \
-  Resources/ComputerMCPApp/Info.plist)
-PRODUCT_BUILD=$(/usr/libexec/PlistBuddy \
-  -c 'Print :CFBundleVersion' \
-  Resources/ComputerMCPApp/Info.plist)
+python3 Scripts/version.py check
+PRODUCT_VERSION=$(python3 Scripts/version.py show --field version)
+PRODUCT_BUILD=$(python3 Scripts/version.py show --field build)
 /usr/bin/swift build
 BUILD_BIN_DIR=$(/usr/bin/swift build --show-bin-path)
 if [[ -f "$ROOT_DIR/.build/manifest.pif" ]]; then

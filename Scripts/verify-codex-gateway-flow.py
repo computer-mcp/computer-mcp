@@ -15,12 +15,17 @@ parser.add_argument("cli")
 parser.add_argument("adapter")
 parser.add_argument("vendor")
 parser.add_argument("model_source")
+parser.add_argument("--output-directory", type=Path, help="New directory for isolated evidence and runtime state")
 options = parser.parse_args()
 cli, adapter, vendor, model_source = (options.cli, options.adapter, options.vendor, options.model_source)
 for executable in (cli, adapter, vendor):
     if not os.path.isabs(executable) or not os.access(executable, os.X_OK):
         parser.error("Executable paths must be absolute and executable")
-root = Path(tempfile.mkdtemp(prefix="computer-mcp-installed-flow-"))
+if options.output_directory:
+    root = options.output_directory.resolve()
+    root.mkdir(mode=0o700, parents=True, exist_ok=False)
+else:
+    root = Path(tempfile.mkdtemp(prefix="computer-mcp-installed-flow-"))
 home = root / "codex-home"
 home.mkdir()
 vendor_path = Path(vendor)

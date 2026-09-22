@@ -1,44 +1,34 @@
 # Release Reference
 
 Computer MCP is distributed outside the Mac App Store as a notarized Universal
-2 DMG. A signed `vMAJOR.MINOR.PATCH` tag in the canonical GitHub repository is
-the only supported source of an official release. Local builds are for
-development, validation, and release rehearsal only.
+2 DMG. [Versioning and Release](../Architecture/VersioningAndRelease.md) owns
+version meaning, compatibility and evidence policy. This reference owns commands
+and protected publisher configuration.
 
 ## Release trust boundary
 
-The release workflow is `.github/workflows/release-gate.yml` and has two jobs:
+`.github/workflows/release-gate.yml` builds candidates on an explicitly requested
+canonical `master` commit. Its no-secret `verify` job runs the shared source
+checks, reusing only matching official successful master CI receipts. Its
+`release` job starts after verification and protected `production` Environment
+authorization. It signs and notarizes the App and DMG and uploads a checksummed,
+immutable Actions artifact. It neither creates a formal tag nor publishes a
+GitHub Release.
 
-1. `verify` runs without Apple or publication secrets. It verifies the signed
-   annotated tag restored from the canonical remote after checkout, confirms
-   that its commit is reachable from `origin/master`,
-   checks version and changelog alignment, rejects unfinished legal records or
-   malformed release templates, and runs the complete build, test,
-   documentation, metadata, and development-distribution gates.
-2. `release` starts only after `verify` passes and GitHub authorizes the
-   protected `production` Environment. It imports signing assets into a
-   temporary runner Keychain, builds fresh arm64 and x86_64 slices, signs the
-   App with Developer ID, Developer ID signs the DMG container, notarizes and
-   staples the App and DMG, runs Gatekeeper validation, captures both
-   notarization receipts, renders artifact-bound release records, assembles
-   checksummed assets, uploads them to a draft GitHub Release, downloads the
-   same DMG, proves byte identity, writes the published-artifact provenance
-   receipt, and leaves the Release as a draft for local installation acceptance.
-
-All release-blocking product, security, real App Server, handoff, native permission,
-cold-start, and local package acceptance must be complete before the signed tag
-is pushed. Use isolated targets or the exact workspaces separately authorized
-for that release; a previous release's live workspace is not standing permission
-to reuse it. The final signed and notarized draft must also pass local installation
-acceptance before an operator makes it public. A tag never automatically
-publishes a Release or causes a local machine to package an official artifact.
+`Scripts/candidate.py` authenticates the run, workflow, repository, commit and
+GitHub artifact digest before extracting the candidate. Installation acceptance
+binds the exact packaged App and selected plugin bytes to fixed case results.
+`Scripts/publish-release.py` requires authenticated matching checkpoints before
+creating the signed tag and publishing those same binaries. Source changes,
+rebuilding, re-signing or package changes invalidate the relevant evidence.
 
 ## One-time GitHub configuration
 
 Create a GitHub Environment named `production`. Restrict its deployment branch
-and tag policy to the canonical repository, add a required reviewer, and do not
-allow untrusted branches to access it. The workflow grants `contents: write`
-only to the release job; all preceding jobs retain read-only repository access.
+policy to the canonical repository, add a required reviewer, and do not
+allow untrusted branches to access it. The candidate workflow has read-only repository access. Publication uses the
+authorized operator’s Git signing identity and GitHub CLI credentials only after
+installed acceptance has passed.
 
 Set these Environment variables:
 
@@ -83,9 +73,9 @@ shared password and must not be reused across boundaries.
 | Developer ID `.p12` and its export password | Import the certificate and private key used by `codesign` | Keep a recoverable encrypted backup; GitHub stores the encoded file and password as separate `production` Secrets |
 | Developer ID provisioning profile | Authorize the production App ID, entitlements, and Keychain group | GitHub `production` Secret; no per-release input |
 | App Store Connect Team API `.p8`, Key ID, and Issuer ID | Authenticate `notarytool` submissions | Preserve the one-time-download private key in secure backup and GitHub `production` Secrets; revoke and replace it if exposed |
-| GitHub Environment approval | Permit this signed-tag run to read protected Apple credentials | A per-run reviewer decision, not a password |
+| GitHub Environment approval | Permit this trusted-master candidate run to read protected Apple credentials | A per-run reviewer decision, not a password |
 | Temporary runner Keychain password | Unlock only the ephemeral CI signing Keychain | Generated randomly inside the job and destroyed with the runner; nobody records or enters it |
-| GitHub `GITHUB_TOKEN` | Create the checksummed draft Release | Issued automatically to the job with scoped permissions; no personal access token is required |
+| GitHub `GITHUB_TOKEN` | Read repository content and candidate artifacts | Issued automatically to the job with scoped permissions; no personal access token is required |
 
 Apple App-Specific Passwords are not used by this repository and can be revoked
 without affecting the Team API key workflow. Cloudflare tunnel tokens and
@@ -94,9 +84,10 @@ Protection Keychain; they are never inputs to the release workflow.
 
 An operator needs to understand these roles, but does not need to memorize
 secret values or type a release password for each tag. The normal human actions
-are to merge a verified release PR, create the SSH-signed annotated tag, and
-approve the protected `production` job, accept the final installed package,
-and publish the accepted draft. Store the original `.p12`, its export
+are to merge the verified candidate PR, approve the protected `production` job,
+authorize production replacement and resolve native permission prompts. The
+release scripts perform checks and publish accepted bytes using the authorized
+operator identity. Store the original `.p12`, its export
 password, and the original `.p8` in a recovery-capable secrets manager because
 GitHub does not reveal Secret values after they are saved.
 
@@ -122,270 +113,163 @@ The GitHub-hosted runner is ephemeral. No Apple credential is embedded in the
 App, DMG, release metadata, logs, or GitHub Release. App runtime secrets remain
 in Computer MCP's separate Data Protection Keychain namespace.
 
-## Preparing a release
+## Preparing a candidate
 
-Before tagging:
-
-1. update `ComputerMCPCLI.version`, `ComputerMCPCLI.build`,
-   `CFBundleShortVersionString`, and `CFBundleVersion` together;
-2. move all entries out of `CHANGELOG.md` `Unreleased` into a dated version
-   section;
-3. finalize the static content in
-   `Documentation/Reference/ReleaseNotes-<version>.md` and
-   `ProductionReadinessReport-<version>.md` while preserving the exact
-   machine render tokens required by `verify-release-readiness.sh`;
-4. obtain the publisher's explicit approval for `LICENSE`, `EULA.md`, and
-   `PRIVACY.md`, record the approved file digests, and remove only the
-   corresponding draft markers; any additional external legal review follows
-   the publisher's release policy and is not a technical release gate;
-5. merge the release commit to `master` and wait for normal CI to pass;
-6. complete the release-blocking temporary and explicitly authorized real
-   workflow acceptance against the locally signed validation build;
-7. create an SSH-signed annotated tag from that exact commit and push only the
-   tag.
-
-Resolve the tag from the repository version so the example cannot drift from
-the candidate:
+1. Use `Scripts/version.py update --version X.Y.Z --build N --kind fix --reason …`
+   for a compatible fix, or the corresponding `feature`, `breaking` or
+   `candidate` kind. `Version.json` is authoritative; do not edit generated
+   App/CLI values independently. The build increases for revised App candidates.
+2. Finalize the dated changelog and versioned release-note/readiness templates.
+   Preserve the exact render tokens checked by `verify-release-readiness.sh`.
+   Existing publisher approval records for legal documents remain in force;
+   changed legal text requires its owning approval and updated digests.
+3. Validate and merge the source into official `master`. Resolve component
+   compatibility and required plugin/SDK candidates before public delivery.
+4. Run the shared pipeline. The run identifier names local checkpoints, not a
+   product version:
 
 ```sh
-release_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-  Resources/ComputerMCPApp/Info.plist)
-release_tag="v${release_version}"
-git switch master
-git pull --ff-only origin master
-git tag -s -a "$release_tag" -m "Computer MCP ${release_version}"
-git verify-tag "$release_tag"
-git push origin "$release_tag"
+python3 Scripts/version.py check --dependencies
+python3 Scripts/release.py plan --run candidate --profile candidate
+python3 Scripts/release.py run --run candidate --profile candidate
+python3 Scripts/release.py status --run candidate --profile candidate
 ```
 
-The tag is rejected unless it:
-
-- has the exact `vMAJOR.MINOR.PATCH` form;
-- is an annotated tag with a valid signature listed in
-  `.github/signing-allowed-signers`;
-- points to the checked-out commit;
-- matches the App and CLI version;
-- is reachable from `origin/master`;
-- has a dated changelog section while `Unreleased` is empty.
-
-## CI release sequence
-
-`Scripts/release-ci.sh` is the CI-only orchestrator. It fails immediately when
-run outside GitHub Actions, from a non-tag ref, in a fork, or with a personal
-`notarytool` Keychain profile. In the protected release job it runs:
-
-```text
-verify-release-ref.sh
-verify-release-readiness.sh
-build-app.sh
-package-dmg.sh
-verify-distribution.sh
-assemble-release-assets.sh
-gh release create --draft
-gh release download
-cmp candidate and uploaded DMG bytes
-write and verify exact-published provenance
-stop with an unpublished draft
-```
-
-`build-app.sh` resolves the locked SwiftPM graph, compiles optimized arm64 and
-x86_64 slices from scratch, combines them into a Universal 2 App, generates
-version-derived notices/SBOM/dependency metadata, validates the provisioning
-profile and private Keychain group, and signs the embedded CLI and App with
-Hardened Runtime and a secure timestamp.
-
-`package-dmg.sh` separates four artifact classes: `development`, `validation`,
-`release_candidate`, and `exact_published_release`. Development and validation
-filenames contain their class and an immutable build identity; they cannot bind
-a release tag or use the conventional final release filename.
-
-In the protected job, `package-dmg.sh` submits a ZIP of the signed App to
-Apple's notary service, passes the returned JSON through a separately
-regression-tested fail-closed verifier, requires an `Accepted` receipt and UUID
-submission ID, staples and validates the App ticket, and creates
-`Computer-MCP-<version>-universal.dmg`. Before submitting that exact DMG, the
-script signs the container with the configured Developer ID Application
-identity, the unique `com.showxu.computer-mcp.dmg` signing identifier, and a
-secure timestamp; verifies its signature record, identifier, and Team ID; then
-submits, staples, and validates its ticket. The candidate is built under a
-unique hidden working name and moved atomically to the conventional filename
-only after signing, notarization, and stapling have succeeded. Only then does
-the script write `SHA256SUMS` and a `release_candidate` provenance receipt.
-
-Every provenance receipt binds artifact class and creation phase, filename,
-size, SHA-256, source commit, build identity and its required digest,
-App and DMG notarization states and submission IDs, staple validation, and
-release tag/commit when applicable. The `exact_published_release` receipt also
-binds the downloaded GitHub asset SHA-256 and a successful byte-for-byte
-comparison. A receipt is stored beside its artifact and is rejected after any
-artifact mutation. Verification also hashes the supplied embedded
-`ComputerMCPBuildIdentity.plist` and requires its `source_commit` to match the
-receipt, so a receipt cannot be reused with a different App build identity.
-
-`verify-distribution.sh` mounts the DMG read-only and verifies the checksum,
-volume identity, Universal 2 slices, versions, source commit, embedded CLI
-digest, App and DMG Developer ID chains and timestamps, entitlements,
-provisioning profile, stapled tickets, and Gatekeeper assessments. The mounted
-App must be byte-for-
-byte identical to the current signed App for all identity-bearing files.
-
-`assemble-release-assets.sh` binds the signed tag, commit, Team ID,
-architectures, embedded CLI and DMG digests, notarization submission IDs, and
-GitHub Actions run URL into the release-note and readiness templates. It then
-copies the dependency manifest, CycloneDX SBOM, third-party notices, rendered
-records, and notarization receipts beside the DMG and rewrites `SHA256SUMS`
-over the complete upload set.
-An independently generated summary-only Evidence Manifest can be required with
-`INCLUDE_EVIDENCE_MANIFEST=1`; private raw evidence is never uploaded.
-
-## Local installation acceptance and publication
-
-Before tagging, run the complete local acceptance described above. The
-protected workflow then verifies every file in its staged draft and proves the
-uploaded DMG is byte-identical to the signed candidate. It stops at the draft.
-The operator retrieves this exact package and installs it locally before
-publication, preserving existing production data and the control session.
-Run the installed App outside the source and build directories, with the
-producer's build directories unavailable. Changing the working directory alone
-does not prevent an absolute SwiftPM fallback from hiding missing resources.
-
-Record the tag, source commit, build identity, DMG SHA-256, installed App identity,
-test outcomes, and recovery result in the acceptance evidence. Exercise every
-management page, localized labels, workspace registration, MCP registration and
-connection checks, plugin search/install/configuration/enable/disable/update/
-rollback/uninstall, gateway startup, and process cleanup. Include both isolated
-first launch and preserved-state migration. A failed or unverified required
-check keeps the draft unpublished. Build, signing, notarization, and unit-test
-success are not substitutes for installed acceptance.
-
-After acceptance, recheck that the draft is still unpublished and its asset
-checksums and identities match the accepted package, then publish that draft:
+A protected Environment wait exits with code 75 and prints its exact Actions
+URL. Approve that run through GitHub, then use:
 
 ```sh
-gh release edit "$release_tag" --draft=false
+python3 Scripts/release.py resume --run candidate --profile candidate
 ```
 
-Publication does not rebuild, re-sign, or replace assets. Any package change
-requires installation acceptance of the changed package before publication.
+Do not dispatch again merely because the local command was interrupted. The
+recorded request identity locates the existing run. A failed candidate retains
+its evidence. After a source correction, merge the correction and use a new run
+identifier/build as appropriate, keeping the intended formal product version.
 
-After publication, download every file and verify the immutable release record:
+## Shared checks and checkpoints
+
+`Scripts/release-checks.json` defines `ci`, `source`, `boundaries`, `candidate`,
+`acceptance` and `publish` profiles. Ordinary CI invokes the same entry point:
 
 ```sh
-release_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-  Resources/ComputerMCPApp/Info.plist)
-release_dmg="Computer-MCP-${release_version}-universal.dmg"
-shasum -a 256 -c SHA256SUMS
-spctl --assess --type open --context context:primary-signature --verbose=2 \
-  "$release_dmg"
-xcrun stapler validate "$release_dmg"
+python3 Scripts/release.py run --run local --profile ci
+python3 Scripts/release.py resume --run local --profile ci
+python3 Scripts/release.py status --run local --profile ci
 ```
 
-Then install the exact published App, restore the active profile, registered
-workspaces, OpenAI Tunnel, gateway, and launch-at-login state, and run a bounded
-production verification plus ownership/permission diagnostics. This post-install check
-confirms installation and restored local state; it is not permission to defer a
-release-blocking product test until after publication. A live Cloudflare named
-deployment is a user-owned deployment check, not a publisher credential or
-release gate. Do not rebuild or replace individual assets after publication.
+The CI profile checks dependencies, formatting/script boundaries, complete Swift
+and Validation tests, CLI/examples/localization, documentation and development
+packaging. The source profile omits development distribution. `--reuse-ci` may
+import authenticated GitHub evidence from the matching successful master push;
+missing or mismatched evidence runs locally. A failed master CI cannot be
+bypassed by protected candidate construction.
 
-Workspace acceptance is local and independent of network providers. Before
-publication, the final installed App's **Workspaces > Add** action
-must open the native macOS directory panel, register a new fixture directory
-with a non-stale bookmark, and refresh the existing page in place. A website
-challenge, provider response, or Shell policy cannot be used to classify or
-interrupt this check.
+Run state, logs, immutable attempt history and outputs stay below
+`.agent/releases/<run>/`. The owner-only checkpoint key lives in the Git common
+directory. Do not copy an arbitrary key/receipt pair into a trusted checkout.
+The status report gives stage state and duration. Each command has a deadline;
+failed cases are retained, not automatically retried until green. `resume`
+revalidates every input and output before reusing a passed stage.
 
-Tool acceptance starts from the advertised catalog, validates the arguments
-clients can construct from it, and follows affected routes through execution,
-events, release and cleanup with exact audit correlation. Native acceptance
-through `Scripts/verify-codex-plugin-host.sh` includes a separate stdio client;
-set `COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE` to the signed App's embedded CLI to
-exercise the packaged entry point. Fixture execution and installed-package
-execution must be labeled separately.
+## Installation acceptance
 
-Record vendor authentication or availability limitations separately from local
-failures and use an alternative only when the applicable acceptance requirement
-explicitly permits it. A local schema, policy, workspace, lifecycle, or audit
-failure is not a vendor limitation and keeps the release unpublished. A test
-must not invoke user-owned destructive tools merely to cover a catalog entry.
+Finish active production tasks and authorize the specific replacement before:
+
+```sh
+python3 Scripts/install-candidate.py --run candidate --approve-cutover
+python3 Scripts/release.py run --run candidate --profile acceptance
+```
+
+The installer requires an authenticated candidate checkpoint, mounts its exact
+DMG read-only, checks the App's files, signature and notarization, stages it,
+requests normal App termination, preserves the previous App and installs the
+candidate. It checks running version/build and rolls back the App if launch
+fails. It never rewrites production data, plugin receipts or credentials. An
+interrupted cutover retains its journal and all identifiable App copies for
+inspection. Rollback of the executable does not imply rollback of a database
+migration; release review must establish data compatibility before replacement.
+
+The acceptance script checks actual installed identity, signature, notarization,
+TCC, native navigation, workspace add/duplicate-add/remove, fixed cold concurrent
+requests, cancellation/reconnection and source-unavailable operation. It also
+runs the installed Codex adapter with the real vendor executable and an isolated
+loopback model through the packaged gateway. That fixture exercises App Server,
+Exec, permission inheritance and owned-process cleanup without production
+credentials or a model judging results. The installed plugin must pass doctor
+and runtime-version checks; its full file inventory is bound to the receipt.
+
+TCC denial exits 75 with the exact System Settings action. Enable the permissions
+for the production App and resume. `acceptance` never replaces a running App
+implicitly. Install the accepted plugin candidate through the App's supported
+plugin operations before combined acceptance; preserve prior installation IDs
+for rollback and never repair an identity mismatch by changing its receipt.
+
+## Publication
+
+With all candidate and installed acceptance checkpoints valid:
+
+```sh
+python3 Scripts/release.py publish --run candidate
+```
+
+The publisher verifies installed App/plugin bytes and each evidence file again,
+creates or verifies the signed `vMAJOR.MINOR.PATCH` tag on that candidate commit,
+confirms trusted master ancestry and pushes only that tag. It assembles release
+records around the existing DMG, never builds or re-signs the package, and saves
+an immutable asset inventory. Assets are uploaded into a draft, downloaded and
+compared before the draft becomes public. Unauthenticated public downloads must
+also match. `release.json` is the product delivery record used by the website.
+
+A partial draft upload resumes only missing assets. Existing bytes must match;
+public assets and formal tags cannot be replaced. Authentication/network failure
+is a failed operation, not evidence that no release exists. Resume the same run
+to continue its verified assembly. Do not rebuild an accepted binary to retry
+publication. A post-publication defect is handled in the next appropriate version.
+
+After publication, use the website repository's `npm run release:update -- vX.Y.Z`,
+commit and deliver its generated record, then `release:verify-public` and normal
+website checks. Check the deployed record against the same public delivery.
 
 ## Supported local scope
 
-Local commands exercise build and package structure without producing an
-official release:
+Local builds and distribution checks are available independently:
 
 ```sh
 Scripts/build-app.sh
 Scripts/package-dmg.sh
 Scripts/verify-distribution.sh
-Scripts/verify-cli-interface.sh
-```
-
-When exactly one Apple Development identity and compatible profile are
-installed, `build-app.sh` uses them for stable production-Bundle testing. This
-preserves the production Team ID, Bundle ID, Data Protection Keychain access
-group, and TCC identity while remaining an unnotarized development artifact.
-
-Use a separate local runtime namespace when testing first-launch behavior and
-environment isolation:
-
-```sh
 APP_ENVIRONMENT=development Scripts/build-app.sh
 ```
 
-For isolated bundle/DMG structure checks without runtime Keychain access:
+With exactly one compatible Apple Development identity/profile, `build-app.sh`
+uses stable production-Bundle testing identity. The `development` environment
+uses a separate runtime namespace. `ADHOC_SIGNING=1` supports isolated bundle/DMG
+structure checks without runtime Keychain access. These unnotarized artifacts
+cannot substitute for the protected signed candidate.
+
+Local names include development/validation identity and cannot claim a formal
+release. `RELEASE_MODE=1` is restricted to the canonical trusted-master candidate
+workflow. Local official signing/notarization remains unsupported. GitHub CI
+uses `macos-26` and explicitly selects Xcode 26.4.
+
+## Cleanup and recovery
 
 ```sh
-ADHOC_SIGNING=1 Scripts/build-app.sh
-Scripts/package-dmg.sh
-Scripts/verify-distribution.sh
+python3 Scripts/release.py cleanup --run local
+python3 Scripts/release.py cleanup --run local --apply
 ```
 
-Local package output defaults to a development filename such as
-`Computer-MCP-<version>-development-<build-id>-universal.dmg`. Set
-`ARTIFACT_CLASS=validation` for a validation artifact. Neither class may use a
-final-release-looking filename, claim notarization, or bind a release tag.
+Preview is the default. Cleanup checks ownership, unchanged authenticated files
+and absence of running references before removing a stage's temporary work.
+Candidate, acceptance, publication and previous-App recovery records are retained.
+Modified or unique files cause retention. Inspect retained failed attempts before
+any separate archival or deletion; never delete active process directories.
 
-Local `RELEASE_MODE=1`, local notarization, and local GitHub Release upload are
-not supported release paths. Both `build-app.sh` and `package-dmg.sh` reject
-official release mode outside a GitHub tag job, and CI notarization accepts only
-the protected Team API key workflow.
-
-## Failure handling
-
-- A failed `verify` job never receives Apple or publication credentials.
-- A failed `release` job runs credential cleanup. A failure before upload
-  creates no GitHub Release; a failure during atomic publication may leave a
-  draft that must be inspected explicitly and is never silently overwritten.
-- A rejected notarization stops before DMG publication; inspect the submission
-  log using the same Team API key outside workflow logs.
-- A script failure after `notarytool submit --wait` returns is distinct from an
-  authentication or Apple rejection. The immutable run remains the audit
-  record, credential cleanup still runs, and a source correction requires a new
-  patch version. The pre-secret notarization-record gate accepts only a valid
-  response with the expected submission identity and terminal status.
-- `source=no usable signature` during the DMG Gatekeeper assessment means the
-  container itself lacks a usable Developer ID signature even when its
-  contents and notarization ticket are valid. Do not publish or re-sign that
-  artifact after notarization. The release path creates the DMG, signs it with
-  Developer ID and a secure timestamp, verifies the signature record, and only
-  then submits that exact container. The no-secret signing-boundary regression
-  rejects a missing or reordered step before production credentials are read.
-- A `SHA256SUMS` open/read failure for a notarization receipt means the release
-  asset root is incomplete or inconsistent. Do not publish a partial asset set.
-  Both receipts, the DMG, and `SHA256SUMS` must share the verified root upload
-  directory, and the complete checksum file must pass before draft creation.
-- An existing Release for the tag causes the workflow to stop instead of
-  overwriting assets.
-- A failed immutable tag remains an audit record. After correcting a workflow
-  or source defect, increment the patch version and create a new signed tag;
-  never move, replace, or force-push the failed tag.
-- A transient runner or external-service failure may be retried for the same
-  immutable tag only when the source and workflow need no correction and no
-  draft already exists.
-- If a draft exists, inspect and resolve it explicitly; the workflow will not
-  mutate it on a retry. A public Release is never treated as a retryable draft
-  and its assets are not replaced.
-
-GitHub CI uses the `macos-26` hosted image and selects Xcode 26.4 explicitly so
-the root and Validation Swift 6.2 package manifests use one known toolchain.
+Notarization rejection, invalid signatures, incomplete checksums, failed
+source/installed checks and unknown results stop publication. Inspect the saved
+stage log and original failure, repair its cause, then resume valid checkpoints.
+If an Apple submission succeeded before interruption, inspect that submission
+rather than assuming it needs a new product version. Changed bytes always need
+new signing/notarization and affected artifact acceptance. Credentials are cleaned
+up even when the protected workflow fails.

@@ -256,7 +256,7 @@ struct Plugins: AsyncParsableCommand {
       commandName: "recover",
       abstract: "Retry App-owned file cleanup and report recovery issues as JSON.",
       discussion:
-        "Leaves selections, grants and unknown directories unchanged. The App also attempts recovery at startup. Connected gateway clients and active installation workers are not interrupted."
+        "Leaves selections, grants and unknown directories unchanged. The App also attempts recovery at startup. Disconnect gateway clients before retrying; connected clients and active installation workers block recovery."
     )
     @OptionGroup var revision: Revision
     func run() async throws {

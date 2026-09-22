@@ -6,8 +6,9 @@ OUTPUT_DIR=${OUTPUT_DIR:-"$ROOT_DIR/dist"}
 APP_PATH="$OUTPUT_DIR/Computer MCP.app"
 METADATA_DIR="$OUTPUT_DIR/ReleaseMetadata"
 INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
-APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")
-APP_BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")
+python3 "$ROOT_DIR/Scripts/version.py" check
+APP_VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
+APP_BUILD=$(python3 "$ROOT_DIR/Scripts/version.py" show --field build)
 RELEASE_MODE=${RELEASE_MODE:-0}
 SOURCE_COMMIT=${SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
 ARTIFACT_BUILD_ID=${ARTIFACT_BUILD_ID:-"$APP_BUILD-${SOURCE_COMMIT[1,12]}"}
@@ -131,8 +132,7 @@ BUILT_SOURCE_COMMIT=$(/usr/bin/plutil -extract source_commit raw -o - "$BUILD_ID
 if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ ${GITHUB_ACTIONS:-false} == "true" ]] \
     || fail "Official release packaging is supported only by GitHub Actions."
-  [[ ${GITHUB_REF_TYPE:-} == "tag" ]] \
-    || fail "Official release packaging requires a GitHub tag ref."
+  "$ROOT_DIR/Scripts/verify-candidate-ref.sh"
   [[ -n ${SIGNING_IDENTITY:-} ]] || fail "Release mode requires SIGNING_IDENTITY."
   [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "Release mode requires EXPECTED_TEAM_ID."
   configure_notary_arguments
@@ -199,7 +199,7 @@ if [[ "$RELEASE_MODE" == "1" ]]; then
   DMG_NOTARIZATION_ID=$(/usr/bin/jq -er '.id' "$DMG_NOTARY_RECORD")
   SOURCE_COMMIT="$SOURCE_COMMIT" \
     RELEASE_COMMIT="$SOURCE_COMMIT" \
-    RELEASE_TAG="${GITHUB_REF_NAME:-}" \
+    RELEASE_TAG="v$APP_VERSION" \
     BUILD_IDENTITY="$APP_VERSION-$APP_BUILD-$ARTIFACT_BUILD_ID" \
     BUILD_IDENTITY_PATH="$BUILD_IDENTITY_PATH" \
     CREATION_PHASE="release_candidate" \

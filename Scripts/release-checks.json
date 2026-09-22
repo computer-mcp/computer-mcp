@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "candidate": ["candidate"],
+    "acceptance": ["acceptance"],
+    "publish": ["publish"],
+    "ci": ["distribution", "documentation", "interfaces", "validation", "swift-tests", "syntax", "dependencies"],
+    "source": ["documentation", "interfaces", "validation", "swift-tests", "syntax", "dependencies"],
+    "boundaries": ["dependencies", "syntax"]
+  },
+  "stages": [
+    {
+      "id": "dependencies",
+      "timeout_seconds": 900,
+      "commands": [
+        ["python3", "Scripts/version.py", "check", "--dependencies"],
+        ["Scripts/verify-package-boundary.sh"],
+        ["Scripts/verify-public-repository.sh"]
+      ],
+      "access": "Public dependency tags; read-only repository access"
+    },
+    {
+      "id": "syntax",
+      "timeout_seconds": 600,
+      "commands": [
+        ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--configuration", ".swift-format", "Package.swift", "Sources", "Tests"],
+        ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--configuration", ".swift-format", "Tools/Validation/Package.swift", "Tools/Validation/Sources", "Tools/Validation/Tests"],
+        ["python3", "-m", "unittest", "discover", "-s", "Scripts/tests", "-p", "test_*.py"],
+        ["python3", "-m", "py_compile", "Scripts/accept-release.py", "Scripts/install-candidate.py", "Scripts/verify-installed-workspaces.py", "Scripts/verify-installed-runtime.py", "Scripts/verify-codex-gateway-flow.py"],
+        ["xcrun", "swiftc", "-typecheck", "Scripts/verify-app-navigation.swift"],
+        ["xcrun", "swiftc", "-typecheck", "Scripts/quit-installed-app.swift"],
+        ["zsh", "-c", "for script in Scripts/*.sh; do zsh -n \"$script\" || exit; done"],
+        ["actionlint", ".github/workflows/ci.yml", ".github/workflows/release-gate.yml"],
+        ["Scripts/verify-protected-release-boundary.sh"],
+        ["Scripts/verify-protected-release-boundary-regression.sh"],
+        ["Scripts/verify-dmg-signing-boundary-regression.sh"],
+        ["Scripts/verify-developer-id-signature-record-regression.sh"],
+        ["Scripts/verify-notarization-record-regression.sh"],
+        ["Scripts/verify-artifact-provenance-boundary.sh"],
+        ["zsh", "Scripts/verify-artifact-provenance-boundary-regression.sh"],
+        ["Scripts/verify-release-asset-boundary-regression.sh"],
+        ["Scripts/write-release-checksums-regression.sh"],
+        ["Scripts/verify-release-tag-restoration.sh"],
+        ["Scripts/verify-release-record-rendering.sh"],
+        ["Scripts/verify-public-repository-worktree-regression.sh"],
+        ["Scripts/verify-naming.sh"]
+      ],
+      "access": "Local toolchain"
+    },
+    {
+      "id": "swift-tests",
+      "needs": ["dependencies"],
+      "timeout_seconds": 3600,
+      "commands": [["/usr/bin/swift", "build"], ["/usr/bin/swift", "test", "--no-parallel"]],
+      "access": "Local isolated regression fixtures"
+    },
+    {
+      "id": "validation",
+      "needs": ["dependencies"],
+      "timeout_seconds": 1800,
+      "commands": [
+        ["/usr/bin/swift", "build", "--package-path", "Tools/Validation"],
+        ["/usr/bin/swift", "test", "--package-path", "Tools/Validation", "--no-parallel"],
+        ["/usr/bin/swift", "run", "--package-path", "Tools/Validation", "computer-mcp-validate", "test-case", "validate"]
+      ],
+      "access": "Local Validation fixtures and catalog"
+    },
+    {
+      "id": "interfaces",
+      "needs": ["swift-tests"],
+      "timeout_seconds": 900,
+      "commands": [["Scripts/verify-cli-interface.sh"], ["Scripts/verify-examples.sh"], ["Scripts/verify-localization.sh"]],
+      "access": "Local CLI and fixtures"
+    },
+    {
+      "id": "documentation",
+      "needs": ["dependencies"],
+      "timeout_seconds": 1200,
+      "commands": [["Scripts/verify-release-metadata.sh"], ["Scripts/verify-documentation.sh"]],
+      "access": "Local DocC tooling"
+    },
+    {
+      "id": "distribution",
+      "needs": ["swift-tests", "syntax"],
+      "timeout_seconds": 3600,
+      "environment": {"ADHOC_SIGNING": "1"},
+      "commands": [["Scripts/build-app.sh"], ["Scripts/package-dmg.sh"], ["Scripts/verify-distribution.sh"]],
+      "access": "Development bundle only; no production cutover or credentials"
+    },
+    {
+      "id": "candidate",
+      "timeout_seconds": 7500,
+      "retain_outputs": true,
+      "commands": [["python3", "Scripts/candidate.py", "request"]],
+      "access": "Trusted master, GitHub Actions dispatch and protected production environment approval"
+    },
+    {
+      "id": "acceptance",
+      "needs": ["candidate"],
+      "timeout_seconds": 600,
+      "retain_outputs": true,
+      "commands": [["python3", "Scripts/accept-release.py"]],
+      "access": "Exact installed candidate; production cutover and native TCC permissions"
+    },
+    {
+      "id": "publish",
+      "needs": ["acceptance"],
+      "timeout_seconds": 1200,
+      "retain_outputs": true,
+      "commands": [["python3", "Scripts/publish-release.py"]],
+      "access": "Authorized tag signing and GitHub release publication; promotes accepted bytes"
+    }
+  ]
+}

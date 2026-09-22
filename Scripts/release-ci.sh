@@ -2,9 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR=${0:A:h:h}
-VERSION=$(/usr/libexec/PlistBuddy \
-  -c 'Print :CFBundleShortVersionString' \
-  "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
+python3 "$ROOT_DIR/Scripts/version.py" check
+VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
 EXPECTED_REPOSITORY=${EXPECTED_GITHUB_REPOSITORY:-computer-mcp/computer-mcp}
 
 fail() {
@@ -16,8 +15,7 @@ fail() {
   || fail "Official releases are supported only by GitHub Actions."
 [[ ${GITHUB_REPOSITORY:-} == "$EXPECTED_REPOSITORY" ]] \
   || fail "Unexpected GitHub repository: ${GITHUB_REPOSITORY:-missing}."
-[[ ${GITHUB_REF_TYPE:-} == "tag" && ${GITHUB_REF_NAME:-} == "v$VERSION" ]] \
-  || fail "Official releases require the v$VERSION tag context."
+"$ROOT_DIR/Scripts/verify-candidate-ref.sh"
 [[ -n ${SIGNING_IDENTITY:-} ]] || fail "SIGNING_IDENTITY is required."
 [[ -n ${EXPECTED_TEAM_ID:-} ]] || fail "EXPECTED_TEAM_ID is required."
 [[ -n ${PROVISIONING_PROFILE:-} ]] || fail "PROVISIONING_PROFILE is required."
@@ -28,10 +26,6 @@ for variable in ASC_API_KEY_PATH ASC_API_KEY_ID ASC_API_ISSUER_ID; do
   [[ -n "$value" ]] || fail "$variable is required."
 done
 
-RELEASE_TAG="$GITHUB_REF_NAME" \
-  RELEASE_BRANCH="${RELEASE_BRANCH:-master}" \
-  REQUIRE_REMOTE_BRANCH=1 \
-  "$ROOT_DIR/Scripts/verify-release-ref.sh"
 "$ROOT_DIR/Scripts/verify-release-readiness.sh"
 
 APP_ENVIRONMENT=production \
@@ -55,8 +49,6 @@ RELEASE_MODE=1 \
   EXPECTED_TEAM_ID="$EXPECTED_TEAM_ID" \
   "$ROOT_DIR/Scripts/verify-distribution.sh"
 
-EXPECTED_TEAM_ID="$EXPECTED_TEAM_ID" \
-  INCLUDE_EVIDENCE_MANIFEST="${INCLUDE_EVIDENCE_MANIFEST:-0}" \
-  "$ROOT_DIR/Scripts/assemble-release-assets.sh"
+python3 "$ROOT_DIR/Scripts/candidate.py" bundle
 
 echo "CI release candidate is ready: dist/Computer-MCP-$VERSION-universal.dmg"

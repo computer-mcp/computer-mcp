@@ -7,6 +7,10 @@ Use this guide for agent work in this repository.
 - For package work, inspect `Package.swift` before editing targets or products.
 - For build, run, and test tasks, use SwiftPM commands from the repository root.
 - For documentation work, keep the role boundaries in `Documentation/README.md`.
+- For version, dependency, packaging or release work, read
+  `Documentation/Architecture/VersioningAndRelease.md` and
+  `Documentation/Reference/Release.md`. Use `Scripts/version.py` for version
+  updates/checks and `Scripts/release.py` for shared CI and release stages.
 - For API documentation, keep DocC source with the target at
   `Sources/ComputerMCP/ComputerMCP.docc/`.
 - For GitHub collaboration files, edit `.github/` or the root governance files,

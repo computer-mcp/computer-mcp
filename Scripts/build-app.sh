@@ -75,8 +75,7 @@ fi
 if [[ "$RELEASE_MODE" == "1" ]]; then
   [[ ${GITHUB_ACTIONS:-false} == "true" ]] \
     || fail "Official release mode is supported only by GitHub Actions."
-  [[ ${GITHUB_REF_TYPE:-} == "tag" ]] \
-    || fail "Official release mode requires a GitHub tag ref."
+  "$ROOT_DIR/Scripts/verify-candidate-ref.sh"
   [[ "$APP_ENVIRONMENT" == "production" ]] \
     || fail "Release mode requires APP_ENVIRONMENT=production."
   [[ "$ADHOC_SIGNING" == "0" ]] || fail "Release mode cannot use ad-hoc signing."
@@ -220,19 +219,9 @@ select_provisioning_profile() {
 
 "$ROOT_DIR/Scripts/verify-localization.sh"
 
-APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFO_PLIST")
-APP_BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFO_PLIST")
-SOURCE_VERSION=$(/usr/bin/sed -n \
-  's/^[[:space:]]*package static let version = "\([^"]*\)"[[:space:]]*$/\1/p' \
-  "$ROOT_DIR/Sources/ComputerMCP/ComputerMCPCLI.swift")
-SOURCE_BUILD=$(/usr/bin/sed -n \
-  's/^[[:space:]]*package static let build = "\([^"]*\)"[[:space:]]*$/\1/p' \
-  "$ROOT_DIR/Sources/ComputerMCP/ComputerMCPCLI.swift")
-if [[ -z "$SOURCE_VERSION" || -z "$SOURCE_BUILD" \
-  || "$SOURCE_VERSION" != "$APP_VERSION" || "$SOURCE_BUILD" != "$APP_BUILD" ]]
-then
-  fail "Release metadata mismatch: source=${SOURCE_VERSION:-missing} (${SOURCE_BUILD:-missing}) App=$APP_VERSION ($APP_BUILD)"
-fi
+python3 "$ROOT_DIR/Scripts/version.py" check
+APP_VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
+APP_BUILD=$(python3 "$ROOT_DIR/Scripts/version.py" show --field build)
 
 SOURCE_COMMIT=${SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
 [[ "$SOURCE_COMMIT" =~ '^[0-9a-f]{40}$' ]] || fail "Unable to resolve the source commit."
@@ -528,7 +517,7 @@ else
   else
     echo "Built stably signed development Universal 2 app: $APP_PATH"
   fi
-  echo "Official releases are built by the signed-tag GitHub Actions workflow."
+  echo "Official candidates are built by the protected main-branch GitHub Actions workflow."
 fi
 
 echo "Source commit: $SOURCE_COMMIT"

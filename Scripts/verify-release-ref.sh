@@ -2,11 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR=${0:A:h:h}
-INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
-VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")
-SOURCE_VERSION=$(/usr/bin/sed -n \
-  's/^[[:space:]]*package static let version = "\([^"]*\)"[[:space:]]*$/\1/p' \
-  "$ROOT_DIR/Sources/ComputerMCP/ComputerMCPCLI.swift")
+python3 "$ROOT_DIR/Scripts/version.py" check
+VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
 TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-"v$VERSION"}}
 RELEASE_BRANCH=${RELEASE_BRANCH:-master}
 REQUIRE_REMOTE_BRANCH=${REQUIRE_REMOTE_BRANCH:-0}
@@ -18,8 +15,6 @@ fail() {
 
 [[ "$REQUIRE_REMOTE_BRANCH" == "0" || "$REQUIRE_REMOTE_BRANCH" == "1" ]] \
   || fail "REQUIRE_REMOTE_BRANCH must be 0 or 1."
-[[ "$VERSION" == "$SOURCE_VERSION" ]] \
-  || fail "App and CLI versions differ: App=$VERSION CLI=${SOURCE_VERSION:-missing}."
 [[ "$TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' ]] \
   || fail "Tag must use the exact vMAJOR.MINOR.PATCH form."
 [[ "$TAG" == "v$VERSION" ]] || fail "$TAG does not match product version $VERSION."

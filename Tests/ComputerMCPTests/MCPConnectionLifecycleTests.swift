@@ -114,6 +114,42 @@ struct MCPConnectionLifecycleTests {
     try configuration.validate()
   }
 
+  @Test
+  func hostDeathReapsResponsiveCommandAndItsLongDeadlineTimer() async throws {
+    let owner = Process()
+    owner.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    owner.arguments = ["30"]
+    try owner.run()
+    defer { if owner.isRunning { owner.terminate() } }
+    let transport = try ManagedLineProcess(
+      configuration: .init(
+        executable: "/usr/bin/python3",
+        arguments: [
+          "-c",
+          "import os,signal,time; signal.signal(signal.SIGTERM,lambda *_:exit(0)); print(os.getpid(),flush=True); time.sleep(30)",
+        ],
+        workingDirectory: FileManager.default.temporaryDirectory,
+        terminationGraceMilliseconds: 30_000, ownerProcessID: owner.processIdentifier))
+    do {
+      var lines = transport.inboundLines.makeAsyncIterator()
+      let ready = try #require(try await lines.next())
+      let child = try #require(Int32(ready))
+      owner.terminate()
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !(await transport.snapshot().hasExited), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let stopped = await transport.snapshot()
+      #expect(stopped.hasExited)
+      #expect(stopped.exitCode == 0)
+      #expect(Darwin.kill(child, 0) == -1 && errno == ESRCH)
+      await transport.close()
+    } catch {
+      await transport.close()
+      throw error
+    }
+  }
+
   @Test(arguments: ["duplicateID", "unknownCancel", "invalidEvents"])
   func rejectedRequestPreservesUnrelatedWork(failure: String) async throws {
     let fixture = try LifecycleFixture()

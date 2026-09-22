@@ -3,9 +3,8 @@ set -euo pipefail
 
 ROOT_DIR=${0:A:h:h}
 OUTPUT_DIR=${OUTPUT_DIR:-"$ROOT_DIR/dist"}
-PRODUCT_VERSION=$(/usr/libexec/PlistBuddy \
-  -c 'Print :CFBundleShortVersionString' \
-  "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
+python3 "$ROOT_DIR/Scripts/version.py" check
+PRODUCT_VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
 RELEASE_MODE=${RELEASE_MODE:-0}
 DMG_PATH=${DMG_PATH:-}
 CURRENT_APP_PATH=${CURRENT_APP_PATH:-"$OUTPUT_DIR/Computer MCP.app"}

@@ -6,9 +6,8 @@ OUTPUT_DIR=${OUTPUT_DIR:-"$ROOT_DIR/dist"}
 APP_PATH="$OUTPUT_DIR/Computer MCP.app"
 METADATA_DIR="$OUTPUT_DIR/ReleaseMetadata"
 EXPECTED_TEAM_ID=${EXPECTED_TEAM_ID:-}
-VERSION=$(/usr/libexec/PlistBuddy \
-  -c "Print :CFBundleShortVersionString" \
-  "$ROOT_DIR/Resources/ComputerMCPApp/Info.plist")
+python3 "$ROOT_DIR/Scripts/version.py" check
+VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
 TAG="v$VERSION"
 DMG_PATH=${DMG_PATH:-"$OUTPUT_DIR/Computer-MCP-$VERSION-universal.dmg"}
 ARTIFACT_PROVENANCE=${ARTIFACT_PROVENANCE:-"${DMG_PATH:r}-ArtifactProvenance.json"}

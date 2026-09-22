@@ -379,33 +379,44 @@ final class ManagedLineProcess: @unchecked Sendable {
       set -m
       pid_file=$1
       owner_pid=$2
-      grace_ticks=$3
+      grace_seconds=$3
       shift 3
 
       child=
       watchdog=
+      timer=
+      cleanup_timer() {
+        if [ -n "$timer" ]; then
+          kill -KILL "$timer" 2>/dev/null || true
+          wait "$timer" 2>/dev/null || true
+          timer=
+        fi
+      }
       terminate_group() {
-        /bin/kill -TERM -- -"$child" 2>/dev/null || true
-        remaining=$grace_ticks
-        while /bin/kill -0 -- -"$child" 2>/dev/null; do
-          if [ "$remaining" -le 0 ]; then
-            /bin/kill -KILL -- -"$child" 2>/dev/null || true
+        kill -TERM -- -"$child" 2>/dev/null || true
+        # One owned timer measures elapsed grace independently of polling cost.
+        /bin/sleep "$grace_seconds" \(configuration.ownershipHandle == nil ? "" : "9>&-") &
+        timer=$!
+        while kill -0 -- -"$child" 2>/dev/null; do
+          if ! kill -0 "$timer" 2>/dev/null; then
+            kill -KILL -- -"$child" 2>/dev/null || true
             break
           fi
           /bin/sleep 0.01 \(configuration.ownershipHandle == nil ? "" : "9>&-")
-          remaining=$((remaining - 1))
         done
+        cleanup_timer
       }
       cleanup() {
         trap - EXIT HUP INT TERM
         if [ -n "$child" ]; then
-          if /bin/kill -0 -- -"$child" 2>/dev/null; then
+          if kill -0 -- -"$child" 2>/dev/null; then
             terminate_group
           fi
           wait "$child" 2>/dev/null || true
         fi
         if [ -n "$watchdog" ]; then
-          /bin/kill -KILL "$watchdog" 2>/dev/null || true
+          kill -CONT "$watchdog" 2>/dev/null || true
+          kill -TERM "$watchdog" 2>/dev/null || true
           wait "$watchdog" 2>/dev/null || true
         fi
       }
@@ -417,8 +428,9 @@ final class ManagedLineProcess: @unchecked Sendable {
       \(configuration.inheritedDescriptors.keys.sorted().map { "exec \($0)>&-" }.joined(separator: "\n"))
       if ! printf '%s\n' "$child" > "$pid_file"; then exit 1; fi
       (
-        trap '' HUP INT TERM
-        while /bin/kill -0 "$owner_pid" 2>/dev/null; do
+        trap '' HUP INT
+        trap 'cleanup_timer; exit' TERM
+        while kill -0 "$owner_pid" 2>/dev/null; do
           /bin/sleep 0.1 \(configuration.ownershipHandle == nil ? "" : "9>&-")
         done
         terminate_group
@@ -435,7 +447,7 @@ final class ManagedLineProcess: @unchecked Sendable {
       [.posixPermissions: NSNumber(value: Int16(0o700))],
       ofItemAtPath: script.path
     )
-    let graceTicks = max(10, (configuration.terminationGraceMilliseconds + 9) / 10)
+    let graceSeconds = Double(configuration.terminationGraceMilliseconds) / 1_000
     return SupervisorLaunch(
       directory: directory,
       processIDFile: processIDFile,
@@ -443,7 +455,7 @@ final class ManagedLineProcess: @unchecked Sendable {
         script.path,
         processIDFile.path,
         String(configuration.ownerProcessID),
-        String(graceTicks),
+        String(graceSeconds),
         configuration.executable,
       ] + configuration.arguments
     )

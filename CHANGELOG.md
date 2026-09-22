@@ -4,6 +4,14 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.2.2 — 2026-09-22
+
+- Complete repeated MCP initialization safely across reused request IDs and
+  return initialization failures to queued handshakes.
+
+- Bound owned-process crash cleanup by elapsed grace time and join its timer.
+- Derive App and CLI versions from one declaration and check dependency release identities.
+
 ## 1.2.1 — 2026-09-21
 
 - Serialize gateway lifecycle changes so workspace updates and background

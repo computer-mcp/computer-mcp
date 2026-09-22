@@ -15,6 +15,7 @@ struct AppShellView: View {
                 Image(systemName: workspace.systemImage)
               }
               .tag(workspace)
+              .accessibilityIdentifier("navigation.\(workspace.rawValue)")
             }
           }
         }
@@ -34,6 +35,8 @@ struct AppShellView: View {
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("page.\((model.selectedWorkspace ?? .home).rawValue)")
     }
     .sheet(
       isPresented: Binding(

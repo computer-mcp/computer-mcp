@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,42 @@ spec.loader.exec_module(publisher)
 
 
 class PublicationEvidence(unittest.TestCase):
+    def test_interrupted_assembly_requires_authenticated_complete_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            previous = root / "previous"
+            (previous / "dist/App").mkdir(parents=True)
+            (previous / "dist/App/binary").write_text("accepted app")
+            (previous / "dist/Product.dmg").write_text("accepted dmg")
+            candidate = {"candidate": "42.1", "source_commit": "a" * 40, "archive_sha256": "b" * 64}
+            key = os.urandom(32)
+            record = {"candidate": "42.1", "assets": {"Product.dmg": release.file_digest(previous / "dist/Product.dmg")}}
+            release.atomic_json(previous / "publication-assets.json", record)
+            self.assertFalse(publisher.restore_assembly(previous, root / "unsealed", candidate, key))
+            self.assertFalse((root / "unsealed/dist").exists())
+            publisher.checkpoint_assembly(previous, candidate, key)
+            self.assertTrue(publisher.restore_assembly(previous, root / "resumed", candidate, key))
+            self.assertEqual(release.inventory(root / "resumed/dist"), release.inventory(previous / "dist"))
+            for field in candidate:
+                with self.subTest(field=field), self.assertRaisesRegex(ValueError, "different candidate"):
+                    publisher.restore_assembly(previous, root / "wrong", dict(candidate, **{field: "wrong"}), key)
+            for target in [previous / "publication-assets.json", previous / "dist/App/binary", previous / "dist/Product.dmg"]:
+                original = target.read_bytes()
+                target.write_bytes(b'{}')
+                with self.subTest(file=target.name), self.assertRaisesRegex(ValueError, "assets changed"):
+                    publisher.restore_assembly(previous, root / "changed", candidate, key)
+                target.write_bytes(original)
+            checkpoint = previous / "assembly-checkpoint.json"
+            original = checkpoint.read_bytes()
+            forged = json.loads(original)
+            forged["payload"]["record"]["candidate"] = "forged"
+            checkpoint.write_text(json.dumps(forged))
+            with self.assertRaisesRegex(ValueError, "Unauthenticated"):
+                publisher.restore_assembly(previous, root / "forged", candidate, key)
+            checkpoint.write_bytes(original)
+            with self.assertRaisesRegex(ValueError, "Unauthenticated"):
+                publisher.restore_assembly(previous, root / "wrong-key", candidate, os.urandom(32))
+
     def test_installed_bytes_and_each_evidence_file_are_required(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

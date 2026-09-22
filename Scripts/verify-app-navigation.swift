@@ -55,21 +55,19 @@ let pages = [
 ]
 for page in pages {
   guard let item = waitFor("navigation." + page) else { fail("Missing navigation item: " + page) }
-  var selected = AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
-  if !selected {
-    var row = item
-    for _ in 0..<4 {
-      if AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue)
+  var row = item
+  var selected = false
+  for _ in 0..<6 {
+    if attribute(row, kAXRoleAttribute) as? String == kAXRowRole {
+      selected =
+        AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue)
         == .success
-      {
-        selected = true
-        break
-      }
-      guard let parent = attribute(row, kAXParentAttribute),
-        CFGetTypeID(parent) == AXUIElementGetTypeID()
-      else { break }
-      row = unsafeBitCast(parent, to: AXUIElement.self)
+      break
     }
+    guard let parent = attribute(row, kAXParentAttribute),
+      CFGetTypeID(parent) == AXUIElementGetTypeID()
+    else { break }
+    row = unsafeBitCast(parent, to: AXUIElement.self)
   }
   guard selected, waitFor("page." + page) != nil else {
     fail("Navigation did not display page: " + page)

@@ -99,11 +99,38 @@ checks bound to those inputs. Installed App and plugin bytes are checked again
 before publication. A digest is evidence identity, not proof of test quality or
 permission to execute untrusted code.
 
-States are `passed`, `failed`, `waiting_for_human` and `invalidated`. Failures and
-interrupted attempts retain their logs and outputs. `resume` verifies them before
-continuing. A partial draft upload resumes only missing assets and compares all
-existing bytes; it never overwrites a release asset. Product checks are not
-automatically rerun until they happen to pass.
+Artifact identity and checker identity are separate inputs. A correction to an
+acceptance script, assertion or report invalidates its results and dependent
+publication decisions, not an unchanged signed artifact. `resume --reuse-candidate`
+binds committed check changes to an authenticated successful candidate already
+built from trusted master. The runner permits only explicitly enumerated
+validation/publication files, verifies the Git difference, and records both
+commits. It never dispatches another candidate through this binding. Formal tags
+still identify the original candidate commit; acceptance records identify the
+revised checks. Check changes may be validated and delivered independently.
+
+Product source, dependencies, build configuration, packaging inputs, signing or
+entitlements can affect artifact bytes and require a new candidate plus affected
+validation. Being a script does not make a file exempt. An unclassified change
+blocks reuse with its exact paths so its effect can be investigated; this is not
+an instruction to rebuild or increment the formal version automatically. Add a
+reuse exception only after confirming it cannot supply the artifact build.
+
+States are `running`, `passed`, `failed`, `waiting_for_human` and `invalidated`.
+An active attempt and its stage process hold the same exclusive ownership lock. An
+in-progress receipt authenticates attempt identity and inputs; its log and
+outputs are sealed only when the attempt finishes. An interrupted attempt cannot
+count as passed, and a still-running stage prevents concurrent recovery.
+
+Failures and interrupted attempts retain their logs and outputs. `resume`
+separates completed, authenticated outputs from unfinished recovery input.
+Candidate recovery locates and authenticates the original remote request;
+publication independently authenticates its assembled output inventory before
+resuming uploads. Missing or forged receipts for retained candidate or delivery
+outputs require investigation before retrying. A partial draft upload resumes
+only missing assets and compares all existing bytes; it never overwrites a
+release asset. Product checks are not automatically rerun until they happen to
+pass.
 
 ## Retention and handoff
 

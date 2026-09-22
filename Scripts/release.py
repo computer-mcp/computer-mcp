@@ -24,6 +24,17 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 WAITING = 75
 
+# These files operate on an existing signed artifact; none supplies its build.
+CANDIDATE_CHECK_FILES = frozenset({
+    "Scripts/release.py", "Scripts/candidate.py", "Scripts/publish-release.py",
+    "Scripts/accept-release.py", "Scripts/verify-app-navigation.swift",
+    "Scripts/verify-installed-runtime.py", "Scripts/verify-installed-workspaces.py",
+    "Scripts/verify-codex-gateway-flow.py", "Scripts/verify-release-ref.sh",
+    "Scripts/assemble-release-assets.sh", "Scripts/tests/test_release.py",
+    "Scripts/tests/test_candidate.py", "Scripts/tests/test_publication.py",
+    "Documentation/Architecture/VersioningAndRelease.md", "Documentation/Reference/Release.md",
+})
+
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -128,7 +139,7 @@ def validate_definition(definition):
 
 
 class Runner:
-    def __init__(self, root, run_dir, definition, key_path, source=None, environment=None):
+    def __init__(self, root, run_dir, definition, key_path, source=None, environment=None, rebind_candidate=False):
         self.root = root.resolve()
         self.run_dir = run_dir.resolve()
         self.definition = definition
@@ -137,6 +148,50 @@ class Runner:
         self.source = source if source is not None else source_identity(self.root)
         self.environment = environment if environment is not None else environment_identity(self.root)
         self.stages = {stage["id"]: stage for stage in definition["stages"]}
+        self.candidate_source = None
+        binding = self.run_dir / "candidate-reuse.json"
+        if binding.exists() and not rebind_candidate:
+            envelope = json.loads(binding.read_text())
+            payload = envelope["payload"]
+            expected = hmac.new(self.key(), canonical(payload), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, envelope["mac"]):
+                raise ValueError("Unauthenticated candidate reuse binding")
+            if (payload["checker_source"] != self.source
+                    or payload["run_dir"] != str(self.run_dir)
+                    or payload["candidate_receipt_sha256"] != file_digest(self.run_dir / "receipts/candidate.json")):
+                raise ValueError("Candidate reuse inputs changed; review and explicitly bind the current checks again")
+            self.candidate_source = payload["candidate_source"]
+
+    def bind_candidate(self):
+        """Bind committed check changes to a candidate already built from trusted master."""
+        with self.lock():
+            if output(["git", "status", "--porcelain"], self.root):
+                raise ValueError("Candidate reuse requires committed, clean checks")
+            subprocess.run(["git", "fetch", "origin", "master"], cwd=self.root, check=True, timeout=60)
+            receipt = self.receipt("candidate")
+            prior = receipt["source"]
+            subprocess.run(["git", "merge-base", "--is-ancestor", prior["commit"], "origin/master"],
+                           cwd=self.root, check=True, timeout=60)
+            subprocess.run(["git", "merge-base", "--is-ancestor", prior["commit"], self.source["commit"]],
+                           cwd=self.root, check=True, timeout=60)
+            changed = set(output(["git", "diff", "--name-only", "--no-renames", "-z",
+                                  prior["commit"], self.source["commit"]], self.root).split("\0")) - {""}
+            if not changed <= CANDIDATE_CHECK_FILES:
+                raise ValueError("Candidate build inputs changed: " + ", ".join(sorted(changed - CANDIDATE_CHECK_FILES)))
+            expected = digest({"source": prior, "environment": self.environment,
+                               "stage": self.stages["candidate"], "dependencies": {}})
+            candidate_work = self.run_dir / "work/candidate"
+            candidate = json.loads((candidate_work / "candidate.json").read_text())
+            if (receipt["status"] != "passed" or receipt["fingerprint"] != expected
+                    or inventory(candidate_work) != receipt["outputs"]
+                    or candidate["source_commit"] != prior["commit"]):
+                raise ValueError("Candidate reuse requires unchanged authenticated successful evidence")
+            payload = {"run_dir": str(self.run_dir), "checker_source": self.source, "candidate_source": prior,
+                       "changed_files": sorted(changed),
+                       "candidate_receipt_sha256": file_digest(self.run_dir / "receipts/candidate.json")}
+            atomic_json(self.run_dir / "candidate-reuse.json", {
+                "payload": payload, "mac": hmac.new(self.key(), canonical(payload), hashlib.sha256).hexdigest()})
+            self.candidate_source = prior
 
     def selected(self, profile):
         required = set()
@@ -169,7 +224,8 @@ class Runner:
         return key
 
     def fingerprint(self, stage, dependencies):
-        return digest({"source": self.source, "environment": self.environment,
+        source = self.candidate_source if stage["id"] == "candidate" and self.candidate_source else self.source
+        return digest({"source": source, "environment": self.environment,
                        "stage": stage, "dependencies": dependencies})
 
     def receipt(self, name):
@@ -182,9 +238,39 @@ class Runner:
         if result["stage"] != name or result["run_dir"] != str(self.run_dir):
             raise ValueError("Checkpoint belongs to another stage or run")
         log = self.run_dir / result["log"]
-        if not log.resolve().is_relative_to(self.run_dir) or file_digest(log) != result["log_sha256"]:
+        if not log.resolve().is_relative_to(self.run_dir) or not log.is_file():
+            raise ValueError("Missing or modified checkpoint log")
+        if result["status"] != "running" and file_digest(log) != result["log_sha256"]:
             raise ValueError("Missing or modified checkpoint log")
         return result
+
+    def attempt_path(self, attempt):
+        if not re.fullmatch(r"[a-z][a-z0-9-]*-[0-9a-f]{32}", attempt):
+            raise ValueError("Invalid checkpoint attempt identity")
+        return self.run_dir / "active" / (attempt + ".lock")
+
+    @contextlib.contextmanager
+    def active_attempt(self, attempt):
+        path = self.attempt_path(attempt)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a+") as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # The stage inherits this descriptor so an orphaned, still-running
+            # operation retains ownership after its runner is interrupted.
+            yield stream.fileno()
+
+    def attempt_running(self, attempt):
+        path = self.attempt_path(attempt)
+        try:
+            stream = path.open("r")
+        except FileNotFoundError:
+            return False
+        with stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+        return False
 
     def status(self, profile):
         statuses = []
@@ -209,9 +295,10 @@ class Runner:
                     else:
                         valid[name] = digest({"fingerprint": result["fingerprint"], "outputs": result["outputs"]})
                 elif state == "running":
-                    state, reason = "invalidated", "Interrupted stage requires a new attempt"
+                    if not self.attempt_running(result["attempt"]):
+                        state, reason = "invalidated", "Interrupted stage requires a new attempt"
             except (OSError, ValueError, KeyError, TypeError) as error:
-                reason = str(error)
+                state, reason = "invalidated", str(error)
             statuses.append({"stage": name, "status": state, "reason": reason,
                              "fingerprint": fingerprint,
                              "duration_seconds": result.get("duration_seconds") if result else None})
@@ -242,6 +329,8 @@ class Runner:
                 if status["status"] == "passed":
                     print(json.dumps({"stage": stage["id"], "status": "reused"}), flush=True)
                     continue
+                if stage["id"] == "candidate" and self.candidate_source:
+                    raise ValueError("Bound candidate evidence is invalid; investigate without dispatching a replacement")
                 if enforce_source and source_identity(self.root) != self.source:
                     raise ValueError("Source changed during this run; resume with the current inputs")
                 result = self.execute(stage, status["fingerprint"])
@@ -257,9 +346,18 @@ class Runner:
     def execute(self, stage, fingerprint):
         name = stage["id"]
         attempt = name + "-" + uuid.uuid4().hex
+        with self.active_attempt(attempt) as active_descriptor:
+            return self.execute_attempt(stage, fingerprint, attempt, active_descriptor)
+
+    def execute_attempt(self, stage, fingerprint, attempt, active_descriptor):
+        name = stage["id"]
+        for path in (self.run_dir / "active").glob(name + "-*.lock"):
+            if path.stem != attempt and self.attempt_running(path.stem):
+                raise ValueError("The previous attempt still owns this stage")
         work = self.run_dir / "work" / name
         previous = None
         previous_matches = False
+        interrupted = False
         # Prior outputs are retained separately; retries never erase failed evidence.
         if work.exists():
             prior_receipt = None
@@ -268,7 +366,13 @@ class Runner:
                 previous_matches = prior_receipt["fingerprint"] == fingerprint
             except (OSError, ValueError, KeyError):
                 pass
-            if previous_matches and inventory(work) != prior_receipt["outputs"]:
+            if prior_receipt is None and stage.get("retain_outputs", False):
+                raise ValueError("Retained candidate/delivery outputs lack an authenticated checkpoint; investigate before retrying")
+            if prior_receipt and prior_receipt["status"] == "running":
+                if self.attempt_running(prior_receipt["attempt"]):
+                    raise ValueError("The previous attempt still owns this stage")
+                interrupted = True
+            if previous_matches and not interrupted and inventory(work) != prior_receipt["outputs"]:
                 raise ValueError("Modified checkpoint outputs must be investigated before resuming this stage")
             retained = self.run_dir / "retained" / attempt
             retained.parent.mkdir(parents=True, exist_ok=True)
@@ -287,10 +391,11 @@ class Runner:
         environment = dict(os.environ, RELEASE_WORK_DIR=str(work), RELEASE_RUN_DIR=str(self.run_dir),
                            OUTPUT_DIR=str(work / "dist"), BUILD_ROOT=str(self.root / ".build/distribution"))
         environment.update(stage.get("environment", {}))
+        environment.pop("RELEASE_PREVIOUS_WORK_DIR", None)
+        environment.pop("RELEASE_INTERRUPTED_WORK_DIR", None)
         if previous is not None and previous_matches:
-            environment["RELEASE_PREVIOUS_WORK_DIR"] = str(previous)
-        else:
-            environment.pop("RELEASE_PREVIOUS_WORK_DIR", None)
+            key = "RELEASE_INTERRUPTED_WORK_DIR" if interrupted else "RELEASE_PREVIOUS_WORK_DIR"
+            environment[key] = str(previous)
         try:
             with log.open("ab", buffering=0) as stream:
                 for command in stage["commands"]:
@@ -299,7 +404,8 @@ class Runner:
                     if remaining <= 0:
                         raise TimeoutError("Stage deadline exceeded")
                     process = subprocess.Popen(command, cwd=self.root, env=environment,
-                                               stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+                                               stdout=stream, stderr=subprocess.STDOUT, start_new_session=True,
+                                               pass_fds=(active_descriptor,))
                     try:
                         code = process.wait(timeout=remaining)
                     except BaseException:
@@ -344,6 +450,8 @@ class Runner:
                     if self.stages[name].get("retain_outputs", False):
                         raise ValueError("Required candidate or delivery evidence is retained")
                     receipt = self.receipt(name)
+                    if receipt["status"] == "running":
+                        raise ValueError("Unfinished attempt outputs are retained for recovery")
                     if inventory(path) != receipt["outputs"]:
                         raise ValueError("Directory has unique or changed content")
                     check = subprocess.run(["/usr/sbin/lsof", "-t", "+D", str(path)],
@@ -366,6 +474,8 @@ def main():
     parser.add_argument("--profile", default="ci")
     parser.add_argument("--apply", action="store_true", help="Apply cleanup; otherwise preview")
     parser.add_argument("--reuse-ci", action="store_true", help="Import matching checks from a trusted successful master CI run")
+    parser.add_argument("--reuse-candidate", action="store_true",
+                        help="Bind an existing successful candidate after a trusted check-only revision")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", args.run):
         parser.error("Invalid run identifier")
@@ -377,7 +487,11 @@ def main():
     if not git_dir.is_absolute():
         git_dir = ROOT / git_dir
     runner = Runner(ROOT, ROOT / ".agent/releases" / args.run, definition,
-                    git_dir / "computer-mcp-release.key")
+                    git_dir / "computer-mcp-release.key", rebind_candidate=args.reuse_candidate)
+    if args.reuse_candidate:
+        if args.operation not in ("run", "resume") or profile != "acceptance":
+            parser.error("--reuse-candidate is only valid when running/resuming acceptance")
+        runner.bind_candidate()
     if args.operation == "plan":
         print(json.dumps({"source": runner.source, "environment": runner.environment,
                           "stages": runner.selected(profile)}, indent=2))
@@ -386,7 +500,7 @@ def main():
         stages = runner.status(profile)
         print(json.dumps({"run": args.run, "stages": stages,
                           "summary": {state: sum(s["status"] == state for s in stages)
-                                      for state in ("passed", "failed", "waiting_for_human", "invalidated")}}, indent=2))
+                                      for state in ("running", "passed", "failed", "waiting_for_human", "invalidated")}}, indent=2))
         return 0
     if args.operation == "cleanup":
         print(json.dumps(runner.cleanup(args.apply), indent=2))

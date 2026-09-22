@@ -97,7 +97,8 @@ def request():
     if current != commit:
         raise ValueError("The daily checkout must match published master before requesting a candidate")
     work = Path(os.environ["RELEASE_WORK_DIR"])
-    previous = Path(os.environ["RELEASE_PREVIOUS_WORK_DIR"]) if os.environ.get("RELEASE_PREVIOUS_WORK_DIR") else None
+    previous_path = os.environ.get("RELEASE_PREVIOUS_WORK_DIR") or os.environ.get("RELEASE_INTERRUPTED_WORK_DIR")
+    previous = Path(previous_path) if previous_path else None
     request_path = work / "request.json"
     if previous and (previous / "request.json").is_file():
         record = json.loads((previous / "request.json").read_text())

@@ -71,8 +71,8 @@ if [[ "$INCLUDE_EVIDENCE_MANIFEST" == "1" ]]; then
   MANIFEST_APP_HASH=$(/usr/bin/jq -r '.release.app_executable_sha256' "$EVIDENCE_MANIFEST")
   MANIFEST_CLI_HASH=$(/usr/bin/jq -r '.release.embedded_cli_sha256' "$EVIDENCE_MANIFEST")
   MANIFEST_DMG_HASH=$(/usr/bin/jq -r '.release.dmg_sha256' "$EVIDENCE_MANIFEST")
-  [[ "$MANIFEST_COMMIT" == $(git -C "$ROOT_DIR" rev-parse HEAD) ]] \
-    || fail "Evidence Manifest commit does not match HEAD."
+  [[ "$MANIFEST_COMMIT" == ${RELEASE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)} ]] \
+    || fail "Evidence Manifest commit does not match the accepted source commit."
   [[ "$MANIFEST_TAG" == "$TAG" ]] || fail "Evidence Manifest tag does not match $TAG."
   [[ "$MANIFEST_TEAM" == "$EXPECTED_TEAM_ID" ]] \
     || fail "Evidence Manifest Team ID does not match EXPECTED_TEAM_ID."
@@ -99,7 +99,7 @@ READINESS_REPORT="$OUTPUT_DIR/Computer-MCP-$VERSION-ProductionReadiness.md"
 /bin/cp "$APP_NOTARY_RECORD" "$APP_NOTARY_ASSET"
 /bin/cp "$DMG_NOTARY_RECORD" "$DMG_NOTARY_ASSET"
 
-RELEASE_COMMIT=$(git -C "$ROOT_DIR" rev-parse HEAD)
+RELEASE_COMMIT=${RELEASE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
 RELEASE_TAG_OBJECT=$(git -C "$ROOT_DIR" rev-parse "$TAG")
 RELEASE_DATE=$(git -C "$ROOT_DIR" for-each-ref \
   --format='%(taggerdate:format:%Y-%m-%d)' "refs/tags/$TAG")

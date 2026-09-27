@@ -24,6 +24,8 @@ package struct MCPHostContext: Encodable, Sendable {
   var processOwnershipRoot: URL?
   /// Host-owned file identities by registration; never supplied in plugin arguments.
   var pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
+  /// In-process work ownership is never serialized or asserted by a plugin.
+  var ownedWork: GatewayOwnedWork?
   /// Host-local execution receipts and identity are never environment credentials.
   let executionDatabase: GatewayDatabase?
   let principalID: String

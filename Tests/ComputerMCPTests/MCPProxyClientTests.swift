@@ -307,6 +307,54 @@ final class MCPProxyClientTests {
     await client.shutdown()
   }
 
+  @Test(arguments: [false, true])
+  func requestOwnershipSurvivesCancellationUntilResponseOrConfirmedExit(
+    completeBeforeShutdown: Bool
+  ) async throws {
+    let fixture = try fakePersistentMCPServer()
+    let root = fixture.script.deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let ownedWork = GatewayOwnedWork()
+    var hostContext = MCPHostContext(
+      runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
+      workspaceID: "fixture", rootURL: root, readOnly: false)
+    hostContext.ownedWork = ownedWork
+    let client = MCPProxyClient(hostContext: hostContext)
+    let server = MCPServerConfig(
+      id: "owned", transport: .stdio, command: fixture.script.path,
+      args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
+    do {
+      try await runBlockingTest {
+        _ = try client.startToolCall(
+          server: server, name: "hang", arguments: .object([:]), requestID: "owned-call")
+        let record = try #require(ownedWork.snapshot.first)
+        #expect(record.kind == .mcpRequest)
+        #expect(record.workspaceID == "fixture")
+        #expect(record.registrationID == "owned")
+        #expect(record.resourceID == "owned-call")
+        _ = try client.cancelRequest(server: server, requestID: "owned-call", reason: "stop")
+        #expect(ownedWork.snapshot == [record])
+        if completeBeforeShutdown {
+          _ = try client.callTool(
+            server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]))
+          let deadline = ContinuousClock.now + .seconds(2)
+          while !ownedWork.snapshot.isEmpty && ContinuousClock.now < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+          }
+          #expect(ownedWork.snapshot.isEmpty)
+          #expect(
+            try client.connectionStatus(server: server).objectValue?["state"]
+              == .string("connected"))
+        }
+      }
+    } catch {
+      await client.shutdown()
+      throw error
+    }
+    await client.shutdown()
+    #expect(ownedWork.snapshot.isEmpty)
+  }
+
   @Test
   func testStartupDeadlineIsIndependentOfLongRequestBudget() async throws {
     try await runBlockingTest {
@@ -708,7 +756,13 @@ final class MCPProxyClientTests {
       try? FileManager.default.removeItem(at: directory)
     }
     let database = try GatewayDatabase(inMemory: ())
-    let client = MCPProxyClient(executionDatabase: database, executionScope: "cancel-failure")
+    let ownedWork = GatewayOwnedWork()
+    var hostContext = MCPHostContext(
+      runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
+      workspaceID: "fixture", rootURL: directory, readOnly: false)
+    hostContext.ownedWork = ownedWork
+    let client = MCPProxyClient(
+      hostContext: hostContext, executionDatabase: database, executionScope: "cancel-failure")
     let server = MCPServerConfig(
       id: "cancel-failure", transport: .http,
       url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
@@ -731,6 +785,8 @@ final class MCPProxyClientTests {
       #expect(receipt.objectValue?["cancellation"] == .string("failed"))
       #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
       #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
+      #expect(ownedWork.snapshot.count == 1)
+      #expect(ownedWork.snapshot.first?.uncertain == true)
       #expect(throws: (any Error).self) {
         try client.callTool(
           server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
@@ -741,6 +797,9 @@ final class MCPProxyClientTests {
       #expect(try String(contentsOf: marker, encoding: .utf8) == "called\n")
       try Data().write(to: directory.appendingPathComponent("release.txt"))
       await client.shutdown()
+      // Remote completion was not observed even though the transport has closed.
+      #expect(ownedWork.snapshot.count == 1)
+      #expect(ownedWork.snapshot.first?.uncertain == true)
     } catch {
       waiting.cancel()
       try? Data().write(to: directory.appendingPathComponent("release.txt"))

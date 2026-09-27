@@ -237,8 +237,13 @@ internal protocol ShellManaging: Sendable {
 internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable {
   private let lock = NSLock()
   private var sessions: [String: ShellSession] = [:]
+  private let ownedWork: GatewayOwnedWork?
+  private let workspaceID: String?
 
-  internal init() {}
+  internal init(ownedWork: GatewayOwnedWork? = nil, workspaceID: String? = nil) {
+    self.ownedWork = ownedWork
+    self.workspaceID = workspaceID
+  }
 
   internal func run(
     request: ShellLaunchRequest,
@@ -321,7 +326,9 @@ internal final class SubprocessShellRuntime: ShellManaging, @unchecked Sendable 
     sessions[session.id] = session
     lock.unlock()
 
+    let ownership = ownedWork?.retain(.shell, workspaceID: workspaceID, resourceID: session.id)
     Task.detached(priority: .userInitiated) {
+      defer { ownership?.finish() }
       await Self.launch(resolved, session: session)
     }
 

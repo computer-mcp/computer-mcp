@@ -594,6 +594,9 @@ private actor MCPProxyConnection {
   private let eventSessionID = UUID().uuidString
   private var nextEventCursor = 1
   private var activeRequests: [String: ActiveRequest] = [:]
+  private let ownedWork: GatewayOwnedWork?
+  private let workspaceID: String?
+  private var requestOwnership: [UUID: GatewayOwnedWork.Lease] = [:]
   private let toolsChanged: @Sendable () -> Void
 
   init(
@@ -609,6 +612,8 @@ private actor MCPProxyConnection {
     self.predecessor = predecessor
     self.toolsChanged = toolsChanged
     self.onTermination = onTermination
+    ownedWork = hostContext?.ownedWork
+    workspaceID = hostContext?.workspace.id
     client = MCP.Client(
       name: "computer-mcp-gateway",
       version: ComputerMCPCLI.version
@@ -664,10 +669,10 @@ private actor MCPProxyConnection {
     }
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
-    let context: RequestContext<CallTool.Result> = try await client.callTool(
-      name: name,
-      arguments: arguments.mapValues(\.sdkValue)
-    )
+    let (context, ownership) = try await dispatchTool(
+      name: name, arguments: arguments, gatewayRequestID: gatewayRequestID)
+    var confirmedResponse = false
+    defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     guard closeTask == nil else {
       try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
       throw MCPError.connectionClosed
@@ -713,7 +718,14 @@ private actor MCPProxyConnection {
       }
     }
 
-    let result = try await context.value
+    let result: CallTool.Result
+    do {
+      result = try await context.value
+      confirmedResponse = true
+    } catch {
+      confirmedResponse = Self.isResponseError(error)
+      throw error
+    }
     let value = try JSONValue.sdkToolResult(
       content: result.content,
       structuredContent: result.structuredContent,
@@ -746,10 +758,8 @@ private actor MCPProxyConnection {
     }
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
-    let context: RequestContext<CallTool.Result> = try await client.callTool(
-      name: name,
-      arguments: arguments.mapValues(\.sdkValue)
-    )
+    let (context, ownership) = try await dispatchTool(
+      name: name, arguments: arguments, gatewayRequestID: gatewayRequestID)
     guard closeTask == nil else {
       try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
       throw MCPError.connectionClosed
@@ -768,25 +778,30 @@ private actor MCPProxyConnection {
     appendEvent(kind: "request.started", requestID: gatewayRequestID)
 
     observers[context.requestID] = Task { [weak self] in
+      var confirmedResponse = false
       do {
         let result = try await context.value
+        confirmedResponse = true
         let value = try JSONValue.sdkToolResult(
           content: result.content, structuredContent: result.structuredContent,
           isError: result.isError, meta: result._meta)
         await self?.finishStartedRequest(
           gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
           kind: result.isError == true ? "request.error_result" : "request.completed",
-          result: value, failed: result.isError == true
+          result: value, failed: result.isError == true,
+          ownership: ownership, confirmedResponse: true
         )
       } catch is CancellationError {
         await self?.finishStartedRequest(
           gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
-          kind: "request.outcome_unknown"
+          kind: "request.outcome_unknown", ownership: ownership,
+          confirmedResponse: confirmedResponse
         )
       } catch {
         await self?.finishStartedRequest(
           gatewayRequestID: gatewayRequestID, downstreamRequestID: context.requestID,
-          kind: "request.outcome_unknown"
+          kind: "request.outcome_unknown", ownership: ownership,
+          confirmedResponse: confirmedResponse || Self.isResponseError(error)
         )
       }
     }
@@ -963,8 +978,10 @@ private actor MCPProxyConnection {
 
   private func finishStartedRequest(
     gatewayRequestID: String, downstreamRequestID: MCP.ID, kind: String,
-    result: JSONValue? = nil, failed: Bool = false
+    result: JSONValue? = nil, failed: Bool = false,
+    ownership: GatewayOwnedWork.Lease?, confirmedResponse: Bool = false
   ) {
+    settleOwnership(ownership, confirmed: confirmedResponse)
     observers.removeValue(forKey: downstreamRequestID)
     // Only the matching native request may end this gateway request's observation.
     guard activeRequests[gatewayRequestID]?.downstreamRequestID == downstreamRequestID else {
@@ -984,6 +1001,41 @@ private actor MCPProxyConnection {
     } catch {
       lastError = "The execution outcome could not be persisted; do not replay this request."
       appendEvent(kind: "request.storage_failed", requestID: gatewayRequestID)
+    }
+  }
+
+  private func dispatchTool(
+    name: String, arguments: [String: JSONValue], gatewayRequestID: String
+  ) async throws -> (RequestContext<CallTool.Result>, GatewayOwnedWork.Lease?) {
+    let ownership = ownedWork?.retain(
+      .mcpRequest, workspaceID: workspaceID, registrationID: server.id,
+      resourceID: gatewayRequestID)
+    if let ownership { requestOwnership[ownership.id] = ownership }
+    do {
+      return (
+        try await client.callTool(name: name, arguments: arguments.mapValues(\.sdkValue)), ownership
+      )
+    } catch {
+      settleOwnership(ownership, confirmed: Self.isResponseError(error))
+      throw error
+    }
+  }
+
+  private func settleOwnership(_ ownership: GatewayOwnedWork.Lease?, confirmed: Bool) {
+    guard let ownership else { return }
+    if confirmed {
+      ownership.finish()
+      requestOwnership.removeValue(forKey: ownership.id)
+    } else {
+      ownership.markUncertain()
+    }
+  }
+
+  private static func isResponseError(_ error: any Error) -> Bool {
+    guard let error = error as? MCPError else { return false }
+    switch error {
+    case .methodNotFound, .invalidParams, .serverError, .urlElicitationRequired: return true
+    default: return false
     }
   }
 
@@ -1036,6 +1088,11 @@ private actor MCPProxyConnection {
     }
     closeTask = task
     let confirmed = await task.value
+    // Closing a remote transport is not evidence that remote execution stopped.
+    // A local managed child can release unknown requests only after verified exit.
+    for ownership in Array(requestOwnership.values) {
+      settleOwnership(ownership, confirmed: confirmed && transport is MCPChildProcessTransport)
+    }
     for request in retainedRequests {
       do {
         try journal.update(serverID: server.id, requestID: request.gatewayRequestID) {

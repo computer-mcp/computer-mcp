@@ -834,6 +834,11 @@ final class GatewayRuntimeTests {
         ]))
     )
     let sessionID = try #require(payload(spawned).objectValue?["session_id"]?.stringValue)
+    let owner = try #require(gateway.ownedWork.snapshot.first)
+    #expect(gateway.ownedWork.snapshot.count == 1)
+    #expect(owner.kind == .shell)
+    #expect(owner.workspaceID == "first")
+    #expect(owner.resourceID == sessionID)
     defer {
       _ = try? gateway.callTool(
         name: "operations.commit",

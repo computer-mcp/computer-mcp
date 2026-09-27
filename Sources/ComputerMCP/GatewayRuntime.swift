@@ -16,6 +16,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let workspaceErrors: [String: WorkspaceBookmarkError]
   private let providerRouters: [String: GatewayProviderRouter]
   private let lifetime: GatewayRuntimeLifetime
+  let ownedWork = GatewayOwnedWork()
   private let authenticatedSessionFactory:
     @Sendable (String, GatewayTransportTrace?) throws -> GatewayRuntime
   private static let construction = BlockingOperationExecutor(
@@ -161,7 +162,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       lifetime.onShutdown { access.close() }
       var workspaceConfiguration = configuration
       workspaceConfiguration.workspaceDirectory = access.rootURL.standardizedFileURL
-      let shellManager = SubprocessShellRuntime()
+      let shellManager = SubprocessShellRuntime(ownedWork: ownedWork, workspaceID: workspace.id)
       let processManager = SubprocessProcessRegistry(
         shellManager: shellManager,
         maxSessions: configuration.policy.maxShellSessions,
@@ -176,6 +177,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         managedWorkspaceRoot: database?.fileURL?.deletingLastPathComponent()
           .appendingPathComponent("Managed Worktrees", isDirectory: true),
         processOwnershipRoot: database?.mcpProcessOwnershipRoot, executionDatabase: database)
+      hostContext.ownedWork = ownedWork
       for (registration, origin) in composition.origins where registration.kind == .mcp {
         if let lease = artifactLeases.first(where: {
           $0.identity.url.appendingPathComponent("package").path == origin.source.root.path
@@ -648,7 +650,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: JSONValue?,
     context: ExecutionContext
   ) throws -> JSONValue {
-    try perform(
+    let ownership = ownedWork.retain(
+      .invocation,
+      workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
+      resourceID: name)
+    defer { ownership.finish() }
+    return try perform(
       name: name,
       arguments: arguments?.objectValue ?? [:],
       context: context,
@@ -662,7 +669,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: JSONValue?,
     context: ExecutionContext
   ) async throws -> JSONValue {
-    try await performAsync(
+    let ownership = ownedWork.retain(
+      .invocation,
+      workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
+      resourceID: name)
+    defer { ownership.finish() }
+    return try await performAsync(
       name: name,
       arguments: arguments?.objectValue ?? [:],
       context: context,

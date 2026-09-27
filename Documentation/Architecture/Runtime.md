@@ -73,8 +73,9 @@ over a pending refresh. A successful refresh that changes discovery inputs can
 require the caller to reconnect with the refreshed registration.
 
 Temporary catalogs and tunnel audits await runtime shutdown on success and
-failure. A socket session takes ownership after construction and closes its
-runtime when the connection ends. Cancellation during synchronous initialization
+failure. The App listener owns admitted runtimes; a disconnected socket session
+releases its protocol server without cancelling listener-owned work.
+Cancellation during synchronous initialization
 is checked when the bounded discovery returns, then shutdown is awaited; it
 does not immediately interrupt startup. Once a tool has been dispatched, its
 result and audit remain governed by the tool-call lifecycle rather than being
@@ -209,7 +210,16 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   and post-action verification.
 - Codex: an independent standard MCP adapter package owns App Server, Exec,
   domain persistence and `swift-codex`. Gateway registration and
-  routing use the same downstream MCP plane as other providers.
+routing use the same downstream MCP plane as other providers.
+
+Each runtime keeps an in-process work ledger distinct from authorization and
+durable execution receipts. An invocation owns its lifetime through its return,
+a shell session through process and stream cleanup, and an MCP request through
+its observed response or confirmed local transport teardown. Cancelling a
+request does not release that ownership. Lost observation marks it uncertain;
+closing an HTTP connection cannot establish that remote execution stopped.
+These records account for host-observed work and do not infer the lifetime of
+jobs a provider starts after replying.
 
 Downstream MCP initialization and ready-session requests have independent
 budgets. Expiry invalidates the connection and identifies the failed stage.

@@ -89,7 +89,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   package func callToolAsync(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
   ) async throws -> JSONValue {
-    let cancellation = MCPCallCancellation()
+    let cancellation = MCPCallCancellation(
+      deliveryTimeout: .milliseconds(server.requestTimeoutMs ?? 30_000))
     let admission = MCPInvocationAdmission.current
     return try await withTaskCancellationHandler {
       do {
@@ -107,6 +108,15 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         return result
       } catch {
         await cancellation.finish()
+        if error is CancellationError {
+          try Task.checkCancellation()
+          try cancellation.checkCancellation()
+          // An upstream MCP server suppresses replies for caller cancellation. A
+          // retired downstream request must instead settle its still-waiting caller.
+          throw GatewayToolError.executionFailed(
+            "[mcp.request_cancelled] Downstream request was cancelled; its execution outcome may be unknown."
+          )
+        }
         throw error
       }
     } onCancel: {

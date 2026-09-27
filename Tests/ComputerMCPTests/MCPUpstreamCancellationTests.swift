@@ -106,7 +106,12 @@ struct MCPUpstreamCancellationTests {
       await #expect(throws: CancellationError.self) { _ = try await first.value }
       try await wait(root: root, for: "cancelled:first")
       let afterCancellation = try events(root)
-      #expect(!afterCancellation.contains("cancelled:sibling"))
+      let cancellationTrace = try String(
+        contentsOf: root.appendingPathComponent("trace"), encoding: .utf8)
+      try #require(
+        !afterCancellation.contains("cancelled:sibling"),
+        "Unexpected sibling cancellation: \(cancellationTrace)"
+      )
       let release: RequestContext<CallTool.Result> = try await client.callTool(
         name: "native.release", arguments: [:])
       let released = try await release.value
@@ -167,6 +172,10 @@ struct MCPUpstreamCancellationTests {
     for line in sys.stdin:
         request = json.loads(line)
         method = request.get("method")
+        with (root / "trace").open("a") as trace:
+            trace.write(json.dumps({"method":method, "id":request.get("id"),
+                "request_id":request.get("params",{}).get("requestId"),
+                "reason":request.get("params",{}).get("reason")}) + "\n")
         if method == "notifications/cancelled":
             label = waiting.pop(request["params"]["requestId"], None)
             if label is not None: record("cancelled:" + label)

@@ -91,6 +91,8 @@ struct MCPHostInvocationTests {
         try runtime.requireHostInvocation(
           workspaceID: "fixture", origin: "provider", id: retainedID)
       }
+      // The final replay also creates an observation barrier, even when it fails.
+      try await Self.waitForResourceCount(0, runtime: runtime)
     } catch {
       await runtime.shutdown()
       throw error

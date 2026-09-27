@@ -7,6 +7,33 @@ import Testing
 
 final class MCPProxyClientTests {
   @Test
+  func retiringConnectionReturnsAnErrorToAnUncancelledCaller() async throws {
+    let fixture = try fakePersistentMCPServer()
+    defer { try? FileManager.default.removeItem(at: fixture.script.deletingLastPathComponent()) }
+    let server = MCPServerConfig(
+      id: "retiring-call", transport: .stdio, command: fixture.script.path,
+      args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
+    let client = MCPProxyClient()
+    let inspection = BlockingOperationExecutor(label: "retiring-call-test")
+    _ = try await inspection.perform { try client.listTools(server: server) }
+    let call = Task {
+      try await client.callToolAsync(
+        server: server, name: "hang", arguments: .object([:]), requestID: "awaited")
+    }
+    let deadline = ContinuousClock.now + .seconds(3)
+    var observed = false
+    repeat {
+      observed = try await inspection.perform {
+        try client.activeRequests(server: server).objectValue?["requests"]?.arrayValue?.count == 1
+      }
+      if !observed { try await Task.sleep(for: .milliseconds(10)) }
+    } while !observed && ContinuousClock.now < deadline
+    await client.shutdown()
+    try #require(observed)
+    await #expect(throws: GatewayToolError.self) { _ = try await call.value }
+  }
+
+  @Test
   func testPaginatedCatalogReexportsOnlyAllowedToolsFromLaterPages() async throws {
     try await runBlockingTest {
       let script = try self.fakeLineDelimitedMCPServer(paginated: true)

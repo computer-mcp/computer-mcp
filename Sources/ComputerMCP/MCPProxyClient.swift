@@ -1066,7 +1066,15 @@ private actor MCPProxyConnection {
     } else {
       invocation = nil
     }
-    let providerInvocationID = try providerWork?.beginInvocation(tool: name)
+    let workContext: MCPHostToolDirectory.InvocationLease?
+    if providerWork != nil, let hostInvocationID, let hostTools, let workspaceID {
+      workContext = try hostTools.retainWork(
+        id: hostInvocationID, workspaceID: workspaceID, origin: server.id)
+    } else {
+      workContext = nil
+    }
+    let providerInvocationID = try providerWork?.beginInvocation(
+      tool: name, hostContext: workContext)
     let work = ownedWork?.retain(
       .mcpRequest, workspaceID: workspaceID, registrationID: server.id,
       resourceID: gatewayRequestID)

@@ -452,23 +452,27 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   func requireHostInvocation(workspaceID: String, origin: String, id: UUID) throws
     -> MCPHostInvocation
   {
-    try requireHostInvocation(workspaceID: workspaceID, origin: origin) { $0.id == id }
+    try requireHostInvocation(workspaceID: workspaceID, origin: origin, includingRetainedWork: true)
+    {
+      $0.id == id
+    }
   }
 
   private func requireHostInvocation(
-    workspaceID: String, origin: String, matching: (MCPHostInvocation) -> Bool
+    workspaceID: String, origin: String, includingRetainedWork: Bool = false,
+    matching: (MCPHostInvocation) -> Bool
   ) throws -> MCPHostInvocation {
     try validateHostOrigin(workspaceID: workspaceID, origin: origin)
-    let matches = hostToolDirectory.active(workspaceID: workspaceID, origin: origin).filter(
-      matching)
+    let matches = hostToolDirectory.active(
+      workspaceID: workspaceID, origin: origin, includingRetainedWork: includingRetainedWork
+    ).filter(matching)
     guard matches.count == 1, let invocation = matches.first else {
       throw Self.invalid(
         code: "policy.host_invocation_required",
         message: "Host service requires one matching live gateway invocation.")
     }
-    // The parent is suspended waiting for this callback; rediscovery on that
-    // same downstream connection can deadlock. Its admitted effect is immutable,
-    // while the host grant is checked again for every callback.
+    // Rediscovery can deadlock a parent waiting on this callback. The admitted
+    // effect stays immutable; every active or retained context rechecks the grant.
     let descriptor = invocation.admittedCapability
     guard descriptor.mcpReference == invocation.reference,
       policyEvaluator.evaluate(

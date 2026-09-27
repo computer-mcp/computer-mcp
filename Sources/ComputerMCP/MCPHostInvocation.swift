@@ -1,6 +1,6 @@
 import Foundation
 
-/// Host-owned evidence that a forwarded operation is currently authorized and executing.
+/// Host-owned scope of a forwarded operation and any work retaining its acquisition.
 /// It never leaves the gateway and is not reconstructed from plugin assertions.
 struct MCPHostInvocation: Sendable {
   static let metadataKey = "io.github.computer-mcp/host-invocation"

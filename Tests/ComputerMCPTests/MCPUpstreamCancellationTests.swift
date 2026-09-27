@@ -109,7 +109,8 @@ struct MCPUpstreamCancellationTests {
       #expect(!afterCancellation.contains("cancelled:sibling"))
       let release: RequestContext<CallTool.Result> = try await client.callTool(
         name: "native.release", arguments: [:])
-      #expect(try await release.value.isError != true)
+      let released = try await release.value
+      try #require(released.isError != true, "Sibling release failed: \(released.content)")
       #expect(try await sibling.value.isError != true)
       let receipt = try events(root)
       #expect(receipt.filter { $0 == "started:first" }.count == 1)

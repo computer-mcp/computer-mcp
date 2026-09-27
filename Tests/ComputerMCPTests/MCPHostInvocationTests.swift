@@ -5,6 +5,114 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct MCPHostInvocationTests {
+  @Test
+  func backgroundWorkKeepsExactContextThroughDerivedWorkAndReleasesItAtCompletion() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let script = root.appendingPathComponent("provider.py")
+    try Self.provider.write(to: script, atomically: true, encoding: .utf8)
+    let names = ["background", "derive", "finish", "replay"]
+    let database = try GatewayDatabase(path: root.appendingPathComponent("host.db").path)
+    let runtime = try await GatewayRuntime.make(
+      configuration: .init(
+        runtime: .init(caller: .localMCP, profileID: .localAdmin),
+        profiles: [
+          .init(
+            id: .localAdmin, capabilities: ["mcp.tools.call"], workspaces: ["fixture"],
+            allowedCallers: [.localMCP], mode: .readOnly)
+        ],
+        mcp: .init(servers: [
+          .init(
+            id: "provider", transport: .stdio, command: "/usr/bin/python3",
+            args: [script.path, "work"], allowedTools: names,
+            startupTimeoutMs: 5_000, requestTimeoutMs: 5_000,
+            toolRisks: Dictionary(uniqueKeysWithValues: names.map { ($0, .readOnly) }),
+            hostServices: true)
+        ])),
+      database: database,
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+    do {
+      // Retained contexts must not exhaust the independent 256 active-call slots.
+      for _ in 0..<257 {
+        _ = try await runtime.callToolAsync(
+          name: "mcp.tools.call", arguments: Self.arguments(tool: "background"))
+      }
+      try await Self.waitForResourceCount(257, runtime: runtime)
+      let replay = try await runtime.callToolAsync(
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"))
+      let original = try #require(
+        Self.payload(replay).objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
+      #expect(original["tool"] == .string("background"))
+      #expect(original["registration_id"] == .string("provider"))
+      _ = try await runtime.callToolAsync(
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "derive"))
+      try await Self.waitForResourceCount(1, runtime: runtime)
+      let derived = try await runtime.callToolAsync(
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"))
+      #expect(
+        Self.payload(derived).objectValue?["structuredContent"]?.objectValue?["result"]
+          == .object(original))
+      let retainedID = try #require(
+        original["invocation_id"]?.stringValue.flatMap(UUID.init(uuidString:)))
+      #expect(
+        try runtime.requireHostInvocation(
+          workspaceID: "fixture", origin: "provider", id: retainedID
+        ).reference.toolName == "background")
+      // Background context is not an active operation-ticket mutation window.
+      #expect(throws: (any Error).self) {
+        try runtime.requireHostInvocation(
+          workspaceID: "fixture", origin: "provider", methods: ["background"])
+      }
+      #expect(throws: (any Error).self) {
+        try runtime.requireHostInvocation(workspaceID: "fixture", origin: "other", id: retainedID)
+      }
+      var grant = ProfileGrant(
+        id: .localAdmin, capabilityIDs: ["mcp.tools.call"], workspaceIDs: [],
+        allowedCallers: [.localMCP], mcpServerIDs: ["provider"])
+      try database.saveProfile(grant)
+      #expect(throws: (any Error).self) {
+        try runtime.requireHostInvocation(
+          workspaceID: "fixture", origin: "provider", id: retainedID)
+      }
+      grant.workspaceIDs = ["fixture"]
+      try database.saveProfile(grant)
+      #expect(
+        try runtime.requireHostInvocation(
+          workspaceID: "fixture", origin: "provider", id: retainedID
+        ).id == retainedID)
+      _ = try await runtime.callToolAsync(
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "finish"))
+      try await Self.waitForResourceCount(0, runtime: runtime)
+      let expired = try await runtime.callToolAsync(
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"))
+      #expect(Self.payload(expired).objectValue?["isError"] == .bool(true))
+      #expect(throws: (any Error).self) {
+        try runtime.requireHostInvocation(
+          workspaceID: "fixture", origin: "provider", id: retainedID)
+      }
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
+    await runtime.shutdown()
+    #expect(runtime.ownedWork.snapshot.isEmpty)
+  }
+
+  private static func waitForResourceCount(_ count: Int, runtime: GatewayRuntime) async throws {
+    let deadline = ContinuousClock.now + .seconds(3)
+    while ContinuousClock.now < deadline {
+      let snapshot = runtime.ownedWork.snapshot
+      if snapshot.filter({ $0.kind == .mcpResource }).count == count,
+        !snapshot.contains(where: { $0.kind == .mcpObservation })
+      {
+        return
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Provider work did not settle to \(count) resources.")
+  }
+
   @Test(arguments: [false, true], ["sync", "async", "detached"])
   func nativeProviderReceivesOnlyItsHostBoundInvocation(hostServices: Bool, mode: String)
     async throws
@@ -120,11 +228,16 @@ struct MCPHostInvocationTests {
   }
 
   private static let provider = #"""
-    import json, os, socket, sys
+    import json, os, socket, sys, uuid
     channel = None
     sequence = 0
     pending = []
     previous = None
+    work_enabled = len(sys.argv) > 1
+    resources = []
+    revision = 0
+    instance = str(uuid.uuid4())
+    work_uri = "computer-mcp://runtime/work/v1"
     def send(id, result):
         print(json.dumps({"jsonrpc": "2.0", "id": id, "result": result}), flush=True)
     def host(method, params):
@@ -156,14 +269,35 @@ struct MCPHostInvocationTests {
         params = request.get("params", {})
         if method == "initialize":
             result = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "generic-fixture", "version": "1"}}
+            if work_enabled:
+                result["capabilities"]["resources"] = {}
         elif method == "tools/list":
-            result = {"tools": [{"name": name, "inputSchema": {"type": "object"}} for name in ["inspect", "deferred", "release", "replay"]]}
+            result = {"tools": [{"name": name, "inputSchema": {"type": "object"}} for name in ["inspect", "deferred", "release", "replay", "background", "derive", "finish"]]}
+            if work_enabled:
+                for tool in result["tools"]:
+                    tool["_meta"] = {"io.github.computer-mcp/work": {"format_version": 1, "uri": work_uri}}
+        elif method == "resources/read":
+            assert work_enabled and params["uri"] == work_uri
+            result = {"contents": [{"uri": work_uri, "mimeType": "application/json", "text": json.dumps({"format_version": 1, "instance_id": instance, "revision": revision, "resources": resources})}]}
         elif method == "tools/call":
             invocation = params.get("_meta", {}).get("io.github.computer-mcp/host-invocation")
             if params["name"] == "deferred":
                 pending.append((request["id"], invocation))
                 continue
-            if params["name"] == "release":
+            if params["name"] == "background":
+                previous = invocation
+                resources.append({"kind": "fixture", "id": str(request["id"]), "acquired_by": params["_meta"]["io.github.computer-mcp/work-invocation"], "state": "active"})
+                revision += 1
+                result = {"content": []}
+            elif params["name"] == "derive":
+                resources = [{**resources[-1], "id": "derived"}]
+                revision += 1
+                result = {"content": []}
+            elif params["name"] == "finish":
+                resources.clear()
+                revision += 1
+                result = {"content": []}
+            elif params["name"] == "release":
                 for id, binding in pending:
                     send(id, describe(binding))
                     previous = binding

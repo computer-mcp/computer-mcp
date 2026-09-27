@@ -345,6 +345,13 @@ The host sends only its correlation UUID in downstream request metadata.
 and checks current authorization. Independently started MCP requests retain the
 record until their response or confirmed local cleanup, including after their
 outer Gateway call has returned a started receipt.
+Validated provider work retains the creating call's context through its immutable
+acquisition reference, including derived work after the response. Complete work
+observations release the context only after its final owner disappears; failed
+observations retain it. Background contexts do not consume active-call slots.
+Exact-ID context inspection rechecks the current grant. Services that require
+an executing operation ticket continue to require an active forwarded request;
+background retention does not extend that mutation window.
 Private services match that reference, current grants and, for destructive
 removal, the executing operation ticket. Binding is lazy so plugin catalog
 startup does not depend on a partially constructed Gateway runtime.

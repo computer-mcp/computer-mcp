@@ -95,6 +95,7 @@ struct MCPProviderWork {
 
   private struct Invocation {
     let tool: String
+    let hostContext: MCPHostToolDirectory.InvocationLease?
     var confirmed = false
     var uncertain = false
   }
@@ -103,6 +104,7 @@ struct MCPProviderWork {
     let resource: Resource
     let tool: String
     let lease: GatewayOwnedWork.Lease
+    let hostContext: MCPHostToolDirectory.InvocationLease?
   }
 
   private let work: GatewayOwnedWork
@@ -156,13 +158,15 @@ struct MCPProviderWork {
     ])
   }
 
-  mutating func beginInvocation(tool: String) throws -> UUID {
+  mutating func beginInvocation(
+    tool: String, hostContext: MCPHostToolDirectory.InvocationLease? = nil
+  ) throws -> UUID {
     guard invocations.count < Self.maximumResources else {
       throw GatewayToolError.executionFailed(
         "[mcp.work_capacity] Provider work observation must settle before admitting more calls.")
     }
     let id = UUID()
-    invocations[id] = Invocation(tool: tool)
+    invocations[id] = Invocation(tool: tool, hostContext: hostContext)
     requireObservation()
     return id
   }
@@ -196,7 +200,11 @@ struct MCPProviderWork {
       else { throw Self.invalidReport() }
     }
     var bindings = invocations.mapValues(\.tool)
-    for item in ownership.values { bindings[item.resource.acquiredBy] = item.tool }
+    var contexts = invocations.compactMapValues(\.hostContext)
+    for item in ownership.values {
+      bindings[item.resource.acquiredBy] = item.tool
+      if let context = item.hostContext { contexts[item.resource.acquiredBy] = context }
+    }
     // Validate the entire snapshot before releasing any owner or creating partial state.
     for resource in next.resources.values {
       if let existing = ownership[resource.key] {
@@ -210,7 +218,8 @@ struct MCPProviderWork {
     for resource in next.resources.values {
       if let existing = ownership[resource.key] {
         replacement[resource.key] = Ownership(
-          resource: resource, tool: existing.tool, lease: existing.lease)
+          resource: resource, tool: existing.tool, lease: existing.lease,
+          hostContext: existing.hostContext)
       } else if let tool = bindings[resource.acquiredBy] {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -223,7 +232,7 @@ struct MCPProviderWork {
           .mcpResource, workspaceID: workspaceID, registrationID: registrationID,
           resourceID: String(decoding: try encoder.encode(identity), as: UTF8.self))
         replacement[resource.key] = Ownership(
-          resource: resource, tool: tool, lease: lease)
+          resource: resource, tool: tool, lease: lease, hostContext: contexts[resource.acquiredBy])
       }
     }
     // Acquire every new owner before releasing old owners or the observation barrier.

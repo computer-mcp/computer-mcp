@@ -70,7 +70,7 @@ cancellation delivery alone does not.
 
 | Private tool | Required inputs | Purpose |
 | --- | --- | --- |
-| `host.invocations.describe` | `invocation_id` | Inspect the exact active invocation bound to this private channel |
+| `host.invocations.describe` | `invocation_id` | Inspect an exact invocation retained by a request or validated work on this private channel |
 | `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source profile grant atomically |
 | `host.workspaces.authorize_removal` | `worktree` | Check the live destructive operation ticket before removal |
 | `host.workspaces.unregister` | `worktree` | Remove the unchanged owned registration, or confirm an ownership-free no-op |
@@ -91,6 +91,13 @@ receive this entry. Downstream arguments cannot set or replace it. The adapter
 passes this UUID to `host.invocations.describe` on its inherited connection.
 The UUID is correlation, not a credential: another channel, an expired
 invocation, or revoked current authorization cannot use it.
+
+Providers that declare the ordinary MCP work resource retain this context while
+their validated resources reference the creating acquisition, including derived
+work after the initial call returns. The host releases it only after a complete
+observation establishes that no owner remains. Missing or invalid observations
+retain uncertainty. Background contexts have a separate lifetime from active
+request admission and do not extend an operation ticket's mutation window.
 
 The version-1 result includes `invocation_id`, `generation_id`,
 `registration_id`, `plugin_id`, `contribution_id`, `principal_id`, `profile_id`,

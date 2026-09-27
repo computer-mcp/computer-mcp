@@ -45,6 +45,8 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   private var directorySource: DispatchSourceFileSystemObject?
   private var directoryDescriptor: Int32 = -1
   private var knownDigest: String?
+  // Protected by writeLock; disk edits become active only after validation.
+  private var configuration: GatewayConfiguration?
 
   internal init(
     manifestURL: URL,
@@ -96,10 +98,37 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   }
 
   internal func activeConfiguration() throws -> GatewayConfiguration {
+    writeLock.lock()
+    defer { writeLock.unlock() }
+    return try admittedConfiguration()
+  }
+
+  /// The synchronous publication closure shares the manifest admission lock with
+  /// managed activation and external reload; no actor hop may split commit/routing.
+  func withCurrentConfiguration<Result>(
+    _ expected: GatewayConfiguration, publication: () throws -> Result
+  ) throws -> Result {
+    writeLock.lock()
+    defer { writeLock.unlock() }
+    guard try admittedConfiguration() == expected,
+      try Self.digest(of: Data(contentsOf: manifestURL)) == currentKnownDigest()
+    else { throw AtomicManifestStoreError.staleDigest }
+    return try publication()
+  }
+
+  private func admittedConfiguration() throws -> GatewayConfiguration {
+    if let configuration { return configuration }
     guard fileManager.fileExists(atPath: manifestURL.path) else {
       throw AtomicManifestStoreError.manifestMissing
     }
-    return try loader.load(path: manifestURL.path)
+    let data = try Data(contentsOf: manifestURL)
+    let loaded = try loader.load(path: manifestURL.path)
+    guard try Data(contentsOf: manifestURL) == data else {
+      throw AtomicManifestStoreError.staleDigest
+    }
+    configuration = loaded
+    setKnownDigest(try Self.digest(of: data))
+    return loaded
   }
 
   internal func history(limit: Int = 50) throws -> [ConfigurationRevision] {
@@ -191,7 +220,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
 
     do {
       try Self.writeAndSynchronize(data, to: stagedURL)
-      _ = try loader.load(path: stagedURL.path)
+      let loaded = try loader.load(path: stagedURL.path)
       revision.activatedAt = Date()
       try database.saveConfigurationRevision(revision)
       guard rename(stagedURL.path, manifestURL.path) == 0 else {
@@ -202,6 +231,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
         [.posixPermissions: NSNumber(value: Int16(0o600))],
         ofItemAtPath: manifestURL.path
       )
+      configuration = loaded
       setKnownDigest(revision.digest)
       publish(ManifestChange(revision: revision, reason: reason))
       return revision
@@ -217,6 +247,8 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   }
 
   private func reloadExternalChange() {
+    writeLock.lock()
+    defer { writeLock.unlock() }
     do {
       guard fileManager.fileExists(atPath: manifestURL.path) else {
         return
@@ -227,13 +259,15 @@ internal final class AtomicManifestStore: @unchecked Sendable {
         return
       }
       let manifest = String(decoding: data, as: UTF8.self)
-      _ = try loader.load(path: manifestURL.path)
+      let loaded = try loader.load(path: manifestURL.path)
+      guard try Data(contentsOf: manifestURL) == data else { return }
       let revision = ConfigurationRevision(
         digest: digest,
         manifest: manifest,
         activatedAt: Date()
       )
       try database.saveConfigurationRevision(revision)
+      configuration = loaded
       setKnownDigest(digest)
       publish(ManifestChange(revision: revision, reason: .externalReload))
     } catch {

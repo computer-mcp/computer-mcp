@@ -328,12 +328,11 @@ preserved, including a directory created immediately before a crash prevented
 its ownership receipt from being committed. Recovery does not infer ownership
 from a UUID-looking name, process ID or age.
 
-App and owner-only CLI mutations use the same idle gateway admission reservation.
-They never interrupt connected clients. File leases protect managed artifacts;
-they do not by themselves implement live routing or detached-work retirement.
-Connections remain busy while session creation or downstream cleanup is in
-progress, including after the client has disconnected. Stopping the socket
-server waits for those owners to finish before reporting completion.
+App and owner-only CLI mutations use the same prepared runtime publication.
+Existing work retains its runtime and artifact leases across plugin changes;
+new calls use the published configuration. Connection ownership includes session
+creation and downstream cleanup, including after a client disconnects. Stopping
+the socket server waits for those owners to finish before reporting completion.
 The host chooses its embedded archive worker and stores installations under
 its Application Support `Plugins` directory; neither path is a plugin or
 control-socket argument. An unavailable embedded worker fails without a PATH
@@ -694,7 +693,7 @@ target.
 Nonempty `issues` can accompany exit status zero: inspect them before retrying
 cleanup, rather than repeating a successful installation. Runtime failures return
 a JSON `error` with `code` and `message` and a nonzero exit status. Codes distinguish
-`plugin.stale_revision`, `plugin.installation_busy`, `plugin.connected_clients`,
+`plugin.stale_revision`, `plugin.installation_busy`, `plugin.change_in_progress`,
 `plugin.worker_unavailable`, and `plugin.archive.<reason>` failures. Parser errors
 use standard CLI usage diagnostics. If the control connection is lost, inspect
 list/show before retrying a change whose outcome is unknown.
@@ -736,12 +735,20 @@ or unavailable; such references do not create a runtime or authorize another
 registration. Expanded registrations and this host reference context are not
 serialized into the main TOML.
 
-Registration changes require the gateway to have no connected, connecting or
-cleaning-up clients. The listener temporarily pauses admission during a change and resumes
-on success or failure. A busy gateway rejects the mutation without disconnecting
-clients or interrupting their tasks. This control-plane check is separate from
-downstream MCP catalog-change notifications. A successful settings commit is
-configuration validation, not a claim that a downstream executable is healthy.
+Plugin registration changes prepare runtime candidates for each admitted client
+identity and profile before committing the plugin revision. Existing clients keep
+using their current runtime during preparation. New identities wait for publication.
+The commit compares the captured manifest and database inputs, then switches routing
+before notifying clients of catalog changes. Subsequent calls on the same connection
+use the published configuration; continuations of existing work retain their original
+runtime and files until that work finishes. Current authorization applies to both.
+
+Failed preparation, cancellation or a concurrent configuration change leaves the
+previous plugin revision and routing intact. Runtime capacity includes current,
+retained, preparing and closing generations; a change that exceeds it is rejected.
+Listener shutdown joins an in-progress publication and its resource cleanup.
+Preparation validates enabled contributions, including downstream discovery where
+required by their exposure. It does not prove a vendor account or model is usable.
 
 For an HTTP contribution, host `mcp.<component>.authentication` settings may
 contain `endpoint` and `keychain_account`. The endpoint must exactly match the
@@ -749,4 +756,8 @@ package's URL; a package update cannot retarget a saved credential. The manifest
 cannot declare this binding or contain the token. The App's MCP list and
 `mcp credential` commands manage its Keychain value independently of package
 versions. Disabling or uninstalling a package retains the user's credential.
+For an inactive registered plugin, `mcp credential` can resolve the selected
+declaration and host binding before activation. Configure the endpoint binding,
+set the credential, then enable the plugin. Ambiguous registration IDs, changed
+source declarations and mismatched endpoints cannot select a credential target.
 See [HTTP credentials](Config.md#http-credentials).

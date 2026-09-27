@@ -76,11 +76,16 @@ package final class GatewayDatabase: @unchecked Sendable {
     return state
   }
 
+  @discardableResult
   func savePluginStoreSnapshot(
     _ state: PluginStoreSnapshot, expectedRevision: Int64,
-    expectedConfiguration: ConfigurationState? = nil
-  ) throws {
+    expectedConfiguration: ConfigurationState? = nil,
+    resolution: GatewayConfigurationResolution = .init()
+  ) throws -> ConfigurationState {
     try state.validate()
+    guard
+      expectedConfiguration != nil || (resolution.workspaces.isEmpty && resolution.profiles.isEmpty)
+    else { throw PluginStoreError.invalidState }
     guard expectedRevision >= 0, expectedRevision < Int64.max,
       state.revision == expectedRevision + 1
     else {
@@ -92,7 +97,7 @@ package final class GatewayDatabase: @unchecked Sendable {
     guard data.count <= 4_194_304, let payload = String(data: data, encoding: .utf8) else {
       throw PluginStoreError.invalidState
     }
-    try writer.write { database in
+    let committed = try writer.write { database in
       let current =
         try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
       guard current == expectedRevision else {
@@ -108,6 +113,34 @@ package final class GatewayDatabase: @unchecked Sendable {
           INSERT INTO pluginState (id, revision, payloadJSON) VALUES (1, ?, ?)
           ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, payloadJSON = excluded.payloadJSON
           """, arguments: [state.revision, payload])
+      try Self.applyRuntimeResolution(resolution, in: database)
+      return try Self.configurationState(in: database)
+    }
+    notifyResolvedProfiles(resolution)
+    return committed
+  }
+
+  private static func applyRuntimeResolution(
+    _ resolution: GatewayConfigurationResolution, in database: Database
+  ) throws {
+    for change in resolution.workspaces {
+      guard change.original.id == change.resolved.id,
+        try WorkspaceRecord.fetchOne(database, key: change.original.id)?.value == change.original
+      else { throw GatewayDatabaseError.configurationChanged }
+      try saveWorkspace(change.resolved, in: database)
+    }
+    for profile in resolution.profiles {
+      guard profile.authorizationRevision == 0,
+        try ProfileRecord.fetchOne(database, key: profile.id.rawValue)?.authorizationRevision == 0
+      else { throw GatewayDatabaseError.configurationChanged }
+      try profile.validate()
+      try saveProfile(profile, updatedAt: Date(), expectedRevision: 0, in: database)
+    }
+  }
+
+  private func notifyResolvedProfiles(_ resolution: GatewayConfigurationResolution) {
+    for profile in resolution.profiles {
+      profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
     }
   }
 
@@ -364,31 +397,38 @@ package final class GatewayDatabase: @unchecked Sendable {
   ) throws {
     try profile.validate()
     try writer.write { database in
-      let current = try ProfileRecord.fetchOne(database, key: profile.id.rawValue)
-      let revision = current?.authorizationRevision ?? 0
-      guard expectedRevision == nil || expectedRevision == revision else {
-        throw GatewayDatabaseError.invalidStoredValue(
-          "Profile authorization changed; reload before saving.")
-      }
-      guard revision < Int64.max else {
-        throw GatewayDatabaseError.invalidStoredValue("Profile authorization revision exhausted.")
-      }
-      var saved = profile
-      saved.authorizationRevision = revision + 1
-      try ProfileRecord(saved, updatedAt: updatedAt).save(database)
-      try database.execute(
-        sql: """
-          UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
-          WHERE profileID = ? AND state IN (?, ?, ?)
-          """,
-        arguments: [
-          OperationTicketState.denied.rawValue, updatedAt,
-          "operations.authorization_changed", profile.id.rawValue,
-          OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
-          OperationTicketState.approved.rawValue,
-        ])
+      try Self.saveProfile(
+        profile, updatedAt: updatedAt, expectedRevision: expectedRevision, in: database)
     }
     profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
+  }
+
+  private static func saveProfile(
+    _ profile: ProfileGrant, updatedAt: Date, expectedRevision: Int64?, in database: Database
+  ) throws {
+    let current = try ProfileRecord.fetchOne(database, key: profile.id.rawValue)
+    let revision = current?.authorizationRevision ?? 0
+    guard expectedRevision == nil || expectedRevision == revision else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Profile authorization changed; reload before saving.")
+    }
+    guard revision < Int64.max else {
+      throw GatewayDatabaseError.invalidStoredValue("Profile authorization revision exhausted.")
+    }
+    var saved = profile
+    saved.authorizationRevision = revision + 1
+    try ProfileRecord(saved, updatedAt: updatedAt).save(database)
+    try database.execute(
+      sql: """
+        UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
+        WHERE profileID = ? AND state IN (?, ?, ?)
+        """,
+      arguments: [
+        OperationTicketState.denied.rawValue, updatedAt,
+        "operations.authorization_changed", profile.id.rawValue,
+        OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
+        OperationTicketState.approved.rawValue,
+      ])
   }
 
   func profileChanges(for profileID: GatewayProfileID) -> AsyncStream<Void> {

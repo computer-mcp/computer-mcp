@@ -6,6 +6,49 @@ import Testing
 @Suite
 
 final class AtomicManifestStoreTests {
+  @Test(arguments: ["schema_version = 999\n", Self.manifest(name: "pending")])
+  func unadmittedDiskChangesPreserveActiveReadsAndInvalidatePublication(text: String) throws {
+    let fixture = try ManifestStoreFixture()
+    defer { fixture.cleanup() }
+    _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let original = try fixture.store.activeConfiguration()
+    try text.write(to: fixture.manifestURL, atomically: true, encoding: .utf8)
+    #expect(try fixture.store.activeConfiguration() == original)
+    var published = false
+    #expect(throws: AtomicManifestStoreError.staleDigest) {
+      try fixture.store.withCurrentConfiguration(original) { published = true }
+    }
+    #expect(!published)
+    #expect(try fixture.store.history().count == 1)
+    _ = try fixture.store.activate(manifest: Self.manifest(name: "managed"))
+    #expect(try fixture.store.activeConfiguration().server.name == "managed")
+    #expect(throws: AtomicManifestStoreError.staleDigest) {
+      try fixture.store.withCurrentConfiguration(original) { published = true }
+    }
+    #expect(!published)
+    let current = try fixture.store.activeConfiguration()
+    try fixture.store.withCurrentConfiguration(current) { published = true }
+    #expect(published)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func externalReloadAdmitsValidatedConfiguration() async throws {
+    let fixture = try ManifestStoreFixture()
+    defer { fixture.cleanup() }
+    _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    try fixture.store.startHotReloadMonitoring()
+    defer { fixture.store.stopHotReloadMonitoring() }
+    let stream = fixture.store.changes()
+    let change = Task { await stream.first(where: { $0.reason == .externalReload }) }
+    defer { change.cancel() }
+    try Self.manifest(name: "external").write(
+      to: fixture.manifestURL, atomically: true, encoding: .utf8)
+    let event = try #require(await change.value)
+    #expect(event.reason == .externalReload)
+    #expect(try fixture.store.activeConfiguration().server.name == "external")
+    #expect(try fixture.store.history().count == 2)
+  }
+
   @Test
   func testActivationValidatesPersistsSynchronizesAndPublishes() async throws {
     let fixture = try ManifestStoreFixture()

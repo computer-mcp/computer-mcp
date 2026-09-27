@@ -6,6 +6,54 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct PluginStoreInstallationTests {
+  @Test
+  func candidatesAcquireIndependentArtifactLeasesInsideTheInstallationTransaction() async throws {
+    let fixture = try await PreparationFixture.make(manifest: Self.skillsManifest)
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    let original = try database.configurationState()
+    var proposed = original.plugins
+    proposed.settings[record.pluginID]?.enabled = true
+    let state = GatewayDatabase.ConfigurationState(
+      workspaces: original.workspaces, workspaceAliases: original.workspaceAliases,
+      profiles: original.profiles, plugins: proposed)
+    let storage = try PluginInstallationStorage(at: fixture.installationRoot)
+    defer { storage.finishTransaction() }
+    #expect(throws: PluginStoreError.installationBusy) {
+      try GatewayRuntime.retainPluginArtifacts(state: proposed, plugins: nil, database: database)
+    }
+    var candidates: [GatewayRuntimePreparation] = []
+    do {
+      for principal in ["first", "second"] {
+        var context = ExecutionContext(caller: .localCLI, profileID: .localAdmin)
+        context.trustedPrincipalID = principal
+        candidates.append(
+          try await GatewayRuntime.prepare(
+            configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+            context: context, database: database, state: state,
+            bundledPlugins: BundledPlugins(packages: [], issues: []), artifactStorage: storage))
+      }
+      #expect(candidates.allSatisfy { $0.runtime.pluginOrigins.count == 1 })
+      #expect(try database.configurationState() == original)
+      storage.finishTransaction()
+      let removed = try await store.uninstallArtifact(
+        installationID: record.id, storageRoot: fixture.installationRoot, expectedRevision: 1)
+      #expect(removed.issues.count == 1)
+      await candidates[0].runtime.shutdown()
+      #expect(
+        try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+      await candidates[1].runtime.shutdown()
+      #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+    } catch {
+      for candidate in candidates { await candidate.runtime.shutdown() }
+      throw error
+    }
+  }
+
   @Test(arguments: [false, true])
   func unpublishedPluginStateRetainsArtifactsThroughAuthenticatedSessions(resolved: Bool)
     async throws

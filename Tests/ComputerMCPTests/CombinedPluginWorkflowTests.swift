@@ -116,16 +116,16 @@ struct CombinedPluginWorkflowTests {
       let active = try await Self.connect(fixture)
       client = active
       let projectedName = try await Self.checkActive(active)
-      let busy = try await fixture.cli([
-        "disable", "combined", "--expected-revision", String(snapshot.state.revision),
-      ])
-      #expect(busy.exitCode != 0)
-      #expect(try fixture.database.pluginStoreSnapshot().revision == snapshot.state.revision)
-      #expect(try await active.callTool(name: "combined.inspect", arguments: [:]).isError != true)
+      snapshot = try await Self.run(
+        fixture, ["disable", "combined"], revision: snapshot.state.revision)
+      try await Self.checkIndependent(active, removedCLI: projectedName)
+      snapshot = try await Self.run(
+        fixture, ["enable", "combined"], revision: snapshot.state.revision)
+      #expect(try await Self.checkActive(active) == projectedName)
       await active.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts)
+      try Self.checkExited(starts, count: 3)
       var rejectedEntries = entries
       rejectedEntries[0].content =
         Self.manifest
@@ -146,7 +146,7 @@ struct CombinedPluginWorkflowTests {
       await retained.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 2)
+      try Self.checkExited(starts, count: 4)
 
       var updatedEntries = entries
       updatedEntries[0].content = Self.manifest
@@ -172,7 +172,7 @@ struct CombinedPluginWorkflowTests {
       await updated.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 3)
+      try Self.checkExited(starts, count: 6)
 
       let selection = installation.map { ["--installation-id", $0.id] } ?? ["--bundled"]
       snapshot = try await Self.run(
@@ -185,7 +185,7 @@ struct CombinedPluginWorkflowTests {
       await restored.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 4)
+      try Self.checkExited(starts, count: 8)
       snapshot = try await Self.run(
         fixture, ["uninstall", updateID], revision: snapshot.state.revision)
       #expect(!FileManager.default.fileExists(atPath: updateRoot.path))
@@ -219,7 +219,7 @@ struct CombinedPluginWorkflowTests {
       await removed.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 4)
+      try Self.checkExited(starts, count: 9)
       #expect(try Data(contentsOf: fixture.directories.manifest) == initialManifest)
       #expect(try Data(contentsOf: vendor) == initialVendor)
       #expect(try Self.digest(Data(contentsOf: archive)) == digest)

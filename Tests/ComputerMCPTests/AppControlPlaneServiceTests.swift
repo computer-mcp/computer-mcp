@@ -786,11 +786,10 @@ final class AppControlPlaneServiceTests {
         configuration: .init(
           socketURL: fixture.directories.gatewaySocket, clientIdentity: .localCLI))
       _ = try await client.connect(transport: transport)
-      await #expect(throws: PluginHostError.connectedClients) {
-        try await gateway.changePlugins(
-          .enabled(pluginID: "test-package", true), expectedRevision: 0)
-      }
-      #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
+      let initial = try await gateway.changePlugins(
+        .enabled(pluginID: "test-package", true), expectedRevision: 0)
+      #expect(initial.state.revision == 1)
+      #expect(try fixture.database.pluginStoreSnapshot().revision == 1)
       try await client.ping()
       await client.disconnect()
       let clock = ContinuousClock()
@@ -799,13 +798,13 @@ final class AppControlPlaneServiceTests {
         try await Task.sleep(for: .milliseconds(10))
       }
       #expect(await gateway.snapshot().connectionCount == 0)
-      await #expect(throws: PluginStoreError.staleRevision(expected: 1, actual: 0)) {
+      await #expect(throws: PluginStoreError.staleRevision(expected: 0, actual: 1)) {
         try await gateway.changePlugins(
-          .enabled(pluginID: "test-package", true), expectedRevision: 1)
+          .enabled(pluginID: "test-package", true), expectedRevision: 0)
       }
       let result = try await gateway.changePlugins(
-        .enabled(pluginID: "test-package", true), expectedRevision: 0)
-      #expect(result.state.revision == 1)
+        .enabled(pluginID: "test-package", true), expectedRevision: 1)
+      #expect(result.state.revision == 2)
       #expect(result.issues.count == 1)
       let next = Client(name: "plugin-next", version: "1")
       _ = try await next.connect(

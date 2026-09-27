@@ -186,12 +186,15 @@ package actor AppControlPlaneService {
   }
 
   package func activeConfiguration() throws -> GatewayConfiguration {
-    try manifestStore.activeConfiguration()
+    var configuration = try manifestStore.activeConfiguration()
+    configuration.knownPluginMCPServerIDs = try database.pluginStoreSnapshot()
+      .includingBundledDefaults(bundledPlugins.packages.map(\.manifest)).knownMCPRegistrationIDs
+    return configuration
   }
 
   package func effectiveConfigurationForExport() async throws -> GatewayConfiguration {
     let grants = try await profileGrants()
-    var configuration = try manifestStore.activeConfiguration()
+    var configuration = try activeConfiguration()
     configuration.workspaces = try workspaces().map { workspace in
       WorkspaceManifestConfig(
         id: workspace.id,
@@ -574,6 +577,21 @@ package actor AppControlPlaneService {
       inputs: inputs, caller: caller, profileID: profileID, transportTrace: transportTrace,
       trustedPrincipalID: trustedPrincipalID, terminalSessions: terminalSessions)
     return (inputs, gateway)
+  }
+
+  func prepareGateway(
+    inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
+    trustedPrincipalID: String?, terminalSessions: GatewayTerminalSessions,
+    artifactStorage: PluginInstallationStorage?
+  ) async throws -> GatewayRuntimePreparation {
+    var context = inputs.configuration.executionContext(caller: caller, profileID: profileID)
+    context.trustedPrincipalID = trustedPrincipalID
+    return try await GatewayRuntime.prepare(
+      configuration: inputs.configuration, context: context, database: database,
+      state: inputs.persisted,
+      bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
+      bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
+      artifactStorage: artifactStorage)
   }
 
   func localAdminTools(

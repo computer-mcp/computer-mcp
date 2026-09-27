@@ -182,7 +182,7 @@ struct PluginManagementModelTests {
     let model = PluginManagementModel(controlPlane: service)
     await model.reload()
     let before = model.snapshot?.state
-    service.onFetch = { throw PluginHostError.connectedClients }
+    service.onFetch = { throw PluginHostError.changeInProgress }
     await model.reload()
     #expect(model.snapshot?.state == before)
     #expect(model.pluginIDs == ["sample"])

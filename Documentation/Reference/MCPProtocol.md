@@ -241,8 +241,13 @@ new admission during shutdown. Pending construction and cleanup count toward the
 invalidates its publication epoch, so a late candidate cannot enter a restarted
 listener. Owner-side manifest and workspace management still use an explicit
 listener restart; live dispatch applies to changes observed while the listener
-remains running. Plugin mutations require the listener to have no connected
-clients.
+remains running. Plugin mutations prepare candidates for every admitted identity
+and profile while existing calls continue. New identities wait at a bounded
+publication barrier. The host checks the manifest and persisted inputs, commits
+the plugin revision and installs routing before notifying clients. A failed
+candidate or conflicting input change leaves the prior plugin revision and
+routing intact. Shutdown waits for the in-progress plugin publication and its
+cleanup before completing.
 
 ## Downstream Host Context
 

@@ -568,7 +568,7 @@ struct PluginControlPlaneTests {
   }
 
   @Test
-  func connectedGatewayPreventsArtifactWritesWithoutInterruptingClient() async throws {
+  func connectedGatewayPreservesAdmissionAcrossRecoveryAndInvalidRemoval() async throws {
     let fixture = try PluginControlFixture()
     defer { fixture.remove() }
     try await fixture.gateway.start(profile: .chatGPTObserve)
@@ -577,11 +577,11 @@ struct PluginControlPlaneTests {
     let client = Client(name: "artifact-protection", version: "1")
     do {
       _ = try await client.connect(transport: transport)
-      for change: PluginHostChange in [.uninstallArtifact(installationID: "unselected"), .recover] {
-        await #expect(throws: PluginHostError.connectedClients) {
-          try await fixture.gateway.changePlugins(change, expectedRevision: 0)
-        }
+      await #expect(throws: PluginStoreError.unknownInstallation("unselected")) {
+        try await fixture.gateway.changePlugins(
+          .uninstallArtifact(installationID: "unselected"), expectedRevision: 0)
       }
+      _ = try await fixture.gateway.changePlugins(.recover, expectedRevision: 0)
       _ = try await client.listTools()
       #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
       await client.disconnect()

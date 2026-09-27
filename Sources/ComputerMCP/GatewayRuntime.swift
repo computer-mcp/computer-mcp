@@ -16,6 +16,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let workspaceErrors: [String: WorkspaceBookmarkError]
   private let providerRouters: [String: GatewayProviderRouter]
   private let lifetime: GatewayRuntimeLifetime
+  private let publication = GatewayRuntimePublication()
+  private let configurationResolution: GatewayConfigurationResolution
   let ownedWork = GatewayOwnedWork()
   let generationID = UUID()
   private let authenticatedSessionFactory:
@@ -61,7 +63,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
       pluginState: pluginState,
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
-      lifetime: GatewayRuntimeLifetime())
+      lifetime: GatewayRuntimeLifetime(), preparationState: nil, artifactStorage: nil)
   }
 
   package static func make(
@@ -86,7 +88,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
           policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
           pluginState: pluginState,
-          bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime)
+          bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime,
+          preparationState: nil, artifactStorage: nil)
       }
       try Task.checkCancellation()
       return runtime
@@ -96,12 +99,56 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
+  /// Discovery owns its resources, but candidate callbacks and invocations remain closed
+  /// until the listener publishes the committed generation.
+  static func prepare(
+    configuration: GatewayConfiguration, context: ExecutionContext,
+    database: GatewayDatabase, state: GatewayDatabase.ConfigurationState,
+    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
+    mcpClient: any DownstreamMCPClient = MCPProxyClient(),
+    bundledPlugins: BundledPlugins = .current,
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
+    artifactStorage: PluginInstallationStorage? = nil
+  ) async throws -> GatewayRuntimePreparation {
+    try Task.checkCancellation()
+    let lifetime = GatewayRuntimeLifetime()
+    do {
+      let runtime = try await construction.perform {
+        try GatewayRuntime(
+          configuration: configuration, context: context, database: database,
+          registeredWorkspaces: state.workspaces, bookmarkService: bookmarkService,
+          policyEvaluator: GatewayPolicyEvaluator(), mcpClient: mcpClient,
+          plugins: nil, pluginState: state.plugins, bundledPlugins: bundledPlugins,
+          terminalSessions: terminalSessions, lifetime: lifetime,
+          preparationState: state, artifactStorage: artifactStorage)
+      }
+      try Task.checkCancellation()
+      return GatewayRuntimePreparation(
+        runtime: runtime, resolution: runtime.configurationResolution)
+    } catch {
+      await lifetime.beginShutdown().value
+      throw error
+    }
+  }
+
+  /// The generation owner installs routing and calls this without suspending after its commit.
+  func requirePreparedPublication() throws {
+    guard !lifetime.isClosing else { throw GatewaySocketError.notConnected }
+  }
+
+  func publishPrepared() {
+    publication.publish()
+    hostToolDirectory.attach(self)
+  }
+
   private init(
     configuration: GatewayConfiguration, context: ExecutionContext?, database: GatewayDatabase?,
     registeredWorkspaces: [RegisteredWorkspace]?, bookmarkService: any WorkspaceBookmarkServicing,
     policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
     plugins: [ResolvedPlugin]?, pluginState: PluginStoreSnapshot?, bundledPlugins: BundledPlugins,
-    terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime
+    terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime,
+    preparationState: GatewayDatabase.ConfigurationState?,
+    artifactStorage: PluginInstallationStorage?
   ) throws {
     let initializationConfiguration = configuration
     self.lifetime = lifetime
@@ -112,7 +159,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let pluginState = try (pluginState ?? database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
     let artifactLeases = try Self.retainPluginArtifacts(
-      state: pluginState, plugins: plugins, database: database)
+      state: pluginState, plugins: plugins, database: database, transaction: artifactStorage)
     lifetime.onShutdown {
       for lease in artifactLeases { lease.close() }
     }
@@ -133,7 +180,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let effectiveContext = context ?? configuration.executionContext()
     let configuredGrant = configuration.profiles.first { $0.id == effectiveContext.profileID }?
       .grant
-    let persistedProfiles = try database?.profiles() ?? []
+    let persistedProfiles = try preparationState?.profiles ?? database?.profiles() ?? []
     let persistedGrant = persistedProfiles.first(where: { $0.id == effectiveContext.profileID })
     let mcpGrant = configuredGrant ?? configuration.profileGrant(for: effectiveContext.profileID)
     let derivesObserveGrant =
@@ -157,7 +204,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           derivesObserveGrant: derivesObserveGrant && (persisted?.authorizationRevision ?? 0) == 0)
       })
 
-    let persistedWorkspaces = try database?.workspaces() ?? []
+    let persistedWorkspaces = try preparationState?.workspaces ?? database?.workspaces() ?? []
     let configuredWorkspaces =
       registeredWorkspaces
       ?? (persistedWorkspaces.isEmpty ? configuration.manifestWorkspaces : persistedWorkspaces)
@@ -167,6 +214,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var errorByID: [String: WorkspaceBookmarkError] = [:]
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
     let commandRunner = ProcessCommandRunner()
+    var resolution = GatewayConfigurationResolution()
 
     for workspace in configuredWorkspaces {
       guard workspaceByID[workspace.id] == nil else {
@@ -234,7 +282,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       providerRouterByID[workspace.id] = router
       lifetime.replaceShutdown(registryCleanup) { await router.shutdown() }
       if access.workspace != workspace {
-        try database?.saveWorkspace(access.workspace, replacing: workspace)
+        if preparationState != nil {
+          resolution.workspaces.append(.init(original: workspace, resolved: access.workspace))
+        } else {
+          try database?.saveWorkspace(access.workspace, replacing: workspace)
+        }
       }
     }
 
@@ -275,12 +327,17 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       if effectiveGrant.capabilityIDs.contains("*") {
         effectiveGrant.workspaceIDs = Set(workspaceByID.keys)
       }
-      try database.saveProfile(effectiveGrant, expectedRevision: 0)
-      effectiveGrant =
-        try database.profiles().first { $0.id == effectiveGrant.id } ?? effectiveGrant
+      if preparationState != nil {
+        resolution.profiles.append(effectiveGrant)
+      } else {
+        try database.saveProfile(effectiveGrant, expectedRevision: 0)
+        effectiveGrant =
+          try database.profiles().first { $0.id == effectiveGrant.id } ?? effectiveGrant
+      }
     }
     try effectiveGrant.validate()
 
+    self.configurationResolution = resolution
     self.configuration = configuration
     self.context = effectiveContext
     self.grant = effectiveGrant
@@ -305,7 +362,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.workspaceAccesses = accessByID
     self.workspaceErrors = errorByID
     self.providerRouters = providerRouterByID
-    hostToolDirectory.attach(self)
+    if preparationState == nil {
+      publication.publish()
+      hostToolDirectory.attach(self)
+    }
     initialized = true
   }
 
@@ -559,7 +619,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   package func authenticatedSession(
     principalID: String, transportTrace: GatewayTransportTrace?
   ) throws -> GatewayRuntime {
-    try authenticatedSessionFactory(principalID, transportTrace)
+    try publication.requirePublished()
+    return try authenticatedSessionFactory(principalID, transportTrace)
   }
 
   package func listTools() throws -> [MCPTool] {
@@ -1641,6 +1702,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     _ descriptor: CapabilityDescriptor,
     context: ExecutionContext
   ) throws -> ProfileGrant {
+    try publication.requirePublished()
     if descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp.")
       || descriptor.id.hasPrefix("runtime.owners.")
     {

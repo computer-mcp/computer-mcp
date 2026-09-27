@@ -140,7 +140,7 @@ private final class PluginCatalogFake: PluginManaging {
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
   {
-    throw PluginHostError.connectedClients
+    throw PluginHostError.changeInProgress
   }
   func pluginReleaseArtifacts(repository: String, repositoryID: Int64, tag: String?, page: Int)
     async throws -> GitHubPluginReleaseArtifacts

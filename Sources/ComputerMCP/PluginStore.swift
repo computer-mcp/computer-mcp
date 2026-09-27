@@ -123,7 +123,13 @@ package struct PluginStoreResolution: Sendable {
 /// Revision comparison in the database also protects against other store instances/processes.
 package actor PluginStore {
   let database: GatewayDatabase
+  typealias PublishSnapshot =
+    @Sendable (
+      PluginStoreSnapshot, GatewayDatabase.ConfigurationState, PluginInstallationStorage?
+    ) async throws -> Void
+
   private let expectedConfiguration: GatewayDatabase.ConfigurationState?
+  private let publishSnapshot: PublishSnapshot?
   private let validateSnapshot: @Sendable (PluginStoreSnapshot) throws -> Void
 
   package init(
@@ -132,23 +138,26 @@ package actor PluginStore {
   ) {
     self.database = database
     self.expectedConfiguration = nil
+    self.publishSnapshot = nil
     self.validateSnapshot = validateSnapshot
   }
 
   /// One management change may await archive preparation before entering its commit.
   init(
     database: GatewayDatabase, expectedConfiguration: GatewayDatabase.ConfigurationState,
+    publishSnapshot: PublishSnapshot? = nil,
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
     self.database = database
     self.expectedConfiguration = expectedConfiguration
+    self.publishSnapshot = publishSnapshot
     self.validateSnapshot = validateSnapshot
   }
 
   package func snapshot() throws -> PluginStoreSnapshot { try database.pluginStoreSnapshot() }
 
   @discardableResult
-  package func registerDevelopment(at root: URL, expectedRevision: Int64) throws
+  package func registerDevelopment(at root: URL, expectedRevision: Int64) async throws
     -> PluginStoreSnapshot
   {
     let plugin = try PluginPackage.load(at: root)
@@ -168,7 +177,7 @@ package actor PluginStore {
     if existing == nil { state.installations.append(record) }
     state.selectedInstallations[record.pluginID] = record.id
     Self.addMissingSettings(for: plugin.manifest, to: &state)
-    return try commit(state, expectedRevision: expectedRevision)
+    return try await commit(state, expectedRevision: expectedRevision)
   }
 
   static func addMissingSettings(for manifest: PluginManifest, to state: inout PluginStoreSnapshot)
@@ -190,28 +199,28 @@ package actor PluginStore {
   package func setSettings(
     _ settings: PluginSettings, for pluginID: String, expectedRevision: Int64
   )
-    throws -> PluginStoreSnapshot
+    async throws -> PluginStoreSnapshot
   {
     try validatePluginID(pluginID)
     var state = try checkedSnapshot(expectedRevision)
     state.settings[pluginID] = settings
-    return try commit(state, expectedRevision: expectedRevision)
+    return try await commit(state, expectedRevision: expectedRevision)
   }
 
   @discardableResult
   package func setEnabled(_ enabled: Bool, for pluginID: String, expectedRevision: Int64)
-    throws -> PluginStoreSnapshot
+    async throws -> PluginStoreSnapshot
   {
     try validatePluginID(pluginID)
     var state = try checkedSnapshot(expectedRevision)
     state.settings[pluginID, default: PluginSettings()].enabled = enabled
-    return try commit(state, expectedRevision: expectedRevision)
+    return try await commit(state, expectedRevision: expectedRevision)
   }
 
   /// A nil selection restores bundled fallback; it does not alter the user's enabled state or grants.
   @discardableResult
   package func select(installationID: String?, for pluginID: String, expectedRevision: Int64)
-    throws -> PluginStoreSnapshot
+    async throws -> PluginStoreSnapshot
   {
     try validatePluginID(pluginID)
     var state = try checkedSnapshot(expectedRevision)
@@ -223,12 +232,12 @@ package actor PluginStore {
       }
     }
     state.selectedInstallations[pluginID] = installationID
-    return try commit(state, expectedRevision: expectedRevision)
+    return try await commit(state, expectedRevision: expectedRevision)
   }
 
   /// Remove an installation reference, never the user-owned development checkout or external binaries.
   @discardableResult
-  package func removeDevelopment(installationID: String, expectedRevision: Int64) throws
+  package func removeDevelopment(installationID: String, expectedRevision: Int64) async throws
     -> PluginStoreSnapshot
   {
     var state = try checkedSnapshot(expectedRevision)
@@ -241,7 +250,7 @@ package actor PluginStore {
     if state.selectedInstallations[record.pluginID] == installationID {
       state.selectedInstallations.removeValue(forKey: record.pluginID)
     }
-    return try commit(state, expectedRevision: expectedRevision)
+    return try await commit(state, expectedRevision: expectedRevision)
   }
 
   package func resolve(
@@ -345,7 +354,10 @@ package actor PluginStore {
     return state
   }
 
-  func commit(_ proposed: PluginStoreSnapshot, expectedRevision: Int64) throws
+  func commit(
+    _ proposed: PluginStoreSnapshot, expectedRevision: Int64,
+    storage: PluginInstallationStorage? = nil
+  ) async throws
     -> PluginStoreSnapshot
   {
     var next = proposed
@@ -356,8 +368,13 @@ package actor PluginStore {
     try next.validate()
     let configuration = try expectedConfiguration ?? database.configurationState()
     try validateSnapshot(next)
-    try database.savePluginStoreSnapshot(
-      next, expectedRevision: expectedRevision, expectedConfiguration: configuration)
+    if let publishSnapshot {
+      try await publishSnapshot(next, configuration, storage)
+    } else {
+      try Task.checkCancellation()
+      try database.savePluginStoreSnapshot(
+        next, expectedRevision: expectedRevision, expectedConfiguration: configuration)
+    }
     return next
   }
 

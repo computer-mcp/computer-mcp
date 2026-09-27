@@ -153,14 +153,12 @@ final class GatewaySocketTests {
         try await waitUntil { await cleanup.entered }
       }
       #expect(await server.connectionCount() == 1)
-      #expect(await server.reserveIdleConfigurationChange() == false)
       let stopping = Task { await server.stop() }
       await server.waitUntilClosed()
       let secondStop = Task { await server.stop() }
       await creation.release()
       try await waitUntil { await cleanup.entered }
       #expect(await server.connectionCount() == 1)
-      #expect(await server.reserveIdleConfigurationChange() == false)
       await cleanup.release()
       await stopping.value
       await secondStop.value

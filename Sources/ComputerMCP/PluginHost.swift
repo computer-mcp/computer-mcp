@@ -91,7 +91,6 @@ package enum PluginHostChange: Sendable {
 
 package enum PluginHostError: Error, LocalizedError, Equatable, Sendable {
   case changeInProgress
-  case connectedClients
   case invalidComposition(String)
   case workerUnavailable
 
@@ -99,8 +98,6 @@ package enum PluginHostError: Error, LocalizedError, Equatable, Sendable {
     switch self {
     case .changeInProgress:
       "Another gateway configuration change is in progress. Retry after it finishes."
-    case .connectedClients:
-      "Gateway clients are connected or connecting. Disconnect them before changing plugin registrations; active tasks were not interrupted."
     case .invalidComposition(let message): "Plugin configuration was not changed: \(message)"
     case .workerUnavailable:
       "The App's embedded plugin archive worker is unavailable. Check the App installation; no PATH executable was used."

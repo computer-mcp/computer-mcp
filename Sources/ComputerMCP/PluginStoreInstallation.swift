@@ -119,7 +119,7 @@ extension PluginStore {
     _ package: PluginPackage, receipt: PluginArchiveReceipt, owned: PluginOwnedDirectory,
     storage: PluginInstallationStorage, expectedRevision: Int64,
     githubRelease: GitHubPluginArtifact?
-  ) throws -> PluginStoreSnapshot {
+  ) async throws -> PluginStoreSnapshot {
     try Task.checkCancellation()
     // Archive preparation suspends the actor; never reuse its preflight snapshot.
     var state = try checkedSnapshot(expectedRevision)
@@ -135,14 +135,14 @@ extension PluginStore {
     state.installations.append(record)
     state.selectedInstallations[record.pluginID] = record.id
     Self.addMissingSettings(for: package.manifest, to: &state)
-    return try commit(state, expectedRevision: expectedRevision)
+    return try await commit(state, expectedRevision: expectedRevision, storage: storage)
   }
 
   /// Revokes only this artifact's registration. Host overrides and other versions survive.
   /// In-use files remain receipted for recovery after their runtime owners drain.
   package func uninstallArtifact(
     installationID: String, storageRoot: URL, expectedRevision: Int64
-  ) throws -> PluginStoreMutation {
+  ) async throws -> PluginStoreMutation {
     let storage = try PluginInstallationStorage(at: storageRoot)
     defer { storage.finishTransaction() }
     var state = try checkedSnapshot(expectedRevision)
@@ -161,7 +161,7 @@ extension PluginStore {
     }
     // Preserve files if another registration explicitly references the managed directory.
     guard !Self.isReferenced(owned.identity, in: state) else { throw PluginStoreError.invalidState }
-    let committed = try commit(state, expectedRevision: expectedRevision)
+    let committed = try await commit(state, expectedRevision: expectedRevision, storage: storage)
     do {
       try storage.clean(
         owned.identity, keepingPackage: false,

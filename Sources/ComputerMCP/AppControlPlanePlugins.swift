@@ -67,18 +67,33 @@ extension AppControlPlaneService {
     return configuration
   }
 
-  /// Configuration preflight precedes the database CAS. Only artifact installation
-  /// launches the host's bounded archive worker; contributions are never executed here.
-  func applyPluginChange(_ change: PluginHostChange, expectedRevision: Int64) async throws
+  /// The publisher prepares contributions and commits while holding listener admission.
+  func applyPluginChange(
+    _ change: PluginHostChange, expectedRevision: Int64,
+    publish: (
+      @Sendable (GatewayInputs, PluginStoreSnapshot, PluginInstallationStorage?) async throws ->
+        Void
+    )? = nil
+  ) async throws
     -> PluginHostSnapshot
   {
     guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
     pluginMutationInProgress = true
     defer { pluginMutationInProgress = false }
+    let inputs = try gatewayInputs()
     let manifestStore = manifestStore
     let bundledPlugins = bundledPlugins
+    let publication: PluginStore.PublishSnapshot?
+    if let publish {
+      publication = { proposed, expected, storage in
+        guard expected == inputs.persisted else { throw GatewayDatabaseError.configurationChanged }
+        try await publish(inputs, proposed, storage)
+      }
+    } else {
+      publication = nil
+    }
     let store = PluginStore(
-      database: database, expectedConfiguration: try database.configurationState()
+      database: database, expectedConfiguration: inputs.persisted, publishSnapshot: publication
     ) { proposed in
       var configuration = try manifestStore.activeConfiguration()
       configuration.knownPluginMCPServerIDs =

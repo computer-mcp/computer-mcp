@@ -1120,7 +1120,6 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       let code =
         switch error {
         case .changeInProgress: "change_in_progress"
-        case .connectedClients: "connected_clients"
         case .invalidComposition: "invalid_composition"
         case .workerUnavailable: "worker_unavailable"
         }

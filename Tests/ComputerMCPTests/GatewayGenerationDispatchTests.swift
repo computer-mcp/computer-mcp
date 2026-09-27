@@ -1,11 +1,363 @@
+import CryptoKit
 import Darwin
 import Foundation
+import MCP
 import Testing
 
 @testable import ComputerMCP
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
+  @Test(arguments: [false, true])
+  func connectedPluginPublicationPreservesNativeWorkAndRejectsFailedCandidates(managed: Bool)
+    async throws
+  {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    let archives = try ArchiveFixture()
+    defer { archives.remove() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    let observer = MCP.Client(name: "publication-observer", version: "1")
+    do {
+      _ = try await observer.connect(
+        transport: GatewaySocketTransport(configuration: fixture.service.socketConfiguration))
+      var snapshot = try await fixture.installPlugin(
+        version: 1, managed: managed, archives: archives)
+      let settings = PluginSettings(
+        enabled: false,
+        mcp: [
+          "native": .init(
+            registrationID: "fixture", exposure: .reexport, prefix: "fixture", allowAnyTool: true,
+            toolRisks: Dictionary(
+              uniqueKeysWithValues: [
+                "start", "inspect", "finish", "identity", "change", "wait", "generation_1",
+                "generation_2",
+              ]
+              .map { ($0, CapabilityRisk.readOnly) }),
+            args: [fixture.root.path, "unused", "yes"])
+        ])
+      snapshot = try await fixture.service.changePlugins(
+        .settings(pluginID: "live-fixture", settings), expectedRevision: snapshot.state.revision)
+      var configuration = try await fixture.control.activeConfiguration()
+      configuration.mcp.servers = []
+      _ = try await fixture.control.activateManifest(configuration.exportedTOML())
+      #expect(try await !client.listTools().contains { $0.name == "fixture.identity" })
+      let changes = GatewayToolChangeBroadcaster()
+      let events = changes.stream()
+      await observer.onNotification(ToolListChangedNotification.self) { _ in changes.send() }
+      snapshot = try await fixture.service.changePlugins(
+        .enabled(pluginID: "live-fixture", true), expectedRevision: snapshot.state.revision)
+      let announced = try await withThrowingTaskGroup(of: Bool.self) { group in
+        group.addTask {
+          for await _ in events {
+            if try await observer.listTools().tools.contains(where: {
+              $0.name == "fixture.generation_1"
+            }) {
+              return true
+            }
+          }
+          return false
+        }
+        group.addTask {
+          try await Task.sleep(for: .seconds(5))
+          return false
+        }
+        defer { group.cancelAll() }
+        return try await group.next() ?? false
+      }
+      #expect(announced)
+      #expect(try await client.listTools().contains { $0.name == "fixture.generation_1" })
+      let oldPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("old-plugin")])))
+      let oldRecord = try #require(snapshot.state.installations.first)
+      snapshot = try await fixture.service.changePlugins(
+        .enabled(pluginID: "live-fixture", false), expectedRevision: snapshot.state.revision)
+      #expect(try await !client.listTools().contains { $0.name == "fixture.identity" })
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")])))
+          == oldPID)
+      snapshot = try await fixture.service.changePlugins(
+        .enabled(pluginID: "live-fixture", true), expectedRevision: snapshot.state.revision)
+      snapshot = try await fixture.installPlugin(version: 2, managed: managed, archives: archives)
+      let fresh = try await client.call(toolName: "fixture.identity")
+      let newPID = try pid(fresh)
+      #expect(value(fresh, "version") == .integer(2))
+      let requestID = try #require(
+        value(fresh, "gateway_execution")?.objectValue?["request_id"]?.stringValue)
+      let audit = try #require(try fixture.database.auditEvent(requestID: requestID))
+      #expect(audit.mcpRequestID == fresh.requestID)
+      #expect(audit.socketConnectionID != nil)
+      #expect(oldPID != newPID && alive(oldPID))
+      #expect(try await client.listTools().contains { $0.name == "fixture.generation_2" })
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")])))
+          == oldPID)
+      let beforeFailure = try fixture.database.configurationState()
+      let directoriesBeforeFailure = try fixture.database.pluginOwnedDirectories()
+      await #expect(throws: (any Error).self) {
+        try await fixture.installPlugin(version: 3, managed: managed, archives: archives)
+      }
+      #expect(try fixture.database.configurationState() == beforeFailure)
+      #expect(try fixture.database.pluginOwnedDirectories() == directoriesBeforeFailure)
+      #expect(try pid(await client.call(toolName: "fixture.identity")) == newPID)
+      #expect(alive(oldPID))
+      snapshot = try await fixture.service.changePlugins(
+        managed
+          ? .uninstallArtifact(installationID: oldRecord.id)
+          : .removeDevelopment(installationID: oldRecord.id),
+        expectedRevision: snapshot.state.revision)
+      #expect(FileManager.default.fileExists(atPath: oldRecord.source.root.path))
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")])))
+          == oldPID)
+      _ = try await client.call(
+        toolName: "fixture.finish", arguments: .object(["handle": .string("old-plugin")]))
+      try await wait { !alive(oldPID) }
+      snapshot = try await fixture.service.changePlugins(
+        .recover, expectedRevision: snapshot.state.revision)
+      if managed {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while FileManager.default.fileExists(atPath: oldRecord.source.root.path),
+          ContinuousClock.now < deadline
+        {
+          try await Task.sleep(for: .milliseconds(10))
+          snapshot = try await fixture.service.changePlugins(
+            .recover, expectedRevision: snapshot.state.revision)
+        }
+      }
+      #expect(FileManager.default.fileExists(atPath: oldRecord.source.root.path) == !managed)
+      let retainedPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("removed-plugin")])))
+      let selected = try #require(snapshot.state.selectedInstallations["live-fixture"])
+      snapshot = try await fixture.service.changePlugins(
+        managed
+          ? .uninstallArtifact(installationID: selected)
+          : .removeDevelopment(installationID: selected), expectedRevision: snapshot.state.revision)
+      let removedCall = try await client.call(toolName: "fixture.identity")
+      #expect(removedCall.result.objectValue?["isError"] == .bool(true))
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("removed-plugin")])))
+          == retainedPID)
+      _ = try await client.call(
+        toolName: "fixture.finish", arguments: .object(["handle": .string("removed-plugin")]))
+      try await wait { !alive(retainedPID) }
+      _ = try await fixture.service.changePlugins(
+        .recover, expectedRevision: snapshot.state.revision)
+      await observer.disconnect()
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await observer.disconnect()
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func listenerStopJoinsPluginPublication(cancel: Bool) async throws {
+    let bookmark = GatedBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmark)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    bookmark.arm()
+    let mutation = Task {
+      try await fixture.service.changePlugins(
+        .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+    }
+    do {
+      try await wait { bookmark.entered }
+      let stopping = Task { await fixture.service.stop() }
+      if cancel { mutation.cancel() }
+      bookmark.release()
+      if cancel {
+        await #expect(throws: CancellationError.self) { try await mutation.value }
+      } else {
+        #expect(try await mutation.value.state.revision == 1)
+      }
+      await stopping.value
+      #expect(await fixture.service.snapshot().state == .stopped)
+      #expect(try fixture.database.pluginStoreSnapshot().revision == (cancel ? 0 : 1))
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+      await client.disconnect()
+      try await fixture.service.start(profile: .chatGPTOperate)
+      let reconnected = try await fixture.connect()
+      _ = try pid(await reconnected.call(toolName: "fixture.identity"))
+      await reconnected.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      mutation.cancel()
+      bookmark.release()
+      _ = await mutation.result
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func publicationCapacityIncludesEveryExistingAndPreparedRuntime() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    let profiles = try (0..<65).map { number in
+      ProfileGrantConfig(
+        id: try #require(GatewayProfileID(rawValue: "client-\(number)")),
+        capabilities: ["workspace.list"], workspaces: ["fixture"], allowedCallers: [.localMCP])
+    }
+    let configuration = GatewayConfiguration(profiles: profiles, workspaceDirectory: fixture.root)
+    _ = try await fixture.control.activateManifest(configuration.exportedTOML())
+    for profile in profiles { try fixture.database.saveProfile(profile.grant) }
+    try await fixture.service.start(profile: profiles[0].id)
+    var clients: [GatewayClientSession] = []
+    do {
+      for profile in profiles {
+        try await fixture.service.selectProfile(profile.id)
+        clients.append(try await fixture.connect())
+      }
+      let before = try fixture.database.configurationState()
+      await #expect(
+        throws: GatewaySocketError.invalidConfiguration(
+          "The gateway has reached its owned runtime capacity.")
+      ) {
+        try await fixture.service.changePlugins(
+          .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+      }
+      #expect(try fixture.database.configurationState() == before)
+      #expect(await fixture.service.snapshot().connectionCount == 65)
+      for client in clients {
+        #expect(
+          try await client.call(toolName: "workspace.list").result.objectValue?["isError"]
+            != .bool(true))
+        await client.disconnect()
+      }
+      await fixture.service.stop()
+    } catch {
+      for client in clients { await client.disconnect() }
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test(arguments: ["publish", "cancel", "profile", "manifest"])
+  func pluginPublicationCoordinatesExistingAndNewProfileAdmissions(outcome: String) async throws {
+    let bookmark = GatedBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmark)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let future = try #require(GatewayProfileID(rawValue: "future-client"))
+    var configuration = try await fixture.control.activeConfiguration()
+    let original = try #require(configuration.profiles.first)
+    for id in [GatewayProfileID.cloudflareOperate, future] {
+      var profile = original
+      profile.id = id
+      configuration.profiles.append(profile)
+      try fixture.database.saveProfile(profile.grant)
+    }
+    _ = try await fixture.control.activateManifest(configuration.exportedTOML())
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let first = try await fixture.connect()
+    try await fixture.service.selectProfile(.cloudflareOperate)
+    let second = try await fixture.connect()
+    let previous = try pid(
+      await first.call(toolName: "fixture.start", arguments: .object(["handle": .string("live")])))
+    let secondPID = try pid(await second.call(toolName: "fixture.identity"))
+    let before = try fixture.database.configurationState()
+    bookmark.arm()
+    let mutation = Task {
+      try await fixture.service.changePlugins(
+        .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+    }
+    var connecting: Task<GatewayClientSession, any Error>?
+    do {
+      try await wait { bookmark.entered }
+      #expect(try fixture.database.configurationState() == before)
+      #expect(try pid(await first.call(toolName: "fixture.identity")) == previous)
+      #expect(try pid(await second.call(toolName: "fixture.identity")) == secondPID)
+      await #expect(throws: PluginHostError.changeInProgress) {
+        try await fixture.service.changePlugins(
+          .enabled(pluginID: "competing", true), expectedRevision: 0)
+      }
+      try await fixture.service.selectProfile(future)
+      connecting = Task { try await fixture.connect() }
+      let deadline = ContinuousClock.now + .seconds(5)
+      while await fixture.service.snapshot().connectionCount < 3, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      #expect(await fixture.service.snapshot().connectionCount == 3)
+      if outcome == "cancel" { mutation.cancel() }
+      if outcome == "profile" {
+        var grant = try #require(before.profiles.first { $0.id == .chatGPTOperate })
+        grant.capabilityIDs = []
+        grant.mcpServerIDs = []
+        try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+        let denied = try await first.call(
+          toolName: "fixture.inspect", arguments: .object(["handle": .string("live")]))
+        #expect(denied.result.objectValue?["isError"] == .bool(true))
+      }
+      if outcome == "manifest" {
+        let manifest = await fixture.control.manifestStore.manifestURL
+        try "schema_version = 999\n".write(
+          to: manifest, atomically: true, encoding: .utf8)
+      }
+      bookmark.release()
+      if outcome == "publish" {
+        #expect(try await mutation.value.state.revision == 1)
+      } else {
+        await #expect(throws: (any Error).self) { try await mutation.value }
+        #expect(try fixture.database.pluginStoreSnapshot() == before.plugins)
+        #expect(try fixture.database.workspaces() == before.workspaces)
+      }
+      let third = try await #require(connecting).value
+      _ = try pid(await third.call(toolName: "fixture.identity"))
+      await third.disconnect()
+      connecting = nil
+      if outcome == "publish" {
+        #expect(try pid(await first.call(toolName: "fixture.identity")) != previous)
+        #expect(try pid(await second.call(toolName: "fixture.identity")) != secondPID)
+        #expect(
+          try pid(
+            await first.call(
+              toolName: "fixture.inspect", arguments: .object(["handle": .string("live")])))
+            == previous)
+        try await wait { !alive(secondPID) }
+      } else {
+        #expect(try pid(await second.call(toolName: "fixture.identity")) == secondPID)
+        #expect(alive(previous))
+      }
+      await first.disconnect()
+      await second.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      mutation.cancel()
+      bookmark.release()
+      _ = await mutation.result
+      if let connecting, case .success(let third) = await connecting.result {
+        await third.disconnect()
+      }
+      await first.disconnect()
+      await second.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
   @Test
   func connectedClientUsesNewConfigurationWhileOldNativeWorkKeepsItsOwner() async throws {
     let fixture = try GenerationFixture()
@@ -770,6 +1122,9 @@ private struct GenerationFixture: Sendable {
       directories: directories, database: database,
       manifestStore: try AtomicManifestStore(manifestURL: directories.manifest, database: database),
       secretStore: secrets, openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secrets),
+      gatewayExecutablePath: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent(".build/debug/computer-mcp").path,
       bookmarkService: bookmarkService, bundledPlugins: .init(packages: [], issues: []))
     service = AppGatewayService(
       controlPlane: control,
@@ -815,6 +1170,57 @@ private struct GenerationFixture: Sendable {
       ]), workspaceDirectory: root)
     if try database.profiles().isEmpty { try database.saveProfile(profile.grant) }
     _ = try await control.activateManifest(configuration.exportedTOML())
+  }
+
+  func installPlugin(version: Int, managed: Bool, archives: ArchiveFixture) async throws
+    -> PluginHostSnapshot
+  {
+    let manifest = """
+      id = 'live-fixture'
+      name = 'Live Fixture'
+      version = '\(version).0.0'
+      [compatibility]
+      minimum_host = '1.0.0'
+      architectures = ['arm64', 'x86_64']
+      [[mcp]]
+      id = 'native'
+      transport = 'stdio'
+      executable = { path = 'provider' }
+      """
+    let provider =
+      "#!/usr/bin/python3\n"
+      + Self.provider.replacingOccurrences(
+        of: "int(sys.argv[2])", with: String(version)
+      ).replacingOccurrences(
+        of: "uri, instance, revision, resources =",
+        with: "if version == 3: sys.exit(2)\nuri, instance, revision, resources =")
+    let revision = try database.pluginStoreSnapshot().revision
+    if managed {
+      let archive = try await BlockingOperationExecutor(label: "live-plugin-archive").perform {
+        try archives.archive([
+          .init(name: PluginManifest.filename, content: manifest),
+          .init(name: "provider", content: provider, mode: 0o755),
+        ])
+      }
+      let digest = SHA256.hash(data: try Data(contentsOf: archive)).map {
+        String(format: "%02x", $0)
+      }.joined()
+      return try await service.changePlugins(
+        .installArchive(
+          archive: archive, sha256: digest, pluginID: "live-fixture",
+          version: PluginVersion("\(version).0.0")),
+        expectedRevision: revision)
+    }
+    let package = root.appendingPathComponent("plugin-\(version)")
+    try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+    try manifest.write(
+      to: package.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8
+    )
+    let executable = package.appendingPathComponent("provider")
+    try provider.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    return try await service.changePlugins(
+      .registerDevelopment(package), expectedRevision: revision)
   }
 
   func connect() async throws -> GatewayClientSession {

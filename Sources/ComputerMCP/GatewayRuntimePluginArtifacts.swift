@@ -2,7 +2,8 @@ import Foundation
 
 extension GatewayRuntime {
   static func retainPluginArtifacts(
-    state: PluginStoreSnapshot, plugins: [ResolvedPlugin]?, database: GatewayDatabase?
+    state: PluginStoreSnapshot, plugins: [ResolvedPlugin]?, database: GatewayDatabase?,
+    transaction: PluginInstallationStorage? = nil
   ) throws -> [PluginArtifactLease] {
     let records: [PluginInstallationRecord]
     if let plugins {
@@ -26,10 +27,14 @@ extension GatewayRuntime {
         directory.pluginID == record.pluginID,
         directory.identity.url.appendingPathComponent("package").path == record.source.root.path
       else { throw PluginStoreError.invalidState }
-      let storage = try PluginInstallationStorage(
-        at: directory.identity.url.deletingLastPathComponent())
-      defer { storage.finishTransaction() }
-      leases.append(try storage.retainArtifact(directory.identity))
+      let root = directory.identity.url.deletingLastPathComponent()
+      if let transaction, transaction.root.path == root.path {
+        leases.append(try transaction.retainArtifact(directory.identity))
+      } else {
+        let storage = try PluginInstallationStorage(at: root)
+        defer { storage.finishTransaction() }
+        leases.append(try storage.retainArtifact(directory.identity))
+      }
     }
     return leases
   }

@@ -101,6 +101,8 @@ package actor AppGatewayService {
   private var startedAt: Date?
   private var lastError: String?
   private var pluginChangeInProgress = false
+  private var publicationWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+  private var preparingRuntimeCount = 0
   private var runtimes: [RuntimeKey: AdmittedRuntime] = [:]
   private var pendingRuntimes: [RuntimeKey: PendingRuntime] = [:]
   private var retiredRuntimes: [RuntimeKey: [UUID: GatewayRuntime]] = [:]
@@ -300,8 +302,7 @@ package actor AppGatewayService {
 
   private func requireAdmission(epoch: UUID) throws {
     try Task.checkCancellation()
-    guard listenerEpoch == epoch, state == .running || state == .starting,
-      !pluginChangeInProgress
+    guard listenerEpoch == epoch, state == .running || state == .starting
     else { throw GatewaySocketError.notConnected }
   }
 
@@ -310,9 +311,19 @@ package actor AppGatewayService {
     -> AdmittedRuntime
   {
     try requireAdmission(epoch: epoch)
+    if pluginChangeInProgress {
+      if let existing = runtimes[key] { return existing }
+      try await waitForPublication()
+      return try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    }
     if let pending = pendingRuntimes[key] { return try await pending.task.value }
     let current = try await controlPlane.gatewayInputs()
     try requireAdmission(epoch: epoch)
+    if pluginChangeInProgress {
+      if let existing = runtimes[key] { return existing }
+      try await waitForPublication()
+      return try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    }
     if let pending = pendingRuntimes[key] { return try await pending.task.value }
     if let existing = runtimes[key], existing.inputs.configuration == current.configuration,
       existing.inputs.workspaces == current.workspaces, existing.inputs.plugins == current.plugins
@@ -321,7 +332,9 @@ package actor AppGatewayService {
     }
     reapRetiredRuntimes()
     let retiredCount = retiredRuntimes.values.reduce(0) { $0 + $1.count }
-    guard runtimes.count + retiredCount + retiringRuntimes.count + pendingRuntimes.count < 128
+    guard
+      runtimes.count + retiredCount + retiringRuntimes.count + pendingRuntimes.count
+        + preparingRuntimeCount < 128
     else {
       throw GatewaySocketError.invalidConfiguration(
         "The gateway has reached its owned runtime capacity.")
@@ -597,7 +610,7 @@ package actor AppGatewayService {
     )
   }
 
-  /// The listener remains bound, but admission is paused while an idle gateway adopts new registrations.
+  /// Existing keys continue on their admitted generation while new keys await publication.
   package func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
   {
@@ -606,21 +619,116 @@ package actor AppGatewayService {
     }
     pluginChangeInProgress = true
     lifecycleInProgress = true
-    defer { releaseLifecycle() }
-    let activeServer = server
-    if let activeServer, !(await activeServer.reserveIdleConfigurationChange()) {
+    defer {
       pluginChangeInProgress = false
-      throw PluginHostError.connectedClients
+      let waiters = Array(publicationWaiters.values)
+      publicationWaiters.removeAll()
+      for waiter in waiters { waiter.resume() }
+      releaseLifecycle()
     }
+    // Finish admissions that already own construction; later new keys wait above.
+    let pending = pendingRuntimes.values.map(\.task)
+    for task in pending { _ = try? await task.value }
+    try Task.checkCancellation()
+    return try await controlPlane.applyPluginChange(change, expectedRevision: expectedRevision) {
+      [self] expected, proposed, storage in
+      try await preparePluginPublication(expected: expected, proposed: proposed, storage: storage)
+    }
+  }
+
+  private func waitForPublication() async throws {
+    let id = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, any Error>) in
+        if Task.isCancelled {
+          continuation.resume(throwing: CancellationError())
+        } else if !pluginChangeInProgress {
+          continuation.resume()
+        } else if publicationWaiters.count >= 128 {
+          continuation.resume(
+            throwing: GatewaySocketError.invalidConfiguration(
+              "The gateway has reached its configuration admission capacity."))
+        } else {
+          publicationWaiters[id] = continuation
+        }
+      }
+    } onCancel: {
+      Task { await self.cancelPublicationWaiter(id) }
+    }
+  }
+
+  private func cancelPublicationWaiter(_ id: UUID) {
+    publicationWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+  }
+
+  private func preparePluginPublication(
+    expected: AppControlPlaneService.GatewayInputs, proposed: PluginStoreSnapshot,
+    storage: PluginInstallationStorage?
+  ) async throws {
+    let epoch = listenerEpoch
+    let keys = Array(runtimes.keys)
+    reapRetiredRuntimes()
+    let retiredCount = retiredRuntimes.values.reduce(0) { $0 + $1.count }
+    let required = max(1, keys.count)
+    guard
+      runtimes.count + retiredCount + retiringRuntimes.count + pendingRuntimes.count + required
+        <= 128
+    else {
+      throw GatewaySocketError.invalidConfiguration(
+        "The gateway has reached its owned runtime capacity.")
+    }
+    preparingRuntimeCount = required
+    defer { preparingRuntimeCount = 0 }
+    let inputs = AppControlPlaneService.GatewayInputs(
+      configuration: expected.configuration,
+      persisted: GatewayDatabase.ConfigurationState(
+        workspaces: expected.workspaces, workspaceAliases: expected.persisted.workspaceAliases,
+        profiles: expected.profiles, plugins: proposed))
+    var candidates: [RuntimeKey: GatewayRuntimePreparation] = [:]
+    var validation: GatewayRuntimePreparation?
     do {
-      let result = try await controlPlane.applyPluginChange(
-        change, expectedRevision: expectedRevision)
-      await activeServer?.finishConfigurationChange()
-      pluginChangeInProgress = false
-      return result
+      if keys.isEmpty {
+        validation = try await controlPlane.prepareGateway(
+          inputs: inputs, caller: .localCLI, profileID: .localAdmin, trustedPrincipalID: nil,
+          terminalSessions: terminalSessions, artifactStorage: storage)
+      } else {
+        for key in keys {
+          candidates[key] = try await controlPlane.prepareGateway(
+            inputs: inputs, caller: key.caller, profileID: key.profileID,
+            trustedPrincipalID: key.principalID, terminalSessions: terminalSessions,
+            artifactStorage: storage)
+        }
+      }
+      try Task.checkCancellation()
+      guard listenerEpoch == epoch, pluginChangeInProgress else {
+        throw GatewaySocketError.notConnected
+      }
+      var resolution = GatewayConfigurationResolution()
+      for candidate in Array(candidates.values) + [validation].compactMap({ $0 }) {
+        try candidate.runtime.requirePreparedPublication()
+        try resolution.merge(candidate.resolution)
+      }
+      try controlPlane.manifestStore.withCurrentConfiguration(expected.configuration) {
+        let persisted = try controlPlane.database.savePluginStoreSnapshot(
+          proposed, expectedRevision: expected.plugins.revision,
+          expectedConfiguration: expected.persisted, resolution: resolution)
+        let published = AppControlPlaneService.GatewayInputs(
+          configuration: expected.configuration, persisted: persisted)
+        for (key, candidate) in candidates {
+          if let previous = runtimes.updateValue((published, candidate.runtime), forKey: key) {
+            retiredRuntimes[key, default: [:]][previous.gateway.generationID] = previous.gateway
+          }
+          candidate.runtime.publishPrepared()
+          observe(candidate.runtime, key: key, epoch: epoch)
+        }
+        for key in candidates.keys { changes(for: key).send() }
+        reapRetiredRuntimes()
+      }
+      await validation?.runtime.shutdown()
     } catch {
-      await activeServer?.finishConfigurationChange()
-      pluginChangeInProgress = false
+      for candidate in candidates.values { await candidate.runtime.shutdown() }
+      await validation?.runtime.shutdown()
       throw error
     }
   }

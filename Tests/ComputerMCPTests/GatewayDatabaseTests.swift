@@ -8,6 +8,214 @@ import Testing
 @Suite
 
 final class GatewayDatabaseTests {
+  @Test(arguments: [false, true], [false, true])
+  func workspaceMutationsPublishOnlyCommittedAuthorization(rollback: Bool, removing: Bool)
+    async throws
+  {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let path = root.appendingPathComponent("state.sqlite").path
+    let stream = try { () -> AsyncStream<Void> in
+      let database = try GatewayDatabase(path: path)
+      for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
+        try database.saveWorkspace(
+          RegisteredWorkspace(
+            id: id, displayName: "Shared", rootPath: root.path,
+            createdAt: Date(timeIntervalSince1970: date)))
+      }
+      if removing {
+        let plan = try database.workspaceDeduplicationPlan()
+        _ = try database.applyWorkspaceDeduplication(
+          expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
+      }
+      var profile = ProfileGrant.operate
+      profile.workspaceIDs = ["duplicate"]
+      try database.saveProfile(profile)
+      let before = try database.configurationState()
+      let plan = try database.workspaceDeduplicationPlan()
+      let pending = OperationTicket(
+        id: "pending", capabilityID: "file.trash", caller: .secureTunnel,
+        profileID: profile.id, inputDigest: "fixture", state: .approved,
+        expiresAt: Date().addingTimeInterval(3_600))
+      try database.saveOperationTicket(pending)
+      let ticket = try #require(try database.operationTicket(id: pending.id))
+      let connection = try DatabaseQueue(path: path)
+      defer { try? connection.close() }
+      if rollback {
+        try connection.write {
+          let operation =
+            removing ? "DELETE ON workspaces" : "INSERT ON workspaceDeduplicationReceipts"
+          try $0.execute(
+            sql: """
+              CREATE TRIGGER refuse_mutation BEFORE \(operation)
+              BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END
+              """)
+        }
+      }
+      let stream = database.profileChanges(for: profile.id)
+      do {
+        if removing {
+          try database.removeWorkspace(id: "duplicate", expectedConfiguration: before)
+        } else {
+          _ = try database.applyWorkspaceDeduplication(
+            expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
+        }
+        #expect(!rollback)
+      } catch is DatabaseError {
+        #expect(rollback)
+      }
+      if rollback {
+        #expect(try database.configurationState() == before)
+        #expect(try database.operationTicket(id: "pending") == ticket)
+      } else {
+        #expect(try database.profiles().first?.workspaceIDs == (removing ? [] : ["canonical"]))
+        #expect(try database.operationTicket(id: "pending")?.state == .denied)
+        #expect(try database.workspaces().map(\.id) == (removing ? [] : ["canonical"]))
+      }
+      let receipts = try connection.read {
+        try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM workspaceDeduplicationReceipts")
+      }
+      #expect(receipts == (rollback && !removing ? 0 : 1))
+      return stream
+    }()
+    // Database destruction finishes the stream, making absence of a rollback event deterministic.
+    var notifications = 0
+    for await _ in stream { notifications += 1 }
+    #expect(notifications == (rollback ? 0 : 1))
+  }
+
+  @Test(arguments: [false, true], ["profile", "bookmark", "plugin"])
+  func workspaceTransactionsRejectChangedPreparationInputs(removing: Bool, change: String) throws {
+    let database = try GatewayDatabase(inMemory: ())
+    for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
+      try database.saveWorkspace(
+        RegisteredWorkspace(
+          id: id, displayName: "Shared", rootPath: "/tmp/shared-workspace",
+          createdAt: Date(timeIntervalSince1970: date)))
+    }
+    var profile = ProfileGrant.operate
+    profile.workspaceIDs = ["duplicate"]
+    try database.saveProfile(profile)
+    let expected = try database.configurationState()
+    let plan = try database.workspaceDeduplicationPlan()
+    switch change {
+    case "profile":
+      profile.capabilityIDs = ["workspace.list"]
+      try database.saveProfile(profile)
+    case "bookmark":
+      var workspace = try #require(try database.workspace(id: "canonical"))
+      workspace.bookmarkData = Data([1, 2, 3])
+      try database.saveWorkspace(workspace)
+    default:
+      var plugins = expected.plugins
+      plugins.revision += 1
+      try database.savePluginStoreSnapshot(plugins, expectedRevision: expected.plugins.revision)
+    }
+    let changed = try database.configurationState()
+    #expect(throws: GatewayDatabaseError.configurationChanged) {
+      if removing {
+        try database.removeWorkspace(id: "duplicate", expectedConfiguration: expected)
+      } else {
+        _ = try database.applyWorkspaceDeduplication(
+          expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false,
+          expectedConfiguration: expected)
+      }
+    }
+    #expect(try database.configurationState() == changed)
+  }
+
+  @Test
+  func historicalAliasRootBindingUsesCurrentCanonicalRegistration() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let path = root.appendingPathComponent("state.sqlite").path
+    let database = try GatewayDatabase(path: path)
+    for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
+      try database.saveWorkspace(
+        RegisteredWorkspace(
+          id: id, displayName: "Shared", rootPath: root.path,
+          createdAt: Date(timeIntervalSince1970: date)))
+    }
+    let plan = try database.workspaceDeduplicationPlan()
+    _ = try database.applyWorkspaceDeduplication(
+      expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
+    let connection = try DatabaseQueue(path: path)
+    defer { try? connection.close() }
+    try connection.write {
+      try $0.execute(sql: "UPDATE workspaceCanonicalRoots SET workspaceID = 'duplicate'")
+    }
+    let existing = try database.registerWorkspaceIdempotently(
+      RegisteredWorkspace(displayName: "Shared", rootPath: root.path))
+    #expect(!existing.created)
+    #expect(existing.workspace.id == "canonical")
+    var moved = existing.workspace
+    moved.rootPath = root.appendingPathComponent("moved").path
+    try database.saveWorkspace(moved)
+    let replacement = try database.registerWorkspaceIdempotently(
+      RegisteredWorkspace(id: "replacement", displayName: "New", rootPath: root.path))
+    #expect(replacement.created)
+    #expect(replacement.workspace.id == "replacement")
+    #expect(try database.workspace(id: "duplicate")?.rootPath == moved.rootPath)
+  }
+
+  @Test
+  func workspaceDeduplicationRevokesTicketsOnceAndPreservesCanonicalRegistration() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    for id in ["a", "b"] {
+      for (suffix, date) in [("duplicate", 2.0), ("canonical", 1.0)] {
+        try database.saveWorkspace(
+          RegisteredWorkspace(
+            id: "\(id)-\(suffix)", displayName: id, rootPath: "/tmp/dedup-\(id)",
+            createdAt: Date(timeIntervalSince1970: date)))
+      }
+    }
+    var profile = ProfileGrant.operate
+    profile.workspaceIDs = ["a-duplicate", "b-duplicate", "unrelated"]
+    try database.saveProfile(profile)
+    let before = try #require(try database.profiles().first)
+    let states: [OperationTicketState] = [
+      .prepared, .pendingApproval, .approved, .executing, .succeeded,
+    ]
+    for state in states {
+      try database.saveOperationTicket(
+        OperationTicket(
+          id: state.rawValue, capabilityID: "file.trash", caller: .secureTunnel,
+          profileID: profile.id, workspaceID: "a-duplicate", inputDigest: "fixture",
+          state: state, expiresAt: Date().addingTimeInterval(60),
+          authorizationRevision: before.authorizationRevision))
+    }
+    try database.saveOperationTicket(
+      OperationTicket(
+        id: "other-profile", capabilityID: "file.trash", caller: .secureTunnel,
+        profileID: .chatGPTObserve, inputDigest: "fixture", state: .approved,
+        expiresAt: Date().addingTimeInterval(60)))
+    let plan = try database.workspaceDeduplicationPlan()
+    let result = try database.applyWorkspaceDeduplication(
+      expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
+    let saved = try #require(try database.profiles().first)
+    #expect(saved.authorizationRevision == before.authorizationRevision + 1)
+    #expect(saved.workspaceIDs == ["a-canonical", "b-canonical", "unrelated"])
+    #expect(result.updatedProfileIDs == [profile.id.rawValue])
+    for state in states {
+      let ticket = try #require(try database.operationTicket(id: state.rawValue))
+      if [.prepared, .pendingApproval, .approved].contains(state) {
+        #expect(ticket.state == .denied)
+        #expect(ticket.failureCode == "operations.authorization_changed")
+      } else {
+        #expect(ticket.state == state)
+      }
+    }
+    #expect(try database.operationTicket(id: "other-profile")?.state == .approved)
+    for id in ["a", "b"] {
+      let registration = try database.registerWorkspaceIdempotently(
+        RegisteredWorkspace(displayName: id, rootPath: "/tmp/dedup-\(id)"))
+      #expect(!registration.created)
+      #expect(registration.workspace.id == "\(id)-canonical")
+    }
+  }
+
   @Test
   func configurationSnapshotAllowsUnrelatedRuntimeEvidenceDuringCommit() throws {
     let database = try GatewayDatabase(inMemory: ())

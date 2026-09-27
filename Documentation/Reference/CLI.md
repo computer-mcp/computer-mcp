@@ -369,6 +369,12 @@ explicit choice to keep the oldest registration metadata. The operation never
 deletes the workspace directory; retired ids remain aliases for historical
 references.
 
+Removal and deduplication commit workspace records, affected profile grants, and
+approval invalidation together. A failed commit leaves them unchanged. Each
+affected profile receives one new authorization revision; already executing
+operations and historical audit records retain their original state. Concurrent
+configuration changes invalidate prepared workspace changes and require a retry.
+
 ## Host permission commands
 
 `profile permissions` updates one profile's host authority. Modes are

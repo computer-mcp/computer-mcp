@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import GRDB
 import MCP
 import Testing
 
@@ -9,6 +10,89 @@ import Testing
 @Suite(.serialized)
 
 final class AppControlPlaneServiceTests {
+  @Test(arguments: [false, true])
+  func workspaceChangesPreserveResolvedLegacyPermissions(removing: Bool) async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let configuration = GatewayConfiguration(
+      profiles: [
+        .init(
+          id: .chatGPTOperate, capabilities: ["file.read", "file.write"],
+          allowedCallers: [.secureTunnel], mode: .workspaceOperations),
+        .init(
+          id: .chatGPTObserve, capabilities: ["workspace.list"], allowedCallers: [.secureTunnel]),
+        .init(
+          id: .cloudflareObserve, capabilities: ["workspace.list"],
+          allowedCallers: [.cloudflareTunnel]),
+      ], workspaceDirectory: fixture.root)
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
+      try fixture.database.saveWorkspace(
+        RegisteredWorkspace(
+          id: id, displayName: "Shared", rootPath: fixture.root.path,
+          createdAt: Date(timeIntervalSince1970: date)))
+    }
+    var profile = ProfileGrant.operate
+    profile.workspaceIDs = ["duplicate", "unrelated"]
+    profile.confirmationPolicy = .allWrites
+    try fixture.database.saveProfile(profile)
+    let connection = try DatabaseQueue(path: fixture.directories.database.path)
+    try await connection.write {
+      try $0.execute(sql: "UPDATE profiles SET authorizationRevision = 0")
+    }
+    try connection.close()
+    if removing {
+      try await fixture.controlPlane.removeWorkspace(id: "duplicate")
+    } else {
+      let plan = try fixture.database.workspaceDeduplicationPlan()
+      _ = try await fixture.controlPlane.applyWorkspaceDeduplication(
+        expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
+    }
+    let saved = try #require(try fixture.database.profiles().first { $0.id == profile.id })
+    #expect(saved.capabilityIDs == ["file.read", "file.write"])
+    #expect(saved.workspaceIDs == (removing ? ["unrelated"] : ["canonical", "unrelated"]))
+    #expect(saved.allowedCallers == [.secureTunnel])
+    #expect(saved.mode == .workspaceOperations)
+    #expect(saved.confirmationPolicy == .allWrites)
+    #expect(saved.authorizationRevision == 1)
+  }
+
+  @Test
+  func workspaceRemovalRollsBackGrantsAndTicketsWhenDeletionFails() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    try fixture.database.saveWorkspace(
+      RegisteredWorkspace(id: "removed", displayName: "Removed", rootPath: fixture.root.path))
+    for id in [GatewayProfileID.chatGPTObserve, .chatGPTOperate] {
+      try fixture.database.saveProfile(
+        ProfileGrant(
+          id: id, capabilityIDs: ["workspace.list"], workspaceIDs: ["removed"],
+          allowedCallers: [.secureTunnel]))
+    }
+    try fixture.database.saveOperationTicket(
+      OperationTicket(
+        id: "pending", capabilityID: "file.trash", caller: .secureTunnel,
+        profileID: .chatGPTOperate, workspaceID: "removed", inputDigest: "fixture",
+        state: .approved, expiresAt: Date().addingTimeInterval(60)))
+    let before = try fixture.database.configurationState()
+    let ticket = try fixture.database.operationTicket(id: "pending")
+    let connection = try DatabaseQueue(path: fixture.directories.database.path)
+    try await connection.write {
+      try $0.execute(
+        sql: """
+          CREATE TRIGGER refuse_workspace_deletion BEFORE DELETE ON workspaces
+          BEGIN SELECT RAISE(ABORT, 'fixture deletion failure'); END
+          """)
+    }
+    do {
+      try await fixture.controlPlane.removeWorkspace(id: "removed")
+      Issue.record("Expected the final deletion to fail")
+    } catch is DatabaseError {}
+    #expect(try fixture.database.configurationState() == before)
+    #expect(try fixture.database.operationTicket(id: "pending") == ticket)
+    try connection.close()
+  }
+
   @Test
   func startDuringStopWaitsForOwnedListenerCleanup() async throws {
     let fixture = try AppControlPlaneServiceFixture()

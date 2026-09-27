@@ -253,28 +253,57 @@ package actor AppControlPlaneService {
   package func applyWorkspaceDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool
-  ) throws -> WorkspaceDeduplicationResult {
-    try database.applyWorkspaceDeduplication(
-      expectedPlanDigest: expectedPlanDigest,
-      allowMetadataConflicts: allowMetadataConflicts
-    )
+  ) async throws -> WorkspaceDeduplicationResult {
+    let expected = try database.configurationState()
+    let plan = try database.workspaceDeduplicationPlan()
+    let resolved = try await resolveLegacyWorkspaceProfiles(
+      expected, workspaceIDs: Set(plan.groups.flatMap(\.duplicateWorkspaceIDs)))
+    try Task.checkCancellation()
+    let commit = {
+      try self.database.applyWorkspaceDeduplication(
+        expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
+        expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
+    }
+    if let configuration = resolved.configuration {
+      return try manifestStore.withCurrentConfiguration(configuration, publication: commit)
+    }
+    return try commit()
   }
 
   package func removeWorkspace(id: String) async throws {
-    guard let workspace = try database.workspace(id: id) else {
+    let expected = try database.configurationState()
+    let canonicalID = expected.workspaceAliases[id] ?? id
+    guard expected.workspaces.contains(where: { $0.id == canonicalID }) else {
       throw AppControlPlaneServiceError.unknownWorkspace(id)
     }
-    let canonicalID = workspace.id
-    let persistedProfiles = try database.profiles()
-    let hasLegacyReferences = persistedProfiles.contains {
-      $0.authorizationRevision == 0 && $0.workspaceIDs.contains(canonicalID)
+    let removedIDs = Set(
+      expected.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [canonicalID])
+    let resolved = try await resolveLegacyWorkspaceProfiles(expected, workspaceIDs: removedIDs)
+    try Task.checkCancellation()
+    let commit = {
+      try self.database.removeWorkspace(
+        id: canonicalID, expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
     }
-    let effectiveProfiles = hasLegacyReferences ? try await profileGrants() : persistedProfiles
-    for var profile in effectiveProfiles where profile.workspaceIDs.contains(canonicalID) {
-      profile.workspaceIDs.remove(canonicalID)
-      try database.saveProfile(profile, expectedRevision: profile.authorizationRevision)
+    if let configuration = resolved.configuration {
+      try manifestStore.withCurrentConfiguration(configuration, publication: commit)
+    } else {
+      try commit()
     }
-    try database.deleteWorkspace(id: canonicalID)
+  }
+
+  private func resolveLegacyWorkspaceProfiles(
+    _ expected: GatewayDatabase.ConfigurationState, workspaceIDs: Set<String>
+  ) async throws -> (profiles: [ProfileGrant], configuration: GatewayConfiguration?) {
+    guard
+      expected.profiles.contains(where: {
+        $0.authorizationRevision == 0 && !$0.workspaceIDs.isDisjoint(with: workspaceIDs)
+      })
+    else { return ([], nil) }
+    let inputs = try gatewayInputs()
+    guard inputs.persisted == expected else { throw GatewayDatabaseError.configurationChanged }
+    let profiles = try await profileGrants()
+    try requireCurrentGatewayInputs(inputs)
+    return (profiles, inputs.configuration)
   }
 
   package func profileGrants() async throws -> [ProfileGrant] {

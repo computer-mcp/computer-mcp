@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Subprocess
 import System
+import os
 
 internal enum ShellLaunchMode: String, Codable, Sendable {
   case shell
@@ -232,6 +233,11 @@ internal protocol ShellManaging: Sendable {
 
   func write(sessionID: String, data: Data, close: Bool) throws -> ShellWriteResult
   func cancel(sessionID: String) throws -> ShellCancelResult
+  func shutdown() async
+}
+
+extension ShellManaging {
+  func shutdown() async {}
 }
 
 /// Listener-owned output storage. Possessing this store never grants tool authorization.
@@ -358,6 +364,17 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
 }
 
 internal final class SubprocessShellRuntime: ShellManaging, Sendable {
+  private struct ExecutionOwner {
+    let session: ShellSession
+    let task: Task<Void, Never>
+  }
+
+  private struct ExecutionState {
+    var running: [String: ExecutionOwner] = [:]
+    var shutdown: Task<Void, Never>?
+  }
+
+  private let executionState = OSAllocatedUnfairLock(initialState: ExecutionState())
   private let sessions: GatewayTerminalSessions
   private let scope: GatewayTerminalSessions.Scope
   private let ownedWork: GatewayOwnedWork?
@@ -479,16 +496,20 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
       terminationGraceMilliseconds: terminationGraceMilliseconds
     )
 
-    try sessions.insert(
-      session, scope: scope, maxSessions: maxSessions, isRegisteredProcess: isRegisteredProcess)
-
-    let ownership = ownedWork?.retain(.shell, workspaceID: workspaceID, resourceID: session.id)
-    Task.detached(priority: .userInitiated) { [sessions] in
-      defer {
-        ownership?.finish()
-        sessions.prune()
+    try executionState.withLock { state in
+      guard state.shutdown == nil else { throw ShellRuntimeError.stopped }
+      try sessions.insert(
+        session, scope: scope, maxSessions: maxSessions, isRegisteredProcess: isRegisteredProcess)
+      let ownership = ownedWork?.retain(.shell, workspaceID: workspaceID, resourceID: session.id)
+      let task = Task.detached(priority: .userInitiated) { [sessions, weak self] in
+        defer {
+          ownership?.finish()
+          sessions.prune()
+          _ = self?.executionState.withLock { $0.running.removeValue(forKey: session.id) }
+        }
+        await Self.launch(resolved, session: session)
       }
-      await Self.launch(resolved, session: session)
+      state.running[session.id] = ExecutionOwner(session: session, task: task)
     }
 
     guard session.waitForStart(timeoutMilliseconds: 10_000) else {
@@ -507,6 +528,21 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
     }
 
     return session
+  }
+
+  /// Execution membership belongs to this launcher; result storage may be shared by other generations.
+  internal func shutdown() async {
+    let task = executionState.withLock { state -> Task<Void, Never> in
+      if let task = state.shutdown { return task }
+      let running = Array(state.running.values)
+      let task = Task {
+        for owner in running { _ = owner.session.cancel() }
+        for owner in running { await owner.task.value }
+      }
+      state.shutdown = task
+      return task
+    }
+    await task.value
   }
 
   internal func list(
@@ -747,8 +783,10 @@ private final class ShellSession: @unchecked Sendable {
     self.inputWriter = inputWriter
     self.processID = Int32(execution.processIdentifier.value)
     started = true
+    let terminationRequested = cancelled || timedOut
     condition.broadcast()
     condition.unlock()
+    if terminationRequested { requestTermination(execution) }
   }
 
   func appendStdout(_ data: Data) {
@@ -1092,6 +1130,7 @@ private func blockingAsync<Value: Sendable>(
 }
 
 internal enum ShellRuntimeError: Error, LocalizedError, Equatable {
+  case stopped
   case invalidRequest(String)
   case unknownSession(String)
   case sessionLimitReached(Int)
@@ -1104,6 +1143,8 @@ internal enum ShellRuntimeError: Error, LocalizedError, Equatable {
 
   internal var errorDescription: String? {
     switch self {
+    case .stopped:
+      return "The shell execution owner has stopped."
     case .invalidRequest(let message), .launchFailed(let message),
       .internalFailure(let message):
       return message

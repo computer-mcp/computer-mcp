@@ -183,6 +183,62 @@ struct GatewayGenerationDispatchTests {
     report.result.objectValue?["structuredContent"]?.objectValue?[key]
   }
 
+  @Test
+  func shellContinuationSurvivesReplacementAndListenerStopJoinsItsProcesses() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, fullShell: true)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    var children: [Int32] = []
+    defer { for pid in children where alive(pid) { _ = kill(-pid, SIGKILL) } }
+    func payload(_ report: GatewayCallReport) throws -> [String: JSONValue] {
+      try #require(value(report, "result")?.objectValue)
+    }
+    func spawn() async throws -> (id: String, pid: Int32) {
+      let started = try await client.call(
+        toolName: "shell.spawn",
+        arguments: .object([
+          "mode": .string("argv"), "executable": .string("/bin/cat"),
+        ]))
+      let id = try #require(try payload(started)["session_id"]?.stringValue)
+      let snapshot = try await client.call(
+        toolName: "shell.read", arguments: .object(["session_id": .string(id)]))
+      let rawPID = try #require(try payload(snapshot)["process_id"]?.int64Value)
+      return (id, try #require(Int32(exactly: rawPID)))
+    }
+    do {
+      let first = try await spawn()
+      children.append(first.pid)
+      let previousProvider = try #require(try fixture.pids().first)
+      try await fixture.activate(version: 2, fullShell: true)
+      #expect(value(try await client.call(toolName: "fixture.identity"), "version") == .integer(2))
+      #expect(alive(first.pid) && alive(previousProvider))
+      _ = try await client.call(
+        toolName: "shell.write",
+        arguments: .object([
+          "session_id": .string(first.id), "text": .string("across-generations"),
+          "close": .bool(true),
+        ]))
+      try await wait { !alive(previousProvider) && !alive(first.pid) }
+      let retained = try await client.call(
+        toolName: "shell.read", arguments: .object(["session_id": .string(first.id)]))
+      #expect(
+        try payload(retained)["stdout"]?.objectValue?["text"] == .string("across-generations"))
+      let second = try await spawn()
+      children.append(second.pid)
+      await client.disconnect()
+      #expect(alive(second.pid))
+      await fixture.service.stop()
+      #expect(!alive(second.pid))
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
   private func pid(_ report: GatewayCallReport) throws -> Int32 {
     let value = try #require(value(report, "pid")?.int64Value)
     return try #require(Int32(exactly: value))
@@ -266,15 +322,18 @@ private struct GenerationFixture: Sendable {
     try Data(Self.provider.utf8).write(to: root.appendingPathComponent("provider.py"))
   }
 
-  func activate(version: Int) async throws {
+  func activate(version: Int, fullShell: Bool = false) async throws {
     let names = ["start", "inspect", "finish", "identity", "generation_\(version)"]
     let profile = ProfileGrantConfig(
       id: .chatGPTOperate,
-      capabilities: ["mcp.tools.call", "mcp.requests.read", "mcp.requests.cancel"],
-      workspaces: ["fixture"], allowedCallers: [.localMCP], mcpServers: ["fixture"],
-      mode: .workspaceOperations, confirmationPolicy: .never)
+      capabilities: ["mcp.tools.call", "mcp.requests.read", "mcp.requests.cancel"]
+        + (fullShell ? ["shell.spawn", "shell.read", "shell.write", "shell.cancel"] : []),
+      workspaces: ["fixture"], allowedCallers: [.localMCP], fullShellEnabled: fullShell,
+      mcpServers: ["fixture"],
+      mode: fullShell ? .localFullAccess : .workspaceOperations, confirmationPolicy: .never)
     let configuration = GatewayConfiguration(
-      runtime: .init(caller: .localMCP, profileID: .chatGPTOperate), profiles: [profile],
+      runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
+      policy: .init(shellEnabled: fullShell), profiles: [profile],
       mcp: .init(servers: [
         .init(
           id: "fixture", transport: .stdio, command: "/usr/bin/python3",

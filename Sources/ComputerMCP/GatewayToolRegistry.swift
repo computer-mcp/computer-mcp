@@ -1696,6 +1696,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   internal func toolChanges() -> AsyncStream<Void> { mcpClient.toolChanges() }
 
   internal func shutdown() async {
+    await shellManager.shutdown()
     await cliExecution.shutdown()
     await mcpClient.shutdown()
   }

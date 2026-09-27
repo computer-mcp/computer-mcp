@@ -5139,8 +5139,11 @@ budget of 64 completed sessions and 8 MiB of stdout/stderr. The newest results t
 fit these budgets are retained; running sessions are not evicted. Expired or
 evicted results are omitted from lists and report an unknown session or process
 id on lookup. Output already returned by `shell.run` is unaffected by retention.
-Stopping the listener clears its result store. Save needed output before these
-limits apply.
+Stopping the listener closes launch admission, cancels its Shell and registered
+process executions, waits for their process and output cleanup, and clears its
+result store. Shutting down one runtime owns only the executions it started;
+shared result storage does not transfer cancellation ownership. Save needed output
+before the retention limits or listener stop apply.
 
 Full Shell gives the caller the current macOS user's effective terminal
 authority. Prefer typed tools or registered CLI argv execution when that

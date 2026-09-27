@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -295,6 +296,125 @@ struct GatewayTerminalSessionsTests {
       await next.shutdown()
       throw error
     }
+  }
+
+  @Test
+  func gatewayShutdownJoinsItsExecutingShellWithoutStoppingAnotherGeneration() async throws {
+    let root = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = GatewayTerminalSessions()
+    let configuration = GatewayConfiguration(
+      schemaVersion: 1, policy: PolicyConfig(shellEnabled: true),
+      profiles: [
+        ProfileGrantConfig(
+          id: .localAdmin, capabilities: ["shell.spawn", "shell.read", "shell.cancel"],
+          workspaces: ["default"], allowedCallers: [.localMCP], fullShellEnabled: true,
+          mode: .localFullAccess, confirmationPolicy: .never)
+      ], workspaceDirectory: root)
+    func make() async throws -> GatewayRuntime {
+      try await GatewayRuntime.make(
+        configuration: configuration, bundledPlugins: BundledPlugins(packages: [], issues: []),
+        terminalSessions: storage)
+    }
+    func spawn(_ gateway: GatewayRuntime) async throws -> (id: String, pid: Int32) {
+      let started = try await gateway.callToolAsync(
+        name: "shell.spawn",
+        arguments: .object([
+          "mode": .string("argv"), "executable": .string("/bin/cat"),
+        ]))
+      let id = try #require(
+        started.objectValue?["structuredContent"]?.objectValue?["result"]?
+          .objectValue?["session_id"]?.stringValue)
+      let read = try await gateway.callToolAsync(
+        name: "shell.read", arguments: .object(["session_id": .string(id)]))
+      let rawPID = try #require(
+        read.objectValue?["structuredContent"]?.objectValue?["result"]?
+          .objectValue?["process_id"]?.int64Value)
+      let pid = try #require(Int32(exactly: rawPID))
+      return (id, pid)
+    }
+    let old = try await make()
+    let current = try await make()
+    var children: [Int32] = []
+    defer { for pid in children where kill(pid, 0) == 0 { _ = kill(-pid, SIGKILL) } }
+    do {
+      let first = try await spawn(old)
+      children.append(first.pid)
+      let second = try await spawn(current)
+      children.append(second.pid)
+      #expect(kill(first.pid, 0) == 0 && kill(second.pid, 0) == 0)
+      await old.shutdown()
+      #expect(kill(first.pid, 0) == -1 && errno == ESRCH)
+      #expect(old.ownedWork.snapshot.isEmpty)
+      #expect(kill(second.pid, 0) == 0)
+      await current.shutdown()
+      #expect(kill(second.pid, 0) == -1 && errno == ESRCH)
+      #expect(current.ownedWork.snapshot.isEmpty)
+      await old.shutdown()
+      await current.shutdown()
+    } catch {
+      await old.shutdown()
+      await current.shutdown()
+      throw error
+    }
+  }
+
+  @Test
+  func registeredProcessesShareResultsButNotShutdownOwnership() async throws {
+    let storage = GatewayTerminalSessions()
+    let scope = GatewayTerminalSessions.Scope.isolated(UUID())
+    let oldOwners = GatewayOwnedWork()
+    let currentOwners = GatewayOwnedWork()
+    let old = SubprocessShellRuntime(ownedWork: oldOwners, sessions: storage, scope: scope)
+    let current = SubprocessShellRuntime(ownedWork: currentOwners, sessions: storage, scope: scope)
+    let process = SubprocessProcessRegistry(shellManager: old)
+    do {
+      let registered = try process.spawn(
+        executable: "/bin/cat", arguments: [], workingDirectory: directory,
+        environment: [:], maxOutputBytes: 1_024)
+      let other = try spawnCat(current)
+      await withTaskGroup(of: Void.self) { group in
+        for _ in 0..<4 { group.addTask { await old.shutdown() } }
+      }
+      #expect(oldOwners.snapshot.isEmpty)
+      #expect(try !process.read(processID: registered).isRunning)
+      let result = try read(current, registered)
+      #expect(result.cancelled && !result.isRunning && result.finishedAt != nil)
+      #expect(try read(current, other).isRunning)
+      #expect(currentOwners.snapshot.map(\.resourceID) == [other])
+      #expect(throws: ShellRuntimeError.stopped) { try spawnCat(old) }
+      #expect(throws: ShellRuntimeError.stopped) {
+        try process.spawn(
+          executable: "/bin/cat", arguments: [], workingDirectory: directory,
+          environment: [:], maxOutputBytes: 1_024)
+      }
+      await current.shutdown()
+      #expect(currentOwners.snapshot.isEmpty)
+    } catch {
+      await old.shutdown()
+      await current.shutdown()
+      throw error
+    }
+  }
+
+  @Test
+  func shutdownJoinsAnAdmittedLaunchRacingWithItsStartupReply() async throws {
+    let owners = GatewayOwnedWork()
+    let shell = SubprocessShellRuntime(ownedWork: owners)
+    let starting = Task {
+      try await BlockingOperationExecutor(label: "test.shell-start-stop").perform {
+        try spawnCat(shell)
+      }
+    }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while owners.snapshot.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
+    #expect(!owners.snapshot.isEmpty)
+    await shell.shutdown()
+    let id = try await starting.value
+    #expect(owners.snapshot.isEmpty)
+    let result = try read(shell, id)
+    #expect(result.cancelled && !result.isRunning && result.finishedAt != nil)
   }
 
   private func spawnCat(_ shell: SubprocessShellRuntime, limit: Int = 4) throws -> String {

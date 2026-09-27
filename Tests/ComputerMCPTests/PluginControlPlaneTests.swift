@@ -33,7 +33,8 @@ struct PluginControlPlaneTests {
     try fixture.database.saveProfile(
       .init(
         id: .localAdmin, capabilityIDs: ["mcp.tools.call"], workspaceIDs: ["workflow-fixture"],
-        allowedCallers: [.localCLI], mode: .workspaceOperations, confirmationPolicy: .never))
+        allowedCallers: [.localCLI], fullShellEnabled: true, mode: .localFullAccess,
+        confirmationPolicy: .never))
     try await fixture.socket.start()
     do {
       let installed = try await fixture.cli([

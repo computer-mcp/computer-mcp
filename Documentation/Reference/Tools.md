@@ -6,6 +6,57 @@ annotations. Successful calls return the same bounded JSON value as readable
 JSON text and as `structuredContent.result`. Downstream MCP tools keep their
 provider-declared schemas and result shape when the Swift SDK exposes them.
 
+## Execution owners
+
+`runtime.owners.list` lists retained work in one granted `workspace_id`. It
+requires its own capability grant. An optional `server` filters MCP registration
+IDs. `limit` defaults to 50 and accepts 1–100; pass the returned `next_cursor` as
+`after` to continue. Pages contain at most 128 KiB of encoded rows, so a byte
+budget can end a page before its requested count. This is a live directory;
+owners may appear or expire between pages. Listing does not start providers.
+
+Each row contains an `owner` locator, work `kind`, `uncertain` and `current`
+flags, and optional registration, connection and resource identifiers. Resource
+descriptions larger than 4 KiB are omitted. The locator identifies the originating
+runtime, workspace and one host-owned lifetime. It conveys no permission and
+expires when that lifetime ends. Confirmed completed Shell/process output remains
+available through ordinary result reads for its retention period, independently
+of execution ownership.
+
+`runtime.owners.call` selects an exact owner when duplicate native handles are
+ambiguous or a call needs a retained provider instance. It requires its own
+capability and the target's current permissions. Supply the `owner` unchanged,
+the same `workspace_id`, the gateway `tool` name and its original `arguments`:
+
+```json
+{
+  "workspace_id": "project",
+  "owner": {
+    "runtime_id": "D26F63CA-B15C-423D-AB83-C1A7CABD1721",
+    "workspace_id": "project",
+    "ownership_id": "EA1521A4-3195-4E5B-9CE1-84682609E97A"
+  },
+  "tool": "provider.session.inspect",
+  "arguments": {"session_id": "native-session"}
+}
+```
+
+The selected owner must belong to the caller's authenticated principal, profile
+and workspace. MCP calls use its original connection and registration; resource
+continuations also require the matching native resource acquisition. Shell and
+registered-process calls require the exact owned session or process ID. Selecting
+a stale, foreign or disconnected owner fails without launching a replacement.
+Owner tools cannot recursively target themselves. Native tool arguments do not
+receive the locator.
+
+For writes requiring approval, select the same owner around both
+`operations.prepare` and `operations.commit`. The review and ticket bind that
+exact owner along with the tool, arguments, workspace and provider identity.
+Changing the owner does not transfer approval. `target_execution` in a successful
+wrapped result identifies the selected invocation; ordinary `gateway_execution`
+identifies the routing call. Permission checks still run immediately before the
+target executes.
+
 ## `cli.list`
 
 Lists directly registered and Plugin-contributed CLI providers. Entries include

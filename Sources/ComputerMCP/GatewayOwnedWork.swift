@@ -17,6 +17,7 @@ final class GatewayOwnedWork: Sendable {
     let kind: Kind
     let workspaceID: String?
     let registrationID: String?
+    let connectionID: UUID?
     let resourceID: String
     var uncertain = false
   }
@@ -35,11 +36,11 @@ final class GatewayOwnedWork: Sendable {
 
   func retain(
     _ kind: Kind, workspaceID: String? = nil, registrationID: String? = nil,
-    resourceID: String
+    resourceID: String, connectionID: UUID? = nil
   ) -> Lease {
     let record = Record(
       id: UUID(), kind: kind, workspaceID: workspaceID, registrationID: registrationID,
-      resourceID: resourceID)
+      connectionID: connectionID, resourceID: resourceID)
     state.withLock { $0.records[record.id] = record }
     changes.send()
     return Lease(owner: self, id: record.id)
@@ -49,7 +50,7 @@ final class GatewayOwnedWork: Sendable {
   func admitInvocation(workspaceID: String?, resourceID: String) throws -> Lease {
     let record = Record(
       id: UUID(), kind: .invocation, workspaceID: workspaceID, registrationID: nil,
-      resourceID: resourceID)
+      connectionID: nil, resourceID: resourceID)
     try state.withLock { state in
       guard state.admitsInvocations else {
         throw GatewayToolError.disabled(

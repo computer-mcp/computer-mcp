@@ -29,7 +29,10 @@ internal struct GatewayCapabilityCatalog: Sendable {
   internal func descriptor(for tool: MCPTool) -> CapabilityDescriptor {
     let name = tool.name
     let risk: CapabilityRisk
-    if name.hasPrefix("shell.") || name == "cli.exec" || name == "process.spawn" {
+    if name == "runtime.owners.call" {
+      // The routing operation authorizes no effect; its selected target performs risk and approval admission.
+      risk = .readOnly
+    } else if name.hasPrefix("shell.") || name == "cli.exec" || name == "process.spawn" {
       risk = .fullShell
     } else if name == "operations.commit" {
       risk = .externalWrite
@@ -59,7 +62,7 @@ internal struct GatewayCapabilityCatalog: Sendable {
       workspaceRequirement = .none
     } else if name.hasPrefix("operations.") {
       workspaceRequirement = .optional
-    } else if name.hasPrefix("shell.") {
+    } else if name.hasPrefix("shell.") || name.hasPrefix("runtime.owners.") {
       workspaceRequirement = .required
     } else if name.hasPrefix("file.") || name.hasPrefix("git.")
       || name.hasPrefix("workspace.") || name.hasPrefix("cli.")

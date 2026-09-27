@@ -72,18 +72,20 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test
-  func duplicateNativeHandlesFailWithoutDispatchAndRoutingFailureIsAudited() async throws {
+  func duplicateNativeHandlesRequireExactOwnerAndExpiredSelectionCannotBeReused() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
     try await fixture.activate(version: 1)
     try await fixture.service.start(profile: .chatGPTOperate)
     let client = try await fixture.connect()
     do {
-      _ = try await client.call(
-        toolName: "fixture.start", arguments: .object(["handle": .string("same")]))
+      let firstPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("same")])))
       try await fixture.activate(version: 2)
-      _ = try await client.call(
-        toolName: "fixture.start", arguments: .object(["handle": .string("same")]))
+      let secondPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("same")])))
       let before = try fixture.calls()
       var rejected = try await client.call(
         toolName: "fixture.inspect", arguments: .object(["handle": .string("same")]))
@@ -104,6 +106,46 @@ struct GatewayGenerationDispatchTests {
       let audit = try #require(try fixture.database.auditEvent(requestID: request))
       #expect(audit.capabilityID == "fixture.inspect")
       #expect(audit.mcpRequestID == rejected.requestID)
+      let owners = try await owners(client, kind: "mcpResource", pageSize: 1)
+      #expect(owners.count == 2)
+      var routedPIDs = Set<Int32>()
+      var previous: JSONValue?
+      for owner in owners {
+        let inspected = try await call(
+          client, owner: owner, tool: "fixture.inspect",
+          arguments: ["handle": .string("same")])
+        let selectedPID = try pid(inspected)
+        routedPIDs.insert(selectedPID)
+        #expect(try pid(await call(client, owner: owner, tool: "fixture.identity")) == selectedPID)
+        #expect(value(inspected, "target_execution")?.objectValue?["execution_owner"] == owner)
+        #expect(value(inspected, "arguments") == .object(["handle": .string("same")]))
+        let generic = try await call(
+          client, owner: owner, tool: "mcp.tools.call",
+          arguments: [
+            "server": .string("fixture"), "tool": .string("inspect"),
+            "arguments": .object(["handle": .string("same")]),
+          ])
+        #expect(
+          value(generic, "result")?.objectValue?["structuredContent"]?.objectValue?["pid"]
+            == .integer(Int64(selectedPID)))
+        if selectedPID == firstPID { previous = owner }
+      }
+      #expect(routedPIDs == [firstPID, secondPID])
+      let previousOwner = try #require(previous)
+      #expect(
+        try pid(
+          await call(
+            client, owner: previousOwner, tool: "fixture.finish",
+            arguments: ["handle": .string("same")])) == firstPID)
+      try await wait { !alive(firstPID) }
+      let calls = try fixture.calls()
+      let stale = try await call(
+        client, owner: previousOwner, tool: "fixture.inspect",
+        arguments: ["handle": .string("same")])
+      #expect(stale.result.objectValue?["isError"] == .bool(true))
+      #expect(String(describing: stale.result).contains("runtime.owner_unavailable"))
+      #expect(try fixture.calls() == calls)
+      #expect(alive(secondPID))
       await client.disconnect()
       await fixture.service.stop()
     } catch {
@@ -126,6 +168,27 @@ struct GatewayGenerationDispatchTests {
       let current = try pid(await client.call(toolName: "fixture.identity"))
       #expect(previous != current)
       #expect(alive(previous))
+      let owners = try await owners(client, kind: "mcpUnreportedWork")
+      #expect(owners.count == 2)
+      var pids = Set<Int32>()
+      for owner in owners {
+        pids.insert(try pid(await call(client, owner: owner, tool: "fixture.identity")))
+      }
+      #expect(pids == [previous, current])
+      let starts = try fixture.pids()
+      let calls = try fixture.calls()
+      var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      grant.mcpServerIDs = []
+      grant.capabilityIDs = ["runtime.owners.list", "runtime.owners.call"]
+      try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+      #expect(try await self.owners(client, kind: "mcpUnreportedWork").isEmpty)
+      for owner in owners {
+        #expect(
+          try await call(client, owner: owner, tool: "fixture.identity")
+            .result.objectValue?["isError"] == .bool(true))
+      }
+      #expect(try fixture.calls() == calls)
+      #expect(try fixture.pids() == starts)
       await client.disconnect()
       #expect(alive(previous) && alive(current))
       await fixture.service.stop()
@@ -184,6 +247,202 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test
+  func explicitOwnerControlsOriginalBackgroundReceiptAfterReplacement() async throws {
+    let fixture = try GenerationFixture(reportWork: false)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let started = try await client.call(
+        toolName: "mcp.tools.call",
+        arguments: .object([
+          "server": .string("fixture"), "tool": .string("wait"), "arguments": .object([:]),
+          "request_id": .string("original"), "wait_for_result": .bool(false),
+        ]))
+      #expect(started.result.objectValue?["isError"] != .bool(true))
+      let originalPID = try #require(try fixture.pids().first)
+      let owner = try #require(try await owners(client, kind: "mcpRequest").first)
+      try await fixture.activate(version: 2)
+      let currentPID = try pid(await client.call(toolName: "fixture.identity"))
+      #expect(currentPID != originalPID)
+      let receiptArguments: [String: JSONValue] = [
+        "server": .string("fixture"), "request_id": .string("original"),
+      ]
+      let reading = try await call(
+        client, owner: owner, tool: "mcp.requests.read", arguments: receiptArguments)
+      #expect(value(reading, "result")?.objectValue?["request_id"] == .string("original"))
+      let rejected = try await call(
+        client, owner: owner, tool: "mcp.requests.cancel",
+        arguments: [
+          "server": .string("fixture"), "request_id": .string("foreign"),
+        ])
+      #expect(rejected.result.objectValue?["isError"] == .bool(true))
+      let cancelled = try await call(
+        client, owner: owner, tool: "mcp.requests.cancel", arguments: receiptArguments)
+      #expect(value(cancelled, "result")?.objectValue?["cancellation_requested"] == .bool(true))
+      #expect(alive(originalPID) && alive(currentPID))
+      try Data().write(to: fixture.root.appendingPathComponent("release"))
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !(try await owners(client, kind: "mcpRequest")).isEmpty, ContinuousClock.now < deadline
+      {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      #expect(try await owners(client, kind: "mcpRequest").isEmpty)
+      #expect(try fixture.calls() == "1:wait\n2:identity\n")
+      #expect(try fixture.pids() == [originalPID, currentPID])
+      await client.disconnect()
+      await fixture.service.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func resourceSelectionExpiresBeforeSameNativeHandleIsReacquired() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let arguments: [String: JSONValue] = ["handle": .string("reused")]
+      let originalPID = try pid(
+        await client.call(toolName: "fixture.start", arguments: .object(arguments)))
+      let old = try #require(try await owners(client, kind: "mcpResource").first)
+      _ = try await call(client, owner: old, tool: "fixture.finish", arguments: arguments)
+      _ = try await client.call(toolName: "fixture.start", arguments: .object(arguments))
+      let fresh = try #require(try await owners(client, kind: "mcpResource").first)
+      #expect(fresh != old)
+      let calls = try fixture.calls()
+      var forged = try #require(fresh.objectValue)
+      forged["runtime_id"] = .string(UUID().uuidString)
+      var foreign = try #require(fresh.objectValue)
+      foreign["workspace_id"] = .string("another")
+      for invalid in [old, .object(forged), .object(foreign)] {
+        let rejected = try await call(
+          client, owner: invalid, tool: "fixture.inspect", arguments: arguments)
+        #expect(rejected.result.objectValue?["isError"] == .bool(true))
+      }
+      #expect(try fixture.calls() == calls)
+      #expect(
+        try pid(await call(client, owner: fresh, tool: "fixture.inspect", arguments: arguments))
+          == originalPID)
+      #expect(try fixture.pids() == [originalPID])
+      _ = try await client.call(
+        toolName: "fixture.start", arguments: .object(["handle": .string("other")]))
+      let wrongResource = try await call(
+        client, owner: fresh, tool: "fixture.inspect",
+        arguments: ["handle": .string("other")])
+      #expect(wrongResource.result.objectValue?["isError"] == .bool(true))
+      await client.disconnect()
+      await fixture.service.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func operationTicketBindsExactResourceOwnerWithinOneProvider() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, destructiveFinish: true)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      _ = try await client.call(
+        toolName: "fixture.start", arguments: .object(["handle": .string("one")]))
+      _ = try await client.call(
+        toolName: "fixture.start", arguments: .object(["handle": .string("two")]))
+      let owners = try await owners(client, kind: "mcpResource")
+      #expect(owners.count == 2)
+      let first = try #require(owners.first)
+      let second = try #require(owners.last)
+      var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      grant.confirmationPolicy = .riskBased
+      try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+      // An unscoped write can address either connection owner; the approval must still bind
+      // the selected host lifetime even when registration, arguments and connection agree.
+      let prepared = try await call(
+        client, owner: first, tool: "operations.prepare",
+        arguments: [
+          "tool": .string("fixture.change"), "arguments": .object([:]),
+        ])
+      let ticket = try #require(value(prepared, "result")?.objectValue?["ticket_id"])
+      let ticketID = try #require(ticket.stringValue)
+      let saved = try #require(try fixture.database.operationTicket(id: ticketID))
+      #expect(saved.reviewSummary?.contains("execution_owner") == true)
+      #expect(saved.state == .pendingApproval)
+      let arguments: [String: JSONValue] = [
+        "tool": .string("fixture.change"), "arguments": .object([:]), "ticket_id": ticket,
+      ]
+      let before = try fixture.calls()
+      let rejected = try await call(
+        client, owner: second, tool: "operations.commit", arguments: arguments)
+      #expect(rejected.result.objectValue?["isError"] == .bool(true))
+      #expect(String(describing: rejected.result).contains("operations.ticket_arguments_mismatch"))
+      #expect(try fixture.calls() == before)
+      let unapproved = try await call(
+        client, owner: first, tool: "operations.commit", arguments: arguments)
+      #expect(unapproved.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == before)
+      try fixture.database.resolveOperationApproval(
+        id: ticketID, approved: true, resolver: .localCLI)
+      let committed = try await call(
+        client, owner: first, tool: "operations.commit", arguments: arguments)
+      #expect(committed.result.objectValue?["isError"] != .bool(true))
+      #expect(try fixture.calls() == before + "1:change\n")
+      await client.disconnect()
+      await fixture.service.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  private func call(
+    _ client: GatewayClientSession, owner: JSONValue, tool: String,
+    arguments: [String: JSONValue] = [:]
+  ) async throws -> GatewayCallReport {
+    try await client.call(
+      toolName: "runtime.owners.call",
+      arguments: .object([
+        "workspace_id": .string("fixture"), "owner": owner, "tool": .string(tool),
+        "arguments": .object(arguments),
+      ]))
+  }
+
+  private func owners(_ client: GatewayClientSession, kind: String, pageSize: Int = 50)
+    async throws -> [JSONValue]
+  {
+    var result: [JSONValue] = []
+    var after: JSONValue?
+    var seen = Set<String>()
+    repeat {
+      var arguments: [String: JSONValue] = [
+        "workspace_id": .string("fixture"), "limit": .integer(Int64(pageSize)),
+      ]
+      arguments["after"] = after
+      let report = try await client.call(
+        toolName: "runtime.owners.list", arguments: .object(arguments))
+      let page = try #require(value(report, "result")?.objectValue)
+      let rows = try #require(page["owners"]?.arrayValue)
+      #expect(rows.count <= pageSize)
+      for row in rows where row.objectValue?["kind"] == .string(kind) {
+        result.append(try #require(row.objectValue?["owner"]))
+      }
+      after = page["next_cursor"]?.stringValue.map(JSONValue.string)
+      if let cursor = after?.stringValue { try #require(seen.insert(cursor).inserted) }
+    } while after != nil
+    return result
+  }
+
+  @Test
   func shellContinuationSurvivesReplacementAndListenerStopJoinsItsProcesses() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
@@ -214,12 +473,17 @@ struct GatewayGenerationDispatchTests {
       try await fixture.activate(version: 2, fullShell: true)
       #expect(value(try await client.call(toolName: "fixture.identity"), "version") == .integer(2))
       #expect(alive(first.pid) && alive(previousProvider))
-      _ = try await client.call(
-        toolName: "shell.write",
-        arguments: .object([
+      let owner = try #require(try await owners(client, kind: "shell").first)
+      let selectedRead = try await call(
+        client, owner: owner, tool: "shell.read",
+        arguments: ["session_id": .string(first.id)])
+      #expect(try payload(selectedRead)["process_id"] == .integer(Int64(first.pid)))
+      _ = try await call(
+        client, owner: owner, tool: "shell.write",
+        arguments: [
           "session_id": .string(first.id), "text": .string("across-generations"),
           "close": .bool(true),
-        ]))
+        ])
       try await wait { !alive(previousProvider) && !alive(first.pid) }
       let retained = try await client.call(
         toolName: "shell.read", arguments: .object(["session_id": .string(first.id)]))
@@ -322,11 +586,17 @@ private struct GenerationFixture: Sendable {
     try Data(Self.provider.utf8).write(to: root.appendingPathComponent("provider.py"))
   }
 
-  func activate(version: Int, fullShell: Bool = false) async throws {
-    let names = ["start", "inspect", "finish", "identity", "generation_\(version)"]
+  func activate(version: Int, fullShell: Bool = false, destructiveFinish: Bool = false) async throws
+  {
+    let names = [
+      "start", "inspect", "finish", "identity", "change", "wait", "generation_\(version)",
+    ]
     let profile = ProfileGrantConfig(
       id: .chatGPTOperate,
-      capabilities: ["mcp.tools.call", "mcp.requests.read", "mcp.requests.cancel"]
+      capabilities: [
+        "mcp.tools.call", "mcp.requests.read", "mcp.requests.cancel",
+        "runtime.owners.list", "runtime.owners.call", "operations.prepare", "operations.commit",
+      ]
         + (fullShell ? ["shell.spawn", "shell.read", "shell.write", "shell.cancel"] : []),
       workspaces: ["fixture"], allowedCallers: [.localMCP], fullShellEnabled: fullShell,
       mcpServers: ["fixture"],
@@ -343,7 +613,13 @@ private struct GenerationFixture: Sendable {
           ],
           exposure: .reexport, prefix: "fixture", allowAnyTool: true,
           startupTimeoutMs: 5_000, requestTimeoutMs: 5_000,
-          toolRisks: Dictionary(uniqueKeysWithValues: names.map { ($0, .readOnly) }))
+          toolRisks: Dictionary(
+            uniqueKeysWithValues: names.map {
+              (
+                $0,
+                destructiveFinish && ($0 == "finish" || $0 == "change") ? .destructive : .readOnly
+              )
+            }))
       ]), workspaceDirectory: root)
     if try database.profiles().isEmpty { try database.saveProfile(profile.grant) }
     _ = try await control.activateManifest(configuration.exportedTOML())
@@ -368,12 +644,12 @@ private struct GenerationFixture: Sendable {
   func removeFiles() { try? FileManager.default.removeItem(at: root) }
 
   private static let provider = #"""
-    import json, os, sys, uuid
+    import json, os, sys, time, uuid
     from pathlib import Path
     root, version, reporting = Path(sys.argv[1]), int(sys.argv[2]), sys.argv[3] == "yes"
     with (root / "pids").open("a") as f: f.write(str(os.getpid()) + "\n")
     uri, instance, revision, resources = "computer-mcp://runtime/work/v1", str(uuid.uuid4()), 0, []
-    names = ["start", "inspect", "finish", "identity", "generation_" + str(version)]
+    names = ["start", "inspect", "finish", "identity", "change", "wait", "generation_" + str(version)]
     for line in sys.stdin:
         message = json.loads(line)
         if "id" not in message: continue
@@ -404,7 +680,9 @@ private struct GenerationFixture: Sendable {
             elif name == "finish":
                 resources = [r for r in resources if r["id"] != handle]
                 revision += 1
-            result = {"content": [], "structuredContent": {"pid": os.getpid(), "version": version}}
+            elif name == "wait":
+                while not (root / "release").exists(): time.sleep(0.01)
+            result = {"content": [], "structuredContent": {"pid": os.getpid(), "version": version, "arguments": arguments}}
         else:
             result = {}
         print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)

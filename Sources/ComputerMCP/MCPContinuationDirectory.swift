@@ -71,6 +71,8 @@ final class MCPContinuationDirectory: Sendable {
     }
   }
 
+  func entry(connectionID: UUID) -> Entry? { entries.withLock { $0[connectionID] } }
+
   /// A match is a locator, not call admission. Pending observations cannot prove absence.
   func lookup(
     workspaceID: String?, registrationID: String, tool: String, arguments: JSONValue
@@ -104,8 +106,9 @@ struct MCPContinuationTarget: Sendable {
   let workspaceID: String?
   let reference: MCPToolReference
   let connectionID: UUID
-  let instanceID: UUID
+  let instanceID: UUID?
   let resources: [MCPProviderWork.Key: UUID]
+  var selectedOwnershipID: UUID? = nil
 
   static func unavailable() -> GatewayToolError {
     .invalidArguments(

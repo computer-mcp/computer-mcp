@@ -376,9 +376,11 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   ) throws -> T {
     let timeout = timeoutMilliseconds ?? server.requestTimeoutMs ?? 30_000
     let box = AsyncOperationBox<T>()
+    let selected = MCPContinuationTarget.current
     let task = Task.detached {
       do {
         try Task.checkCancellation()
+        if let selected { try await connection.validateSelectedOwner(selected) }
         box.complete(.success(try await operation(connection)))
       } catch {
         box.complete(.failure(error))
@@ -502,6 +504,12 @@ private final class MCPConnectionPool: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     guard !stopped, let entry = entries[server.id], entry.configuration == server else {
+      return nil
+    }
+    if let target = MCPContinuationTarget.current,
+      target.connectionID != entry.connection.connectionID || target.reference.serverID != server.id
+        || target.workspaceID != hostContext?.workspace.id
+    {
       return nil
     }
     return entry.connection
@@ -1087,6 +1095,17 @@ private actor MCPProxyConnection {
     }
   }
 
+  func validateSelectedOwner(_ target: MCPContinuationTarget) throws {
+    guard let selected = target.selectedOwnershipID else { return }
+    guard closeTask == nil, target.connectionID == connectionID,
+      target.reference.serverID == server.id, target.workspaceID == workspaceID,
+      ownedWork?.snapshot.contains(where: {
+        $0.id == selected && $0.connectionID == connectionID
+          && $0.workspaceID == workspaceID && $0.registrationID == server.id
+      }) == true
+    else { throw MCPContinuationTarget.unavailable() }
+  }
+
   private func dispatchTool(
     name: String, arguments: [String: JSONValue], gatewayRequestID: String, hostInvocationID: UUID?,
     continuation: MCPContinuationTarget?
@@ -1096,8 +1115,14 @@ private actor MCPProxyConnection {
     }
     guard closeTask == nil else { throw MCPError.connectionClosed }
     if let continuation {
-      guard let providerWork else { throw MCPContinuationTarget.unavailable() }
-      try providerWork.validate(continuation, tool: name, arguments: .object(arguments))
+      try validateSelectedOwner(continuation)
+      guard continuation.reference.toolName == name else {
+        throw MCPContinuationTarget.unavailable()
+      }
+      if continuation.selectedOwnershipID == nil || !continuation.resources.isEmpty {
+        guard let providerWork else { throw MCPContinuationTarget.unavailable() }
+        try providerWork.validate(continuation, tool: name, arguments: .object(arguments))
+      }
     }
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
@@ -1120,12 +1145,12 @@ private actor MCPProxyConnection {
     if providerWork == nil, unreportedWork == nil {
       unreportedWork = ownedWork?.retain(
         .mcpUnreportedWork, workspaceID: workspaceID, registrationID: server.id,
-        resourceID: connectionID.uuidString)
+        resourceID: connectionID.uuidString, connectionID: connectionID)
       unreportedWork?.markUncertain()
     }
     let work = ownedWork?.retain(
       .mcpRequest, workspaceID: workspaceID, registrationID: server.id,
-      resourceID: gatewayRequestID)
+      resourceID: gatewayRequestID, connectionID: connectionID)
     let ownership =
       work != nil || invocation != nil || providerInvocationID != nil
       ? RequestOwnership(

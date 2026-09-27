@@ -272,7 +272,8 @@ struct MCPProviderWork {
         ])
         let lease = work.retain(
           .mcpResource, workspaceID: workspaceID, registrationID: registrationID,
-          resourceID: String(decoding: try encoder.encode(identity), as: UTF8.self))
+          resourceID: String(decoding: try encoder.encode(identity), as: UTF8.self),
+          connectionID: connectionID)
         replacement[resource.key] = Ownership(
           resource: resource, tool: tool, lease: lease, hostContext: contexts[resource.acquiredBy])
       }
@@ -362,7 +363,7 @@ struct MCPProviderWork {
     guard observation == nil else { return }
     observation = work.retain(
       .mcpObservation, workspaceID: workspaceID, registrationID: registrationID,
-      resourceID: connectionID.uuidString)
+      resourceID: connectionID.uuidString, connectionID: connectionID)
     publishContinuations()
   }
 

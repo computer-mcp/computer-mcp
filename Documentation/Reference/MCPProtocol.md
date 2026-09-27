@@ -204,6 +204,15 @@ satisfy an old selection. Missing owners fail without creating a replacement
 connection; ordinary host policy and current permission checks still apply.
 Ordinary MCP arguments and native handle values remain unchanged.
 
+Clients can use the host's typed `runtime.owners.list` and `runtime.owners.call`
+tools to select a retained instance explicitly. A locator binds the runtime,
+workspace and a live host ownership lease, not just a reusable native handle.
+The selected lease and original connection are rechecked before dispatch.
+Current target authorization and operation approval remain mandatory; approval
+tickets also bind the selected locator. See [Execution owners](Tools.md#execution-owners)
+for paging, scope and call syntax. These host locators are not forwarded as
+downstream arguments or accepted as authorization.
+
 The local gateway listener keeps a stable dispatcher for each authenticated
 connection. New work adopts the current configuration on a validated runtime;
 continuations with a unique observed owner use their originating runtime within

@@ -28,8 +28,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     _ operation: @escaping @Sendable () throws -> Value
   ) async throws -> Value {
     let target = MCPContinuationTarget.current
+    let owner = GatewayOwnerRouting.selection
     return try await admission.perform {
-      try MCPContinuationTarget.$current.withValue(target, operation: operation)
+      try GatewayOwnerRouting.$selection.withValue(owner) {
+        try MCPContinuationTarget.$current.withValue(target, operation: operation)
+      }
     }
   }
 
@@ -600,6 +603,187 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     context.workspaceID ?? (workspaceOrder.count == 1 ? workspaceOrder.first : nil)
   }
 
+  func callOwnedTool(
+    owner: GatewayOwnerSelection, name: String, arguments: JSONValue
+  ) async throws -> JSONValue {
+    guard owner.runtimeID == generationID,
+      let record = ownedWork.snapshot.first(where: {
+        $0.id == owner.ownershipID && $0.workspaceID == owner.workspaceID && $0.kind != .invocation
+      }), var object = arguments.objectValue,
+      !name.hasPrefix("runtime.owners.")
+    else { throw GatewayOwnerSelection.unavailable() }
+    if let workspace = object["workspace_id"], workspace != .string(owner.workspaceID) {
+      throw GatewayOwnerSelection.unavailable()
+    }
+    object["workspace_id"] = .string(owner.workspaceID)
+    var targetName = name
+    var targetArguments = object
+    if name == "operations.prepare" || name == "operations.commit" {
+      targetName = try Self.requiredString("tool", in: object)
+      guard !targetName.hasPrefix("runtime.owners."),
+        let nested = object["arguments"]?.objectValue,
+        nested["workspace_id"] == nil || nested["workspace_id"] == .string(owner.workspaceID)
+      else { throw GatewayOwnerSelection.unavailable() }
+      targetArguments = nested
+    }
+    var target: MCPContinuationTarget?
+    if let connectionID = record.connectionID {
+      let lookup: ContinuationLookup
+      if let native = try continuationLookup(
+        name: name, arguments: .object(object), workspaceID: owner.workspaceID)
+      {
+        lookup = native
+      } else if targetName.hasPrefix("mcp."),
+        let server = targetArguments["server"]?.stringValue, server == record.registrationID
+      {
+        lookup = .init(
+          workspaceID: owner.workspaceID, reference: .init(serverID: server, toolName: targetName),
+          observation: .init())
+      } else {
+        throw GatewayOwnerSelection.unavailable()
+      }
+      guard lookup.reference.serverID == record.registrationID else {
+        throw GatewayOwnerSelection.unavailable()
+      }
+      if targetName == "mcp.requests.read" || targetName == "mcp.requests.cancel" {
+        guard record.kind == .mcpRequest,
+          targetArguments["request_id"] == .string(record.resourceID)
+        else {
+          throw GatewayOwnerSelection.unavailable()
+        }
+      }
+      let matches = lookup.observation.matches.filter { $0.connectionID == connectionID }
+      if lookup.observation.applicable && matches.isEmpty {
+        throw GatewayOwnerSelection.unavailable()
+      }
+      if record.kind == .mcpResource, lookup.observation.applicable {
+        let identity = try JSONDecoder().decode(JSONValue.self, from: Data(record.resourceID.utf8))
+        guard
+          matches.contains(where: {
+            identity.objectValue?["kind"] == .string($0.resource.kind)
+              && identity.objectValue?["id"] == $0.resource.id.json
+          })
+        else { throw GatewayOwnerSelection.unavailable() }
+      }
+      target = MCPContinuationTarget(
+        workspaceID: owner.workspaceID, reference: lookup.reference, connectionID: connectionID,
+        instanceID: ownedWork.continuations.entry(connectionID: connectionID)?.instanceID,
+        resources: Dictionary(uniqueKeysWithValues: matches.map { ($0.resource, $0.acquiredBy) }),
+        selectedOwnershipID: record.id)
+    } else {
+      let key: String
+      switch targetName {
+      case "shell.read", "shell.write", "shell.cancel": key = "session_id"
+      case "process.read", "process.cancel": key = "process_id"
+      default: throw GatewayOwnerSelection.unavailable()
+      }
+      guard record.kind == .shell, targetArguments[key] == .string(record.resourceID) else {
+        throw GatewayOwnerSelection.unavailable()
+      }
+    }
+    let reservation = try ownedWork.admitInvocation(
+      workspaceID: owner.workspaceID, resourceID: name)
+    defer { reservation.finish() }
+    return try await GatewayOwnerRouting.$selection.withValue(owner) {
+      try await MCPContinuationTarget.$current.withValue(target) {
+        try await callToolAsync(name: name, arguments: .object(object))
+      }
+    }
+  }
+
+  private func executionOwners(arguments: [String: JSONValue], context: ExecutionContext) throws
+    -> JSONValue
+  {
+    guard let workspaceID = context.workspaceID,
+      Set(arguments.keys).isSubset(of: ["server", "after", "limit"]),
+      arguments["server"] == nil || arguments["server"]?.stringValue != nil,
+      arguments["after"] == nil || arguments["after"]?.stringValue != nil,
+      let limit = arguments["limit"]?.int64Value ?? (arguments["limit"] == nil ? 50 : nil),
+      (1...100).contains(limit)
+    else {
+      throw GatewayToolError.invalidArguments("Supply a workspace and a page limit from 1 to 100.")
+    }
+    let after = arguments["after"]?.stringValue ?? ""
+    if !after.isEmpty {
+      let parts = after.split(separator: ":", omittingEmptySubsequences: false)
+      guard parts.count == 2, parts.allSatisfy({ UUID(uuidString: String($0)) != nil }) else {
+        throw GatewayToolError.invalidArguments("Invalid execution owner cursor.")
+      }
+    }
+    let server = arguments["server"]?.stringValue
+    var selected: [(GatewayRuntime, GatewayOwnedWork.Record, GatewayOwnerSelection)] = []
+    let candidates = GatewayOwnerRouting.runtimes.isEmpty ? [self] : GatewayOwnerRouting.runtimes
+    for runtime in candidates {
+      guard runtime.context.principalID == context.principalID,
+        runtime.context.profileID == context.profileID, runtime.context.caller == context.caller,
+        let grant = try? runtime.currentHostGrant(),
+        grant.workspaceIDs.contains("*") || grant.workspaceIDs.contains(workspaceID),
+        grant.allowedCallers.contains(context.caller)
+      else { continue }
+      let policy = MCPToolAccessPolicy(
+        configuration: runtime.configuration, grant: grant, derivesObserveGrant: false)
+      let visibleServers = Set(
+        runtime.configuration.mcp.servers.filter { policy.isVisible($0) }.map(\.id))
+      for record in runtime.ownedWork.snapshot
+      where record.kind != .invocation && record.workspaceID == workspaceID {
+        if let server, record.registrationID != server { continue }
+        if let registration = record.registrationID {
+          guard visibleServers.contains(registration) else { continue }
+        } else {
+          guard record.kind == .shell, grant.fullShellEnabled, grant.permitsRisk(.fullShell) else {
+            continue
+          }
+        }
+        let owner = GatewayOwnerSelection(
+          runtimeID: runtime.generationID, workspaceID: workspaceID, ownershipID: record.id)
+        guard owner.cursor > after else { continue }
+        selected.append((runtime, record, owner))
+        selected.sort { $0.2.cursor < $1.2.cursor }
+        if selected.count > Int(limit) + 1 { selected.removeLast() }
+      }
+    }
+    var rows: [JSONValue] = []
+    var bytes = 0
+    var last: String?
+    for (runtime, record, owner) in selected.prefix(Int(limit)) {
+      var row: [String: JSONValue] = [
+        "owner": owner.json, "kind": .string(record.kind.rawValue),
+        "uncertain": .bool(record.uncertain),
+        "current": .bool(runtime.generationID == generationID),
+        "server": record.registrationID.map(JSONValue.string) ?? .null,
+        "connection_id": record.connectionID.map { .string($0.uuidString) } ?? .null,
+      ]
+      if record.resourceID.utf8.count <= 4_096 { row["resource_id"] = .string(record.resourceID) }
+      let value = JSONValue.object(row)
+      let size = try Self.encoder.encode(value).count
+      guard bytes + size <= 131_072 else { break }
+      bytes += size
+      rows.append(value)
+      last = owner.cursor
+    }
+    return .object([
+      "owners": .array(rows),
+      "next_cursor": rows.count < selected.count ? last.map(JSONValue.string) ?? .null : .null,
+      "live_directory": .bool(true),
+    ])
+  }
+
+  private func selectedOwnerCall(arguments: [String: JSONValue], context: ExecutionContext)
+    async throws -> JSONValue
+  {
+    guard Set(arguments.keys).isSubset(of: ["owner", "tool", "arguments"]) else {
+      throw GatewayOwnerSelection.unavailable()
+    }
+    let owner = try GatewayOwnerSelection(arguments["owner"])
+    guard owner.workspaceID == context.workspaceID else {
+      throw GatewayOwnerSelection.unavailable()
+    }
+    let name = try Self.requiredString("tool", in: arguments)
+    let target = arguments["arguments"] ?? .object([:])
+    if let call = GatewayOwnerRouting.call { return try await call(owner, name, target) }
+    return try await callOwnedTool(owner: owner, name: name, arguments: target)
+  }
+
   /// Resolves cached routing and accepted ownership without starting a provider.
   func continuationLookup(name: String, arguments: JSONValue?, workspaceID: String?) throws
     -> ContinuationLookup?
@@ -826,6 +1010,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       switch name {
       case "workspace.list":
         rawResult = try resultEnvelope(workspaceList(context: routed.context))
+      case "runtime.owners.list":
+        rawResult = try resultEnvelope(
+          executionOwners(arguments: routed.arguments, context: routed.context))
+      case "runtime.owners.call":
+        throw GatewayToolError.invalidArguments(
+          "Execution owner calls require asynchronous dispatch.")
       case "workspace.describe":
         rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
       case "policy.probe":
@@ -953,6 +1143,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       switch name {
       case "workspace.list":
         rawResult = try resultEnvelope(workspaceList(context: routed.context))
+      case "runtime.owners.list":
+        rawResult = try resultEnvelope(
+          executionOwners(arguments: routed.arguments, context: routed.context))
+      case "runtime.owners.call":
+        rawResult = try await selectedOwnerCall(
+          arguments: routed.arguments, context: routed.context)
       case "workspace.describe":
         rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
       case "policy.probe":
@@ -1107,7 +1303,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       createdAt: now,
       expiresAt: now.addingTimeInterval(Double(ttlMilliseconds) / 1_000),
       authorizationRevision: currentGrant.authorizationRevision,
-      reviewSummary: try Self.operationReviewSummary(routed.arguments)
+      reviewSummary: try Self.operationReviewSummary(
+        GatewayOwnerRouting.selection.map {
+          ["execution_owner": $0.json, "arguments": .object(routed.arguments)]
+        } ?? routed.arguments)
     )
     try database.saveOperationTicket(ticket)
     return PreparedOperation(
@@ -1419,7 +1618,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     _ descriptor: CapabilityDescriptor,
     context: ExecutionContext
   ) throws -> ProfileGrant {
-    if descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp.") {
+    if descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp.")
+      || descriptor.id.hasPrefix("runtime.owners.")
+    {
       guard context.caller == self.context.caller,
         context.profileID == self.context.profileID,
         context.principalID == self.context.principalID
@@ -1427,7 +1628,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         throw Self.invalid(
           code: PolicyDenialCode.callerDenied.rawValue,
           message:
-            "Downstream MCP calls must retain their gateway connection's caller and provenance.")
+            "Runtime-owned calls must retain their gateway connection's caller and provenance.")
       }
     }
     let authorizedGrant = try currentHostGrant()
@@ -1648,6 +1849,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "workspace_id": context.workspaceID.map(JSONValue.string) ?? .null,
       "capability_id": .string(capabilityID),
     ]
+    if let owner = GatewayOwnerRouting.selection { executionObject["execution_owner"] = owner.json }
     if let transport = context.transportTrace?.transport {
       executionObject["transport"] = .string(transport)
     }
@@ -1674,7 +1876,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let execution = JSONValue.object(executionObject)
 
     if var structuredContent = object["structuredContent"]?.objectValue {
-      if capabilityID == "operations.commit",
+      if capabilityID == "operations.commit" || capabilityID == "runtime.owners.call",
         let targetExecution = structuredContent["gateway_execution"]
       {
         structuredContent["target_execution"] = targetExecution
@@ -1684,7 +1886,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
 
     var metadata = object["_meta"]?.objectValue ?? [:]
-    if capabilityID == "operations.commit",
+    if capabilityID == "operations.commit" || capabilityID == "runtime.owners.call",
       let targetExecution = metadata["computer_mcp"]
     {
       metadata["computer_mcp_target"] = targetExecution
@@ -1765,6 +1967,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         )
       ),
     ]
+    tools.append(contentsOf: GatewayOwnerRouting.tools)
     if databaseEnabled {
       tools.append(
         MCPTool(
@@ -2157,6 +2360,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var binding: [String: JSONValue] = [
       "capability": try .encoded(descriptor), "arguments": .object(arguments),
     ]
+    if let owner = GatewayOwnerRouting.selection { binding["execution_owner"] = owner.json }
     if let reference = descriptor.mcpReference {
       guard let server = configuration.mcp.servers.first(where: { $0.id == reference.serverID })
       else {
@@ -2181,12 +2385,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     tool: String,
     arguments: [String: JSONValue]
   ) throws -> String {
-    let data = try encoder.encode(
-      JSONValue.object([
-        "tool": .string(tool),
-        "arguments": .object(arguments),
-      ])
-    )
+    var input: [String: JSONValue] = ["tool": .string(tool), "arguments": .object(arguments)]
+    if let owner = GatewayOwnerRouting.selection { input["execution_owner"] = owner.json }
+    let data = try encoder.encode(JSONValue.object(input))
     return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 

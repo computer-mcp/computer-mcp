@@ -444,6 +444,12 @@ package actor AppGatewayService {
     name: String, arguments: JSONValue?, key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace
   ) async throws -> InvocationSelection {
     try requireAdmission(epoch: epoch)
+    if name.hasPrefix("runtime.owners."), let current = runtimes[key]?.gateway {
+      return InvocationSelection(
+        gateway: current, target: nil,
+        ownership: try current.ownedWork.admitInvocation(
+          workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue, resourceID: name))
+    }
     if let owned = try retainedInvocation(name: name, arguments: arguments, key: key) {
       return owned
     }
@@ -538,11 +544,23 @@ package actor AppGatewayService {
       let selection = try await selectInvocation(
         name: name, arguments: arguments, key: key, epoch: epoch, trace: trace)
       defer { selection.ownership.finish() }
-      return try await MCPContinuationTarget.$current.withValue(selection.target) {
-        if envelope {
-          return try await selection.gateway.callToolForMCPAsync(name: name, arguments: arguments)
+      let owners =
+        (runtimes[key].map { [$0.gateway] } ?? [])
+        + Array(retiredRuntimes[key]?.values ?? [:].values)
+      return try await GatewayOwnerRouting.$runtimes.withValue(owners) {
+        try await GatewayOwnerRouting.$call.withValue({ [weak self] owner, tool, arguments in
+          guard let self else { throw GatewayOwnerSelection.unavailable() }
+          return try await self.callOwnedTool(
+            owner: owner, name: tool, arguments: arguments, key: key, epoch: epoch)
+        }) {
+          try await MCPContinuationTarget.$current.withValue(selection.target) {
+            if envelope {
+              return try await selection.gateway.callToolForMCPAsync(
+                name: name, arguments: arguments)
+            }
+            return try await selection.gateway.callToolAsync(name: name, arguments: arguments)
+          }
         }
-        return try await selection.gateway.callToolAsync(name: name, arguments: arguments)
       }
     } catch is CancellationError {
       throw CancellationError()
@@ -551,6 +569,20 @@ package actor AppGatewayService {
       return runtime.routingErrorForMCP(
         error, name: name, arguments: arguments, recordFailure: true)
     }
+  }
+
+  private func callOwnedTool(
+    owner: GatewayOwnerSelection, name: String, arguments: JSONValue, key: RuntimeKey, epoch: UUID
+  ) async throws -> JSONValue {
+    try requireAdmission(epoch: epoch)
+    let runtime: GatewayRuntime?
+    if runtimes[key]?.gateway.generationID == owner.runtimeID {
+      runtime = runtimes[key]?.gateway
+    } else {
+      runtime = retiredRuntimes[key]?[owner.runtimeID]
+    }
+    guard let runtime else { throw GatewayOwnerSelection.unavailable() }
+    return try await runtime.callOwnedTool(owner: owner, name: name, arguments: arguments)
   }
 
   package func snapshot() async -> AppGatewayServiceSnapshot {

@@ -46,6 +46,8 @@ package enum WorkspaceBookmarkError: Error, Equatable, Sendable {
   case notFileURL
   case rootDoesNotExist(path: String)
   case rootIsNotDirectory(path: String)
+  case rootIdentityUnavailable(path: String)
+  case rootChanged(workspaceID: String)
   case bookmarkCreationFailed(path: String)
   case bookmarkResolutionFailed(workspaceID: String)
   case securityScopeAccessDenied(workspaceID: String)
@@ -59,6 +61,10 @@ package enum WorkspaceBookmarkError: Error, Equatable, Sendable {
       "workspace.root_missing"
     case .rootIsNotDirectory:
       "workspace.root_not_directory"
+    case .rootIdentityUnavailable:
+      "workspace.root_identity_unavailable"
+    case .rootChanged:
+      "workspace.root_changed"
     case .bookmarkCreationFailed:
       "workspace.bookmark_creation_failed"
     case .bookmarkResolutionFailed:
@@ -80,6 +86,10 @@ extension WorkspaceBookmarkError: LocalizedError {
       "Workspace root does not exist: \(path)"
     case .rootIsNotDirectory(let path):
       "Workspace root is not a directory: \(path)"
+    case .rootIdentityUnavailable(let path):
+      "Could not verify the workspace folder's identity: \(path)"
+    case .rootChanged(let workspaceID):
+      "The workspace folder no longer matches this runtime: \(workspaceID)"
     case .bookmarkCreationFailed(let path):
       "Could not create a security-scoped bookmark for workspace root: \(path)"
     case .bookmarkResolutionFailed(let workspaceID):
@@ -96,6 +106,7 @@ package final class ResolvedWorkspaceAccess: @unchecked Sendable {
   package let workspace: RegisteredWorkspace
   package let rootURL: URL
   package let bookmarkWasRefreshed: Bool
+  let rootIdentity: WorkspaceRootIdentity
 
   private let lock = NSLock()
   private var active = true
@@ -106,7 +117,8 @@ package final class ResolvedWorkspaceAccess: @unchecked Sendable {
     rootURL: URL,
     bookmarkWasRefreshed: Bool,
     stopAccessing: (@Sendable () -> Void)?
-  ) {
+  ) throws {
+    self.rootIdentity = try WorkspaceRootIdentity(rootURL)
     self.workspace = workspace
     self.rootURL = rootURL
     self.bookmarkWasRefreshed = bookmarkWasRefreshed
@@ -193,7 +205,7 @@ package struct WorkspaceBookmarkService: WorkspaceBookmarkServicing, Sendable {
       var resolvedWorkspace = workspace
       resolvedWorkspace.rootPath = rootURL.path
       resolvedWorkspace.bookmarkIsStale = false
-      return ResolvedWorkspaceAccess(
+      return try ResolvedWorkspaceAccess(
         workspace: resolvedWorkspace,
         rootURL: rootURL,
         bookmarkWasRefreshed: false,
@@ -239,8 +251,7 @@ package struct WorkspaceBookmarkService: WorkspaceBookmarkServicing, Sendable {
       resolvedWorkspace.updatedAt = now()
     }
 
-    ownsSecurityScope = false
-    return ResolvedWorkspaceAccess(
+    let access = try ResolvedWorkspaceAccess(
       workspace: resolvedWorkspace,
       rootURL: rootURL,
       bookmarkWasRefreshed: resolution.isStale,
@@ -248,6 +259,8 @@ package struct WorkspaceBookmarkService: WorkspaceBookmarkServicing, Sendable {
         adapter.stopAccessing(rootURL)
       }
     )
+    ownsSecurityScope = false
+    return access
   }
 
   private func validatedDirectoryURL(_ url: URL) throws -> URL {
@@ -306,7 +319,7 @@ private struct FoundationWorkspaceBookmarkAdapter: WorkspaceBookmarkAdapter {
     var isStale = false
     let url = try URL(
       resolvingBookmarkData: data,
-      options: .withSecurityScope,
+      options: [.withSecurityScope, .withoutUI],
       relativeTo: nil,
       bookmarkDataIsStale: &isStale
     )

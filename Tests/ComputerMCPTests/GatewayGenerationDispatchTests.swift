@@ -908,6 +908,62 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test
+  func physicalRootReplacementDeniesOldOwnerWithoutTerminatingItsWork() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    let root = fixture.root.appendingPathComponent("workspace")
+    let moved = fixture.root.appendingPathComponent("original")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    var workspace = try #require(try fixture.database.workspace(id: "fixture"))
+    workspace.rootPath = root.path
+    try fixture.database.saveWorkspace(workspace)
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let arguments: [String: JSONValue] = ["handle": .string("retained")]
+      let originalPID = try pid(
+        await client.call(toolName: "fixture.start", arguments: .object(arguments)))
+      let owner = try #require(try await owners(client, kind: "mcpResource").first)
+      let startedAt = await fixture.service.snapshot().startedAt
+      try FileManager.default.moveItem(at: root, to: moved)
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      let before = try fixture.calls()
+      let ordinary = try await client.call(
+        toolName: "fixture.inspect", arguments: .object(arguments))
+      let selected = try await call(
+        client, owner: owner, tool: "fixture.inspect", arguments: arguments)
+      #expect(ordinary.result.objectValue?["isError"] == .bool(true))
+      #expect(selected.result.objectValue?["isError"] == .bool(true))
+      #expect(try await owners(client, kind: "mcpResource").isEmpty)
+      #expect(try fixture.calls() == before)
+      #expect(alive(originalPID))
+
+      try await fixture.activate(version: 2)
+      let currentPID = try pid(await client.call(toolName: "fixture.identity"))
+      #expect(currentPID != originalPID)
+      #expect(alive(originalPID))
+      #expect(await fixture.service.snapshot().startedAt == startedAt)
+      let stillDenied = try await call(
+        client, owner: owner, tool: "fixture.inspect", arguments: arguments)
+      #expect(stillDenied.result.objectValue?["isError"] == .bool(true))
+
+      try FileManager.default.removeItem(at: root)
+      try FileManager.default.moveItem(at: moved, to: root)
+      #expect(
+        try pid(await call(client, owner: owner, tool: "fixture.finish", arguments: arguments))
+          == originalPID)
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
   func metadataChangePreservesScopeWhileRevokedWorkspaceBlocksNewContinuations() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }

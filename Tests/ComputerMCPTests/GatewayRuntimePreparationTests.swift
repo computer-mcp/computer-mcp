@@ -135,12 +135,13 @@ struct GatewayRuntimePreparationTests {
         _ = try await prepared.runtime.callToolAsync(
           name: "workspace.list", arguments: .object([:]))
       }
+      #expect(fixture.adapter.startCount - fixture.adapter.stopCount == 1)
       await prepared.runtime.shutdown()
     } catch {
       await prepared.runtime.shutdown()
       throw error
     }
-    #expect(fixture.adapter.stopCount == 1)
+    #expect(fixture.adapter.startCount == fixture.adapter.stopCount)
   }
 
   @Test(arguments: [false, true])

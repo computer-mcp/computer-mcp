@@ -145,12 +145,14 @@ struct GatewayTerminalSessionsTests {
       caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "one")
     let workspace = RegisteredWorkspace(id: "folder", displayName: "Folder", rootPath: root.path)
     let scope = try GatewayTerminalSessions.Scope.workspace(
-      context: context, workspace: workspace, root: root)
+      context: context, workspace: workspace, root: WorkspaceRootIdentity(root))
     let storage = GatewayTerminalSessions()
     let shell = SubprocessShellRuntime(sessions: storage, scope: scope)
     let result = try run(shell, "printf private-result")
     let same = SubprocessShellRuntime(
-      sessions: storage, scope: try .workspace(context: context, workspace: workspace, root: root))
+      sessions: storage,
+      scope: try .workspace(
+        context: context, workspace: workspace, root: WorkspaceRootIdentity(root)))
     #expect(try read(same, result.sessionID).stdout.text == "private-result")
     var foreignPrincipal = context
     foreignPrincipal.trustedPrincipalID = "two"
@@ -164,11 +166,11 @@ struct GatewayTerminalSessionsTests {
     otherID.id = "another-folder"
     let scopes = try [
       GatewayTerminalSessions.Scope.workspace(
-        context: foreignPrincipal, workspace: workspace, root: root),
-      .workspace(context: foreignProfile, workspace: workspace, root: root),
-      .workspace(context: foreignCaller, workspace: workspace, root: root),
-      .workspace(context: context, workspace: reregistered, root: root),
-      .workspace(context: context, workspace: otherID, root: root),
+        context: foreignPrincipal, workspace: workspace, root: WorkspaceRootIdentity(root)),
+      .workspace(context: foreignProfile, workspace: workspace, root: WorkspaceRootIdentity(root)),
+      .workspace(context: foreignCaller, workspace: workspace, root: WorkspaceRootIdentity(root)),
+      .workspace(context: context, workspace: reregistered, root: WorkspaceRootIdentity(root)),
+      .workspace(context: context, workspace: otherID, root: WorkspaceRootIdentity(root)),
     ]
     for foreign in scopes {
       let isolated = SubprocessShellRuntime(sessions: storage, scope: foreign)
@@ -182,7 +184,9 @@ struct GatewayTerminalSessionsTests {
     defer { try? FileManager.default.removeItem(at: moved) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let replaced = SubprocessShellRuntime(
-      sessions: storage, scope: try .workspace(context: context, workspace: workspace, root: root))
+      sessions: storage,
+      scope: try .workspace(
+        context: context, workspace: workspace, root: WorkspaceRootIdentity(root)))
     #expect(try replaced.list().isEmpty)
     #expect(throws: ShellRuntimeError.unknownSession(result.sessionID)) {
       try read(replaced, result.sessionID)

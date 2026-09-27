@@ -13,6 +13,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let workspaces: [String: RegisteredWorkspace]
   private let workspaceOrder: [String]
   private let workspaceAccesses: [String: ResolvedWorkspaceAccess]
+  private let bookmarkService: any WorkspaceBookmarkServicing
   private let workspaceErrors: [String: WorkspaceBookmarkError]
   private let providerRouters: [String: GatewayProviderRouter]
   private let lifetime: GatewayRuntimeLifetime
@@ -233,8 +234,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceConfiguration.workspaceDirectory = access.rootURL.standardizedFileURL
       let shellManager = SubprocessShellRuntime(
         ownedWork: ownedWork, workspaceID: workspace.id, sessions: terminalSessions,
-        scope: try .workspace(
-          context: effectiveContext, workspace: access.workspace, root: access.rootURL,
+        scope: .workspace(
+          context: effectiveContext, workspace: access.workspace, root: access.rootIdentity,
           registered: registeredWorkspaces != nil || !persistedWorkspaces.isEmpty))
       let processManager = SubprocessProcessRegistry(
         shellManager: shellManager,
@@ -360,6 +361,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.workspaces = workspaceByID
     self.workspaceOrder = configuredWorkspaces.map(\.id)
     self.workspaceAccesses = accessByID
+    self.bookmarkService = bookmarkService
     self.workspaceErrors = errorByID
     self.providerRouters = providerRouterByID
     if preparationState == nil {
@@ -457,14 +459,41 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return current
   }
 
-  private func validateExecutionWorkspace(_ workspaceID: String) throws {
-    guard let current = try currentRegisteredWorkspace(workspaceID) else { return }
-    guard current.createdAt == persistedWorkspaceRegistrations[workspaceID]?.createdAt,
-      current.rootPath == workspaces[workspaceID]?.rootPath
-    else {
-      throw Self.invalid(
-        code: "policy.workspace_denied",
-        message: "The registered workspace changed or was removed.")
+  private func validateExecutionWorkspace(_ workspaceID: String, requiresAccess: Bool = true) throws
+  {
+    let current = try currentRegisteredWorkspace(workspaceID)
+    if let current {
+      guard current.createdAt == persistedWorkspaceRegistrations[workspaceID]?.createdAt,
+        current.rootPath == workspaces[workspaceID]?.rootPath
+      else {
+        throw Self.invalid(
+          code: "policy.workspace_denied",
+          message: "The registered workspace changed or was removed.")
+      }
+    }
+    if requiresAccess, let workspace = current ?? workspaces[workspaceID],
+      let error = workspaceAccessError(workspace)
+    {
+      throw Self.invalid(code: error.code, message: error.localizedDescription)
+    }
+  }
+
+  private func workspaceAccessError(_ workspace: RegisteredWorkspace) -> WorkspaceBookmarkError? {
+    guard let admitted = workspaceAccesses[workspace.id] else {
+      return workspaceErrors[workspace.id]
+    }
+    do {
+      let current = try currentRegisteredWorkspace(workspace.id) ?? workspace
+      let access = try bookmarkService.resolve(current)
+      defer { access.close() }
+      guard admitted.isActive, access.rootIdentity == admitted.rootIdentity else {
+        return .rootChanged(workspaceID: workspace.id)
+      }
+      return nil
+    } catch let error as WorkspaceBookmarkError {
+      return error
+    } catch {
+      return .bookmarkResolutionFailed(workspaceID: workspace.id)
     }
   }
 
@@ -1621,7 +1650,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         "id": .string(workspace.id),
         "display_name": .string(workspace.displayName),
         "bookmark_stale": .bool(workspace.bookmarkIsStale),
-        "access": WorkspaceAccessReport(workspace: workspace, error: workspaceErrors[id]).json,
+        "access": WorkspaceAccessReport(
+          workspace: workspace, error: workspaceAccessError(workspace)
+        ).json,
         "selected": .bool(context.workspaceID == id),
       ])
     }
@@ -1639,7 +1670,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "root_path": .string(workspace.rootPath),
       "bookmark_backed": .bool(workspace.bookmarkData != nil),
       "bookmark_stale": .bool(workspace.bookmarkIsStale),
-      "access": WorkspaceAccessReport(workspace: workspace, error: workspaceErrors[id]).json,
+      "access": WorkspaceAccessReport(workspace: workspace, error: workspaceAccessError(workspace))
+        .json,
       "created_at": .string(Self.iso8601(workspace.createdAt)),
       "updated_at": .string(Self.iso8601(workspace.updatedAt)),
     ])
@@ -1744,7 +1776,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         // validates its original execution scope, including registration lifetime and root.
         _ = try currentRegisteredWorkspace(workspaceID)
       } else {
-        try validateExecutionWorkspace(workspaceID)
+        try validateExecutionWorkspace(
+          workspaceID,
+          requiresAccess: !Self.coreTools(databaseEnabled: database != nil).contains {
+            $0.name == descriptor.id
+          })
       }
     }
     if let workspaceID = context.workspaceID, let error = workspaceErrors[workspaceID],

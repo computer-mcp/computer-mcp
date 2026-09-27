@@ -246,26 +246,16 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
     case isolated(UUID)
     case workspace(
       principal: String, profile: GatewayProfileID, caller: GatewayCallerKind,
-      workspace: String, registeredAt: Date?, root: String, device: UInt64, inode: UInt64,
-      createdAt: Date?)
+      workspace: String, registeredAt: Date?, root: WorkspaceRootIdentity)
 
     static func workspace(
-      context: ExecutionContext, workspace: RegisteredWorkspace, root: URL, registered: Bool = true
-    ) throws -> Scope {
-      let canonical = root.standardizedFileURL.resolvingSymlinksInPath()
-      let attributes = try FileManager.default.attributesOfItem(atPath: canonical.path)
-      guard let device = attributes[.systemNumber] as? NSNumber,
-        let inode = attributes[.systemFileNumber] as? NSNumber
-      else {
-        // Unverifiable folder identity must not reconnect to a previous generation's results.
-        return .isolated(UUID())
-      }
+      context: ExecutionContext, workspace: RegisteredWorkspace, root: WorkspaceRootIdentity,
+      registered: Bool = true
+    ) -> Scope {
       return .workspace(
         principal: context.principalID, profile: context.profileID, caller: context.caller,
         workspace: workspace.id, registeredAt: registered ? workspace.createdAt : nil,
-        root: canonical.path,
-        device: device.uint64Value, inode: inode.uint64Value,
-        createdAt: attributes[.creationDate] as? Date)
+        root: root)
     }
   }
 

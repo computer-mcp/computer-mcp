@@ -32,9 +32,22 @@ CLI and App health checks resolve access explicitly and close their temporary
 scope. No provider is created for an inaccessible workspace; if all are
 inaccessible, core diagnostics remain available. Explicit workspace selection
 never falls back to another directory, and grants are checked before revealing
-access errors. Reconnect after restoring the directory or renewing its access.
+access errors. A runtime created without access needs fresh construction after
+the directory or authorization is restored.
 Duplicate registration IDs and invalid provider configuration still reject
 construction.
+
+Every new workspace execution revalidates its current registration and bookmark
+access, then compares the resolved folder with the runtime's admitted physical
+identity (canonical path, device, inode and available creation time). Replacing a
+folder at the same path, redirecting a symlink, or losing bookmark access denies
+new calls, including continuations selected through an old owner. Existing work
+retains its owner and is not terminated by this check. Terminal result retention
+uses the same physical identity. Temporary validation scopes are balanced;
+bookmark resolution does not display system UI or persist a refreshed bookmark
+during a call. Workspace diagnostics report current access failures without
+executing providers. These checks do not grant macOS privacy permissions or
+provide an operating-system filesystem sandbox.
 
 The control socket and gateway socket are distinct and mode `0600`. CLI
 administration binds `local-cli`; MCP bridge clients bind `local-mcp` or an

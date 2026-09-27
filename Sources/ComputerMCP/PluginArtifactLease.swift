@@ -38,11 +38,14 @@ final class PluginArtifactLease: Sendable {
 
   deinit { close() }
 
-  /// Closing one reference must not unlock any copies still owned by a process.
+  /// This descriptor is private to one runtime; child ownership uses separate
+  /// process receipts. End its lock explicitly so incidental fork-before-exec
+  /// copies cannot extend a finished runtime's lease.
   func close() {
     closed.withLock { closed in
       guard !closed else { return }
       closed = true
+      flock(descriptor, LOCK_UN)
       Darwin.close(descriptor)
     }
   }

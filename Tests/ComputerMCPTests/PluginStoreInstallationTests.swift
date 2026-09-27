@@ -82,6 +82,42 @@ struct PluginStoreInstallationTests {
   }
 
   @Test
+  func finishedRuntimeLeaseDoesNotRemainHeldByIncidentalDescriptorCopies() async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    let artifact = try #require(database.pluginOwnedDirectories().first).identity
+    let storage = try PluginInstallationStorage(at: fixture.installationRoot)
+    let lease = try storage.retainArtifact(artifact)
+    storage.finishTransaction()
+    defer { lease.close() }
+
+    // An unrelated child between fork and exec can momentarily hold a CLOEXEC copy.
+    var named = stat()
+    try #require(lstat(artifact.url.appendingPathComponent("artifact.lock").path, &named) == 0)
+    let descriptors = try FileManager.default.contentsOfDirectory(atPath: "/dev/fd")
+      .compactMap(Int32.init)
+    let descriptor = try #require(
+      descriptors.first { descriptor in
+        var opened = stat()
+        return fstat(descriptor, &opened) == 0
+          && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino
+      })
+    let copy = fcntl(descriptor, F_DUPFD_CLOEXEC, 10)
+    try #require(copy >= 0)
+    defer { Darwin.close(copy) }
+    let removed = try await store.uninstallArtifact(
+      installationID: record.id, storageRoot: fixture.installationRoot, expectedRevision: 1)
+    #expect(removed.issues.count == 1)
+    lease.close()
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+  }
+
+  @Test
   func artifactLeaseRejectsASymlinkWithoutTouchingItsTarget() async throws {
     let fixture = try await PreparationFixture.make()
     defer { fixture.files.remove() }

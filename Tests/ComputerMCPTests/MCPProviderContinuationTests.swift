@@ -333,6 +333,42 @@ struct MCPProviderContinuationTests {
   }
 
   @Test
+  func retainedDeclarationsRejectCatalogChurnAtomicallyAndRecoverAfterDrain() throws {
+    let ledger = GatewayOwnedWork()
+    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "fixture")
+    let declared = tool(handles: ["native": "/handle"])
+    func named(_ name: String) -> MCPTool {
+      MCPTool(
+        name: name, description: declared.description, inputSchema: declared.inputSchema,
+        meta: declared.meta)
+    }
+    try work.declareContinuations(
+      from: (0..<MCPProviderWork.maximumContinuations).map { named("continue\($0)") })
+    let reference = MCPToolReference(serverID: "fixture", toolName: "continue0")
+    #expect(ledger.continuations.retainsContinuation(workspaceID: "ws", reference: reference))
+    #expect(throws: GatewayToolError.self) {
+      try work.declareContinuations(from: [named("overflow")])
+    }
+    #expect(ledger.continuations.retainsContinuation(workspaceID: "ws", reference: reference))
+    #expect(
+      try ledger.continuations.lookup(
+        workspaceID: "ws", registrationID: "fixture", tool: "overflow",
+        arguments: .object(["handle": .string("reused")])) == .init())
+    try work.accept(report(UUID(), 1, []), covering: [])
+    try work.declareContinuations(from: [named("next")])
+    #expect(!ledger.continuations.retainsContinuation(workspaceID: "ws", reference: reference))
+    #expect(
+      try ledger.continuations.lookup(
+        workspaceID: "ws", registrationID: "fixture", tool: "continue0",
+        arguments: .object(["handle": .string("reused")])) == .init())
+    #expect(
+      try ledger.continuations.lookup(
+        workspaceID: "ws", registrationID: "fixture", tool: "next",
+        arguments: .object(["handle": .string("reused")])
+      ).applicable)
+  }
+
+  @Test
   func admissionRechecksInstanceScopeHandlesAndAcquisition() throws {
     let ledger = GatewayOwnedWork()
     var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "fixture")

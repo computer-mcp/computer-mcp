@@ -48,6 +48,50 @@ package actor AppGatewayService {
     inputs: AppControlPlaneService.GatewayInputs, gateway: GatewayRuntime
   )
 
+  private struct PendingRuntime {
+    let id: UUID
+    let task: Task<AdmittedRuntime, any Error>
+  }
+
+  private struct InvocationSelection {
+    let gateway: GatewayRuntime
+    let target: MCPContinuationTarget?
+    let ownership: GatewayOwnedWork.Lease
+  }
+
+  /// The connection fixes identity; each invocation resolves its generation at admission.
+  private struct SessionDispatcher: GatewayAsyncToolServing {
+    weak var service: AppGatewayService?
+    let key: RuntimeKey
+    let epoch: UUID
+    let trace: GatewayTransportTrace
+    let changes: GatewayToolChangeBroadcaster
+
+    func toolChanges() -> AsyncStream<Void> { changes.stream() }
+
+    func listToolsAsync() async throws -> [MCPTool] {
+      guard let service else { throw GatewaySocketError.notConnected }
+      return try await service.listTools(key: key, epoch: epoch, trace: trace)
+    }
+
+    func refreshTools() async throws {
+      guard let service else { throw GatewaySocketError.notConnected }
+      try await service.refreshTools(key: key, epoch: epoch, trace: trace)
+    }
+
+    func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+      guard let service else { throw GatewaySocketError.notConnected }
+      return try await service.callTool(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false)
+    }
+
+    func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+      guard let service else { throw GatewaySocketError.notConnected }
+      return try await service.callTool(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
+    }
+  }
+
   package nonisolated let socketConfiguration: GatewaySocketConfiguration
 
   private let controlPlane: AppControlPlaneService
@@ -58,8 +102,13 @@ package actor AppGatewayService {
   private var lastError: String?
   private var pluginChangeInProgress = false
   private var runtimes: [RuntimeKey: AdmittedRuntime] = [:]
-  private var pendingRuntimes: [RuntimeKey: Task<AdmittedRuntime, any Error>] = [:]
-  private var retiredRuntimes: [GatewayRuntime] = []
+  private var pendingRuntimes: [RuntimeKey: PendingRuntime] = [:]
+  private var retiredRuntimes: [RuntimeKey: [UUID: GatewayRuntime]] = [:]
+  private var retiringRuntimes: [UUID: Task<Void, Never>] = [:]
+  private var runtimeObservers: [UUID: [Task<Void, Never>]] = [:]
+  private var catalogChanges: [RuntimeKey: GatewayToolChangeBroadcaster] = [:]
+  private var manifestObserver: Task<Void, Never>?
+  private var listenerEpoch = UUID()
   private var terminalSessions = GatewayTerminalSessions()
   private var lifecycleInProgress = false
   private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
@@ -98,6 +147,7 @@ package actor AppGatewayService {
     }
 
     state = .starting
+    listenerEpoch = UUID()
     lastError = nil
     let selectedProfile: GatewayProfileID
     do {
@@ -112,6 +162,14 @@ package actor AppGatewayService {
       self.profileID = selectedProfile
 
       try await controlPlane.start()
+      let epoch = listenerEpoch
+      let manifestChanges = await controlPlane.manifestChanges()
+      manifestObserver = Task { [weak self] in
+        for await _ in manifestChanges {
+          guard !Task.isCancelled else { break }
+          await self?.configurationChanged(epoch: epoch)
+        }
+      }
       if let credentialFile = socketConfiguration.tunnelCredentialFile {
         try GatewaySocketCredentialStore.create(at: credentialFile)
       }
@@ -135,6 +193,8 @@ package actor AppGatewayService {
       self.startedAt = Date()
       state = .running
     } catch {
+      manifestObserver?.cancel()
+      manifestObserver = nil
       if let credentialFile = socketConfiguration.tunnelCredentialFile {
         GatewaySocketCredentialStore.remove(at: credentialFile)
       }
@@ -173,13 +233,29 @@ package actor AppGatewayService {
       return
     }
     state = .stopping
+    listenerEpoch = UUID()
+    manifestObserver?.cancel()
+    manifestObserver = nil
+    let pending = pendingRuntimes.values.map(\.task)
+    pendingRuntimes.removeAll()
+    for task in pending { task.cancel() }
     let activeServer = server
     server = nil
     await activeServer?.stop()
-    let ownedRuntimes = runtimes.values.map(\.gateway) + retiredRuntimes
+    for task in pending { _ = try? await task.value }
+    let ownedRuntimes =
+      runtimes.values.map(\.gateway)
+      + retiredRuntimes.values.flatMap { $0.values }
     runtimes.removeAll()
     retiredRuntimes.removeAll()
+    for observers in runtimeObservers.values { for observer in observers { observer.cancel() } }
+    runtimeObservers.removeAll()
+    for changes in catalogChanges.values { changes.finish() }
+    catalogChanges.removeAll()
+    let retiring = Array(retiringRuntimes.values)
     for runtime in ownedRuntimes { await runtime.shutdown() }
+    for cleanup in retiring { await cleanup.value }
+    retiringRuntimes.removeAll()
     terminalSessions = GatewayTerminalSessions()
     if let credentialFile = socketConfiguration.tunnelCredentialFile {
       GatewaySocketCredentialStore.remove(at: credentialFile)
@@ -199,53 +275,282 @@ package actor AppGatewayService {
   private func makeSession(identity: GatewaySocketConnectionIdentity) async throws
     -> GatewaySocketServerSession
   {
-    guard state == .running || state == .starting, let profileID,
-      !pluginChangeInProgress
-    else { throw GatewaySocketError.notConnected }
+    let epoch = listenerEpoch
+    try requireAdmission(epoch: epoch)
+    guard let profileID else { throw GatewaySocketError.notConnected }
     let key = RuntimeKey(
       principalID: identity.trustedPrincipalID, profileID: profileID, caller: identity.caller)
-    let admitted = try await admittedRuntime(key: key, trace: identity.transportTrace)
+    let admitted = try await admittedRuntime(key: key, epoch: epoch, trace: identity.transportTrace)
+    try requireAdmission(epoch: epoch)
+    let dispatcher = SessionDispatcher(
+      service: self, key: key, epoch: epoch, trace: identity.transportTrace,
+      changes: changes(for: key))
     let server = await MCPRuntimeAdapter.makeGatewayServer(
-      configuration: admitted.inputs.configuration, registry: admitted.gateway,
+      configuration: admitted.inputs.configuration, registry: dispatcher,
       transportTrace: identity.transportTrace)
-    // The listener owns executions. A disconnected MCP session only releases its protocol server.
+    do {
+      try requireAdmission(epoch: epoch)
+    } catch {
+      await server.stop()
+      throw error
+    }
+    // A disconnected MCP session releases its protocol server, not listener-owned work.
     return GatewaySocketServerSession(server: server)
   }
 
-  private func admittedRuntime(key: RuntimeKey, trace: GatewayTransportTrace) async throws
+  private func requireAdmission(epoch: UUID) throws {
+    try Task.checkCancellation()
+    guard listenerEpoch == epoch, state == .running || state == .starting,
+      !pluginChangeInProgress
+    else { throw GatewaySocketError.notConnected }
+  }
+
+  private func admittedRuntime(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace)
+    async throws
     -> AdmittedRuntime
   {
-    if let pending = pendingRuntimes[key] {
-      return try await pending.value
-    }
+    try requireAdmission(epoch: epoch)
+    if let pending = pendingRuntimes[key] { return try await pending.task.value }
     let current = try await controlPlane.gatewayInputs()
-    if let pending = pendingRuntimes[key] { return try await pending.value }
+    try requireAdmission(epoch: epoch)
+    if let pending = pendingRuntimes[key] { return try await pending.task.value }
     if let existing = runtimes[key], existing.inputs.configuration == current.configuration,
       existing.inputs.workspaces == current.workspaces, existing.inputs.plugins == current.plugins
     {
       return existing
     }
-    guard runtimes.count + retiredRuntimes.count + pendingRuntimes.count < 128 else {
+    reapRetiredRuntimes()
+    let retiredCount = retiredRuntimes.values.reduce(0) { $0 + $1.count }
+    guard runtimes.count + retiredCount + retiringRuntimes.count + pendingRuntimes.count < 128
+    else {
       throw GatewaySocketError.invalidConfiguration(
         "The gateway has reached its owned runtime capacity.")
     }
+    let id = UUID()
+    let terminalSessions = terminalSessions
     let task = Task { [controlPlane] in
       do {
         let admitted = try await controlPlane.makeGatewaySocketRuntime(
           caller: key.caller, profileID: key.profileID, transportTrace: trace,
           trustedPrincipalID: key.principalID, terminalSessions: terminalSessions)
+        do {
+          try requireAdmission(epoch: epoch)
+          guard pendingRuntimes[key]?.id == id else { throw GatewaySocketError.notConnected }
+        } catch {
+          await admitted.gateway.shutdown()
+          throw error
+        }
         if let previous = runtimes.updateValue(admitted, forKey: key) {
-          retiredRuntimes.append(previous.gateway)
+          retiredRuntimes[key, default: [:]][previous.gateway.generationID] = previous.gateway
         }
         pendingRuntimes.removeValue(forKey: key)
+        observe(admitted.gateway, key: key, epoch: epoch)
+        reapRetiredRuntimes()
+        changes(for: key).send()
         return admitted
       } catch {
-        pendingRuntimes.removeValue(forKey: key)
+        if pendingRuntimes[key]?.id == id { pendingRuntimes.removeValue(forKey: key) }
         throw error
       }
     }
-    pendingRuntimes[key] = task
+    pendingRuntimes[key] = PendingRuntime(id: id, task: task)
     return try await task.value
+  }
+
+  private func changes(for key: RuntimeKey) -> GatewayToolChangeBroadcaster {
+    if let existing = catalogChanges[key] { return existing }
+    let changes = GatewayToolChangeBroadcaster()
+    catalogChanges[key] = changes
+    return changes
+  }
+
+  private func configurationChanged(epoch: UUID) {
+    guard epoch == listenerEpoch else { return }
+    for changes in catalogChanges.values { changes.send() }
+  }
+
+  private func observe(_ runtime: GatewayRuntime, key: RuntimeKey, epoch: UUID) {
+    let id = runtime.generationID
+    let work = runtime.ownedWork.updates()
+    let tools = runtime.toolChanges()
+    runtimeObservers[id] = [
+      Task { [weak self] in
+        for await _ in work {
+          guard !Task.isCancelled else { break }
+          await self?.workChanged(epoch: epoch)
+        }
+      },
+      Task { [weak self] in
+        for await _ in tools {
+          guard !Task.isCancelled else { break }
+          await self?.toolsChanged(key: key, generation: id, epoch: epoch)
+        }
+      },
+    ]
+  }
+
+  private func toolsChanged(key: RuntimeKey, generation: UUID, epoch: UUID) {
+    guard epoch == listenerEpoch, runtimes[key]?.gateway.generationID == generation else { return }
+    changes(for: key).send()
+  }
+
+  private func workChanged(epoch: UUID) {
+    guard epoch == listenerEpoch else { return }
+    reapRetiredRuntimes()
+  }
+
+  /// Invocation reservations and the retirement claim run without suspending the listener actor.
+  private func reapRetiredRuntimes() {
+    for (key, generations) in retiredRuntimes {
+      for (id, runtime) in generations {
+        guard let cleanup = runtime.beginRetirementIfDrained() else { continue }
+        retiredRuntimes[key]?.removeValue(forKey: id)
+        if retiredRuntimes[key]?.isEmpty == true { retiredRuntimes.removeValue(forKey: key) }
+        if let observers = runtimeObservers.removeValue(forKey: id) {
+          for observer in observers { observer.cancel() }
+        }
+        retiringRuntimes[id] = Task {
+          await cleanup.value
+          retiringRuntimes.removeValue(forKey: id)
+        }
+      }
+    }
+  }
+
+  private func listTools(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace) async throws
+    -> [MCPTool]
+  {
+    _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    try requireAdmission(epoch: epoch)
+    guard let runtime = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
+    let reservation = try runtime.ownedWork.admitInvocation(
+      workspaceID: nil, resourceID: "tools/list")
+    defer { reservation.finish() }
+    return try await runtime.listToolsAsync()
+  }
+
+  private func refreshTools(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace) async throws
+  {
+    _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    try requireAdmission(epoch: epoch)
+    guard let runtime = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
+    let reservation = try runtime.ownedWork.admitInvocation(
+      workspaceID: nil, resourceID: "tools/list")
+    defer { reservation.finish() }
+    try await runtime.refreshTools()
+  }
+
+  private func selectInvocation(
+    name: String, arguments: JSONValue?, key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace
+  ) async throws -> InvocationSelection {
+    try requireAdmission(epoch: epoch)
+    if let owned = try retainedInvocation(name: name, arguments: arguments, key: key) {
+      return owned
+    }
+    _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    try requireAdmission(epoch: epoch)
+    guard let current = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
+    // Construction suspends; a prior invocation may have published its owner while we waited.
+    if let owned = try retainedInvocation(name: name, arguments: arguments, key: key) {
+      return owned
+    }
+    return InvocationSelection(
+      gateway: current, target: nil,
+      ownership: try current.ownedWork.admitInvocation(
+        workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue,
+        resourceID: name))
+  }
+
+  private func retainedInvocation(name: String, arguments: JSONValue?, key: RuntimeKey) throws
+    -> InvocationSelection?
+  {
+    let generations =
+      (runtimes[key].map { [$0.gateway] } ?? [])
+      + Array(retiredRuntimes[key]?.values ?? [:].values)
+    let workspaceID =
+      arguments?.objectValue?["workspace_id"]?.stringValue
+      ?? runtimes[key]?.gateway.unambiguousWorkspaceID
+    var lookups: [(GatewayRuntime, GatewayRuntime.ContinuationLookup)] = []
+    for runtime in generations {
+      if let lookup = try runtime.continuationLookup(
+        name: name, arguments: arguments, workspaceID: workspaceID)
+      {
+        lookups.append((runtime, lookup))
+      }
+    }
+    if let matches = try MCPContinuationDirectory.uniqueOwner(in: lookups.map { $0.1.observation }),
+      let match = matches.first,
+      let (runtime, lookup) = lookups.first(where: { $0.1.observation.matches.contains(match) })
+    {
+      let target = MCPContinuationTarget(
+        workspaceID: lookup.workspaceID, reference: lookup.reference,
+        connectionID: match.connectionID, instanceID: match.instanceID,
+        resources: Dictionary(uniqueKeysWithValues: matches.map { ($0.resource, $0.acquiredBy) }))
+      return InvocationSelection(
+        gateway: runtime, target: target,
+        ownership: try runtime.ownedWork.admitInvocation(
+          workspaceID: lookup.workspaceID, resourceID: name))
+    }
+    var tool = name
+    var object = arguments?.objectValue ?? [:]
+    if tool == "operations.prepare" || tool == "operations.commit" {
+      tool = object["tool"]?.stringValue ?? ""
+      object = object["arguments"]?.objectValue ?? [:]
+    }
+    let kind: GatewayOwnedWork.Kind
+    let id: String
+    switch tool {
+    case "shell.read", "shell.write", "shell.cancel":
+      kind = .shell
+      guard let value = object["session_id"]?.stringValue else { return nil }
+      id = value
+    case "process.read", "process.cancel":
+      kind = .shell
+      guard let value = object["process_id"]?.stringValue else { return nil }
+      id = value
+    case "mcp.requests.read", "mcp.requests.cancel":
+      kind = .mcpRequest
+      guard let value = object["request_id"]?.stringValue else { return nil }
+      id = value
+    default: return nil
+    }
+    let owners = generations.filter { runtime in
+      runtime.ownedWork.snapshot.contains {
+        $0.kind == kind && $0.workspaceID == workspaceID && $0.resourceID == id
+          && (kind != .mcpRequest || $0.registrationID == object["server"]?.stringValue)
+      }
+    }
+    guard owners.count <= 1 else {
+      throw GatewayToolError.invalidArguments(
+        "[runtime.owner_ambiguous] Select the exact work owner.")
+    }
+    guard let owner = owners.first else { return nil }
+    return InvocationSelection(
+      gateway: owner, target: nil,
+      ownership: try owner.ownedWork.admitInvocation(workspaceID: workspaceID, resourceID: name))
+  }
+
+  private func callTool(
+    name: String, arguments: JSONValue?, key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace,
+    envelope: Bool
+  ) async throws -> JSONValue {
+    do {
+      let selection = try await selectInvocation(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace)
+      defer { selection.ownership.finish() }
+      return try await MCPContinuationTarget.$current.withValue(selection.target) {
+        if envelope {
+          return try await selection.gateway.callToolForMCPAsync(name: name, arguments: arguments)
+        }
+        return try await selection.gateway.callToolAsync(name: name, arguments: arguments)
+      }
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      guard envelope, let runtime = runtimes[key]?.gateway else { throw error }
+      return runtime.routingErrorForMCP(
+        error, name: name, arguments: arguments, recordFailure: true)
+    }
   }
 
   package func snapshot() async -> AppGatewayServiceSnapshot {

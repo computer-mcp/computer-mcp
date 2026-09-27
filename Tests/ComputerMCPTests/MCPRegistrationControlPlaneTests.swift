@@ -330,6 +330,8 @@ struct MCPRegistrationControlPlaneTests {
       name, starts = sys.argv[1:]
       with open(starts, "a") as f:
           f.write(str(os.getpid()) + "\n")
+      with open(starts + ".versions", "a") as f:
+          f.write(name + "\n")
       for line in sys.stdin:
           request = json.loads(line)
           if "id" not in request:
@@ -343,6 +345,8 @@ struct MCPRegistrationControlPlaneTests {
                                    "inputSchema": {"type": "object", "properties": {}},
                                    "annotations": {"readOnlyHint": True}} for tool in [name, "hold"]]}
           elif method == "tools/call":
+              with open(starts + ".invocations", "a") as f:
+                  f.write(name + ":" + request["params"]["name"] + "\n")
               if request["params"]["name"] == "hold":
                   with open(starts + ".calls", "a") as f:
                       f.write("hold\n")
@@ -417,7 +421,11 @@ struct MCPRegistrationControlPlaneTests {
       try #require(FileManager.default.fileExists(atPath: calls.path))
       try await fixture.apply(["disable", "manual"])
       let allPIDs = try fixture.processIDs(at: starts)
-      #expect(allPIDs.count == 2)
+      // A catalog notification can prepare the replacement before the explicit restart claims admission.
+      #expect((2...3).contains(allPIDs.count))
+      let versions = try String(contentsOfFile: starts.path + ".versions", encoding: .utf8)
+        .split(separator: "\n").map(String.init)
+      #expect(versions == ["first", "second"] || versions == ["first", "second", "second"])
       #expect(allPIDs.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
       await #expect(throws: (any Error).self) { try await second.listTools() }
       await second.disconnect()
@@ -429,6 +437,9 @@ struct MCPRegistrationControlPlaneTests {
       #expect(try await !disabled.listTools().tools.contains { $0.name.hasPrefix("manual.") })
       #expect(try fixture.processIDs(at: starts) == allPIDs)
       #expect(try String(contentsOf: calls, encoding: .utf8) == "hold\n")
+      #expect(
+        try String(contentsOfFile: starts.path + ".invocations", encoding: .utf8)
+          == "first:first\nsecond:second\nsecond:hold\n")
       try await fixture.apply(["remove", "manual"])
       #expect(try fixture.configuration().mcp.servers.isEmpty)
       #expect(FileManager.default.fileExists(atPath: script.path))

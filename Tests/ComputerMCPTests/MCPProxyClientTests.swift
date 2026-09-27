@@ -354,21 +354,26 @@ final class MCPProxyClientTests {
       try await runBlockingTest {
         _ = try client.startToolCall(
           server: server, name: "hang", arguments: .object([:]), requestID: "owned-call")
-        let record = try #require(ownedWork.snapshot.first)
+        let record = try #require(ownedWork.snapshot.first { $0.kind == .mcpRequest })
         #expect(record.kind == .mcpRequest)
         #expect(record.workspaceID == "fixture")
         #expect(record.registrationID == "owned")
         #expect(record.resourceID == "owned-call")
         _ = try client.cancelRequest(server: server, requestID: "owned-call", reason: "stop")
-        #expect(ownedWork.snapshot == [record])
+        #expect(ownedWork.snapshot.filter { $0.kind == .mcpRequest } == [record])
         if completeBeforeShutdown {
           _ = try client.callTool(
             server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]))
           let deadline = ContinuousClock.now + .seconds(2)
-          while !ownedWork.snapshot.isEmpty && ContinuousClock.now < deadline {
+          while ownedWork.snapshot.contains(where: { $0.kind == .mcpRequest })
+            && ContinuousClock.now < deadline
+          {
             Thread.sleep(forTimeInterval: 0.01)
           }
-          #expect(ownedWork.snapshot.isEmpty)
+          #expect(!ownedWork.snapshot.contains { $0.kind == .mcpRequest })
+          let unknown = try #require(ownedWork.snapshot.first { $0.kind == .mcpUnreportedWork })
+          #expect(unknown.uncertain)
+          #expect(!ownedWork.closeAdmissionIfDrained())
           #expect(
             try client.connectionStatus(server: server).objectValue?["state"]
               == .string("connected"))
@@ -812,8 +817,8 @@ final class MCPProxyClientTests {
       #expect(receipt.objectValue?["cancellation"] == .string("failed"))
       #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
       #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
-      #expect(ownedWork.snapshot.count == 1)
-      #expect(ownedWork.snapshot.first?.uncertain == true)
+      #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
+      #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
       #expect(throws: (any Error).self) {
         try client.callTool(
           server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
@@ -825,8 +830,8 @@ final class MCPProxyClientTests {
       try Data().write(to: directory.appendingPathComponent("release.txt"))
       await client.shutdown()
       // Remote completion was not observed even though the transport has closed.
-      #expect(ownedWork.snapshot.count == 1)
-      #expect(ownedWork.snapshot.first?.uncertain == true)
+      #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
+      #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
     } catch {
       waiting.cancel()
       try? Data().write(to: directory.appendingPathComponent("release.txt"))

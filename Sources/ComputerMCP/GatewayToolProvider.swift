@@ -164,6 +164,7 @@ internal enum GatewayToolDomain: String, CaseIterable, Sendable {
 internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private struct State {
     var snapshot: GatewayToolCatalogSnapshot
+    var retainedContinuations: [String: GatewayToolCatalogSnapshot.Route] = [:]
     var monitors: [Task<Void, Never>] = []
     var stopped = false
     var shutdownTask: Task<Void, Never>?
@@ -175,6 +176,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private let reservedToolNames: Set<String>
   private let shutdownSource: @Sendable () async -> Void
   private let mcpRiskResolver: (@Sendable (MCPToolReference) throws -> CapabilityRisk)?
+  private let retainsContinuation: @Sendable (MCPToolReference) -> Bool
   private let refreshCoordinator = GatewayCatalogRefreshCoordinator()
   private let changes = GatewayToolChangeBroadcaster()
 
@@ -188,12 +190,14 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     refreshInterval: Duration? = nil,
     reservedToolNames: Set<String> = [],
     mcpRiskResolver: (@Sendable (MCPToolReference) throws -> CapabilityRisk)? = nil,
+    retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false },
     shutdownSource: @escaping @Sendable () async -> Void = {}
   ) throws {
     self.source = source
     self.reservedToolNames = reservedToolNames
     self.shutdownSource = shutdownSource
     self.mcpRiskResolver = mcpRiskResolver
+    self.retainsContinuation = retainsContinuation
     self.state = OSAllocatedUnfairLock(
       initialState: State(
         snapshot: try .init(providers: source(), reservedToolNames: reservedToolNames)))
@@ -231,7 +235,8 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   internal convenience init(
     registry: GatewayToolRegistry,
     additionalProviders: [any GatewayToolProvider],
-    reservedToolNames: Set<String> = []
+    reservedToolNames: Set<String> = [],
+    retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false }
   ) throws {
     try self.init(
       source: {
@@ -247,6 +252,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
         ? .seconds(30) : nil,
       reservedToolNames: reservedToolNames,
       mcpRiskResolver: { try registry.downstreamRisk(for: $0) },
+      retainsContinuation: retainsContinuation,
       shutdownSource: { await registry.shutdown() }
     )
   }
@@ -260,6 +266,15 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
 
   internal func capability(named name: String) throws -> CapabilityDescriptor {
     try route(named: name).capability
+  }
+
+  /// A private locator survives catalog hiding while native work still owns its binding.
+  internal func continuationReference(named name: String) -> MCPToolReference? {
+    state.withLock { state in
+      guard !state.stopped else { return nil }
+      return state.snapshot.routes[name]?.capability.mcpReference
+        ?? state.retainedContinuations[name]?.capability.mcpReference
+    }
   }
 
   internal func downstreamRisk(for reference: MCPToolReference) throws -> CapabilityRisk {
@@ -294,9 +309,18 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   {
     try state.withLock { state in
       guard !state.stopped else { throw GatewayProviderRouterError.stopped }
-      guard let route = state.snapshot.routes[name] else {
-        throw GatewayToolError.unknownTool(name)
+      let route: GatewayToolCatalogSnapshot.Route?
+      if let target = MCPContinuationTarget.current,
+        let retained = state.retainedContinuations[name],
+        retained.capability.mcpReference == target.reference
+      {
+        route =
+          state.snapshot.routes[name]?.capability.mcpReference == target.reference
+          ? state.snapshot.routes[name] : retained
+      } else {
+        route = state.snapshot.routes[name]
       }
+      guard let route else { throw GatewayToolError.unknownTool(name) }
       if let expectedCapability, route.capability != expectedCapability {
         throw GatewayProviderRouterError.capabilityChanged(name)
       }
@@ -327,6 +351,14 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
         let changed = try state.withLock { state in
           guard !state.stopped else { throw GatewayProviderRouterError.stopped }
           let changed = !state.snapshot.hasSameSurface(as: snapshot)
+          let previous = state.retainedContinuations.merging(state.snapshot.routes) { _, new in new
+          }
+          state.retainedContinuations = previous.filter { name, route in
+            guard snapshot.routes[name] == nil, let reference = route.capability.mcpReference else {
+              return false
+            }
+            return retainsContinuation(reference)
+          }
           state.snapshot = snapshot
           state.lastRefreshError = nil
           return changed

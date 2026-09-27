@@ -17,6 +17,7 @@ struct MCPProviderWork {
   static let invocationKey = "io.github.computer-mcp/work-invocation"
   static let resourceURI = "computer-mcp://runtime/work/v1"
   static let maximumResources = 1_024
+  static let maximumContinuations = 1_024
   static let maximumBytes = 512 * 1_024
 
   enum Identifier: Hashable, Sendable {
@@ -336,8 +337,14 @@ struct MCPProviderWork {
     }
     // Removed tools still locate their retained owners; discovery independently
     // decides whether that connection can currently execute the operation.
-    continuations =
+    let next =
       needsObservation ? continuations.merging(declarations) { _, new in new } : declarations
+    guard next.count <= Self.maximumContinuations else {
+      throw GatewayToolError.invalidArguments(
+        "[mcp.continuation_capacity] Retained continuation declarations exceed the connection budget."
+      )
+    }
+    continuations = next
     publishContinuations()
   }
 

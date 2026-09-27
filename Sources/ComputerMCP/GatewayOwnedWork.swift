@@ -9,6 +9,7 @@ final class GatewayOwnedWork: Sendable {
     case mcpRequest
     case mcpResource
     case mcpObservation
+    case mcpUnreportedWork
   }
 
   struct Record: Sendable, Equatable {

@@ -641,6 +641,7 @@ private actor MCPProxyConnection {
   }
   private var requestOwnership: [UUID: RequestOwnership] = [:]
   private var providerWork: MCPProviderWork?
+  private var unreportedWork: GatewayOwnedWork.Lease?
   private var workCatalogObserved = false
   private var workObservation: Task<Void, Never>?
   private var workObservationID: UUID?
@@ -952,6 +953,7 @@ private actor MCPProxyConnection {
       "last_error": lastError.map(JSONValue.string) ?? .null,
       "initialize": initializeResult.flatMap { try? JSONValue.encoded($0) } ?? .null,
       "provider_work": providerWork?.status ?? .null,
+      "unreported_work": .bool(unreportedWork != nil),
     ])
   }
 
@@ -1114,6 +1116,13 @@ private actor MCPProxyConnection {
     }
     let providerInvocationID = try providerWork?.beginInvocation(
       tool: name, hostContext: workContext)
+    // A response from a provider without lifetime reporting cannot prove background work drained.
+    if providerWork == nil, unreportedWork == nil {
+      unreportedWork = ownedWork?.retain(
+        .mcpUnreportedWork, workspaceID: workspaceID, registrationID: server.id,
+        resourceID: connectionID.uuidString)
+      unreportedWork?.markUncertain()
+    }
     let work = ownedWork?.retain(
       .mcpRequest, workspaceID: workspaceID, registrationID: server.id,
       resourceID: gatewayRequestID)
@@ -1222,6 +1231,10 @@ private actor MCPProxyConnection {
     }
     closeTask = task
     let confirmed = await task.value
+    if confirmed, transport is MCPChildProcessTransport {
+      unreportedWork?.finish()
+      unreportedWork = nil
+    }
     // Closing a remote transport is not evidence that remote execution stopped.
     // A local managed child can release unknown requests only after verified exit.
     for ownership in Array(requestOwnership.values) {

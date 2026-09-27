@@ -217,7 +217,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let router = try GatewayProviderRouter(
         registry: registry,
         additionalProviders: additionalProviders,
-        reservedToolNames: Set(Self.coreTools(databaseEnabled: true).map(\.name))
+        reservedToolNames: Set(Self.coreTools(databaseEnabled: true).map(\.name)),
+        retainsContinuation: { [ownedWork, workspaceID = workspace.id] reference in
+          ownedWork.continuations.retainsContinuation(
+            workspaceID: workspaceID, reference: reference)
+        }
       )
       providerRouterByID[workspace.id] = router
       lifetime.replaceShutdown(registryCleanup) { await router.shutdown() }
@@ -617,11 +621,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         toolName: Self.requiredString("tool", in: arguments))
       nativeArguments = arguments["arguments"] ?? .object([:])
     } else {
-      let capability: CapabilityDescriptor
-      do { capability = try router.capability(named: name) } catch GatewayToolError.unknownTool {
-        return nil
-      }
-      guard let nativeReference = capability.mcpReference else { return nil }
+      guard let nativeReference = router.continuationReference(named: name) else { return nil }
       reference = nativeReference
       arguments.removeValue(forKey: "workspace_id")
       nativeArguments = .object(arguments)
@@ -706,6 +706,37 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     name: String,
     arguments: JSONValue?
   ) async throws -> JSONValue {
+    let callContext = contextForMCP(arguments: arguments)
+    do {
+      return try await callToolAsync(name: name, arguments: arguments, context: callContext)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      return routingErrorForMCP(error, name: name, arguments: arguments, context: callContext)
+    }
+  }
+
+  func routingErrorForMCP(
+    _ error: any Error, name: String, arguments: JSONValue?, context: ExecutionContext? = nil,
+    recordFailure: Bool = false
+  ) -> JSONValue {
+    let context = context ?? contextForMCP(arguments: arguments)
+    let linkage = Self.operationLinkageFromArguments(
+      name: name, arguments: arguments?.objectValue ?? [:])
+    let result = Self.attachExecutionMetadata(
+      to: Self.errorEnvelope(error), context: context, capabilityID: name, operationLinkage: linkage
+    )
+    if recordFailure {
+      try? recordAudit(
+        context: context, capabilityID: name, decision: Self.auditDecision(for: error),
+        errorCode: Self.auditErrorCode(for: error), duration: .zero,
+        inputDigest: try? Self.inputDigest(tool: name, arguments: arguments?.objectValue ?? [:]),
+        output: result, operationLinkage: linkage)
+    }
+    return result
+  }
+
+  private func contextForMCP(arguments: JSONValue?) -> ExecutionContext {
     var callContext = contextForCall()
     let object = arguments?.objectValue ?? [:]
     if let workspaceID = object["workspace_id"]?.stringValue {
@@ -713,25 +744,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     } else if callContext.workspaceID == nil, workspaceOrder.count == 1 {
       callContext.workspaceID = workspaceOrder[0]
     }
-    do {
-      return try await callToolAsync(
-        name: name,
-        arguments: arguments,
-        context: callContext
-      )
-    } catch is CancellationError {
-      throw CancellationError()
-    } catch {
-      return Self.attachExecutionMetadata(
-        to: Self.errorEnvelope(error),
-        context: callContext,
-        capabilityID: name,
-        operationLinkage: Self.operationLinkageFromArguments(
-          name: name,
-          arguments: object
-        )
-      )
-    }
+    return callContext
   }
 
   package func callTool(

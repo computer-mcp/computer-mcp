@@ -61,6 +61,16 @@ final class MCPContinuationDirectory: Sendable {
     }
   }
 
+  func retainsContinuation(workspaceID: String?, reference: MCPToolReference) -> Bool {
+    entries.withLock { entries in
+      entries.values.contains {
+        $0.workspaceID == workspaceID && $0.registrationID == reference.serverID
+          && $0.declarations[reference.toolName] != nil
+          && ($0.observationPending || !$0.resources.isEmpty)
+      }
+    }
+  }
+
   /// A match is a locator, not call admission. Pending observations cannot prove absence.
   func lookup(
     workspaceID: String?, registrationID: String, tool: String, arguments: JSONValue

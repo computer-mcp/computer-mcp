@@ -139,8 +139,11 @@ Malformed reports, lost transport and supervisor exit cannot prove detached work
 completed. Only a valid complete snapshot on the owning instance releases absent
 resources. Connection status includes `provider_work` counts and the last
 accepted instance/revision; the bounded event stream records failed or timed-out
-observations. This accounting does not itself enable live configuration mutation
-or route continuation calls across runtime generations.
+observations. A provider that does not advertise lifetime reporting retains an
+uncertain owner after its first tool call. A reply alone cannot prove that such a
+provider has no background work. `unreported_work` exposes this state; automatic
+generation retirement preserves it. Verified exit of its managed local process
+can release it, while closing a remote transport cannot.
 
 ### Continuation declarations
 
@@ -190,16 +193,34 @@ are scoped to the runtime, workspace and registration. Lost connections retain
 their uncertain ownership evidence; a pending observation cannot prove a handle
 is absent. Removed tool declarations remain available to locate retained owners.
 A declaration for an existing tool cannot change while that connection retains
-work or an unsettled observation.
+work or an unsettled observation. A connection retains at most 1,024 continuation
+declarations. Catalog changes that exceed this budget fail atomically; a drained
+connection can replace its declarations with the current catalog.
 
 Host-selected continuation calls bind an exact connection, provider instance and
 resource acquisition. Execution rechecks that binding and the original scalar
 handle before dispatch. A reused native ID with a different acquisition cannot
 satisfy an old selection. Missing owners fail without creating a replacement
 connection; ordinary host policy and current permission checks still apply.
-These internal admission primitives do not by themselves enable cross-generation
-dispatch or remove connected-client mutation guards. Ordinary MCP arguments and
-native handle values remain unchanged.
+Ordinary MCP arguments and native handle values remain unchanged.
+
+The local gateway listener keeps a stable dispatcher for each authenticated
+connection. New work adopts the current configuration on a validated runtime;
+continuations with a unique observed owner use their originating runtime within
+the same principal, profile and caller scope. Duplicate owners, unsettled
+observations on another connection, and unavailable owners fail before dispatch.
+Private continuation bindings survive removal from the visible tool catalog
+while their work remains owned. They do not restore a revoked permission.
+
+Superseded runtimes retire only after their invocation and resource owners have
+drained. Retirement reserves the runtime before asynchronous cleanup, preventing
+new admission during shutdown. Pending construction and cleanup count toward the
+128-runtime listener budget. Listener stop joins candidate construction and
+invalidates its publication epoch, so a late candidate cannot enter a restarted
+listener. Owner-side manifest and workspace management still use an explicit
+listener restart; live dispatch applies to changes observed while the listener
+remains running. Plugin mutations require the listener to have no connected
+clients.
 
 ## Downstream Host Context
 

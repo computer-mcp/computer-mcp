@@ -122,6 +122,7 @@ internal actor GatewayClientSession {
   private let transportName: String
   private let endpoint: String
   private var initialization: Initialize.Result?
+  private var terminationObserver: Task<Void, Never>?
 
   private init(transportName: String, endpoint: String) {
     self.client = Client(name: "computer-mcp-client", version: "1")
@@ -231,11 +232,34 @@ internal actor GatewayClientSession {
 
   internal func disconnect() async {
     initialization = nil
+    let observer = terminationObserver
+    terminationObserver = nil
+    observer?.cancel()
     await client.disconnect()
+    await observer?.value
   }
 
   private func connect(transport: any Transport) async throws {
-    initialization = try await client.connect(transport: transport)
+    if let socket = transport as? GatewaySocketTransport {
+      terminationObserver = Task { [client] in
+        for await _ in socket.termination {}
+        guard !Task.isCancelled else { return }
+        // The SDK receive loop ending does not resolve pending initialize/tool requests.
+        await client.disconnect()
+      }
+    }
+    do {
+      initialization = try await withTaskCancellationHandler {
+        let result = try await client.connect(transport: transport)
+        try Task.checkCancellation()
+        return result
+      } onCancel: { [client] in
+        Task { await client.disconnect() }
+      }
+    } catch {
+      await disconnect()
+      throw error
+    }
   }
 
   private static func timestamp(_ date: Date) -> String {

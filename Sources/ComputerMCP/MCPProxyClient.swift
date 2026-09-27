@@ -92,15 +92,18 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     let cancellation = MCPCallCancellation(
       deliveryTimeout: .milliseconds(server.requestTimeoutMs ?? 30_000))
     let admission = MCPInvocationAdmission.current
+    let continuation = MCPContinuationTarget.current
     return try await withTaskCancellationHandler {
       do {
         try Task.checkCancellation()
         let result = try await calls.perform {
           try cancellation.checkCancellation()
           return try MCPInvocationAdmission.$current.withValue(admission) {
-            try self.callTool(
-              server: server, name: name, arguments: arguments, requestID: requestID,
-              cancellation: cancellation)
+            try MCPContinuationTarget.$current.withValue(continuation) {
+              try self.callTool(
+                server: server, name: name, arguments: arguments, requestID: requestID,
+                cancellation: cancellation)
+            }
           }
         }
         await cancellation.finish()
@@ -135,6 +138,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
 
     let retainsResult = requestID != nil
+    let continuation = MCPContinuationTarget.current
+    if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
     let requestID = requestID ?? UUID().uuidString
     if retainsResult {
       guard !requestID.isEmpty else {
@@ -161,6 +166,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         try await connection.callTool(
           name: name, arguments: object, gatewayRequestID: requestID, cancellation: cancellation,
           retainsResult: retainsResult, hostInvocationID: hostInvocationID,
+          continuation: continuation,
           cancellationDeliveryFailed: {
             self.pool.invalidate(server: server, connection: connection)
           })
@@ -195,6 +201,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       )
     }
 
+    let continuation = MCPContinuationTarget.current
+    if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
     let reservation = try journal.reserve(
       server: server, tool: name, arguments: arguments, requestID: requestID)
     if !reservation.inserted {
@@ -205,7 +213,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       return try run(server: server) { connection in
         try await connection.startToolCall(
           name: name, arguments: object, gatewayRequestID: requestID,
-          hostInvocationID: hostInvocationID)
+          hostInvocationID: hostInvocationID, continuation: continuation)
       }
     } catch {
       try journal.update(serverID: server.id, requestID: requestID) {
@@ -348,7 +356,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     notifyToolsOnConnect: Bool = true,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
-    let connection = try pool.connection(for: server)
+    let connection = try pool.connection(for: server, continuation: MCPContinuationTarget.current)
     try runExisting(
       server: server, connection: connection,
       timeoutMilliseconds: server.startupTimeoutMs ?? 30_000,
@@ -453,7 +461,9 @@ private final class MCPConnectionPool: @unchecked Sendable {
     self.toolsChanged = toolsChanged
   }
 
-  func connection(for server: MCPServerConfig) throws -> MCPProxyConnection {
+  func connection(for server: MCPServerConfig, continuation: MCPContinuationTarget?) throws
+    -> MCPProxyConnection
+  {
     guard server.enabled else {
       throw GatewayToolError.disabled("MCP registration '\(server.id)' is disabled.")
     }
@@ -461,6 +471,14 @@ private final class MCPConnectionPool: @unchecked Sendable {
     defer { lock.unlock() }
     guard !stopped else {
       throw GatewayToolError.disabled("The downstream MCP client is stopped.")
+    }
+    if let continuation {
+      guard continuation.reference.serverID == server.id,
+        continuation.workspaceID == hostContext?.workspace.id,
+        let entry = entries[server.id], entry.configuration == server,
+        entry.connection.connectionID == continuation.connectionID
+      else { throw MCPContinuationTarget.unavailable() }
+      return entry.connection
     }
     if let entry = entries[server.id], entry.configuration == server {
       return entry.connection
@@ -555,6 +573,8 @@ private final class MCPConnectionPool: @unchecked Sendable {
 }
 
 private actor MCPProxyConnection {
+  nonisolated let connectionID = UUID()
+
   private struct Event: Sendable {
     let cursor: Int
     let kind: String
@@ -689,10 +709,13 @@ private actor MCPProxyConnection {
       }
       if advertised && providerWork == nil {
         providerWork = MCPProviderWork(
-          work: ownedWork ?? GatewayOwnedWork(), workspaceID: workspaceID, registrationID: server.id
+          work: ownedWork ?? GatewayOwnedWork(), workspaceID: workspaceID,
+          registrationID: server.id,
+          connectionID: connectionID
         )
         refreshProviderWork()
       }
+      try providerWork?.declareContinuations(from: catalog)
       workCatalogObserved = true
     } catch {
       providerWork?.observationLost()
@@ -708,6 +731,7 @@ private actor MCPProxyConnection {
     cancellation: MCPCallCancellation? = nil,
     retainsResult: Bool = false,
     hostInvocationID: UUID? = nil,
+    continuation: MCPContinuationTarget? = nil,
     cancellationDeliveryFailed: @escaping @Sendable () -> Void = {}
   ) async throws -> JSONValue {
     try await ensureConnected()
@@ -725,7 +749,7 @@ private actor MCPProxyConnection {
 
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      hostInvocationID: hostInvocationID)
+      hostInvocationID: hostInvocationID, continuation: continuation)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     guard closeTask == nil else {
@@ -799,7 +823,7 @@ private actor MCPProxyConnection {
   func startToolCall(
     name: String,
     arguments: [String: JSONValue],
-    gatewayRequestID: String, hostInvocationID: UUID?
+    gatewayRequestID: String, hostInvocationID: UUID?, continuation: MCPContinuationTarget?
   ) async throws -> JSONValue {
     try await ensureConnected()
     // Reserve before crossing into the SDK actor so concurrent calls cannot
@@ -815,7 +839,7 @@ private actor MCPProxyConnection {
 
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      hostInvocationID: hostInvocationID)
+      hostInvocationID: hostInvocationID, continuation: continuation)
     guard closeTask == nil else {
       try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
       throw MCPError.connectionClosed
@@ -1062,12 +1086,17 @@ private actor MCPProxyConnection {
   }
 
   private func dispatchTool(
-    name: String, arguments: [String: JSONValue], gatewayRequestID: String, hostInvocationID: UUID?
+    name: String, arguments: [String: JSONValue], gatewayRequestID: String, hostInvocationID: UUID?,
+    continuation: MCPContinuationTarget?
   ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
     if !workCatalogObserved && initializeResult?.capabilities.resources != nil {
       _ = try await listTools()
     }
     guard closeTask == nil else { throw MCPError.connectionClosed }
+    if let continuation {
+      guard let providerWork else { throw MCPContinuationTarget.unavailable() }
+      try providerWork.validate(continuation, tool: name, arguments: .object(arguments))
+    }
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
       guard let hostTools, let workspaceID else { throw MCPError.connectionClosed }

@@ -140,16 +140,22 @@ struct MCPProviderWork {
   private let work: GatewayOwnedWork
   private let workspaceID: String?
   private let registrationID: String
-  private let connectionID = UUID()
+  let connectionID: UUID
   private var invocations: [UUID: Invocation] = [:]
   private var ownership: [Key: Ownership] = [:]
   private var observation: GatewayOwnedWork.Lease?
   private var report: Report?
+  private var continuations: [String: MCPProviderContinuation] = [:]
+  private var connected = true
 
-  init(work: GatewayOwnedWork, workspaceID: String?, registrationID: String) {
+  init(
+    work: GatewayOwnedWork, workspaceID: String?, registrationID: String,
+    connectionID: UUID = UUID()
+  ) {
     self.work = work
     self.workspaceID = workspaceID
     self.registrationID = registrationID
+    self.connectionID = connectionID
     requireObservation()
   }
 
@@ -221,7 +227,9 @@ struct MCPProviderWork {
   }
 
   mutating func disconnected() {
+    connected = false
     if needsObservation { observationLost() }
+    publishContinuations()
   }
 
   mutating func accept(_ next: Report, covering completed: Set<UUID>) throws {
@@ -290,10 +298,57 @@ struct MCPProviderWork {
     } else {
       observation?.confirmObservation()
     }
+    publishContinuations()
   }
 
   func resources(matching query: MCPProviderContinuation.Query) -> Set<Key> {
     Set(ownership.values.compactMap { $0.resource.matches(query) ? $0.resource.key : nil })
+  }
+
+  func validate(_ target: MCPContinuationTarget, tool: String, arguments: JSONValue) throws {
+    guard connected, target.connectionID == connectionID,
+      target.workspaceID == workspaceID,
+      target.reference == MCPToolReference(serverID: registrationID, toolName: tool),
+      target.instanceID == report?.instanceID,
+      let declaration = continuations[tool]
+    else { throw MCPContinuationTarget.unavailable() }
+    let queries = try declaration.queries(arguments: arguments)
+    guard
+      ownership.values.contains(where: { item in
+        target.resources[item.resource.key] == item.resource.acquiredBy
+          && queries.contains(where: item.resource.matches)
+      })
+    else { throw MCPContinuationTarget.unavailable() }
+  }
+
+  mutating func declareContinuations(from tools: [MCPTool]) throws {
+    var declarations: [String: MCPProviderContinuation] = [:]
+    for tool in tools {
+      let declaration = try MCPProviderContinuation(tool)
+      if needsObservation, let existing = continuations[tool.name], existing != declaration {
+        throw GatewayToolError.invalidArguments(
+          "[mcp.continuation_changed] Continuation bindings cannot change while the connection owns work."
+        )
+      }
+      if let declaration {
+        declarations[tool.name] = declaration
+      }
+    }
+    // Removed tools still locate their retained owners; discovery independently
+    // decides whether that connection can currently execute the operation.
+    continuations =
+      needsObservation ? continuations.merging(declarations) { _, new in new } : declarations
+    publishContinuations()
+  }
+
+  private func publishContinuations() {
+    work.continuations.update(
+      connectionID: connectionID,
+      entry: .init(
+        workspaceID: workspaceID, registrationID: registrationID,
+        instanceID: report?.instanceID, declarations: continuations,
+        resources: ownership.values.map(\.resource), observationPending: observation != nil,
+        connected: connected))
   }
 
   private mutating func requireObservation() {
@@ -301,6 +356,7 @@ struct MCPProviderWork {
     observation = work.retain(
       .mcpObservation, workspaceID: workspaceID, registrationID: registrationID,
       resourceID: connectionID.uuidString)
+    publishContinuations()
   }
 
   private static func invalidReport() -> GatewayToolError {

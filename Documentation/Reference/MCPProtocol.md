@@ -185,9 +185,21 @@ unique ownership across connections. Multiple matching lifetimes remain distinct
 
 The host validates and retains these declarations with the originating connection
 and strips them from gateway aliases/reexports. The work ledger can match them
-against accepted resource observations, including uncertain work. This does not
-by itself enable cross-generation dispatch or remove connected-client mutation
-guards. Ordinary MCP arguments and native handle values remain unchanged.
+against accepted resource observations, including uncertain work. Observations
+are scoped to the runtime, workspace and registration. Lost connections retain
+their uncertain ownership evidence; a pending observation cannot prove a handle
+is absent. Removed tool declarations remain available to locate retained owners.
+A declaration for an existing tool cannot change while that connection retains
+work or an unsettled observation.
+
+Host-selected continuation calls bind an exact connection, provider instance and
+resource acquisition. Execution rechecks that binding and the original scalar
+handle before dispatch. A reused native ID with a different acquisition cannot
+satisfy an old selection. Missing owners fail without creating a replacement
+connection; ordinary host policy and current permission checks still apply.
+These internal admission primitives do not by themselves enable cross-generation
+dispatch or remove connected-client mutation guards. Ordinary MCP arguments and
+native handle values remain unchanged.
 
 ## Downstream Host Context
 

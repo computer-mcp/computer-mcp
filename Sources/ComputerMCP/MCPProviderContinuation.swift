@@ -1,7 +1,7 @@
 import Foundation
 
 /// Provider-owned argument bindings select existing work; they confer no permission.
-struct MCPProviderContinuation: Sendable {
+struct MCPProviderContinuation: Equatable, Sendable {
   static let metadataKey = "io.github.computer-mcp/continuation"
   static let maximumHandles = 16
 
@@ -10,14 +10,14 @@ struct MCPProviderContinuation: Sendable {
     let handles: [String: MCPProviderWork.Identifier]
   }
 
-  private struct Selector: Sendable {
+  private struct Selector: Equatable, Sendable {
     let kind: String
     let handles: [String: [String]]
     let nullableHandles: Set<String>
     let condition: Condition?
   }
 
-  private struct Condition: Sendable {
+  private struct Condition: Equatable, Sendable {
     let pointer: [String]
     let values: Set<String>
 

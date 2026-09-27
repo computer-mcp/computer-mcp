@@ -201,6 +201,137 @@ struct MCPProviderContinuationTests {
     }
   }
 
+  @Test
+  func directoryDistinguishesPendingObservationFromConfirmedAbsence() throws {
+    let ledger = GatewayOwnedWork()
+    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "fixture")
+    try work.declareContinuations(from: [tool(handles: ["native": "/handle"])])
+    let instance = UUID()
+    var result = try lookup(ledger)
+    #expect(result.applicable && result.matches.isEmpty)
+    #expect(result.pendingConnections == [work.connectionID])
+    try work.accept(report(instance, 0, []), covering: [])
+    result = try lookup(ledger)
+    #expect(result.applicable && result.matches.isEmpty && result.pendingConnections.isEmpty)
+    let invocation = try work.beginInvocation(tool: "start")
+    work.finishInvocation(invocation, confirmed: true)
+    #expect(try lookup(ledger).pendingConnections == [work.connectionID])
+    try work.accept(
+      report(instance, 1, [row(invocation, "lifetime", handles: ["native": .string("reused")])]),
+      covering: work.completedInvocations)
+    result = try lookup(ledger)
+    #expect(result.pendingConnections.isEmpty)
+    #expect(result.matches.count == 1 && result.matches.first?.uncertain == false)
+    work.observationLost()
+    result = try lookup(ledger)
+    #expect(result.matches.count == 1 && result.pendingConnections == [work.connectionID])
+    try work.accept(report(instance, 2, []), covering: [])
+    work.disconnected()
+    #expect(try lookup(ledger) == .init())
+    #expect(ledger.snapshot.isEmpty)
+  }
+
+  @Test
+  func directoryRetainsDisconnectedEvidenceAndEveryDuplicateOwner() throws {
+    let ledger = GatewayOwnedWork()
+    let connectionIDs = try (0..<2).map { index in
+      var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "fixture")
+      try work.declareContinuations(from: [tool(handles: ["native": "/handle"])])
+      let invocation = try work.beginInvocation(tool: "start")
+      work.finishInvocation(invocation, confirmed: true)
+      try work.accept(
+        report(UUID(), 1, [row(invocation, "lifetime", handles: ["native": .string("reused")])]),
+        covering: work.completedInvocations)
+      if index == 0 { work.disconnected() }
+      return work.connectionID
+    }
+    let result = try lookup(ledger)
+    #expect(Set(result.matches.map(\.connectionID)) == Set(connectionIDs))
+    #expect(result.pendingConnections == [connectionIDs[0]])
+    let lost = try #require(result.matches.first { $0.connectionID == connectionIDs[0] })
+    #expect(!lost.connected && lost.uncertain)
+    #expect(try lookup(ledger, workspaceID: "other") == .init())
+    #expect(try lookup(ledger, workspaceID: nil) == .init())
+    #expect(try lookup(ledger, registrationID: "other") == .init())
+    #expect(try lookup(ledger, arguments: .object([:])) == .init())
+  }
+
+  @Test
+  func directoryPublishesLateHandlesAndRejectsRebindingLiveDeclarations() throws {
+    let ledger = GatewayOwnedWork()
+    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "fixture")
+    let declared = tool(handles: ["native": "/handle"])
+    try work.declareContinuations(from: [declared])
+    let instance = UUID()
+    let invocation = try work.beginInvocation(tool: "start")
+    work.finishInvocation(invocation, confirmed: true)
+    try work.accept(
+      report(instance, 1, [row(invocation, "lifetime")]), covering: work.completedInvocations)
+    #expect(try lookup(ledger).matches.isEmpty)
+    try work.accept(
+      report(instance, 2, [row(invocation, "lifetime", handles: ["native": .string("reused")])]),
+      covering: [])
+    #expect(try lookup(ledger).matches.count == 1)
+    #expect(throws: GatewayToolError.self) {
+      try work.declareContinuations(from: [tool(handles: ["native": "/different"])])
+    }
+    #expect(try lookup(ledger).matches.count == 1)
+    try work.declareContinuations(from: [])
+    #expect(try lookup(ledger).matches.count == 1)
+    try work.accept(report(instance, 3, []), covering: [])
+    try work.declareContinuations(from: [])
+    #expect(try lookup(ledger) == .init())
+  }
+
+  private func lookup(
+    _ work: GatewayOwnedWork, workspaceID: String? = "ws", registrationID: String = "fixture",
+    arguments: JSONValue = .object(["handle": .string("reused")])
+  ) throws -> MCPContinuationDirectory.Lookup {
+    try work.continuations.lookup(
+      workspaceID: workspaceID, registrationID: registrationID, tool: "continue",
+      arguments: arguments)
+  }
+
+  @Test
+  func admissionRechecksInstanceScopeHandlesAndAcquisition() throws {
+    let ledger = GatewayOwnedWork()
+    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "fixture")
+    try work.declareContinuations(from: [tool(handles: ["native": "/handle"])])
+    let instance = UUID()
+    let invocation = try work.beginInvocation(tool: "start")
+    work.finishInvocation(invocation, confirmed: true)
+    try work.accept(
+      report(instance, 1, [row(invocation, "lifetime", handles: ["native": .integer(42)])]),
+      covering: work.completedInvocations)
+    let key = MCPProviderWork.Key(kind: "fixture.turn", id: .string("lifetime"))
+    let arguments = JSONValue.object(["handle": .integer(42)])
+    let valid = MCPContinuationTarget(
+      workspaceID: "ws", reference: .init(serverID: "fixture", toolName: "continue"),
+      connectionID: work.connectionID, instanceID: instance, resources: [key: invocation])
+    try work.validate(valid, tool: "continue", arguments: arguments)
+    #expect(throws: GatewayToolError.self) {
+      try work.validate(valid, tool: "other", arguments: arguments)
+    }
+    #expect(throws: GatewayToolError.self) {
+      try work.validate(valid, tool: "continue", arguments: .object(["handle": .string("42")]))
+    }
+    for index in 0..<5 {
+      let target = MCPContinuationTarget(
+        workspaceID: index == 0 ? "other" : "ws",
+        reference: .init(serverID: index == 1 ? "other" : "fixture", toolName: "continue"),
+        connectionID: index == 2 ? UUID() : work.connectionID,
+        instanceID: index == 3 ? UUID() : instance,
+        resources: [key: index == 4 ? UUID() : invocation])
+      #expect(throws: GatewayToolError.self) {
+        try work.validate(target, tool: "continue", arguments: arguments)
+      }
+    }
+    work.disconnected()
+    #expect(throws: GatewayToolError.self) {
+      try work.validate(valid, tool: "continue", arguments: arguments)
+    }
+  }
+
   private func tool(
     handles: [String: String], condition: JSONValue? = nil, nullable: [JSONValue]? = nil
   ) -> MCPTool {

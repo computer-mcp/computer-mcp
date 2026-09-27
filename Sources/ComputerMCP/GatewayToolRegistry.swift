@@ -249,13 +249,16 @@ extension DownstreamMCPClient {
   ) async throws -> JSONValue {
     try Task.checkCancellation()
     let admission = MCPInvocationAdmission.current
+    let target = MCPContinuationTarget.current
     let result = try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         continuation.resume(
           with: Result {
             try MCPInvocationAdmission.$current.withValue(admission) {
-              try self.callTool(
-                server: server, name: name, arguments: arguments, requestID: requestID)
+              try MCPContinuationTarget.$current.withValue(target) {
+                try self.callTool(
+                  server: server, name: name, arguments: arguments, requestID: requestID)
+              }
             }
           })
       }
@@ -28065,12 +28068,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       }
     }
     let authorization = MCPInvocationAdmission.current
+    let target = MCPContinuationTarget.current
     return try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         continuation.resume(
           with: Result {
             try MCPInvocationAdmission.$current.withValue(authorization) {
-              try self.callTool(definition: definition, arguments: arguments)
+              try MCPContinuationTarget.$current.withValue(target) {
+                try self.callTool(definition: definition, arguments: arguments)
+              }
             }
           })
       }

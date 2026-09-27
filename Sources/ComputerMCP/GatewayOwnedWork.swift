@@ -20,10 +20,16 @@ final class GatewayOwnedWork: Sendable {
     var uncertain = false
   }
 
-  private let records = OSAllocatedUnfairLock(initialState: [UUID: Record]())
-  private let changes = GatewayToolChangeBroadcaster()
+  private struct State {
+    var records: [UUID: Record] = [:]
+    var admitsInvocations = true
+  }
 
-  var snapshot: [Record] { records.withLock { Array($0.values) } }
+  private let state = OSAllocatedUnfairLock(initialState: State())
+  private let changes = GatewayToolChangeBroadcaster()
+  let continuations = MCPContinuationDirectory()
+
+  var snapshot: [Record] { state.withLock { Array($0.records.values) } }
   func updates() -> AsyncStream<Void> { changes.stream() }
 
   func retain(
@@ -33,19 +39,45 @@ final class GatewayOwnedWork: Sendable {
     let record = Record(
       id: UUID(), kind: kind, workspaceID: workspaceID, registrationID: registrationID,
       resourceID: resourceID)
-    records.withLock { $0[record.id] = record }
+    state.withLock { $0.records[record.id] = record }
     changes.send()
     return Lease(owner: self, id: record.id)
   }
 
+  /// Call admission and the idle-retirement decision share one linearization point.
+  func admitInvocation(workspaceID: String?, resourceID: String) throws -> Lease {
+    let record = Record(
+      id: UUID(), kind: .invocation, workspaceID: workspaceID, registrationID: nil,
+      resourceID: resourceID)
+    try state.withLock { state in
+      guard state.admitsInvocations else {
+        throw GatewayToolError.disabled(
+          "[runtime.retired] This runtime no longer admits invocations.")
+      }
+      state.records[record.id] = record
+    }
+    changes.send()
+    return Lease(owner: self, id: record.id)
+  }
+
+  func closeAdmissionIfDrained() -> Bool {
+    state.withLock { state in
+      guard state.records.isEmpty else { return false }
+      state.admitsInvocations = false
+      return true
+    }
+  }
+
+  func closeAdmission() { state.withLock { $0.admitsInvocations = false } }
+
   private func finish(_ id: UUID) {
-    if records.withLock({ $0.removeValue(forKey: id) != nil }) { changes.send() }
+    if state.withLock({ $0.records.removeValue(forKey: id) != nil }) { changes.send() }
   }
 
   private func setUncertain(_ id: UUID, _ uncertain: Bool) {
-    let changed = records.withLock { records in
-      guard let record = records[id], record.uncertain != uncertain else { return false }
-      records[id]?.uncertain = uncertain
+    let changed = state.withLock { state in
+      guard let record = state.records[id], record.uncertain != uncertain else { return false }
+      state.records[id]?.uncertain = uncertain
       return true
     }
     if changed { changes.send() }

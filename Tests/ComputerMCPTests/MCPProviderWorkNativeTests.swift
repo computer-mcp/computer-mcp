@@ -1,10 +1,135 @@
 import Foundation
 import Testing
+import os
 
 @testable import ComputerMCP
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct MCPProviderWorkNativeTests {
+  @Test
+  func exactContinuationRevalidatesAcquisitionAndCurrentAuthorization() async throws {
+    try await withProvider { client, server, work in
+      let started = try await call(client, server, "start")
+      try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
+      let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
+      let target = try continuationTarget(work, server: server, arguments: arguments)
+      var configured = server
+      configured.allowAnyTool = true
+      configured.toolRisks = ["inspect": .readOnly]
+      let configuration = GatewayConfiguration(mcp: .init(servers: [configured]))
+      func policy(_ allowed: Bool) -> MCPToolAccessPolicy {
+        .init(
+          configuration: configuration,
+          grant: .init(
+            id: .chatGPTOperate, capabilityIDs: allowed ? ["mcp.tools.call"] : [],
+            allowedCallers: [.secureTunnel], mode: .workspaceOperations),
+          derivesObserveGrant: false)
+      }
+      let current = OSAllocatedUnfairLock(initialState: policy(true))
+      let authorized = AuthorizedMCPClient(
+        base: client, policy: policy(true), policyProvider: { current.withLock { $0 } })
+      // The policy's selected tools do not change the already-connected transport config.
+      let result = try await MCPContinuationTarget.$current.withValue(target) {
+        try await authorized.callToolAsync(
+          server: server, name: "inspect", arguments: arguments, requestID: nil)
+      }
+      #expect(
+        result.objectValue?["structuredContent"]?.objectValue?["pid"] == started.objectValue?["pid"]
+      )
+      let revoked = policy(false)
+      current.withLock { $0 = revoked }
+      await #expect(throws: GatewayToolError.self) {
+        try await MCPContinuationTarget.$current.withValue(target) {
+          try await authorized.callToolAsync(
+            server: server, name: "inspect", arguments: arguments, requestID: nil)
+        }
+      }
+      _ = try await call(client, server, "finish")
+      try await wait { work.snapshot.isEmpty }
+      _ = try await call(client, server, "start")
+      try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
+      let next = try continuationTarget(work, server: server, arguments: arguments)
+      #expect(target.connectionID == next.connectionID && target.instanceID == next.instanceID)
+      #expect(target.resources != next.resources)
+      await #expect(throws: GatewayToolError.self) {
+        try await MCPContinuationTarget.$current.withValue(target) {
+          try await client.callToolAsync(
+            server: server, name: "inspect", arguments: arguments, requestID: nil)
+        }
+      }
+      let inspected = try await MCPContinuationTarget.$current.withValue(next) {
+        try await client.callToolAsync(
+          server: server, name: "inspect", arguments: arguments, requestID: nil)
+      }
+      #expect(
+        inspected.objectValue?["structuredContent"]?.objectValue?["call_count"] == .integer(5))
+      #expect(
+        inspected.objectValue?["structuredContent"]?.objectValue?["pid"]
+          == started.objectValue?["pid"])
+      _ = try await call(client, server, "finish")
+      try await wait { work.snapshot.isEmpty }
+    }
+  }
+
+  @Test
+  func missingSelectedConnectionCannotStartOrReplaceAProvider() async throws {
+    try await withProvider { client, server, work in
+      let started = try await call(client, server, "start")
+      try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
+      let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
+      let target = try continuationTarget(work, server: server, arguments: arguments)
+      let blocking = BlockingOperationExecutor(label: "continuation-selection-test")
+      var replacement = server
+      replacement.args.append("changed")
+      let changed = replacement
+      await #expect(throws: GatewayToolError.self) {
+        try await blocking.perform {
+          try MCPContinuationTarget.$current.withValue(target) {
+            try client.listTools(server: changed)
+          }
+        }
+      }
+      let unchanged = try await call(client, server, "inspect")
+      #expect(unchanged.objectValue?["pid"] == started.objectValue?["pid"])
+      try await withProvider { other, otherServer, _ in
+        await #expect(throws: GatewayToolError.self) {
+          try await MCPContinuationTarget.$current.withValue(target) {
+            try await other.callToolAsync(
+              server: otherServer, name: "inspect", arguments: arguments, requestID: nil)
+          }
+        }
+        await #expect(throws: GatewayToolError.self) {
+          try await blocking.perform {
+            try MCPContinuationTarget.$current.withValue(target) {
+              try other.startToolCall(
+                server: otherServer, name: "inspect", arguments: arguments, requestID: "detached")
+            }
+          }
+        }
+        let script = try #require(otherServer.args.first)
+        #expect(
+          !FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: script).deletingLastPathComponent().appendingPathComponent(
+              "starts"
+            ).path))
+      }
+      _ = try await call(client, server, "finish")
+      try await wait { work.snapshot.isEmpty }
+    }
+  }
+
+  private func continuationTarget(
+    _ work: GatewayOwnedWork, server: MCPServerConfig, arguments: JSONValue
+  ) throws -> MCPContinuationTarget {
+    let lookup = try work.continuations.lookup(
+      workspaceID: "fixture", registrationID: server.id, tool: "inspect", arguments: arguments)
+    let match = try #require(lookup.matches.first)
+    return MCPContinuationTarget(
+      workspaceID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
+      connectionID: match.connectionID, instanceID: match.instanceID,
+      resources: [match.resource: match.acquiredBy])
+  }
+
   @Test
   func ordinaryProviderRetainsWorkAfterReplyAndRecoversObservation() async throws {
     try await withProvider { client, server, work in
@@ -105,12 +230,15 @@ struct MCPProviderWorkNativeTests {
 
   private static let provider = #"""
     import json, os, sys, uuid
+    with open(os.path.join(os.path.dirname(__file__), "starts"), "a") as marker:
+        marker.write("started\n")
     uri = "computer-mcp://runtime/work/v1"
     instance = str(uuid.uuid4())
     revision = 0
     resources = []
     pending = []
     read_count = 0
+    call_count = 0
     holding = False
     invalid = False
     names = ["start", "finish", "hold", "unhold", "invalid", "valid", "inspect"]
@@ -130,6 +258,9 @@ struct MCPProviderWorkNativeTests {
             result = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "work-fixture", "version": "1"}}
         elif method == "tools/list":
             result = {"tools": [{"name": name, "inputSchema": {"type": "object"}, "_meta": {"io.github.computer-mcp/work": {"format_version": 1, "uri": uri}}} for name in names]}
+            for tool in result["tools"]:
+                if tool["name"] == "inspect":
+                    tool["_meta"]["io.github.computer-mcp/continuation"] = {"format_version": 1, "selectors": [{"kind": "session", "handles": {"id": "/handle"}}]}
         elif method == "resources/read":
             assert params["uri"] == uri
             read_count += 1
@@ -138,6 +269,7 @@ struct MCPProviderWorkNativeTests {
                 pending.append((request["id"], result))
                 continue
         elif method == "tools/call":
+            call_count += 1
             name = params["name"]
             invocation = params.get("_meta", {}).get("io.github.computer-mcp/work-invocation")
             if name == "start":
@@ -155,7 +287,7 @@ struct MCPProviderWorkNativeTests {
                 pending.clear()
             elif name == "invalid": invalid = True
             elif name == "valid": invalid = False
-            result = {"content": [], "structuredContent": {"acquired_by": invocation, "host_services": "COMPUTER_MCP_HOST_FD" in os.environ, "pid": os.getpid(), "read_count": read_count, "pending_reads": len(pending)}}
+            result = {"content": [], "structuredContent": {"acquired_by": invocation, "host_services": "COMPUTER_MCP_HOST_FD" in os.environ, "pid": os.getpid(), "read_count": read_count, "call_count": call_count, "pending_reads": len(pending)}}
         else:
             raise RuntimeError("Unexpected method")
         send(request["id"], result)

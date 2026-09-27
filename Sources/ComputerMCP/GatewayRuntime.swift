@@ -23,6 +23,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     label: "computer-mcp.gateway-construction", serial: false)
   private static let admission = BlockingOperationExecutor(
     label: "computer-mcp.gateway-admission", serial: false)
+  private static func performAdmission<Value: Sendable>(
+    _ operation: @escaping @Sendable () throws -> Value
+  ) async throws -> Value {
+    let target = MCPContinuationTarget.current
+    return try await admission.perform {
+      try MCPContinuationTarget.$current.withValue(target, operation: operation)
+    }
+  }
+
   private let hostToolDirectory = MCPHostToolDirectory()
   package let pluginOrigins: [IntegrationRegistration: PluginContributionOrigin]
   package let pluginDiagnostics: [PluginResolutionDiagnostic]
@@ -498,8 +507,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func shutdown() async {
+    ownedWork.closeAdmission()
     hostToolDirectory.attach(nil)
     await lifetime.beginShutdown().value
+  }
+
+  /// The generation owner calls this synchronously before releasing its routing lock.
+  func beginRetirementIfDrained() -> Task<Void, Never>? {
+    guard ownedWork.closeAdmissionIfDrained() else { return nil }
+    hostToolDirectory.attach(nil)
+    return lifetime.beginShutdown()
   }
 
   package func authenticatedSession(
@@ -667,8 +684,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: JSONValue?,
     context: ExecutionContext
   ) throws -> JSONValue {
-    let ownership = ownedWork.retain(
-      .invocation,
+    let ownership = try ownedWork.admitInvocation(
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
@@ -686,8 +702,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: JSONValue?,
     context: ExecutionContext
   ) async throws -> JSONValue {
-    let ownership = ownedWork.retain(
-      .invocation,
+    let ownership = try ownedWork.admitInvocation(
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
@@ -839,7 +854,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ?? Self.operationLinkageFromArguments(name: name, arguments: arguments)
 
     do {
-      let descriptor = try await Self.admission.perform {
+      let descriptor = try await Self.performAdmission {
         try self.invocationDescriptor(named: name, arguments: arguments, context: originalContext)
       }
       let routed = try route(
@@ -854,7 +869,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         authorizedGrant.confirmationPolicy.requiresConfirmation(
           for: effectiveOperationDescriptor(descriptor, arguments: routed.arguments).risk)
       {
-        let pending = try await Self.admission.perform {
+        let pending = try await Self.performAdmission {
           try self.prepareOperation(
             arguments: ["tool": .string(name), "arguments": .object(routed.arguments)],
             context: routed.context)
@@ -873,18 +888,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       case "workspace.describe":
         rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
       case "policy.probe":
-        rawResult = try await Self.admission.perform {
+        rawResult = try await Self.performAdmission {
           try self.resultEnvelope(
             self.policyProbe(arguments: routed.arguments, context: routed.context))
         }
       case "operations.prepare":
-        let preparation = try await Self.admission.perform {
+        let preparation = try await Self.performAdmission {
           try self.prepareOperation(arguments: routed.arguments, context: routed.context)
         }
         operationLinkage = OperationAuditLinkage(ticketID: preparation.ticketID)
         rawResult = try resultEnvelope(preparation.result)
       case "operations.commit":
-        let invocation = try await Self.admission.perform {
+        let invocation = try await Self.performAdmission {
           try self.beginOperationCommit(arguments: routed.arguments, context: routed.context)
         }
         operationLinkage = invocation.linkage

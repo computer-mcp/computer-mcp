@@ -28,8 +28,9 @@ provider discovery, Tunnel supervisors, and launch at login.
 external manifest monitoring. Its bounded invalidation stream and one owned
 consumer coalesce file saves and prepare the latest candidate through the same
 publication boundary. Rejected edits remain on disk with a gateway diagnostic;
-the admitted configuration and existing work remain active. Gateway stop cancels
-and joins monitoring and candidate cleanup; start rechecks the file.
+the admitted configuration and existing work remain active. The monitor remains
+active while either the gateway listener or owner control service is running.
+Their lifecycle transitions join candidate cleanup and reconsider the latest file.
 SwiftUI maps shared results into view models; the CLI maps the same results into
 stable JSON over `ControlSocketService`.
 
@@ -42,6 +43,15 @@ embedded CLI can read the version-matched contract offline through:
 ```sh
 computer-mcp app capabilities
 ```
+
+App-owned tool calls share retained local-admin runtimes in `AppGatewayService`.
+Each CLI connection carries its own audit trace; disconnecting it does not stop
+background work. Local-admin runtimes participate in the same prepared
+configuration publication and exact continuation routing as gateway runtimes.
+The control service and gateway listener have separate admission epochs and
+shutdown ownership. Either can stop without discarding the other's work; App
+shutdown stops and joins both. Local tool calls also work while the gateway
+listener is stopped, with current authorization and operation approvals intact.
 
 The `computer-mcp` control CLI is not a registered remote `cli.exec` provider.
 Executing it from a Tunnel-originated gateway process would convert a remote

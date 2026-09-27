@@ -48,6 +48,7 @@ final class LiveAppControlPlane: AppControlPlane {
     controlPlane: AppControlPlaneService,
     gatewayService: AppGatewayService,
     fileLogger: AppFileLogger,
+    controlSocketService: ControlSocketService? = nil,
     permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester()
   ) {
     self.controlPlane = controlPlane
@@ -56,7 +57,7 @@ final class LiveAppControlPlane: AppControlPlane {
       controlPlane: controlPlane,
       gatewayService: gatewayService
     )
-    self.controlSocketService = nil
+    self.controlSocketService = controlSocketService
     self.fileLogger = fileLogger
     self.permissionRequester = permissionRequester
     fileLogger.append(.info, event: "app.control_plane.initialized")
@@ -110,6 +111,7 @@ final class LiveAppControlPlane: AppControlPlane {
     fileLogger.append(.info, event: "app.stop.requested")
     reconnectAttempts.removeAll()
     nextReconnectAt.removeAll()
+    await controlSocketService?.stop()
     await gatewayService.stop()
     fileLogger.append(.info, event: "app.stop.completed")
   }

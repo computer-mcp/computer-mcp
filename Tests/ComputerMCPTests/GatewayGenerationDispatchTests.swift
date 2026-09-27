@@ -8,6 +8,317 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
+  @Test
+  func localAdminStopJoinsPendingConstructionAndRestartsWithFreshAdmission() async throws {
+    let bookmarks = GatedBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmarks)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let socket = fixture.root.appendingPathComponent("control.sock")
+    let control = ControlSocketService(
+      controlPlane: fixture.control, gatewayService: fixture.service, socketURL: socket)
+    let client = AppControlPlaneServiceClient(socketURL: socket)
+    try await control.start()
+    bookmarks.arm()
+    let pending = Task { try await adminCall(client, "fixture.identity") }
+    var stopping: Task<Void, Never>?
+    do {
+      try await wait { bookmarks.entered }
+      stopping = Task { await control.stop() }
+      try await waitUntil { await control.snapshot().state == .stopping }
+      bookmarks.release()
+      await stopping?.value
+      #expect(await control.snapshot().state == .stopped)
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+      if case .success = await pending.result {
+        Issue.record("A stopped admission returned success")
+      }
+      try await control.start()
+      #expect(
+        try await adminCall(client, "fixture.identity").objectValue?["version"] == .integer(1))
+      await control.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      bookmarks.release()
+      pending.cancel()
+      await stopping?.value
+      _ = await pending.result
+      await control.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func localAdminPluginPublicationRetainsOwnersAndRechecksRemovedWorkspace() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    let archives = try ArchiveFixture()
+    defer { archives.remove() }
+    try await fixture.activate(version: 1)
+    var configuration = try await fixture.control.activeConfiguration()
+    configuration.mcp.servers = []
+    configuration.profiles = []
+    _ = try await fixture.service.changeManifest(configuration.exportedTOML())
+    var snapshot = try await fixture.installPlugin(version: 1, managed: true, archives: archives)
+    snapshot = try await fixture.service.changePlugins(
+      .settings(
+        pluginID: "live-fixture",
+        .init(
+          enabled: true,
+          mcp: [
+            "native": .init(
+              registrationID: "fixture", exposure: .reexport, prefix: "fixture", allowAnyTool: true,
+              toolRisks: Dictionary(
+                uniqueKeysWithValues: [
+                  "start", "inspect", "finish", "identity", "generation_1", "generation_2",
+                ].map { ($0, CapabilityRisk.readOnly) }),
+              args: [fixture.root.path, "unused", "yes"])
+          ])), expectedRevision: snapshot.state.revision)
+    let socket = fixture.root.appendingPathComponent("control.sock")
+    let control = ControlSocketService(
+      controlPlane: fixture.control, gatewayService: fixture.service, socketURL: socket)
+    let client = AppControlPlaneServiceClient(socketURL: socket)
+    let arguments: [String: JSONValue] = [
+      "workspace_id": .string("fixture"), "handle": .string("retained"),
+    ]
+    do {
+      try await control.start()
+      let started = try await adminCall(client, "fixture.start", arguments)
+      let oldPID = try #require(
+        started.objectValue?["pid"]?.int64Value.flatMap(Int32.init(exactly:)))
+      let directory = try await adminCall(
+        client, "runtime.owners.list", ["workspace_id": .string("fixture")])
+      let owner = try #require(
+        directory.objectValue?["result"]?.objectValue?["owners"]?.arrayValue?.first?.objectValue?[
+          "owner"])
+      _ = try await fixture.installPlugin(version: 2, managed: true, archives: archives)
+      #expect(
+        try await adminCall(client, "fixture.identity").objectValue?["pid"]
+          != .integer(Int64(oldPID)))
+      let selectedArguments: [String: JSONValue] = [
+        "workspace_id": .string("fixture"), "owner": owner,
+        "tool": .string("fixture.inspect"), "arguments": .object(arguments),
+      ]
+      #expect(
+        try await adminCall(client, "runtime.owners.call", selectedArguments).objectValue?["pid"]
+          == .integer(Int64(oldPID)))
+      let state = try fixture.database.configurationState()
+      await #expect(throws: (any Error).self) {
+        _ = try await fixture.installPlugin(version: 3, managed: true, archives: archives)
+      }
+      #expect(try fixture.database.configurationState() == state)
+      #expect(alive(oldPID))
+      _ = try await fixture.service.changeWorkspaces(.remove("fixture"))
+      let before = try fixture.calls()
+      let denied = try await client.call(
+        "tools.call",
+        arguments: .object([
+          "name": .string("runtime.owners.call"), "arguments": .object(selectedArguments),
+        ]))
+      #expect(denied.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == before)
+      #expect(alive(oldPID))
+      await control.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await control.stop()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func localAdminCallsRetainNativeWorkAcrossConnections(listenerRunning: Bool) async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let socket = fixture.root.appendingPathComponent("control.sock")
+    let control = ControlSocketService(
+      controlPlane: fixture.control, gatewayService: fixture.service, socketURL: socket)
+    let client = AppControlPlaneServiceClient(socketURL: socket)
+    func call(_ name: String) async throws -> JSONValue {
+      let report = try await client.call(
+        "tools.call",
+        arguments: .object([
+          "name": .string(name), "arguments": .object(["handle": .string("owned")]),
+        ]))
+      let result = report
+      try #require(result.objectValue?["isError"] != .bool(true), "\(result)")
+      return try #require(result.objectValue?["structuredContent"])
+    }
+    do {
+      try await control.start()
+      if listenerRunning { try await fixture.service.start(profile: .chatGPTOperate) }
+      let first = try await call("fixture.start")
+      let original = try #require(
+        first.objectValue?["pid"]?.int64Value.flatMap(Int32.init(exactly:)))
+      #expect(alive(original))
+      let continued = try await call("fixture.inspect")
+      #expect(continued.objectValue?["pid"] == .integer(Int64(original)))
+      #expect(try fixture.pids().count == 1)
+      let firstRequest = try #require(
+        first.objectValue?["gateway_execution"]?.objectValue?["request_id"]?.stringValue)
+      let secondRequest = try #require(
+        continued.objectValue?["gateway_execution"]?.objectValue?["request_id"]?.stringValue)
+      let firstAudit = try #require(try fixture.database.auditEvent(requestID: firstRequest))
+      let secondAudit = try #require(try fixture.database.auditEvent(requestID: secondRequest))
+      #expect(firstAudit.socketConnectionID != nil)
+      #expect(
+        secondAudit.socketConnectionID != nil
+          && firstAudit.socketConnectionID != secondAudit.socketConnectionID)
+      #expect(firstAudit.profileID == .localAdmin && secondAudit.transport == "control_socket")
+      _ = try await fixture.service.changeManifest(fixture.externalManifest(version: 2))
+      let current = try await call("fixture.identity")
+      #expect(current.objectValue?["version"] == .integer(2))
+      #expect(current.objectValue?["pid"] != first.objectValue?["pid"])
+      #expect(try await call("fixture.inspect").objectValue?["pid"] == .integer(Int64(original)))
+      await fixture.service.stop()
+      #expect(await fixture.service.snapshot().state == .stopped)
+      #expect(try await call("fixture.inspect").objectValue?["pid"] == .integer(Int64(original)))
+      try fixture.writeManifest(try await fixture.externalManifest(version: 3), atomic: false)
+      try await waitUntil {
+        try await fixture.control.activeConfiguration().server.name == "version-3"
+      }
+      #expect(try await call("fixture.identity").objectValue?["version"] == .integer(3))
+      try await fixture.service.start(profile: .chatGPTOperate)
+      try await fixture.service.restart(profile: .chatGPTOperate)
+      #expect(try await call("fixture.inspect").objectValue?["pid"] == .integer(Int64(original)))
+      _ = try await call("fixture.finish")
+      await control.stop()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await control.stop()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func controlStopRetiresOnlyLocalOwnersAndRestartRejectsOldEpoch() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let epoch = try await fixture.service.startLocalAdministration()
+    let identity = GatewaySocketConnectionIdentity(trustedPrincipalID: "owner", origin: .localCLI)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let remote = try await fixture.connect()
+    var restartEpoch: UUID?
+    do {
+      let local = try await fixture.service.callLocalAdminTool(
+        name: "fixture.start", arguments: .object(["handle": .string("local")]),
+        identity: identity, epoch: epoch)
+      let localPID = try #require(
+        local.objectValue?["structuredContent"]?.objectValue?["pid"]?.int64Value.flatMap(
+          Int32.init(exactly:)))
+      let remotePID = try pid(
+        await remote.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("remote")])))
+      #expect(localPID != remotePID)
+      await fixture.service.stopLocalAdministration(epoch: epoch)
+      #expect(!alive(localPID) && alive(remotePID))
+      #expect(
+        try pid(
+          await remote.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("remote")])))
+          == remotePID)
+      let fresh = try await fixture.service.startLocalAdministration()
+      restartEpoch = fresh
+      await #expect(throws: GatewaySocketError.self) {
+        _ = try await fixture.service.localAdminTools(identity: identity, epoch: epoch)
+      }
+      await #expect(throws: GatewaySocketError.self) {
+        _ = try await fixture.service.localAdminTools(
+          identity: .init(trustedPrincipalID: "owner", origin: .secureTunnel), epoch: fresh)
+      }
+      _ = try await fixture.service.localAdminTools(identity: identity, epoch: fresh)
+      await fixture.service.stopLocalAdministration(epoch: fresh)
+      await remote.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await fixture.service.stopLocalAdministration(epoch: restartEpoch ?? epoch)
+      await remote.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func localAdminShellAndMCPReceiptsSurviveSeparateCallsAndManifestPublication() async throws {
+    let fixture = try GenerationFixture(reportWork: false)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, fullShell: true)
+    let socket = fixture.root.appendingPathComponent("control.sock")
+    let control = ControlSocketService(
+      controlPlane: fixture.control, gatewayService: fixture.service, socketURL: socket)
+    let client = AppControlPlaneServiceClient(socketURL: socket)
+    var shellPID: Int32?
+    do {
+      try await control.start()
+      let started = try await approvedAdminCall(
+        client, "shell.spawn", ["mode": .string("argv"), "executable": .string("/bin/cat")])
+      let session = try #require(started.objectValue?["result"]?.objectValue?["session_id"])
+      let read = try await approvedAdminCall(client, "shell.read", ["session_id": session])
+      shellPID = try #require(
+        read.objectValue?["result"]?.objectValue?["process_id"]?.int64Value.flatMap(
+          Int32.init(exactly:)))
+      _ = try await adminCall(
+        client, "mcp.tools.call",
+        [
+          "server": .string("fixture"), "tool": .string("wait"), "arguments": .object([:]),
+          "request_id": .string("background"), "wait_for_result": .bool(false),
+        ])
+      _ = try await fixture.service.changeManifest(fixture.externalManifest(version: 2))
+      let native = try await adminCall(client, "fixture.identity")
+      #expect(native.objectValue?["version"] == .integer(2))
+      _ = try await approvedAdminCall(
+        client, "shell.write", ["session_id": session, "text": .string("retained\n")])
+      let repeated = try await approvedAdminCall(client, "shell.read", ["session_id": session])
+      #expect(
+        repeated.objectValue?["result"]?.objectValue?["process_id"]
+          == .integer(Int64(try #require(shellPID))))
+      let request = try await adminCall(
+        client, "mcp.requests.read",
+        ["server": .string("fixture"), "request_id": .string("background")])
+      #expect(request.objectValue?["result"]?.objectValue?["request_id"] == .string("background"))
+      try Data().write(to: fixture.root.appendingPathComponent("release"))
+      await control.stop()
+      #expect(!alive(try #require(shellPID)))
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      try? Data().write(to: fixture.root.appendingPathComponent("release"))
+      await control.stop()
+      if let shellPID, alive(shellPID) { _ = kill(-shellPID, SIGKILL) }
+      throw error
+    }
+  }
+
+  private func adminCall(
+    _ client: AppControlPlaneServiceClient, _ name: String, _ arguments: [String: JSONValue] = [:]
+  ) async throws -> JSONValue {
+    let result = try await client.call(
+      "tools.call", arguments: .object(["name": .string(name), "arguments": .object(arguments)]))
+    try #require(result.objectValue?["isError"] != .bool(true), "\(result)")
+    return try #require(result.objectValue?["structuredContent"])
+  }
+
+  private func approvedAdminCall(
+    _ client: AppControlPlaneServiceClient, _ name: String, _ arguments: [String: JSONValue]
+  ) async throws -> JSONValue {
+    let prepared = try await adminCall(
+      client, "operations.prepare",
+      [
+        "tool": .string(name), "arguments": .object(arguments),
+      ])
+    let ticket = try #require(prepared.objectValue?["result"]?.objectValue?["ticket_id"])
+    _ = try await client.call("approvals.approve", arguments: .object(["id": ticket]))
+    return try await adminCall(
+      client, "operations.commit",
+      [
+        "tool": .string(name), "arguments": .object(arguments), "ticket_id": ticket,
+      ])
+  }
+
   @Test(arguments: [false, true])
   func externalManifestChangesPreserveConnectionWorkAndEditorBytes(atomic: Bool) async throws {
     let fixture = try GenerationFixture()

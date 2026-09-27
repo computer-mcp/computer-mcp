@@ -339,17 +339,23 @@ final class AppControlPlaneServiceTests {
           gatewayExecutablePath: "/tmp/computer-mcp",
           gatewaySocketPath: fixture.directories.gatewaySocket.path))
     }
+    let owner = AppGatewayService(
+      controlPlane: fixture.controlPlane,
+      socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
+    let ownerEpoch = try await owner.startLocalAdministration()
+    let identity = GatewaySocketConnectionIdentity(
+      trustedPrincipalID: "test-owner", origin: .localCLI)
     let originalProfiles = try fixture.database.profiles()
     let pending = Task {
-      let trace = GatewayTransportTrace(transport: "control_socket")
       switch operation {
       case "tools":
-        let tools = try await fixture.controlPlane.localAdminTools(transportTrace: trace)
+        let tools = try await owner.localAdminTools(identity: identity, epoch: ownerEpoch)
         #expect(tools.contains { $0.name == "fixture.inspect" })
       case "call", "call-error":
-        let result = try await fixture.controlPlane.callLocalAdminTool(
+        let result = try await owner.callLocalAdminTool(
           name: operation == "call" ? "fixture.inspect" : "fixture.missing",
-          arguments: .object(["workspace_id": .string(workspace.id)]), transportTrace: trace)
+          arguments: .object(["workspace_id": .string(workspace.id)]), identity: identity,
+          epoch: ownerEpoch)
         #expect(result.objectValue?["isError"] == .bool(operation == "call-error"))
       case "socket":
         let session = try await fixture.controlPlane.makeGatewaySocketSession(
@@ -431,6 +437,7 @@ final class AppControlPlaneServiceTests {
       } else if operation != "workspace" && operation != "shell" {
         #expect(try fixture.database.profiles() == originalProfiles)
       }
+      await owner.stopLocalAdministration(epoch: ownerEpoch)
       let pids = try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
         .filter { $0.hasPrefix("pid-") }.compactMap { Int32($0.dropFirst(4)) }
       #expect(!pids.isEmpty)
@@ -442,6 +449,7 @@ final class AppControlPlaneServiceTests {
       pending.cancel()
       try? Data().write(to: release)
       _ = await pending.result
+      await owner.stopLocalAdministration(epoch: ownerEpoch)
       throw error
     }
   }
@@ -495,12 +503,17 @@ final class AppControlPlaneServiceTests {
     }
     try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
     #expect(try await fixture.controlPlane.activeGatewayProfile() == .chatGPTOperate)
+    let owner = AppGatewayService(
+      controlPlane: fixture.controlPlane,
+      socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
+    let epoch = try await owner.startLocalAdministration()
     let cancelled = Task {
       withUnsafeCurrentTask { $0?.cancel() }
-      _ = try await fixture.controlPlane.localAdminTools(
-        transportTrace: GatewayTransportTrace(transport: "control_socket"))
+      _ = try await owner.localAdminTools(
+        identity: .init(trustedPrincipalID: "test-owner", origin: .localCLI), epoch: epoch)
     }
     await #expect(throws: CancellationError.self) { try await cancelled.value }
+    await owner.stopLocalAdministration(epoch: epoch)
     #expect(try fixture.database.profiles().isEmpty)
     #expect(
       try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)

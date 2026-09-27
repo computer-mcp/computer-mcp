@@ -52,6 +52,9 @@ package actor ControlSocketService {
   private var state: AppGatewayServiceState = .stopped
   private var startedAt: Date?
   private var lastError: String?
+  private var administrationEpoch: UUID?
+  private var lifecycleInProgress = false
+  private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
 
   package init(
     controlPlane: AppControlPlaneService,
@@ -67,10 +70,14 @@ package actor ControlSocketService {
   }
 
   package func start() async throws {
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
     guard state != .running && state != .starting else { return }
     state = .starting
     lastError = nil
     do {
+      let epoch = try await gatewayService.startLocalAdministration()
+      administrationEpoch = epoch
       let controlPlane = controlPlane
       let gatewayService = gatewayService
       let server = GatewaySocketServer(
@@ -91,7 +98,8 @@ package actor ControlSocketService {
               controlPlane: controlPlane,
               gatewayService: gatewayService
             ),
-            identity: identity
+            identity: identity,
+            administrationEpoch: epoch
           )
           return await MCPRuntimeAdapter.makeGatewayServer(
             configuration: GatewayConfiguration(
@@ -106,6 +114,10 @@ package actor ControlSocketService {
       startedAt = Date()
       state = .running
     } catch {
+      if let epoch = administrationEpoch {
+        administrationEpoch = nil
+        await gatewayService.stopLocalAdministration(epoch: epoch)
+      }
       server = nil
       startedAt = nil
       lastError = String(describing: error)
@@ -115,14 +127,37 @@ package actor ControlSocketService {
   }
 
   package func stop() async {
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
     guard state != .stopped && state != .stopping else { return }
     state = .stopping
     let activeServer = server
     server = nil
-    await activeServer?.stop()
+    async let connectionsStopped = activeServer?.stop()
+    if let epoch = administrationEpoch {
+      administrationEpoch = nil
+      await gatewayService.stopLocalAdministration(epoch: epoch)
+    }
+    _ = await connectionsStopped
     startedAt = nil
     lastError = nil
     state = .stopped
+  }
+
+  private func acquireLifecycle() async {
+    if lifecycleInProgress {
+      await withCheckedContinuation { lifecycleWaiters.append($0) }
+    } else {
+      lifecycleInProgress = true
+    }
+  }
+
+  private func releaseLifecycle() {
+    if lifecycleWaiters.isEmpty {
+      lifecycleInProgress = false
+    } else {
+      lifecycleWaiters.removeFirst().resume()
+    }
   }
 
   package func snapshot() async -> ControlSocketSnapshot {
@@ -352,17 +387,20 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
   private let gatewayService: AppGatewayService
   private let operations: AppControlPlaneOperations
   private let identity: GatewaySocketConnectionIdentity
+  private let administrationEpoch: UUID
 
   init(
     controlPlane: AppControlPlaneService,
     gatewayService: AppGatewayService,
     operations: AppControlPlaneOperations,
-    identity: GatewaySocketConnectionIdentity
+    identity: GatewaySocketConnectionIdentity,
+    administrationEpoch: UUID
   ) {
     self.controlPlane = controlPlane
     self.gatewayService = gatewayService
     self.operations = operations
     self.identity = identity
+    self.administrationEpoch = administrationEpoch
   }
 
   func listTools() throws -> [MCPTool] {
@@ -755,24 +793,24 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           )
         )
       case "tools.list":
-        let tools = try await controlPlane.localAdminTools(
-          transportTrace: localAdminTransportTrace
+        let tools = try await gatewayService.localAdminTools(
+          identity: identity, epoch: administrationEpoch
         )
         payload = .object(["tools": .array(tools.map(\.json))])
       case "tools.inspect":
         let toolName = try requiredString("name", in: object)
-        let tools = try await controlPlane.localAdminTools(
-          transportTrace: localAdminTransportTrace
+        let tools = try await gatewayService.localAdminTools(
+          identity: identity, epoch: administrationEpoch
         )
         guard let tool = tools.first(where: { $0.name == toolName }) else {
           throw GatewayToolError.unknownTool(toolName)
         }
         payload = tool.json
       case "tools.call":
-        payload = try await controlPlane.callLocalAdminTool(
+        payload = try await gatewayService.callLocalAdminTool(
           name: requiredString("name", in: object),
           arguments: object["arguments"],
-          transportTrace: localAdminTransportTrace
+          identity: identity, epoch: administrationEpoch
         )
       case "tunnel.openai.list":
         let snapshot = try await controlPlane.snapshot()
@@ -1010,13 +1048,6 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       throw GatewayToolError.invalidArguments("Invalid profile ID '\(rawValue)'.")
     }
     return profile
-  }
-
-  private var localAdminTransportTrace: GatewayTransportTrace {
-    GatewayTransportTrace(
-      transport: "control_socket",
-      socketConnectionID: identity.connectionID
-    )
   }
 
   private func requiredString(

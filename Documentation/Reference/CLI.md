@@ -530,6 +530,14 @@ The App supplies private credential/profile options to its owned Secure MCP
 Tunnel process. Local clients use the local-MCP identity. The command does not
 load TOML or start a second control plane.
 
+App-owned `tools call` requests retain their execution owner across CLI process
+exits and subsequent calls. Background handles continue through the same owner
+after configuration changes. The owner control service works while the gateway
+listener is stopped; stopping or restarting that listener does not cancel local
+administration work. Stopping the owner control service or exiting the App joins
+its owned processes and clears its retained results. Each continuation still
+requires current workspace access, permissions and any operation approval.
+
 ## Explicit standalone mode
 
 Standalone development requires `--config`:

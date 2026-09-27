@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -7,6 +8,78 @@ import Testing
 @MainActor
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
+  @Test(arguments: [false, true])
+  func applicationStopJoinsOwnerWorkWithEitherGatewayState(gatewayRunning: Bool) async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let database = await fixture.controlPlane.database
+      try database.saveWorkspace(
+        .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+      _ = try await fixture.controlPlane.activateManifest(
+        GatewayConfiguration(policy: .init(shellEnabled: true), workspaceDirectory: fixture.root)
+          .exportedTOML())
+      try await fixture.controlPlane.setGatewayDesiredRunning(gatewayRunning)
+      try await fixture.app.startApplication()
+      let client = AppControlPlaneServiceClient(
+        socketURL: fixture.controlSocket.socketConfiguration.socketURL)
+      let arguments: JSONValue = .object([
+        "mode": .string("argv"), "executable": .string("/bin/cat"),
+      ])
+      let prepared = try await client.call(
+        "tools.call",
+        arguments: .object([
+          "name": .string("operations.prepare"),
+          "arguments": .object([
+            "tool": .string("shell.spawn"), "arguments": arguments,
+          ]),
+        ]))
+      try #require(prepared.objectValue?["isError"] != .bool(true), "\(prepared)")
+      let ticket = try #require(
+        prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
+          "ticket_id"])
+      _ = try await client.call("approvals.approve", arguments: .object(["id": ticket]))
+      let spawned = try await client.call(
+        "tools.call",
+        arguments: .object([
+          "name": .string("operations.commit"),
+          "arguments": .object([
+            "tool": .string("shell.spawn"), "arguments": arguments, "ticket_id": ticket,
+          ]),
+        ]))
+      let session = try #require(
+        spawned.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
+          "session_id"])
+      let readArguments: JSONValue = .object(["session_id": session])
+      let readPrepared = try await client.call(
+        "tools.call",
+        arguments: .object([
+          "name": .string("operations.prepare"),
+          "arguments": .object([
+            "tool": .string("shell.read"), "arguments": readArguments,
+          ]),
+        ]))
+      let readTicket = try #require(
+        readPrepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
+          "ticket_id"])
+      _ = try await client.call("approvals.approve", arguments: .object(["id": readTicket]))
+      let read = try await client.call(
+        "tools.call",
+        arguments: .object([
+          "name": .string("operations.commit"),
+          "arguments": .object([
+            "tool": .string("shell.read"), "arguments": readArguments, "ticket_id": readTicket,
+          ]),
+        ]))
+      let pid = try #require(
+        read.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["process_id"]?
+          .int64Value.flatMap(Int32.init(exactly:)))
+      #expect(kill(pid, 0) == 0)
+      await fixture.app.stopApplication()
+      #expect(kill(pid, 0) == -1 && errno == ESRCH)
+      #expect(await fixture.controlSocket.snapshot().state == .stopped)
+      #expect(await fixture.gatewayService.snapshot().state == .stopped)
+    }
+  }
+
   @Test
   func localMCPConnectionTargetsTheOwningAppInstance() async throws {
     try await withAppControlPlaneFixture { fixture in
@@ -301,6 +374,7 @@ private final class AppControlPlaneFixture {
   let socketURL: URL
   let controlPlane: AppControlPlaneService
   let gatewayService: AppGatewayService
+  let controlSocket: ControlSocketService
   let app: LiveAppControlPlane
 
   init(
@@ -346,10 +420,14 @@ private final class AppControlPlaneFixture {
       controlPlane: controlPlane,
       socketConfiguration: GatewaySocketConfiguration(socketURL: socketURL)
     )
+    controlSocket = ControlSocketService(
+      controlPlane: controlPlane, gatewayService: gatewayService,
+      socketURL: socketDirectory.appendingPathComponent("control.sock"))
     app = LiveAppControlPlane(
       controlPlane: controlPlane,
       gatewayService: gatewayService,
       fileLogger: try AppFileLogger(directory: directories.logs),
+      controlSocketService: controlSocket,
       permissionRequester: permissionRequester
     )
   }

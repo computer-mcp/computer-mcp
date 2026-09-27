@@ -735,41 +735,6 @@ package actor AppControlPlaneService {
       artifactStorage: artifactStorage)
   }
 
-  func localAdminTools(
-    transportTrace: GatewayTransportTrace
-  ) async throws -> [MCPTool] {
-    let inputs = try gatewayInputs()
-    let gateway = try await makeGateway(
-      inputs: inputs, caller: .localCLI, profileID: .localAdmin, transportTrace: transportTrace)
-    do {
-      let tools = try gateway.listTools()
-      await gateway.shutdown()
-      try requireCurrentGatewayInputs(inputs)
-      return tools
-    } catch {
-      await gateway.shutdown()
-      throw error
-    }
-  }
-
-  func callLocalAdminTool(
-    name: String,
-    arguments: JSONValue?,
-    transportTrace: GatewayTransportTrace
-  ) async throws -> JSONValue {
-    let gateway = try await makeGateway(
-      inputs: gatewayInputs(), caller: .localCLI, profileID: .localAdmin,
-      transportTrace: transportTrace)
-    do {
-      let result = try await gateway.callToolForMCPAsync(name: name, arguments: arguments)
-      await gateway.shutdown()
-      return result
-    } catch {
-      await gateway.shutdown()
-      throw error
-    }
-  }
-
   /// Values whose changes invalidate a pending catalog or session construction.
   struct GatewayInputs: Equatable, Sendable {
     let configuration: GatewayConfiguration

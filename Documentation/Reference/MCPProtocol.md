@@ -227,6 +227,14 @@ observations on another connection, and unavailable owners fail before dispatch.
 Private continuation bindings survive removal from the visible tool catalog
 while their work remains owned. They do not restore a revoked permission.
 
+Owner control-socket tool calls use the same runtime directory and publication
+barrier, scoped to the authenticated local user, `local-admin` profile and
+`local-cli` caller. They retain work across control connections and carry each
+request's current audit trace. The control service and gateway listener have
+independent admission epochs and shutdown scopes. Local administration remains
+available while the gateway listener is stopped. App shutdown joins both scopes;
+a remote caller cannot acquire the local-admin scope.
+
 Each new call also checks its registered workspace's current lifetime and root.
 Removal, root rebinding or re-registration invalidates the old execution scope,
 including under a wildcard workspace grant. Display metadata updates preserve
@@ -237,9 +245,10 @@ work whose original scope is no longer authorized.
 Superseded runtimes retire only after their invocation and resource owners have
 drained. Retirement reserves the runtime before asynchronous cleanup, preventing
 new admission during shutdown. Pending construction and cleanup count toward the
-128-runtime listener budget. Listener stop joins candidate construction and
-invalidates its publication epoch, so a late candidate cannot enter a restarted
-listener. Managed manifest activation/rollback, external file edits, manual MCP changes, plugin
+128-runtime host budget shared by both serving scopes. Stopping either service
+joins its candidate construction and invalidates its admission epoch, so a late
+candidate cannot enter a restarted service. Managed manifest activation/rollback,
+external file edits, manual MCP changes, plugin
 mutations and workspace add, repair, remove and deduplication
 prepare candidates for every admitted identity and profile while existing calls
 continue. New identities wait at a bounded publication barrier. The host checks
@@ -247,7 +256,8 @@ the manifest and persisted inputs, commits the prepared configuration and
 installs routing before notifying clients. A failed candidate or conflicting
 input change leaves prior configuration and routing intact. Shutdown waits for
 in-progress publication and its cleanup before completing. External saves are
-coalesced through one listener-owned consumer. Rejection preserves the editor's
+coalesced through one host-owned consumer while either service is active.
+Rejection preserves the editor's
 file and exposes a gateway diagnostic; admission never rewrites that file. A
 corrected re-save is reconsidered, including changes made while the gateway was
 stopped in the same App process.

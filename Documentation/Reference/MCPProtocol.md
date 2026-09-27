@@ -97,8 +97,9 @@ is a complete snapshot:
 - `revision` is a nonnegative signed 64-bit integer. Increase it whenever the
   snapshot changes. Equal revisions must describe equal resource sets; lower
   revisions and replacement instance IDs cannot discharge existing ownership.
-- `kind` is a provider-defined identifier. `id` is its native string or exact
-  signed 64-bit integer. Strings and integers remain distinct. The pair must be
+- `kind` is a provider-defined identifier. `id` identifies the actual resource
+  lifetime with a string or exact signed 64-bit integer. A reusable native handle
+  may differ from this lifetime ID. Strings and integers remain distinct. The pair must be
   unique; strings are nonempty, at most 1,024 UTF-8 bytes, and contain no control
   characters.
 - `acquired_by` is the host-supplied work-invocation UUID that acquired this
@@ -107,8 +108,16 @@ is a complete snapshot:
 - `state` is `active` or `uncertain`. Include work whose completion is unknown.
   Remove a resource only after its actual release or completion is established.
 
-The version-1 fields are exact. Additional fields require another supported
-contract version. Snapshots are bounded to 512 KiB and 1,024 resources. A retained
+A row may additionally contain `handles`, a nonempty object of at most 16 named
+native aliases. Names and values obey the same identifier bounds; values are
+strings or exact signed integers. The name `id` is reserved for the row's primary
+identity and cannot appear in `handles`. A known alias cannot change or disappear
+while its resource lifetime remains present. A provider may add an alias when a
+native reply establishes it. Reacquiring a reused native handle requires a new
+resource lifetime and the correct acquisition reference.
+
+The version-1 fields above are exact; other fields are rejected. Snapshots are
+bounded to 512 KiB and 1,024 resources. A retained
 thread, subscription, approval, interactive request, process or pending launch
 can own work between tool calls. Record the acquisition before replying to its
 tool call; a response must not leave unreported future background work. An
@@ -132,6 +141,40 @@ resources. Connection status includes `provider_work` counts and the last
 accepted instance/revision; the bounded event stream records failed or timed-out
 observations. This accounting does not itself enable live configuration mutation
 or route continuation calls across runtime generations.
+
+### Continuation declarations
+
+A tool that declares the work resource may also declare connection-local
+`_meta["io.github.computer-mcp/continuation"]` metadata:
+
+```json
+{
+  "format_version": 1,
+  "selectors": [
+    { "kind": "session", "handles": { "id": "/session" } }
+  ]
+}
+```
+
+Each selector names a resource kind and maps handle names to RFC 6901 JSON
+Pointers in the tool arguments. `id` matches the primary resource ID; other names
+match the row's optional native aliases. A selector matches only if all values
+have the exact type and value on that resource. Missing fields make an optional
+selector inapplicable. Supplied values must be bounded strings or exact integers;
+malformed nested values do not silently become new work. Pointer escapes are
+`~0` and `~1`; array indices use canonical nonnegative decimal notation.
+
+There may be 1–16 selectors, each with 1–16 handles, within 16 KiB of encoded
+metadata. Names and pointers are at most 1,024 UTF-8 bytes; pointers contain at
+most 32 components. Unsupported fields/versions/pointers fail catalog validation.
+A matching native alias is still a locator, never a permission grant or proof of
+unique ownership across connections. Multiple matching lifetimes remain distinct.
+
+The host validates and retains these declarations with the originating connection
+and strips them from gateway aliases/reexports. The work ledger can match them
+against accepted resource observations, including uncertain work. This does not
+by itself enable cross-generation dispatch or remove connected-client mutation
+guards. Ordinary MCP arguments and native handle values remain unchanged.
 
 ## Downstream Host Context
 

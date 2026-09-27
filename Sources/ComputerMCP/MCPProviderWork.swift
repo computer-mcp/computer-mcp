@@ -6,6 +6,7 @@ extension MCPTool {
   var exportedMetadata: JSONValue? {
     guard mcpReference != nil, var fields = meta?.objectValue else { return meta }
     fields.removeValue(forKey: MCPProviderWork.metadataKey)
+    fields.removeValue(forKey: MCPProviderContinuation.metadataKey)
     return fields.isEmpty ? nil : .object(fields)
   }
 }
@@ -21,6 +22,14 @@ struct MCPProviderWork {
   enum Identifier: Hashable, Sendable {
     case string(String)
     case integer(Int64)
+
+    init?(_ value: JSONValue) {
+      switch value {
+      case .string(let value) where MCPProviderContinuation.validName(value): self = .string(value)
+      case .integer(let value): self = .integer(value)
+      default: return nil
+      }
+    }
 
     var json: JSONValue {
       switch self {
@@ -39,6 +48,14 @@ struct MCPProviderWork {
     let key: Key
     let acquiredBy: UUID
     let uncertain: Bool
+    var handles: [String: Identifier] = [:]
+
+    func matches(_ query: MCPProviderContinuation.Query) -> Bool {
+      key.kind == query.kind && !query.handles.isEmpty
+        && query.handles.allSatisfy { name, value in
+          (name == "id" ? key.id : handles[name]) == value
+        }
+    }
   }
 
   struct Report: Equatable, Sendable {
@@ -67,7 +84,8 @@ struct MCPProviderWork {
       var decoded: [Key: Resource] = [:]
       for value in resources {
         guard let item = value.objectValue,
-          Set(item.keys) == ["kind", "id", "acquired_by", "state"],
+          Set(item.keys).isSubset(of: ["kind", "id", "acquired_by", "state", "handles"]),
+          Set(item.keys).isSuperset(of: ["kind", "id", "acquired_by", "state"]),
           let kind = item["kind"]?.stringValue, Self.validIdentifier(kind),
           let acquiredBy = item["acquired_by"]?.stringValue.flatMap(UUID.init(uuidString:)),
           let state = item["state"]?.stringValue, ["active", "uncertain"].contains(state)
@@ -80,7 +98,19 @@ struct MCPProviderWork {
         }
         let key = Key(kind: kind, id: id)
         guard decoded[key] == nil else { throw MCPProviderWork.invalidReport() }
-        decoded[key] = Resource(key: key, acquiredBy: acquiredBy, uncertain: state == "uncertain")
+        var handles: [String: Identifier] = [:]
+        if let value = item["handles"] {
+          guard let entries = value.objectValue,
+            (1...MCPProviderContinuation.maximumHandles).contains(entries.count),
+            entries.keys.allSatisfy({ $0 != "id" && Self.validIdentifier($0) })
+          else { throw MCPProviderWork.invalidReport() }
+          for (name, value) in entries {
+            guard let identifier = Identifier(value) else { throw MCPProviderWork.invalidReport() }
+            handles[name] = identifier
+          }
+        }
+        decoded[key] = Resource(
+          key: key, acquiredBy: acquiredBy, uncertain: state == "uncertain", handles: handles)
       }
       self.instanceID = instanceID
       self.revision = revision
@@ -126,6 +156,7 @@ struct MCPProviderWork {
   static func advertised(by tools: [MCPTool]) throws -> Bool {
     var advertised = false
     for tool in tools {
+      _ = try MCPProviderContinuation(tool)
       guard let value = tool.meta?.objectValue?[metadataKey] else { continue }
       guard let fields = value.objectValue, Set(fields.keys) == ["format_version", "uri"],
         fields["format_version"]?.int64Value == 1, fields["uri"] == .string(resourceURI)
@@ -208,7 +239,9 @@ struct MCPProviderWork {
     // Validate the entire snapshot before releasing any owner or creating partial state.
     for resource in next.resources.values {
       if let existing = ownership[resource.key] {
-        guard existing.resource.acquiredBy == resource.acquiredBy else {
+        guard existing.resource.acquiredBy == resource.acquiredBy,
+          existing.resource.handles.allSatisfy({ resource.handles[$0.key] == $0.value })
+        else {
           throw Self.invalidReport()
         }
       }
@@ -257,6 +290,10 @@ struct MCPProviderWork {
     } else {
       observation?.confirmObservation()
     }
+  }
+
+  func resources(matching query: MCPProviderContinuation.Query) -> Set<Key> {
+    Set(ownership.values.compactMap { $0.resource.matches(query) ? $0.resource.key : nil })
   }
 
   private mutating func requireObservation() {

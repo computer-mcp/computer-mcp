@@ -425,7 +425,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private func beginHostInvocation(
     descriptor: CapabilityDescriptor, name: String, arguments: [String: JSONValue],
-    context: ExecutionContext, linkage: OperationAuditLinkage?
+    context: ExecutionContext, linkage: OperationAuditLinkage?, authorizationRevision: Int64
   ) throws -> MCPHostInvocation? {
     guard let reference = descriptor.mcpReference,
       hostServiceRegistrations.contains(reference.serverID)
@@ -435,7 +435,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       upstreamArguments: arguments,
       arguments: name == "mcp.tools.call" ? arguments["arguments"]?.objectValue ?? [:] : arguments,
       context: context, ticketID: linkage?.ticketID, ticketInvocationID: linkage?.invocationID,
-      parentRequestID: linkage?.parentRequestID)
+      parentRequestID: linkage?.parentRequestID, authorizationRevision: authorizationRevision)
     try hostToolDirectory.begin(invocation)
     return invocation
   }
@@ -444,10 +444,23 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     workspaceID: String, origin: String, methods: Set<String>,
     matching: (MCPHostInvocation) -> Bool = { _ in true }
   ) throws -> MCPHostInvocation {
-    try validateHostOrigin(workspaceID: workspaceID, origin: origin)
-    let matches = hostToolDirectory.active(workspaceID: workspaceID, origin: origin).filter {
+    try requireHostInvocation(workspaceID: workspaceID, origin: origin) {
       methods.contains($0.reference.toolName) && matching($0)
     }
+  }
+
+  func requireHostInvocation(workspaceID: String, origin: String, id: UUID) throws
+    -> MCPHostInvocation
+  {
+    try requireHostInvocation(workspaceID: workspaceID, origin: origin) { $0.id == id }
+  }
+
+  private func requireHostInvocation(
+    workspaceID: String, origin: String, matching: (MCPHostInvocation) -> Bool
+  ) throws -> MCPHostInvocation {
+    try validateHostOrigin(workspaceID: workspaceID, origin: origin)
+    let matches = hostToolDirectory.active(workspaceID: workspaceID, origin: origin).filter(
+      matching)
     guard matches.count == 1, let invocation = matches.first else {
       throw Self.invalid(
         code: "policy.host_invocation_required",
@@ -755,10 +768,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         }
         let hostInvocation = try beginHostInvocation(
           descriptor: descriptor, name: name, arguments: routed.arguments,
-          context: routed.context, linkage: operationLinkage)
+          context: routed.context, linkage: operationLinkage,
+          authorizationRevision: authorizedGrant.authorizationRevision)
         defer { hostToolDirectory.end(hostInvocation) }
-        rawResult = try MCPInvocationRisk.$current.withValue(
-          MCPInvocationRisk(descriptor: descriptor)
+        rawResult = try MCPInvocationAdmission.$current.withValue(
+          MCPInvocationAdmission(descriptor: descriptor, hostInvocationID: hostInvocation?.id)
         ) {
           try providerRouter.callTool(
             name: name,
@@ -880,10 +894,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         }
         let hostInvocation = try beginHostInvocation(
           descriptor: descriptor, name: name, arguments: routed.arguments,
-          context: routed.context, linkage: operationLinkage)
+          context: routed.context, linkage: operationLinkage,
+          authorizationRevision: authorizedGrant.authorizationRevision)
         defer { hostToolDirectory.end(hostInvocation) }
-        rawResult = try await MCPInvocationRisk.$current.withValue(
-          MCPInvocationRisk(descriptor: descriptor)
+        rawResult = try await MCPInvocationAdmission.$current.withValue(
+          MCPInvocationAdmission(descriptor: descriptor, hostInvocationID: hostInvocation?.id)
         ) {
           try await providerRouter.callToolAsync(
             name: name,

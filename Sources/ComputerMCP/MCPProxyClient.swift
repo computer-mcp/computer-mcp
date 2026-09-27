@@ -90,14 +90,17 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
   ) async throws -> JSONValue {
     let cancellation = MCPCallCancellation()
+    let admission = MCPInvocationAdmission.current
     return try await withTaskCancellationHandler {
       do {
         try Task.checkCancellation()
         let result = try await calls.perform {
           try cancellation.checkCancellation()
-          return try self.callTool(
-            server: server, name: name, arguments: arguments, requestID: requestID,
-            cancellation: cancellation)
+          return try MCPInvocationAdmission.$current.withValue(admission) {
+            try self.callTool(
+              server: server, name: name, arguments: arguments, requestID: requestID,
+              cancellation: cancellation)
+          }
         }
         await cancellation.finish()
         try Task.checkCancellation()
@@ -142,11 +145,12 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         return try JSONDecoder().decode(JSONValue.self, from: Data(output.utf8))
       }
     }
+    let hostInvocationID = MCPInvocationAdmission.current?.correlationID(for: server, tool: name)
     do {
       return try run(server: server) { connection in
         try await connection.callTool(
           name: name, arguments: object, gatewayRequestID: requestID, cancellation: cancellation,
-          retainsResult: retainsResult,
+          retainsResult: retainsResult, hostInvocationID: hostInvocationID,
           cancellationDeliveryFailed: {
             self.pool.invalidate(server: server, connection: connection)
           })
@@ -186,10 +190,12 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     if !reservation.inserted {
       return try reservation.record.snapshot(instance: journal.instanceID)
     }
+    let hostInvocationID = MCPInvocationAdmission.current?.correlationID(for: server, tool: name)
     do {
       return try run(server: server) { connection in
         try await connection.startToolCall(
-          name: name, arguments: object, gatewayRequestID: requestID)
+          name: name, arguments: object, gatewayRequestID: requestID,
+          hostInvocationID: hostInvocationID)
       }
     } catch {
       try journal.update(serverID: server.id, requestID: requestID) {
@@ -596,7 +602,13 @@ private actor MCPProxyConnection {
   private var activeRequests: [String: ActiveRequest] = [:]
   private let ownedWork: GatewayOwnedWork?
   private let workspaceID: String?
-  private var requestOwnership: [UUID: GatewayOwnedWork.Lease] = [:]
+  private let hostTools: MCPHostToolDirectory?
+  private struct RequestOwnership: Sendable {
+    let id = UUID()
+    let work: GatewayOwnedWork.Lease?
+    let invocation: MCPHostToolDirectory.InvocationLease?
+  }
+  private var requestOwnership: [UUID: RequestOwnership] = [:]
   private let toolsChanged: @Sendable () -> Void
 
   init(
@@ -614,6 +626,7 @@ private actor MCPProxyConnection {
     self.onTermination = onTermination
     ownedWork = hostContext?.ownedWork
     workspaceID = hostContext?.workspace.id
+    hostTools = hostContext?.tools
     client = MCP.Client(
       name: "computer-mcp-gateway",
       version: ComputerMCPCLI.version
@@ -654,6 +667,7 @@ private actor MCPProxyConnection {
     gatewayRequestID: String,
     cancellation: MCPCallCancellation? = nil,
     retainsResult: Bool = false,
+    hostInvocationID: UUID? = nil,
     cancellationDeliveryFailed: @escaping @Sendable () -> Void = {}
   ) async throws -> JSONValue {
     try await ensureConnected()
@@ -670,7 +684,8 @@ private actor MCPProxyConnection {
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
     let (context, ownership) = try await dispatchTool(
-      name: name, arguments: arguments, gatewayRequestID: gatewayRequestID)
+      name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
+      hostInvocationID: hostInvocationID)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     guard closeTask == nil else {
@@ -744,7 +759,7 @@ private actor MCPProxyConnection {
   func startToolCall(
     name: String,
     arguments: [String: JSONValue],
-    gatewayRequestID: String
+    gatewayRequestID: String, hostInvocationID: UUID?
   ) async throws -> JSONValue {
     try await ensureConnected()
     // Reserve before crossing into the SDK actor so concurrent calls cannot
@@ -759,7 +774,8 @@ private actor MCPProxyConnection {
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
     let (context, ownership) = try await dispatchTool(
-      name: name, arguments: arguments, gatewayRequestID: gatewayRequestID)
+      name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
+      hostInvocationID: hostInvocationID)
     guard closeTask == nil else {
       try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
       throw MCPError.connectionClosed
@@ -979,7 +995,7 @@ private actor MCPProxyConnection {
   private func finishStartedRequest(
     gatewayRequestID: String, downstreamRequestID: MCP.ID, kind: String,
     result: JSONValue? = nil, failed: Bool = false,
-    ownership: GatewayOwnedWork.Lease?, confirmedResponse: Bool = false
+    ownership: RequestOwnership?, confirmedResponse: Bool = false
   ) {
     settleOwnership(ownership, confirmed: confirmedResponse)
     observers.removeValue(forKey: downstreamRequestID)
@@ -1005,15 +1021,31 @@ private actor MCPProxyConnection {
   }
 
   private func dispatchTool(
-    name: String, arguments: [String: JSONValue], gatewayRequestID: String
-  ) async throws -> (RequestContext<CallTool.Result>, GatewayOwnedWork.Lease?) {
-    let ownership = ownedWork?.retain(
+    name: String, arguments: [String: JSONValue], gatewayRequestID: String, hostInvocationID: UUID?
+  ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
+    let invocation: MCPHostToolDirectory.InvocationLease?
+    if let hostInvocationID {
+      guard let hostTools, let workspaceID else { throw MCPError.connectionClosed }
+      invocation = try hostTools.retain(
+        id: hostInvocationID, workspaceID: workspaceID, origin: server.id)
+    } else {
+      invocation = nil
+    }
+    let work = ownedWork?.retain(
       .mcpRequest, workspaceID: workspaceID, registrationID: server.id,
       resourceID: gatewayRequestID)
+    let ownership =
+      work != nil || invocation != nil
+      ? RequestOwnership(work: work, invocation: invocation) : nil
     if let ownership { requestOwnership[ownership.id] = ownership }
     do {
+      let meta = hostInvocationID.map {
+        MCP.Metadata(additionalFields: [MCPHostInvocation.metadataKey: .string($0.uuidString)])
+      }
       return (
-        try await client.callTool(name: name, arguments: arguments.mapValues(\.sdkValue)), ownership
+        try await client.callTool(
+          name: name, arguments: arguments.mapValues(\.sdkValue), meta: meta),
+        ownership
       )
     } catch {
       settleOwnership(ownership, confirmed: Self.isResponseError(error))
@@ -1021,13 +1053,14 @@ private actor MCPProxyConnection {
     }
   }
 
-  private func settleOwnership(_ ownership: GatewayOwnedWork.Lease?, confirmed: Bool) {
+  private func settleOwnership(_ ownership: RequestOwnership?, confirmed: Bool) {
     guard let ownership else { return }
     if confirmed {
-      ownership.finish()
+      ownership.work?.finish()
+      ownership.invocation?.finish()
       requestOwnership.removeValue(forKey: ownership.id)
     } else {
-      ownership.markUncertain()
+      ownership.work?.markUncertain()
     }
   }
 

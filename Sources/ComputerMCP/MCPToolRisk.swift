@@ -43,16 +43,18 @@ extension GatewayConfiguration {
 }
 
 /// Bound by the host after authorization and consent, never accepted from MCP arguments.
-struct MCPInvocationRisk: Sendable {
-  @TaskLocal static var current: MCPInvocationRisk?
+struct MCPInvocationAdmission: Sendable {
+  @TaskLocal static var current: MCPInvocationAdmission?
 
   let reference: MCPToolReference
   let risk: CapabilityRisk
+  let hostInvocationID: UUID?
 
-  init?(descriptor: CapabilityDescriptor) {
+  init?(descriptor: CapabilityDescriptor, hostInvocationID: UUID? = nil) {
     guard let reference = descriptor.mcpReference else { return nil }
     self.reference = reference
     risk = descriptor.risk
+    self.hostInvocationID = hostInvocationID
   }
 
   func validate(reference: MCPToolReference, risk: CapabilityRisk) throws {
@@ -61,5 +63,11 @@ struct MCPInvocationRisk: Sendable {
         "[mcp.risk_changed] The downstream tool risk changed after host authorization. Retry through the current host policy and approval flow."
       )
     }
+  }
+
+  func correlationID(for server: MCPServerConfig, tool: String) -> UUID? {
+    guard server.hostServices, reference == MCPToolReference(serverID: server.id, toolName: tool)
+    else { return nil }
+    return hostInvocationID
   }
 }

@@ -3,27 +3,51 @@ import MCP
 
 /// Weak routing avoids extending the authority/lifetime of the originating gateway.
 package final class MCPHostToolDirectory: @unchecked Sendable {
+  private struct Entry {
+    let invocation: MCPHostInvocation
+    var owners = 1
+  }
   private let lock = NSLock()
   private weak var runtime: GatewayRuntime?
-  private var invocations: [UUID: MCPHostInvocation] = [:]
+  private var invocations: [UUID: Entry] = [:]
 
   func attach(_ runtime: GatewayRuntime?) { lock.withLock { self.runtime = runtime } }
 
   func begin(_ invocation: MCPHostInvocation) throws {
     try lock.withLock {
-      guard invocations.count < 256 else {
+      guard invocations.count < 256, invocations[invocation.id] == nil else {
         throw MCPError.serverError(code: -32000, message: "Host invocation capacity reached.")
       }
-      invocations[invocation.id] = invocation
+      invocations[invocation.id] = Entry(invocation: invocation)
     }
   }
   func end(_ invocation: MCPHostInvocation?) {
     guard let invocation else { return }
-    _ = lock.withLock { invocations.removeValue(forKey: invocation.id) }
+    release(invocation.id)
+  }
+
+  func retain(id: UUID, workspaceID: String, origin: String) throws -> InvocationLease {
+    try lock.withLock {
+      guard runtime != nil, var entry = invocations[id],
+        entry.invocation.context.workspaceID == workspaceID,
+        entry.invocation.reference.serverID == origin
+      else { throw MCPError.invalidParams("No matching active host invocation.") }
+      entry.owners += 1
+      invocations[id] = entry
+    }
+    return InvocationLease(directory: self, id: id)
+  }
+
+  private func release(_ id: UUID) {
+    lock.withLock {
+      guard var entry = invocations[id] else { return }
+      entry.owners -= 1
+      if entry.owners == 0 { invocations.removeValue(forKey: id) } else { invocations[id] = entry }
+    }
   }
   func active(workspaceID: String, origin: String) -> [MCPHostInvocation] {
     lock.withLock {
-      invocations.values.filter {
+      invocations.values.map(\.invocation).filter {
         $0.context.workspaceID == workspaceID && $0.reference.serverID == origin
       }
     }
@@ -32,6 +56,26 @@ package final class MCPHostToolDirectory: @unchecked Sendable {
   func resolve() throws -> GatewayRuntime {
     guard let runtime = lock.withLock({ runtime }) else { throw MCPError.connectionClosed }
     return runtime
+  }
+
+  /// Downstream requests can outlive the RPC that returned their started receipt.
+  final class InvocationLease: @unchecked Sendable {
+    private let directory: MCPHostToolDirectory
+    private let id: UUID
+    private let lock = NSLock()
+    private var finished = false
+    fileprivate init(directory: MCPHostToolDirectory, id: UUID) {
+      self.directory = directory
+      self.id = id
+    }
+    func finish() {
+      lock.withLock {
+        guard !finished else { return }
+        finished = true
+        directory.release(id)
+      }
+    }
+    deinit { finish() }
   }
 }
 

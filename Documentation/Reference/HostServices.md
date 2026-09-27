@@ -63,11 +63,14 @@ northbound Gateway tools. Dynamic tool requests from a vendor cannot target the
 private namespace. The host records a short-lived, in-memory reference to each
 currently forwarded operation. Permission-sensitive private calls must match
 exactly one such operation and its arguments; a claimed caller or request ID
-from the adapter is insufficient. The reference expires when the forwarded call
-returns or fails and is never sent as a reusable capability token.
+from the adapter is insufficient. An independently started downstream request
+retains its reference after the Gateway returns its started receipt. A confirmed
+response or confirmed local teardown releases that request's reference;
+cancellation delivery alone does not.
 
 | Private tool | Required inputs | Purpose |
 | --- | --- | --- |
+| `host.invocations.describe` | `invocation_id` | Inspect the exact active invocation bound to this private channel |
 | `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source profile grant atomically |
 | `host.workspaces.authorize_removal` | `worktree` | Check the live destructive operation ticket before removal |
 | `host.workspaces.unregister` | `worktree` | Remove the unchanged owned registration, or confirm an ownership-free no-op |
@@ -78,6 +81,33 @@ and a bounded error. They do not accept caller-supplied identity, local approval
 or arbitrary database operations. Inspect their actual MCP schemas for input
 constraints. They require host persistence; directory metadata alone is not a
 host-service implementation.
+
+## Invocation context
+
+For callback-enabled registrations, the Gateway supplies its own invocation
+UUID in `tools/call` request metadata under
+`_meta["io.github.computer-mcp/host-invocation"]`. Ordinary registrations do not
+receive this entry. Downstream arguments cannot set or replace it. The adapter
+passes this UUID to `host.invocations.describe` on its inherited connection.
+The UUID is correlation, not a credential: another channel, an expired
+invocation, or revoked current authorization cannot use it.
+
+The version-1 result includes `invocation_id`, `generation_id`,
+`registration_id`, `plugin_id`, `contribution_id`, `principal_id`, `profile_id`,
+`caller`, `workspace_id`, `request_id`, `authorization_revision`,
+`capability_id`, `tool`, `risk`, `arguments_digest` and `ticket_id`.
+`generation_id` identifies the originating runtime. `authorization_revision`
+is the grant revision admitted for that invocation; inspection checks current
+authorization again. Plugin/contribution identities come from host composition
+and are null for a direct registration. The argument digest uses SHA-256 over
+the host-recorded downstream argument object encoded as sorted-key JSON.
+`ticket_id` is null when no operation ticket applies. Identity fields and
+authorization revisions cannot be overridden in the inspection request.
+
+Concurrent invocations have distinct identities even when their tool and
+arguments match. This inspection contract carries no authority to start new
+work, approve operations or retain a background job after its downstream
+request has completed.
 
 ## Derived workspaces and recovery
 

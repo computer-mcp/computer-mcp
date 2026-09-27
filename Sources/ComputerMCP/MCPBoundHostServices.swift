@@ -58,6 +58,10 @@ actor MCPBoundHostServices {
     }
     return [
       tool(
+        "host.invocations.describe",
+        "Inspect the host-bound scope and exact action of this channel's active invocation.",
+        ["invocation_id": identifier], ["invocation_id"], read: true),
+      tool(
         "host.workspaces.register",
         "Atomically register the verified derived directory and its source profile grant during provisioning.",
         ["worktree": worktree], ["worktree"]),
@@ -102,6 +106,7 @@ actor MCPBoundHostServices {
       try validateSourceIdentity()
       let result: JSONValue
       switch name {
+      case "host.invocations.describe": result = try describeInvocation(arguments)
       case "host.workspaces.register": result = try register(arguments)
       case "host.workspaces.authorize_removal": result = try authorizeRemoval(arguments)
       case "host.workspaces.unregister": result = try unregister(arguments)
@@ -205,6 +210,34 @@ actor MCPBoundHostServices {
             "output_digest": audit.outputDigest.map(JSONValue.string) ?? .null,
           ])
         }),
+    ])
+  }
+
+  private func describeInvocation(_ args: [String: JSONValue]) throws -> JSONValue {
+    guard let raw = args["invocation_id"]?.stringValue, let id = UUID(uuidString: raw) else {
+      throw MCPHostServiceError.denied("A host invocation identity is required.")
+    }
+    let runtime = try directory.resolve()
+    let active = try runtime.requireHostInvocation(
+      workspaceID: context.workspace.id, origin: origin, id: id)
+    auditInvocation = active
+    let plugin = runtime.pluginOrigins[.init(kind: .mcp, id: origin)]
+    return .object([
+      "format_version": .integer(1), "invocation_id": .string(active.id.uuidString),
+      "generation_id": .string(context.runtimeID.uuidString),
+      "registration_id": .string(origin),
+      "plugin_id": plugin.map { .string($0.pluginID) } ?? .null,
+      "contribution_id": plugin.map { .string($0.componentID) } ?? .null,
+      "principal_id": .string(active.context.principalID),
+      "profile_id": .string(active.context.profileID.rawValue),
+      "caller": .string(active.context.caller.rawValue),
+      "workspace_id": .string(context.workspace.id),
+      "request_id": .string(active.context.requestID),
+      "authorization_revision": .integer(active.authorizationRevision),
+      "capability_id": .string(active.upstreamName), "tool": .string(active.reference.toolName),
+      "risk": .string(active.admittedCapability.risk.rawValue),
+      "arguments_digest": .string(try Self.digest(.object(active.arguments))),
+      "ticket_id": active.ticketID.map(JSONValue.string) ?? .null,
     ])
   }
 

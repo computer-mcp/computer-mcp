@@ -85,7 +85,7 @@ struct MCPBoundHostServicesTests {
     #expect(
       Set(MCPBoundHostServices.tools.map(\.name)) == [
         "host.workspaces.register", "host.workspaces.authorize_removal",
-        "host.workspaces.unregister", "host.diagnostics.snapshot",
+        "host.workspaces.unregister", "host.diagnostics.snapshot", "host.invocations.describe",
       ])
     let result = try await fixture.direct("host.unknown", [:])
     #expect(result.objectValue?["isError"] == .bool(true))
@@ -95,6 +95,63 @@ struct MCPBoundHostServicesTests {
       try await fixture.service.call(
         name: "host.diagnostics.snapshot", arguments: ["limit": .number(1)])
     }
+  }
+
+  @Test
+  func genericInvocationContextIsHostBoundAndExpiresWithTheCall() async throws {
+    let fixture = try HostAuthorityFixture()
+    defer { fixture.remove() }
+    let response = try await fixture.during("fixture.read", ["item": .string("sample")]) {
+      service in
+      let id = try #require(MCPInvocationAdmission.current?.hostInvocationID)
+      return try await .encoded(
+        service.call(
+          name: "host.invocations.describe", arguments: ["invocation_id": .string(id.uuidString)]))
+    }
+    let value = try #require(
+      response.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
+    #expect(value["format_version"] == .integer(1))
+    #expect(value["principal_id"] == .string("fixture-principal"))
+    #expect(value["workspace_id"] == .string("scope"))
+    #expect(value["registration_id"] == .string("probe"))
+    #expect(value["profile_id"] == .string("chatgpt-operate"))
+    #expect(value["tool"] == .string("fixture.read"))
+    #expect(value["capability_id"] == .string("adapter.fixture.read"))
+    #expect(value["authorization_revision"]?.intValue != nil)
+    #expect(value["generation_id"] == fixture.peer.context.map { .string($0.runtimeID.uuidString) })
+    #expect(value["plugin_id"] == .null)
+    #expect(value["contribution_id"] == .null)
+    let id = try #require(value["invocation_id"])
+    let expired = try await fixture.direct("host.invocations.describe", ["invocation_id": id])
+    #expect(expired.objectValue?["isError"] == .bool(true))
+    await fixture.close()
+  }
+
+  @Test(arguments: ["foreign-channel", "forged-id", "forged-owner", "revoked"])
+  func genericInvocationContextRejectsForeignOrRevokedAuthority(attack: String) async throws {
+    let fixture = try HostAuthorityFixture()
+    let other = try HostAuthorityFixture()
+    defer {
+      fixture.remove()
+      other.remove()
+    }
+    let response = try await fixture.during("fixture.read") { service in
+      let id = try #require(MCPInvocationAdmission.current?.hostInvocationID)
+      var arguments: [String: JSONValue] = ["invocation_id": .string(id.uuidString)]
+      if attack == "forged-id" { arguments["invocation_id"] = .string(UUID().uuidString) }
+      if attack == "forged-owner" { arguments["principal_id"] = .string("other") }
+      if attack == "revoked" {
+        var profile = try #require(fixture.database.profiles().first)
+        profile.capabilityIDs = []
+        try fixture.database.saveProfile(profile)
+      }
+      return try await .encoded(
+        (attack == "foreign-channel" ? other.service : service).call(
+          name: "host.invocations.describe", arguments: arguments))
+    }
+    #expect(response.objectValue?["isError"] == .bool(true))
+    await fixture.close()
+    await other.close()
   }
 
   @Test
@@ -336,6 +393,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
 
 private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
   static let methods = [
+    "fixture.read",
     "codex.app.thread.start", "codex.app.turn.start", "codex.diagnostics.snapshot",
     "codex.app.thread.release",
     "codex.worktree.provision.perform",

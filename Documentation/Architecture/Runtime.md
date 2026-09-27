@@ -331,6 +331,11 @@ Callback-enabled owned stdio adapters receive a private standard MCP endpoint.
 The host retains caller grants, workspace registrations, approval authority and
 audit; the adapter owns domain state and vendor protocol execution.
 `MCPHostInvocation` records the live outer call without exporting a credential.
+The host sends only its correlation UUID in downstream request metadata.
+`host.invocations.describe` resolves that identity within the private channel
+and checks current authorization. Independently started MCP requests retain the
+record until their response or confirmed local cleanup, including after their
+outer Gateway call has returned a started receipt.
 Private services match that reference, current grants and, for destructive
 removal, the executing operation ticket. Binding is lazy so plugin catalog
 startup does not depend on a partially constructed Gateway runtime.
@@ -344,7 +349,7 @@ row to remain present. Current persisted restrictions are reapplied to callbacks
 
 `MCPBoundHostServices` owns the atomic derived-workspace registration ledger
 and projects bounded diagnostics. Its private namespace permits only
-workspace registration, verified removal, and diagnostic reads for matching
+invocation inspection, workspace registration, verified removal, and diagnostic reads for matching
 live invocations. The independent Codex adapter
 implements its host interfaces through this endpoint while retaining separate
 App Server and Exec lifecycles. Imported embedded Codex configuration

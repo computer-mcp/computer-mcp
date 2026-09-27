@@ -65,7 +65,7 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     async throws -> JSONValue
   {
     try Task.checkCancellation()
-    let authorization = MCPInvocationRisk.current
+    let authorization = MCPInvocationAdmission.current
     try await Self.discovery.perform {
       try requireTool(name, server: server, authorization: authorization)
     }
@@ -133,7 +133,7 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
 
   private func requireTool(
     _ name: String, server: MCPServerConfig,
-    authorization: MCPInvocationRisk? = MCPInvocationRisk.current
+    authorization: MCPInvocationAdmission? = MCPInvocationAdmission.current
   ) throws {
     let reference = MCPToolReference(serverID: server.id, toolName: name)
     try requireToolGrant(reference)

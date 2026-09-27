@@ -247,6 +247,120 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test
+  func selectedLegacyConnectionCloseRequiresApprovalAndLeavesCurrentWorkAlive() async throws {
+    let fixture = try GenerationFixture(reportWork: false)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let originalPID = try pid(await client.call(toolName: "fixture.identity"))
+      let owner = try #require(try await owners(client, kind: "mcpUnreportedWork").first)
+      try await fixture.activate(version: 2)
+      let currentPID = try pid(await client.call(toolName: "fixture.identity"))
+      var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      grant.mode = .readOnly
+      try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+      let arguments: [String: JSONValue] = ["server": .string("fixture")]
+      let denied = try await call(
+        client, owner: owner, tool: "mcp.connections.close", arguments: arguments)
+      #expect(denied.result.objectValue?["isError"] == .bool(true))
+      #expect(alive(originalPID) && alive(currentPID))
+      grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      grant.mode = .workspaceOperations
+      grant.confirmationPolicy = .riskBased
+      try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+      let unbound = try await client.call(
+        toolName: "mcp.connections.close", arguments: .object(arguments))
+      #expect(String(describing: unbound.result).contains("mcp.connection_owner_required"))
+      let prepared = try await call(
+        client, owner: owner, tool: "operations.prepare",
+        arguments: [
+          "tool": .string("mcp.connections.close"), "arguments": .object(arguments),
+        ])
+      let ticket = try #require(value(prepared, "result")?.objectValue?["ticket_id"]?.stringValue)
+      #expect(try fixture.database.operationTicket(id: ticket)?.state == .pendingApproval)
+      let commit: [String: JSONValue] = [
+        "tool": .string("mcp.connections.close"), "arguments": .object(arguments),
+        "ticket_id": .string(ticket),
+      ]
+      let pending = try await call(
+        client, owner: owner, tool: "operations.commit", arguments: commit)
+      #expect(pending.result.objectValue?["isError"] == .bool(true))
+      #expect(alive(originalPID) && alive(currentPID))
+      try fixture.database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
+      let closed = try await call(
+        client, owner: owner, tool: "operations.commit", arguments: commit)
+      let result = try #require(value(closed, "result")?.objectValue)
+      #expect(result["transport_closed"] == .bool(true))
+      #expect(result["managed_process_exit_confirmed"] == .bool(true))
+      #expect(result["work_cleanup"] == .string("confirmed"))
+      #expect(result["remaining_owners"] == .integer(0))
+      #expect(!alive(originalPID) && alive(currentPID))
+      let repeated = try await call(
+        client, owner: owner, tool: "mcp.connections.close", arguments: arguments)
+      #expect(repeated.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.pids() == [originalPID, currentPID])
+      #expect(try await owners(client, kind: "mcpUnreportedWork").count == 1)
+      grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      grant.confirmationPolicy = .never
+      try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+      let currentOwner = try #require(try await owners(client, kind: "mcpUnreportedWork").first)
+      async let firstClose = call(
+        client, owner: currentOwner, tool: "mcp.connections.close", arguments: arguments)
+      async let secondClose = call(
+        client, owner: currentOwner, tool: "mcp.connections.close", arguments: arguments)
+      let results = try await [firstClose, secondClose]
+      #expect(results.filter { $0.result.objectValue?["isError"] != .bool(true) }.count == 1)
+      #expect(!alive(currentPID))
+      #expect(try fixture.pids() == [originalPID, currentPID])
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(!alive(currentPID))
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func selectedProviderClosePreservesUncertainNativeResourceOwnership() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let originalPID = try pid(
+        await client.call(
+          toolName: "fixture.start",
+          arguments: .object(["handle": .string("native")])))
+      let owner = try #require(try await owners(client, kind: "mcpResource").first)
+      let closed = try await call(
+        client, owner: owner, tool: "mcp.connections.close",
+        arguments: ["server": .string("fixture")])
+      let result = try #require(value(closed, "result")?.objectValue)
+      #expect(result["managed_process_exit_confirmed"] == .bool(true))
+      #expect(result["work_cleanup"] == .string("unknown"))
+      #expect(try #require(result["remaining_owners"]?.int64Value) > 0)
+      #expect(!alive(originalPID))
+      #expect(try await owners(client, kind: "mcpResource") == [owner])
+      let repeated = try await call(
+        client, owner: owner, tool: "mcp.connections.close",
+        arguments: ["server": .string("fixture")])
+      #expect(repeated.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.pids() == [originalPID])
+      await client.disconnect()
+      await fixture.service.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
   func metadataChangePreservesScopeWhileRevokedWorkspaceBlocksNewContinuations() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }

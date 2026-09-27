@@ -469,6 +469,48 @@ final class MCPProxyClientTests {
   }
 
   @Test
+  func closingSelectedHTTPConnectionCannotClaimRemoteWorkStopped() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakeHTTPMCPServer()
+      let root = fixture.sessionMarker.deletingLastPathComponent()
+      defer {
+        if fixture.process.isRunning { fixture.process.terminate() }
+        fixture.process.waitUntilExit()
+        try? FileManager.default.removeItem(at: root)
+      }
+      let work = GatewayOwnedWork()
+      var context = MCPHostContext(
+        runtimeID: UUID(),
+        context: .init(caller: .localCLI, profileID: .localAdmin),
+        workspaceID: "fixture", rootURL: root, readOnly: false)
+      context.ownedWork = work
+      let client = MCPProxyClient(hostContext: context)
+      let server = MCPServerConfig(
+        id: "http", transport: .http,
+        url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
+      _ = try client.callTool(server: server, name: "http-sample", arguments: .object([:]))
+      let record = try #require(work.snapshot.first { $0.kind == .mcpUnreportedWork })
+      let target = MCPContinuationTarget(
+        workspaceID: "fixture",
+        reference: .init(serverID: "http", toolName: "mcp.connections.close"),
+        connectionID: try #require(record.connectionID), instanceID: nil, resources: [:],
+        selectedOwnershipID: record.id)
+      #expect(throws: GatewayToolError.self) { try client.closeConnection(server: server) }
+      try MCPContinuationTarget.$current.withValue(target) {
+        let result = try client.closeConnection(server: server)
+        #expect(result.objectValue?["transport_closed"] == .bool(true))
+        #expect(result.objectValue?["managed_process_exit_confirmed"] == .null)
+        #expect(result.objectValue?["work_cleanup"] == .string("unknown"))
+        #expect(work.snapshot.contains { $0.id == record.id && $0.uncertain })
+        #expect(fixture.process.isRunning)
+        let before = try String(contentsOf: fixture.sessionMarker, encoding: .utf8)
+        #expect(throws: GatewayToolError.self) { try client.closeConnection(server: server) }
+        #expect(try String(contentsOf: fixture.sessionMarker, encoding: .utf8) == before)
+      }
+    }
+  }
+
+  @Test
   func testHTTPProxyPreservesNegotiatedSessionAcrossRequests() async throws {
     try await runBlockingTest {
       let fixture = try self.fakeHTTPMCPServer()

@@ -37,7 +37,7 @@ internal struct GatewayCapabilityCatalog: Sendable {
     } else if name == "operations.commit" {
       risk = .externalWrite
     } else if name.hasPrefix("mcp.") && name != "mcp.tools.call"
-      && name != "mcp.requests.cancel"
+      && name != "mcp.requests.cancel" && name != "mcp.connections.close"
     {
       risk = .readOnly
     } else if tool.annotations?.destructiveHint == true {

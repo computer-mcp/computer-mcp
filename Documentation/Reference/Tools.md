@@ -297,6 +297,31 @@ Start-only arguments:
 }
 ```
 
+## `mcp.connections.close`
+
+Closes one exact retained downstream connection and joins its managed-process
+teardown. This destructive operation affects **all work on that connection**.
+Select a live owner with `runtime.owners.call` and pass `server` as the target's
+only argument. Unbound or stale selections fail without starting a replacement.
+Current target permissions apply. When approval is required, wrap both
+`operations.prepare` and `operations.commit` with the same owner.
+
+The result separates the observed outcomes:
+
+| Field | Meaning |
+| --- | --- |
+| `transport_closed` | The selected local client transport has closed. |
+| `managed_process_exit_confirmed` | Verified local managed-process exit; `null` for remote transport. |
+| `remaining_owners` | Work leases still retained for the original connection. |
+| `work_cleanup` | `confirmed` only when the managed process exited and no retained work remains; otherwise `unknown`. |
+
+Remote transport closure does not prove remote work stopped. Provider-reported
+native resources can remain uncertain after the provider exits, including
+detached work. Use provider-native cleanup before closing when it can establish
+completion. Unknown ownership is retained. Other connections keep running;
+ordinary configuration changes do not implicitly request this stop operation.
+A later new invocation may start a fresh connection under current configuration.
+
 ## `mcp.events.read`
 
 Reads the retained connection and catalog-change events for one registered

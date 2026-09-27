@@ -217,6 +217,7 @@ package protocol DownstreamMCPClient: Sendable {
   func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
     -> JSONValue
   func connectionStatus(server: MCPServerConfig) throws -> JSONValue
+  func closeConnection(server: MCPServerConfig) throws -> JSONValue
   func readEvents(server: MCPServerConfig, afterCursor: Int, maxResults: Int) throws -> JSONValue
   func readEvents(
     server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
@@ -229,6 +230,11 @@ package protocol DownstreamMCPClient: Sendable {
 }
 
 extension DownstreamMCPClient {
+  package func closeConnection(server: MCPServerConfig) throws -> JSONValue {
+    throw GatewayToolError.disabled(
+      "This downstream client does not support selected connection close.")
+  }
+
   package func readEvents(
     server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
   ) throws -> JSONValue {
@@ -1825,6 +1831,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     case "mcp.requests.cancel":
       try requireMCPProviders()
       return try textResult(cancelDownstreamMCPRequest(arguments: object))
+
+    case "mcp.connections.close":
+      try requireMCPProviders()
+      guard Set(object.keys) == ["server"] else {
+        throw GatewayToolError.invalidArguments("Supply only the selected MCP server id.")
+      }
+      return try textResult(
+        mcpClient.closeConnection(server: mcpServer(requiredString("server", in: object))))
 
     case "process.spawn":
       try requireCLIProviders()
@@ -28587,6 +28601,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         ),
         meta: toolMeta
       ),
+      MCPTool(
+        name: "mcp.connections.close",
+        description:
+          "Close one exact retained MCP connection and join its managed-process teardown. This stops all work on that connection, not just the locating resource. Requires a live owner selected through runtime.owners.call; use that same owner for operations.prepare/commit when approval is required. Remote or detached work may remain uncertain; transport closure does not prove work stopped.",
+        inputSchema: objectSchema(
+          properties: ["server": stringSchema("Registered MCP server id of the selected owner.")],
+          required: ["server"]),
+        meta: toolMeta),
       MCPTool(
         name: "mcp.requests.read",
         description:

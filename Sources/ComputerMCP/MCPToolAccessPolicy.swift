@@ -61,7 +61,10 @@ struct MCPToolAccessPolicy: Sendable {
     "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read", "mcp.requests.list",
     "mcp.requests.read",
     "mcp.requests.cancel",
+    "mcp.connections.close",
   ]
 
-  private static let observeCapabilities = sessionCapabilities.subtracting(["mcp.requests.cancel"])
+  private static let observeCapabilities = sessionCapabilities.subtracting([
+    "mcp.requests.cancel", "mcp.connections.close",
+  ])
 }

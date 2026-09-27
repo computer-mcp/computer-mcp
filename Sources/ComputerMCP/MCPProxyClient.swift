@@ -333,6 +333,20 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
   }
 
+  package func closeConnection(server: MCPServerConfig) throws -> JSONValue {
+    guard let target = MCPContinuationTarget.current, target.selectedOwnershipID != nil,
+      target.reference == .init(serverID: server.id, toolName: "mcp.connections.close"),
+      let connection = pool.existingConnection(for: server)
+    else { throw MCPContinuationTarget.unavailable() }
+    let result = try runExisting(server: server, connection: connection) { connection in
+      try await connection.closeSelected(target)
+    }
+    // Failed selection must leave the original pool entry intact. Teardown and the
+    // pool's existing predecessor barrier remain authoritative for future admission.
+    pool.invalidate(server: server, connection: connection)
+    return result
+  }
+
   package func cancelRequest(
     server: MCPServerConfig,
     requestID: String,
@@ -1199,6 +1213,20 @@ private actor MCPProxyConnection {
     case .methodNotFound, .invalidParams, .serverError, .urlElicitationRequired: return true
     default: return false
     }
+  }
+
+  func closeSelected(_ target: MCPContinuationTarget) async throws -> JSONValue {
+    try validateSelectedOwner(target)
+    let confirmed = await disconnect()
+    let remaining = ownedWork?.snapshot.filter { $0.connectionID == connectionID }.count ?? 0
+    let local = transport is MCPChildProcessTransport
+    return .object([
+      "server": .string(server.id), "connection_id": .string(connectionID.uuidString),
+      "transport_closed": .bool(true),
+      "managed_process_exit_confirmed": local ? .bool(confirmed) : .null,
+      "remaining_owners": .integer(Int64(remaining)),
+      "work_cleanup": .string(local && confirmed && remaining == 0 ? "confirmed" : "unknown"),
+    ])
   }
 
   func disconnect() async -> Bool {

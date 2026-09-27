@@ -87,19 +87,32 @@ struct MCPHostSessionTests {
 
   @Test(arguments: [
     "alias.callback", "loop.operation", "mcp.tools.call", "policy.probe", "operations.prepare",
-    "nested-workspace",
+    "nested-workspace", "selected-owner",
   ])
   func indirectCallsCannotReenterTheOriginOrWidenWorkspace(route: String) async throws {
     let fixture = try HostFixture()
     defer { fixture.remove() }
     var name = route
     var arguments: [String: JSONValue] = [:]
+    let ownerLease = fixture.runtime.ownedWork.retain(
+      .mcpUnreportedWork, workspaceID: "first", registrationID: "plugin",
+      resourceID: "callback-owner", connectionID: UUID())
+    defer { ownerLease.finish() }
     if route == "mcp.tools.call" {
       arguments = ["server": .string("plugin"), "tool": .string("operation")]
     } else if route == "policy.probe" {
       arguments = ["capability_id": .string("alias.callback"), "arguments": .object([:])]
     } else if route == "operations.prepare" {
       arguments = ["tool": .string("alias.callback"), "arguments": .object([:])]
+    } else if route == "selected-owner" {
+      name = "runtime.owners.call"
+      arguments = [
+        "owner": GatewayOwnerSelection(
+          runtimeID: fixture.runtime.generationID,
+          workspaceID: "first", ownershipID: ownerLease.id
+        ).json,
+        "tool": .string("alias.callback"), "arguments": .object([:]),
+      ]
     } else if route == "nested-workspace" {
       name = "policy.probe"
       arguments = [
@@ -111,6 +124,9 @@ struct MCPHostSessionTests {
     }
     let result = try await fixture.call(name, arguments)
     #expect(result.objectValue?["isError"] == .bool(true))
+    if route == "selected-owner" {
+      #expect(String(describing: result).contains("policy.host_recursion_denied"))
+    }
     #expect(fixture.downstream.invocations == 0)
     #expect(try fixture.database.auditEvents().count == 1)
     await fixture.runtime.shutdown()
@@ -290,7 +306,7 @@ private final class HostFixture: Sendable {
     let capabilities = [
       "workspace.list", "workspace.describe", "policy.probe", "operations.prepare",
       "operations.commit", "file.read", "file.replace_text", "mcp.tools.call", "alias.callback",
-      "loop.operation",
+      "loop.operation", "runtime.owners.call",
     ]
     grant = ProfileGrant(
       id: profile, capabilityIDs: Set(capabilities), workspaceIDs: ["first", "second"],

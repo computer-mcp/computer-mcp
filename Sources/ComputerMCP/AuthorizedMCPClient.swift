@@ -109,6 +109,11 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     return try base.connectionStatus(server: server)
   }
 
+  func closeConnection(server: MCPServerConfig) throws -> JSONValue {
+    try requireServer(server, capability: "mcp.connections.close")
+    return try base.closeConnection(server: server)
+  }
+
   func readEvents(server: MCPServerConfig, afterCursor: Int, maxResults: Int) throws -> JSONValue {
     try requireServer(server, capability: "mcp.events.read")
     return try base.readEvents(server: server, afterCursor: afterCursor, maxResults: maxResults)

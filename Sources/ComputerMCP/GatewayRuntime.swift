@@ -447,7 +447,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "policy.host_grant_revoked",
         message: "The host grant no longer permits this callback.")
     }
-    if name == "policy.probe" || name == "operations.prepare" || name == "operations.commit" {
+    if name == "policy.probe" || name == "operations.prepare" || name == "operations.commit"
+      || name == "runtime.owners.call"
+    {
       let key = name == "policy.probe" ? "capability_id" : "tool"
       let target = try Self.requiredString(key, in: arguments)
       guard arguments["arguments"] == nil || arguments["arguments"]?.objectValue != nil else {
@@ -1733,6 +1735,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func invocationDescriptor(
     named name: String, arguments: [String: JSONValue], context: ExecutionContext
   ) throws -> CapabilityDescriptor {
+    if name == "mcp.connections.close", MCPContinuationTarget.current?.selectedOwnershipID == nil {
+      throw Self.invalid(
+        code: "mcp.connection_owner_required",
+        message:
+          "Select a live execution owner with runtime.owners.call before closing its connection.")
+    }
     let workspaceID = arguments["workspace_id"]?.stringValue ?? context.workspaceID
     var descriptor = try descriptor(named: name, workspaceID: workspaceID)
     if name == "mcp.tools.call" {

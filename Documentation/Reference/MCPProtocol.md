@@ -46,6 +46,12 @@ resources. This is lifecycle evidence, not a capability grant, a task framework,
 or permission to call private Host Services. A provider without this declaration
 receives no work-invocation metadata and continues to use ordinary MCP.
 
+The host's destructive `mcp.connections.close` operation requires an explicitly
+selected live execution owner. It joins teardown of that original connection
+and reports transport closure separately from managed-process exit and remaining
+ownership. Remote or detached work retains its uncertainty; closing transport
+does not discharge it. See [connection close](Tools.md#mcpconnectionsclose).
+
 Advertise `resources` in initialization and put this declaration in one or more
 tool definitions. Keep it available for the lifetime of the connection:
 

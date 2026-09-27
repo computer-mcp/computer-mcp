@@ -355,7 +355,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
     "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
     "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
-    "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel",
+    "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel", "mcp.connections.close",
   ]
 }
 

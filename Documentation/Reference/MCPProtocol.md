@@ -221,6 +221,13 @@ observations on another connection, and unavailable owners fail before dispatch.
 Private continuation bindings survive removal from the visible tool catalog
 while their work remains owned. They do not restore a revoked permission.
 
+Each new call also checks its registered workspace's current lifetime and root.
+Removal, root rebinding or re-registration invalidates the old execution scope,
+including under a wildcard workspace grant. Display metadata updates preserve
+that scope. Existing work remains owned; a denied new call does not stop its
+process. Owner directory queries use the current registration and omit retained
+work whose original scope is no longer authorized.
+
 Superseded runtimes retire only after their invocation and resource owners have
 drained. Retirement reserves the runtime before asynchronous cleanup, preventing
 new admission during shutdown. Pending construction and cleanup count toward the

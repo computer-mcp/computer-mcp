@@ -247,6 +247,84 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test
+  func metadataChangePreservesScopeWhileRevokedWorkspaceBlocksNewContinuations() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+    grant.workspaceIDs = ["*"]
+    try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    let original = try #require(try fixture.database.workspace(id: "fixture"))
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let arguments: [String: JSONValue] = ["handle": .string("original")]
+      let originalPID = try pid(
+        await client.call(toolName: "fixture.start", arguments: .object(arguments)))
+      let owner = try #require(try await owners(client, kind: "mcpResource").first)
+      var renamed = original
+      renamed.displayName = "Renamed"
+      try fixture.database.saveWorkspace(renamed)
+      #expect(
+        try pid(await call(client, owner: owner, tool: "fixture.inspect", arguments: arguments))
+          == originalPID)
+      for change in ["remove", "rebind", "reregister"] {
+        try fixture.database.saveWorkspace(original)
+        switch change {
+        case "remove": try fixture.database.deleteWorkspace(id: original.id)
+        case "rebind":
+          let other = fixture.root.appendingPathComponent("other")
+          try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+          var rebound = original
+          rebound.rootPath = other.path
+          try fixture.database.saveWorkspace(rebound)
+        default:
+          try fixture.database.deleteWorkspace(id: original.id)
+          var replacement = original
+          replacement.createdAt = original.createdAt.addingTimeInterval(1)
+          try fixture.database.saveWorkspace(replacement)
+        }
+        let before = try fixture.calls()
+        let ordinary = try await client.call(
+          toolName: "fixture.inspect", arguments: .object(arguments))
+        let selected = try await call(
+          client, owner: owner, tool: "fixture.inspect", arguments: arguments)
+        let listed = try await client.call(
+          toolName: "runtime.owners.list",
+          arguments: .object([
+            "workspace_id": .string("fixture")
+          ]))
+        #expect(ordinary.result.objectValue?["isError"] == .bool(true), "Scope mutation: \(change)")
+        #expect(selected.result.objectValue?["isError"] == .bool(true), "Scope mutation: \(change)")
+        #expect(
+          listed.result.objectValue?["isError"] == .bool(true)
+            || value(listed, "result")?.objectValue?["owners"] == .array([]),
+          "Scope mutation: \(change)")
+        #expect(try fixture.calls() == before)
+        #expect(alive(originalPID))
+        if change == "rebind" {
+          let reboundPID = try pid(await client.call(toolName: "fixture.identity"))
+          #expect(reboundPID != originalPID)
+          #expect(try await owners(client, kind: "mcpResource").isEmpty)
+          #expect(alive(originalPID))
+        }
+      }
+      try fixture.database.saveWorkspace(original)
+      #expect(
+        try pid(await call(client, owner: owner, tool: "fixture.finish", arguments: arguments))
+          == originalPID)
+      #expect(try fixture.pids().count == 2)
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
   func explicitOwnerControlsOriginalBackgroundReceiptAfterReplacement() async throws {
     let fixture = try GenerationFixture(reportWork: false)
     defer { fixture.removeFiles() }

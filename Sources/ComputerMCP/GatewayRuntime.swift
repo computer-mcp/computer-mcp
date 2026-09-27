@@ -7,7 +7,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let context: ExecutionContext
   private let grant: ProfileGrant
   private let requiresPersistedGrant: Bool
-  private let persistedWorkspaceIDs: Set<String>
+  private let persistedWorkspaceRegistrations: [String: RegisteredWorkspace]
   private let policyEvaluator: GatewayPolicyEvaluator
   private let database: GatewayDatabase?
   private let workspaces: [String: RegisteredWorkspace]
@@ -290,7 +290,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions)
     }
     self.requiresPersistedGrant = persistedGrant != nil
-    self.persistedWorkspaceIDs = Set(persistedWorkspaces.map(\.id))
+    self.persistedWorkspaceRegistrations = Dictionary(
+      uniqueKeysWithValues: persistedWorkspaces.map { ($0.id, $0) })
     self.policyEvaluator = policyEvaluator
     self.database = database
     self.workspaces = workspaceByID
@@ -371,20 +372,33 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private func validateHostOrigin(workspaceID: String, origin: String) throws {
     guard !lifetime.isClosing, hostServiceRegistrations.contains(origin),
-      let workspace = workspaces[workspaceID]
+      workspaces[workspaceID] != nil
     else {
       throw Self.invalid(
         code: "policy.host_scope_unavailable",
         message: "The originating host scope is no longer available.")
     }
-    if persistedWorkspaceIDs.contains(workspaceID), let database {
-      guard let current = try database.workspace(id: workspaceID), current.id == workspaceID,
-        current.rootPath == workspace.rootPath
-      else {
-        throw Self.invalid(
-          code: "policy.workspace_denied",
-          message: "The registered workspace changed or was removed.")
-      }
+    try validateExecutionWorkspace(workspaceID)
+  }
+
+  private func currentRegisteredWorkspace(_ workspaceID: String) throws -> RegisteredWorkspace? {
+    guard persistedWorkspaceRegistrations[workspaceID] != nil, let database else { return nil }
+    guard let current = try database.workspace(id: workspaceID), current.id == workspaceID else {
+      throw Self.invalid(
+        code: "policy.workspace_denied",
+        message: "The registered workspace changed or was removed.")
+    }
+    return current
+  }
+
+  private func validateExecutionWorkspace(_ workspaceID: String) throws {
+    guard let current = try currentRegisteredWorkspace(workspaceID) else { return }
+    guard current.createdAt == persistedWorkspaceRegistrations[workspaceID]?.createdAt,
+      current.rootPath == workspaces[workspaceID]?.rootPath
+    else {
+      throw Self.invalid(
+        code: "policy.workspace_denied",
+        message: "The registered workspace changed or was removed.")
     }
   }
 
@@ -718,7 +732,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         runtime.context.profileID == context.profileID, runtime.context.caller == context.caller,
         let grant = try? runtime.currentHostGrant(),
         grant.workspaceIDs.contains("*") || grant.workspaceIDs.contains(workspaceID),
-        grant.allowedCallers.contains(context.caller)
+        grant.allowedCallers.contains(context.caller),
+        (try? runtime.validateExecutionWorkspace(workspaceID)) != nil
       else { continue }
       let policy = MCPToolAccessPolicy(
         configuration: runtime.configuration, grant: grant, derivesObserveGrant: false)
@@ -1643,6 +1658,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         throw Self.invalid(code: code.rawValue, message: message)
       }
       throw Self.invalid(code: "policy.denied", message: "The capability was denied.")
+    }
+    if let workspaceID = context.workspaceID {
+      if descriptor.id.hasPrefix("runtime.owners.") {
+        // Directory access uses the current registration; the selected target separately
+        // validates its original execution scope, including registration lifetime and root.
+        _ = try currentRegisteredWorkspace(workspaceID)
+      } else {
+        try validateExecutionWorkspace(workspaceID)
+      }
     }
     if let workspaceID = context.workspaceID, let error = workspaceErrors[workspaceID],
       !Self.coreTools(databaseEnabled: database != nil).contains(where: { $0.name == descriptor.id }

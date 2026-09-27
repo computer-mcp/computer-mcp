@@ -375,6 +375,12 @@ affected profile receives one new authorization revision; already executing
 operations and historical audit records retain their original state. Concurrent
 configuration changes invalidate prepared workspace changes and require a retry.
 
+The owner commands for adding, removing and deduplicating workspaces prepare the
+new runtime configuration before committing. Connected clients stay connected;
+new calls use the published configuration while existing work keeps its original
+runtime. A failed candidate leaves prior registration and routing intact. Removing
+a workspace denies new calls in its old scope without stopping existing work.
+
 ## Host permission commands
 
 `profile permissions` updates one profile's host authority. Modes are

@@ -30,11 +30,11 @@ extension AppControlPlaneService {
   /// Run after the App has claimed its control socket, before admitting gateway clients.
   /// Busy or damaged storage is reported without stopping unrelated integrations.
   package func recoverPluginsAtStartup() async throws {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     guard !pluginRecoveryAttempted else { return }
     pluginRecoveryAttempted = true
-    pluginMutationInProgress = true
-    defer { pluginMutationInProgress = false }
+    configurationMutationInProgress = true
+    defer { configurationMutationInProgress = false }
     try? await recoverPluginFiles(using: PluginStore(database: database))
   }
 
@@ -77,9 +77,9 @@ extension AppControlPlaneService {
   ) async throws
     -> PluginHostSnapshot
   {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
-    pluginMutationInProgress = true
-    defer { pluginMutationInProgress = false }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
+    configurationMutationInProgress = true
+    defer { configurationMutationInProgress = false }
     let inputs = try gatewayInputs()
     let manifestStore = manifestStore
     let bundledPlugins = bundledPlugins

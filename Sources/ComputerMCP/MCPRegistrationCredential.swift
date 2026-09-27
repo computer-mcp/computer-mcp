@@ -38,7 +38,7 @@ extension AppControlPlaneService {
   private func mcpCredentialBinding(id: String) throws
     -> (authentication: MCPHTTPAuthentication, digest: String)
   {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     guard
       let entry = try mcpRegistrations().registrations.first(where: { $0.id == id })
         ?? inactivePluginCredentialEntry(id: id)

@@ -239,15 +239,19 @@ drained. Retirement reserves the runtime before asynchronous cleanup, preventing
 new admission during shutdown. Pending construction and cleanup count toward the
 128-runtime listener budget. Listener stop joins candidate construction and
 invalidates its publication epoch, so a late candidate cannot enter a restarted
-listener. Owner-side manifest and workspace management still use an explicit
-listener restart; live dispatch applies to changes observed while the listener
-remains running. Plugin mutations prepare candidates for every admitted identity
-and profile while existing calls continue. New identities wait at a bounded
-publication barrier. The host checks the manifest and persisted inputs, commits
-the plugin revision and installs routing before notifying clients. A failed
-candidate or conflicting input change leaves the prior plugin revision and
-routing intact. Shutdown waits for the in-progress plugin publication and its
-cleanup before completing.
+listener. Owner-side manifest and manual MCP management still use an explicit
+listener restart. Plugin mutations and workspace add, remove and deduplication
+prepare candidates for every admitted identity and profile while existing calls
+continue. New identities wait at a bounded publication barrier. The host checks
+the manifest and persisted inputs, commits the prepared configuration and
+installs routing before notifying clients. A failed candidate or conflicting
+input change leaves prior configuration and routing intact. Shutdown waits for
+in-progress publication and its cleanup before completing.
+
+When a continuation omits its workspace, cached ownership can identify its exact
+original scope across registered workspaces. Multiple matching owners require an
+explicit workspace or owner selection; the host does not dispatch by directory
+order. The inferred scope still requires current authorization.
 
 ## Downstream Host Context
 

@@ -60,7 +60,7 @@ package actor AppControlPlaneService {
   private var cachedLaunchAtLoginState: LaunchAtLoginState = .unavailable
   private var launchAtLoginRefreshInProgress = false
   private var launchAtLoginGeneration: UInt64 = 0
-  var pluginMutationInProgress = false
+  var configurationMutationInProgress = false
   var pluginRecoveryAttempted = false
   var pluginRecoveryIssues: [PluginStoreIssue] = []
   var pluginRecoveryError: String?
@@ -181,7 +181,7 @@ package actor AppControlPlaneService {
   package func activateManifest(_ manifest: String, expectedDigest: String? = nil) throws
     -> ConfigurationRevision
   {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     return try manifestStore.activate(manifest: manifest, expectedDigest: expectedDigest)
   }
 
@@ -304,6 +304,67 @@ package actor AppControlPlaneService {
     let profiles = try await profileGrants()
     try requireCurrentGatewayInputs(inputs)
     return (profiles, inputs.configuration)
+  }
+
+  func applyWorkspaceChange(
+    _ change: WorkspaceHostChange,
+    publish:
+      @Sendable (GatewayInputs, PreparedWorkspaceChange) async throws ->
+      GatewayDatabase.ConfigurationState
+  ) async throws -> WorkspaceChangeResult {
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
+    configurationMutationInProgress = true
+    defer { configurationMutationInProgress = false }
+    let inputs = try gatewayInputs()
+    let mutation: WorkspaceConfigurationMutation
+    let affectedWorkspaceIDs: Set<String>
+    var requestedDisplayName: String?
+    switch change {
+    case .register(let url, let displayName):
+      let workspace = try bookmarkService.registerFolder(at: url, displayName: displayName)
+      mutation = .register(workspace)
+      affectedWorkspaceIDs = []
+      if displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+        requestedDisplayName = workspace.displayName
+      }
+    case .remove(let id):
+      let canonicalID = inputs.persisted.workspaceAliases[id] ?? id
+      guard inputs.workspaces.contains(where: { $0.id == canonicalID }) else {
+        throw AppControlPlaneServiceError.unknownWorkspace(id)
+      }
+      mutation = .remove(canonicalID)
+      affectedWorkspaceIDs = Set(
+        inputs.persisted.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [
+          canonicalID
+        ])
+    case .deduplicate(let digest, let allowMetadataConflicts):
+      mutation = .deduplicate(
+        expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts)
+      let plan = try database.workspaceDeduplicationPlan()
+      guard plan.planDigest == digest else {
+        throw WorkspaceDeduplicationError.planChanged(expected: digest, actual: plan.planDigest)
+      }
+      affectedWorkspaceIDs = Set(plan.groups.flatMap(\.duplicateWorkspaceIDs))
+    }
+    let resolved = try await resolveLegacyWorkspaceProfiles(
+      inputs.persisted, workspaceIDs: affectedWorkspaceIDs)
+    try requireCurrentGatewayInputs(inputs)
+    let prepared = try database.prepareWorkspaceChange(
+      mutation, expected: inputs.persisted, resolvedProfiles: resolved.profiles)
+    if case .registered(let workspace, false) = prepared.result,
+      let requestedDisplayName, workspace.displayName != requestedDisplayName
+    {
+      throw AppControlPlaneServiceError.workspaceMetadataConflict(
+        workspaceID: workspace.id, existingDisplayName: workspace.displayName,
+        requestedDisplayName: requestedDisplayName)
+    }
+    let committed = try await publish(inputs, prepared)
+    if case .registered(let workspace, let created) = prepared.result,
+      let published = committed.workspaces.first(where: { $0.id == workspace.id })
+    {
+      return .registered(published, created: created)
+    }
+    return prepared.result
   }
 
   package func profileGrants() async throws -> [ProfileGrant] {
@@ -719,7 +780,7 @@ package actor AppControlPlaneService {
 
   @discardableResult
   package func rollbackManifest(to revisionID: String) throws -> ConfigurationRevision {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     return try manifestStore.rollback(to: revisionID)
   }
 

@@ -7,6 +7,105 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayRuntimePreparationTests {
   @Test(arguments: [false, true])
+  func workspacePreviewPublishesNoGrantTicketReceiptOrNotification(removing: Bool) async throws {
+    let stream = try { () -> AsyncStream<Void> in
+      let fixture = try PreparationStateFixture()
+      defer { fixture.cleanup() }
+      var duplicate = try #require(try fixture.database.workspace(id: "fixture"))
+      duplicate.id = "duplicate"
+      duplicate.createdAt = duplicate.createdAt.addingTimeInterval(1)
+      try fixture.database.saveWorkspace(duplicate)
+      var profile = try #require(try fixture.database.profiles().first)
+      profile.workspaceIDs = [removing ? "fixture" : "duplicate"]
+      try fixture.database.saveProfile(profile)
+      try fixture.database.saveOperationTicket(
+        OperationTicket(
+          id: "pending", capabilityID: "file.trash", caller: .localCLI,
+          profileID: profile.id, inputDigest: "fixture", state: .approved,
+          expiresAt: Date().addingTimeInterval(3_600)))
+      let expected = try fixture.database.configurationState()
+      let ticket = try fixture.database.operationTicket(id: "pending")
+      let changes = fixture.database.profileChanges(for: profile.id)
+      let plan = try fixture.database.workspaceDeduplicationPlan()
+      let mutation: WorkspaceConfigurationMutation =
+        removing
+        ? .remove("fixture")
+        : .deduplicate(expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
+      let prepared = try fixture.database.prepareWorkspaceChange(mutation, expected: expected)
+      #expect(prepared.proposed != expected)
+      #expect(try fixture.database.configurationState() == expected)
+      #expect(try fixture.database.workspaceDeduplicationPlan() == plan)
+      #expect(try fixture.database.operationTicket(id: "pending") == ticket)
+      let connection = try DatabaseQueue(path: #require(fixture.database.fileURL).path)
+      let receipts = try connection.read {
+        try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM workspaceDeduplicationReceipts")
+      }
+      try connection.close()
+      #expect(receipts == 0)
+      return changes
+    }()
+    var notifications = 0
+    for await _ in stream { notifications += 1 }
+    #expect(notifications == 0)
+  }
+
+  @Test(arguments: ["register", "remove", "deduplicate"], [false, true])
+  func workspacePreparationDefersAuthorityAndCommitsResolution(operation: String, fail: Bool)
+    async throws
+  {
+    let fixture = try PreparationStateFixture()
+    defer { fixture.cleanup() }
+    let extraRoot = fixture.root.appendingPathComponent("extra")
+    try FileManager.default.createDirectory(at: extraRoot, withIntermediateDirectories: true)
+    let extra = RegisteredWorkspace(
+      id: "extra", displayName: "Fixture",
+      rootPath: operation == "deduplicate" ? fixture.root.path : extraRoot.path,
+      createdAt: Date(timeIntervalSince1970: 2000))
+    if operation != "register" { try fixture.database.saveWorkspace(extra) }
+    let original = try fixture.database.configurationState()
+    let mutation: WorkspaceConfigurationMutation
+    switch operation {
+    case "register": mutation = .register(extra)
+    case "remove": mutation = .remove(extra.id)
+    default:
+      mutation = .deduplicate(
+        expectedPlanDigest: try fixture.database.workspaceDeduplicationPlan().planDigest,
+        allowMetadataConflicts: false)
+    }
+    let change = try fixture.database.prepareWorkspaceChange(mutation, expected: original)
+    #expect(try fixture.database.configurationState() == original)
+    let prepared = try await fixture.prepare(state: change.proposed)
+    do {
+      #expect(try fixture.database.configurationState() == original)
+      var resolution = prepared.resolution
+      if fail {
+        var conflict = try #require(resolution.profiles.first)
+        conflict.authorizationRevision = 1
+        resolution.profiles = [conflict]
+        #expect(throws: GatewayDatabaseError.configurationChanged) {
+          try fixture.database.saveWorkspaceChange(change, resolution: resolution)
+        }
+        #expect(try fixture.database.configurationState() == original)
+      } else {
+        let committed = try fixture.database.saveWorkspaceChange(change, resolution: resolution)
+        #expect(committed.workspaces.contains { $0.id == extra.id } == (operation == "register"))
+        #expect(committed.profiles.first?.authorizationRevision == 1)
+        #expect(
+          committed.workspaces.first { $0.id == "fixture" }?.bookmarkData == Data("refreshed".utf8))
+        #expect(committed.plugins == original.plugins)
+        if operation == "deduplicate" {
+          #expect(committed.workspaceAliases[extra.id] == "fixture")
+        }
+      }
+      await prepared.runtime.shutdown()
+    } catch {
+      await prepared.runtime.shutdown()
+      throw error
+    }
+    #expect(fixture.adapter.startCount == fixture.adapter.stopCount)
+  }
+
+  @Test(arguments: [false, true])
   func pluginPublicationCommitsResolutionAtomically(fail: Bool) async throws {
     let fixture = try PreparationStateFixture()
     defer { fixture.cleanup() }

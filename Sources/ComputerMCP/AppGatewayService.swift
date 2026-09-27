@@ -100,7 +100,7 @@ package actor AppGatewayService {
   private var profileID: GatewayProfileID?
   private var startedAt: Date?
   private var lastError: String?
-  private var pluginChangeInProgress = false
+  private var configurationChangeInProgress = false
   private var publicationWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
   private var preparingRuntimeCount = 0
   private var runtimes: [RuntimeKey: AdmittedRuntime] = [:]
@@ -143,7 +143,7 @@ package actor AppGatewayService {
   }
 
   private func startOwnedRuntime(profile requestedProfile: GatewayProfileID?) async throws {
-    guard !pluginChangeInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationChangeInProgress else { throw PluginHostError.changeInProgress }
     guard state != .running && state != .starting else {
       return
     }
@@ -311,7 +311,7 @@ package actor AppGatewayService {
     -> AdmittedRuntime
   {
     try requireAdmission(epoch: epoch)
-    if pluginChangeInProgress {
+    if configurationChangeInProgress {
       if let existing = runtimes[key] { return existing }
       try await waitForPublication()
       return try await admittedRuntime(key: key, epoch: epoch, trace: trace)
@@ -319,7 +319,7 @@ package actor AppGatewayService {
     if let pending = pendingRuntimes[key] { return try await pending.task.value }
     let current = try await controlPlane.gatewayInputs()
     try requireAdmission(epoch: epoch)
-    if pluginChangeInProgress {
+    if configurationChangeInProgress {
       if let existing = runtimes[key] { return existing }
       try await waitForPublication()
       return try await admittedRuntime(key: key, epoch: epoch, trace: trace)
@@ -491,7 +491,7 @@ package actor AppGatewayService {
       ?? runtimes[key]?.gateway.unambiguousWorkspaceID
     var lookups: [(GatewayRuntime, GatewayRuntime.ContinuationLookup)] = []
     for runtime in generations {
-      if let lookup = try runtime.continuationLookup(
+      for lookup in try runtime.continuationLookups(
         name: name, arguments: arguments, workspaceID: workspaceID)
       {
         lookups.append((runtime, lookup))
@@ -557,6 +557,13 @@ package actor AppGatewayService {
       let selection = try await selectInvocation(
         name: name, arguments: arguments, key: key, epoch: epoch, trace: trace)
       defer { selection.ownership.finish() }
+      var scopedArguments = arguments
+      if let workspaceID = selection.target?.workspaceID {
+        var object = arguments?.objectValue ?? [:]
+        // The verified continuation owner supplies the scope for an unscoped request.
+        if object["workspace_id"] == nil { object["workspace_id"] = .string(workspaceID) }
+        scopedArguments = .object(object)
+      }
       let owners =
         (runtimes[key].map { [$0.gateway] } ?? [])
         + Array(retiredRuntimes[key]?.values ?? [:].values)
@@ -569,9 +576,9 @@ package actor AppGatewayService {
           try await MCPContinuationTarget.$current.withValue(selection.target) {
             if envelope {
               return try await selection.gateway.callToolForMCPAsync(
-                name: name, arguments: arguments)
+                name: name, arguments: scopedArguments)
             }
-            return try await selection.gateway.callToolAsync(name: name, arguments: arguments)
+            return try await selection.gateway.callToolAsync(name: name, arguments: scopedArguments)
           }
         }
       }
@@ -614,13 +621,42 @@ package actor AppGatewayService {
   package func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
   {
-    guard !pluginChangeInProgress, !lifecycleInProgress else {
+    try await withConfigurationChange {
+      try await controlPlane.applyPluginChange(change, expectedRevision: expectedRevision) {
+        [self] expected, proposed, storage in
+        let state = GatewayDatabase.ConfigurationState(
+          workspaces: expected.workspaces, workspaceAliases: expected.persisted.workspaceAliases,
+          profiles: expected.profiles, plugins: proposed)
+        _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
+          try self.controlPlane.database.savePluginStoreSnapshot(
+            proposed, expectedRevision: expected.plugins.revision,
+            expectedConfiguration: expected.persisted, resolution: $0)
+        }
+      }
+    }
+  }
+
+  func changeWorkspaces(_ change: WorkspaceHostChange) async throws -> WorkspaceChangeResult {
+    try await withConfigurationChange {
+      try await controlPlane.applyWorkspaceChange(change) { [self] expected, prepared in
+        try await preparePublication(expected: expected, proposed: prepared.proposed, storage: nil)
+        {
+          try self.controlPlane.database.saveWorkspaceChange(prepared, resolution: $0)
+        }
+      }
+    }
+  }
+
+  private func withConfigurationChange<Result: Sendable>(
+    _ operation: () async throws -> Result
+  ) async throws -> Result {
+    guard !configurationChangeInProgress, !lifecycleInProgress else {
       throw PluginHostError.changeInProgress
     }
-    pluginChangeInProgress = true
+    configurationChangeInProgress = true
     lifecycleInProgress = true
     defer {
-      pluginChangeInProgress = false
+      configurationChangeInProgress = false
       let waiters = Array(publicationWaiters.values)
       publicationWaiters.removeAll()
       for waiter in waiters { waiter.resume() }
@@ -630,10 +666,7 @@ package actor AppGatewayService {
     let pending = pendingRuntimes.values.map(\.task)
     for task in pending { _ = try? await task.value }
     try Task.checkCancellation()
-    return try await controlPlane.applyPluginChange(change, expectedRevision: expectedRevision) {
-      [self] expected, proposed, storage in
-      try await preparePluginPublication(expected: expected, proposed: proposed, storage: storage)
-    }
+    return try await operation()
   }
 
   private func waitForPublication() async throws {
@@ -643,7 +676,7 @@ package actor AppGatewayService {
         (continuation: CheckedContinuation<Void, any Error>) in
         if Task.isCancelled {
           continuation.resume(throwing: CancellationError())
-        } else if !pluginChangeInProgress {
+        } else if !configurationChangeInProgress {
           continuation.resume()
         } else if publicationWaiters.count >= 128 {
           continuation.resume(
@@ -662,10 +695,11 @@ package actor AppGatewayService {
     publicationWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
   }
 
-  private func preparePluginPublication(
-    expected: AppControlPlaneService.GatewayInputs, proposed: PluginStoreSnapshot,
-    storage: PluginInstallationStorage?
-  ) async throws {
+  private func preparePublication(
+    expected: AppControlPlaneService.GatewayInputs, proposed: GatewayDatabase.ConfigurationState,
+    storage: PluginInstallationStorage?,
+    commit: @Sendable (GatewayConfigurationResolution) throws -> GatewayDatabase.ConfigurationState
+  ) async throws -> GatewayDatabase.ConfigurationState {
     let epoch = listenerEpoch
     let keys = Array(runtimes.keys)
     reapRetiredRuntimes()
@@ -681,10 +715,7 @@ package actor AppGatewayService {
     preparingRuntimeCount = required
     defer { preparingRuntimeCount = 0 }
     let inputs = AppControlPlaneService.GatewayInputs(
-      configuration: expected.configuration,
-      persisted: GatewayDatabase.ConfigurationState(
-        workspaces: expected.workspaces, workspaceAliases: expected.persisted.workspaceAliases,
-        profiles: expected.profiles, plugins: proposed))
+      configuration: expected.configuration, persisted: proposed)
     var candidates: [RuntimeKey: GatewayRuntimePreparation] = [:]
     var validation: GatewayRuntimePreparation?
     do {
@@ -701,7 +732,7 @@ package actor AppGatewayService {
         }
       }
       try Task.checkCancellation()
-      guard listenerEpoch == epoch, pluginChangeInProgress else {
+      guard listenerEpoch == epoch, configurationChangeInProgress else {
         throw GatewaySocketError.notConnected
       }
       var resolution = GatewayConfigurationResolution()
@@ -709,10 +740,10 @@ package actor AppGatewayService {
         try candidate.runtime.requirePreparedPublication()
         try resolution.merge(candidate.resolution)
       }
-      try controlPlane.manifestStore.withCurrentConfiguration(expected.configuration) {
-        let persisted = try controlPlane.database.savePluginStoreSnapshot(
-          proposed, expectedRevision: expected.plugins.revision,
-          expectedConfiguration: expected.persisted, resolution: resolution)
+      let committed = try controlPlane.manifestStore.withCurrentConfiguration(
+        expected.configuration
+      ) {
+        let persisted = try commit(resolution)
         let published = AppControlPlaneService.GatewayInputs(
           configuration: expected.configuration, persisted: persisted)
         for (key, candidate) in candidates {
@@ -724,8 +755,10 @@ package actor AppGatewayService {
         }
         for key in candidates.keys { changes(for: key).send() }
         reapRetiredRuntimes()
+        return persisted
       }
       await validation?.runtime.shutdown()
+      return committed
     } catch {
       for candidate in candidates.values { await candidate.runtime.shutdown() }
       await validation?.runtime.shutdown()

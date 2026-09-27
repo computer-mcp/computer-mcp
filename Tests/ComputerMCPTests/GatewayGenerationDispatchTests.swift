@@ -8,6 +8,184 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
+  @Test
+  func implicitContinuationRequiresOneExactOwnerAcrossWorkspaceChanges() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    var grant = try #require(try fixture.database.profiles().first)
+    grant.workspaceIDs = ["*"]
+    try fixture.database.saveProfile(grant)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let oldPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("shared")])))
+      let root = fixture.root.appendingPathComponent("added")
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      let operations = AppControlPlaneOperations(
+        controlPlane: fixture.control, gatewayService: fixture.service)
+      let added = try await operations.registerWorkspace(at: root, displayName: "Added")
+      let addedArguments = JSONValue.object([
+        "workspace_id": .string(added.id), "handle": .string("shared"),
+      ])
+      let newPID = try pid(await client.call(toolName: "fixture.start", arguments: addedArguments))
+      #expect(newPID != oldPID)
+      let calls = try fixture.calls()
+      let ambiguous = try await client.call(
+        toolName: "fixture.inspect", arguments: .object(["handle": .string("shared")]))
+      #expect(ambiguous.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == calls)
+      let originalArguments = JSONValue.object([
+        "workspace_id": .string("fixture"), "handle": .string("shared"),
+      ])
+      #expect(
+        try pid(await client.call(toolName: "fixture.inspect", arguments: originalArguments))
+          == oldPID)
+      #expect(
+        try pid(await client.call(toolName: "fixture.inspect", arguments: addedArguments)) == newPID
+      )
+      grant = try #require(try fixture.database.profiles().first)
+      grant.workspaceIDs = ["fixture"]
+      try fixture.database.saveProfile(grant)
+      let beforeDenial = try fixture.calls()
+      let denied = try await client.call(toolName: "fixture.finish", arguments: addedArguments)
+      #expect(denied.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == beforeDenial)
+      #expect(alive(newPID))
+      #expect(
+        try pid(await client.call(toolName: "fixture.finish", arguments: originalArguments))
+          == oldPID)
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func connectedDeduplicationPublishesAliasesAndGrantRevision() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let canonical = try #require(try fixture.database.workspace(id: "fixture"))
+    var duplicate = canonical
+    duplicate.id = "duplicate"
+    duplicate.createdAt = canonical.createdAt.addingTimeInterval(1)
+    try fixture.database.saveWorkspace(duplicate)
+    var grant = ProfileGrant.cloudflareOperate
+    grant.workspaceIDs = [duplicate.id]
+    try fixture.database.saveProfile(grant)
+    let before = try #require(try fixture.database.profiles().first { $0.id == grant.id })
+    try fixture.database.saveOperationTicket(
+      OperationTicket(
+        id: "pending", capabilityID: "file.trash", caller: .cloudflareTunnel,
+        profileID: grant.id, workspaceID: duplicate.id, inputDigest: "fixture", state: .approved,
+        expiresAt: Date().addingTimeInterval(60),
+        authorizationRevision: before.authorizationRevision))
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let arguments = JSONValue.object([
+        "workspace_id": .string("fixture"), "handle": .string("old"),
+      ])
+      let oldPID = try pid(await client.call(toolName: "fixture.start", arguments: arguments))
+      let plan = try fixture.database.workspaceDeduplicationPlan()
+      let operations = AppControlPlaneOperations(
+        controlPlane: fixture.control, gatewayService: fixture.service)
+      let receipt = try await operations.applyWorkspaceDeduplication(
+        expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
+      #expect(receipt.aliasedWorkspaceIDs == [duplicate.id])
+      #expect(try fixture.database.workspace(id: duplicate.id)?.id == canonical.id)
+      let after = try #require(try fixture.database.profiles().first { $0.id == grant.id })
+      #expect(after.workspaceIDs == [canonical.id])
+      #expect(after.authorizationRevision == before.authorizationRevision + 1)
+      #expect(try fixture.database.operationTicket(id: "pending")?.state == .denied)
+      #expect(await fixture.service.snapshot().connectionCount == 1)
+      #expect(try pid(await client.call(toolName: "fixture.identity")) != oldPID)
+      #expect(
+        try pid(await client.call(toolName: "fixture.finish", arguments: arguments)) == oldPID)
+      try await wait { !alive(oldPID) }
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func connectedWorkspacePublicationPreservesNativeWorkAndRejectsFailedCandidates() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.control, gatewayService: fixture.service)
+    let addedRoot = fixture.root.appendingPathComponent("added")
+    try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
+    do {
+      let startedAt = await fixture.service.snapshot().startedAt
+      let oldPID = try pid(
+        await client.call(toolName: "fixture.start", arguments: .object(["handle": .string("old")]))
+      )
+      let added = try await operations.registerWorkspace(at: addedRoot, displayName: "Added")
+      #expect(try fixture.database.workspace(id: added.id) != nil)
+      let currentPID = try pid(await client.call(toolName: "fixture.identity"))
+      #expect(currentPID != oldPID)
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("old")]))) == oldPID)
+      let repeated = try await operations.registerWorkspace(at: addedRoot, displayName: "Added")
+      #expect(repeated.id == added.id)
+      #expect(try fixture.database.workspaces().count == 2)
+      let before = try fixture.database.configurationState()
+      let admittedPID = try pid(await client.call(toolName: "fixture.identity"))
+      await #expect(throws: AppControlPlaneServiceError.self) {
+        try await operations.registerWorkspace(at: addedRoot, displayName: "Conflicting")
+      }
+      #expect(try fixture.database.configurationState() == before)
+      #expect(try pid(await client.call(toolName: "fixture.identity")) == admittedPID)
+      let providerURL = fixture.root.appendingPathComponent("provider.py")
+      let provider = try Data(contentsOf: providerURL)
+      let failure = """
+        import os, sys
+        from pathlib import Path
+        with (Path(sys.argv[1]) / "pids").open("a") as output: output.write(str(os.getpid()) + "\\n")
+        raise SystemExit(2)
+        """
+      try Data(failure.utf8).write(to: providerURL)
+      await #expect(throws: (any Error).self) { try await operations.removeWorkspace(id: added.id) }
+      #expect(try fixture.database.configurationState() == before)
+      #expect(try pid(await client.call(toolName: "fixture.identity")) == admittedPID)
+      try provider.write(to: providerURL)
+      try await operations.removeWorkspace(id: added.id)
+      #expect(try fixture.database.workspace(id: added.id) == nil)
+      #expect(await fixture.service.snapshot().connectionCount == 1)
+      #expect(await fixture.service.snapshot().startedAt == startedAt)
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))) == oldPID)
+      try await wait { !alive(oldPID) }
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
   @Test(arguments: [false, true])
   func connectedPluginPublicationPreservesNativeWorkAndRejectsFailedCandidates(managed: Bool)
     async throws
@@ -167,18 +345,24 @@ struct GatewayGenerationDispatchTests {
     }
   }
 
-  @Test(arguments: [false, true])
-  func listenerStopJoinsPluginPublication(cancel: Bool) async throws {
+  @Test(arguments: [false, true], [false, true])
+  func listenerStopJoinsConfigurationPublication(cancel: Bool, workspace: Bool) async throws {
     let bookmark = GatedBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmark)
     defer { fixture.removeFiles() }
     try await fixture.activate(version: 1)
     try await fixture.service.start(profile: .chatGPTOperate)
     let client = try await fixture.connect()
+    let addedRoot = fixture.root.appendingPathComponent("added")
+    try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
     bookmark.arm()
     let mutation = Task {
-      try await fixture.service.changePlugins(
-        .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+      if workspace {
+        _ = try await fixture.service.changeWorkspaces(.register(addedRoot, displayName: "Added"))
+      } else {
+        _ = try await fixture.service.changePlugins(
+          .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+      }
     }
     do {
       try await wait { bookmark.entered }
@@ -188,11 +372,12 @@ struct GatewayGenerationDispatchTests {
       if cancel {
         await #expect(throws: CancellationError.self) { try await mutation.value }
       } else {
-        #expect(try await mutation.value.state.revision == 1)
+        try await mutation.value
       }
       await stopping.value
       #expect(await fixture.service.snapshot().state == .stopped)
-      #expect(try fixture.database.pluginStoreSnapshot().revision == (cancel ? 0 : 1))
+      #expect(try fixture.database.pluginStoreSnapshot().revision == (cancel || workspace ? 0 : 1))
+      #expect(try fixture.database.workspaces().count == (workspace && !cancel ? 2 : 1))
       #expect(try fixture.pids().allSatisfy { !alive($0) })
       await client.disconnect()
       try await fixture.service.start(profile: .chatGPTOperate)
@@ -254,8 +439,10 @@ struct GatewayGenerationDispatchTests {
     }
   }
 
-  @Test(arguments: ["publish", "cancel", "profile", "manifest"])
-  func pluginPublicationCoordinatesExistingAndNewProfileAdmissions(outcome: String) async throws {
+  @Test(arguments: ["publish", "cancel", "profile", "manifest"], [false, true])
+  func configurationPublicationCoordinatesExistingAndNewProfileAdmissions(
+    outcome: String, workspace: Bool
+  ) async throws {
     let bookmark = GatedBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmark)
     defer { fixture.removeFiles() }
@@ -278,10 +465,16 @@ struct GatewayGenerationDispatchTests {
       await first.call(toolName: "fixture.start", arguments: .object(["handle": .string("live")])))
     let secondPID = try pid(await second.call(toolName: "fixture.identity"))
     let before = try fixture.database.configurationState()
+    let addedRoot = fixture.root.appendingPathComponent("added")
+    try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
     bookmark.arm()
     let mutation = Task {
-      try await fixture.service.changePlugins(
-        .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+      if workspace {
+        _ = try await fixture.service.changeWorkspaces(.register(addedRoot, displayName: "Added"))
+      } else {
+        _ = try await fixture.service.changePlugins(
+          .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+      }
     }
     var connecting: Task<GatewayClientSession, any Error>?
     do {
@@ -317,7 +510,9 @@ struct GatewayGenerationDispatchTests {
       }
       bookmark.release()
       if outcome == "publish" {
-        #expect(try await mutation.value.state.revision == 1)
+        try await mutation.value
+        #expect(try fixture.database.pluginStoreSnapshot().revision == (workspace ? 0 : 1))
+        #expect(try fixture.database.workspaces().count == (workspace ? 2 : 1))
       } else {
         await #expect(throws: (any Error).self) { try await mutation.value }
         #expect(try fixture.database.pluginStoreSnapshot() == before.plugins)

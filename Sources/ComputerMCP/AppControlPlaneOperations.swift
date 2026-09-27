@@ -187,25 +187,31 @@ package struct AppControlPlaneOperations: Sendable {
     at url: URL,
     displayName: String? = nil
   ) async throws -> RegisteredWorkspace {
-    let workspace = try await controlPlane.registerWorkspace(at: url, displayName: displayName)
-    _ = try await restartGatewayIfRunning()
+    guard
+      case .registered(let workspace, _) =
+        try await gatewayService.changeWorkspaces(.register(url, displayName: displayName))
+    else {
+      throw GatewayDatabaseError.invalidStoredValue("Workspace registration result is unavailable.")
+    }
     return workspace
   }
 
   package func removeWorkspace(id: String) async throws {
-    try await controlPlane.removeWorkspace(id: id)
-    _ = try await restartGatewayIfRunning()
+    _ = try await gatewayService.changeWorkspaces(.remove(id))
   }
 
   package func applyWorkspaceDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool
   ) async throws -> WorkspaceDeduplicationResult {
-    let result = try await controlPlane.applyWorkspaceDeduplication(
-      expectedPlanDigest: expectedPlanDigest,
-      allowMetadataConflicts: allowMetadataConflicts
-    )
-    _ = try await restartGatewayIfRunning()
+    guard
+      case .deduplicated(let result) = try await gatewayService.changeWorkspaces(
+        .deduplicate(
+          expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts))
+    else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Workspace deduplication result is unavailable.")
+    }
     return result
   }
 

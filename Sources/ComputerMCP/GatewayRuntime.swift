@@ -869,6 +869,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   /// Resolves cached routing and accepted ownership without starting a provider.
+  func continuationLookups(name: String, arguments: JSONValue?, workspaceID: String?) throws
+    -> [ContinuationLookup]
+  {
+    let workspaceIDs = workspaceID.map { [$0] } ?? workspaceOrder
+    return try workspaceIDs.compactMap {
+      try continuationLookup(name: name, arguments: arguments, workspaceID: $0)
+    }
+  }
+
   func continuationLookup(name: String, arguments: JSONValue?, workspaceID: String?) throws
     -> ContinuationLookup?
   {

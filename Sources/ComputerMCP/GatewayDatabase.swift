@@ -46,6 +46,77 @@ package final class GatewayDatabase: @unchecked Sendable {
     try writer.read { try Self.configurationState(in: $0) }
   }
 
+  func prepareWorkspaceChange(
+    _ mutation: WorkspaceConfigurationMutation, expected: ConfigurationState,
+    resolvedProfiles: [ProfileGrant] = []
+  ) throws -> PreparedWorkspaceChange {
+    let timestamp = Date()
+    let receiptID = UUID().uuidString
+    return try writer.write { database in
+      guard try Self.configurationState(in: database) == expected else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      var prepared: PreparedWorkspaceChange?
+      try database.inSavepoint {
+        let result = try Self.applyWorkspaceChange(
+          mutation, expected: expected, resolvedProfiles: resolvedProfiles,
+          timestamp: timestamp, receiptID: receiptID, in: database)
+        prepared = PreparedWorkspaceChange(
+          mutation: mutation, expected: expected,
+          proposed: try Self.configurationState(in: database),
+          resolvedProfiles: resolvedProfiles, result: result, timestamp: timestamp,
+          receiptID: receiptID)
+        return .rollback
+      }
+      guard let prepared else { throw GatewayDatabaseError.configurationChanged }
+      return prepared
+    }
+  }
+
+  func saveWorkspaceChange(
+    _ prepared: PreparedWorkspaceChange, resolution: GatewayConfigurationResolution
+  ) throws -> ConfigurationState {
+    let committed = try writer.write { database in
+      guard try Self.configurationState(in: database) == prepared.expected else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      let result = try Self.applyWorkspaceChange(
+        prepared.mutation, expected: prepared.expected, resolvedProfiles: prepared.resolvedProfiles,
+        timestamp: prepared.timestamp, receiptID: prepared.receiptID, in: database)
+      guard result == prepared.result,
+        try Self.configurationState(in: database) == prepared.proposed
+      else { throw GatewayDatabaseError.configurationChanged }
+      try Self.applyRuntimeResolution(resolution, in: database)
+      return try Self.configurationState(in: database)
+    }
+    for profile in committed.profiles where !prepared.expected.profiles.contains(profile) {
+      profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
+    }
+    return committed
+  }
+
+  private static func applyWorkspaceChange(
+    _ mutation: WorkspaceConfigurationMutation, expected: ConfigurationState,
+    resolvedProfiles: [ProfileGrant], timestamp: Date, receiptID: String, in database: Database
+  ) throws -> WorkspaceChangeResult {
+    switch mutation {
+    case .register(let workspace):
+      let result = try registerWorkspaceIdempotently(workspace, in: database)
+      return .registered(result.workspace, created: result.created)
+    case .remove(let id):
+      _ = try removeWorkspace(
+        id: id, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
+        now: timestamp, in: database)
+      return .removed
+    case .deduplicate(let digest, let allowMetadataConflicts):
+      return .deduplicated(
+        try applyWorkspaceDeduplication(
+          expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts,
+          now: timestamp, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
+          receiptID: receiptID, in: database))
+    }
+  }
+
   private static func configurationState(in database: Database) throws -> ConfigurationState {
     try ConfigurationState(
       workspaces: workspaces(in: database),
@@ -229,47 +300,51 @@ package final class GatewayDatabase: @unchecked Sendable {
   package func registerWorkspaceIdempotently(
     _ proposed: RegisteredWorkspace
   ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
-    let canonicalRoot = Self.canonicalWorkspaceRoot(proposed.rootPath)
-    return try writer.write { database in
-      if let binding = try WorkspaceCanonicalRootRecord.fetchOne(
-        database,
-        key: canonicalRoot
-      ) {
-        let canonicalID =
-          try WorkspaceAliasRecord.fetchOne(database, key: binding.workspaceID)?
-          .canonicalWorkspaceID
-          ?? binding.workspaceID
-        if let existing = try WorkspaceRecord.fetchOne(database, key: canonicalID),
-          Self.canonicalWorkspaceRoot(existing.rootPath) == canonicalRoot
-        {
-          if binding.workspaceID != canonicalID {
-            try WorkspaceCanonicalRootRecord(
-              canonicalRootPath: canonicalRoot, workspaceID: canonicalID,
-              createdAt: existing.createdAt
-            ).save(database)
-          }
-          return (existing.value, false)
+    try writer.write { try Self.registerWorkspaceIdempotently(proposed, in: $0) }
+  }
+
+  private static func registerWorkspaceIdempotently(
+    _ proposed: RegisteredWorkspace, in database: Database
+  ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
+    let canonicalRoot = canonicalWorkspaceRoot(proposed.rootPath)
+    if let binding = try WorkspaceCanonicalRootRecord.fetchOne(
+      database,
+      key: canonicalRoot
+    ) {
+      let canonicalID =
+        try WorkspaceAliasRecord.fetchOne(database, key: binding.workspaceID)?
+        .canonicalWorkspaceID
+        ?? binding.workspaceID
+      if let existing = try WorkspaceRecord.fetchOne(database, key: canonicalID),
+        Self.canonicalWorkspaceRoot(existing.rootPath) == canonicalRoot
+      {
+        if binding.workspaceID != canonicalID {
+          try WorkspaceCanonicalRootRecord(
+            canonicalRootPath: canonicalRoot, workspaceID: canonicalID,
+            createdAt: existing.createdAt
+          ).save(database)
         }
-        _ = try WorkspaceCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
+        return (existing.value, false)
       }
-      if let existing = try Self.workspaces(in: database).first(where: {
-        Self.canonicalWorkspaceRoot($0.rootPath) == canonicalRoot
-      }) {
-        try WorkspaceCanonicalRootRecord(
-          canonicalRootPath: canonicalRoot,
-          workspaceID: existing.id,
-          createdAt: existing.createdAt
-        ).insert(database, onConflict: .ignore)
-        return (existing, false)
-      }
-      try WorkspaceRecord(proposed).insert(database)
+      _ = try WorkspaceCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
+    }
+    if let existing = try Self.workspaces(in: database).first(where: {
+      Self.canonicalWorkspaceRoot($0.rootPath) == canonicalRoot
+    }) {
       try WorkspaceCanonicalRootRecord(
         canonicalRootPath: canonicalRoot,
-        workspaceID: proposed.id,
-        createdAt: proposed.createdAt
-      ).insert(database)
-      return (proposed, true)
+        workspaceID: existing.id,
+        createdAt: existing.createdAt
+      ).insert(database, onConflict: .ignore)
+      return (existing, false)
     }
+    try WorkspaceRecord(proposed).insert(database)
+    try WorkspaceCanonicalRootRecord(
+      canonicalRootPath: canonicalRoot,
+      workspaceID: proposed.id,
+      createdAt: proposed.createdAt
+    ).insert(database)
+    return (proposed, true)
   }
 
   package func workspaces() throws -> [RegisteredWorkspace] {
@@ -324,31 +399,40 @@ package final class GatewayDatabase: @unchecked Sendable {
     id: String, expectedConfiguration: ConfigurationState,
     resolvedProfiles: [ProfileGrant] = [], now: Date = Date()
   ) throws {
-    let changed = try writer.write { database -> [GatewayProfileID] in
-      guard try Self.configurationState(in: database) == expectedConfiguration else {
-        throw GatewayDatabaseError.configurationChanged
-      }
-      let canonicalID = expectedConfiguration.workspaceAliases[id] ?? id
-      guard expectedConfiguration.workspaces.contains(where: { $0.id == canonicalID }) else {
-        throw GatewayDatabaseError.invalidStoredValue("Unknown workspace '\(id)'.")
-      }
-      let removedIDs = Set(
-        expectedConfiguration.workspaceAliases.filter { $0.value == canonicalID }.map(\.key)
-          + [canonicalID])
-      var changed: [GatewayProfileID] = []
-      for stored in expectedConfiguration.profiles {
-        guard !stored.workspaceIDs.isDisjoint(with: removedIDs) else { continue }
-        var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
-        profile.workspaceIDs.subtract(removedIDs)
-        try profile.validate()
-        try Self.saveProfile(
-          profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
-        changed.append(profile.id)
-      }
-      try Self.deleteWorkspace(id: canonicalID, in: database)
-      return changed
+    let changed = try writer.write { database in
+      try Self.removeWorkspace(
+        id: id, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
+        now: now, in: database)
     }
     for id in changed { profileChangeLock.withLock { profileChangeBroadcasters[id] }?.send() }
+  }
+
+  private static func removeWorkspace(
+    id: String, expectedConfiguration: ConfigurationState,
+    resolvedProfiles: [ProfileGrant], now: Date, in database: Database
+  ) throws -> [GatewayProfileID] {
+    guard try Self.configurationState(in: database) == expectedConfiguration else {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    let canonicalID = expectedConfiguration.workspaceAliases[id] ?? id
+    guard expectedConfiguration.workspaces.contains(where: { $0.id == canonicalID }) else {
+      throw GatewayDatabaseError.invalidStoredValue("Unknown workspace '\(id)'.")
+    }
+    let removedIDs = Set(
+      expectedConfiguration.workspaceAliases.filter { $0.value == canonicalID }.map(\.key)
+        + [canonicalID])
+    var changed: [GatewayProfileID] = []
+    for stored in expectedConfiguration.profiles {
+      guard !stored.workspaceIDs.isDisjoint(with: removedIDs) else { continue }
+      var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
+      profile.workspaceIDs.subtract(removedIDs)
+      try profile.validate()
+      try Self.saveProfile(
+        profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
+      changed.append(profile.id)
+    }
+    try Self.deleteWorkspace(id: canonicalID, in: database)
+    return changed
   }
 
   private static func resolvedWorkspaceProfile(
@@ -377,77 +461,88 @@ package final class GatewayDatabase: @unchecked Sendable {
     resolvedProfiles: [ProfileGrant] = []
   ) throws -> WorkspaceDeduplicationResult {
     let result = try writer.write { database in
-      if let expectedConfiguration,
-        try Self.configurationState(in: database) != expectedConfiguration
-      {
-        throw GatewayDatabaseError.configurationChanged
-      }
-      let plan = try Self.workspaceDeduplicationPlan(database)
-      guard plan.planDigest == expectedPlanDigest else {
-        throw WorkspaceDeduplicationError.planChanged(
-          expected: expectedPlanDigest,
-          actual: plan.planDigest
-        )
-      }
-      let conflictIDs = plan.groups.filter(\.hasMetadataConflict)
-        .flatMap(\.duplicateWorkspaceIDs)
-        .sorted()
-      if !allowMetadataConflicts, !conflictIDs.isEmpty {
-        throw WorkspaceDeduplicationError.metadataConflict(workspaceIDs: conflictIDs)
-      }
-
-      var replacements: [String: String] = [:]
-      for group in plan.groups {
-        guard
-          let canonical = try WorkspaceRecord.fetchOne(database, key: group.canonicalWorkspaceID)
-        else { throw GatewayDatabaseError.configurationChanged }
-        try WorkspaceCanonicalRootRecord(
-          canonicalRootPath: group.canonicalRootPath, workspaceID: canonical.id,
-          createdAt: canonical.createdAt
-        ).save(database)
-        for duplicateID in group.duplicateWorkspaceIDs {
-          try WorkspaceAliasRecord(
-            aliasWorkspaceID: duplicateID,
-            canonicalWorkspaceID: group.canonicalWorkspaceID,
-            canonicalRootPath: group.canonicalRootPath,
-            migratedAt: now
-          ).save(database)
-          replacements[duplicateID] = group.canonicalWorkspaceID
-        }
-      }
-      var updatedProfileIDs: [String] = []
-      for stored in try Self.profiles(in: database) {
-        guard stored.workspaceIDs.contains(where: { replacements[$0] != nil }) else { continue }
-        var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
-        profile.workspaceIDs = Set(profile.workspaceIDs.map { replacements[$0] ?? $0 })
-        try profile.validate()
-        try Self.saveProfile(
-          profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
-        updatedProfileIDs.append(profile.id.rawValue)
-      }
-
-      let result = WorkspaceDeduplicationResult(
-        receiptID: UUID().uuidString,
-        planDigest: plan.planDigest,
-        canonicalWorkspaceIDs: plan.groups.map(\.canonicalWorkspaceID).sorted(),
-        aliasedWorkspaceIDs: plan.groups.flatMap(\.duplicateWorkspaceIDs).sorted(),
-        updatedProfileIDs: updatedProfileIDs.sorted(),
-        appliedAt: now
-      )
-      let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
-      try WorkspaceDeduplicationReceiptRecord(
-        id: result.receiptID,
-        planDigest: result.planDigest,
-        appliedAt: now,
-        payloadJSON: String(decoding: try encoder.encode(result), as: UTF8.self)
-      ).insert(database)
-      return result
+      try Self.applyWorkspaceDeduplication(
+        expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
+        now: now, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
+        receiptID: UUID().uuidString, in: database)
     }
     for rawID in result.updatedProfileIDs {
       if let id = GatewayProfileID(rawValue: rawID) {
         profileChangeLock.withLock { profileChangeBroadcasters[id] }?.send()
       }
     }
+    return result
+  }
+
+  private static func applyWorkspaceDeduplication(
+    expectedPlanDigest: String, allowMetadataConflicts: Bool, now: Date,
+    expectedConfiguration: ConfigurationState?, resolvedProfiles: [ProfileGrant],
+    receiptID: String, in database: Database
+  ) throws -> WorkspaceDeduplicationResult {
+    if let expectedConfiguration,
+      try Self.configurationState(in: database) != expectedConfiguration
+    {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    let plan = try Self.workspaceDeduplicationPlan(database)
+    guard plan.planDigest == expectedPlanDigest else {
+      throw WorkspaceDeduplicationError.planChanged(
+        expected: expectedPlanDigest,
+        actual: plan.planDigest
+      )
+    }
+    let conflictIDs = plan.groups.filter(\.hasMetadataConflict)
+      .flatMap(\.duplicateWorkspaceIDs)
+      .sorted()
+    if !allowMetadataConflicts, !conflictIDs.isEmpty {
+      throw WorkspaceDeduplicationError.metadataConflict(workspaceIDs: conflictIDs)
+    }
+
+    var replacements: [String: String] = [:]
+    for group in plan.groups {
+      guard
+        let canonical = try WorkspaceRecord.fetchOne(database, key: group.canonicalWorkspaceID)
+      else { throw GatewayDatabaseError.configurationChanged }
+      try WorkspaceCanonicalRootRecord(
+        canonicalRootPath: group.canonicalRootPath, workspaceID: canonical.id,
+        createdAt: canonical.createdAt
+      ).save(database)
+      for duplicateID in group.duplicateWorkspaceIDs {
+        try WorkspaceAliasRecord(
+          aliasWorkspaceID: duplicateID,
+          canonicalWorkspaceID: group.canonicalWorkspaceID,
+          canonicalRootPath: group.canonicalRootPath,
+          migratedAt: now
+        ).save(database)
+        replacements[duplicateID] = group.canonicalWorkspaceID
+      }
+    }
+    var updatedProfileIDs: [String] = []
+    for stored in try Self.profiles(in: database) {
+      guard stored.workspaceIDs.contains(where: { replacements[$0] != nil }) else { continue }
+      var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
+      profile.workspaceIDs = Set(profile.workspaceIDs.map { replacements[$0] ?? $0 })
+      try profile.validate()
+      try Self.saveProfile(
+        profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
+      updatedProfileIDs.append(profile.id.rawValue)
+    }
+
+    let result = WorkspaceDeduplicationResult(
+      receiptID: receiptID,
+      planDigest: plan.planDigest,
+      canonicalWorkspaceIDs: plan.groups.map(\.canonicalWorkspaceID).sorted(),
+      aliasedWorkspaceIDs: plan.groups.flatMap(\.duplicateWorkspaceIDs).sorted(),
+      updatedProfileIDs: updatedProfileIDs.sorted(),
+      appliedAt: now
+    )
+    let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
+    try WorkspaceDeduplicationReceiptRecord(
+      id: result.receiptID,
+      planDigest: result.planDigest,
+      appliedAt: now,
+      payloadJSON: String(decoding: try encoder.encode(result), as: UTF8.self)
+    ).insert(database)
     return result
   }
 

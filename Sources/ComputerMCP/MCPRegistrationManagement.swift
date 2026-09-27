@@ -87,7 +87,7 @@ extension AppControlPlaneService {
   func prepareMCPRegistrationChange(_ change: MCPRegistrationChange) throws
     -> (preview: MCPRegistrationChangePreview, manifest: String)
   {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     let data = try Data(contentsOf: directories.manifest)
     guard let text = String(data: data, encoding: .utf8) else {
       throw ConfigurationError.invalid("The active manifest is not valid UTF-8.")

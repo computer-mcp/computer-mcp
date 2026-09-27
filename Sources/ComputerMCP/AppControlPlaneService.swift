@@ -64,7 +64,7 @@ package actor AppControlPlaneService {
   var pluginRecoveryAttempted = false
   var pluginRecoveryIssues: [PluginStoreIssue] = []
   var pluginRecoveryError: String?
-  let pluginCatalog: any PluginCatalogSearching
+  let pluginCatalog: any PluginCatalogBrowsing
   let pluginReleases: GitHubPluginReleases
   let pluginDownload: GitHubPluginDownload
   let bundledPlugins: BundledPlugins
@@ -81,7 +81,7 @@ package actor AppControlPlaneService {
     launchAtLoginController: any LaunchAtLoginControlling =
       SMAppServiceLaunchAtLoginController(),
     bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
-    pluginCatalog: any PluginCatalogSearching = GitHubPluginCatalog(),
+    pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
     pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
     bundledPlugins: BundledPlugins = .current
@@ -95,7 +95,11 @@ package actor AppControlPlaneService {
     self.providerDiscovery = providerDiscovery
     self.launchAtLoginController = launchAtLoginController
     self.bookmarkService = bookmarkService
-    self.pluginCatalog = pluginCatalog
+    self.pluginCatalog =
+      pluginCatalog
+      ?? StaticPluginCatalog(
+        cacheURL: directories.applicationSupport.appendingPathComponent(
+          "Cache/PluginCatalog/index.json"))
     self.pluginReleases = pluginReleases
     self.pluginDownload = pluginDownload
     self.bundledPlugins = bundledPlugins

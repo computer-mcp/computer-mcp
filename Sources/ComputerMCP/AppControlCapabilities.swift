@@ -157,10 +157,10 @@ package enum AppControlCapabilityCatalog {
       readOnly: true),
     item(
       "plugin.search", "computer-mcp plugins search",
-      "Search public plugin declarations from the official GitHub organization.", readOnly: true),
+      "Search compatible published plugins in the cached official static catalog.", readOnly: true),
     item(
       "plugin.artifacts", "computer-mcp plugins artifacts",
-      "List verified archive selections from an official repository's published release.",
+      "Select released archives and versions locally; installation revalidates GitHub provenance.",
       readOnly: true),
     item(
       "plugin.install_release", "computer-mcp plugins install-release",

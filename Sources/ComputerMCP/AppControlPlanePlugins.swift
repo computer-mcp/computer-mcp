@@ -10,7 +10,7 @@ extension AppControlPlaneService {
   package func pluginReleaseArtifacts(
     repository: String, repositoryID: Int64, tag: String?, page: Int
   ) async throws -> GitHubPluginReleaseArtifacts {
-    try await pluginReleases.artifacts(
+    try await pluginCatalog.artifacts(
       repository: repository, repositoryID: repositoryID, tag: tag, page: page)
   }
 

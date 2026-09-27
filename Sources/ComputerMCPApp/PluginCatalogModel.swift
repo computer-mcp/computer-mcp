@@ -78,7 +78,7 @@ final class PluginCatalogModel: ObservableObject {
       else { return }
       if case PluginCatalogError.httpStatus(let status) = error {
         errorMessage = AppLocalization.formatted(
-          "GitHub request failed with HTTP %@.", String(status))
+          "Plugin request failed with HTTP %@.", String(status))
       } else {
         errorMessage = AppLocalization.errorDescription(error)
       }

@@ -466,18 +466,22 @@ remain selectable for rollback. Neither archive installation nor digest checking
 establishes official publisher provenance or installs external dependencies.
 
 `plugins search [query] --kind mcp|cli|skills --page <number> --refresh`
-reads public official GitHub plugin declarations through the same service as
+reads the official static plugin catalog through the same persistent cache as
 the App. It returns JSON metadata, not an installation or a permission grant.
-Follow `next_page` even when a filtered repository page has no matches. Runtime
-failures return a JSON `error` object and a nonzero exit status; argument parsing
+Filtering precedes local pagination; follow `next_page` when present. The `catalog`
+object reports generation, validation time and stale status. A failed refresh
+returns a saved valid snapshot with issues; without one, runtime failures return a
+JSON `error` object and a nonzero exit status. Argument parsing
 errors use the standard CLI usage diagnostics. See
 [Official Search](PluginPackages.md#official-search) for provenance, caching,
 network limits, and failure behavior.
 
 `plugins artifacts <owner/repository> --repository-id <id> [--tag <tag>]`
-lists installable release archives, defaulting to the latest stable release.
+selects catalog release archives locally, defaulting to the latest compatible stable
+release. It also returns recorded versions, withdrawal status and prerequisites.
 Use the repository name and numeric identity from search, and follow `next_page`
-even on empty asset pages. Save one complete `artifacts` entry as a JSON file;
+for additional local asset pages. Withdrawn/incompatible releases expose no
+installable archives. Save one complete `artifacts` entry as a JSON file;
 `plugins install-release <selection.json> --expected-revision <revision>`
 revalidates that selection, downloads its bytes and installs it through the
 same App-owned transaction. The selection file is bounded to 256 KiB. New

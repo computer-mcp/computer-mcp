@@ -150,9 +150,8 @@ struct GitHubPluginReleasesTests {
   func pinsTheReleasedManifestAndRevalidatesMembershipAcrossPages() async throws {
     let http = ReleaseHTTPFake()
     let releases = GitHubPluginReleases(http: http)
-    let page = try await releases.artifacts(repository: "computer-mcp/combined", repositoryID: 7)
-    let artifact = try #require(page.artifacts.first)
-    #expect(page.tag == "release/1.2.3" && !page.prerelease && page.issues.isEmpty)
+    let artifact = pluginArtifactFixture()
+    try await releases.revalidate(artifact)
     #expect(artifact == pluginArtifactFixture())
     #expect(
       await http.paths.contains("/repos/computer-mcp/combined/commits/refs/tags/release/1.2.3"))
@@ -166,21 +165,17 @@ struct GitHubPluginReleasesTests {
     #expect(!(await http.paths.contains(artifact.apiPath)))
   }
 
-  @Test
-  func incompleteArchivesAreIssuesAndOtherAssetTypesAreIgnored() async throws {
+  @Test(arguments: ["digest", "size", "upload"])
+  func incompleteSelectedArchivesFailRevalidation(_ fault: String) async throws {
     let http = ReleaseHTTPFake()
-    var missingDigest = releaseAssetFixture(id: 12)
-    missingDigest["digest"] = .null
-    var oversized = releaseAssetFixture(id: 13)
-    oversized["size"] = .number(Double(PluginArchiveLimits().archiveBytes + 1))
-    var uploading = releaseAssetFixture(id: 14)
-    uploading["state"] = .string("starter")
-    var notes = releaseAssetFixture(id: 15)
-    notes["name"] = .string("notes.md")
-    await http.setAssets([missingDigest, oversized, uploading, notes], page: 1, next: 2)
-    let result = try await GitHubPluginReleases(http: http).artifacts(
-      repository: "computer-mcp/combined", repositoryID: 7)
-    #expect(result.artifacts.isEmpty && result.issues.count == 3 && result.nextPage == 2)
+    var asset = releaseAssetFixture()
+    if fault == "digest" { asset["digest"] = .null }
+    if fault == "size" { asset["size"] = .integer(Int64(PluginArchiveLimits().archiveBytes + 1)) }
+    if fault == "upload" { asset["state"] = .string("starter") }
+    await http.setAssets([asset], page: 1)
+    await #expect(throws: PluginCatalogError.self) {
+      try await GitHubPluginReleases(http: http).revalidate(pluginArtifactFixture())
+    }
   }
 
   @Test(arguments: [
@@ -189,9 +184,7 @@ struct GitHubPluginReleasesTests {
   func rejectsChangedSelections(_ change: String) async throws {
     let http = ReleaseHTTPFake()
     let releases = GitHubPluginReleases(http: http)
-    let selected = try #require(
-      try await releases.artifacts(repository: "computer-mcp/combined", repositoryID: 7).artifacts
-        .first)
+    let selected = pluginArtifactFixture()
     await http.change(change)
     await #expect(throws: PluginCatalogError.invalidProvenance) {
       try await releases.revalidate(selected)
@@ -199,13 +192,16 @@ struct GitHubPluginReleasesTests {
   }
 
   @Test
-  func explicitPrereleaseAndTagArePreserved() async throws {
+  func explicitPrereleaseIsRevalidatedByImmutableReleaseID() async throws {
     let http = ReleaseHTTPFake()
     await http.setPrerelease()
-    let result = try await GitHubPluginReleases(http: http).artifacts(
-      repository: "computer-mcp/combined", repositoryID: 7, tag: "release/1.2.3")
-    #expect(result.prerelease && result.artifacts.first?.prerelease == true)
-    #expect(await http.paths.contains("/repos/computer-mcp/combined/releases/tags/release/1.2.3"))
+    let original = pluginArtifactFixture()
+    let selected = GitHubPluginArtifact(
+      declaration: original.declaration, releaseID: original.releaseID, tag: original.tag,
+      prerelease: true, assetID: original.assetID, name: original.name, size: original.size,
+      sha256: original.sha256)
+    try await GitHubPluginReleases(http: http).revalidate(selected)
+    #expect(await http.paths.contains("/repos/computer-mcp/combined/releases/9"))
   }
 
   @Test(arguments: [
@@ -217,23 +213,15 @@ struct GitHubPluginReleasesTests {
     let http = ReleaseHTTPFake()
     await http.setLink(link)
     await #expect(throws: PluginCatalogError.invalidResponse) {
-      try await GitHubPluginReleases(http: http).artifacts(
-        repository: "computer-mcp/combined", repositoryID: 7)
+      try await GitHubPluginReleases(http: http).revalidate(pluginArtifactFixture())
     }
   }
 
   @Test
-  func invalidRequestNeverReachesNetwork() async throws {
+  func invalidSelectionNeverReachesNetwork() async throws {
     let http = ReleaseHTTPFake()
-    let releases = GitHubPluginReleases(http: http)
-    await #expect(throws: PluginCatalogError.invalidProvenance) {
-      try await releases.artifacts(repository: "another/combined", repositoryID: 7)
-    }
-    await #expect(throws: PluginCatalogError.invalidQuery) {
-      try await releases.artifacts(repository: "computer-mcp/combined", repositoryID: 0)
-    }
-    await #expect(throws: PluginCatalogError.invalidQuery) {
-      try await releases.artifacts(repository: "computer-mcp/combined", repositoryID: 7, page: 0)
+    await #expect(throws: PluginCatalogError.invalidResponse) {
+      try await GitHubPluginReleases(http: http).revalidate(pluginArtifactFixture(assetID: 0))
     }
     #expect(await http.paths.isEmpty)
   }
@@ -243,7 +231,7 @@ struct GitHubPluginReleasesTests {
     let http = SleepingReleaseHTTP()
     let releases = GitHubPluginReleases(http: http, timeout: .milliseconds(30))
     await #expect(throws: PluginCatalogError.timedOut) {
-      try await releases.artifacts(repository: "computer-mcp/combined", repositoryID: 7)
+      try await releases.revalidate(pluginArtifactFixture())
     }
     #expect(await http.finished)
     #expect(await !http.active)
@@ -282,10 +270,12 @@ actor ReleaseHTTPFake: PluginCatalogHTTPFetching {
   private var links: [Int: String] = [:]
 
   init(
-    manifest: String = releaseManifestFixture, artifactBytes: Data = Data("archive fixture".utf8)
+    manifest: String = releaseManifestFixture, artifactBytes: Data = Data("archive fixture".utf8),
+    tag: String = "release/1.2.3"
   ) {
     self.manifest = manifest
     self.artifactBytes = artifactBytes
+    self.tag = tag
     pages = [
       1: [
         releaseAssetFixture(

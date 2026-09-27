@@ -17,7 +17,7 @@ struct PluginCatalogModelTests {
         publisher: "computer-mcp", publisherID: 315_005_910, query: request.query,
         kind: request.kind,
         page: 1, nextPage: 2, checkedRepositories: 10,
-        fetchedAt: Date(timeIntervalSince1970: 1_788_846_000), cached: false,
+        fetchedAt: Date(timeIntervalSince1970: 1_788_846_000), cached: true,
         entries: [
           PluginCatalogEntry(
             repositoryID: 1234, repository: "computer-mcp/render-fixture", publisherID: 315_005_910,
@@ -27,18 +27,27 @@ struct PluginCatalogModelTests {
             name: "Workspace tools · 工作区工具", version: try PluginVersion("1.2.3"),
             summary: "Isolated render fixture with MCP, CLI and skills; not a published package.",
             mcp: ["native"], cli: ["command"], skills: ["guidance"])
-        ], issues: [])
+        ], issues: [],
+        catalog: PluginCatalogStatus(
+          generation: 8, revision: String(repeating: "c", count: 64),
+          generatedAt: Date(timeIntervalSince1970: 1_788_846_000),
+          validatedAt: Date(timeIntervalSince1970: 1_788_846_600), stale: true,
+          nextRefreshAt: Date(timeIntervalSince1970: 1_788_846_900)))
     }
     let management = PluginManagementModel(controlPlane: service)
     await management.reload()
     let model = management.catalog
     await model.search()
-    for dark in [false, true] {
-      let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
-      try render(
-        PluginCatalogView(management: management).environment(\.colorScheme, dark ? .dark : .light),
-        size: NSSize(width: 760, height: 680), appearance: appearance,
-        name: dark ? "catalog-dark" : "catalog-light")
+    for language in ["en", "zh-Hans"] {
+      for dark in [false, true] {
+        let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+        try render(
+          PluginCatalogView(management: management)
+            .environment(\.locale, Locale(identifier: language))
+            .environment(\.colorScheme, dark ? .dark : .light),
+          size: NSSize(width: 760, height: 680), appearance: appearance,
+          name: "catalog-\(language)-\(dark ? "dark" : "light")")
+      }
     }
     let failureManagement = PluginManagementModel(controlPlane: service)
     await failureManagement.reload()

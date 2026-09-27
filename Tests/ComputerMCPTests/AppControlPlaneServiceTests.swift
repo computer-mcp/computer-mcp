@@ -628,8 +628,101 @@ final class AppControlPlaneServiceTests {
     }
   }
 
+  @Test
+  func staticCatalogCacheFeedsDefaultAppAndActualCLIWithoutGitHubDiscovery() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let data = try staticCatalogFixture()
+    let server = try await CatalogHTTPFixture.start(
+      script: """
+        import base64, http.server, json, os, threading
+        threading.Timer(40, lambda: os._exit(0)).start()
+        paths = []
+        body = base64.b64decode('\(data.base64EncodedString())')
+        class Handler(http.server.BaseHTTPRequestHandler):
+          def log_message(self, *args): pass
+          def do_GET(self):
+            if self.path == '/stats': content = json.dumps(paths).encode()
+            else:
+              paths.append(self.path)
+              content = body
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('ETag', '"fixture-v1"')
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        print(server.server_port, flush=True)
+        server.serve_forever()
+        """)
+    defer { server.stop() }
+    let cacheURL = fixture.directories.applicationSupport
+      .appendingPathComponent("Cache/PluginCatalog/index.json")
+    let publisher = StaticPluginCatalog(
+      cacheURL: cacheURL,
+      http: StaticPluginCatalogHTTP(
+        endpoint: server.origin.appendingPathComponent("plugins/index.json")))
+    _ = try await publisher.load()
+    let before = try fixture.database.pluginStoreSnapshot()
+    let appResult = try await fixture.controlPlane.searchPlugins(
+      query: "工具", kind: .mcp, page: 1, refresh: false)
+    #expect(appResult.entries.map(\.pluginID) == ["example"])
+    #expect(appResult.cached && appResult.catalog?.generation == 1)
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let socket = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await socket.start()
+    do {
+      let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent(".build/debug/computer-mcp")
+      for arguments in [
+        ["plugins", "search", "工具", "--kind", "mcp"],
+        [
+          "plugins", "artifacts", "computer-mcp/plugin-example", "--repository-id", "10", "--tag",
+          "v1.0.0",
+        ],
+      ] {
+        let command = try ProcessCommandRunner().run(
+          executable: executable.path,
+          arguments: arguments + ["--control-socket", fixture.directories.controlSocket.path],
+          workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
+          maxOutputBytes: 1_048_576)
+        try #require(command.exitCode == 0, "\(command.stdout) \(command.stderr)")
+        let result = try JSONDecoder().decode(JSONValue.self, from: Data(command.stdout.utf8))
+        #expect(result.objectValue?["catalog"]?.objectValue?["generation"] == .integer(1))
+        #expect(result.objectValue?["catalog"]?.objectValue?["stale"] == .bool(false))
+        if arguments[1] == "search" {
+          #expect(
+            result.objectValue?["entries"]?.arrayValue?.first?.objectValue?["plugin_id"]
+              == .string("example"))
+        } else {
+          #expect(result.objectValue?["artifacts"]?.arrayValue?.count == 1)
+          #expect(
+            result.objectValue?["versions"]?.arrayValue?.first?.objectValue?["tag"]
+              == .string("v1.0.0"))
+        }
+      }
+      let stats = try await StaticPluginCatalogHTTP(
+        endpoint: server.origin.appendingPathComponent("stats")
+      )
+      .fetch(validators: .init())
+      #expect(try stats.decode([String].self) == ["/plugins/index.json"])
+      #expect(try fixture.database.pluginStoreSnapshot() == before)
+      await socket.stop()
+      await gateway.stop()
+    } catch {
+      await socket.stop()
+      await gateway.stop()
+      throw error
+    }
+  }
+
   @Test(.enabled(if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_CATALOG_TEST"] == "1"))
-  func testOfficialPluginSearchAgainstPublicGitHubFromIsolatedCLI() async throws {
+  func testOfficialPluginSearchAgainstPublicCatalogFromIsolatedCLI() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     let gateway = AppGatewayService.live(
@@ -650,12 +743,14 @@ final class AppControlPlaneServiceTests {
         ],
         workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
         maxOutputBytes: 1_048_576)
-      #expect(command.exitCode == 0, "Live GitHub response: \(command.stdout) \(command.stderr)")
+      #expect(
+        command.exitCode == 0, "Live official catalog response: \(command.stdout) \(command.stderr)"
+      )
       let json = try JSONDecoder().decode(JSONValue.self, from: Data(command.stdout.utf8))
       #expect(json.objectValue?["publisher_id"] == .number(315_005_910))
       #expect(json.objectValue?["cached"] == .bool(false))
       #expect(json.objectValue?["issues"]?.arrayValue?.isEmpty == true)
-      print("Live GitHub catalog via isolated CLI: \(command.stdout)")
+      print("Live official catalog via isolated CLI: \(command.stdout)")
       #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
       await socket.stop()
       await gateway.stop()
@@ -2315,7 +2410,7 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
     keychainAdapter: (any KeychainAdapter)? = nil,
     launchAtLoginController: any LaunchAtLoginControlling = MemoryLaunchAtLoginController(),
     gatewayExecutablePath: String = "computer-mcp",
-    pluginCatalog: any PluginCatalogSearching = GitHubPluginCatalog(),
+    pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     providerDiscovery: any ControlPlaneProviderDiscovering = TestProviderDiscovery()
   ) throws {
     root = URL(
@@ -2359,7 +2454,12 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
   }
 }
 
-private actor ControlPlaneCatalogFake: PluginCatalogSearching {
+private actor ControlPlaneCatalogFake: PluginCatalogBrowsing {
+  func artifacts(repository: String, repositoryID: Int64, tag: String?, page: Int) async throws
+    -> GitHubPluginReleaseArtifacts
+  {
+    throw PluginCatalogError.httpStatus(404)
+  }
   private var failing = false
   private(set) var refreshRequested = false
   private(set) var calls = 0

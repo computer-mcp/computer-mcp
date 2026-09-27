@@ -51,7 +51,7 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
 
   internal init(
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing,
+    registry: any GatewayAsyncToolServing,
     host: String,
     port: Int,
     publicBaseURL: String?,
@@ -117,7 +117,7 @@ private actor GatewayHTTPApp {
   }
 
   private let configuration: GatewayConfiguration
-  private let registry: any GatewayToolServing
+  private let registry: any GatewayAsyncToolServing
   private let authenticator: HTTPBearerAuthenticator
   private var listeningPort: Int
   private let effectivePublicBaseURL: String?
@@ -126,7 +126,7 @@ private actor GatewayHTTPApp {
   private var channel: Channel?
   private var eventLoopGroup: MultiThreadedEventLoopGroup?
   private var sessions: [String: SessionContext] = [:]
-  private var principalRegistries: [String: any GatewayToolServing] = [:]
+  private var principalRegistries: [String: any GatewayAsyncToolServing] = [:]
   private var pendingSessionIDs = Set<String>()
   private var pendingSessionWaiters: [CheckedContinuation<Void, Never>] = []
   private var retiringSessions: [String: Task<Void, Never>] = [:]
@@ -140,7 +140,7 @@ private actor GatewayHTTPApp {
 
   init(
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing,
+    registry: any GatewayAsyncToolServing,
     listeningPort: Int,
     publicBaseURL: String?,
     accessToken: String?,
@@ -375,7 +375,7 @@ private actor GatewayHTTPApp {
       retryInterval: 1_000,
       logger: logger
     )
-    let admittedRegistry: any GatewayToolServing
+    let admittedRegistry: any GatewayAsyncToolServing
     do {
       if let existing = principalRegistries[principalID] {
         admittedRegistry = existing

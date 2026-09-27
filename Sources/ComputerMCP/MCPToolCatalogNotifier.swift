@@ -2,14 +2,16 @@ import MCP
 
 /// The SDK server's initialized connection owns this subscription until its receive loop ends.
 actor MCPToolCatalogNotifier {
-  private let registry: any GatewayToolServing
+  private let registry: any GatewayAsyncToolServing
   private let changes: AsyncStream<Void>
   private let initialCatalog: [String: JSONValue]?
   private var started = false
   private var notificationTask: Task<Void, Never>?
   private var completionTask: Task<Void, Never>?
 
-  init(registry: any GatewayToolServing, changes: AsyncStream<Void>, initialCatalog: [MCPTool]?) {
+  init(
+    registry: any GatewayAsyncToolServing, changes: AsyncStream<Void>, initialCatalog: [MCPTool]?
+  ) {
     self.registry = registry
     self.changes = changes
     self.initialCatalog = initialCatalog.map(Self.fingerprint)
@@ -18,13 +20,12 @@ actor MCPToolCatalogNotifier {
   func start(server: MCP.Server) {
     guard !started else { return }
     started = true
-    let surface = GatewayMCPToolSurface(registry: registry)
-    notificationTask = Task { [changes, initialCatalog, weak server] in
+    notificationTask = Task { [registry, changes, initialCatalog, weak server] in
       var previous = initialCatalog
       for await _ in changes {
         guard !Task.isCancelled else { break }
         let current: [String: JSONValue]
-        do { current = Self.fingerprint(try await surface.listToolsAsync()) } catch { continue }
+        do { current = Self.fingerprint(try await registry.listToolsAsync()) } catch { continue }
         guard current != previous else { continue }
         guard let server else { break }
         do {

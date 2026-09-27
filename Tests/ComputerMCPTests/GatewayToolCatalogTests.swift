@@ -8,6 +8,52 @@ import os
 
 struct GatewayToolCatalogTests {
   @Test
+  func asynchronousAdmissionKeepsAnOlderCallAndCurrentCatalogIndependent() async throws {
+    let gateway = AsyncCatalogGateway()
+    let server = await MCPRuntimeAdapter.makeGatewayServer(
+      configuration: .init(), registry: gateway,
+      transportTrace: .init(transport: "async-fixture"))
+    let transports = await InMemoryTransport.createConnectedPair()
+    let client = MCP.Client(name: "async-admission", version: "1")
+    let entered = gateway.entered.stream()
+    let changes = GatewayToolChangeBroadcaster()
+    let notices = changes.stream()
+    await client.onNotification(ToolListChangedNotification.self) { _ in changes.send() }
+    var pending: Task<MCP.CallTool.Result, any Error>?
+    do {
+      try await server.start(transport: transports.server)
+      _ = try await client.connect(transport: transports.client)
+      pending = Task {
+        let request = try await client.send(
+          MCP.CallTool.request(.init(name: "read", arguments: ["wait": .bool(true)])))
+        return try await request.value
+      }
+      #expect(try await Self.nextEvent(entered))
+      await gateway.replace()
+      #expect(try await Self.nextEvent(notices))
+      #expect(try await client.listTools().tools.first?.description == "generation 2")
+      let currentRequest = try await client.send(MCP.CallTool.request(.init(name: "read")))
+      let current = try await currentRequest.value
+      #expect(current.structuredContent?.objectValue?["generation"] == .int(2))
+      #expect(current.structuredContent?.objectValue?["transport"] == .string("async-fixture"))
+      await gateway.release()
+      let original = try await pending?.value
+      #expect(original?.structuredContent?.objectValue?["generation"] == .int(1))
+      await client.disconnect()
+      await server.stop()
+      await gateway.shutdown()
+    } catch {
+      await gateway.release()
+      pending?.cancel()
+      _ = await pending?.result
+      await client.disconnect()
+      await server.stop()
+      await gateway.shutdown()
+      throw error
+    }
+  }
+
+  @Test
   func refreshPublishesDefinitionsCapabilitiesAndRoutesTogether() async throws {
     let source = CatalogSourceFixture()
     let router = try GatewayProviderRouter(source: source.providers)
@@ -700,3 +746,48 @@ private let catalogMultimodalJSON = #"""
     {"type":"resource","resource":{"uri":"memory://binary","mimeType":"application/octet-stream","blob":"AP8="}}
   ]
   """#
+
+private actor AsyncCatalogGateway: GatewayAsyncToolServing {
+  nonisolated let entered = GatewayToolChangeBroadcaster()
+  private nonisolated let changes = GatewayToolChangeBroadcaster()
+  private var generation: Int64 = 1
+  private var waiter: CheckedContinuation<Void, Never>?
+
+  func listToolsAsync() async throws -> [MCPTool] {
+    [
+      MCPTool(
+        name: "read", description: "generation \(generation)",
+        inputSchema: .object(["type": .string("object")]))
+    ]
+  }
+
+  func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+    let admitted = generation
+    if arguments?.objectValue?["wait"] == .bool(true) {
+      entered.send()
+      await withCheckedContinuation { waiter = $0 }
+    }
+    return .object([
+      "content": .array([]),
+      "structuredContent": .object([
+        "generation": .integer(admitted),
+        "transport": MCPRuntimeAdapter.requestTrace.map { .string($0.transport) } ?? .null,
+      ]),
+    ])
+  }
+
+  nonisolated func toolChanges() -> AsyncStream<Void> { changes.stream() }
+  func replace() {
+    generation += 1
+    changes.send()
+  }
+  func release() {
+    waiter?.resume()
+    waiter = nil
+  }
+  func shutdown() {
+    release()
+    changes.finish()
+    entered.finish()
+  }
+}

@@ -30,6 +30,27 @@ final class MCPContinuationDirectory: Sendable {
 
   private let entries = OSAllocatedUnfairLock(initialState: [UUID: Entry]())
 
+  /// Callers combine only observations from one principal/profile routing scope.
+  static func uniqueOwner(in observations: [Lookup]) throws -> Set<Match>? {
+    let matches = observations.reduce(into: Set<Match>()) { $0.formUnion($1.matches) }
+    let pending = observations.reduce(into: Set<UUID>()) { $0.formUnion($1.pendingConnections) }
+    let connections = Set(matches.map(\.connectionID))
+    let instances = Set(matches.map(\.instanceID))
+    guard connections.count <= 1, instances.count <= 1 else {
+      throw GatewayToolError.invalidArguments(
+        "[mcp.continuation_ambiguous] More than one retained instance owns this handle. Select its exact execution owner."
+      )
+    }
+    guard pending.subtracting(connections).isEmpty else {
+      throw GatewayToolError.invalidArguments(
+        "[mcp.continuation_pending] Work observation has not settled. Retry after ownership is observed; no call was dispatched."
+      )
+    }
+    guard !matches.isEmpty else { return nil }
+    guard matches.allSatisfy(\.connected) else { throw MCPContinuationTarget.unavailable() }
+    return matches
+  }
+
   func update(connectionID: UUID, entry: Entry) {
     entries.withLock { entries in
       if !entry.connected && entry.resources.isEmpty && !entry.observationPending {

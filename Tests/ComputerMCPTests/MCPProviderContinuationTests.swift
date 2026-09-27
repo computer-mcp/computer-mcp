@@ -232,6 +232,46 @@ struct MCPProviderContinuationTests {
   }
 
   @Test
+  func ownerSelectionNeverGuessesAcrossPendingOrDuplicateInstances() throws {
+    let connection = UUID()
+    let instance = UUID()
+    let acquisition = UUID()
+    func match(_ id: String, connectionID: UUID? = nil, connected: Bool = true)
+      -> MCPContinuationDirectory.Match
+    {
+      .init(
+        connectionID: connectionID ?? connection, instanceID: instance,
+        resource: .init(kind: "fixture.turn", id: .string(id)), acquiredBy: acquisition,
+        connected: connected, uncertain: !connected)
+    }
+    let resources: Set<MCPContinuationDirectory.Match> = [match("thread"), match("turn")]
+    let owned = MCPContinuationDirectory.Lookup(
+      applicable: true, matches: resources, pendingConnections: [connection])
+    #expect(try MCPContinuationDirectory.uniqueOwner(in: [owned]) == resources)
+    #expect(try MCPContinuationDirectory.uniqueOwner(in: [.init()]) == nil)
+    #expect(try MCPContinuationDirectory.uniqueOwner(in: [.init(applicable: true)]) == nil)
+    let pending = MCPContinuationDirectory.Lookup(applicable: true, pendingConnections: [UUID()])
+    for observations in [[pending], [owned, pending]] {
+      #expect(throws: GatewayToolError.self) {
+        try MCPContinuationDirectory.uniqueOwner(in: observations)
+      }
+    }
+    let other = MCPContinuationDirectory.Lookup(
+      applicable: true, matches: [match("thread", connectionID: UUID())])
+    for observations in [[owned, other], [other, owned]] {
+      #expect(throws: GatewayToolError.self) {
+        try MCPContinuationDirectory.uniqueOwner(in: observations)
+      }
+    }
+    let lost = MCPContinuationDirectory.Lookup(
+      applicable: true, matches: [match("thread", connected: false)],
+      pendingConnections: [connection])
+    #expect(throws: GatewayToolError.self) {
+      try MCPContinuationDirectory.uniqueOwner(in: [lost])
+    }
+  }
+
+  @Test
   func directoryRetainsDisconnectedEvidenceAndEveryDuplicateOwner() throws {
     let ledger = GatewayOwnedWork()
     let connectionIDs = try (0..<2).map { index in

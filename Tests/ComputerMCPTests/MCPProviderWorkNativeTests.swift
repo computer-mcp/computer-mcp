@@ -7,6 +7,74 @@ import os
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct MCPProviderWorkNativeTests {
   @Test
+  func runtimeResolvesCachedNativeAndGenericContinuationsWithoutDispatch() async throws {
+    try await withProvider { _, originalServer, _ in
+      var server = originalServer
+      server.exposure = .reexport
+      server.prefix = "fixture"
+      server.allowAnyTool = true
+      server.toolRisks = ["start": .readOnly, "inspect": .readOnly, "finish": .readOnly]
+      let script = try #require(server.args.first)
+      let root = URL(fileURLWithPath: script).deletingLastPathComponent()
+      let runtime = try await GatewayRuntime.make(
+        configuration: GatewayConfiguration(mcp: .init(servers: [server])),
+        context: .init(caller: .localCLI, profileID: .localAdmin),
+        registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+        plugins: [], bundledPlugins: .init(packages: [], issues: []))
+      do {
+        _ = try await runtime.callToolAsync(name: "fixture.start", arguments: .object([:]))
+        try await wait { runtime.ownedWork.snapshot.contains { $0.kind == .mcpResource } }
+        let native = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
+        let generic = JSONValue.object([
+          "server": .string(server.id), "tool": .string("inspect"), "arguments": native,
+        ])
+        let first = try #require(
+          try runtime.continuationLookup(
+            name: "fixture.inspect", arguments: native, workspaceID: "fixture"))
+        #expect(first.observation.matches.count == 1)
+        #expect(first.reference == .init(serverID: server.id, toolName: "inspect"))
+        #expect(runtime.unambiguousWorkspaceID == "fixture")
+        for name in ["mcp.tools.call", "operations.prepare", "operations.commit"] {
+          let arguments: JSONValue =
+            name == "mcp.tools.call"
+            ? generic
+            : .object([
+              "tool": .string("mcp.tools.call"), "arguments": generic,
+            ])
+          let lookup = try #require(
+            try runtime.continuationLookup(name: name, arguments: arguments, workspaceID: "fixture")
+          )
+          #expect(lookup.observation == first.observation)
+          #expect(lookup.reference == first.reference && lookup.workspaceID == first.workspaceID)
+        }
+        #expect(
+          try runtime.continuationLookup(
+            name: "fixture.inspect", arguments: native, workspaceID: "other") == nil)
+        #expect(
+          try runtime.continuationLookup(name: "unknown", arguments: native, workspaceID: "fixture")
+            == nil)
+        #expect(
+          try runtime.continuationLookup(
+            name: "workspace.list", arguments: nil, workspaceID: "fixture") == nil)
+        let inspected = try await runtime.callToolAsync(name: "fixture.inspect", arguments: native)
+        #expect(
+          inspected.objectValue?["structuredContent"]?.objectValue?["call_count"] == .integer(2))
+        _ = try await runtime.callToolAsync(name: "fixture.finish", arguments: .object([:]))
+        try await wait { runtime.ownedWork.snapshot.isEmpty }
+        let retirement = try #require(runtime.beginRetirementIfDrained())
+        await retirement.value
+        await #expect(throws: GatewayToolError.self) {
+          try await runtime.callToolAsync(name: "fixture.start", arguments: .object([:]))
+        }
+      } catch {
+        await runtime.shutdown()
+        throw error
+      }
+      await runtime.shutdown()
+    }
+  }
+
+  @Test
   func exactContinuationRevalidatesAcquisitionAndCurrentAuthorization() async throws {
     try await withProvider { client, server, work in
       let started = try await call(client, server, "start")

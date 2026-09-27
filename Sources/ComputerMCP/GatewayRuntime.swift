@@ -17,6 +17,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let providerRouters: [String: GatewayProviderRouter]
   private let lifetime: GatewayRuntimeLifetime
   let ownedWork = GatewayOwnedWork()
+  let generationID = UUID()
   private let authenticatedSessionFactory:
     @Sendable (String, GatewayTransportTrace?) throws -> GatewayRuntime
   private static let construction = BlockingOperationExecutor(
@@ -154,7 +155,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var errorByID: [String: WorkspaceBookmarkError] = [:]
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
     let commandRunner = ProcessCommandRunner()
-    let runtimeID = UUID()
 
     for workspace in configuredWorkspaces {
       guard workspaceByID[workspace.id] == nil else {
@@ -180,7 +180,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceByID[workspace.id] = access.workspace
       accessByID[workspace.id] = access
       var hostContext = MCPHostContext(
-        runtimeID: runtimeID, context: effectiveContext, workspaceID: workspace.id,
+        runtimeID: generationID, context: effectiveContext, workspaceID: workspace.id,
         rootURL: access.rootURL, readOnly: !mcpGrant.permitsRisk(.workspaceWrite),
         tools: hostToolDirectory,
         managedWorkspaceRoot: database?.fileURL?.deletingLastPathComponent()
@@ -576,6 +576,53 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   package func capabilityDescriptor(named name: String) throws -> CapabilityDescriptor {
     try descriptor(named: name)
+  }
+
+  struct ContinuationLookup: Sendable {
+    let workspaceID: String
+    let reference: MCPToolReference
+    let observation: MCPContinuationDirectory.Lookup
+  }
+
+  var unambiguousWorkspaceID: String? {
+    context.workspaceID ?? (workspaceOrder.count == 1 ? workspaceOrder.first : nil)
+  }
+
+  /// Resolves cached routing and accepted ownership without starting a provider.
+  func continuationLookup(name: String, arguments: JSONValue?, workspaceID: String?) throws
+    -> ContinuationLookup?
+  {
+    var name = name
+    var arguments = arguments?.objectValue ?? [:]
+    if name == "operations.prepare" || name == "operations.commit" {
+      name = try Self.requiredString("tool", in: arguments)
+      arguments = arguments["arguments"]?.objectValue ?? [:]
+    }
+    guard let workspaceID = arguments["workspace_id"]?.stringValue ?? workspaceID,
+      let router = providerRouters[workspaceID]
+    else { return nil }
+    let reference: MCPToolReference
+    let nativeArguments: JSONValue
+    if name == "mcp.tools.call" {
+      reference = try .init(
+        serverID: Self.requiredString("server", in: arguments),
+        toolName: Self.requiredString("tool", in: arguments))
+      nativeArguments = arguments["arguments"] ?? .object([:])
+    } else {
+      let capability: CapabilityDescriptor
+      do { capability = try router.capability(named: name) } catch GatewayToolError.unknownTool {
+        return nil
+      }
+      guard let nativeReference = capability.mcpReference else { return nil }
+      reference = nativeReference
+      arguments.removeValue(forKey: "workspace_id")
+      nativeArguments = .object(arguments)
+    }
+    return try ContinuationLookup(
+      workspaceID: workspaceID, reference: reference,
+      observation: ownedWork.continuations.lookup(
+        workspaceID: workspaceID, registrationID: reference.serverID,
+        tool: reference.toolName, arguments: nativeArguments))
   }
 
   package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {

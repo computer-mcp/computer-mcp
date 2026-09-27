@@ -13,6 +13,7 @@ struct ComputerMCPCommand: AsyncParsableCommand {
       Doctor.self,
       BuildInfo.self,
       Config.self,
+      CLITreeCommands.self,
       Workspace.self,
       Profile.self,
       Permissions.self,

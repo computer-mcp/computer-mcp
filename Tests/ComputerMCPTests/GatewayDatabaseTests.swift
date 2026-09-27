@@ -8,6 +8,32 @@ import Testing
 @Suite
 
 final class GatewayDatabaseTests {
+  @Test
+  func configurationSnapshotAllowsUnrelatedRuntimeEvidenceDuringCommit() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveWorkspace(
+      RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: "/tmp/fixture"))
+    try database.saveProfile(
+      ProfileGrant(
+        id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: ["fixture"],
+        allowedCallers: [.localCLI]))
+    let expected = try database.configurationState()
+    #expect(try expected.workspaces == database.workspaces())
+    #expect(try expected.profiles == database.profiles())
+    #expect(try expected.plugins == database.pluginStoreSnapshot())
+    try database.saveProviderState(
+      ProviderState(id: "fixture", kind: "mcp", health: "ready"))
+    var next = expected.plugins
+    next.revision += 1
+    next.settings["candidate"] = PluginSettings(enabled: true)
+    try database.savePluginStoreSnapshot(
+      next, expectedRevision: expected.plugins.revision, expectedConfiguration: expected)
+    #expect(try database.pluginStoreSnapshot() == next)
+    #expect(try database.workspaces() == expected.workspaces)
+    #expect(try database.profiles() == expected.profiles)
+    #expect(try database.providerStates().count == 1)
+  }
+
   @Test(arguments: ["unchanged", "edited", "deleted"])
   func bookmarkRefreshPreservesConcurrentRegistrationChanges(change: String) throws {
     let database = try GatewayDatabase(inMemory: ())

@@ -77,7 +77,9 @@ extension AppControlPlaneService {
     defer { pluginMutationInProgress = false }
     let manifestStore = manifestStore
     let bundledPlugins = bundledPlugins
-    let store = PluginStore(database: database) { proposed in
+    let store = PluginStore(
+      database: database, expectedConfiguration: try database.configurationState()
+    ) { proposed in
       var configuration = try manifestStore.activeConfiguration()
       configuration.knownPluginMCPServerIDs =
         proposed

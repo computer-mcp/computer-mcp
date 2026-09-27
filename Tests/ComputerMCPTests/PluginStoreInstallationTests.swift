@@ -7,6 +7,86 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct PluginStoreInstallationTests {
   @Test(arguments: [false, true])
+  func unpublishedPluginStateRetainsArtifactsThroughAuthenticatedSessions(resolved: Bool)
+    async throws
+  {
+    let fixture = try await PreparationFixture.make(manifest: Self.skillsManifest)
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    var proposed = installed.snapshot
+    proposed.settings[record.pluginID]?.enabled = true
+    var active = PluginStoreSnapshot()
+    active.revision = 2
+    try database.savePluginStoreSnapshot(active, expectedRevision: 1)
+    let bundled = BundledPlugins(packages: [], issues: [])
+    let plugins = try resolved ? PluginHost.resolve(proposed, bundled: bundled).plugins : nil
+    let runtime = try await GatewayRuntime.make(
+      configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+      database: database, plugins: plugins, pluginState: proposed, bundledPlugins: bundled)
+    var authenticated: GatewayRuntime?
+    do {
+      #expect(runtime.pluginOrigins.count == 1)
+      #expect(try database.pluginStoreSnapshot() == active)
+      #expect(
+        try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+      authenticated = try runtime.authenticatedSession(principalID: "fixture", transportTrace: nil)
+      #expect(authenticated?.pluginOrigins == runtime.pluginOrigins)
+      await runtime.shutdown()
+      #expect(
+        try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+      await authenticated?.shutdown()
+      #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+      #expect(try database.pluginStoreSnapshot() == active)
+    } catch {
+      await authenticated?.shutdown()
+      await runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test
+  func failedUnpublishedRuntimeJoinsArtifactLeaseCleanup() async throws {
+    let fixture = try await PreparationFixture.make(manifest: Self.skillsManifest)
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    var proposed = installed.snapshot
+    proposed.settings[record.pluginID]?.enabled = true
+    var active = PluginStoreSnapshot()
+    active.revision = 2
+    try database.savePluginStoreSnapshot(active, expectedRevision: 1)
+    let workspace = RegisteredWorkspace(
+      id: "duplicate", displayName: "Fixture", rootPath: fixture.files.root.path)
+    await #expect(throws: GatewayRuntimeError.duplicateWorkspaceID("duplicate")) {
+      try await GatewayRuntime.make(
+        configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+        database: database, registeredWorkspaces: [workspace, workspace], pluginState: proposed,
+        bundledPlugins: BundledPlugins(packages: [], issues: []))
+    }
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+    #expect(try database.pluginStoreSnapshot() == active)
+  }
+
+  private static let skillsManifest = """
+    id = 'combined'
+    name = 'Combined'
+    version = '1.2.3'
+    [compatibility]
+    minimum_host = '1.0.0'
+    architectures = ['arm64']
+    [[skills]]
+    id = 'guide'
+    path = 'skills'
+    """
+
+  @Test(arguments: [false, true])
   func processReceiptRetainsArtifactAfterRuntimeReleasesIt(uncertain: Bool) async throws {
     let fixture = try await PreparationFixture.make()
     defer { fixture.files.remove() }
@@ -240,13 +320,18 @@ struct PluginStoreInstallationTests {
       try FileManager.default.contentsOfDirectory(atPath: fixture.installationRoot.path).count == 2)
   }
 
-  @Test
-  func suspendedInstallationRechecksRevisionAndHoldsTheCrossStoreLock() async throws {
+  @Test(arguments: ["plugin", "workspace", "profile"])
+  func suspendedInstallationRechecksConfigurationAndHoldsTheCrossStoreLock(change: String)
+    async throws
+  {
     let fixture = try await PreparationFixture.make()
     defer { fixture.files.remove() }
-    let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database)
-    let other = PluginStore(database: database)
+    let path = fixture.files.root.appendingPathComponent("gateway.sqlite").path
+    let database = try GatewayDatabase(path: path)
+    let concurrent = try GatewayDatabase(path: path)
+    let store = PluginStore(
+      database: database, expectedConfiguration: try database.configurationState())
+    let other = PluginStore(database: concurrent)
     let ready = fixture.files.root.appendingPathComponent("ready")
     let release = fixture.files.root.appendingPathComponent("release")
     let worker = try await fixture.stub(
@@ -264,12 +349,30 @@ struct PluginStoreInstallationTests {
       await #expect(throws: PluginStoreError.installationBusy) {
         try await other.recoverInstallations(storageRoot: fixture.installationRoot)
       }
-      let changed = try await other.setEnabled(false, for: "another", expectedRevision: 0)
-      try Data().write(to: release)
-      await #expect(throws: PluginStoreError.staleRevision(expected: 0, actual: 1)) {
-        try await installing.value
+      switch change {
+      case "plugin":
+        _ = try await other.setEnabled(false, for: "another", expectedRevision: 0)
+      case "workspace":
+        try concurrent.saveWorkspace(
+          RegisteredWorkspace(id: "added", displayName: "Added", rootPath: fixture.files.root.path))
+      default:
+        try concurrent.saveProfile(
+          ProfileGrant(
+            id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: [],
+            allowedCallers: [.localCLI]))
       }
-      #expect(try await store.snapshot() == changed)
+      let changed = try database.configurationState()
+      try Data().write(to: release)
+      if change == "plugin" {
+        await #expect(throws: PluginStoreError.staleRevision(expected: 0, actual: 1)) {
+          try await installing.value
+        }
+      } else {
+        await #expect(throws: GatewayDatabaseError.configurationChanged) {
+          try await installing.value
+        }
+      }
+      #expect(try database.configurationState() == changed)
       #expect(try database.pluginOwnedDirectories().isEmpty)
       #expect(
         try FileManager.default.contentsOfDirectory(atPath: fixture.installationRoot.path) == [

@@ -614,15 +614,15 @@ package actor AppControlPlaneService {
   /// Values whose changes invalidate a pending catalog or session construction.
   struct GatewayInputs: Equatable, Sendable {
     let configuration: GatewayConfiguration
-    let workspaces: [RegisteredWorkspace]
-    let profiles: [ProfileGrant]
-    let plugins: PluginStoreSnapshot
+    let persisted: GatewayDatabase.ConfigurationState
+    var workspaces: [RegisteredWorkspace] { persisted.workspaces }
+    var profiles: [ProfileGrant] { persisted.profiles }
+    var plugins: PluginStoreSnapshot { persisted.plugins }
   }
 
   func gatewayInputs() throws -> GatewayInputs {
     try GatewayInputs(
-      configuration: manifestStore.activeConfiguration(), workspaces: database.workspaces(),
-      profiles: database.profiles(), plugins: database.pluginStoreSnapshot())
+      configuration: manifestStore.activeConfiguration(), persisted: database.configurationState())
   }
 
   func requireCurrentGatewayInputs(_ inputs: GatewayInputs) throws {
@@ -655,7 +655,8 @@ package actor AppControlPlaneService {
       context: context,
       database: database, registeredWorkspaces: inputs.workspaces,
       bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
-      plugins: plugins, bundledPlugins: bundledPlugins, terminalSessions: terminalSessions)
+      plugins: plugins, pluginState: inputs.plugins, bundledPlugins: bundledPlugins,
+      terminalSessions: terminalSessions)
     do {
       try requireCurrentGatewayInputs(inputs)
       return gateway

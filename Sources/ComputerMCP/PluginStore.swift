@@ -123,6 +123,7 @@ package struct PluginStoreResolution: Sendable {
 /// Revision comparison in the database also protects against other store instances/processes.
 package actor PluginStore {
   let database: GatewayDatabase
+  private let expectedConfiguration: GatewayDatabase.ConfigurationState?
   private let validateSnapshot: @Sendable (PluginStoreSnapshot) throws -> Void
 
   package init(
@@ -130,6 +131,17 @@ package actor PluginStore {
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
     self.database = database
+    self.expectedConfiguration = nil
+    self.validateSnapshot = validateSnapshot
+  }
+
+  /// One management change may await archive preparation before entering its commit.
+  init(
+    database: GatewayDatabase, expectedConfiguration: GatewayDatabase.ConfigurationState,
+    validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
+  ) {
+    self.database = database
+    self.expectedConfiguration = expectedConfiguration
     self.validateSnapshot = validateSnapshot
   }
 
@@ -342,8 +354,10 @@ package actor PluginStore {
     }
     next.revision = expectedRevision + 1
     try next.validate()
+    let configuration = try expectedConfiguration ?? database.configurationState()
     try validateSnapshot(next)
-    try database.savePluginStoreSnapshot(next, expectedRevision: expectedRevision)
+    try database.savePluginStoreSnapshot(
+      next, expectedRevision: expectedRevision, expectedConfiguration: configuration)
     return next
   }
 

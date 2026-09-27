@@ -51,6 +51,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     plugins: [ResolvedPlugin]? = nil,
+    pluginState: PluginStoreSnapshot? = nil,
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
   ) throws {
@@ -58,6 +59,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       configuration: configuration, context: context, database: database,
       registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
       policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
+      pluginState: pluginState,
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
       lifetime: GatewayRuntimeLifetime())
   }
@@ -71,6 +73,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     plugins: [ResolvedPlugin]? = nil,
+    pluginState: PluginStoreSnapshot? = nil,
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
   ) async throws -> GatewayRuntime {
@@ -82,6 +85,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           configuration: configuration, context: context, database: database,
           registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
           policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
+          pluginState: pluginState,
           bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime)
       }
       try Task.checkCancellation()
@@ -96,7 +100,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     configuration: GatewayConfiguration, context: ExecutionContext?, database: GatewayDatabase?,
     registeredWorkspaces: [RegisteredWorkspace]?, bookmarkService: any WorkspaceBookmarkServicing,
     policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
-    plugins: [ResolvedPlugin]?, bundledPlugins: BundledPlugins,
+    plugins: [ResolvedPlugin]?, pluginState: PluginStoreSnapshot?, bundledPlugins: BundledPlugins,
     terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime
   ) throws {
     let initializationConfiguration = configuration
@@ -104,7 +108,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var initialized = false
     defer { if !initialized { _ = lifetime.beginShutdown() } }
     var sourceConfiguration = configuration
-    let pluginState = try (database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
+    try pluginState?.validate()
+    let pluginState = try (pluginState ?? database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
     let artifactLeases = try Self.retainPluginArtifacts(
       state: pluginState, plugins: plugins, database: database)
@@ -287,6 +292,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         configuration: initializationConfiguration, context: bound, database: database,
         registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
+        pluginState: pluginState,
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions)
     }
     self.requiresPersistedGrant = persistedGrant != nil
@@ -2378,7 +2384,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "operations.ticket_expired_or_used",
         message: databaseError.localizedDescription
       )
-    case .invalidOperationTicketTransition, .invalidStoredValue:
+    case .invalidOperationTicketTransition, .invalidStoredValue, .configurationChanged:
       return invalid(
         code: "operations.ticket_lifecycle_failed",
         message: databaseError.localizedDescription

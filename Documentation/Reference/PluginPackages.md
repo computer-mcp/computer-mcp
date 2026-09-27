@@ -403,6 +403,17 @@ it read. The database atomically compares that revision and saves the next
 snapshot; a stale update must reload before retrying. Invalid or oversized state
 leaves the previous snapshot intact. Serialized state is limited to 4 MiB.
 
+App-managed changes also capture the registered workspaces, workspace aliases,
+profile authorization and plugin settings before preparation. The commit compares
+these inputs in the same database transaction as the plugin revision check.
+A concurrent workspace or authorization edit rejects the plugin change and
+preserves that edit; reload before retrying. Provider health and execution
+receipts do not invalidate this configuration snapshot.
+
+Runtime construction uses its captured plugin snapshot for contribution resolution
+and managed artifact leases. Authenticated sessions derived from that runtime
+retain the same plugin sources while checking current profile authorization.
+
 A development registration records the canonical source directory, declared
 identity and version, registration time, and a SHA-256 fingerprint of the parsed
 manifest. That fingerprint is neither an archive digest nor a signature and

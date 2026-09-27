@@ -33,25 +33,53 @@ package final class GatewayDatabase: @unchecked Sendable {
     try Self.migrator.migrate(writer)
   }
 
-  package func pluginStoreSnapshot() throws -> PluginStoreSnapshot {
-    try writer.read { database in
-      guard
-        let row = try Row.fetchOne(
-          database, sql: "SELECT revision, payloadJSON FROM pluginState WHERE id = 1")
-      else {
-        return PluginStoreSnapshot()
-      }
-      let payload: String = row["payloadJSON"]
-      guard payload.utf8.count <= 4_194_304 else { throw PluginStoreError.invalidState }
-      let state = try JSONDecoder().decode(PluginStoreSnapshot.self, from: Data(payload.utf8))
-      let revision: Int64 = row["revision"]
-      guard state.revision == revision else { throw PluginStoreError.invalidState }
-      try state.validate()
-      return state
-    }
+  /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
+  /// comparison even though only canonical workspaces appear in the public directory.
+  struct ConfigurationState: Equatable, Sendable {
+    let workspaces: [RegisteredWorkspace]
+    let workspaceAliases: [String: String]
+    let profiles: [ProfileGrant]
+    let plugins: PluginStoreSnapshot
   }
 
-  func savePluginStoreSnapshot(_ state: PluginStoreSnapshot, expectedRevision: Int64) throws {
+  func configurationState() throws -> ConfigurationState {
+    try writer.read { try Self.configurationState(in: $0) }
+  }
+
+  private static func configurationState(in database: Database) throws -> ConfigurationState {
+    try ConfigurationState(
+      workspaces: workspaces(in: database),
+      workspaceAliases: Dictionary(
+        uniqueKeysWithValues: WorkspaceAliasRecord.fetchAll(database).map {
+          ($0.aliasWorkspaceID, $0.canonicalWorkspaceID)
+        }),
+      profiles: profiles(in: database), plugins: pluginStoreSnapshot(in: database))
+  }
+
+  package func pluginStoreSnapshot() throws -> PluginStoreSnapshot {
+    try writer.read { try Self.pluginStoreSnapshot(in: $0) }
+  }
+
+  private static func pluginStoreSnapshot(in database: Database) throws -> PluginStoreSnapshot {
+    guard
+      let row = try Row.fetchOne(
+        database, sql: "SELECT revision, payloadJSON FROM pluginState WHERE id = 1")
+    else {
+      return PluginStoreSnapshot()
+    }
+    let payload: String = row["payloadJSON"]
+    guard payload.utf8.count <= 4_194_304 else { throw PluginStoreError.invalidState }
+    let state = try JSONDecoder().decode(PluginStoreSnapshot.self, from: Data(payload.utf8))
+    let revision: Int64 = row["revision"]
+    guard state.revision == revision else { throw PluginStoreError.invalidState }
+    try state.validate()
+    return state
+  }
+
+  func savePluginStoreSnapshot(
+    _ state: PluginStoreSnapshot, expectedRevision: Int64,
+    expectedConfiguration: ConfigurationState? = nil
+  ) throws {
     try state.validate()
     guard expectedRevision >= 0, expectedRevision < Int64.max,
       state.revision == expectedRevision + 1
@@ -69,6 +97,11 @@ package final class GatewayDatabase: @unchecked Sendable {
         try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
       guard current == expectedRevision else {
         throw PluginStoreError.staleRevision(expected: expectedRevision, actual: current)
+      }
+      if let expectedConfiguration,
+        try Self.configurationState(in: database) != expectedConfiguration
+      {
+        throw GatewayDatabaseError.configurationChanged
       }
       try database.execute(
         sql: """
@@ -195,17 +228,17 @@ package final class GatewayDatabase: @unchecked Sendable {
   }
 
   package func workspaces() throws -> [RegisteredWorkspace] {
-    try writer.read { database in
-      let aliasIDs = Set(
-        try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID)
-      )
-      return
-        try WorkspaceRecord
-        .order(Column("displayName").collating(.nocase), Column("id"))
-        .fetchAll(database)
-        .filter { !aliasIDs.contains($0.id) }
-        .map(\.value)
-    }
+    try writer.read { try Self.workspaces(in: $0) }
+  }
+
+  private static func workspaces(in database: Database) throws -> [RegisteredWorkspace] {
+    let aliasIDs = Set(try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID))
+    return
+      try WorkspaceRecord
+      .order(Column("displayName").collating(.nocase), Column("id"))
+      .fetchAll(database)
+      .filter { !aliasIDs.contains($0.id) }
+      .map(\.value)
   }
 
   package func workspace(id: String) throws -> RegisteredWorkspace? {
@@ -369,9 +402,11 @@ package final class GatewayDatabase: @unchecked Sendable {
   }
 
   package func profiles() throws -> [ProfileGrant] {
-    try writer.read { database in
-      try ProfileRecord.order(Column("id")).fetchAll(database).map { try $0.value() }
-    }
+    try writer.read { try Self.profiles(in: $0) }
+  }
+
+  private static func profiles(in database: Database) throws -> [ProfileGrant] {
+    try ProfileRecord.order(Column("id")).fetchAll(database).map { try $0.value() }
   }
 
   func reserveMCPExecution(_ proposed: MCPExecutionRecord) throws
@@ -1576,6 +1611,7 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
 }
 
 package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
+  case configurationChanged
   case invalidStoredValue(String)
   case invalidOperationTicketTransition(String)
   case operationTicketUnknown(String)
@@ -1585,6 +1621,9 @@ package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
 
   package var errorDescription: String? {
     switch self {
+    case .configurationChanged:
+      return
+        "The gateway configuration changed during preparation. Reload before applying this change."
     case .invalidStoredValue(let message):
       return message
     case .invalidOperationTicketTransition(let message):

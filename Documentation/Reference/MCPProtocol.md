@@ -163,6 +163,19 @@ have the exact type and value on that resource. Missing fields make an optional
 selector inapplicable. Supplied values must be bounded strings or exact integers;
 malformed nested values do not silently become new work. Pointer escapes are
 `~0` and `~1`; array indices use canonical nonnegative decimal notation.
+An optional `nullable_handles` array can name a unique, nonempty subset of the
+selector's handles whose explicit JSON null means no scope. For those handles,
+null makes the selector inapplicable just like a missing field. Other supplied
+handle values are still validated; this does not change the tool's input schema.
+
+For a tool that dispatches several operations, an optional `when` field contains
+`pointer` and `values`, for example
+`{"pointer":"/operation","values":["read","cancel"]}`. The pointer must select
+an exact string in the declared set before that selector applies. Missing or
+unmatched operation names make it inapplicable; a supplied non-string is invalid.
+The set contains 1–64 unique bounded strings and uses the same pointer bounds.
+This distinguishes an operation creating a new handle from one continuing an
+existing handle with the same argument shape.
 
 There may be 1–16 selectors, each with 1–16 handles, within 16 KiB of encoded
 metadata. Names and pointers are at most 1,024 UTF-8 bytes; pointers contain at

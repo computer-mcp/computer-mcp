@@ -7,6 +7,61 @@ import Testing
 @Suite
 struct MCPProviderContinuationTests {
   @Test
+  func operationConditionsDoNotMistakeNewWorkForAContinuation() throws {
+    let declaration = try #require(
+      try MCPProviderContinuation(
+        tool(
+          handles: ["native": "/params/handle"],
+          condition: .object([
+            "pointer": .string("/operation~1name"),
+            "values": .array([.string("read"), .string("cancel")]),
+          ]))))
+    let params = JSONValue.object(["handle": .string("reused")])
+    for operation in ["read", "cancel"] {
+      #expect(
+        try declaration.queries(
+          arguments: .object(["operation/name": .string(operation), "params": params]))
+          == [.init(kind: "fixture.turn", handles: ["native": .string("reused")])])
+    }
+    #expect(
+      try declaration.queries(
+        arguments: .object(["operation/name": .string("start"), "params": params])
+      ).isEmpty)
+    #expect(try declaration.queries(arguments: .object(["params": params])).isEmpty)
+    #expect(throws: GatewayToolError.self) {
+      try declaration.queries(
+        arguments: .object(["operation/name": .integer(1), "params": params]))
+    }
+  }
+
+  @Test
+  func malformedOperationConditionsFailCatalogAdmission() throws {
+    let invalid: [JSONValue] = [
+      .null, .object([:]),
+      .object(["pointer": .string("operation"), "values": .array([.string("read")])]),
+      .object(["pointer": .string("/operation"), "values": .array([])]),
+      .object(["pointer": .string("/operation"), "values": .array([.integer(1)])]),
+      .object(["pointer": .string("/operation"), "values": .array([.string("bad\nname")])]),
+      .object([
+        "pointer": .string("/operation"), "values": .array([.string("read"), .string("read")]),
+      ]),
+      .object([
+        "pointer": .string("/operation"),
+        "values": .array((0...64).map { .string("operation\($0)") }),
+      ]),
+      .object([
+        "pointer": .string("/operation"), "values": .array([.string("read")]),
+        "unknown": .bool(true),
+      ]),
+    ]
+    for condition in invalid {
+      #expect(throws: GatewayToolError.self) {
+        try MCPProviderWork.advertised(by: [tool(handles: ["id": "/handle"], condition: condition)])
+      }
+    }
+  }
+
+  @Test
   func nativeHandleQueriesPreserveTypesAndDecodePointers() throws {
     let declaration = try #require(
       try MCPProviderContinuation(
@@ -31,6 +86,31 @@ struct MCPProviderContinuationTests {
     for value in [JSONValue.null, .bool(true), .number(1.5), .string(""), .string("bad\0id")] {
       #expect(throws: GatewayToolError.self) {
         try optional.queries(arguments: .object(["session": value]))
+      }
+    }
+  }
+
+  @Test
+  func nullableNativeScopesAreExplicitAndDoNotCoerceOtherHandles() throws {
+    let declaration = try #require(
+      try MCPProviderContinuation(
+        tool(handles: ["thread": "/thread", "request": "/request"], nullable: [.string("thread")])
+      ))
+    #expect(
+      try declaration.queries(arguments: .object(["thread": .null, "request": .string("owned")]))
+        .isEmpty)
+    #expect(throws: GatewayToolError.self) {
+      try declaration.queries(arguments: .object(["thread": .null, "request": .bool(true)]))
+    }
+    #expect(throws: GatewayToolError.self) {
+      try declaration.queries(arguments: .object(["thread": .string("owned"), "request": .null]))
+    }
+    let invalid: [[JSONValue]] = [
+      [], [.string("unknown")], [.integer(1)], [.string("id"), .string("id")],
+    ]
+    for names in invalid {
+      #expect(throws: GatewayToolError.self) {
+        try MCPProviderContinuation(tool(handles: ["id": "/id"], nullable: names))
       }
     }
   }
@@ -121,8 +201,15 @@ struct MCPProviderContinuationTests {
     }
   }
 
-  private func tool(handles: [String: String]) -> MCPTool {
-    MCPTool(
+  private func tool(
+    handles: [String: String], condition: JSONValue? = nil, nullable: [JSONValue]? = nil
+  ) -> MCPTool {
+    var selector: [String: JSONValue] = [
+      "kind": .string("fixture.turn"), "handles": .object(handles.mapValues(JSONValue.string)),
+    ]
+    if let condition { selector["when"] = condition }
+    if let nullable { selector["nullable_handles"] = .array(nullable) }
+    return MCPTool(
       name: "continue", description: "", inputSchema: .object([:]),
       meta: .object([
         MCPProviderWork.metadataKey: .object([
@@ -130,12 +217,7 @@ struct MCPProviderContinuationTests {
         ]),
         MCPProviderContinuation.metadataKey: .object([
           "format_version": .integer(1),
-          "selectors": .array([
-            .object([
-              "kind": .string("fixture.turn"),
-              "handles": .object(handles.mapValues(JSONValue.string)),
-            ])
-          ]),
+          "selectors": .array([.object(selector)]),
         ]),
       ]))
   }

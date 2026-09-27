@@ -17,15 +17,13 @@ struct MCPRegistrationControlPlaneTests {
     let server = MCPServerConfig(
       id: "owned", transport: .stdio, command: "/usr/bin/touch", args: [marker.path],
       allowAnyTool: true)
-    let input = fixture.root.appendingPathComponent("registration.json")
-    try JSONEncoder().encode(server).write(to: input)
     let storage = try #require(fixture.database.mcpProcessOwnershipRoot)
     let owner = try MCPProcessOwnership.acquire(
       root: storage, workspace: fixture.root, registration: "owned")
     try owner.finish(confirmed: false, hostServicesConfirmed: hostConfirmed)
     try await fixture.socket.start()
     do {
-      try await fixture.apply(["add", "--registration-file", input.path])
+      try await fixture.seedRegistration(server)
       let before = try Data(contentsOf: fixture.directories.manifest)
       let result = try await fixture.cli(["doctor", "owned", "--workspace-id", "fixture"])
       #expect(result.exitCode == 1)
@@ -121,10 +119,8 @@ struct MCPRegistrationControlPlaneTests {
         id: "http", transport: .streamableHTTP,
         url: "http://127.0.0.1:\(port)/mcp", allowAnyTool: true,
         startupTimeoutMs: 1000, requestTimeoutMs: 1000)
-      let input = fixture.root.appendingPathComponent("registration.json")
-      try JSONEncoder().encode(server).write(to: input)
       try await fixture.socket.start()
-      try await fixture.apply(["add", "--registration-file", input.path])
+      try await fixture.seedRegistration(server)
       let report = try await fixture.json(["doctor", "http", "--workspace-id", "fixture"])
       #expect(report.objectValue?["status"] == .string("passed"))
       #expect(report.objectValue?["server_version"] == .string("2.3.4"))
@@ -179,11 +175,9 @@ struct MCPRegistrationControlPlaneTests {
       args: mode == "interpreter" ? [] : [script.path, mode, receipt.path],
       env: ["FIXTURE_SECRET": "must-not-appear-in-report"], allowAnyTool: true,
       startupTimeoutMs: 300, requestTimeoutMs: 300)
-    let input = fixture.root.appendingPathComponent("registration.json")
-    try JSONEncoder().encode(server).write(to: input)
     try await fixture.socket.start()
     do {
-      try await fixture.apply(["add", "--registration-file", input.path])
+      try await fixture.seedRegistration(server)
       let before = try Data(contentsOf: fixture.directories.manifest)
       let result = try await fixture.cli(["doctor", "failure", "--workspace-id", "fixture"])
       #expect(result.exitCode == 1)
@@ -270,7 +264,6 @@ struct MCPRegistrationControlPlaneTests {
     ).write(to: script)
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
-    let input = fixture.root.appendingPathComponent("registration.json")
     try await fixture.socket.start()
     do {
       for id in ["selected", "unrelated", "disabled"] {
@@ -283,8 +276,7 @@ struct MCPRegistrationControlPlaneTests {
           exposure: .reexport, prefix: id, allowAnyTool: true,
           startupTimeoutMs: 1500, requestTimeoutMs: 1500, hostServices: true,
           enabled: id != "disabled")
-        try JSONEncoder().encode(server).write(to: input)
-        try await fixture.apply(["add", "--registration-file", input.path])
+        try await fixture.seedRegistration(server)
       }
       let before = try Data(contentsOf: fixture.directories.manifest)
       let report = try await fixture.json(["doctor", "selected", "--workspace-id", "fixture"])
@@ -350,7 +342,9 @@ struct MCPRegistrationControlPlaneTests {
               if request["params"]["name"] == "hold":
                   with open(starts + ".calls", "a") as f:
                       f.write("hold\n")
-                  time.sleep(60)
+                  deadline = time.monotonic() + 10
+                  while not os.path.exists(starts + ".release") and time.monotonic() < deadline:
+                      time.sleep(0.01)
               result = {"content": [{"type": "text", "text": name}], "isError": False}
           else:
               result = {}
@@ -363,7 +357,7 @@ struct MCPRegistrationControlPlaneTests {
     var server = MCPServerConfig(
       id: "manual", transport: .stdio, command: "/usr/bin/python3",
       args: [script.path, "first", starts.path], exposure: .reexport, prefix: "manual",
-      allowAnyTool: true, startupTimeoutMs: 3000, requestTimeoutMs: 3000,
+      allowAnyTool: true, startupTimeoutMs: 3000, requestTimeoutMs: 10000,
       toolRisks: ["first": .readOnly, "second": .readOnly, "hold": .readOnly])
     try JSONEncoder().encode(server).write(to: input)
     try await fixture.socket.start()
@@ -380,25 +374,24 @@ struct MCPRegistrationControlPlaneTests {
       _ = try await first.connect(transport: fixture.transport())
       #expect(try await first.listTools().tools.contains { $0.name == "manual.first" })
       let firstPIDs = try fixture.processIDs(at: starts)
-      try #require(firstPIDs.count == 1)
+      try #require(firstPIDs.count == 2)
+      #expect(Darwin.kill(firstPIDs[0], 0) == -1 && errno == ESRCH)
+      #expect(Darwin.kill(firstPIDs[1], 0) == 0)
       let firstCall = try await first.callTool(name: "manual.first", arguments: [:])
       #expect(firstCall.isError != true)
 
       server.args[1] = "second"
       try JSONEncoder().encode(server).write(to: input)
       let preview = try await fixture.json(["configure", "--registration-file", input.path])
-      #expect(preview.objectValue?["transport_will_restart"] == .bool(true))
+      #expect(preview.objectValue?["transport_will_restart"] == .bool(false))
       let digest = try #require(preview.objectValue?["current_digest"]?.stringValue)
       _ = try await fixture.json([
         "configure", "--registration-file", input.path, "--apply", "--expected-current-digest",
         digest,
       ])
-      #expect(firstPIDs.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
-      await first.disconnect()
-
-      let second = Client(name: "registration-second", version: "1")
-      clients.append(second)
-      _ = try await second.connect(transport: fixture.transport())
+      #expect(Darwin.kill(firstPIDs[1], 0) == 0)
+      #expect(await fixture.gateway.snapshot().connectionCount == 1)
+      let second = first
       let currentTools = try await second.listTools().tools.map(\.name)
       #expect(currentTools.contains("manual.second") && !currentTools.contains("manual.first"))
       let secondCall = try await second.callTool(name: "manual.second", arguments: [:])
@@ -421,19 +414,16 @@ struct MCPRegistrationControlPlaneTests {
       try #require(FileManager.default.fileExists(atPath: calls.path))
       try await fixture.apply(["disable", "manual"])
       let allPIDs = try fixture.processIDs(at: starts)
-      // A catalog notification can prepare the replacement before the explicit restart claims admission.
-      #expect((2...3).contains(allPIDs.count))
+      #expect(allPIDs.count == 3)
       let versions = try String(contentsOfFile: starts.path + ".versions", encoding: .utf8)
         .split(separator: "\n").map(String.init)
-      #expect(versions == ["first", "second"] || versions == ["first", "second", "second"])
-      #expect(allPIDs.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
-      await #expect(throws: (any Error).self) { try await second.listTools() }
-      await second.disconnect()
-      #expect(await heldCall.value)
+      #expect(versions == ["first", "first", "second"])
+      #expect(allPIDs.dropFirst().allSatisfy { Darwin.kill($0, 0) == 0 })
+      #expect(try await !second.listTools().tools.contains { $0.name.hasPrefix("manual.") })
+      try Data().write(to: URL(fileURLWithPath: starts.path + ".release"))
+      #expect(await heldCall.value == false)
 
-      let disabled = Client(name: "registration-disabled", version: "1")
-      clients.append(disabled)
-      _ = try await disabled.connect(transport: fixture.transport())
+      let disabled = first
       #expect(try await !disabled.listTools().tools.contains { $0.name.hasPrefix("manual.") })
       #expect(try fixture.processIDs(at: starts) == allPIDs)
       #expect(try String(contentsOf: calls, encoding: .utf8) == "hold\n")
@@ -447,6 +437,7 @@ struct MCPRegistrationControlPlaneTests {
       for client in clients { await client.disconnect() }
       await fixture.socket.stop()
       await fixture.gateway.stop()
+      #expect(allPIDs.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
     } catch {
       for client in clients { await client.disconnect() }
       await fixture.socket.stop()
@@ -577,6 +568,13 @@ struct MCPRegistrationControlFixture: Sendable {
     let preview = try await json(arguments)
     let digest = try #require(preview.objectValue?["current_digest"]?.stringValue)
     _ = try await json(arguments + ["--apply", "--expected-current-digest", digest])
+  }
+
+  /// Doctor must be able to inspect existing registrations that cannot pass activation preflight.
+  func seedRegistration(_ server: MCPServerConfig) async throws {
+    var configuration = try configuration()
+    configuration.mcp.servers.append(server)
+    _ = try await host.activateManifest(configuration.exportedTOML())
   }
 
   func configuration() throws -> GatewayConfiguration {

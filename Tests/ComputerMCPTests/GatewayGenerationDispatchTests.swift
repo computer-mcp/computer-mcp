@@ -8,6 +8,67 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
+  @Test
+  func managedManifestAndRollbackPublishWithoutDisconnectingOrLosingOldWork() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let original = try #require(try fixture.database.configurationRevisions().first)
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.control, gatewayService: fixture.service)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let startedAt = await fixture.service.snapshot().startedAt
+      let oldPID = try pid(
+        await client.call(toolName: "fixture.start", arguments: .object(["handle": .string("old")]))
+      )
+      var proposed = try await fixture.control.activeConfiguration()
+      proposed.mcp.servers[0].args[2] = "2"
+      proposed.mcp.servers[0].toolRisks["generation_2"] = .readOnly
+      let manifest = try proposed.exportedTOML()
+      let applied = try await operations.activateManifest(manifest, expectedDigest: original.digest)
+      let currentPID = try pid(await client.call(toolName: "fixture.identity"))
+      #expect(currentPID != oldPID)
+      #expect(try await client.listTools().contains { $0.name == "fixture.generation_2" })
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("old")])))
+          == oldPID)
+      let before = try fixture.database.configurationState()
+      let history = try fixture.database.configurationRevisions()
+      var rejected = proposed
+      rejected.mcp.servers[0].command = "/nonexistent/manifest-candidate"
+      await #expect(throws: (any Error).self) {
+        try await operations.activateManifest(
+          rejected.exportedTOML(), expectedDigest: applied.digest)
+      }
+      #expect(try Data(contentsOf: fixture.control.directories.manifest) == Data(manifest.utf8))
+      #expect(try fixture.database.configurationState() == before)
+      #expect(try fixture.database.configurationRevisions() == history)
+      #expect(try pid(await client.call(toolName: "fixture.identity")) == currentPID)
+      let rollback = try await operations.rollbackManifest(to: original.id)
+      #expect(rollback.id != original.id && rollback.digest == original.digest)
+      #expect(try await client.listTools().contains { $0.name == "fixture.generation_1" })
+      #expect(await fixture.service.snapshot().connectionCount == 1)
+      #expect(await fixture.service.snapshot().startedAt == startedAt)
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.finish", arguments: .object(["handle": .string("old")])))
+          == oldPID)
+      try await wait { !alive(oldPID) && !alive(currentPID) }
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
   @Test(arguments: [1, 2, 3], [false, true])
   func repairRejectsLostSelectedAccessBeforePublication(resolveNumber: Int, replace: Bool)
     async throws
@@ -443,7 +504,7 @@ struct GatewayGenerationDispatchTests {
     }
   }
 
-  @Test(arguments: [false, true], ["plugin", "register", "repair"])
+  @Test(arguments: [false, true], ["plugin", "register", "repair", "manifest"])
   func listenerStopJoinsConfigurationPublication(cancel: Bool, change: String) async throws {
     let workspace = change != "plugin"
     let bookmark = GatedBookmarkService()
@@ -452,11 +513,16 @@ struct GatewayGenerationDispatchTests {
     try await fixture.activate(version: 1)
     try await fixture.service.start(profile: .chatGPTOperate)
     let client = try await fixture.connect()
+    var manifestCandidate = try await fixture.control.activeConfiguration()
+    manifestCandidate.server.name = "published"
+    let manifest = try manifestCandidate.exportedTOML()
     let addedRoot = fixture.root.appendingPathComponent("added")
     try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
     bookmark.arm()
     let mutation = Task {
-      if change == "repair" {
+      if change == "manifest" {
+        _ = try await fixture.service.changeManifest(manifest)
+      } else if change == "repair" {
         _ = try await fixture.service.changeWorkspaces(
           .repair(id: "fixture", root: fixture.root, displayName: nil))
       } else if workspace {
@@ -541,7 +607,9 @@ struct GatewayGenerationDispatchTests {
     }
   }
 
-  @Test(arguments: ["publish", "cancel", "profile", "manifest"], ["plugin", "register", "repair"])
+  @Test(
+    arguments: ["publish", "cancel", "profile", "manifest"],
+    ["plugin", "register", "repair", "manifest"])
   func configurationPublicationCoordinatesExistingAndNewProfileAdmissions(
     outcome: String, change: String
   ) async throws {
@@ -560,6 +628,8 @@ struct GatewayGenerationDispatchTests {
       try fixture.database.saveProfile(profile.grant)
     }
     _ = try await fixture.control.activateManifest(configuration.exportedTOML())
+    configuration.server.name = "published"
+    let manifestCandidate = try configuration.exportedTOML()
     try await fixture.service.start(profile: .chatGPTOperate)
     let first = try await fixture.connect()
     try await fixture.service.selectProfile(.cloudflareOperate)
@@ -572,7 +642,9 @@ struct GatewayGenerationDispatchTests {
     try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
     bookmark.arm()
     let mutation = Task {
-      if change == "repair" {
+      if change == "manifest" {
+        _ = try await fixture.service.changeManifest(manifestCandidate)
+      } else if change == "repair" {
         _ = try await fixture.service.changeWorkspaces(
           .repair(id: "fixture", root: fixture.root, displayName: nil))
       } else if workspace {

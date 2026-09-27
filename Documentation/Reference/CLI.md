@@ -225,18 +225,20 @@ edit that object. Unknown fields are rejected. For example:
 }
 ```
 
-All five mutation commands preview by default. Review the proposed settings
-and reconnect warning, then repeat the same command with `--apply` and
+All five mutation commands preview by default. Review the proposed settings,
+then repeat the same command with `--apply` and
 `--expected-current-digest <current_digest>` from that preview. A stale digest
-rejects the change; obtain and review a fresh preview. Applying reconnects an
-already running gateway and closes its clients' existing sessions. Clients
-must reconnect and complete or cancel their pending request waits. A lost
-response does not prove an operation failed: inspect its outcome before
-retrying, especially for writes. Adding or enabling a registration does not grant
-profile permissions, install dependencies, or prove connection health.
+rejects the change; obtain and review a fresh preview. Applying prepares the new
+runtime configuration before publication and keeps existing client connections.
+The same connection can list and invoke the new tools; existing work retains its
+original owner. A failed candidate leaves the prior configuration active. A lost
+response does not prove failure: inspect the current configuration before retrying.
+Adding or enabling a registration does not grant profile permissions or install
+dependencies. Candidate discovery does not prove authenticated tool execution.
 
 Disabling retains launch settings, selection and profile references while
-excluding the registration from discovery and execution. Removal rejects
+excluding the registration from new discovery and invocation. Existing work can
+continue on its original owner while its current permissions remain valid. Removal rejects
 registrations still referenced by tool mappings or profile grants; disable
 them or explicitly review those references first. External executables and
 registration input files are retained.
@@ -491,14 +493,15 @@ does not silently create another database or gateway.
 `config import` is two phase. The first invocation validates the candidate,
 shows a secret-free diff, and returns the current digest. `--apply` requires
 that digest so a concurrent App edit cannot be overwritten. Apply never starts
-a stopped transport; when the gateway is already running it uses the same
-restart-and-rollback operation as the App so the active runtime cannot drift
-from the accepted manifest.
+a stopped transport. It prepares candidate runtimes, commits the manifest and
+resolved state, then publishes routing while keeping current connections and
+old work. Failed candidates or conflicting edits leave the prior admitted state
+active. Manifest rollback uses the same candidate and publication checks.
 
 Workspace, profile, manifest, gateway, and Tunnel lifecycle writes all use the
 same lifecycle-aware operations as the App. A local CLI call therefore performs
-the same validation, restart, desired-Tunnel reconnection, and failure rollback
-as the corresponding UI action.
+the same validation, publication, and lifecycle behavior as the corresponding
+UI action. Explicit gateway restart remains a separate operation.
 
 The owner-only control CLI is deliberately not registered as a remotely
 executable `cli.exec` provider. Doing so would let a remote caller inherit the

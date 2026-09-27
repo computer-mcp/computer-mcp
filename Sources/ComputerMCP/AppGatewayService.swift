@@ -654,6 +654,24 @@ package actor AppGatewayService {
     }
   }
 
+  func changeManifest(
+    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String? = nil
+  ) async throws -> ConfigurationRevision {
+    try await withConfigurationChange {
+      try await controlPlane.applyManifestChange(
+        manifest, reason: reason, expectedDigest: expectedDigest
+      ) { [self] _, prepared in
+        try await preparePublication(
+          inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
+          storage: nil
+        ) { resolution, install in
+          try self.controlPlane.manifestStore.commit(
+            prepared, resolution: resolution, install: install)
+        }
+      }
+    }
+  }
+
   private func withConfigurationChange<Result: Sendable>(
     _ operation: () async throws -> Result
   ) async throws -> Result {
@@ -708,6 +726,24 @@ package actor AppGatewayService {
     requiredWorkspace: (id: String, root: WorkspaceRootIdentity)? = nil,
     commit: @Sendable (GatewayConfigurationResolution) throws -> GatewayDatabase.ConfigurationState
   ) async throws -> GatewayDatabase.ConfigurationState {
+    try await preparePublication(
+      inputs: .init(configuration: expected.configuration, persisted: proposed), storage: storage,
+      requiredWorkspace: requiredWorkspace
+    ) { resolution, install in
+      try self.controlPlane.manifestStore.withCurrentConfiguration(expected.configuration) {
+        let persisted = try commit(resolution)
+        install(persisted)
+        return persisted
+      }
+    }
+  }
+
+  private func preparePublication<Result: Sendable>(
+    inputs: AppControlPlaneService.GatewayInputs, storage: PluginInstallationStorage?,
+    requiredWorkspace: (id: String, root: WorkspaceRootIdentity)? = nil,
+    publish: (GatewayConfigurationResolution, (GatewayDatabase.ConfigurationState) -> Void) throws
+      -> Result
+  ) async throws -> Result {
     let epoch = listenerEpoch
     let keys = Array(runtimes.keys)
     reapRetiredRuntimes()
@@ -722,8 +758,6 @@ package actor AppGatewayService {
     }
     preparingRuntimeCount = required
     defer { preparingRuntimeCount = 0 }
-    let inputs = AppControlPlaneService.GatewayInputs(
-      configuration: expected.configuration, persisted: proposed)
     var candidates: [RuntimeKey: GatewayRuntimePreparation] = [:]
     var validation: GatewayRuntimePreparation?
     do {
@@ -752,12 +786,9 @@ package actor AppGatewayService {
         }
         try resolution.merge(candidate.resolution)
       }
-      let committed = try controlPlane.manifestStore.withCurrentConfiguration(
-        expected.configuration
-      ) {
-        let persisted = try commit(resolution)
+      let committed = try publish(resolution) { persisted in
         let published = AppControlPlaneService.GatewayInputs(
-          configuration: expected.configuration, persisted: persisted)
+          configuration: inputs.configuration, persisted: persisted)
         for (key, candidate) in candidates {
           if let previous = runtimes.updateValue((published, candidate.runtime), forKey: key) {
             retiredRuntimes[key, default: [:]][previous.gateway.generationID] = previous.gateway
@@ -767,7 +798,6 @@ package actor AppGatewayService {
         }
         for key in candidates.keys { changes(for: key).send() }
         reapRetiredRuntimes()
-        return persisted
       }
       await validation?.runtime.shutdown()
       return committed

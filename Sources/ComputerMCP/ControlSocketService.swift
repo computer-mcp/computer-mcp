@@ -952,7 +952,6 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     }
     let currentDigest = Self.digest(currentData)
     let proposedDigest = Self.digest(Data(canonical.utf8))
-    let gatewayWasRunning = await gatewayService.snapshot().state == .running
     var result: [String: JSONValue] = [
       "ok": .bool(true),
       "schema_version": .integer(Int64(parsed.schemaVersion)),
@@ -961,7 +960,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       "changed": .bool(currentDigest != proposedDigest),
       "diff": Self.manifestDiff(current: currentManifest, proposed: canonical),
       "toml": .string(canonical),
-      "transport_will_restart": .bool(gatewayWasRunning),
+      "transport_will_restart": .bool(false),
     ]
     if name == "config.import", arguments["apply"]?.boolValue == true {
       guard
@@ -979,7 +978,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       }
       let revision = try await operations.activateManifest(canonical, expectedDigest: expected)
       result["applied_revision"] = .string(revision.id)
-      result["transport_restarted"] = .bool(gatewayWasRunning)
+      result["transport_restarted"] = .bool(false)
     }
     return .object(result)
   }

@@ -15,8 +15,11 @@ stop, and restart; workspace registration/grants; profile activation and Full
 Shell state; manifest activation/rollback; provider refresh; and Tunnel
 configuration/lifecycle. It preserves desired state, validates compatible
 Tunnel profiles, restarts an already-running gateway when required, reconnects
-desired Tunnels, and rolls profile or manifest changes back when activation
-fails.
+desired Tunnels, and rolls profile changes back when activation fails. Managed
+manifest activation/rollback, manual MCP, plugin and workspace changes prepare
+candidate runtimes before committing their state and synchronously publishing
+routes. They preserve current connections and existing task owners; failed
+candidates leave the admitted configuration active.
 
 `AppControlPlaneService` owns durable state and direct domain mechanisms:
 manifest revisions, GRDB records, security-scoped bookmarks, Keychain secrets,

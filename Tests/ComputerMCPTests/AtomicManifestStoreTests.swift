@@ -8,6 +8,50 @@ import Testing
 @Suite
 
 final class AtomicManifestStoreTests {
+  @Test(arguments: ["publish", "conflict", "file"])
+  func preparedPublicationCommitsFileAndResolutionTogether(outcome: String) throws {
+    let fixture = try ManifestStoreFixture()
+    defer { fixture.cleanup() }
+    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    try fixture.database.saveWorkspace(
+      .init(id: "workspace", displayName: "Workspace", rootPath: fixture.root.path))
+    let before = try fixture.database.configurationState()
+    let store = try AtomicManifestStore(
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      fileManager: outcome == "file"
+        ? RejectingManifestMetadata(manifestURL: fixture.manifestURL) : .default)
+    let candidate = try store.prepare(
+      manifest: Self.manifest(name: "candidate"), expectedDigest: original.digest)
+    #expect(try store.activeConfiguration().server.name == "original")
+    #expect(try fixture.database.configurationState() == before)
+    #expect(try store.history().map(\.id) == [original.id])
+    let workspace = try #require(before.workspaces.first)
+    var refreshed = workspace
+    refreshed.bookmarkData = Data([1, 2, 3])
+    let resolution = GatewayConfigurationResolution(workspaces: [
+      .init(original: workspace, resolved: refreshed)
+    ])
+    if outcome == "conflict" { try fixture.database.saveProfile(.operate) }
+    var installed: GatewayDatabase.ConfigurationState?
+    if outcome == "publish" {
+      _ = try store.commit(candidate, resolution: resolution) { installed = $0 }
+      #expect(installed == (try fixture.database.configurationState()))
+      #expect(
+        try fixture.database.workspace(id: workspace.id)?.bookmarkData == refreshed.bookmarkData)
+      #expect(try store.activeConfiguration().server.name == "candidate")
+      #expect(try store.history().count == 2)
+    } else {
+      #expect(throws: (any Error).self) {
+        try store.commit(candidate, resolution: resolution) { installed = $0 }
+      }
+      #expect(installed == nil)
+      #expect(try fixture.database.workspace(id: workspace.id) == workspace)
+      #expect(try Data(contentsOf: fixture.manifestURL) == Data(original.manifest.utf8))
+      #expect(try store.activeConfiguration().server.name == "original")
+      #expect(try store.history().map(\.id) == [original.id])
+    }
+  }
+
   @Test
   func failedMetadataWriteRestoresFileAndRevisionAuthority() throws {
     let fixture = try ManifestStoreFixture()

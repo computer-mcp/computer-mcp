@@ -239,8 +239,8 @@ drained. Retirement reserves the runtime before asynchronous cleanup, preventing
 new admission during shutdown. Pending construction and cleanup count toward the
 128-runtime listener budget. Listener stop joins candidate construction and
 invalidates its publication epoch, so a late candidate cannot enter a restarted
-listener. Owner-side manifest and manual MCP management still use an explicit
-listener restart. Plugin mutations and workspace add, repair, remove and deduplication
+listener. Managed manifest activation/rollback, manual MCP changes, plugin
+mutations and workspace add, repair, remove and deduplication
 prepare candidates for every admitted identity and profile while existing calls
 continue. New identities wait at a bounded publication barrier. The host checks
 the manifest and persisted inputs, commits the prepared configuration and
@@ -421,10 +421,13 @@ annotations and metadata survive reexport alongside `structuredContent` and
 array remains empty. Unsupported or malformed content produces an error rather
 than silently dropping items or converting media to a text-only result.
 
-App-owned manual registration changes restart a running gateway. Existing
-socket sessions close, owned downstream processes are released, and clients
-reconnect to obtain the replacement catalog. Clients must handle transport
-termination and explicitly finish pending waits if their SDK does not do so.
+App-owned manual registration changes prepare a replacement generation before
+publishing it to existing connections. Clients can re-list the catalog and use
+new tools on the same connection. Old invocations and resource owners retain
+their original runtime until they finish or are explicitly closed; current
+authorization still applies to continuation calls. Candidate failure does not
+replace the manifest or publish partial database or routing state. Explicit transport shutdown still
+requires clients to finish pending waits if their SDK does not do so.
 A disconnected request has an unknown outcome unless independently verified;
 neither the gateway nor the client should replay a write merely because its
 response was lost.

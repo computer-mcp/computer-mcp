@@ -381,7 +381,7 @@ struct DiagnosticsView: View {
         title: Text("Roll back configuration?"),
         message: AppLocalization.verbatimText(
           AppLocalization.formatted(
-            "Revision %@ will be validated and activated atomically. The running gateway will restart.",
+            "Revision %@ will be validated and activated. Existing connections and running tasks will be preserved.",
             String(revision.digest.prefix(12))
           )
         ),

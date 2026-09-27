@@ -178,11 +178,28 @@ package actor AppControlPlaneService {
   }
 
   @discardableResult
-  package func activateManifest(_ manifest: String, expectedDigest: String? = nil) throws
+  func activateManifest(_ manifest: String, expectedDigest: String? = nil) throws
     -> ConfigurationRevision
   {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     return try manifestStore.activate(manifest: manifest, expectedDigest: expectedDigest)
+  }
+
+  func applyManifestChange(
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String?,
+    publish: @Sendable (GatewayInputs, PreparedManifestChange) async throws -> ConfigurationRevision
+  ) async throws -> ConfigurationRevision {
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
+    configurationMutationInProgress = true
+    defer { configurationMutationInProgress = false }
+    let inputs = try gatewayInputs()
+    let prepared = try manifestStore.prepare(
+      manifest: manifest, reason: reason, expectedDigest: expectedDigest,
+      expectedConfiguration: inputs.configuration)
+    guard prepared.persisted == inputs.persisted else {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    return try await publish(inputs, prepared)
   }
 
   package func activeConfiguration() throws -> GatewayConfiguration {
@@ -812,12 +829,6 @@ package actor AppControlPlaneService {
 
   package func configurationHistory(limit: Int = 50) throws -> [ConfigurationRevision] {
     try manifestStore.history(limit: limit)
-  }
-
-  @discardableResult
-  package func rollbackManifest(to revisionID: String) throws -> ConfigurationRevision {
-    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
-    return try manifestStore.rollback(to: revisionID)
   }
 
   @discardableResult

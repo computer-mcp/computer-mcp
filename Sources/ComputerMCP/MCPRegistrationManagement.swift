@@ -124,7 +124,6 @@ extension AppControlPlaneOperations {
   ) async throws -> MCPRegistrationChangePreview {
     let prepared = try await controlPlane.prepareMCPRegistrationChange(change)
     var preview = prepared.preview
-    preview.transportWillRestart = await gatewayService.snapshot().state == .running
     if apply {
       guard expectedCurrentDigest == preview.currentDigest else {
         throw AtomicManifestStoreError.staleDigest

@@ -13,6 +13,16 @@ internal struct ManifestChange: Codable, Equatable, Sendable {
   internal var reason: ManifestChangeReason
 }
 
+/// Validated input retained in memory while executable candidates are prepared.
+struct PreparedManifestChange: Sendable {
+  fileprivate let admissionID: UUID
+  fileprivate let previous: Data?
+  fileprivate let revision: ConfigurationRevision
+  fileprivate let reason: ManifestChangeReason
+  let configuration: GatewayConfiguration
+  let persisted: GatewayDatabase.ConfigurationState
+}
+
 internal protocol ManifestConfigurationLoading: Sendable {
   func load(path: String) throws -> GatewayConfiguration
 }
@@ -47,6 +57,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   private var knownDigest: String?
   // Protected by writeLock; disk edits become active only after validation.
   private var configuration: GatewayConfiguration?
+  private var admissionID = UUID()
 
   private var files: ManifestFileTransaction {
     ManifestFileTransaction(manifestURL: manifestURL, database: database, fileManager: fileManager)
@@ -209,11 +220,22 @@ internal final class AtomicManifestStore: @unchecked Sendable {
     throws
     -> ConfigurationRevision
   {
+    try commit(prepare(manifest: manifest, reason: reason, expectedDigest: expectedDigest))
+  }
+
+  func prepare(
+    manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String? = nil,
+    expectedConfiguration: GatewayConfiguration? = nil
+  ) throws -> PreparedManifestChange {
     writeLock.lock()
     defer { writeLock.unlock() }
     return try files.withExclusiveAccess {
       try files.recover()
+      if let expectedConfiguration, try admittedConfiguration() != expectedConfiguration {
+        throw AtomicManifestStoreError.staleDigest
+      }
       let previous = try files.currentData()
+      let persisted = try database.configurationState()
       if let expectedDigest {
         guard let previous, try Self.digest(of: previous) == expectedDigest else {
           throw AtomicManifestStoreError.staleDigest
@@ -232,12 +254,38 @@ internal final class AtomicManifestStore: @unchecked Sendable {
       guard try Data(contentsOf: stagedURL) == data else {
         throw AtomicManifestStoreError.staleDigest
       }
-      let revision = ConfigurationRevision(
-        digest: try Self.digest(of: data), manifest: manifest, activatedAt: Date())
-      try files.commit(stagedURL: stagedURL, previous: previous, revision: revision)
-      configuration = loaded
+      return PreparedManifestChange(
+        admissionID: admissionID, previous: previous,
+        revision: ConfigurationRevision(digest: try Self.digest(of: data), manifest: manifest),
+        reason: reason, configuration: loaded, persisted: persisted)
+    }
+  }
+
+  func commit(
+    _ prepared: PreparedManifestChange, resolution: GatewayConfigurationResolution = .init(),
+    install: (GatewayDatabase.ConfigurationState) -> Void = { _ in }
+  ) throws -> ConfigurationRevision {
+    writeLock.lock()
+    defer { writeLock.unlock() }
+    return try files.withExclusiveAccess {
+      try files.recover()
+      guard prepared.admissionID == admissionID,
+        try files.currentData() == prepared.previous
+      else { throw AtomicManifestStoreError.staleDigest }
+      let stagedURL = manifestURL.deletingLastPathComponent().appendingPathComponent(
+        ".\(manifestURL.lastPathComponent).staged.\(UUID().uuidString)")
+      defer { try? fileManager.removeItem(at: stagedURL) }
+      var revision = prepared.revision
+      revision.activatedAt = Date()
+      try ManifestFileTransaction.writeAndSynchronize(Data(revision.manifest.utf8), to: stagedURL)
+      let persisted = try files.commit(
+        stagedURL: stagedURL, previous: prepared.previous, revision: revision,
+        expected: prepared.persisted, resolution: resolution)
+      configuration = prepared.configuration
+      admissionID = UUID()
       setKnownDigest(revision.digest)
-      publish(ManifestChange(revision: revision, reason: reason))
+      install(persisted)
+      publish(ManifestChange(revision: revision, reason: prepared.reason))
       return revision
     }
   }
@@ -258,6 +306,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
           digest: digest, manifest: manifest, activatedAt: Date())
         try database.saveConfigurationRevision(revision)
         configuration = loaded
+        admissionID = UUID()
         setKnownDigest(digest)
         publish(ManifestChange(revision: revision, reason: .externalReload))
       }

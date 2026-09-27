@@ -281,35 +281,14 @@ package struct AppControlPlaneOperations: Sendable {
   package func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws
     -> ConfigurationRevision
   {
-    let previous = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
-    let revision = try await controlPlane.activateManifest(manifest, expectedDigest: expectedDigest)
-    do {
-      _ = try await restartGatewayIfRunning()
-      return revision
-    } catch {
-      _ = try? await controlPlane.activateManifest(previous, expectedDigest: revision.digest)
-      _ = try? await restartGatewayIfRunning()
-      throw error
-    }
+    try await gatewayService.changeManifest(manifest, expectedDigest: expectedDigest)
   }
 
   package func rollbackManifest(to revisionID: String) async throws -> ConfigurationRevision {
-    let previous = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
-    let revision = try await controlPlane.rollbackManifest(to: revisionID)
-    do {
-      _ = try await restartGatewayIfRunning()
-      return revision
-    } catch {
-      _ = try? await controlPlane.activateManifest(previous)
-      _ = try? await restartGatewayIfRunning()
-      throw error
+    guard let revision = try controlPlane.database.configurationRevision(id: revisionID) else {
+      throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
+    return try await gatewayService.changeManifest(revision.manifest, reason: .rolledBack)
   }
 
   package func refreshProvider(id: String? = nil) async throws -> [ProviderState] {

@@ -48,8 +48,9 @@ struct ManifestFileTransaction {
 
   /// Called under the manifest lock; the database callback remains synchronous.
   func commit(
-    stagedURL: URL, previous: Data?, revision: ConfigurationRevision
-  ) throws {
+    stagedURL: URL, previous: Data?, revision: ConfigurationRevision,
+    expected: GatewayDatabase.ConfigurationState, resolution: GatewayConfigurationResolution
+  ) throws -> GatewayDatabase.ConfigurationState {
     guard try currentData() == previous else { throw AtomicManifestStoreError.staleDigest }
     let record = ManifestRecoveryRecord(version: 1, revision: revision, previous: previous)
     let temporary = recoveryURL.appendingPathExtension(UUID().uuidString)
@@ -61,9 +62,14 @@ struct ManifestFileTransaction {
       throw AtomicManifestStoreError.posix(
         operation: "publish manifest recovery record", code: errno)
     }
+    var committed: GatewayDatabase.ConfigurationState?
     do {
       try Self.synchronizeDirectory(manifestURL.deletingLastPathComponent())
-      try database.activateConfigurationRevision(revision) {
+      _ = try database.activateConfigurationRevision(
+        revision, expected: expected, resolution: resolution
+      ) {
+        state in
+        committed = state
         guard try currentData() == previous else { throw AtomicManifestStoreError.staleDigest }
         guard rename(stagedURL.path, manifestURL.path) == 0 else {
           throw AtomicManifestStoreError.posix(operation: "replace manifest", code: errno)
@@ -80,6 +86,8 @@ struct ManifestFileTransaction {
     // The durable revision already committed. Cleanup cannot turn success into
     // failure; the next admission or startup retries an outstanding journal.
     try? removeRecoveryRecord()
+    guard let committed else { throw AtomicManifestStoreError.invalidRecoveryJournal }
+    return committed
   }
 
   @discardableResult

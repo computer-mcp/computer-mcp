@@ -22,6 +22,8 @@ package struct MCPHostContext: Encodable, Sendable {
   let managedWorkspaceRoot: String?
   /// Host-local recovery storage; never serialized into downstream launch metadata.
   var processOwnershipRoot: URL?
+  /// Host-owned file identities by registration; never supplied in plugin arguments.
+  var pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
   /// Host-local execution receipts and identity are never environment credentials.
   let executionDatabase: GatewayDatabase?
   let principalID: String

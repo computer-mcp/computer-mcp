@@ -86,6 +86,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var sourceConfiguration = configuration
     let pluginState = try (database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
+    let artifactLeases = try Self.retainPluginArtifacts(
+      state: pluginState, plugins: plugins, database: database)
+    lifetime.onShutdown {
+      for lease in artifactLeases { lease.close() }
+    }
     sourceConfiguration.knownPluginMCPServerIDs.formUnion(pluginState.knownMCPRegistrationIDs)
     let resolved =
       try plugins == nil ? PluginHost.resolve(pluginState, bundled: bundledPlugins) : nil
@@ -162,19 +167,27 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
       workspaceByID[workspace.id] = access.workspace
       accessByID[workspace.id] = access
+      var hostContext = MCPHostContext(
+        runtimeID: runtimeID, context: effectiveContext, workspaceID: workspace.id,
+        rootURL: access.rootURL, readOnly: !mcpGrant.permitsRisk(.workspaceWrite),
+        tools: hostToolDirectory,
+        managedWorkspaceRoot: database?.fileURL?.deletingLastPathComponent()
+          .appendingPathComponent("Managed Worktrees", isDirectory: true),
+        processOwnershipRoot: database?.mcpProcessOwnershipRoot, executionDatabase: database)
+      for (registration, origin) in composition.origins where registration.kind == .mcp {
+        if let lease = artifactLeases.first(where: {
+          $0.identity.url.appendingPathComponent("package").path == origin.source.root.path
+        }) {
+          hostContext.pluginArtifacts[registration.id] = lease.identity
+        }
+      }
       let registry = GatewayToolRegistry(
         configuration: workspaceConfiguration,
         commandRunner: commandRunner,
         processManager: processManager,
         shellManager: shellManager,
         mcpClient: scopedMCPClient,
-        hostContext: MCPHostContext(
-          runtimeID: runtimeID, context: effectiveContext, workspaceID: workspace.id,
-          rootURL: access.rootURL, readOnly: !mcpGrant.permitsRisk(.workspaceWrite),
-          tools: hostToolDirectory,
-          managedWorkspaceRoot: database?.fileURL?.deletingLastPathComponent()
-            .appendingPathComponent("Managed Worktrees", isDirectory: true),
-          processOwnershipRoot: database?.mcpProcessOwnershipRoot, executionDatabase: database)
+        hostContext: hostContext
       )
       let registryCleanup = lifetime.onShutdown { await registry.shutdown() }
       let additionalProviders: [any GatewayToolProvider] = [

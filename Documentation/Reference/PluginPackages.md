@@ -301,6 +301,22 @@ points into the directory, uninstall refuses the change. A cleanup failure after
 a successful database commit returns the committed state with a recovery issue;
 it must not delete a successfully installed version as an apparent rollback.
 
+Before resolving an enabled managed artifact, a runtime acquires a shared file
+lease under the installation transaction lock. Cleanup requires the exclusive
+lease, so uninstall can revoke selection while retaining files and their
+ownership receipt for later recovery. Multiple runtimes may hold the same
+artifact; releasing one does not release another's protection. Lease files are
+host-owned, outside the package payload, and validated against symlinks, file
+ownership and the receipted directory identity.
+
+Downstream MCP launch receipts also bind the managed artifact identity. Cleanup
+checks these persisted receipts and locks held by supervisors and watchdogs,
+including after the runtime or host exits. An uncertain cleanup receipt retains
+the artifact until the existing reviewed process-recovery procedure succeeds.
+Legacy receipts lack artifact provenance, so live or uncertain legacy owners
+conservatively retain files. Neither a supervisor exit nor a released host
+reference proves that all inherited owners have finished.
+
 Recovery holds the same lock. A receipted committed installation retains its
 package and loses only reserved staging files. A missing package directory,
 symlink, non-directory or non-private payload produces an issue without
@@ -312,9 +328,9 @@ preserved, including a directory created immediately before a crash prevented
 its ownership receipt from being committed. Recovery does not infer ownership
 from a UUID-looking name, process ID or age.
 
-These store APIs require the host to quiesce affected runtime tasks before
-changing selected files. App and owner-only CLI mutations use the same idle
-gateway admission reservation. They never interrupt connected clients.
+App and owner-only CLI mutations use the same idle gateway admission reservation.
+They never interrupt connected clients. File leases protect managed artifacts;
+they do not by themselves implement live routing or detached-work retirement.
 Connections remain busy while session creation or downstream cleanup is in
 progress, including after the client has disconnected. Stopping the socket
 server waits for those owners to finish before reporting completion.

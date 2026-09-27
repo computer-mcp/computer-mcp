@@ -7,6 +7,7 @@ package enum PluginStoreError: Error, Equatable, LocalizedError, Sendable {
   case invalidState
   case manifestChanged(String)
   case installationBusy
+  case artifactInUse
 
   package var errorDescription: String? {
     switch self {
@@ -17,6 +18,8 @@ package enum PluginStoreError: Error, Equatable, LocalizedError, Sendable {
       "Plugin '\(id)' changed on disk. Explicitly refresh its development registration before activation."
     case .installationBusy:
       "A plugin installation or recovery is still running. Retry when it finishes."
+    case .artifactInUse:
+      "Plugin files are still in use. They will be retained until their owners finish."
     }
   }
 }

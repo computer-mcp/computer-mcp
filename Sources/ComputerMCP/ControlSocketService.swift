@@ -1112,6 +1112,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         case .invalidState: "invalid_state"
         case .manifestChanged: "manifest_changed"
         case .installationBusy: "installation_busy"
+        case .artifactInUse: "artifact_in_use"
         }
       return (.failed, "plugin.\(code)")
     }

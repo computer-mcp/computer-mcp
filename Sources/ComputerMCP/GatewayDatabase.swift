@@ -7,12 +7,15 @@ package final class GatewayDatabase: @unchecked Sendable {
   private let profileChangeLock = NSLock()
   private var profileChangeBroadcasters: [GatewayProfileID: GatewayToolChangeBroadcaster] = [:]
   let fileURL: URL?
+  private let transientOwnershipID = UUID()
 
   var mcpProcessOwnershipRoot: URL? {
     fileURL.map {
       $0.deletingLastPathComponent().appendingPathComponent(
         $0.lastPathComponent + ".mcp-processes", isDirectory: true)
     }
+      ?? FileManager.default.temporaryDirectory.appendingPathComponent(
+        "computer-mcp-mcp-processes-" + transientOwnershipID.uuidString, isDirectory: true)
   }
 
   package init(path: String) throws {

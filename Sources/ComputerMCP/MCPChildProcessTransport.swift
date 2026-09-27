@@ -62,12 +62,10 @@ actor MCPChildProcessTransport: MCP.Transport {
         "Could not start MCP server '\(server.id)': \(inspection.message)")
     }
     let ownership = try MCPProcessOwnership.acquire(
-      root: hostContext?.processOwnershipRoot
-        ?? FileManager.default.temporaryDirectory.appendingPathComponent(
-          "computer-mcp-mcp-processes", isDirectory: true),
+      root: hostContext?.processOwnershipRoot ?? MCPProcessOwnership.defaultRoot,
       workspace: hostContext.map { URL(fileURLWithPath: $0.workspace.rootPath) }
         ?? workingDirectory,
-      registration: server.id)
+      registration: server.id, artifact: hostContext?.pluginArtifacts[server.id])
     self.ownership = ownership
     let session =
       try server.hostServices

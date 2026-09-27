@@ -77,7 +77,9 @@ extension PluginStore {
     do {
       try database.recordPluginDirectory(owned)
     } catch {
-      try storage.clean(identity, keepingPackage: false)
+      try storage.clean(
+        identity, keepingPackage: false,
+        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
       throw error
     }
     let preparation = PluginArchivePreparation(
@@ -105,7 +107,9 @@ extension PluginStore {
         return PluginStoreMutation(snapshot: current, issues: [cleanupIssue(pluginID)])
       }
       guard !Self.isReferenced(identity, in: current) else { throw PluginStoreError.invalidState }
-      try storage.clean(identity, keepingPackage: false)
+      try storage.clean(
+        identity, keepingPackage: false,
+        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
       try database.forgetPluginDirectory(owned)
       throw error
     }
@@ -135,7 +139,7 @@ extension PluginStore {
   }
 
   /// Revokes only this artifact's registration. Host overrides and other versions survive.
-  /// Callers must finish affected tasks and release their processes before this operation.
+  /// In-use files remain receipted for recovery after their runtime owners drain.
   package func uninstallArtifact(
     installationID: String, storageRoot: URL, expectedRevision: Int64
   ) throws -> PluginStoreMutation {
@@ -159,7 +163,9 @@ extension PluginStore {
     guard !Self.isReferenced(owned.identity, in: state) else { throw PluginStoreError.invalidState }
     let committed = try commit(state, expectedRevision: expectedRevision)
     do {
-      try storage.clean(owned.identity, keepingPackage: false)
+      try storage.clean(
+        owned.identity, keepingPackage: false,
+        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
       try database.forgetPluginDirectory(owned)
       return PluginStoreMutation(snapshot: committed, issues: [])
     } catch {
@@ -189,7 +195,10 @@ extension PluginStore {
           guard !Self.isReferenced(owned.identity, in: state) else {
             throw PluginStoreError.invalidState
           }
-          try storage.clean(owned.identity, keepingPackage: false)
+          try storage.clean(
+            owned.identity, keepingPackage: false,
+            processOwnershipRoot: database.mcpProcessOwnershipRoot
+              ?? MCPProcessOwnership.defaultRoot)
           try database.forgetPluginDirectory(owned)
         }
       } catch {

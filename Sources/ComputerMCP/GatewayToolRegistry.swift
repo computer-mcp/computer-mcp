@@ -1708,9 +1708,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     for configuredTool in configuration.tools {
       guard let target = configuredTool.tool,
         let server = configuration.mcp.servers.first(where: { $0.id == configuredTool.source }),
-        mcpClient.isServerVisible(server), server.permitsTool(target)
+        mcpClient.isServerVisible(server), server.permitsTool(target),
+        let downstream = try permittedDownstreamTools(server: server).first(where: {
+          $0.name == target
+        })
       else { continue }
-      try appendTool(try toolDefinition(for: configuredTool), to: &tools)
+      try appendTool(try toolDefinition(for: configuredTool, downstream: downstream), to: &tools)
     }
 
     for server in configuration.mcp.servers where server.exposure.includesReexport {
@@ -2710,13 +2713,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
   }
 
-  private func toolDefinition(for tool: ToolConfig) throws -> MCPTool {
+  private func toolDefinition(for tool: ToolConfig, downstream: MCPTool) throws -> MCPTool {
     MCPTool(
       name: tool.name,
       description: tool.description
         ?? "Call configured \(tool.adapter.rawValue) tool \(tool.name).",
       inputSchema: try tool.inputSchemaValue(),
       outputSchema: nil,
+      meta: downstream.meta,
       mcpReference: tool.tool.map { MCPToolReference(serverID: tool.source, toolName: $0) }
     )
   }
@@ -27996,18 +28000,33 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return pathValue.split(separator: ":").map(String.init).filter { !$0.isEmpty }
   }
 
-  internal func capability(for tool: MCPTool) -> CapabilityDescriptor {
+  internal func capability(for tool: MCPTool) throws -> CapabilityDescriptor {
     guard let reference = tool.mcpReference else {
       return GatewayCapabilityCatalog().descriptor(for: tool)
     }
     return CapabilityDescriptor(
       id: tool.name,
-      risk: configuration.mcpRisk(for: reference),
+      risk: try configuration.mcpRisk(for: reference, declaredBy: tool),
       workspaceRequirement: .optional,
       usesNetwork: true,
       mcpReference: reference,
       equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference)
     )
+  }
+
+  internal func downstreamRisk(for reference: MCPToolReference) throws -> CapabilityRisk {
+    let server = try mcpServer(reference.serverID)
+    try requireDownstreamToolAllowed(reference.toolName, server: server)
+    guard
+      let tool = try permittedDownstreamTools(server: server).first(where: {
+        $0.name == reference.toolName
+      })
+    else {
+      throw GatewayToolError.invalidArguments(
+        "[mcp.tool_unavailable] The downstream tool is not available in the current authorized catalog."
+      )
+    }
+    return try configuration.mcpRisk(for: reference, declaredBy: tool)
   }
 
   internal func callTool(definition: MCPTool, arguments: JSONValue?) throws -> JSONValue {
@@ -28042,11 +28061,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
             requestID: optionalString("request_id", in: object)))
       }
     }
+    let authorization = MCPInvocationRisk.current
     return try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         continuation.resume(
           with: Result {
-            try self.callTool(definition: definition, arguments: arguments)
+            try MCPInvocationRisk.$current.withValue(authorization) {
+              try self.callTool(definition: definition, arguments: arguments)
+            }
           })
       }
     }

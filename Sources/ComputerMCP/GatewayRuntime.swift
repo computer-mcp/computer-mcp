@@ -20,6 +20,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     @Sendable (String, GatewayTransportTrace?) throws -> GatewayRuntime
   private static let construction = BlockingOperationExecutor(
     label: "computer-mcp.gateway-construction", serial: false)
+  private static let admission = BlockingOperationExecutor(
+    label: "computer-mcp.gateway-admission", serial: false)
   private let hostToolDirectory = MCPHostToolDirectory()
   package let pluginOrigins: [IntegrationRegistration: PluginContributionOrigin]
   package let pluginDiagnostics: [PluginResolutionDiagnostic]
@@ -381,9 +383,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "policy.host_recursion_denied",
         message: "A host callback cannot enter a domain runtime recursively.")
     }
-    let descriptor = try invocationDescriptor(named: name, arguments: arguments)
-    guard !descriptor.localOnly,
-      descriptor.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true,
+    let target = try descriptor(
+      named: name, workspaceID: arguments["workspace_id"]?.stringValue ?? context.workspaceID)
+    guard !target.localOnly,
+      target.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true,
       !(name.hasPrefix("mcp.")
         && arguments["server"]?.stringValue.map(hostServiceRegistrations.contains) == true)
     else {
@@ -392,6 +395,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message:
           "Host administration and callback-enabled MCP registrations are not callback targets.")
     }
+    let descriptor = try invocationDescriptor(named: name, arguments: arguments, context: context)
     let routed = try route(descriptor: descriptor, arguments: arguments, context: context)
     try authorize(descriptor, context: routed.context)
     let current = try currentHostGrant()
@@ -425,7 +429,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       hostServiceRegistrations.contains(reference.serverID)
     else { return nil }
     let invocation = MCPHostInvocation(
-      reference: reference, upstreamName: name, upstreamArguments: arguments,
+      reference: reference, admittedCapability: descriptor, upstreamName: name,
+      upstreamArguments: arguments,
       arguments: name == "mcp.tools.call" ? arguments["arguments"]?.objectValue ?? [:] : arguments,
       context: context, ticketID: linkage?.ticketID, ticketInvocationID: linkage?.invocationID,
       parentRequestID: linkage?.parentRequestID)
@@ -446,8 +451,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "policy.host_invocation_required",
         message: "Host service requires one matching live gateway invocation.")
     }
-    let descriptor = try invocationDescriptor(
-      named: invocation.upstreamName, arguments: invocation.upstreamArguments)
+    // The parent is suspended waiting for this callback; rediscovery on that
+    // same downstream connection can deadlock. Its admitted effect is immutable,
+    // while the host grant is checked again for every callback.
+    let descriptor = invocation.admittedCapability
     guard descriptor.mcpReference == invocation.reference,
       policyEvaluator.evaluate(
         capability: descriptor, context: invocation.context,
@@ -679,7 +686,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ?? Self.operationLinkageFromArguments(name: name, arguments: arguments)
 
     do {
-      let descriptor = try invocationDescriptor(named: name, arguments: arguments)
+      let descriptor = try invocationDescriptor(
+        named: name, arguments: arguments, context: originalContext)
       let routed = try route(
         descriptor: descriptor,
         arguments: arguments,
@@ -737,11 +745,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           descriptor: descriptor, name: name, arguments: routed.arguments,
           context: routed.context, linkage: operationLinkage)
         defer { hostToolDirectory.end(hostInvocation) }
-        rawResult = try providerRouter.callTool(
-          name: name,
-          arguments: .object(routed.arguments),
-          expectedCapability: name == "mcp.tools.call" ? nil : descriptor
-        )
+        rawResult = try MCPInvocationRisk.$current.withValue(
+          MCPInvocationRisk(descriptor: descriptor)
+        ) {
+          try providerRouter.callTool(
+            name: name,
+            arguments: .object(routed.arguments),
+            expectedCapability: name == "mcp.tools.call" ? nil : descriptor
+          )
+        }
       }
       let result = Self.attachExecutionMetadata(
         to: rawResult,
@@ -797,7 +809,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ?? Self.operationLinkageFromArguments(name: name, arguments: arguments)
 
     do {
-      let descriptor = try invocationDescriptor(named: name, arguments: arguments)
+      let descriptor = try await Self.admission.perform {
+        try self.invocationDescriptor(named: name, arguments: arguments, context: originalContext)
+      }
       let routed = try route(
         descriptor: descriptor,
         arguments: arguments,
@@ -810,9 +824,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         authorizedGrant.confirmationPolicy.requiresConfirmation(
           for: effectiveOperationDescriptor(descriptor, arguments: routed.arguments).risk)
       {
-        let pending = try prepareOperation(
-          arguments: ["tool": .string(name), "arguments": .object(routed.arguments)],
-          context: routed.context)
+        let pending = try await Self.admission.perform {
+          try self.prepareOperation(
+            arguments: ["tool": .string(name), "arguments": .object(routed.arguments)],
+            context: routed.context)
+        }
         throw Self.invalid(
           code: "operations.approval_required",
           message:
@@ -827,21 +843,20 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       case "workspace.describe":
         rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
       case "policy.probe":
-        rawResult = try resultEnvelope(
-          policyProbe(arguments: routed.arguments, context: routed.context)
-        )
+        rawResult = try await Self.admission.perform {
+          try self.resultEnvelope(
+            self.policyProbe(arguments: routed.arguments, context: routed.context))
+        }
       case "operations.prepare":
-        let preparation = try prepareOperation(
-          arguments: routed.arguments,
-          context: routed.context
-        )
+        let preparation = try await Self.admission.perform {
+          try self.prepareOperation(arguments: routed.arguments, context: routed.context)
+        }
         operationLinkage = OperationAuditLinkage(ticketID: preparation.ticketID)
         rawResult = try resultEnvelope(preparation.result)
       case "operations.commit":
-        let invocation = try beginOperationCommit(
-          arguments: routed.arguments,
-          context: routed.context
-        )
+        let invocation = try await Self.admission.perform {
+          try self.beginOperationCommit(arguments: routed.arguments, context: routed.context)
+        }
         operationLinkage = invocation.linkage
         rawResult = try await executeCommittedOperationAsync(invocation)
       default:
@@ -855,11 +870,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           descriptor: descriptor, name: name, arguments: routed.arguments,
           context: routed.context, linkage: operationLinkage)
         defer { hostToolDirectory.end(hostInvocation) }
-        rawResult = try await providerRouter.callToolAsync(
-          name: name,
-          arguments: .object(routed.arguments),
-          expectedCapability: name == "mcp.tools.call" ? nil : descriptor
-        )
+        rawResult = try await MCPInvocationRisk.$current.withValue(
+          MCPInvocationRisk(descriptor: descriptor)
+        ) {
+          try await providerRouter.callToolAsync(
+            name: name,
+            arguments: .object(routed.arguments),
+            expectedCapability: name == "mcp.tools.call" ? nil : descriptor
+          )
+        }
       }
       let result = Self.attachExecutionMetadata(
         to: rawResult,
@@ -918,7 +937,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
     }
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
-    let targetDescriptor = try invocationDescriptor(named: toolName, arguments: targetArguments)
+    let targetDescriptor = try invocationDescriptor(
+      named: toolName, arguments: targetArguments, context: context)
     let effectiveRisk = effectiveOperationDescriptor(
       targetDescriptor, arguments: targetArguments
     ).risk
@@ -1003,7 +1023,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
     }
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
-    let targetDescriptor = try invocationDescriptor(named: capabilityID, arguments: targetArguments)
+    let targetDescriptor = try invocationDescriptor(
+      named: capabilityID, arguments: targetArguments, context: context)
     let routed = try route(
       descriptor: targetDescriptor,
       arguments: targetArguments,
@@ -1048,7 +1069,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message: "The operation ticket is not bound to this principal, profile, and tool."
       )
     }
-    let targetDescriptor = try invocationDescriptor(named: toolName, arguments: targetArguments)
+    let targetDescriptor = try invocationDescriptor(
+      named: toolName, arguments: targetArguments, context: context)
     let routed = try route(
       descriptor: targetDescriptor,
       arguments: targetArguments,
@@ -1355,44 +1377,56 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return true
   }
 
-  private func descriptor(named name: String) throws -> CapabilityDescriptor {
+  private func descriptor(named name: String, workspaceID: String? = nil) throws
+    -> CapabilityDescriptor
+  {
     if let tool = Self.coreTools(databaseEnabled: database != nil)
       .first(where: { $0.name == name })
     {
       return GatewayCapabilityCatalog().descriptor(for: tool)
     }
-    if let firstProviderRouter {
-      return try firstProviderRouter.capability(named: name)
+    if let router = workspaceID.flatMap({ providerRouters[$0] }) ?? firstProviderRouter {
+      return try router.capability(named: name)
     }
     throw GatewayToolError.unknownTool(name)
   }
 
   private func invocationDescriptor(
-    named name: String, arguments: [String: JSONValue]
+    named name: String, arguments: [String: JSONValue], context: ExecutionContext
   ) throws -> CapabilityDescriptor {
-    var descriptor = try descriptor(named: name)
-    guard name == "mcp.tools.call" else { return descriptor }
-    let serverID = try Self.requiredString("server", in: arguments)
-    let toolName = try Self.requiredString("tool", in: arguments)
-    let reference = MCPToolReference(serverID: serverID, toolName: toolName)
-    descriptor.mcpReference = reference
-    descriptor.equivalentCapabilityIDs = configuration.mcpCapabilityIDs(for: reference)
-    descriptor.risk = configuration.mcpRisk(for: reference)
-    // Denial must not reveal whether an out-of-scope registration or selection exists.
-    guard try currentHostGrant().grants(descriptor) else {
-      throw Self.invalid(
-        code: PolicyDenialCode.capabilityDenied.rawValue,
-        message: "The profile does not grant this downstream MCP tool.")
+    let workspaceID = arguments["workspace_id"]?.stringValue ?? context.workspaceID
+    var descriptor = try descriptor(named: name, workspaceID: workspaceID)
+    if name == "mcp.tools.call" {
+      let serverID = try Self.requiredString("server", in: arguments)
+      let toolName = try Self.requiredString("tool", in: arguments)
+      let reference = MCPToolReference(serverID: serverID, toolName: toolName)
+      descriptor.mcpReference = reference
+      descriptor.equivalentCapabilityIDs = configuration.mcpCapabilityIDs(for: reference)
+      descriptor.risk = configuration.mcpRisk(for: reference)
+      // Denial must not reveal whether an out-of-scope registration or selection exists.
+      guard try currentHostGrant().grants(descriptor) else {
+        throw Self.invalid(
+          code: PolicyDenialCode.capabilityDenied.rawValue,
+          message: "The profile does not grant this downstream MCP tool.")
+      }
+      guard let server = configuration.mcp.servers.first(where: { $0.id == serverID }) else {
+        throw GatewayToolError.unknownMCPServer(serverID)
+      }
+      guard server.permitsTool(toolName) else {
+        throw Self.invalid(
+          code: "mcp.tool_not_approved",
+          message: "The host has not approved this downstream MCP tool.")
+      }
+      if server.hostServices { descriptor.workspaceRequirement = .required }
     }
-    guard let server = configuration.mcp.servers.first(where: { $0.id == serverID }) else {
-      throw GatewayToolError.unknownMCPServer(serverID)
-    }
-    guard server.permitsTool(toolName) else {
-      throw Self.invalid(
-        code: "mcp.tool_not_approved",
-        message: "The host has not approved this downstream MCP tool.")
-    }
-    if server.hostServices { descriptor.workspaceRequirement = .required }
+    guard let reference = descriptor.mcpReference else { return descriptor }
+    let routed = try route(descriptor: descriptor, arguments: arguments, context: context)
+    // Check caller and workspace authority before querying a downstream catalog.
+    try authorize(descriptor, context: routed.context)
+    guard let workspaceID = routed.registryWorkspaceID,
+      let router = providerRouters[workspaceID]
+    else { throw GatewayRuntimeError.noWorkspaces }
+    descriptor.risk = try router.downstreamRisk(for: reference)
     return descriptor
   }
 
@@ -1722,7 +1756,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     ]
     guard reviewedTargets.contains(tool), configuration.builtin.enabled.contains(tool),
       !configuration.tools.contains(where: { $0.name == tool }),
-      try invocationDescriptor(named: tool, arguments: arguments).mcpReference == nil
+      try invocationDescriptor(named: tool, arguments: arguments, context: context).mcpReference
+        == nil
     else { return nil }
     guard let workspaceID = context.workspaceID,
       let rootURL = workspaceAccesses[workspaceID]?.rootURL.standardizedFileURL
@@ -2122,12 +2157,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 }
 
-private struct PreparedOperation {
+private struct PreparedOperation: Sendable {
   var ticketID: String
   var result: JSONValue
 }
 
-private struct OperationAuditLinkage {
+private struct OperationAuditLinkage: Sendable {
   var ticketID: String
   var invocationID: String?
   var parentRequestID: String?
@@ -2143,7 +2178,7 @@ private struct OperationAuditLinkage {
   }
 }
 
-private struct OperationInvocation {
+private struct OperationInvocation: Sendable {
   var ticketID: String
   var invocationID: String
   var parentRequestID: String
@@ -2160,7 +2195,7 @@ private struct OperationInvocation {
   }
 }
 
-private struct RoutedCall {
+private struct RoutedCall: Sendable {
   var arguments: [String: JSONValue]
   var context: ExecutionContext
   var registryWorkspaceID: String?

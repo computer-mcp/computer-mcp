@@ -343,6 +343,7 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
   private let lock = NSLock()
   private var captured: MCPHostContext?
   private var handler: (@Sendable () async throws -> JSONValue)?
+  private var activeCalls = 0
   var context: MCPHostContext? { lock.withLock { captured } }
   func setHandler(_ value: (@Sendable () async throws -> JSONValue)?) {
     lock.withLock { handler = value }
@@ -354,12 +355,18 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     return self
   }
   func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    Self.methods.map { .init(name: $0, description: "Fixture", inputSchema: .object([:])) }
+    // A serial provider cannot answer discovery while waiting for its host callback.
+    guard lock.withLock({ activeCalls == 0 }) else {
+      throw MCPHostServiceError.denied("Catalog queried while the parent call is suspended.")
+    }
+    return Self.methods.map { .init(name: $0, description: "Fixture", inputSchema: .object([:])) }
   }
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
     guard let handler = lock.withLock({ handler }) else {
       throw MCPHostServiceError.denied("Fixture handler absent.")
     }
+    lock.withLock { activeCalls += 1 }
+    defer { lock.withLock { activeCalls -= 1 } }
     let box = HostProbeResult()
     let ready = DispatchSemaphore(value: 0)
     let task = Task {

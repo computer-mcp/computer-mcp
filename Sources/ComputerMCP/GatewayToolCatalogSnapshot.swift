@@ -25,7 +25,7 @@ struct GatewayToolCatalogSnapshot: Sendable {
         }
         tools.append(tool)
         routes[tool.name] = Route(
-          tool: tool, capability: provider.capability(for: tool), provider: provider)
+          tool: tool, capability: try provider.capability(for: tool), provider: provider)
       }
     }
     self.tools = tools

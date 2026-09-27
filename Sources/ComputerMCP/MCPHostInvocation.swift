@@ -5,6 +5,7 @@ import Foundation
 struct MCPHostInvocation: Sendable {
   let id = UUID()
   let reference: MCPToolReference
+  let admittedCapability: CapabilityDescriptor
   let upstreamName: String
   let upstreamArguments: [String: JSONValue]
   let arguments: [String: JSONValue]

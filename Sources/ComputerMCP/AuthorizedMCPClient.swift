@@ -2,6 +2,8 @@ import Foundation
 
 /// Applies one profile's host-owned scope to every route into a downstream session.
 struct AuthorizedMCPClient: DownstreamMCPClient {
+  private static let discovery = BlockingOperationExecutor(
+    label: "computer-mcp.mcp-authorization-discovery", serial: false)
   let base: any DownstreamMCPClient
   let policy: MCPToolAccessPolicy
   var policyProvider: (@Sendable () throws -> MCPToolAccessPolicy)? = nil
@@ -32,7 +34,9 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     let policy = try currentPolicy
     guard policy.canDiscoverTools(on: server) else { return [] }
     return try base.listTools(server: server).filter {
-      policy.allows(.init(serverID: server.id, toolName: $0.name))
+      let reference = MCPToolReference(serverID: server.id, toolName: $0.name)
+      guard policy.allows(reference) else { return false }
+      return try policy.allows(reference, riskFloor: $0.declaredRiskFloor)
     }
   }
 
@@ -60,7 +64,12 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
   )
     async throws -> JSONValue
   {
-    try requireTool(name, server: server)
+    try Task.checkCancellation()
+    let authorization = MCPInvocationRisk.current
+    try await Self.discovery.perform {
+      try requireTool(name, server: server, authorization: authorization)
+    }
+    try Task.checkCancellation()
     return try await base.callToolAsync(
       server: server, name: name, arguments: arguments, requestID: requestID)
   }
@@ -122,11 +131,25 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     return try base.cancelRequest(server: server, requestID: requestID, reason: reason)
   }
 
-  private func requireTool(_ name: String, server: MCPServerConfig) throws {
-    guard try currentPolicy.allows(.init(serverID: server.id, toolName: name)) else {
+  private func requireTool(
+    _ name: String, server: MCPServerConfig,
+    authorization: MCPInvocationRisk? = MCPInvocationRisk.current
+  ) throws {
+    let reference = MCPToolReference(serverID: server.id, toolName: name)
+    try requireToolGrant(reference)
+    guard let tool = try base.listTools(server: server).first(where: { $0.name == name }) else {
       throw GatewayToolError.invalidArguments(
-        "[policy.capability_denied] The profile does not grant this downstream MCP tool.")
+        "[mcp.tool_unavailable] The downstream tool is not in the current catalog.")
     }
+    let floor = try tool.declaredRiskFloor
+    let policy = try currentPolicy
+    guard policy.allows(reference, riskFloor: floor) else {
+      throw GatewayToolError.invalidArguments(
+        "[policy.capability_denied] The profile does not grant the downstream tool's declared risk."
+      )
+    }
+    try authorization?.validate(
+      reference: reference, risk: policy.configuration.mcpRisk(for: reference).raised(to: floor))
   }
 
   func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int) throws
@@ -139,8 +162,17 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       throw GatewayToolError.executionFailed(
         "Execution receipt is missing its original tool identity.")
     }
-    try requireTool(tool, server: server)
+    // Receipt reads inspect host-owned output, not a new provider operation.
+    // Rediscovery can wait behind the very operation whose receipt is being polled.
+    try requireToolGrant(.init(serverID: server.id, toolName: tool))
     return result
+  }
+
+  private func requireToolGrant(_ reference: MCPToolReference) throws {
+    guard try currentPolicy.allows(reference) else {
+      throw GatewayToolError.invalidArguments(
+        "[policy.capability_denied] The profile does not grant this downstream MCP tool.")
+    }
   }
 
   private func requireServer(_ server: MCPServerConfig, capability: String) throws {

@@ -314,15 +314,13 @@ final class ProcessAndOpenAITunnelTests {
   func testChatGPTProfileAuditRejectsMissingReadOnlyAnnotation() throws {
     let configuration = GatewayConfiguration.fixture(
       cli: CLISectionConfig(),
-      tools: [
-        ToolConfig(name: "fake.sample", adapter: .mcp, source: "fake", tool: "sample")
-      ]
+      mcp: MCPSectionConfig()
     )
 
     expectThrows(
       try ChatGPTProfileAuditor().audit(
         configuration: configuration,
-        registry: GatewayToolRegistry(configuration: configuration),
+        registry: MissingAnnotationToolRegistry(),
         allowWriteTools: true
       )
     ) { error in
@@ -450,5 +448,15 @@ final class ProcessAndOpenAITunnelTests {
     ) { error in
       #expect(error.localizedDescription.contains("tunnel-client"))
     }
+  }
+}
+
+private struct MissingAnnotationToolRegistry: GatewayToolServing {
+  func listTools() throws -> [MCPTool] {
+    [.init(name: "fake.sample", description: "Fixture", inputSchema: .object([:]))]
+  }
+
+  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+    throw GatewayToolError.unknownTool(name)
   }
 }

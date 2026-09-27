@@ -22,6 +22,23 @@ MCP protocol handling is provided by the official Swift MCP SDK. The examples
 below document the wire shape for debugging; they are not a separate protocol
 implementation in this repository.
 
+## Downstream tool risk
+
+A downstream tool can declare a minimum risk in
+`_meta["io.github.computer-mcp/risk"]`: `read-only`, `workspace-write`,
+`external-write`, `destructive` or `full-shell`. The host uses the higher of
+this classification and its configured tool risk. Metadata cannot lower host
+policy or grant a capability. Missing declarations retain configured behavior;
+malformed or unknown declarations fail closed. Standard MCP annotations remain
+hints, not permission grants.
+
+Reexported tools, configured aliases and `mcp.tools.call` use the selected
+workspace's current definition. The effective risk applies to discovery,
+authorization, approval preparation and ticket commit. Execution rechecks the
+declaration; a higher risk observed after admission is rejected with `mcp.risk_changed`
+before dispatch. Retry through current host authorization and consent. Background
+calls use the same checks before starting work.
+
 ## Downstream Host Context
 
 For stdio registrations created by `GatewayRuntime`, the host supplies

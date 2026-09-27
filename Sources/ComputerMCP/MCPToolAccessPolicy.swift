@@ -6,11 +6,11 @@ struct MCPToolAccessPolicy: Sendable {
   let grant: ProfileGrant
   let derivesObserveGrant: Bool
 
-  func allows(_ reference: MCPToolReference) -> Bool {
+  func allows(_ reference: MCPToolReference, riskFloor: CapabilityRisk? = nil) -> Bool {
     guard let server = configuration.mcp.servers.first(where: { $0.id == reference.serverID }),
       server.permitsTool(reference.toolName)
     else { return false }
-    let risk = configuration.mcpRisk(for: reference)
+    let risk = configuration.mcpRisk(for: reference).raised(to: riskFloor)
     guard grant.permitsRisk(risk) else { return false }
     guard risk != .fullShell || grant.fullShellEnabled else { return false }
     if derivesObserveGrant && risk == .readOnly { return true }

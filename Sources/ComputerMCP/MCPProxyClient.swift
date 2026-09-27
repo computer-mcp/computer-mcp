@@ -547,7 +547,7 @@ private actor MCPProxyConnection {
 
     var json: JSONValue {
       .object([
-        "cursor": .number(Double(cursor)),
+        "cursor": .integer(Int64(cursor)),
         "kind": .string(kind),
         "timestamp": .number(timestamp.timeIntervalSince1970),
         "request_id": requestID.map(JSONValue.string) ?? .null,
@@ -852,8 +852,8 @@ private actor MCPProxyConnection {
         connected ? "connected" : connectTask == nil ? "not_connected" : "connecting"
       ),
       "persistent_session": .bool(true),
-      "active_requests": .number(Double(activeRequests.count)),
-      "latest_event_cursor": .number(Double(nextEventCursor - 1)),
+      "active_requests": .integer(Int64(activeRequests.count)),
+      "latest_event_cursor": .integer(Int64(nextEventCursor - 1)),
       "last_error": lastError.map(JSONValue.string) ?? .null,
       "initialize": initializeResult.flatMap { try? JSONValue.encoded($0) } ?? .null,
     ])
@@ -886,12 +886,12 @@ private actor MCPProxyConnection {
       "cursor_state": .string(
         missedEvents > 0 ? "truncated" : (sessionID != nil ? "valid" : "unbound")),
       "reset_required": .bool(false),
-      "after_cursor": .number(Double(afterCursor)),
-      "next_cursor": .number(Double(nextCursor)),
-      "oldest_available_cursor": .number(Double(oldestCursor)),
-      "latest_event_cursor": .number(Double(nextEventCursor - 1)),
+      "after_cursor": .integer(Int64(afterCursor)),
+      "next_cursor": .integer(Int64(nextCursor)),
+      "oldest_available_cursor": .integer(Int64(oldestCursor)),
+      "latest_event_cursor": .integer(Int64(nextEventCursor - 1)),
       "events": .array(selected.map(\.json)),
-      "missed_events": .number(Double(missedEvents)),
+      "missed_events": .integer(Int64(missedEvents)),
       "has_more": .bool(nextCursor < nextEventCursor - 1),
       "persistent_session": .bool(true),
     ])

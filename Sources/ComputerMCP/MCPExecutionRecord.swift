@@ -91,9 +91,9 @@ struct MCPExecutionRecord: Codable, Sendable {
       "started_at": .number(createdAt.timeIntervalSince1970),
       "completed_at": completedAt.map { .number($0.timeIntervalSince1970) } ?? .null,
       "cancellation": .string(cancellation), "cleanup": .string(cleanup),
-      "output_state": .string(availability), "output_bytes": .number(Double(outputByteCount)),
-      "retained_bytes": .number(Double(bytes.count)), "offset": .number(Double(offset)),
-      "next_offset": .number(Double(next)), "has_more": .bool(next < bytes.count),
+      "output_state": .string(availability), "output_bytes": .integer(Int64(outputByteCount)),
+      "retained_bytes": .integer(Int64(bytes.count)), "offset": .integer(Int64(offset)),
+      "next_offset": .integer(Int64(next)), "has_more": .bool(next < bytes.count),
       "truncated": .bool(truncated), "replayed": .bool(false),
     ]
     if output != nil, !truncated, offset == 0, next == bytes.count {

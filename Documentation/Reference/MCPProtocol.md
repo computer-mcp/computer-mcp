@@ -1,5 +1,11 @@
 # MCP Protocol Reference
 
+JSON integers in the signed 64-bit range retain their exact value through tool
+arguments, results, metadata, schemas, request identifiers and execution
+receipts. Integral values outside that range are rejected rather than rounded.
+Use strings for identifiers that exceed this range. Fractional values use
+binary floating-point precision.
+
 ## Transport
 
 `computer-mcp serve` and the App's `computer-mcp bridge` use MCP stdio

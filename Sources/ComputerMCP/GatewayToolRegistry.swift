@@ -301,8 +301,8 @@ extension DownstreamMCPClient {
     }
     return .object([
       "server": .string(server.id),
-      "after_cursor": .number(Double(afterCursor)),
-      "next_cursor": .number(Double(afterCursor)),
+      "after_cursor": .integer(Int64(afterCursor)),
+      "next_cursor": .integer(Int64(afterCursor)),
       "events": .array([]),
       "missed_events": .null,
       "session_id": .null, "session_verified": .bool(false),
@@ -2776,8 +2776,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("skills.roots"),
       "enabled": .bool(configuration.skills.enabled),
-      "root_count": .number(Double(roots.count)),
-      "max_bytes_per_skill": .number(Double(configuration.skills.maxBytesPerSkill)),
+      "root_count": .integer(Int64(roots.count)),
+      "max_bytes_per_skill": .integer(Int64(configuration.skills.maxBytesPerSkill)),
       "roots": .array(roots.map(\.json)),
     ])
   }
@@ -2791,10 +2791,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("skills.list"),
       "root_id": rootID.map(JSONValue.string) ?? .null,
-      "root_count": .number(Double(inventory.rootStatuses.count)),
-      "skill_count": .number(Double(inventory.skills.count)),
-      "returned_count": .number(Double(inventory.skills.count)),
-      "max_results": .number(Double(maxResults)),
+      "root_count": .integer(Int64(inventory.rootStatuses.count)),
+      "skill_count": .integer(Int64(inventory.skills.count)),
+      "returned_count": .integer(Int64(inventory.skills.count)),
+      "max_results": .integer(Int64(maxResults)),
       "scan_truncated": .bool(inventory.scanTruncated),
       "result_truncated": .bool(inventory.resultTruncated),
       "truncated": .bool(inventory.scanTruncated || inventory.resultTruncated),
@@ -2836,16 +2836,16 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(skill.fileURL.path),
       "skill_directory_path": .string(skill.directoryURL.path),
       "entrypoint": skillEntrypointJSON(skill),
-      "resource_count": .number(Double(resources.count)),
+      "resource_count": .integer(Int64(resources.count)),
       "resources": .array(resources.map(\.json)),
-      "file_count": .number(Double(fileCount)),
-      "directory_count": .number(Double(directoryCount)),
-      "symlink_count": .number(Double(symlinkCount)),
-      "other_count": .number(Double(otherCount)),
-      "total_size_bytes": .number(Double(totalSize)),
-      "max_depth": .number(Double(maxDepth)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_count": .number(Double(result.scannedCount)),
+      "file_count": .integer(Int64(fileCount)),
+      "directory_count": .integer(Int64(directoryCount)),
+      "symlink_count": .integer(Int64(symlinkCount)),
+      "other_count": .integer(Int64(otherCount)),
+      "total_size_bytes": .integer(Int64(totalSize)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_count": .integer(Int64(result.scannedCount)),
       "result_truncated": .bool(result.resultTruncated),
       "scan_truncated": .bool(result.scanTruncated),
       "truncated": .bool(result.resultTruncated || result.scanTruncated),
@@ -3009,25 +3009,25 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "name": .string(skill.name),
       "directory_name": .string(skill.directoryName),
       "valid": .bool(errorCount == 0),
-      "error_count": .number(Double(errorCount)),
-      "warning_count": .number(Double(warningCount)),
-      "issue_count": .number(Double(issues.count)),
+      "error_count": .integer(Int64(errorCount)),
+      "warning_count": .integer(Int64(warningCount)),
+      "issue_count": .integer(Int64(issues.count)),
       "issues": .array(issues.map(\.json)),
       "frontmatter": frontmatter.json,
       "entrypoint": .object([
         "path": .string("SKILL.md"),
         "absolute_path": .string(skill.fileURL.path),
-        "size_bytes": skill.sizeBytes.map { .number(Double($0)) } ?? .null,
+        "size_bytes": skill.sizeBytes.map { .integer(Int64($0)) } ?? .null,
         "modified_at": skill.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
-        "content_bytes_read": .number(Double(content.bytesRead)),
+        "content_bytes_read": .integer(Int64(content.bytesRead)),
         "content_truncated": .bool(content.truncated),
         "valid_utf8": .bool(content.validUTF8),
         "read_context": skillReadContext(skill),
       ]),
       "resources": .array(resources.map(\.json)),
-      "max_depth": .number(Double(maxDepth)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_count": .number(Double(result.scannedCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_count": .integer(Int64(result.scannedCount)),
       "result_truncated": .bool(result.resultTruncated),
       "scan_truncated": .bool(result.scanTruncated),
       "truncated": .bool(result.resultTruncated || result.scanTruncated || content.truncated),
@@ -3209,11 +3209,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "description": skill.description.map(JSONValue.string) ?? .null,
       "path": .string(skill.fileURL.path),
       "skill_directory_path": .string(skill.directoryURL.path),
-      "size_bytes": skill.sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": skill.sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": skill.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
-      "max_bytes": .number(Double(maxBytes)),
+      "max_bytes": .integer(Int64(maxBytes)),
       "content": content.content.map(JSONValue.string) ?? .null,
-      "content_bytes_read": .number(Double(content.bytesRead)),
+      "content_bytes_read": .integer(Int64(content.bytesRead)),
       "content_truncated": .bool(content.truncated),
       "valid_utf8": .bool(content.validUTF8),
     ])
@@ -3256,13 +3256,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "directory_name": .string(skill.directoryName),
       "path": .string(relativePath),
       "skill_directory_path": .string(skill.directoryURL.path),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
       "include_hidden": .bool(includeHidden),
-      "file_count": .number(Double(result.files.count)),
-      "returned_count": .number(Double(result.files.count)),
-      "scanned_count": .number(Double(result.scannedCount)),
+      "file_count": .integer(Int64(result.files.count)),
+      "returned_count": .integer(Int64(result.files.count)),
+      "scanned_count": .integer(Int64(result.scannedCount)),
       "result_truncated": .bool(result.resultTruncated),
       "scan_truncated": .bool(result.scanTruncated),
       "truncated": .bool(result.resultTruncated || result.scanTruncated),
@@ -3305,12 +3305,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(relativePath),
       "absolute_path": .string(file.path),
       "skill_directory_path": .string(skill.directoryURL.path),
-      "size_bytes": (attributes?[.size] as? NSNumber).map { .number($0.doubleValue) } ?? .null,
+      "size_bytes": (attributes?[.size] as? NSNumber).map { .integer($0.int64Value) } ?? .null,
       "modified_at": (attributes?[.modificationDate] as? Date).map { .string(iso8601String($0)) }
         ?? .null,
       "encoding": .string(content.encoding),
       "content": content.content.map(JSONValue.string) ?? .null,
-      "content_bytes_read": .number(Double(content.bytesRead)),
+      "content_bytes_read": .integer(Int64(content.bytesRead)),
       "content_truncated": .bool(content.truncated),
       "valid_utf8": .bool(content.validUTF8),
     ])
@@ -3362,13 +3362,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         .object([
           "path": .string(relativePath),
           "absolute_path": .string(file.path),
-          "size_bytes": (attributes?[.size] as? NSNumber).map { .number($0.doubleValue) } ?? .null,
+          "size_bytes": (attributes?[.size] as? NSNumber).map { .integer($0.int64Value) } ?? .null,
           "modified_at": (attributes?[.modificationDate] as? Date).map {
             .string(iso8601String($0))
           } ?? .null,
           "encoding": .string(content.encoding),
           "content": content.content.map(JSONValue.string) ?? .null,
-          "content_bytes_read": .number(Double(content.bytesRead)),
+          "content_bytes_read": .integer(Int64(content.bytesRead)),
           "content_truncated": .bool(content.truncated),
           "valid_utf8": .bool(content.validUTF8),
         ]))
@@ -3381,11 +3381,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "directory_name": .string(skill.directoryName),
       "skill_directory_path": .string(skill.directoryURL.path),
       "encoding": .string(encoding),
-      "max_bytes_per_file": .number(Double(maxBytes)),
-      "requested_count": .number(Double(paths.count)),
-      "file_count": .number(Double(entries.count)),
-      "total_content_bytes_read": .number(Double(totalBytesRead)),
-      "truncated_file_count": .number(Double(truncatedCount)),
+      "max_bytes_per_file": .integer(Int64(maxBytes)),
+      "requested_count": .integer(Int64(paths.count)),
+      "file_count": .integer(Int64(entries.count)),
+      "total_content_bytes_read": .integer(Int64(totalBytesRead)),
+      "truncated_file_count": .integer(Int64(truncatedCount)),
       "files": .array(entries),
       "describe_context": skillDescribeContext(skill),
       "validate_context": skillValidateContext(skill),
@@ -3501,11 +3501,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         .object([
           "path": .string(fileInfo.path),
           "absolute_path": .string(fileInfo.absolutePath),
-          "size_bytes": fileInfo.sizeBytes.map { .number(Double($0)) } ?? .null,
+          "size_bytes": fileInfo.sizeBytes.map { .integer(Int64($0)) } ?? .null,
           "modified_at": fileInfo.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
           "encoding": .string(content.encoding),
           "content": content.content.map(JSONValue.string) ?? .null,
-          "content_bytes_read": .number(Double(content.bytesRead)),
+          "content_bytes_read": .integer(Int64(content.bytesRead)),
           "content_truncated": .bool(content.truncated),
           "valid_utf8": .bool(content.validUTF8),
         ]))
@@ -3520,17 +3520,17 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "skill_directory_path": .string(skill.directoryURL.path),
       "encoding": .string(encoding),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_files": .number(Double(maxFiles)),
-      "max_bytes_per_file": .number(Double(maxBytesPerFile)),
-      "max_total_bytes": .number(Double(maxTotalBytes)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_count": .number(Double(result.scannedCount)),
-      "discovered_entry_count": .number(Double(result.files.count)),
-      "file_count": .number(Double(files.count)),
-      "skipped_count": .number(Double(skipped.count)),
-      "total_content_bytes_read": .number(Double(totalBytesRead)),
-      "truncated_file_count": .number(Double(truncatedFileCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_files": .integer(Int64(maxFiles)),
+      "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
+      "max_total_bytes": .integer(Int64(maxTotalBytes)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_count": .integer(Int64(result.scannedCount)),
+      "discovered_entry_count": .integer(Int64(result.files.count)),
+      "file_count": .integer(Int64(files.count)),
+      "skipped_count": .integer(Int64(skipped.count)),
+      "total_content_bytes_read": .integer(Int64(totalBytesRead)),
+      "truncated_file_count": .integer(Int64(truncatedFileCount)),
       "scan_truncated": .bool(result.scanTruncated),
       "result_truncated": .bool(result.resultTruncated),
       "file_count_truncated": .bool(fileCountTruncated),
@@ -3604,12 +3604,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "language": language.map(JSONValue.string) ?? .null,
       "encoding": .string("utf-8"),
       "include_imports": .bool(includeImports),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_results": .number(Double(maxResults)),
-      "bytes_scanned": .number(Double(contentData.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_results": .integer(Int64(maxResults)),
+      "bytes_scanned": .integer(Int64(contentData.count)),
       "file_truncated": .bool(fileTruncated),
-      "outline_count": .number(Double(allItems.count)),
-      "returned_count": .number(Double(returnedItems.count)),
+      "outline_count": .integer(Int64(allItems.count)),
+      "returned_count": .integer(Int64(returnedItems.count)),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(fileTruncated || resultTruncated),
       "items": .array(returnedItems.map(\.json)),
@@ -3717,14 +3717,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "skill_directory_path": .string(skill.directoryURL.path),
         "encoding": .string("utf-8"),
         "heading": .string(heading),
-        "level": level.map { .number(Double($0)) } ?? .null,
-        "occurrence": .number(Double(occurrence)),
+        "level": level.map { .integer(Int64($0)) } ?? .null,
+        "occurrence": .integer(Int64(occurrence)),
         "include_heading": .bool(includeHeading),
-        "max_bytes": .number(Double(maxBytes)),
-        "max_section_bytes": .number(Double(maxSectionBytes)),
-        "bytes_scanned": .number(Double(content.bytesRead)),
+        "max_bytes": .integer(Int64(maxBytes)),
+        "max_section_bytes": .integer(Int64(maxSectionBytes)),
+        "bytes_scanned": .integer(Int64(content.bytesRead)),
         "file_truncated": .bool(content.truncated),
-        "match_count": .number(Double(matchCount)),
+        "match_count": .integer(Int64(matchCount)),
         "matched": .bool(false),
         "failure": .object([
           "reason": .string("missing_heading")
@@ -3767,25 +3767,25 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "skill_directory_path": .string(skill.directoryURL.path),
       "encoding": .string("utf-8"),
       "heading": .string(heading),
-      "level": level.map { .number(Double($0)) } ?? .null,
-      "occurrence": .number(Double(occurrence)),
+      "level": level.map { .integer(Int64($0)) } ?? .null,
+      "occurrence": .integer(Int64(occurrence)),
       "include_heading": .bool(includeHeading),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_section_bytes": .number(Double(maxSectionBytes)),
-      "bytes_scanned": .number(Double(content.bytesRead)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_section_bytes": .integer(Int64(maxSectionBytes)),
+      "bytes_scanned": .integer(Int64(content.bytesRead)),
       "file_truncated": .bool(content.truncated),
-      "match_count": .number(Double(matchCount)),
+      "match_count": .integer(Int64(matchCount)),
       "matched": .bool(true),
       "failure": .null,
       "matched_heading": selectedHeading.json,
       "following_heading": followingHeading?.json ?? .null,
       "section": .object([
-        "start_line": .number(Double(startLine)),
-        "end_line": .number(Double(endLine)),
-        "heading_line": .number(Double(selectedHeading.line)),
-        "line_count": .number(Double(selectedLines.count)),
-        "content_bytes": .number(Double(rawSectionData.count)),
-        "returned_content_bytes": .number(Double(sectionData.count)),
+        "start_line": .integer(Int64(startLine)),
+        "end_line": .integer(Int64(endLine)),
+        "heading_line": .integer(Int64(selectedHeading.line)),
+        "line_count": .integer(Int64(selectedLines.count)),
+        "content_bytes": .integer(Int64(rawSectionData.count)),
+        "returned_content_bytes": .integer(Int64(sectionData.count)),
         "content_truncated": .bool(sectionContentTruncated),
         "section_may_be_truncated": .bool(sectionMayBeTruncated),
         "content": .string(String(decoding: sectionData, as: UTF8.self)),
@@ -3850,14 +3850,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "skill_directory_path": .string(skill.directoryURL.path),
       "encoding": .string("utf-8"),
       "include_code_blocks": .bool(includeCodeBlocks),
-      "max_tables": .number(Double(maxTables)),
-      "max_rows_per_table": .number(Double(maxRowsPerTable)),
-      "max_bytes": .number(Double(maxBytes)),
-      "bytes_scanned": .number(Double(content.bytesRead)),
+      "max_tables": .integer(Int64(maxTables)),
+      "max_rows_per_table": .integer(Int64(maxRowsPerTable)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "bytes_scanned": .integer(Int64(content.bytesRead)),
       "file_truncated": .bool(content.truncated),
-      "table_count": .number(Double(tables.count)),
-      "returned_count": .number(Double(returnedTables.count)),
-      "row_truncated_table_count": .number(Double(rowTruncatedCount)),
+      "table_count": .integer(Int64(tables.count)),
+      "returned_count": .integer(Int64(returnedTables.count)),
+      "row_truncated_table_count": .integer(Int64(rowTruncatedCount)),
       "result_truncated": .bool(tableResultTruncated),
       "truncated": .bool(tableResultTruncated || rowTruncatedCount > 0 || content.truncated),
       "tables": .array(returnedTables.map { $0.json(maxRowsPerTable: maxRowsPerTable) }),
@@ -3961,16 +3961,16 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_reference_definitions": .bool(includeReferenceDefinitions),
       "include_autolinks": .bool(includeAutolinks),
       "include_code_blocks": .bool(includeCodeBlocks),
-      "max_links": .number(Double(maxLinks)),
-      "max_bytes": .number(Double(maxBytes)),
-      "bytes_scanned": .number(Double(content.bytesRead)),
+      "max_links": .integer(Int64(maxLinks)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "bytes_scanned": .integer(Int64(content.bytesRead)),
       "file_truncated": .bool(content.truncated),
-      "link_count": .number(Double(links.count)),
-      "returned_count": .number(Double(returnedLinks.count)),
-      "local_count": .number(Double(localCount)),
-      "external_count": .number(Double(externalCount)),
-      "image_count": .number(Double(imageCount)),
-      "reference_definition_count": .number(Double(referenceDefinitionCount)),
+      "link_count": .integer(Int64(links.count)),
+      "returned_count": .integer(Int64(returnedLinks.count)),
+      "local_count": .integer(Int64(localCount)),
+      "external_count": .integer(Int64(externalCount)),
+      "image_count": .integer(Int64(imageCount)),
+      "reference_definition_count": .integer(Int64(referenceDefinitionCount)),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(content.truncated || resultTruncated),
       "links": .array(skillLinks),
@@ -4023,14 +4023,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       || target?.kind == "absolute_path"
     let isExternal = target?.kind == "url" || target?.kind == "email"
     return .object([
-      "line": .number(Double(link.line)),
+      "line": .integer(Int64(link.line)),
       "kind": .string(link.kind),
       "label": link.label.map(JSONValue.string) ?? .null,
       "reference_label": link.referenceLabel.map(JSONValue.string) ?? .null,
       "destination": link.destination.map(JSONValue.string) ?? .null,
       "resolved_destination": resolvedDestination.map(JSONValue.string) ?? .null,
       "resolved_via_reference_definition": .bool(resolvedViaReferenceDefinition),
-      "reference_definition_line": definition.map { .number(Double($0.line)) } ?? .null,
+      "reference_definition_line": definition.map { .integer(Int64($0.line)) } ?? .null,
       "title": link.title.map(JSONValue.string) ?? .null,
       "raw": .string(link.raw),
       "is_image": .bool(link.isImage),
@@ -4185,21 +4185,21 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_autolinks": .bool(includeAutolinks),
       "include_code_blocks": .bool(includeCodeBlocks),
       "check_fragments": .bool(checkFragments),
-      "max_links": .number(Double(maxLinks)),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_target_bytes": .number(Double(maxTargetBytes)),
-      "bytes_scanned": .number(Double(contentData.count)),
+      "max_links": .integer(Int64(maxLinks)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_target_bytes": .integer(Int64(maxTargetBytes)),
+      "bytes_scanned": .integer(Int64(contentData.count)),
       "file_truncated": .bool(fileTruncated),
-      "check_count": .number(Double(checks.count)),
-      "returned_count": .number(Double(returnedChecks.count)),
-      "ok_count": .number(Double(okCount)),
-      "broken_count": .number(Double(brokenCount)),
-      "unchecked_count": .number(Double(uncheckedCount)),
-      "local_count": .number(Double(localCount)),
-      "external_count": .number(Double(externalCount)),
-      "fragment_count": .number(Double(fragmentCount)),
-      "target_truncated_count": .number(Double(targetTruncatedCount)),
-      "reference_definition_count": .number(Double(definitions.count)),
+      "check_count": .integer(Int64(checks.count)),
+      "returned_count": .integer(Int64(returnedChecks.count)),
+      "ok_count": .integer(Int64(okCount)),
+      "broken_count": .integer(Int64(brokenCount)),
+      "unchecked_count": .integer(Int64(uncheckedCount)),
+      "local_count": .integer(Int64(localCount)),
+      "external_count": .integer(Int64(externalCount)),
+      "fragment_count": .integer(Int64(fragmentCount)),
+      "target_truncated_count": .integer(Int64(targetTruncatedCount)),
+      "reference_definition_count": .integer(Int64(definitions.count)),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(fileTruncated || resultTruncated || targetTruncatedCount > 0),
       "checks": .array(returnedChecks.map(\.json)),
@@ -4626,9 +4626,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "root_id": rootID.map(JSONValue.string) ?? .null,
       "case_sensitive": .bool(caseSensitive),
       "search_content": .bool(searchContent),
-      "skill_count": .number(Double(inventory.skills.count)),
-      "match_count": .number(Double(matches.count)),
-      "max_results": .number(Double(maxResults)),
+      "skill_count": .integer(Int64(inventory.skills.count)),
+      "match_count": .integer(Int64(matches.count)),
+      "max_results": .integer(Int64(maxResults)),
       "scan_truncated": .bool(inventory.scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(inventory.scanTruncated || resultTruncated),
@@ -4727,13 +4727,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "query": .string(query),
       "case_sensitive": .bool(caseSensitive),
       "search_content": .bool(searchContent),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_matches_per_file": .number(Double(maxMatchesPerFile)),
-      "max_file_bytes": .number(Double(maxFileBytes)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_count": .number(Double(result.scannedCount)),
-      "match_count": .number(Double(matches.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_matches_per_file": .integer(Int64(maxMatchesPerFile)),
+      "max_file_bytes": .integer(Int64(maxFileBytes)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_count": .integer(Int64(result.scannedCount)),
+      "match_count": .integer(Int64(matches.count)),
       "scan_truncated": .bool(result.scanTruncated),
       "result_truncated": .bool(resultTruncated || result.resultTruncated),
       "truncated": .bool(result.scanTruncated || resultTruncated || result.resultTruncated),
@@ -5143,7 +5143,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     .object([
       "path": .string("SKILL.md"),
       "absolute_path": .string(skill.fileURL.path),
-      "size_bytes": skill.sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": skill.sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": skill.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "read_context": skillReadContext(skill),
     ])
@@ -5321,20 +5321,20 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "encoding": .string("utf-8"),
       "requested_format": .string(requestedFormat),
       "format": format.map(JSONValue.string) ?? .null,
-      "max_bytes": .number(Double(maxBytes)),
-      "max_depth": .number(Double(maxDepth)),
-      "bytes_scanned": .number(Double(bytesScanned)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "bytes_scanned": .integer(Int64(bytesScanned)),
       "file_truncated": .bool(fileTruncated),
-      "line_count": .number(Double(lineCount)),
+      "line_count": .integer(Int64(lineCount)),
       "has_opening_delimiter": .bool(hasOpening),
       "has_closing_delimiter": .bool(hasClosing),
       "found": .bool(found),
       "raw": raw.map(JSONValue.string) ?? .null,
-      "raw_bytes": raw.map { .number(Double(Data($0.utf8).count)) } ?? .null,
-      "raw_start_line": rawStartLine.map { .number(Double($0)) } ?? .null,
-      "raw_end_line": rawEndLine.map { .number(Double($0)) } ?? .null,
-      "closing_line": closingLine.map { .number(Double($0)) } ?? .null,
-      "body_start_line": bodyStartLine.map { .number(Double($0)) } ?? .null,
+      "raw_bytes": raw.map { .integer(Int64(Data($0.utf8).count)) } ?? .null,
+      "raw_start_line": rawStartLine.map { .integer(Int64($0)) } ?? .null,
+      "raw_end_line": rawEndLine.map { .integer(Int64($0)) } ?? .null,
+      "closing_line": closingLine.map { .integer(Int64($0)) } ?? .null,
+      "body_start_line": bodyStartLine.map { .integer(Int64($0)) } ?? .null,
       "parsed": .bool(parsed),
       "parse_error": parseError.map(JSONValue.string) ?? .null,
       "failure": failureReason.map { .object(["reason": .string($0)]) } ?? .null,
@@ -5356,7 +5356,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(file.path),
       "absolute_path": .string(file.absolutePath),
       "type": .string(file.type),
-      "size_bytes": file.sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": file.sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "is_readable": .bool(file.isReadable),
       "is_symlink": .bool(file.isSymlink),
       "target_inside_skill": .bool(file.targetInsideSkill),
@@ -5657,7 +5657,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "interface": command.interface?.json ?? .null,
       "stdout": .string(result.stdout),
       "stderr": .string(result.stderr),
-      "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+      "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
     ])
   }
 
@@ -5751,8 +5751,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "exposure": .string(server.exposure.rawValue),
       "prefix": server.prefix.map(JSONValue.string) ?? .null,
       "capabilities": .array(server.capabilities.map { .string($0) }),
-      "startup_timeout_ms": server.startupTimeoutMs.map { .number(Double($0)) } ?? .null,
-      "request_timeout_ms": server.requestTimeoutMs.map { .number(Double($0)) } ?? .null,
+      "startup_timeout_ms": server.startupTimeoutMs.map { .integer(Int64($0)) } ?? .null,
+      "request_timeout_ms": server.requestTimeoutMs.map { .integer(Int64($0)) } ?? .null,
       "env": .array(mcpEnvironmentEntries(server)),
     ]
 
@@ -5804,7 +5804,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "server": .string(id),
       "tool": .string(name),
-      "tool_count": .number(Double(tools.count)),
+      "tool_count": .integer(Int64(tools.count)),
       "definition": tool.json,
       "call_context": .object([
         "tool": .string("mcp.tools.call"),
@@ -5846,9 +5846,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "match": .string(matchMode.rawValue),
       "field": .string(field.rawValue),
       "case_sensitive": .bool(caseSensitive),
-      "max_results": .number(Double(maxResults)),
-      "tool_count": .number(Double(tools.count)),
-      "result_count": .number(Double(results.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "tool_count": .integer(Int64(tools.count)),
+      "result_count": .integer(Int64(results.count)),
       "truncated": .bool(truncated),
       "tools": .array(results.map(\.json)),
     ])
@@ -5945,7 +5945,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "server": .string(id),
       "cursor": cursor.map(JSONValue.string) ?? .null,
-      "resource_count": .number(Double(resources.count)),
+      "resource_count": .integer(Int64(resources.count)),
       "next_cursor": nextCursor.map(JSONValue.string) ?? .null,
       "resources": .array(resources),
     ])
@@ -5969,7 +5969,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "server": .string(id),
       "cursor": cursor.map(JSONValue.string) ?? .null,
-      "template_count": .number(Double(templates.count)),
+      "template_count": .integer(Int64(templates.count)),
       "next_cursor": nextCursor.map(JSONValue.string) ?? .null,
       "resource_templates": .array(templates),
     ])
@@ -5986,7 +5986,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "server": .string(id),
       "uri": .string(uri),
-      "content_count": .number(Double(contents.count)),
+      "content_count": .integer(Int64(contents.count)),
       "contents": .array(contents),
     ])
   }
@@ -6021,7 +6021,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "server": .string(id),
       "cursor": cursor.map(JSONValue.string) ?? .null,
-      "prompt_count": .number(Double(prompts.count)),
+      "prompt_count": .integer(Int64(prompts.count)),
       "next_cursor": nextCursor.map(JSONValue.string) ?? .null,
       "prompts": .array(prompts),
     ])
@@ -6040,7 +6040,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "name": .string(name),
       "arguments": promptArguments.map(jsonObject) ?? .null,
       "description": result.objectValue?["description"] ?? .null,
-      "message_count": .number(Double(messages.count)),
+      "message_count": .integer(Int64(messages.count)),
       "messages": .array(messages),
     ])
   }
@@ -6294,7 +6294,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "name": .string(configuration.server.name),
         "http": .object([
           "host": .string(configuration.server.http.host),
-          "port": .number(Double(configuration.server.http.port)),
+          "port": .integer(Int64(configuration.server.http.port)),
           "path": .string(configuration.server.http.path),
           "health_path": .string(configuration.server.http.healthPath),
           "public_base_url": configuration.server.http.publicBaseURL.map(JSONValue.string) ?? .null,
@@ -6307,8 +6307,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "root": .string(configuration.workspaceDirectory.standardizedFileURL.path)
       ]),
       "policy": .object([
-        "default_timeout_ms": .number(Double(configuration.policy.defaultTimeoutMs)),
-        "max_output_bytes": .number(Double(configuration.policy.maxOutputBytes)),
+        "default_timeout_ms": .integer(Int64(configuration.policy.defaultTimeoutMs)),
+        "max_output_bytes": .integer(Int64(configuration.policy.maxOutputBytes)),
         "shell_enabled": .bool(configuration.policy.shellEnabled),
       ]),
       "builtin": .object([
@@ -6401,12 +6401,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       ]),
       "top_level": .object([
         "include_hidden": .bool(includeHidden),
-        "max_entries": .number(Double(maxEntries)),
-        "scanned_entry_count": .number(Double(scannedCount)),
-        "file_count": .number(Double(fileCount)),
-        "directory_count": .number(Double(directoryCount)),
-        "symlink_count": .number(Double(symlinkCount)),
-        "other_count": .number(Double(otherCount)),
+        "max_entries": .integer(Int64(maxEntries)),
+        "scanned_entry_count": .integer(Int64(scannedCount)),
+        "file_count": .integer(Int64(fileCount)),
+        "directory_count": .integer(Int64(directoryCount)),
+        "symlink_count": .integer(Int64(symlinkCount)),
+        "other_count": .integer(Int64(otherCount)),
         "truncated": .bool(truncated),
         "scan_error": scanError.map(JSONValue.string) ?? .null,
       ]),
@@ -6454,10 +6454,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "root": .string(root.path)
       ]),
       "include_missing": .bool(includeMissing),
-      "catalog_count": .number(Double(Self.workspaceManifestCandidates.count)),
-      "included_count": .number(Double(includedCount)),
-      "returned_count": .number(Double(returned.count)),
-      "max_results": .number(Double(maxResults)),
+      "catalog_count": .integer(Int64(Self.workspaceManifestCandidates.count)),
+      "included_count": .integer(Int64(includedCount)),
+      "returned_count": .integer(Int64(returned.count)),
+      "max_results": .integer(Int64(maxResults)),
       "truncated": .bool(includedCount > returned.count),
       "manifests": .array(returned),
     ])
@@ -6579,11 +6579,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "root": .string(root.path)
       ]),
       "include_hidden": .bool(includeHidden),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedCount)),
-      "matched_file_count": .number(Double(files.count)),
-      "returned_count": .number(Double(returned.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedCount)),
+      "matched_file_count": .integer(Int64(files.count)),
+      "returned_count": .integer(Int64(returned.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -6714,14 +6714,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(rootWorkspaceRelativePath),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedCount)),
-      "group_count": .number(Double(sortedGroups.count)),
-      "returned_count": .number(Double(returnedGroups.count)),
-      "hidden_skipped_count": .number(Double(hiddenSkippedCount)),
-      "skipped_subtree_count": .number(Double(skippedSubtreeCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedCount)),
+      "group_count": .integer(Int64(sortedGroups.count)),
+      "returned_count": .integer(Int64(returnedGroups.count)),
+      "hidden_skipped_count": .integer(Int64(hiddenSkippedCount)),
+      "skipped_subtree_count": .integer(Int64(skippedSubtreeCount)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -6774,13 +6774,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "artifact_directory_count": .number(Double(artifactDirectories.count)),
-      "returned_count": .number(Double(artifactDirectories.count)),
-      "hidden_skipped_count": .number(Double(hiddenSkippedCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "artifact_directory_count": .integer(Int64(artifactDirectories.count)),
+      "returned_count": .integer(Int64(artifactDirectories.count)),
+      "hidden_skipped_count": .integer(Int64(hiddenSkippedCount)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -6833,14 +6833,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "scanned_directory_count": .number(Double(scannedDirectoryCount)),
-      "empty_directory_count": .number(Double(emptyDirectories.count)),
-      "returned_count": .number(Double(returnedDirectories.count)),
-      "hidden_skipped_count": .number(Double(hiddenSkippedCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "scanned_directory_count": .integer(Int64(scannedDirectoryCount)),
+      "empty_directory_count": .integer(Int64(emptyDirectories.count)),
+      "returned_count": .integer(Int64(returnedDirectories.count)),
+      "hidden_skipped_count": .integer(Int64(hiddenSkippedCount)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -6876,7 +6876,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     let resultTruncated = changes.count > returnedChanges.count
     let statusCountJSON = Dictionary(
       uniqueKeysWithValues: statusCounts.keys.sorted().map { key in
-        (key, JSONValue.number(Double(statusCounts[key] ?? 0)))
+        (key, JSONValue.integer(Int64(statusCounts[key] ?? 0)))
       })
 
     return .object([
@@ -6884,9 +6884,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "provider": .string(command.id),
       "argv": .array(arguments.map { .string($0) }),
       "paths": .array(paths.map { .string($0) }),
-      "max_results": .number(Double(maxResults)),
-      "change_count": .number(Double(changes.count)),
-      "returned_count": .number(Double(returnedChanges.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "change_count": .integer(Int64(changes.count)),
+      "returned_count": .integer(Int64(returnedChanges.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "parse_incomplete": .bool(result.stdoutTruncated),
@@ -6907,10 +6907,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "result": .object([
         "executable": .string(result.executable),
         "arguments": .array(result.arguments.map { .string($0) }),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
         "stderr": .string(result.stderr),
-        "stdout_bytes": .number(Double(result.stdout.utf8.count)),
+        "stdout_bytes": .integer(Int64(result.stdout.utf8.count)),
         "stdout_truncated": .bool(result.stdoutTruncated),
         "stderr_truncated": .bool(result.stderrTruncated),
       ]),
@@ -7038,13 +7038,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "root": .string(root.path)
       ]),
       "include_hidden": .bool(includeHidden),
-      "max_groups": .number(Double(maxGroups)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedCount)),
-      "regular_file_count": .number(Double(regularFileCount)),
-      "total_size_bytes": .number(Double(totalSizeBytes)),
-      "distinct_extension_count": .number(Double(summaries.count)),
-      "returned_group_count": .number(Double(returned.count)),
+      "max_groups": .integer(Int64(maxGroups)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedCount)),
+      "regular_file_count": .integer(Int64(regularFileCount)),
+      "total_size_bytes": .integer(Int64(totalSizeBytes)),
+      "distinct_extension_count": .integer(Int64(summaries.count)),
+      "returned_group_count": .integer(Int64(returned.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7128,12 +7128,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "root": .string(root.path)
       ]),
       "include_hidden": .bool(includeHidden),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedCount)),
-      "regular_file_count": .number(Double(regularFileCount)),
-      "total_size_bytes": .number(Double(totalSizeBytes)),
-      "returned_count": .number(Double(returned.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedCount)),
+      "regular_file_count": .integer(Int64(regularFileCount)),
+      "total_size_bytes": .integer(Int64(totalSizeBytes)),
+      "returned_count": .integer(Int64(returned.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7224,11 +7224,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "root": .string(root.path)
       ]),
       "include_hidden": .bool(includeHidden),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedCount)),
-      "symlink_count": .number(Double(symlinks.count)),
-      "returned_count": .number(Double(returned.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedCount)),
+      "symlink_count": .integer(Int64(symlinks.count)),
+      "returned_count": .integer(Int64(returned.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7303,11 +7303,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "root": .string(root.path)
       ]),
       "include_hidden": .bool(includeHidden),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedCount)),
-      "executable_file_count": .number(Double(executableFiles.count)),
-      "returned_count": .number(Double(returned.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedCount)),
+      "executable_file_count": .integer(Int64(executableFiles.count)),
+      "returned_count": .integer(Int64(returned.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7385,15 +7385,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "markers": .array(markers.map(JSONValue.string)),
       "case_sensitive": .bool(caseSensitive),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_files": .number(Double(maxFiles)),
-      "max_matches": .number(Double(maxMatches)),
-      "max_bytes_per_file": .number(Double(maxBytesPerFile)),
-      "files_scanned": .number(Double(filesScanned)),
-      "files_skipped": .number(Double(filesSkipped)),
-      "bytes_scanned": .number(Double(bytesScanned)),
-      "truncated_files": .number(Double(truncatedFiles)),
-      "match_count": .number(Double(matches.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_files": .integer(Int64(maxFiles)),
+      "max_matches": .integer(Int64(maxMatches)),
+      "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
+      "files_scanned": .integer(Int64(filesScanned)),
+      "files_skipped": .integer(Int64(filesSkipped)),
+      "bytes_scanned": .integer(Int64(bytesScanned)),
+      "truncated_files": .integer(Int64(truncatedFiles)),
+      "match_count": .integer(Int64(matches.count)),
       "truncated": .bool(truncated),
       "matches": .array(matches.map(\.json)),
     ])
@@ -7457,14 +7457,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden_directories": .bool(includeHiddenDirectories),
-      "max_depth": .number(Double(maxDepth)),
-      "max_files": .number(Double(maxFiles)),
-      "max_keys_per_file": .number(Double(maxKeysPerFile)),
-      "max_bytes_per_file": .number(Double(maxBytesPerFile)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "env_file_count": .number(Double(envFiles.count)),
-      "returned_count": .number(Double(envFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_files": .integer(Int64(maxFiles)),
+      "max_keys_per_file": .integer(Int64(maxKeysPerFile)),
+      "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "env_file_count": .integer(Int64(envFiles.count)),
+      "returned_count": .integer(Int64(envFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(
@@ -7523,13 +7523,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "dependency_file_count": .number(Double(dependencyFiles.count)),
-      "returned_count": .number(Double(dependencyFiles.count)),
-      "catalog_count": .number(Double(Self.dependencyFileDescriptors.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "dependency_file_count": .integer(Int64(dependencyFiles.count)),
+      "returned_count": .integer(Int64(dependencyFiles.count)),
+      "catalog_count": .integer(Int64(Self.dependencyFileDescriptors.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7585,13 +7585,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "dependency_file_count": .number(Double(dependencyFiles.count)),
-      "project_root_count": .number(Double(projectRoots.count)),
-      "returned_count": .number(Double(returnedRoots.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "dependency_file_count": .integer(Int64(dependencyFiles.count)),
+      "project_root_count": .integer(Int64(projectRoots.count)),
+      "returned_count": .integer(Int64(returnedRoots.count)),
       "scan_truncated": .bool(scanTruncated),
       "dependency_result_truncated": .bool(dependencyResultTruncated),
       "result_truncated": .bool(resultTruncated),
@@ -7651,12 +7651,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "documentation_file_count": .number(Double(documentationFiles.count)),
-      "returned_count": .number(Double(documentationFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "documentation_file_count": .integer(Int64(documentationFiles.count)),
+      "returned_count": .integer(Int64(documentationFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7717,12 +7717,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "agent_file_count": .number(Double(agentFiles.count)),
-      "returned_count": .number(Double(agentFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "agent_file_count": .integer(Int64(agentFiles.count)),
+      "returned_count": .integer(Int64(agentFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7779,11 +7779,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path_is_directory": pathIsDirectory.map(JSONValue.bool) ?? .null,
       "scope_workspace_relative_path": .string(workspaceRelativePath(scopeURL)),
       "include_content": .bool(includeContent),
-      "max_bytes_per_file": .number(Double(maxBytesPerFile)),
-      "max_results": .number(Double(maxResults)),
-      "scope_directory_count": .number(Double(scopeDirectories.count)),
-      "instruction_file_count": .number(Double(files.count)),
-      "returned_count": .number(Double(files.count)),
+      "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
+      "max_results": .integer(Int64(maxResults)),
+      "scope_directory_count": .integer(Int64(scopeDirectories.count)),
+      "instruction_file_count": .integer(Int64(files.count)),
+      "returned_count": .integer(Int64(files.count)),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(resultTruncated),
       "files": .array(files.map(\.json)),
@@ -7842,12 +7842,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "test_file_count": .number(Double(testFiles.count)),
-      "returned_count": .number(Double(testFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "test_file_count": .integer(Int64(testFiles.count)),
+      "returned_count": .integer(Int64(testFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7907,12 +7907,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "ci_file_count": .number(Double(ciFiles.count)),
-      "returned_count": .number(Double(ciFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "ci_file_count": .integer(Int64(ciFiles.count)),
+      "returned_count": .integer(Int64(ciFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -7977,12 +7977,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "infra_file_count": .number(Double(infraFiles.count)),
-      "returned_count": .number(Double(infraFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "infra_file_count": .integer(Int64(infraFiles.count)),
+      "returned_count": .integer(Int64(infraFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8042,12 +8042,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "config_file_count": .number(Double(configFiles.count)),
-      "returned_count": .number(Double(configFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "config_file_count": .integer(Int64(configFiles.count)),
+      "returned_count": .integer(Int64(configFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8107,12 +8107,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "ignore_file_count": .number(Double(ignoreFiles.count)),
-      "returned_count": .number(Double(ignoreFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "ignore_file_count": .integer(Int64(ignoreFiles.count)),
+      "returned_count": .integer(Int64(ignoreFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8172,12 +8172,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "asset_file_count": .number(Double(assetFiles.count)),
-      "returned_count": .number(Double(assetFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "asset_file_count": .integer(Int64(assetFiles.count)),
+      "returned_count": .integer(Int64(assetFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8238,12 +8238,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "archive_file_count": .number(Double(archiveFiles.count)),
-      "returned_count": .number(Double(archiveFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "archive_file_count": .integer(Int64(archiveFiles.count)),
+      "returned_count": .integer(Int64(archiveFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8304,12 +8304,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "log_file_count": .number(Double(logFiles.count)),
-      "returned_count": .number(Double(logFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "log_file_count": .integer(Int64(logFiles.count)),
+      "returned_count": .integer(Int64(logFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8373,12 +8373,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "data_file_count": .number(Double(dataFiles.count)),
-      "returned_count": .number(Double(dataFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "data_file_count": .integer(Int64(dataFiles.count)),
+      "returned_count": .integer(Int64(dataFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8441,12 +8441,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "schema_file_count": .number(Double(schemaFiles.count)),
-      "returned_count": .number(Double(schemaFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "schema_file_count": .integer(Int64(schemaFiles.count)),
+      "returned_count": .integer(Int64(schemaFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8510,12 +8510,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "include_tests": .bool(includeTests),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "source_file_count": .number(Double(sourceFiles.count)),
-      "returned_count": .number(Double(sourceFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "source_file_count": .integer(Int64(sourceFiles.count)),
+      "returned_count": .integer(Int64(sourceFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8607,18 +8607,18 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_hidden": .bool(includeHidden),
       "include_tests": .bool(includeTests),
       "include_imports": .bool(includeImports),
-      "max_depth": .number(Double(maxDepth)),
-      "max_files": .number(Double(maxFiles)),
-      "max_items": .number(Double(maxItems)),
-      "max_bytes_per_file": .number(Double(maxBytesPerFile)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "outline_file_count": .number(Double(outlineFileCount)),
-      "outline_item_count": .number(Double(items.count)),
-      "returned_count": .number(Double(items.count)),
-      "bytes_scanned": .number(Double(bytesScanned)),
-      "file_truncated_count": .number(Double(fileTruncatedCount)),
-      "invalid_utf8_file_count": .number(Double(invalidUTF8FileCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_files": .integer(Int64(maxFiles)),
+      "max_items": .integer(Int64(maxItems)),
+      "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "outline_file_count": .integer(Int64(outlineFileCount)),
+      "outline_item_count": .integer(Int64(items.count)),
+      "returned_count": .integer(Int64(items.count)),
+      "bytes_scanned": .integer(Int64(bytesScanned)),
+      "file_truncated_count": .integer(Int64(fileTruncatedCount)),
+      "invalid_utf8_file_count": .integer(Int64(invalidUTF8FileCount)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated || fileTruncatedCount > 0),
@@ -8705,15 +8705,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "max_bytes_per_file": .number(Double(maxBytesPerFile)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "manifest_count": .number(Double(manifests.count)),
-      "command_count": .number(Double(commandCount)),
-      "returned_count": .number(Double(commands.count)),
-      "file_truncated_count": .number(Double(fileTruncatedCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "manifest_count": .integer(Int64(manifests.count)),
+      "command_count": .integer(Int64(commandCount)),
+      "returned_count": .integer(Int64(commands.count)),
+      "file_truncated_count": .integer(Int64(fileTruncatedCount)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated || fileTruncatedCount > 0),
@@ -8778,12 +8778,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "governance_file_count": .number(Double(governanceFiles.count)),
-      "returned_count": .number(Double(governanceFiles.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "governance_file_count": .integer(Int64(governanceFiles.count)),
+      "returned_count": .integer(Int64(governanceFiles.count)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -8802,12 +8802,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "name": .string(processInfo.hostName)
       ]),
       "hardware": .object([
-        "processor_count": .number(Double(processInfo.processorCount)),
-        "active_processor_count": .number(Double(processInfo.activeProcessorCount)),
-        "physical_memory_bytes": .number(Double(processInfo.physicalMemory)),
+        "processor_count": .integer(Int64(processInfo.processorCount)),
+        "active_processor_count": .integer(Int64(processInfo.activeProcessorCount)),
+        "physical_memory_bytes": try .integer(exactly: processInfo.physicalMemory),
       ]),
       "process": .object([
-        "id": .number(Double(processInfo.processIdentifier)),
+        "id": .integer(Int64(processInfo.processIdentifier)),
         "name": .string(processInfo.processName),
       ]),
     ])
@@ -8835,8 +8835,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       ]),
       "hardware": .object([
         "machine": .string(fixedCString(info.machine)),
-        "processor_count": .number(Double(processInfo.processorCount)),
-        "active_processor_count": .number(Double(processInfo.activeProcessorCount)),
+        "processor_count": .integer(Int64(processInfo.processorCount)),
+        "active_processor_count": .integer(Int64(processInfo.activeProcessorCount)),
       ]),
     ])
   }
@@ -8867,9 +8867,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "process_info": .object([
         "operating_system_version_string": .string(
           ProcessInfo.processInfo.operatingSystemVersionString),
-        "major_version": .number(Double(version.majorVersion)),
-        "minor_version": .number(Double(version.minorVersion)),
-        "patch_version": .number(Double(version.patchVersion)),
+        "major_version": .integer(Int64(version.majorVersion)),
+        "minor_version": .integer(Int64(version.minorVersion)),
+        "patch_version": .integer(Int64(version.patchVersion)),
       ]),
       "result": result.json,
     ])
@@ -8914,13 +8914,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     ]
     let calendarPayload: [String: JSONValue] = [
       "identifier": .string(String(describing: calendar.identifier)),
-      "first_weekday": .number(Double(calendar.firstWeekday)),
-      "minimum_days_in_first_week": .number(Double(calendar.minimumDaysInFirstWeek)),
+      "first_weekday": .integer(Int64(calendar.firstWeekday)),
+      "minimum_days_in_first_week": .integer(Int64(calendar.minimumDaysInFirstWeek)),
     ]
     let timeZonePayload: [String: JSONValue] = [
       "identifier": .string(timeZone.identifier),
       "abbreviation": timeZone.abbreviation(for: now).map(JSONValue.string) ?? .null,
-      "seconds_from_gmt": .number(Double(timeZone.secondsFromGMT(for: now))),
+      "seconds_from_gmt": .integer(Int64(timeZone.secondsFromGMT(for: now))),
     ]
 
     return .object([
@@ -8967,39 +8967,39 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("system.memory"),
       "source": .string("host_statistics64"),
-      "physical_memory_bytes": .number(Double(ProcessInfo.processInfo.physicalMemory)),
-      "page_size_bytes": .number(Double(pageSize)),
+      "physical_memory_bytes": try .integer(exactly: ProcessInfo.processInfo.physicalMemory),
+      "page_size_bytes": try .integer(exactly: pageSize),
       "pages": .object([
-        "free": .number(Double(freePages)),
-        "active": .number(Double(activePages)),
-        "inactive": .number(Double(inactivePages)),
-        "wired": .number(Double(wiredPages)),
-        "speculative": .number(Double(speculativePages)),
-        "compressed": .number(Double(compressedPages)),
-        "purgeable": .number(Double(purgeablePages)),
-        "internal": .number(Double(internalPages)),
-        "external": .number(Double(externalPages)),
+        "free": try .integer(exactly: freePages),
+        "active": try .integer(exactly: activePages),
+        "inactive": try .integer(exactly: inactivePages),
+        "wired": try .integer(exactly: wiredPages),
+        "speculative": try .integer(exactly: speculativePages),
+        "compressed": try .integer(exactly: compressedPages),
+        "purgeable": try .integer(exactly: purgeablePages),
+        "internal": try .integer(exactly: internalPages),
+        "external": try .integer(exactly: externalPages),
       ]),
       "bytes": .object([
-        "free": .number(Double(freePages * pageSize)),
-        "active": .number(Double(activePages * pageSize)),
-        "inactive": .number(Double(inactivePages * pageSize)),
-        "wired": .number(Double(wiredPages * pageSize)),
-        "speculative": .number(Double(speculativePages * pageSize)),
-        "compressed": .number(Double(compressedPages * pageSize)),
-        "purgeable": .number(Double(purgeablePages * pageSize)),
-        "internal": .number(Double(internalPages * pageSize)),
-        "external": .number(Double(externalPages * pageSize)),
+        "free": try .integer(exactly: freePages * pageSize),
+        "active": try .integer(exactly: activePages * pageSize),
+        "inactive": try .integer(exactly: inactivePages * pageSize),
+        "wired": try .integer(exactly: wiredPages * pageSize),
+        "speculative": try .integer(exactly: speculativePages * pageSize),
+        "compressed": try .integer(exactly: compressedPages * pageSize),
+        "purgeable": try .integer(exactly: purgeablePages * pageSize),
+        "internal": try .integer(exactly: internalPages * pageSize),
+        "external": try .integer(exactly: externalPages * pageSize),
       ]),
       "events": .object([
-        "pageins": .number(Double(stats.pageins)),
-        "pageouts": .number(Double(stats.pageouts)),
-        "faults": .number(Double(stats.faults)),
-        "copy_on_write_faults": .number(Double(stats.cow_faults)),
-        "compressions": .number(Double(stats.compressions)),
-        "decompressions": .number(Double(stats.decompressions)),
-        "swapins": .number(Double(stats.swapins)),
-        "swapouts": .number(Double(stats.swapouts)),
+        "pageins": try .integer(exactly: stats.pageins),
+        "pageouts": try .integer(exactly: stats.pageouts),
+        "faults": try .integer(exactly: stats.faults),
+        "copy_on_write_faults": try .integer(exactly: stats.cow_faults),
+        "compressions": try .integer(exactly: stats.compressions),
+        "decompressions": try .integer(exactly: stats.decompressions),
+        "swapins": try .integer(exactly: stats.swapins),
+        "swapouts": try .integer(exactly: stats.swapouts),
       ]),
     ])
   }
@@ -9030,9 +9030,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("system.load"),
       "source": .string("getloadavg"),
-      "sample_count": .number(Double(sampleCount)),
-      "processor_count": .number(Double(processInfo.processorCount)),
-      "active_processor_count": .number(Double(activeProcessorCount)),
+      "sample_count": .integer(Int64(sampleCount)),
+      "processor_count": .integer(Int64(processInfo.processorCount)),
+      "active_processor_count": .integer(Int64(activeProcessorCount)),
       "load_average": .object([
         "one_minute": loadValue(oneMinute),
         "five_minutes": loadValue(fiveMinutes),
@@ -9062,22 +9062,22 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         .string("uname"),
       ]),
       "process_info": .object([
-        "processor_count": .number(Double(processInfo.processorCount)),
-        "active_processor_count": .number(Double(processInfo.activeProcessorCount)),
+        "processor_count": .integer(Int64(processInfo.processorCount)),
+        "active_processor_count": .integer(Int64(processInfo.activeProcessorCount)),
       ]),
       "hardware": .object([
         "machine": machine,
         "model_identifier": sysctlString("hw.model").map(JSONValue.string) ?? .null,
         "brand_string": sysctlString("machdep.cpu.brand_string").map(JSONValue.string) ?? .null,
-        "physical_cpu_count": sysctlInteger("hw.physicalcpu").map { .number(Double($0)) } ?? .null,
-        "logical_cpu_count": sysctlInteger("hw.logicalcpu").map { .number(Double($0)) } ?? .null,
-        "physical_cpu_max": sysctlInteger("hw.physicalcpu_max").map { .number(Double($0)) }
+        "physical_cpu_count": sysctlInteger("hw.physicalcpu").map { .integer(Int64($0)) } ?? .null,
+        "logical_cpu_count": sysctlInteger("hw.logicalcpu").map { .integer(Int64($0)) } ?? .null,
+        "physical_cpu_max": sysctlInteger("hw.physicalcpu_max").map { .integer(Int64($0)) }
           ?? .null,
-        "logical_cpu_max": sysctlInteger("hw.logicalcpu_max").map { .number(Double($0)) } ?? .null,
-        "cpu_frequency_hz": sysctlInteger("hw.cpufrequency").map { .number(Double($0)) } ?? .null,
-        "cpu_frequency_min_hz": sysctlInteger("hw.cpufrequency_min").map { .number(Double($0)) }
+        "logical_cpu_max": sysctlInteger("hw.logicalcpu_max").map { .integer(Int64($0)) } ?? .null,
+        "cpu_frequency_hz": sysctlInteger("hw.cpufrequency").map { .integer(Int64($0)) } ?? .null,
+        "cpu_frequency_min_hz": sysctlInteger("hw.cpufrequency_min").map { .integer(Int64($0)) }
           ?? .null,
-        "cpu_frequency_max_hz": sysctlInteger("hw.cpufrequency_max").map { .number(Double($0)) }
+        "cpu_frequency_max_hz": sysctlInteger("hw.cpufrequency_max").map { .integer(Int64($0)) }
           ?? .null,
         "arm64_supported": sysctlInteger("hw.optional.arm64").map { .bool($0 != 0) } ?? .null,
       ]),
@@ -9092,10 +9092,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("system.thermal"),
       "source": .string("ProcessInfo"),
       "thermal_state": .string(thermalStateName(thermalState)),
-      "thermal_state_rank": .number(Double(thermalStateRank(thermalState))),
+      "thermal_state_rank": .integer(Int64(thermalStateRank(thermalState))),
       "low_power_mode_enabled": .bool(processInfo.isLowPowerModeEnabled),
-      "processor_count": .number(Double(processInfo.processorCount)),
-      "active_processor_count": .number(Double(processInfo.activeProcessorCount)),
+      "processor_count": .integer(Int64(processInfo.processorCount)),
+      "active_processor_count": .integer(Int64(processInfo.activeProcessorCount)),
     ])
   }
 
@@ -9114,7 +9114,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "time_zone": .object([
         "identifier": .string(timeZone.identifier),
         "abbreviation": timeZone.abbreviation().map(JSONValue.string) ?? .null,
-        "seconds_from_gmt": .number(Double(timeZone.secondsFromGMT(for: now))),
+        "seconds_from_gmt": .integer(Int64(timeZone.secondsFromGMT(for: now))),
       ]),
       "system": .object([
         "uptime_seconds": .number(ProcessInfo.processInfo.systemUptime)
@@ -9165,10 +9165,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         .string("getgrgid"),
       ]),
       "ids": .object([
-        "uid": .number(Double(realUID)),
-        "effective_uid": .number(Double(effectiveUID)),
-        "gid": .number(Double(realGID)),
-        "effective_gid": .number(Double(effectiveGID)),
+        "uid": .integer(Int64(realUID)),
+        "effective_uid": .integer(Int64(effectiveUID)),
+        "gid": .integer(Int64(realGID)),
+        "effective_gid": .integer(Int64(effectiveGID)),
       ]),
       "user": passwdJSON(for: realUID),
       "effective_user": passwdJSON(for: effectiveUID),
@@ -9208,13 +9208,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         .string("getegid"),
         .string("getgrgid"),
       ]),
-      "primary_gid": .number(Double(getgid())),
-      "effective_gid": .number(Double(getegid())),
-      "supplementary_group_count": .number(Double(groups.count)),
+      "primary_gid": .integer(Int64(getgid())),
+      "effective_gid": .integer(Int64(getegid())),
+      "supplementary_group_count": .integer(Int64(groups.count)),
       "supplementary_groups": .array(
         groups.map { gid in
           .object([
-            "gid": .number(Double(gid)),
+            "gid": .integer(Int64(gid)),
             "group": groupJSON(for: gid),
           ])
         }
@@ -9256,7 +9256,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
 
     return .object([
       "include_hidden": .bool(includeHidden),
-      "volume_count": .number(Double(sortedVolumes.count)),
+      "volume_count": .integer(Int64(sortedVolumes.count)),
       "volumes": .array(sortedVolumes.map { volumeInfo(url: $0, keys: Set(keys)) }),
     ])
   }
@@ -9308,14 +9308,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("system.processes"),
       "argv": .array(arguments.map(JSONValue.string)),
       "query": query.map(JSONValue.string) ?? .null,
-      "max_results": .number(Double(maxResults)),
-      "process_count": .number(Double(matched.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "process_count": .integer(Int64(matched.count)),
       "truncated": .bool(result.stdoutTruncated || matchedBeforeLimit > matched.count),
       "processes": .array(matched),
       "result": .object([
         "executable": .string(result.executable),
         "arguments": .array(result.arguments.map(JSONValue.string)),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
         "stderr": .string(result.stderr),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -9337,9 +9337,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "found": .bool(!paths.isEmpty),
       "resolved_path": paths.first.map(JSONValue.string) ?? .null,
       "paths": .array(paths.map(JSONValue.string)),
-      "match_count": .number(Double(paths.count)),
+      "match_count": .integer(Int64(paths.count)),
       "all_matches": .bool(allMatches),
-      "path_entry_count": .number(Double(pathSearchDirectories().count)),
+      "path_entry_count": .integer(Int64(pathSearchDirectories().count)),
     ])
   }
 
@@ -9374,7 +9374,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
 
       entries.append(
         .object([
-          "index": .number(Double(index)),
+          "index": .integer(Int64(index)),
           "path": .string(path),
           "standardized_path": .string(standardizedPath),
           "is_absolute": .bool(path.hasPrefix("/")),
@@ -9383,7 +9383,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
           "is_readable": .bool(exists && fileManager.isReadableFile(atPath: path)),
           "is_writable": .bool(exists && fileManager.isWritableFile(atPath: path)),
           "is_executable": .bool(exists && fileManager.isExecutableFile(atPath: path)),
-          "duplicate_of_index": duplicateIndex.map { .number(Double($0)) } ?? .null,
+          "duplicate_of_index": duplicateIndex.map { .integer(Int64($0)) } ?? .null,
         ]))
     }
 
@@ -9391,11 +9391,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("system.path"),
       "source": .string(hasProcessPath ? "process_environment" : "default_fallback"),
       "include_missing": .bool(includeMissing),
-      "path_entry_count": .number(Double(directories.count)),
-      "returned_count": .number(Double(entries.count)),
-      "max_entries": .number(Double(maxEntries)),
+      "path_entry_count": .integer(Int64(directories.count)),
+      "returned_count": .integer(Int64(entries.count)),
+      "max_entries": .integer(Int64(maxEntries)),
       "truncated": .bool(omittedCount > 0),
-      "omitted_entry_count": .number(Double(omittedCount)),
+      "omitted_entry_count": .integer(Int64(omittedCount)),
       "entries": .array(entries),
     ])
   }
@@ -9485,16 +9485,16 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("logs.query"),
       "source": .string("macos_unified_log"),
-      "last_seconds": .number(Double(lastSeconds)),
-      "max_entries": .number(Double(maxEntries)),
+      "last_seconds": .integer(Int64(lastSeconds)),
+      "max_entries": .integer(Int64(maxEntries)),
       "predicate": predicate.map(JSONValue.string) ?? .null,
       "include_info": .bool(includeInfo),
       "include_debug": .bool(includeDebug),
-      "observed_line_count": .number(Double(observedLineCount)),
-      "returned_line_count": .number(Double(returnedLineCount)),
-      "event_count": .number(Double(events.count)),
-      "unparsed_line_count": .number(Double(unparsedLines.count)),
-      "omitted_line_count": .number(Double(omittedLineCount)),
+      "observed_line_count": .integer(Int64(observedLineCount)),
+      "returned_line_count": .integer(Int64(returnedLineCount)),
+      "event_count": .integer(Int64(events.count)),
+      "unparsed_line_count": .integer(Int64(unparsedLines.count)),
+      "omitted_line_count": .integer(Int64(omittedLineCount)),
       "truncated": .bool(
         result.stdoutTruncated || observedLineCount > returnedLineCount || result.timedOut),
       "events": .array(events),
@@ -9502,9 +9502,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "execution": .object([
         "executable": .string(result.executable),
         "arguments": .array(result.arguments.map(JSONValue.string)),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
-        "stdout_bytes": .number(Double(result.stdout.utf8.count)),
+        "stdout_bytes": .integer(Int64(result.stdout.utf8.count)),
         "stdout_truncated": .bool(result.stdoutTruncated),
         "stderr": .string(result.stderr),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -9548,7 +9548,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("service.status"),
       "source": .string("launchctl_print"),
       "domain": .string(domain),
-      "uid": domain == "system" ? .null : .number(Double(uid)),
+      "uid": domain == "system" ? .null : .integer(Int64(uid)),
       "label": .string(label),
       "target": .string(target),
       "found": .bool(found),
@@ -9558,9 +9558,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "execution": .object([
         "executable": .string(result.executable),
         "arguments": .array(result.arguments.map(JSONValue.string)),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
-        "stdout_bytes": .number(Double(result.stdout.utf8.count)),
+        "stdout_bytes": .integer(Int64(result.stdout.utf8.count)),
         "stdout_truncated": .bool(result.stdoutTruncated),
         "stderr": .string(result.stderr),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -9618,7 +9618,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       }
       let value = parts[1]
       if let integer = Int(value) {
-        fields[outputKey] = .number(Double(integer))
+        fields[outputKey] = .integer(Int64(integer))
       } else {
         fields[outputKey] = .string(value)
       }
@@ -9695,7 +9695,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "host": .string(host),
         "family": .string(family),
         "resolved": .bool(false),
-        "error_code": .number(Double(status)),
+        "error_code": .integer(Int64(status)),
         "error": .string(String(cString: gai_strerror(status))),
         "result_count": .number(0),
         "truncated": .bool(false),
@@ -9719,8 +9719,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
             "address": .string(address),
             "family": .string(addressFamilyName(pointer.pointee.ai_family)),
             "socket_type": .string(socketTypeName(pointer.pointee.ai_socktype)),
-            "protocol": .number(Double(pointer.pointee.ai_protocol)),
-            "flags": .number(Double(pointer.pointee.ai_flags)),
+            "protocol": .integer(Int64(pointer.pointee.ai_protocol)),
+            "flags": .integer(Int64(pointer.pointee.ai_flags)),
           ]))
       }
       current = pointer.pointee.ai_next
@@ -9734,9 +9734,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "resolved": .bool(!addresses.isEmpty),
       "error_code": .null,
       "error": .null,
-      "result_count": .number(Double(addresses.count)),
-      "scanned_count": .number(Double(scannedCount)),
-      "max_results": .number(Double(maxResults)),
+      "result_count": .integer(Int64(addresses.count)),
+      "scanned_count": .integer(Int64(scannedCount)),
+      "max_results": .integer(Int64(maxResults)),
       "truncated": .bool(scannedCount > addresses.count),
       "addresses": .array(addresses),
     ])
@@ -9782,7 +9782,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("network.services"),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -9808,7 +9808,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("network.hardware_ports"),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -9857,7 +9857,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "discovery_argv": .array(discoveryArguments.map(JSONValue.string)),
         "power_argv": .null,
         "network_argv": .null,
-        "max_output_bytes": .number(Double(maxOutputBytes)),
+        "max_output_bytes": .integer(Int64(maxOutputBytes)),
         "discovery": networkCommandSummary(discovery),
         "power_result": .null,
         "network_result": .null,
@@ -9897,7 +9897,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "discovery_argv": .array(discoveryArguments.map(JSONValue.string)),
       "power_argv": .array(powerArguments.map(JSONValue.string)),
       "network_argv": .array(networkArguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "discovery": networkCommandSummary(discovery),
       "power_result": networkCommandSummary(power),
       "network_result": networkCommandSummary(network),
@@ -9983,7 +9983,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
 
   private func networkCommandSummary(_ result: CommandResult) -> JSONValue {
     .object([
-      "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+      "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
       "timed_out": .bool(result.timedOut),
       "stderr": .string(result.stderr),
       "stdout_truncated": .bool(result.stdoutTruncated),
@@ -10015,10 +10015,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("network.vpn"),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_results": .number(Double(maxResults)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
-      "service_count": .number(Double(parsed.serviceCount)),
-      "returned_count": .number(Double(parsed.services.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
+      "service_count": .integer(Int64(parsed.serviceCount)),
+      "returned_count": .integer(Int64(parsed.services.count)),
       "truncated": .bool(parsed.serviceCount > parsed.services.count),
       "services": .array(parsed.services.map(\.json)),
       "result": networkCommandSummary(result),
@@ -10157,7 +10157,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("network.locations"),
       "current_argv": .array(currentArguments.map(JSONValue.string)),
       "list_argv": .array(listArguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "current": current.json,
       "locations": locations.json,
     ])
@@ -10230,7 +10230,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("network.connections"),
       "family": .string(family),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -10256,7 +10256,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("network.arp"),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -10286,9 +10286,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("network.ping"),
       "host": .string(host),
-      "count": .number(Double(count)),
+      "count": .integer(Int64(count)),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -10323,10 +10323,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("network.tcp_check"),
       "host": .string(host),
-      "port": .number(Double(port)),
-      "connect_timeout_seconds": .number(Double(connectTimeoutSeconds)),
+      "port": .integer(Int64(port)),
+      "connect_timeout_seconds": .integer(Int64(connectTimeoutSeconds)),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -10406,20 +10406,20 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "method": .string(method),
       "include_body": .bool(includeBody && method == "GET"),
       "follow_redirects": .bool(followRedirects),
-      "max_redirects": .number(Double(maxRedirects)),
-      "connect_timeout_seconds": .number(Double(connectTimeoutSeconds)),
-      "timeout_ms": .number(Double(timeout)),
-      "max_body_bytes": .number(Double(maxBodyBytes)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_redirects": .integer(Int64(maxRedirects)),
+      "connect_timeout_seconds": .integer(Int64(connectTimeoutSeconds)),
+      "timeout_ms": .integer(Int64(timeout)),
+      "max_body_bytes": .integer(Int64(maxBodyBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "argv": .array(arguments.map(JSONValue.string)),
-      "http_code": parsed.httpCode.map { .number(Double($0)) } ?? .null,
+      "http_code": parsed.httpCode.map { .integer(Int64($0)) } ?? .null,
       "url_effective": parsed.urlEffective.map(JSONValue.string) ?? .null,
       "content_type": parsed.contentType.map(JSONValue.string) ?? .null,
       "redirect_url": parsed.redirectURL.map(JSONValue.string) ?? .null,
       "time_total_seconds": parsed.timeTotal.map { .number($0) } ?? .null,
       "size_download_bytes": parsed.sizeDownload.map { .number($0) } ?? .null,
       "body": parsed.body.map(JSONValue.string) ?? .null,
-      "body_bytes": parsed.body.map { .number(Double($0.utf8.count)) } ?? .null,
+      "body_bytes": parsed.body.map { .integer(Int64($0.utf8.count)) } ?? .null,
       "body_truncated": .bool(parsed.bodyTruncated),
       "meta_found": .bool(parsed.metaFound),
       "result": networkCommandSummary(result),
@@ -10509,7 +10509,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("network.listeners"),
       "argv": .array(arguments.map(JSONValue.string)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -10536,7 +10536,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_missing": .bool(includeMissing),
       "include_system": .bool(includeSystem),
       "include_temporary": .bool(includeTemporary),
-      "directory_count": .number(Double(rows.count)),
+      "directory_count": .integer(Int64(rows.count)),
       "directories": .array(rows.map(\.json)),
     ])
   }
@@ -10743,10 +10743,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("macos.default_application"),
       "target": target,
       "include_candidates": .bool(includeCandidates),
-      "max_candidates": .number(Double(maxCandidates)),
+      "max_candidates": .integer(Int64(maxCandidates)),
       "default_application_available": .bool(defaultApplication != nil),
       "default_application": defaultApplication.map { macOSApplicationInfo(url: $0).json } ?? .null,
-      "candidate_count": .number(Double(candidates.count)),
+      "candidate_count": .integer(Int64(candidates.count)),
       "candidate_applications": .array(
         selectedCandidates.map { macOSApplicationInfo(url: $0).json }),
       "truncated": .bool(candidates.count > selectedCandidates.count),
@@ -10792,26 +10792,26 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_system": .bool(includeSystem),
       "include_user": .bool(includeUser),
       "roots": .array(roots.map { .string($0.path) }),
-      "max_depth": .number(Double(maxDepth)),
-      "max_visited": .number(Double(maxVisited)),
-      "visited_entries": .number(Double(visited)),
-      "application_count": .number(Double(applications.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_visited": .integer(Int64(maxVisited)),
+      "visited_entries": .integer(Int64(visited)),
+      "application_count": .integer(Int64(applications.count)),
       "truncated": .bool(truncated),
       "applications": .array(applications.map(\.json)),
     ])
   }
 
-  private func macOSScreens() -> JSONValue {
-    let screens = NSScreen.screens.enumerated().map { index, screen in
+  private func macOSScreens() throws -> JSONValue {
+    let screens = try NSScreen.screens.enumerated().map { index, screen in
       var deviceID: JSONValue = .null
       if let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
         as? NSNumber
       {
-        deviceID = .number(screenNumber.doubleValue)
+        deviceID = try JSONValue(foundationNumber: screenNumber)
       }
 
       return JSONValue.object([
-        "index": .number(Double(index)),
+        "index": .integer(Int64(index)),
         "localized_name": .string(screen.localizedName),
         "is_main": .bool(screen == NSScreen.main),
         "is_deepest": .bool(screen == NSScreen.deepest),
@@ -10824,7 +10824,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
 
     return .object([
-      "screen_count": .number(Double(screens.count)),
+      "screen_count": .integer(Int64(screens.count)),
       "screens": .array(screens),
     ])
   }
@@ -10893,13 +10893,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(directory.path),
       "workspace_relative_path": .string(workspaceRelativePath(directory)),
       "query": .string(query),
-      "max_results": .number(Double(maxResults)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
-      "returned_path_count": .number(Double(totalReturnedPaths)),
-      "result_count": .number(Double(matched.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
+      "returned_path_count": .integer(Int64(totalReturnedPaths)),
+      "result_count": .integer(Int64(matched.count)),
       "truncated": .bool(result.stdoutTruncated || containedPathCount > matched.count),
-      "skipped_escaped_results": .number(Double(skippedEscaped)),
-      "skipped_missing_results": .number(Double(skippedMissing)),
+      "skipped_escaped_results": .integer(Int64(skippedEscaped)),
+      "skipped_missing_results": .integer(Int64(skippedMissing)),
       "results": .array(matched.map(\.json)),
       "command": result.json,
     ])
@@ -10941,8 +10941,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "query": query.map(JSONValue.string) ?? .null,
       "match": .string(matchMode.rawValue),
       "case_sensitive": .bool(caseSensitive),
-      "max_results": .number(Double(maxResults)),
-      "application_count": .number(Double(running.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "application_count": .integer(Int64(running.count)),
       "truncated": .bool(running.count > selected.count),
       "applications": .array(selected.map { macOSRunningApplicationInfo($0).json }),
     ])
@@ -11009,8 +11009,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     let presentCount = declaredKeys.filter { processEnvironment[$0] != nil }.count
     return .object([
       "summary": .object([
-        "declared_key_count": .number(Double(declaredKeys.count)),
-        "process_environment_present_count": .number(Double(presentCount)),
+        "declared_key_count": .integer(Int64(declaredKeys.count)),
+        "process_environment_present_count": .integer(Int64(presentCount)),
         "values_redacted": .bool(true),
       ]),
       "server": .array(serverEntries),
@@ -11079,10 +11079,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "path": .string(directory.path),
       "workspace_relative_path": .string(workspaceRelativePath(directory)),
-      "recursive_depth": .number(Double(recursiveDepth)),
+      "recursive_depth": .integer(Int64(recursiveDepth)),
       "include_hidden": .bool(includeHidden),
-      "max_entries": .number(Double(maxEntries)),
-      "entry_count": .number(Double(entries.count)),
+      "max_entries": .integer(Int64(maxEntries)),
+      "entry_count": .integer(Int64(entries.count)),
       "truncated": .bool(truncated),
       "entries": .array(entries.map(\.json)),
     ])
@@ -11118,10 +11118,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_entries": .number(Double(maxEntries)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_entries": .integer(Int64(maxEntries)),
       "directories_only": .bool(directoriesOnly),
-      "entry_count": .number(Double(emitted)),
+      "entry_count": .integer(Int64(emitted)),
       "truncated": .bool(truncated),
       "tree": tree,
     ])
@@ -11151,11 +11151,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "type": .string(info.type),
-      "mode": mode.map { .number(Double($0)) } ?? .null,
+      "mode": mode.map { .integer(Int64($0)) } ?? .null,
       "mode_octal": mode.map { .string(String(format: "%04o", $0 & 0o7777)) } ?? .null,
-      "owner_account_id": ownerID.map { .number(Double($0)) } ?? .null,
+      "owner_account_id": ownerID.map { .integer(Int64($0)) } ?? .null,
       "owner_account_name": ownerName.map(JSONValue.string) ?? .null,
-      "group_owner_account_id": groupID.map { .number(Double($0)) } ?? .null,
+      "group_owner_account_id": groupID.map { .integer(Int64($0)) } ?? .null,
       "group_owner_account_name": groupName.map(JSONValue.string) ?? .null,
       "permissions": mode.map(permissionSummary) ?? .null,
       "current_process_access": .object([
@@ -11202,15 +11202,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "dry_run": .bool(dryRun),
-      "mode_before": normalizedModeBefore.map { .number(Double($0)) } ?? .null,
+      "mode_before": normalizedModeBefore.map { .integer(Int64($0)) } ?? .null,
       "mode_before_octal": normalizedModeBefore.map { .string(String(format: "%04o", $0)) }
         ?? .null,
-      "mode_after": normalizedModeAfter.map { .number(Double($0)) } ?? .null,
+      "mode_after": normalizedModeAfter.map { .integer(Int64($0)) } ?? .null,
       "mode_after_octal": normalizedModeAfter.map { .string(String(format: "%04o", $0)) }
         ?? .null,
-      "requested_mode": .number(Double(mode)),
+      "requested_mode": .integer(Int64(mode)),
       "requested_mode_octal": .string(String(format: "%04o", mode)),
-      "would_mode_after": .number(Double(mode)),
+      "would_mode_after": .integer(Int64(mode)),
       "would_mode_after_octal": .string(String(format: "%04o", mode)),
       "would_change": normalizedModeBefore.map { $0 != mode }.map(JSONValue.bool) ?? .null,
       "changed": .bool(!dryRun && normalizedModeBefore.map { $0 != mode } == true),
@@ -11298,9 +11298,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("file.count"),
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
-      "line_count": lineCount.map { .number(Double($0)) } ?? .null,
-      "word_count": wordCount.map { .number(Double($0)) } ?? .null,
-      "byte_count": byteCount.map { .number(Double($0)) } ?? .null,
+      "line_count": lineCount.map { .integer(Int64($0)) } ?? .null,
+      "word_count": wordCount.map { .integer(Int64($0)) } ?? .null,
+      "byte_count": byteCount.map { .integer(Int64($0)) } ?? .null,
       "result": result.json,
     ])
   }
@@ -11332,9 +11332,16 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "type": .string(info.type),
-      "apparent_size_bytes": info.size.map { .number(Double($0)) } ?? .null,
-      "disk_usage_kib": usageKiB.map { .number(Double($0)) } ?? .null,
-      "disk_usage_bytes": usageKiB.map { .number(Double($0) * 1_024) } ?? .null,
+      "apparent_size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
+      "disk_usage_kib": usageKiB.map { .integer(Int64($0)) } ?? .null,
+      "disk_usage_bytes": try usageKiB.map {
+        let (bytes, overflow) = $0.multipliedReportingOverflow(by: 1_024)
+        guard !overflow else {
+          throw GatewayToolError.executionFailed(
+            "Disk usage exceeds the supported signed 64-bit byte range.")
+        }
+        return JSONValue.integer(bytes)
+      } ?? .null,
       "result": result.json,
     ])
   }
@@ -11402,11 +11409,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "match": .string(matchMode.rawValue),
       "case_sensitive": .bool(caseSensitive),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_visited": .number(Double(maxVisited)),
-      "visited_entries": .number(Double(visited)),
-      "result_count": .number(Double(results.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_visited": .integer(Int64(maxVisited)),
+      "visited_entries": .integer(Int64(visited)),
+      "result_count": .integer(Int64(results.count)),
       "truncated": .bool(truncated),
       "results": .array(results.map(\.json)),
     ])
@@ -11478,15 +11485,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "query": .string(query),
       "case_sensitive": .bool(caseSensitive),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_files": .number(Double(maxFiles)),
-      "max_matches": .number(Double(maxMatches)),
-      "max_bytes_per_file": .number(Double(maxBytesPerFile)),
-      "files_scanned": .number(Double(filesScanned)),
-      "files_skipped": .number(Double(filesSkipped)),
-      "bytes_scanned": .number(Double(bytesScanned)),
-      "truncated_files": .number(Double(truncatedFiles)),
-      "match_count": .number(Double(matches.count)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_files": .integer(Int64(maxFiles)),
+      "max_matches": .integer(Int64(maxMatches)),
+      "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
+      "files_scanned": .integer(Int64(filesScanned)),
+      "files_skipped": .integer(Int64(filesSkipped)),
+      "bytes_scanned": .integer(Int64(bytesScanned)),
+      "truncated_files": .integer(Int64(truncatedFiles)),
+      "match_count": .integer(Int64(matches.count)),
       "truncated": .bool(truncated),
       "matches": .array(matches.map(\.json)),
     ])
@@ -11560,14 +11567,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "modified_after": modifiedAfter.map { .string(iso8601String($0)) } ?? .null,
       "modified_before": modifiedBefore.map { .string(iso8601String($0)) } ?? .null,
       "sort": .string(sort.rawValue),
-      "max_depth": .number(Double(maxDepth)),
-      "max_results": .number(Double(maxResults)),
-      "max_scan_entries": .number(Double(maxScanEntries)),
-      "scanned_entry_count": .number(Double(scannedEntries)),
-      "scanned_file_count": .number(Double(scannedFileCount)),
-      "matched_file_count": .number(Double(sortedEntries.count)),
-      "returned_count": .number(Double(returned.count)),
-      "skipped_missing_modified_date_count": .number(Double(skippedMissingModifiedDateCount)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_results": .integer(Int64(maxResults)),
+      "max_scan_entries": .integer(Int64(maxScanEntries)),
+      "scanned_entry_count": .integer(Int64(scannedEntries)),
+      "scanned_file_count": .integer(Int64(scannedFileCount)),
+      "matched_file_count": .integer(Int64(sortedEntries.count)),
+      "returned_count": .integer(Int64(returned.count)),
+      "skipped_missing_modified_date_count": .integer(Int64(skippedMissingModifiedDateCount)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -11596,7 +11603,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "encoding": .string("utf-8"),
       "content": .string(String(decoding: contentData, as: UTF8.self)),
-      "bytes_read": .number(Double(contentData.count)),
+      "bytes_read": .integer(Int64(contentData.count)),
       "truncated": .bool(truncated),
     ])
   }
@@ -11637,11 +11644,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "operation": .string("file.read_files"),
       "encoding": .string(encoding),
-      "max_bytes_per_file": .number(Double(maxBytes)),
-      "requested_count": .number(Double(paths.count)),
-      "file_count": .number(Double(files.count)),
-      "total_bytes_read": .number(Double(totalBytesRead)),
-      "truncated_file_count": .number(Double(truncatedCount)),
+      "max_bytes_per_file": .integer(Int64(maxBytes)),
+      "requested_count": .integer(Int64(paths.count)),
+      "file_count": .integer(Int64(files.count)),
+      "total_bytes_read": .integer(Int64(totalBytesRead)),
+      "truncated_file_count": .integer(Int64(truncatedCount)),
       "files": .array(files),
     ])
   }
@@ -11716,11 +11723,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "encoding": .string("utf-8"),
-      "offset_bytes": .number(Double(offset)),
-      "max_bytes": .number(Double(maxBytes)),
-      "file_size_bytes": .number(Double(fileSize)),
-      "bytes_read": .number(Double(data.count)),
-      "next_offset_bytes": .number(Double(nextOffset)),
+      "offset_bytes": .integer(Int64(offset)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "file_size_bytes": .integer(Int64(fileSize)),
+      "bytes_read": .integer(Int64(data.count)),
+      "next_offset_bytes": .integer(Int64(nextOffset)),
       "eof": .bool(nextOffset >= fileSize),
       "truncated": .bool(nextOffset < fileSize),
       "valid_utf8": .bool(validUTF8),
@@ -11758,7 +11765,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         return nil
       }
       return .object([
-        "line": .number(Double(lineNumber)),
+        "line": .integer(Int64(lineNumber)),
         "text": .string(String(line)),
       ])
     }
@@ -11768,12 +11775,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "encoding": .string("utf-8"),
-      "start_line": .number(Double(startLine)),
-      "max_lines": .number(Double(maxLines)),
-      "max_bytes": .number(Double(maxBytes)),
-      "bytes_scanned": .number(Double(contentData.count)),
+      "start_line": .integer(Int64(startLine)),
+      "max_lines": .integer(Int64(maxLines)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "bytes_scanned": .integer(Int64(contentData.count)),
       "file_truncated": .bool(fileTruncated),
-      "line_count": .number(Double(returnedCount)),
+      "line_count": .integer(Int64(returnedCount)),
       "lines": .array(selected),
     ])
   }
@@ -11813,8 +11820,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         return nil
       }
       return .object([
-        "line": .number(Double(lineNumber)),
-        "relative_line": .number(Double(lineNumber - line)),
+        "line": .integer(Int64(lineNumber)),
+        "relative_line": .integer(Int64(lineNumber - line)),
         "is_target": .bool(lineNumber == line),
         "text": .string(String(text)),
       ])
@@ -11829,18 +11836,18 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "encoding": .string("utf-8"),
-      "line": .number(Double(line)),
-      "before": .number(Double(before)),
-      "after": .number(Double(after)),
-      "start_line": .number(Double(startLine)),
-      "end_line": .number(Double(endLine)),
+      "line": .integer(Int64(line)),
+      "before": .integer(Int64(before)),
+      "after": .integer(Int64(after)),
+      "start_line": .integer(Int64(startLine)),
+      "end_line": .integer(Int64(endLine)),
       "start_clamped": .bool(line - before < 1),
-      "max_bytes": .number(Double(maxBytes)),
-      "bytes_scanned": .number(Double(contentData.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "bytes_scanned": .integer(Int64(contentData.count)),
       "file_truncated": .bool(fileTruncated),
       "range_may_be_truncated": .bool(rangeMayBeTruncated),
       "target_line_returned": .bool(targetLineReturned),
-      "line_count": .number(Double(selected.count)),
+      "line_count": .integer(Int64(selected.count)),
       "lines": .array(selected),
     ])
   }
@@ -11881,8 +11888,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       byteWindowEndsMidLine && selectedLines.count == allLines.count && !selectedLines.isEmpty
     let selected = selectedLines.enumerated().map { index, line in
       JSONValue.object([
-        "line": .number(Double(index + 1)),
-        "head_index": .number(Double(index + 1)),
+        "line": .integer(Int64(index + 1)),
+        "head_index": .integer(Int64(index + 1)),
         "text": .string(line),
         "line_truncated": .bool(lastReturnedLineTruncated && index == selectedLines.count - 1),
       ])
@@ -11892,14 +11899,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "encoding": .string("utf-8"),
-      "max_lines": .number(Double(maxLines)),
-      "max_bytes": .number(Double(maxBytes)),
-      "file_size_bytes": .number(Double(fileSize)),
-      "bytes_read": .number(Double(data.count)),
+      "max_lines": .integer(Int64(maxLines)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "file_size_bytes": .integer(Int64(fileSize)),
+      "bytes_read": .integer(Int64(data.count)),
       "file_truncated": .bool(fileTruncated),
       "result_truncated": .bool(resultTruncated),
       "last_line_truncated": .bool(lastReturnedLineTruncated),
-      "line_count": .number(Double(selected.count)),
+      "line_count": .integer(Int64(selected.count)),
       "truncated": .bool(fileTruncated || resultTruncated),
       "lines": .array(selected),
     ])
@@ -11947,12 +11954,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "language": language.map(JSONValue.string) ?? .null,
       "encoding": .string("utf-8"),
       "include_imports": .bool(includeImports),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_results": .number(Double(maxResults)),
-      "bytes_scanned": .number(Double(contentData.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_results": .integer(Int64(maxResults)),
+      "bytes_scanned": .integer(Int64(contentData.count)),
       "file_truncated": .bool(fileTruncated),
-      "outline_count": .number(Double(allItems.count)),
-      "returned_count": .number(Double(returnedItems.count)),
+      "outline_count": .integer(Int64(allItems.count)),
+      "returned_count": .integer(Int64(returnedItems.count)),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(fileTruncated || resultTruncated),
       "items": .array(returnedItems.map(\.json)),
@@ -12024,12 +12031,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_reference_definitions": .bool(includeReferenceDefinitions),
       "include_autolinks": .bool(includeAutolinks),
       "include_code_blocks": .bool(includeCodeBlocks),
-      "max_links": .number(Double(maxLinks)),
-      "max_bytes": .number(Double(maxBytes)),
-      "bytes_scanned": .number(Double(inventory.bytesScanned)),
+      "max_links": .integer(Int64(maxLinks)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "bytes_scanned": .integer(Int64(inventory.bytesScanned)),
       "file_truncated": .bool(inventory.fileTruncated),
-      "link_count": .number(Double(inventory.links.count)),
-      "returned_count": .number(Double(returnedLinks.count)),
+      "link_count": .integer(Int64(inventory.links.count)),
+      "returned_count": .integer(Int64(returnedLinks.count)),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(inventory.fileTruncated || resultTruncated),
       "links": .array(returnedLinks.map(\.json)),
@@ -12074,14 +12081,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "encoding": .string("utf-8"),
       "include_code_blocks": .bool(includeCodeBlocks),
-      "max_tables": .number(Double(maxTables)),
-      "max_rows_per_table": .number(Double(maxRowsPerTable)),
-      "max_bytes": .number(Double(maxBytes)),
-      "bytes_scanned": .number(Double(contentData.count)),
+      "max_tables": .integer(Int64(maxTables)),
+      "max_rows_per_table": .integer(Int64(maxRowsPerTable)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "bytes_scanned": .integer(Int64(contentData.count)),
       "file_truncated": .bool(fileTruncated),
-      "table_count": .number(Double(tables.count)),
-      "returned_count": .number(Double(returnedTables.count)),
-      "row_truncated_table_count": .number(Double(rowTruncatedCount)),
+      "table_count": .integer(Int64(tables.count)),
+      "returned_count": .integer(Int64(returnedTables.count)),
+      "row_truncated_table_count": .integer(Int64(rowTruncatedCount)),
       "result_truncated": .bool(tableResultTruncated),
       "truncated": .bool(tableResultTruncated || rowTruncatedCount > 0 || fileTruncated),
       "tables": .array(returnedTables.map { $0.json(maxRowsPerTable: maxRowsPerTable) }),
@@ -12315,14 +12322,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "workspace_relative_path": .string(info.workspaceRelativePath),
         "encoding": .string("utf-8"),
         "heading": .string(heading),
-        "level": level.map { .number(Double($0)) } ?? .null,
-        "occurrence": .number(Double(occurrence)),
+        "level": level.map { .integer(Int64($0)) } ?? .null,
+        "occurrence": .integer(Int64(occurrence)),
         "include_heading": .bool(includeHeading),
-        "max_bytes": .number(Double(maxBytes)),
-        "max_section_bytes": .number(Double(maxSectionBytes)),
-        "bytes_scanned": .number(Double(contentData.count)),
+        "max_bytes": .integer(Int64(maxBytes)),
+        "max_section_bytes": .integer(Int64(maxSectionBytes)),
+        "bytes_scanned": .integer(Int64(contentData.count)),
         "file_truncated": .bool(fileTruncated),
-        "match_count": .number(Double(matchCount)),
+        "match_count": .integer(Int64(matchCount)),
         "matched": .bool(false),
         "failure": .object([
           "reason": .string("missing_heading")
@@ -12353,25 +12360,25 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "encoding": .string("utf-8"),
       "heading": .string(heading),
-      "level": level.map { .number(Double($0)) } ?? .null,
-      "occurrence": .number(Double(occurrence)),
+      "level": level.map { .integer(Int64($0)) } ?? .null,
+      "occurrence": .integer(Int64(occurrence)),
       "include_heading": .bool(includeHeading),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_section_bytes": .number(Double(maxSectionBytes)),
-      "bytes_scanned": .number(Double(contentData.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_section_bytes": .integer(Int64(maxSectionBytes)),
+      "bytes_scanned": .integer(Int64(contentData.count)),
       "file_truncated": .bool(fileTruncated),
-      "match_count": .number(Double(matchCount)),
+      "match_count": .integer(Int64(matchCount)),
       "matched": .bool(true),
       "failure": .null,
       "matched_heading": selectedHeading.json,
       "following_heading": followingHeading?.json ?? .null,
       "section": .object([
-        "start_line": .number(Double(startLine)),
-        "end_line": .number(Double(endLine)),
-        "heading_line": .number(Double(selectedHeading.line)),
-        "line_count": .number(Double(selectedLines.count)),
-        "content_bytes": .number(Double(rawSectionData.count)),
-        "returned_content_bytes": .number(Double(sectionData.count)),
+        "start_line": .integer(Int64(startLine)),
+        "end_line": .integer(Int64(endLine)),
+        "heading_line": .integer(Int64(selectedHeading.line)),
+        "line_count": .integer(Int64(selectedLines.count)),
+        "content_bytes": .integer(Int64(rawSectionData.count)),
+        "returned_content_bytes": .integer(Int64(sectionData.count)),
         "content_truncated": .bool(sectionContentTruncated),
         "section_may_be_truncated": .bool(sectionMayBeTruncated),
         "content": .string(String(decoding: sectionData, as: UTF8.self)),
@@ -12380,7 +12387,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "tool": .string("file.read_context"),
         "arguments": .object([
           "path": .string(info.workspaceRelativePath),
-          "line": .number(Double(selectedHeading.line)),
+          "line": .integer(Int64(selectedHeading.line)),
           "before": .number(2),
           "after": .number(20),
         ]),
@@ -12591,19 +12598,19 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "encoding": .string("utf-8"),
       "requested_format": .string(requestedFormat),
       "format": format.map(JSONValue.string) ?? .null,
-      "max_bytes": .number(Double(maxBytes)),
-      "max_depth": .number(Double(maxDepth)),
-      "bytes_scanned": .number(Double(bytesScanned)),
-      "line_count": .number(Double(lineCount)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "bytes_scanned": .integer(Int64(bytesScanned)),
+      "line_count": .integer(Int64(lineCount)),
       "has_opening_delimiter": .bool(hasOpening),
       "has_closing_delimiter": .bool(hasClosing),
       "found": .bool(found),
       "raw": raw.map(JSONValue.string) ?? .null,
-      "raw_bytes": raw.map { .number(Double(Data($0.utf8).count)) } ?? .null,
-      "raw_start_line": rawStartLine.map { .number(Double($0)) } ?? .null,
-      "raw_end_line": rawEndLine.map { .number(Double($0)) } ?? .null,
-      "closing_line": closingLine.map { .number(Double($0)) } ?? .null,
-      "body_start_line": bodyStartLine.map { .number(Double($0)) } ?? .null,
+      "raw_bytes": raw.map { .integer(Int64(Data($0.utf8).count)) } ?? .null,
+      "raw_start_line": rawStartLine.map { .integer(Int64($0)) } ?? .null,
+      "raw_end_line": rawEndLine.map { .integer(Int64($0)) } ?? .null,
+      "closing_line": closingLine.map { .integer(Int64($0)) } ?? .null,
+      "body_start_line": bodyStartLine.map { .integer(Int64($0)) } ?? .null,
       "parsed": .bool(parsed),
       "parse_error": parseError.map(JSONValue.string) ?? .null,
       "failure": failureReason.map { .object(["reason": .string($0)]) } ?? .null,
@@ -12701,21 +12708,21 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_autolinks": .bool(includeAutolinks),
       "include_code_blocks": .bool(includeCodeBlocks),
       "check_fragments": .bool(checkFragments),
-      "max_links": .number(Double(maxLinks)),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_target_bytes": .number(Double(maxTargetBytes)),
-      "bytes_scanned": .number(Double(inventory.bytesScanned)),
+      "max_links": .integer(Int64(maxLinks)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_target_bytes": .integer(Int64(maxTargetBytes)),
+      "bytes_scanned": .integer(Int64(inventory.bytesScanned)),
       "file_truncated": .bool(inventory.fileTruncated),
-      "check_count": .number(Double(checks.count)),
-      "returned_count": .number(Double(returnedChecks.count)),
-      "ok_count": .number(Double(okCount)),
-      "broken_count": .number(Double(brokenCount)),
-      "unchecked_count": .number(Double(uncheckedCount)),
-      "local_count": .number(Double(localCount)),
-      "external_count": .number(Double(externalCount)),
-      "fragment_count": .number(Double(fragmentCount)),
-      "target_truncated_count": .number(Double(targetTruncatedCount)),
-      "reference_definition_count": .number(Double(definitions.count)),
+      "check_count": .integer(Int64(checks.count)),
+      "returned_count": .integer(Int64(returnedChecks.count)),
+      "ok_count": .integer(Int64(okCount)),
+      "broken_count": .integer(Int64(brokenCount)),
+      "unchecked_count": .integer(Int64(uncheckedCount)),
+      "local_count": .integer(Int64(localCount)),
+      "external_count": .integer(Int64(externalCount)),
+      "fragment_count": .integer(Int64(fragmentCount)),
+      "target_truncated_count": .integer(Int64(targetTruncatedCount)),
+      "reference_definition_count": .integer(Int64(definitions.count)),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(inventory.fileTruncated || resultTruncated || targetTruncatedCount > 0),
       "checks": .array(returnedChecks.map(\.json)),
@@ -13797,8 +13804,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     let firstLineNumber = allLines.count - selectedLines.count + 1
     let selected = selectedLines.enumerated().map { index, line in
       JSONValue.object([
-        "line": lineNumbersKnown ? .number(Double(firstLineNumber + index)) : .null,
-        "tail_index": .number(Double(index + 1)),
+        "line": lineNumbersKnown ? .integer(Int64(firstLineNumber + index)) : .null,
+        "tail_index": .integer(Int64(index + 1)),
         "text": .string(line),
       ])
     }
@@ -13807,15 +13814,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "encoding": .string("utf-8"),
-      "max_lines": .number(Double(maxLines)),
-      "max_bytes": .number(Double(maxBytes)),
-      "file_size_bytes": .number(Double(fileSize)),
-      "start_offset_bytes": .number(Double(startOffset)),
-      "bytes_read": .number(Double(data.count)),
+      "max_lines": .integer(Int64(maxLines)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "file_size_bytes": .integer(Int64(fileSize)),
+      "start_offset_bytes": .integer(Int64(startOffset)),
+      "bytes_read": .integer(Int64(data.count)),
       "file_truncated": .bool(fileTruncated),
       "dropped_partial_first_line": .bool(droppedPartialFirstLine),
       "line_numbers_known": .bool(lineNumbersKnown),
-      "line_count": .number(Double(selected.count)),
+      "line_count": .integer(Int64(selected.count)),
       "lines": .array(selected),
     ])
   }
@@ -13852,10 +13859,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     let lines = stride(from: 0, to: bytes.count, by: 16).map { start -> JSONValue in
       let lineBytes = Array(bytes[start..<min(start + 16, bytes.count)])
       return .object([
-        "offset_bytes": .number(Double(offset + start)),
+        "offset_bytes": .integer(Int64(offset + start)),
         "hex": .string(lineBytes.map { String(format: "%02x", $0) }.joined(separator: " ")),
         "ascii": .string(hexdumpASCII(lineBytes)),
-        "byte_count": .number(Double(lineBytes.count)),
+        "byte_count": .integer(Int64(lineBytes.count)),
       ])
     }
     let nextOffset = offsetValue + UInt64(bytes.count)
@@ -13863,11 +13870,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     return .object([
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
-      "offset_bytes": .number(Double(offset)),
-      "max_bytes": .number(Double(maxBytes)),
-      "file_size_bytes": .number(Double(fileSize)),
-      "bytes_read": .number(Double(bytes.count)),
-      "next_offset_bytes": .number(Double(nextOffset)),
+      "offset_bytes": .integer(Int64(offset)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "file_size_bytes": .integer(Int64(fileSize)),
+      "bytes_read": .integer(Int64(bytes.count)),
+      "next_offset_bytes": .integer(Int64(nextOffset)),
       "eof": .bool(nextOffset >= fileSize),
       "truncated": .bool(nextOffset < fileSize),
       "lines": .array(lines),
@@ -13890,7 +13897,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       let size = try extendedAttributeSize(url: url, name: name)
       var object: [String: JSONValue] = [
         "name": .string(name),
-        "size_bytes": .number(Double(size)),
+        "size_bytes": .integer(Int64(size)),
       ]
 
       if includeValues {
@@ -13907,7 +13914,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
             size: size,
             maxBytes: maxValueBytes
           )
-          object["value_bytes_read"] = .number(Double(value.count))
+          object["value_bytes_read"] = .integer(Int64(value.count))
           object["value_truncated"] = .bool(false)
           object["value_base64"] = .string(value.base64EncodedString())
           object["value_utf8"] = String(data: value, encoding: .utf8).map(JSONValue.string) ?? .null
@@ -13922,8 +13929,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "type": .string(info.type),
       "include_values": .bool(includeValues),
-      "max_value_bytes": .number(Double(maxValueBytes)),
-      "attribute_count": .number(Double(attributes.count)),
+      "max_value_bytes": .integer(Int64(maxValueBytes)),
+      "attribute_count": .integer(Int64(attributes.count)),
       "attributes": .array(attributes),
     ])
   }
@@ -14007,7 +14014,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "result": .object([
         "executable": .string(result.executable),
         "arguments": .array(result.arguments.map(JSONValue.string)),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
         "stderr": .string(result.stderr),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -14114,15 +14121,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("image.info"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "type_identifier": typeIdentifier.map(JSONValue.string) ?? .null,
       "mime_type": typeIdentifier.flatMap(imageMIMEType(for:)).map(JSONValue.string) ?? .null,
-      "frame_count": .number(Double(imageCount)),
-      "pixel_width": pixelWidth.map { .number(Double($0)) } ?? .null,
-      "pixel_height": pixelHeight.map { .number(Double($0)) } ?? .null,
-      "depth": depth.map { .number(Double($0)) } ?? .null,
-      "orientation": orientation.map { .number(Double($0)) } ?? .null,
+      "frame_count": .integer(Int64(imageCount)),
+      "pixel_width": pixelWidth.map { .integer(Int64($0)) } ?? .null,
+      "pixel_height": pixelHeight.map { .integer(Int64($0)) } ?? .null,
+      "depth": depth.map { .integer(Int64($0)) } ?? .null,
+      "orientation": orientation.map { .integer(Int64($0)) } ?? .null,
       "dpi_width": dpiWidth.map(JSONValue.number) ?? .null,
       "dpi_height": dpiHeight.map(JSONValue.number) ?? .null,
       "has_alpha": hasAlpha.map(JSONValue.bool) ?? .null,
@@ -14133,12 +14140,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     ]
 
     if includeProperties {
-      result["properties"] = imagePropertiesJSON(
+      result["properties"] = try imagePropertiesJSON(
         properties,
         maxDepth: maxPropertyDepth,
         truncated: &propertiesTruncated
       )
-      result["global_properties"] = imagePropertiesJSON(
+      result["global_properties"] = try imagePropertiesJSON(
         globalProperties,
         maxDepth: maxPropertyDepth,
         truncated: &propertiesTruncated
@@ -14244,7 +14251,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     _ properties: [CFString: Any]?,
     maxDepth: Int,
     truncated: inout Bool
-  ) -> JSONValue {
+  ) throws -> JSONValue {
     guard let properties else {
       return .null
     }
@@ -14258,7 +14265,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         truncated = true
         break
       }
-      object[String(entry.key)] = imagePropertyValueJSON(
+      object[String(entry.key)] = try imagePropertyValueJSON(
         entry.value,
         depth: maxDepth,
         truncated: &truncated
@@ -14271,15 +14278,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     _ value: Any,
     depth: Int,
     truncated: inout Bool
-  ) -> JSONValue {
-    if let bool = value as? Bool {
-      return .bool(bool)
-    }
+  ) throws -> JSONValue {
     if let number = value as? NSNumber {
-      if CFGetTypeID(number) == CFBooleanGetTypeID() {
-        return .bool(number.boolValue)
-      }
-      return .number(number.doubleValue)
+      return try JSONValue(foundationNumber: number)
     }
     if let string = value as? String {
       if string.utf8.count > 4_096 {
@@ -14300,23 +14301,23 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       }
       return .object([
         "type": .string("data"),
-        "size_bytes": .number(Double(data.count)),
+        "size_bytes": .integer(Int64(data.count)),
         "base64_prefix": .string(Data(bounded).base64EncodedString()),
         "truncated": .bool(data.count > maxBytes),
       ])
     }
     if let dictionary = value as? [CFString: Any] {
-      return imageDictionaryJSON(dictionary, depth: depth, truncated: &truncated)
+      return try imageDictionaryJSON(dictionary, depth: depth, truncated: &truncated)
     }
     if let dictionary = value as? [String: Any] {
-      return imageDictionaryJSON(dictionary, depth: depth, truncated: &truncated)
+      return try imageDictionaryJSON(dictionary, depth: depth, truncated: &truncated)
     }
     if let array = value as? [Any] {
       guard depth > 0 else {
         truncated = true
         return .object([
           "type": .string("array"),
-          "count": .number(Double(array.count)),
+          "count": .integer(Int64(array.count)),
           "truncated": .bool(true),
         ])
       }
@@ -14325,8 +14326,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         truncated = true
       }
       return .array(
-        array.prefix(maxItems).map {
-          imagePropertyValueJSON($0, depth: depth - 1, truncated: &truncated)
+        try array.prefix(maxItems).map {
+          try imagePropertyValueJSON($0, depth: depth - 1, truncated: &truncated)
         })
     }
 
@@ -14337,22 +14338,22 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     _ dictionary: [CFString: Any],
     depth: Int,
     truncated: inout Bool
-  ) -> JSONValue {
+  ) throws -> JSONValue {
     let stringDictionary = Dictionary(
       uniqueKeysWithValues: dictionary.map { (String($0.key), $0.value) })
-    return imageDictionaryJSON(stringDictionary, depth: depth, truncated: &truncated)
+    return try imageDictionaryJSON(stringDictionary, depth: depth, truncated: &truncated)
   }
 
   private func imageDictionaryJSON(
     _ dictionary: [String: Any],
     depth: Int,
     truncated: inout Bool
-  ) -> JSONValue {
+  ) throws -> JSONValue {
     guard depth > 0 else {
       truncated = true
       return .object([
         "type": .string("dictionary"),
-        "count": .number(Double(dictionary.count)),
+        "count": .integer(Int64(dictionary.count)),
         "truncated": .bool(true),
       ])
     }
@@ -14366,7 +14367,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
     var object: [String: JSONValue] = [:]
     for entry in entries.prefix(maxEntries) {
-      object[entry.key] = imagePropertyValueJSON(
+      object[entry.key] = try imagePropertyValueJSON(
         entry.value,
         depth: depth - 1,
         truncated: &truncated
@@ -14399,10 +14400,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         continue
       }
       var pageObject: [String: JSONValue] = [
-        "index": .number(Double(index)),
-        "number": .number(Double(index + 1)),
+        "index": .integer(Int64(index)),
+        "number": .integer(Int64(index + 1)),
         "label": page.label.map(JSONValue.string) ?? .null,
-        "rotation": .number(Double(page.rotation)),
+        "rotation": .integer(Int64(page.rotation)),
       ]
       if includePageBoxes {
         pageObject["boxes"] = .object([
@@ -14421,10 +14422,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("pdf.info"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
-      "page_count": .number(Double(pageCount)),
-      "returned_page_count": .number(Double(pages.count)),
+      "page_count": .integer(Int64(pageCount)),
+      "returned_page_count": .integer(Int64(pages.count)),
       "pages_truncated": .bool(pageCount > returnedPageCount),
       "include_page_boxes": .bool(includePageBoxes),
       "attributes_included": .bool(includeAttributes),
@@ -14436,7 +14437,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     ]
 
     if includeAttributes {
-      result["attributes"] = pdfAttributesJSON(
+      result["attributes"] = try pdfAttributesJSON(
         document.documentAttributes ?? [:],
         truncated: &attributesTruncated
       )
@@ -14477,12 +14478,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "operation": .string("pdf.text"),
         "path": .string(url.path),
         "workspace_relative_path": .string(info.workspaceRelativePath),
-        "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+        "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
         "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
         "page_count": .number(0),
-        "start_page": .number(Double(startPage)),
-        "max_pages": .number(Double(maxPages)),
-        "max_characters": .number(Double(maxCharacters)),
+        "start_page": .integer(Int64(startPage)),
+        "max_pages": .integer(Int64(maxPages)),
+        "max_characters": .integer(Int64(maxCharacters)),
         "returned_page_count": .number(0),
         "total_extracted_character_count": .number(0),
         "page_range_truncated": .bool(false),
@@ -14529,12 +14530,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       totalExtractedCharacters += pageText.count
       pages.append(
         .object([
-          "index": .number(Double(index)),
-          "number": .number(Double(index + 1)),
+          "index": .integer(Int64(index)),
+          "number": .integer(Int64(index + 1)),
           "label": page.label.map(JSONValue.string) ?? .null,
           "text": .string(pageText),
-          "character_count": .number(Double(pageCharacterCount)),
-          "extracted_character_count": .number(Double(pageText.count)),
+          "character_count": .integer(Int64(pageCharacterCount)),
+          "extracted_character_count": .integer(Int64(pageText.count)),
           "text_truncated": .bool(pageTextTruncated),
         ]))
       if pageTextTruncated {
@@ -14547,14 +14548,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("pdf.text"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
-      "page_count": .number(Double(pageCount)),
-      "start_page": .number(Double(startPage)),
-      "max_pages": .number(Double(maxPages)),
-      "max_characters": .number(Double(maxCharacters)),
-      "returned_page_count": .number(Double(pages.count)),
-      "total_extracted_character_count": .number(Double(totalExtractedCharacters)),
+      "page_count": .integer(Int64(pageCount)),
+      "start_page": .integer(Int64(startPage)),
+      "max_pages": .integer(Int64(maxPages)),
+      "max_characters": .integer(Int64(maxCharacters)),
+      "returned_page_count": .integer(Int64(pages.count)),
+      "total_extracted_character_count": .integer(Int64(totalExtractedCharacters)),
       "page_range_truncated": .bool(pageRangeTruncated),
       "text_truncated": .bool(textTruncated),
       "truncated": .bool(pageRangeTruncated || textTruncated),
@@ -14578,7 +14579,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   private func pdfAttributesJSON(
     _ attributes: [AnyHashable: Any],
     truncated: inout Bool
-  ) -> JSONValue {
+  ) throws -> JSONValue {
     let entries = attributes.sorted {
       pdfAttributeName($0.key).localizedStandardCompare(pdfAttributeName($1.key))
         == .orderedAscending
@@ -14589,7 +14590,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
     var object: [String: JSONValue] = [:]
     for entry in entries.prefix(maxEntries) {
-      object[pdfAttributeName(entry.key)] = pdfAttributeValueJSON(
+      object[pdfAttributeName(entry.key)] = try pdfAttributeValueJSON(
         entry.value,
         depth: 2,
         truncated: &truncated
@@ -14609,15 +14610,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     _ value: Any,
     depth: Int,
     truncated: inout Bool
-  ) -> JSONValue {
-    if let bool = value as? Bool {
-      return .bool(bool)
-    }
+  ) throws -> JSONValue {
     if let number = value as? NSNumber {
-      if CFGetTypeID(number) == CFBooleanGetTypeID() {
-        return .bool(number.boolValue)
-      }
-      return .number(number.doubleValue)
+      return try JSONValue(foundationNumber: number)
     }
     if let string = value as? String {
       if string.utf8.count > 4_096 {
@@ -14635,7 +14630,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         truncated = true
         return .object([
           "type": .string("array"),
-          "count": .number(Double(array.count)),
+          "count": .integer(Int64(array.count)),
           "truncated": .bool(true),
         ])
       }
@@ -14644,8 +14639,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         truncated = true
       }
       return .array(
-        array.prefix(maxItems).map {
-          pdfAttributeValueJSON($0, depth: depth - 1, truncated: &truncated)
+        try array.prefix(maxItems).map {
+          try pdfAttributeValueJSON($0, depth: depth - 1, truncated: &truncated)
         })
     }
     if let dictionary = value as? [String: Any] {
@@ -14653,7 +14648,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         truncated = true
         return .object([
           "type": .string("dictionary"),
-          "count": .number(Double(dictionary.count)),
+          "count": .integer(Int64(dictionary.count)),
           "truncated": .bool(true),
         ])
       }
@@ -14666,7 +14661,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       }
       var object: [String: JSONValue] = [:]
       for entry in entries.prefix(maxEntries) {
-        object[entry.key] = pdfAttributeValueJSON(
+        object[entry.key] = try pdfAttributeValueJSON(
           entry.value,
           depth: depth - 1,
           truncated: &truncated
@@ -14738,22 +14733,22 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("media.info"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "extension": .string((info.workspaceRelativePath as NSString).pathExtension.lowercased()),
       "duration_seconds": finiteMediaSeconds(duration).map(JSONValue.number) ?? .null,
-      "duration_timescale": .number(Double(duration.timescale)),
+      "duration_timescale": .integer(Int64(duration.timescale)),
       "is_playable": .bool(isPlayable),
       "has_protected_content": .bool(hasProtectedContent),
       "provides_precise_duration_and_timing": .bool(providesPreciseDurationAndTiming),
-      "track_count": .number(Double(tracks.count)),
-      "returned_track_count": .number(Double(trackRows.count)),
+      "track_count": .integer(Int64(tracks.count)),
+      "returned_track_count": .integer(Int64(trackRows.count)),
       "tracks_truncated": .bool(tracks.count > trackRows.count),
       "media_types": .array(mediaTypes.sorted().map(JSONValue.string)),
-      "metadata_format_count": .number(Double(availableMetadataFormats.count)),
+      "metadata_format_count": .integer(Int64(availableMetadataFormats.count)),
       "available_metadata_formats": .array(
         availableMetadataFormats.map { .string($0.rawValue) }),
-      "load_timeout_ms": .number(Double(loadTimeoutMS)),
+      "load_timeout_ms": .integer(Int64(loadTimeoutMS)),
       "tracks": .array(trackRows),
       "truncated": .bool(tracks.count > trackRows.count),
     ])
@@ -14791,7 +14786,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
 
     var object: [String: JSONValue] = [
-      "index": .number(Double(index)),
+      "index": .integer(Int64(index)),
       "media_type": .string(mediaType),
       "duration_seconds": timeRange.flatMap { finiteMediaSeconds($0.duration) }.map(
         JSONValue.number)
@@ -14943,7 +14938,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("json.read"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "bytes_read": .number(Double(data.count)),
+      "bytes_read": .integer(Int64(data.count)),
       "value": value,
     ])
   }
@@ -15018,8 +15013,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         if records.count < maxRecords {
           records.append(
             .object([
-              "line": .number(Double(lineNumber)),
-              "byte_count": .number(Double(lineData.count)),
+              "line": .integer(Int64(lineNumber)),
+              "byte_count": .integer(Int64(lineData.count)),
               "value": value,
             ]))
         }
@@ -15029,8 +15024,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
           let preview = utf8Preview(line, maxBytes: 240)
           errors.append(
             .object([
-              "line": .number(Double(lineNumber)),
-              "byte_count": .number(Double(lineData.count)),
+              "line": .integer(Int64(lineNumber)),
+              "byte_count": .integer(Int64(lineData.count)),
               "message": .string(error.localizedDescription),
               "raw_preview": .string(preview.text),
               "raw_preview_truncated": .bool(preview.truncated),
@@ -15046,26 +15041,26 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("jsonl.read"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "encoding": .string("utf-8"),
-      "start_line": .number(Double(startLine)),
-      "max_records": .number(Double(maxRecords)),
-      "max_errors": .number(Double(maxErrors)),
-      "max_bytes": .number(Double(maxBytes)),
+      "start_line": .integer(Int64(startLine)),
+      "max_records": .integer(Int64(maxRecords)),
+      "max_errors": .integer(Int64(maxErrors)),
+      "max_bytes": .integer(Int64(maxBytes)),
       "skip_blank_lines": .bool(skipBlankLines),
       "include_partial_line": .bool(includePartialLine),
-      "bytes_read": .number(Double(boundedData.count)),
+      "bytes_read": .integer(Int64(boundedData.count)),
       "content_truncated": .bool(contentTruncated),
       "last_line_may_be_partial": .bool(lastLineMayBePartial),
       "partial_line_dropped": .bool(partialLineDropped),
-      "scanned_line_count": .number(Double(scannedLineCount)),
-      "skipped_blank_line_count": .number(Double(skippedBlankLineCount)),
-      "record_count": .number(Double(parsedRecordCount)),
-      "returned_record_count": .number(Double(records.count)),
+      "scanned_line_count": .integer(Int64(scannedLineCount)),
+      "skipped_blank_line_count": .integer(Int64(skippedBlankLineCount)),
+      "record_count": .integer(Int64(parsedRecordCount)),
+      "returned_record_count": .integer(Int64(records.count)),
       "record_count_truncated": .bool(recordCountTruncated),
-      "error_count": .number(Double(parseErrorCount)),
-      "returned_error_count": .number(Double(errors.count)),
+      "error_count": .integer(Int64(parseErrorCount)),
+      "returned_error_count": .integer(Int64(errors.count)),
       "error_count_truncated": .bool(errorCountTruncated),
       "parse_incomplete": .bool(lastLineMayBePartial),
       "truncated": .bool(
@@ -15175,10 +15170,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "would_create": .bool(!existed),
       "would_overwrite": .bool(existed),
       "would_create_parent_directories": .bool(!parentExists && createDirectories),
-      "bytes_before": .number(Double(existingSizeBytes)),
-      "bytes_after": .number(Double(data.count)),
-      "bytes_to_write": .number(Double(data.count)),
-      "bytes_written": .number(Double(dryRun ? 0 : data.count)),
+      "bytes_before": .integer(Int64(existingSizeBytes)),
+      "bytes_after": .integer(Int64(data.count)),
+      "bytes_to_write": .integer(Int64(data.count)),
+      "bytes_written": .integer(Int64(dryRun ? 0 : data.count)),
       "written": .bool(!dryRun),
     ]
 
@@ -15186,7 +15181,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       let content = String(decoding: data, as: UTF8.self)
       let preview = utf8Preview(content, maxBytes: previewMaxBytes)
       payload["preview"] = .object([
-        "preview_max_bytes": .number(Double(previewMaxBytes)),
+        "preview_max_bytes": .integer(Int64(previewMaxBytes)),
         "content": .string(preview.text),
         "content_truncated": .bool(preview.truncated),
       ])
@@ -15238,7 +15233,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("toml.read"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "bytes_read": .number(Double(data.count)),
+      "bytes_read": .integer(Int64(data.count)),
       "value": tomlJSONValue(value),
     ])
   }
@@ -15296,7 +15291,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         values.append(value)
         documents.append(
           .object([
-            "index": .number(Double(parsedDocumentCount - 1)),
+            "index": .integer(Int64(parsedDocumentCount - 1)),
             "value": value,
           ]))
       }
@@ -15320,15 +15315,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("yaml.read"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "encoding": .string("utf-8"),
-      "bytes_read": .number(Double(data.count)),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_documents": .number(Double(maxDocuments)),
-      "max_depth": .number(Double(maxDepth)),
-      "document_count": .number(Double(parsedDocumentCount)),
-      "returned_document_count": .number(Double(documents.count)),
+      "bytes_read": .integer(Int64(data.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_documents": .integer(Int64(maxDocuments)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "document_count": .integer(Int64(parsedDocumentCount)),
+      "returned_document_count": .integer(Int64(documents.count)),
       "document_count_truncated": .bool(documentCountTruncated),
       "truncated": .bool(documentCountTruncated),
       "conversion": stats.json,
@@ -15390,17 +15385,17 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("xml.read"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
-      "bytes_read": .number(Double(data.count)),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_nodes": .number(Double(maxNodes)),
-      "max_depth": .number(Double(maxDepth)),
-      "max_text_bytes": .number(Double(maxTextBytes)),
+      "bytes_read": .integer(Int64(data.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_nodes": .integer(Int64(maxNodes)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_text_bytes": .integer(Int64(maxTextBytes)),
       "trim_text": .bool(trimText),
-      "element_count": .number(Double(delegate.elementCount)),
-      "returned_element_count": .number(Double(delegate.returnedElementCount)),
-      "max_depth_observed": .number(Double(delegate.maxDepthObserved)),
+      "element_count": .integer(Int64(delegate.elementCount)),
+      "returned_element_count": .integer(Int64(delegate.returnedElementCount)),
+      "max_depth_observed": .integer(Int64(delegate.maxDepthObserved)),
       "node_count_truncated": .bool(delegate.nodeCountTruncated),
       "depth_truncated": .bool(delegate.depthTruncated),
       "text_truncated": .bool(delegate.textTruncated),
@@ -15446,7 +15441,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "format": .string(propertyListFormatName(format)),
-      "bytes_read": .number(Double(data.count)),
+      "bytes_read": .integer(Int64(data.count)),
       "value": try propertyListJSONValue(plist),
     ])
   }
@@ -15489,10 +15484,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "format": .string(resolvedFormat),
       "requested_format": .string(format),
-      "bytes_read": .number(Double(data.count)),
-      "max_bytes": .number(Double(maxBytes)),
-      "max_documents": .number(Double(maxDocuments)),
-      "max_depth": .number(Double(maxDepth)),
+      "bytes_read": .integer(Int64(data.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
+      "max_documents": .integer(Int64(maxDocuments)),
+      "max_depth": .integer(Int64(maxDepth)),
       "query_path": .array(queryPath.map(\.json)),
       "query_pointer": .string(structuredPointer(queryPath)),
       "matched": .bool(selection.matched),
@@ -15602,10 +15597,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "would_create": .bool(!existed),
       "would_overwrite": .bool(existed),
       "would_create_parent_directories": .bool(!parentExists && createDirectories),
-      "bytes_before": .number(Double(existingSizeBytes)),
-      "bytes_after": .number(Double(data.count)),
-      "bytes_to_write": .number(Double(data.count)),
-      "bytes_written": .number(Double(dryRun ? 0 : data.count)),
+      "bytes_before": .integer(Int64(existingSizeBytes)),
+      "bytes_after": .integer(Int64(data.count)),
+      "bytes_to_write": .integer(Int64(data.count)),
+      "bytes_written": .integer(Int64(dryRun ? 0 : data.count)),
       "written": .bool(!dryRun),
     ]
 
@@ -15666,7 +15661,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
 
     let rows: [JSONValue] = rowRecords.enumerated().map { index, cells in
       JSONValue.object([
-        "record_number": .number(Double(index + (hasHeader ? 2 : 1))),
+        "record_number": .integer(Int64(index + (hasHeader ? 2 : 1))),
         "cells": .array(cells.map(JSONValue.string)),
       ])
     }
@@ -15679,19 +15674,19 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("csv.read"),
       "path": .string(url.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "delimiter": .string(delimiter.name),
       "delimiter_character": .string(String(delimiter.character)),
       "delimiter_source": .string(delimiter.source),
       "has_header": .bool(hasHeader),
       "headers": .array(headers.map(JSONValue.string)),
-      "header_count": .number(Double(headers.count)),
+      "header_count": .integer(Int64(headers.count)),
       "rows": .array(rows),
-      "returned_row_count": .number(Double(rows.count)),
-      "max_rows": .number(Double(maxRows)),
-      "max_columns": .number(Double(maxColumns)),
-      "bytes_read": .number(Double(boundedData.count)),
+      "returned_row_count": .integer(Int64(rows.count)),
+      "max_rows": .integer(Int64(maxRows)),
+      "max_columns": .integer(Int64(maxColumns)),
+      "bytes_read": .integer(Int64(boundedData.count)),
       "content_truncated": .bool(contentTruncated),
       "row_count_truncated": .bool(rowCountTruncated),
       "column_count_truncated": .bool(parsed.columnsTruncated),
@@ -15958,7 +15953,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "database": .object([
         "path": .string(url.path),
         "workspace_relative_path": .string(info.workspaceRelativePath),
-        "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+        "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
         "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       ]),
       "include_views": .bool(includeViews),
@@ -15966,17 +15961,17 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_triggers": .bool(includeTriggers),
       "include_internal": .bool(includeInternal),
       "include_sql": .bool(includeSQL),
-      "max_entries": .number(Double(maxEntries)),
-      "returned_count": .number(Double(entries.count)),
+      "max_entries": .integer(Int64(maxEntries)),
+      "returned_count": .integer(Int64(entries.count)),
       "truncated": .bool(truncated),
       "sql": .string(sql),
       "argv": .array(result.arguments.map(JSONValue.string)),
       "entries": .array(entries),
       "result": .object([
         "executable": .string(result.executable),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
-        "stdout_bytes": .number(Double(result.stdout.utf8.count)),
+        "stdout_bytes": .integer(Int64(result.stdout.utf8.count)),
         "stdout_truncated": .bool(result.stdoutTruncated),
         "stderr": .string(result.stderr),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -16057,22 +16052,22 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "database": .object([
         "path": .string(url.path),
         "workspace_relative_path": .string(info.workspaceRelativePath),
-        "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+        "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
         "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       ]),
       "query_kind": .string(readonlyQuery.kind),
       "query": .string(readonlyQuery.sql),
       "executed_sql": .string(executableSQL),
-      "max_rows": .number(Double(maxRows)),
-      "returned_count": .number(Double(rows.count)),
+      "max_rows": .integer(Int64(maxRows)),
+      "returned_count": .integer(Int64(rows.count)),
       "truncated": .bool(truncated),
       "rows": .array(rows),
       "argv": .array(result.arguments.map(JSONValue.string)),
       "result": .object([
         "executable": .string(result.executable),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
-        "stdout_bytes": .number(Double(result.stdout.utf8.count)),
+        "stdout_bytes": .integer(Int64(result.stdout.utf8.count)),
         "stdout_truncated": .bool(result.stdoutTruncated),
         "stderr": .string(result.stderr),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -16333,7 +16328,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "algorithm": .string(algorithm),
       "hex": .string(digest.hex),
-      "bytes_read": .number(Double(digest.bytesRead)),
+      "bytes_read": .integer(Int64(digest.bytesRead)),
     ])
   }
 
@@ -16397,8 +16392,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "path": .string(target.path),
         "workspace_relative_path": .string(workspaceRelativePath(target)),
       ]),
-      "context_lines": .number(Double(contextLines)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
+      "context_lines": .integer(Int64(contextLines)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
       "result": result.json,
     ])
   }
@@ -16592,37 +16587,37 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "left": .object([
         "path": .string(left.path),
         "workspace_relative_path": .string(workspaceRelativePath(left)),
-        "scanned_entries": .number(Double(leftScanned)),
+        "scanned_entries": .integer(Int64(leftScanned)),
         "truncated": .bool(leftTruncated),
       ]),
       "right": .object([
         "path": .string(right.path),
         "workspace_relative_path": .string(workspaceRelativePath(right)),
-        "scanned_entries": .number(Double(rightScanned)),
+        "scanned_entries": .integer(Int64(rightScanned)),
         "truncated": .bool(rightTruncated),
       ]),
       "include_hidden": .bool(includeHidden),
-      "max_depth": .number(Double(maxDepth)),
-      "max_entries": .number(Double(maxEntries)),
-      "max_results": .number(Double(maxResults)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_entries": .integer(Int64(maxEntries)),
+      "max_results": .integer(Int64(maxResults)),
       "compare_hashes": .bool(compareHashes),
-      "max_hash_files": .number(Double(maxHashFiles)),
-      "max_hash_file_bytes": .number(Double(maxHashFileBytes)),
-      "left_entry_count": .number(Double(leftEntries.count)),
-      "right_entry_count": .number(Double(rightEntries.count)),
-      "metadata_match_count": .number(Double(metadataMatchCount)),
-      "hash_match_count": .number(Double(hashMatchCount)),
-      "hash_skipped_count": .number(Double(hashSkippedCount)),
-      "hash_files_compared": .number(Double(hashFilesCompared)),
-      "hash_bytes_read": .number(Double(hashBytesRead)),
-      "difference_count": .number(Double(differenceCount)),
+      "max_hash_files": .integer(Int64(maxHashFiles)),
+      "max_hash_file_bytes": .integer(Int64(maxHashFileBytes)),
+      "left_entry_count": .integer(Int64(leftEntries.count)),
+      "right_entry_count": .integer(Int64(rightEntries.count)),
+      "metadata_match_count": .integer(Int64(metadataMatchCount)),
+      "hash_match_count": .integer(Int64(hashMatchCount)),
+      "hash_skipped_count": .integer(Int64(hashSkippedCount)),
+      "hash_files_compared": .integer(Int64(hashFilesCompared)),
+      "hash_bytes_read": .integer(Int64(hashBytesRead)),
+      "difference_count": .integer(Int64(differenceCount)),
       "difference_counts": .object(
         differenceCounts
           .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
           .reduce(into: [String: JSONValue]()) { result, pair in
-            result[pair.key] = .number(Double(pair.value))
+            result[pair.key] = .integer(Int64(pair.value))
           }),
-      "result_count": .number(Double(differences.count)),
+      "result_count": .integer(Int64(differences.count)),
       "result_truncated": .bool(resultTruncated),
       "scan_truncated": .bool(leftTruncated || rightTruncated),
       "differences": .array(differences.map(\.json)),
@@ -16747,30 +16742,30 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(root.path),
       "workspace_relative_path": .string(workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
-      "min_size_bytes": .number(Double(minSizeBytes)),
-      "max_depth": .number(Double(maxDepth)),
-      "max_entries": .number(Double(maxEntries)),
-      "max_hash_files": .number(Double(maxHashFiles)),
-      "max_hash_file_bytes": .number(Double(maxHashFileBytes)),
-      "max_groups": .number(Double(maxGroups)),
-      "max_files_per_group": .number(Double(maxFilesPerGroup)),
-      "scanned_entries": .number(Double(scannedEntries)),
-      "scanned_file_count": .number(Double(scannedFileCount)),
-      "candidate_file_count": .number(Double(candidates.count)),
-      "candidate_size_bucket_count": .number(Double(sizeBuckets.count)),
-      "skipped_small_file_count": .number(Double(skippedSmallFileCount)),
-      "skipped_large_file_count": .number(Double(skippedLargeFileCount)),
-      "hashed_file_count": .number(Double(hashedFileCount)),
-      "hashed_size_bucket_count": .number(Double(hashedSizeBucketCount)),
-      "hash_bytes_read": .number(Double(hashBytesRead)),
-      "hash_skipped_file_count": .number(Double(hashSkippedFileCount)),
-      "hash_skipped_size_bucket_count": .number(Double(hashSkippedSizeBucketCount)),
-      "duplicate_group_count": .number(Double(duplicateGroupCount)),
-      "returned_group_count": .number(Double(returnedGroups.count)),
-      "duplicate_file_count": .number(Double(duplicateFileCount)),
-      "returned_duplicate_file_count": .number(Double(returnedDuplicateFileCount)),
-      "duplicate_bytes": .number(Double(duplicateBytes)),
-      "redundant_bytes_if_one_kept_per_group": .number(Double(redundantBytes)),
+      "min_size_bytes": .integer(Int64(minSizeBytes)),
+      "max_depth": .integer(Int64(maxDepth)),
+      "max_entries": .integer(Int64(maxEntries)),
+      "max_hash_files": .integer(Int64(maxHashFiles)),
+      "max_hash_file_bytes": .integer(Int64(maxHashFileBytes)),
+      "max_groups": .integer(Int64(maxGroups)),
+      "max_files_per_group": .integer(Int64(maxFilesPerGroup)),
+      "scanned_entries": .integer(Int64(scannedEntries)),
+      "scanned_file_count": .integer(Int64(scannedFileCount)),
+      "candidate_file_count": .integer(Int64(candidates.count)),
+      "candidate_size_bucket_count": .integer(Int64(sizeBuckets.count)),
+      "skipped_small_file_count": .integer(Int64(skippedSmallFileCount)),
+      "skipped_large_file_count": .integer(Int64(skippedLargeFileCount)),
+      "hashed_file_count": .integer(Int64(hashedFileCount)),
+      "hashed_size_bucket_count": .integer(Int64(hashedSizeBucketCount)),
+      "hash_bytes_read": .integer(Int64(hashBytesRead)),
+      "hash_skipped_file_count": .integer(Int64(hashSkippedFileCount)),
+      "hash_skipped_size_bucket_count": .integer(Int64(hashSkippedSizeBucketCount)),
+      "duplicate_group_count": .integer(Int64(duplicateGroupCount)),
+      "returned_group_count": .integer(Int64(returnedGroups.count)),
+      "duplicate_file_count": .integer(Int64(duplicateFileCount)),
+      "returned_duplicate_file_count": .integer(Int64(returnedDuplicateFileCount)),
+      "duplicate_bytes": .integer(Int64(duplicateBytes)),
+      "redundant_bytes_if_one_kept_per_group": .integer(Int64(redundantBytes)),
       "scan_truncated": .bool(scanTruncated),
       "result_truncated": .bool(resultTruncated),
       "truncated": .bool(scanTruncated || resultTruncated),
@@ -16821,14 +16816,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "format": .string(archive.format),
       ]),
       "argv": .array(archive.arguments.map(JSONValue.string)),
-      "max_entries": .number(Double(maxEntries)),
-      "entry_count": .number(Double(entries.count)),
+      "max_entries": .integer(Int64(maxEntries)),
+      "entry_count": .integer(Int64(entries.count)),
       "truncated": .bool(result.stdoutTruncated || allEntries.count > entries.count),
       "entries": .array(Array(entries)),
       "result": .object([
         "executable": .string(result.executable),
         "arguments": .array(result.arguments.map(JSONValue.string)),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
         "stderr": .string(result.stderr),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -16913,14 +16908,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "encoding": .string(resolvedEncoding),
       "valid_utf8": .bool(validUTF8),
       "content": .string(content),
-      "bytes_read": .number(Double(result.stdout.count)),
-      "max_bytes": .number(Double(maxBytes)),
+      "bytes_read": .integer(Int64(result.stdout.count)),
+      "max_bytes": .integer(Int64(maxBytes)),
       "content_truncated": .bool(result.stdoutTruncated),
       "truncated": .bool(result.stdoutTruncated),
       "result": .object([
         "executable": .string(result.executable),
         "arguments": .array(result.arguments.map(JSONValue.string)),
-        "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
         "timed_out": .bool(result.timedOut),
         "stderr": .string(result.stderrString),
         "stderr_truncated": .bool(result.stderrTruncated),
@@ -17056,13 +17051,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "confirm_extract": .bool(confirmExtract),
       "create_directories": .bool(createDirectories),
       "dry_run": .bool(dryRun),
-      "entry_count": .number(Double(entries.count)),
+      "entry_count": .integer(Int64(entries.count)),
       "entries": .array(Array(previewEntries)),
       "entries_truncated": .bool(entries.count > previewEntries.count),
       "format": .string(archive.format),
-      "link_entry_count": .number(Double(linkEntries.count)),
-      "max_entries": .number(Double(maxEntries)),
-      "max_preview_entries": .number(Double(maxPreviewEntries)),
+      "link_entry_count": .integer(Int64(linkEntries.count)),
+      "max_entries": .integer(Int64(maxEntries)),
+      "max_preview_entries": .integer(Int64(maxPreviewEntries)),
       "overwrite": .bool(overwrite),
       "result": result,
       "would_extract": .bool(true),
@@ -17184,15 +17179,15 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "confirm_create": .bool(confirmCreate),
       "create_directories": .bool(createDirectories),
       "dry_run": .bool(dryRun),
-      "entry_count": .number(Double(sourceSnapshot.entryCount)),
+      "entry_count": .integer(Int64(sourceSnapshot.entryCount)),
       "entries": .array(sourceSnapshot.previewEntries.map(\.json)),
       "entries_truncated": .bool(sourceSnapshot.entryCount > sourceSnapshot.previewEntries.count),
       "format": .string(createCommand.format),
-      "max_entries": .number(Double(maxEntries)),
-      "max_preview_entries": .number(Double(maxPreviewEntries)),
+      "max_entries": .integer(Int64(maxEntries)),
+      "max_preview_entries": .integer(Int64(maxPreviewEntries)),
       "overwrite": .bool(overwrite),
       "result": result,
-      "source_count": .number(Double(sourceSnapshot.sources.count)),
+      "source_count": .integer(Int64(sourceSnapshot.sources.count)),
       "sources": .array(sourceSnapshot.sources.map(\.json)),
       "would_create": .bool(true),
     ])
@@ -17371,18 +17366,18 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "create_directories": .bool(createDirectories),
       "downloaded": .bool(downloaded),
       "downloaded_file": downloadedFile,
-      "downloaded_size_bytes": downloadedSizeBytes.map { .number(Double($0)) } ?? .null,
+      "downloaded_size_bytes": downloadedSizeBytes.map { .integer(Int64($0)) } ?? .null,
       "dry_run": .bool(dryRun),
       "follow_redirects": .bool(followRedirects),
-      "http_code": http?.httpCode.map { .number(Double($0)) } ?? .null,
+      "http_code": http?.httpCode.map { .integer(Int64($0)) } ?? .null,
       "url_effective": http?.urlEffective.map(JSONValue.string) ?? .null,
       "content_type": http?.contentType.map(JSONValue.string) ?? .null,
       "redirect_url": http?.redirectURL.map(JSONValue.string) ?? .null,
       "time_total_seconds": http?.timeTotal.map { .number($0) } ?? .null,
       "size_download_bytes": http?.sizeDownload.map { .number($0) } ?? .null,
-      "max_download_bytes": .number(Double(maxDownloadBytes)),
-      "max_output_bytes": .number(Double(maxOutputBytes)),
-      "max_redirects": .number(Double(maxRedirects)),
+      "max_download_bytes": .integer(Int64(maxDownloadBytes)),
+      "max_output_bytes": .integer(Int64(maxOutputBytes)),
+      "max_redirects": .integer(Int64(maxRedirects)),
       "overwrite": .bool(overwrite),
       "result": result,
       "would_download": .bool(true),
@@ -17449,17 +17444,17 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "would_create": .bool(!existed),
       "would_overwrite": .bool(existed),
       "would_create_parent_directories": .bool(!parentExists && createDirectories),
-      "bytes_before": .number(Double(existingSizeBytes)),
-      "bytes_after": .number(Double(data.count)),
-      "bytes_to_write": .number(Double(data.count)),
-      "bytes_written": .number(Double(dryRun ? 0 : data.count)),
+      "bytes_before": .integer(Int64(existingSizeBytes)),
+      "bytes_after": .integer(Int64(data.count)),
+      "bytes_to_write": .integer(Int64(data.count)),
+      "bytes_written": .integer(Int64(dryRun ? 0 : data.count)),
       "written": .bool(!dryRun),
     ]
 
     if includePreview {
       let contentPreview = utf8Preview(content, maxBytes: previewMaxBytes)
       payload["preview"] = .object([
-        "preview_max_bytes": .number(Double(previewMaxBytes)),
+        "preview_max_bytes": .integer(Int64(previewMaxBytes)),
         "content": .string(contentPreview.text),
         "content_truncated": .bool(contentPreview.truncated),
       ])
@@ -17569,10 +17564,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "confirm_write": .bool(confirmWrite),
       "overwrite": .bool(overwrite),
       "create_directories": .bool(createDirectories),
-      "requested_count": .number(Double(entries.count)),
-      "file_count": .number(Double(plans.count)),
-      "total_bytes_to_write": .number(Double(totalBytesToWrite)),
-      "total_bytes_written": .number(Double(dryRun ? 0 : totalBytesToWrite)),
+      "requested_count": .integer(Int64(entries.count)),
+      "file_count": .integer(Int64(plans.count)),
+      "total_bytes_to_write": .integer(Int64(totalBytesToWrite)),
+      "total_bytes_written": .integer(Int64(dryRun ? 0 : totalBytesToWrite)),
       "written": .bool(!dryRun),
       "files": .array(
         plans.map {
@@ -17665,10 +17660,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "would_create": .bool(!existed),
       "would_create_parent_directories": .bool(!parentExists && createDirectories),
       "append_newline": .bool(appendNewline),
-      "bytes_to_append": .number(Double(data.count)),
-      "bytes_appended": .number(Double(dryRun ? 0 : data.count)),
-      "size_before_bytes": .number(Double(sizeBefore)),
-      "size_after_bytes": .number(Double(sizeAfter)),
+      "bytes_to_append": .integer(Int64(data.count)),
+      "bytes_appended": .integer(Int64(dryRun ? 0 : data.count)),
+      "size_before_bytes": .integer(Int64(sizeBefore)),
+      "size_after_bytes": .integer(Int64(sizeAfter)),
       "would_change": .bool(!data.isEmpty),
       "changed": .bool(!dryRun && !data.isEmpty),
     ]
@@ -17676,7 +17671,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     if includePreview {
       let contentPreview = utf8Preview(finalContent, maxBytes: previewMaxBytes)
       payload["preview"] = .object([
-        "preview_max_bytes": .number(Double(previewMaxBytes)),
+        "preview_max_bytes": .integer(Int64(previewMaxBytes)),
         "content": .string(contentPreview.text),
         "content_truncated": .bool(contentPreview.truncated),
       ])
@@ -17766,19 +17761,19 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "encoding": .string("utf-8"),
       "replace_all": .bool(replaceAll),
       "dry_run": .bool(dryRun),
-      "total_matches": .number(Double(totalMatches)),
-      "replacements": .number(Double(replacements)),
+      "total_matches": .integer(Int64(totalMatches)),
+      "replacements": .integer(Int64(replacements)),
       "would_change": .bool(wouldChange),
       "changed": .bool(!dryRun && wouldChange),
-      "bytes_before": .number(Double(data.count)),
-      "bytes_after": .number(Double(updatedData.count)),
+      "bytes_before": .integer(Int64(data.count)),
+      "bytes_after": .integer(Int64(updatedData.count)),
     ]
 
     if includePreview {
       let searchPreview = utf8Preview(search, maxBytes: previewMaxBytes)
       let replacementPreview = utf8Preview(replacement, maxBytes: previewMaxBytes)
       payload["preview"] = .object([
-        "preview_max_bytes": .number(Double(previewMaxBytes)),
+        "preview_max_bytes": .integer(Int64(previewMaxBytes)),
         "search": .string(searchPreview.text),
         "search_truncated": .bool(searchPreview.truncated),
         "replacement": .string(replacementPreview.text),
@@ -17866,14 +17861,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "encoding": .string("utf-8"),
-      "line": .number(Double(line)),
+      "line": .integer(Int64(line)),
       "position": .string(position.rawValue),
       "append_newline": .bool(appendNewline),
       "dry_run": .bool(dryRun),
-      "line_count_before": .number(Double(lineStarts.count)),
-      "bytes_inserted": .number(Double(Data(insertion.utf8).count)),
-      "bytes_before": .number(Double(data.count)),
-      "bytes_after": .number(Double(updatedData.count)),
+      "line_count_before": .integer(Int64(lineStarts.count)),
+      "bytes_inserted": .integer(Int64(Data(insertion.utf8).count)),
+      "bytes_before": .integer(Int64(data.count)),
+      "bytes_after": .integer(Int64(updatedData.count)),
       "would_change": .bool(wouldChange),
       "changed": .bool(!dryRun && wouldChange),
     ]
@@ -17882,7 +17877,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       let targetLinePreview = utf8Preview(targetLine, maxBytes: previewMaxBytes)
       let insertedContentPreview = utf8Preview(insertion, maxBytes: previewMaxBytes)
       payload["preview"] = .object([
-        "preview_max_bytes": .number(Double(previewMaxBytes)),
+        "preview_max_bytes": .integer(Int64(previewMaxBytes)),
         "target_line": .string(targetLinePreview.text),
         "target_line_truncated": .bool(targetLinePreview.truncated),
         "inserted_content": .string(insertedContentPreview.text),
@@ -17984,17 +17979,17 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath(url)),
       "encoding": .string("utf-8"),
-      "start_line": .number(Double(startLine)),
-      "end_line": .number(Double(endLine)),
+      "start_line": .integer(Int64(startLine)),
+      "end_line": .integer(Int64(endLine)),
       "append_newline": .bool(appendNewline),
       "dry_run": .bool(dryRun),
-      "line_count_before": .number(Double(lineStarts.count)),
-      "deleted_line_count": .number(Double(endLine - startLine + 1)),
-      "inserted_line_count": .number(Double(existingLineStarts(in: replacement).count)),
-      "bytes_replaced": .number(Double(Data(originalContent.utf8).count)),
-      "bytes_inserted": .number(Double(Data(replacement.utf8).count)),
-      "bytes_before": .number(Double(data.count)),
-      "bytes_after": .number(Double(updatedData.count)),
+      "line_count_before": .integer(Int64(lineStarts.count)),
+      "deleted_line_count": .integer(Int64(endLine - startLine + 1)),
+      "inserted_line_count": .integer(Int64(existingLineStarts(in: replacement).count)),
+      "bytes_replaced": .integer(Int64(Data(originalContent.utf8).count)),
+      "bytes_inserted": .integer(Int64(Data(replacement.utf8).count)),
+      "bytes_before": .integer(Int64(data.count)),
+      "bytes_after": .integer(Int64(updatedData.count)),
       "would_change": .bool(wouldChange),
       "changed": .bool(!dryRun && wouldChange),
     ]
@@ -18003,7 +17998,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       let selectedPreview = utf8Preview(originalContent, maxBytes: previewMaxBytes)
       let replacementPreview = utf8Preview(replacement, maxBytes: previewMaxBytes)
       payload["preview"] = .object([
-        "preview_max_bytes": .number(Double(previewMaxBytes)),
+        "preview_max_bytes": .integer(Int64(previewMaxBytes)),
         "selected_content": .string(selectedPreview.text),
         "selected_truncated": .bool(selectedPreview.truncated),
         "replacement_content": .string(replacementPreview.text),
@@ -18389,10 +18384,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "argv": .array(args.map(JSONValue.string)),
       "include_values": .bool(includeValues),
       "scope": .string(scope),
-      "max_results": .number(Double(maxResults)),
-      "entry_count": .number(Double(scopedEntries.count)),
-      "returned_count": .number(Double(returnedEntries.count)),
-      "redacted_count": .number(Double(returnedEntries.filter(\.valueRedacted).count)),
+      "max_results": .integer(Int64(maxResults)),
+      "entry_count": .integer(Int64(scopedEntries.count)),
+      "returned_count": .integer(Int64(returnedEntries.count)),
+      "redacted_count": .integer(Int64(returnedEntries.filter(\.valueRedacted).count)),
       "parse_incomplete": .bool(parsed.parseIncomplete),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "result_truncated": .bool(resultTruncated),
@@ -18958,10 +18953,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "query": .string(query),
       "case_sensitive": .bool(caseSensitive),
       "paths": .array(paths.map(JSONValue.string)),
-      "max_results": .number(Double(maxResults)),
+      "max_results": .integer(Int64(maxResults)),
       "argv": .array(args.map(JSONValue.string)),
-      "match_count": .number(Double(parsed.matches.count)),
-      "returned_count": .number(Double(returnedMatches.count)),
+      "match_count": .integer(Int64(parsed.matches.count)),
+      "returned_count": .integer(Int64(returnedMatches.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "parse_incomplete": .bool(parseIncomplete),
@@ -19039,12 +19034,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "workspace_relative_path": .string(paths[0]),
       "follow": .bool(follow),
       "include_merges": .bool(includeMerges),
-      "limit": .number(Double(limit)),
-      "max_results": .number(Double(maxResults)),
-      "entry_count": .number(Double(entries.count)),
-      "returned_entry_count": .number(Double(returnedEntries.count)),
-      "raw_line_count": .number(Double(rawLines.count)),
-      "returned_raw_line_count": .number(Double(returnedRawLines.count)),
+      "limit": .integer(Int64(limit)),
+      "max_results": .integer(Int64(maxResults)),
+      "entry_count": .integer(Int64(entries.count)),
+      "returned_entry_count": .integer(Int64(returnedEntries.count)),
+      "raw_line_count": .integer(Int64(rawLines.count)),
+      "returned_raw_line_count": .integer(Int64(returnedRawLines.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "parse_incomplete": .bool(result.stdoutTruncated),
@@ -19121,9 +19116,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "object_spec": .string(objectSpec),
       "encoding": .string("utf-8"),
       "content": .string(content),
-      "bytes_returned": .number(Double(contentData.count)),
-      "line_count": .number(Double(lineCount)),
-      "max_bytes": .number(Double(maxBytes)),
+      "bytes_returned": .integer(Int64(contentData.count)),
+      "line_count": .integer(Int64(lineCount)),
+      "max_bytes": .integer(Int64(maxBytes)),
       "content_truncated": .bool(contentTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "truncated": .bool(contentTruncated),
@@ -19174,9 +19169,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "index_stage": .number(0),
       "encoding": .string("utf-8"),
       "content": .string(content),
-      "bytes_returned": .number(Double(contentData.count)),
-      "line_count": .number(Double(lineCount)),
-      "max_bytes": .number(Double(maxBytes)),
+      "bytes_returned": .integer(Int64(contentData.count)),
+      "line_count": .integer(Int64(lineCount)),
+      "max_bytes": .integer(Int64(maxBytes)),
       "content_truncated": .bool(contentTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "truncated": .bool(contentTruncated),
@@ -19372,11 +19367,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_ignored": .bool(includeIgnored),
       "ignored_only": .bool(ignoredOnly),
       "paths": .array(paths.map(JSONValue.string)),
-      "max_results": .number(Double(maxResults)),
-      "item_count": .number(Double(items.count)),
-      "returned_item_count": .number(Double(returnedItems.count)),
-      "raw_line_count": .number(Double(rawLines.count)),
-      "returned_raw_line_count": .number(Double(returnedRawLines.count)),
+      "max_results": .integer(Int64(maxResults)),
+      "item_count": .integer(Int64(items.count)),
+      "returned_item_count": .integer(Int64(returnedItems.count)),
+      "raw_line_count": .integer(Int64(rawLines.count)),
+      "returned_raw_line_count": .integer(Int64(returnedRawLines.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "parse_incomplete": .bool(result.stdoutTruncated),
@@ -19496,12 +19491,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("git.reflog"),
       "provider": .string(command.id),
       "argv": .array(args.map(JSONValue.string)),
-      "limit": .number(Double(limit)),
-      "max_results": .number(Double(maxResults)),
-      "entry_count": .number(Double(entries.count)),
-      "returned_entry_count": .number(Double(returnedEntries.count)),
-      "raw_line_count": .number(Double(rawLines.count)),
-      "returned_raw_line_count": .number(Double(returnedRawLines.count)),
+      "limit": .integer(Int64(limit)),
+      "max_results": .integer(Int64(maxResults)),
+      "entry_count": .integer(Int64(entries.count)),
+      "returned_entry_count": .integer(Int64(returnedEntries.count)),
+      "raw_line_count": .integer(Int64(rawLines.count)),
+      "returned_raw_line_count": .integer(Int64(returnedRawLines.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "parse_incomplete": .bool(result.stdoutTruncated),
@@ -19605,12 +19600,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "include_remotes": .bool(includeRemotes),
       "include_tags": .bool(includeTags),
       "namespaces": .array(namespaces.map(JSONValue.string)),
-      "limit": .number(Double(limit)),
-      "max_results": .number(Double(maxResults)),
-      "ref_count": .number(Double(refs.count)),
-      "returned_ref_count": .number(Double(returnedRefs.count)),
-      "raw_line_count": .number(Double(rawLines.count)),
-      "returned_raw_line_count": .number(Double(returnedRawLines.count)),
+      "limit": .integer(Int64(limit)),
+      "max_results": .integer(Int64(maxResults)),
+      "ref_count": .integer(Int64(refs.count)),
+      "returned_ref_count": .integer(Int64(returnedRefs.count)),
+      "raw_line_count": .integer(Int64(rawLines.count)),
+      "returned_raw_line_count": .integer(Int64(returnedRawLines.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "parse_incomplete": .bool(result.stdoutTruncated),
@@ -19737,24 +19732,24 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "head": .string(head),
       "range": .string(range),
       "cherry_pick": .bool(cherryPick),
-      "limit": .number(Double(limit)),
-      "max_results": .number(Double(maxResults)),
+      "limit": .integer(Int64(limit)),
+      "max_results": .integer(Int64(maxResults)),
       "argv": .object([
         "counts": .array(countArgs.map(JSONValue.string)),
         "merge_base": .array(mergeBaseArgs.map(JSONValue.string)),
         "commits": .array(logArgs.map(JSONValue.string)),
       ]),
       "counts": counts?.json ?? .null,
-      "base_only_count": counts.map { .number(Double($0.baseOnly)) } ?? .null,
-      "head_only_count": counts.map { .number(Double($0.headOnly)) } ?? .null,
-      "head_ahead": counts.map { .number(Double($0.headOnly)) } ?? .null,
-      "head_behind": counts.map { .number(Double($0.baseOnly)) } ?? .null,
+      "base_only_count": counts.map { .integer(Int64($0.baseOnly)) } ?? .null,
+      "head_only_count": counts.map { .integer(Int64($0.headOnly)) } ?? .null,
+      "head_ahead": counts.map { .integer(Int64($0.headOnly)) } ?? .null,
+      "head_behind": counts.map { .integer(Int64($0.baseOnly)) } ?? .null,
       "merge_base": mergeBase.map(JSONValue.string) ?? .null,
       "has_merge_base": .bool(mergeBase != nil),
-      "commit_count": .number(Double(commits.count)),
-      "returned_commit_count": .number(Double(returnedCommits.count)),
-      "raw_line_count": .number(Double(rawLines.count)),
-      "returned_raw_line_count": .number(Double(returnedRawLines.count)),
+      "commit_count": .integer(Int64(commits.count)),
+      "returned_commit_count": .integer(Int64(returnedCommits.count)),
+      "raw_line_count": .integer(Int64(rawLines.count)),
+      "returned_raw_line_count": .integer(Int64(returnedRawLines.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(
         countResult.stdoutTruncated || mergeBaseResult.stdoutTruncated || logResult.stdoutTruncated
@@ -19878,7 +19873,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "argv": .array(args.map(JSONValue.string)),
       "merge_bases": .array(mergeBases.map(JSONValue.string)),
       "merge_base": mergeBases.first.map(JSONValue.string) ?? .null,
-      "merge_base_count": .number(Double(mergeBases.count)),
+      "merge_base_count": .integer(Int64(mergeBases.count)),
       "has_merge_base": .bool(!mergeBases.isEmpty),
       "result": gitCommandMetadata(result),
     ])
@@ -20218,18 +20213,18 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "provider": .string(command.id),
       "staged": .bool(staged),
       "paths": .array(paths.map(JSONValue.string)),
-      "max_results": .number(Double(maxResults)),
+      "max_results": .integer(Int64(maxResults)),
       "commands": .object([
         "numstat": .array(numstatArgs.map(JSONValue.string)),
         "summary": .array(summaryArgs.map(JSONValue.string)),
       ]),
-      "file_count": .number(Double(files.count)),
-      "returned_file_count": .number(Double(returnedFiles.count)),
-      "summary_count": .number(Double(summaryItems.count)),
-      "returned_summary_count": .number(Double(returnedSummaryItems.count)),
-      "total_additions": .number(Double(totalAdditions)),
-      "total_deletions": .number(Double(totalDeletions)),
-      "binary_file_count": .number(Double(binaryFileCount)),
+      "file_count": .integer(Int64(files.count)),
+      "returned_file_count": .integer(Int64(returnedFiles.count)),
+      "summary_count": .integer(Int64(summaryItems.count)),
+      "returned_summary_count": .integer(Int64(returnedSummaryItems.count)),
+      "total_additions": .integer(Int64(totalAdditions)),
+      "total_deletions": .integer(Int64(totalDeletions)),
+      "binary_file_count": .integer(Int64(binaryFileCount)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(stdoutTruncated),
       "parse_incomplete": .bool(stdoutTruncated),
@@ -20437,12 +20432,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "argv": .array(args.map(JSONValue.string)),
       "staged": .bool(staged),
       "paths": .array(paths.map(JSONValue.string)),
-      "max_results": .number(Double(maxResults)),
+      "max_results": .integer(Int64(maxResults)),
       "passed": .bool(result.exitCode == 0 && issues.isEmpty && !result.stdoutTruncated),
-      "issue_count": .number(Double(issues.count)),
-      "returned_issue_count": .number(Double(returnedIssues.count)),
-      "raw_line_count": .number(Double(rawLines.count)),
-      "returned_raw_line_count": .number(Double(returnedRawLines.count)),
+      "issue_count": .integer(Int64(issues.count)),
+      "returned_issue_count": .integer(Int64(returnedIssues.count)),
+      "raw_line_count": .integer(Int64(rawLines.count)),
+      "returned_raw_line_count": .integer(Int64(returnedRawLines.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "parse_incomplete": .bool(result.stdoutTruncated),
@@ -20888,7 +20883,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "current_branch": currentBranch.isEmpty ? .null : .string(currentBranch),
       "already_current": .bool(alreadyCurrent),
       "dirty_worktree": .bool(dirty),
-      "working_tree_change_count": .number(Double(changeCount)),
+      "working_tree_change_count": .integer(Int64(changeCount)),
       "preflight": .object([
         "check_ref_format": gitCommandMetadata(checkNameResult),
         "existing_branch": gitCommandMetadata(existsResult),
@@ -20974,7 +20969,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "operation": .string("git.commit_files"),
       "provider": .string(command.id),
       "revision": .string(revision),
-      "max_results": .number(Double(maxResults)),
+      "max_results": .integer(Int64(maxResults)),
       "commands": .object([
         "metadata": .array(metadataArgs.map(JSONValue.string)),
         "files": .array(filesArgs.map(JSONValue.string)),
@@ -20985,10 +20980,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "committed_at": metadata.committedAt.map(JSONValue.string) ?? .null,
       "author": metadata.author.map(JSONValue.string) ?? .null,
       "subject": metadata.subject.map(JSONValue.string) ?? .null,
-      "file_count": .number(Double(files.count)),
-      "returned_file_count": .number(Double(returnedFiles.count)),
-      "raw_record_count": .number(Double(rawRecords.count)),
-      "returned_raw_record_count": .number(Double(returnedRawRecords.count)),
+      "file_count": .integer(Int64(files.count)),
+      "returned_file_count": .integer(Int64(returnedFiles.count)),
+      "raw_record_count": .integer(Int64(rawRecords.count)),
+      "returned_raw_record_count": .integer(Int64(returnedRawRecords.count)),
       "result_truncated": .bool(resultTruncated),
       "stdout_truncated": .bool(stdoutTruncated),
       "parse_incomplete": .bool(parseIncomplete),
@@ -21625,8 +21620,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "path": .string(info.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "type": .string(info.type),
-      "depth": .number(Double(depth)),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "depth": .integer(Int64(depth)),
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
     ]
 
@@ -25937,8 +25932,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
     let value = pointer.pointee
     return .object([
-      "uid": .number(Double(value.pw_uid)),
-      "gid": .number(Double(value.pw_gid)),
+      "uid": .integer(Int64(value.pw_uid)),
+      "gid": .integer(Int64(value.pw_gid)),
       "name": cStringJSON(value.pw_name),
       "home_directory": cStringJSON(value.pw_dir),
       "shell": cStringJSON(value.pw_shell),
@@ -25951,7 +25946,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
     let value = pointer.pointee
     return .object([
-      "gid": .number(Double(value.gr_gid)),
+      "gid": .integer(Int64(value.gr_gid)),
       "name": cStringJSON(value.gr_name),
     ])
   }
@@ -26076,36 +26071,11 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     switch value {
     case _ as NSNull:
       return .null
-    case let bool as Bool:
-      return .bool(bool)
+    case let number as NSNumber:
+      if !number.doubleValue.isFinite { return yamlJSONNumber(number.doubleValue, stats: &stats) }
+      return try JSONValue(foundationNumber: number)
     case let string as String:
       return .string(string)
-    case let int as Int:
-      return .number(Double(int))
-    case let int as Int64:
-      return .number(Double(int))
-    case let int as Int32:
-      return .number(Double(int))
-    case let int as Int16:
-      return .number(Double(int))
-    case let int as Int8:
-      return .number(Double(int))
-    case let uint as UInt:
-      return .number(Double(uint))
-    case let uint as UInt64:
-      return .number(Double(uint))
-    case let uint as UInt32:
-      return .number(Double(uint))
-    case let uint as UInt16:
-      return .number(Double(uint))
-    case let uint as UInt8:
-      return .number(Double(uint))
-    case let double as Double:
-      return yamlJSONNumber(double, stats: &stats)
-    case let float as Float:
-      return yamlJSONNumber(Double(float), stats: &stats)
-    case let number as NSNumber:
-      return yamlJSONNumber(number.doubleValue, stats: &stats)
     case let date as Date:
       stats.dateCount += 1
       let formatter = ISO8601DateFormatter()
@@ -26224,10 +26194,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     switch value {
     case let string as String:
       return .string(string)
-    case let bool as Bool:
-      return .bool(bool)
     case let number as NSNumber:
-      return .number(number.doubleValue)
+      return try JSONValue(foundationNumber: number)
     case let date as Date:
       let formatter = ISO8601DateFormatter()
       formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -26238,7 +26206,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     case let data as Data:
       return .object([
         "type": .string("data"),
-        "byte_count": .number(Double(data.count)),
+        "byte_count": .integer(Int64(data.count)),
         "base64": .string(data.base64EncodedString()),
       ])
     case let array as [Any]:
@@ -26267,14 +26235,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       return string
     case .bool(let bool):
       return bool
+    case .integer(let integer):
+      return integer
     case .number(let number):
       guard number.isFinite else {
         throw GatewayToolError.invalidArguments("Property list numbers must be finite.")
       }
-      let rounded = number.rounded()
-      if rounded == number && number >= Double(Int.min) && number <= Double(Int.max) {
-        return Int(number)
-      }
+      if let integer = Int64(exactly: number) { return integer }
       return number
     case .array(let array):
       return try array.map { try propertyListObject(from: $0, depth: depth + 1) }
@@ -26340,14 +26307,14 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     let truncated = data.count > maxBytes
     if format == .xml, let text = String(data: bounded, encoding: .utf8) {
       return .object([
-        "preview_max_bytes": .number(Double(maxBytes)),
+        "preview_max_bytes": .integer(Int64(maxBytes)),
         "encoding": .string("utf8"),
         "content": .string(text),
         "content_truncated": .bool(truncated),
       ])
     }
     return .object([
-      "preview_max_bytes": .number(Double(maxBytes)),
+      "preview_max_bytes": .integer(Int64(maxBytes)),
       "encoding": .string("base64"),
       "content": .string(bounded.base64EncodedString()),
       "content_truncated": .bool(truncated),
@@ -26359,7 +26326,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     case .string(let string):
       return .string(string)
     case .integer(let integer):
-      return .number(Double(integer))
+      return .integer(Int64(integer))
     case .float(let double):
       return .number(double)
     case .bool(let bool):
@@ -26515,8 +26482,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         value: value,
         metadata: .object([
           "kind": .string("yaml"),
-          "document_count": .number(Double(parsedDocumentCount)),
-          "returned_document_count": .number(Double(documents.count)),
+          "document_count": .integer(Int64(parsedDocumentCount)),
+          "returned_document_count": .integer(Int64(documents.count)),
           "document_count_truncated": .bool(parsedDocumentCount > documents.count),
           "conversion": stats.json,
         ])
@@ -26633,7 +26600,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     switch value {
     case .string:
       return "string"
-    case .number:
+    case .number, .integer:
       return "number"
     case .bool:
       return "bool"
@@ -26683,8 +26650,8 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
 
     return .object([
       "parsed": .bool(true),
-      "pid": .number(Double(pid)),
-      "parent_pid": .number(Double(parentPID)),
+      "pid": .integer(Int64(pid)),
+      "parent_pid": .integer(Int64(parentPID)),
       "user": .string(parts[2]),
       "state": .string(parts[3]),
       "cpu_percent": .number(cpuPercent),
@@ -26998,13 +26965,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       "localized_name": values?.volumeLocalizedName.map(JSONValue.string) ?? .null,
       "volume_name": values?.volumeName.map(JSONValue.string) ?? .null,
       "uuid": values?.volumeUUIDString.map(JSONValue.string) ?? .null,
-      "total_capacity_bytes": values?.volumeTotalCapacity.map { .number(Double($0)) } ?? .null,
-      "available_capacity_bytes": values?.volumeAvailableCapacity.map { .number(Double($0)) }
+      "total_capacity_bytes": values?.volumeTotalCapacity.map { .integer(Int64($0)) } ?? .null,
+      "available_capacity_bytes": values?.volumeAvailableCapacity.map { .integer(Int64($0)) }
         ?? .null,
       "available_capacity_for_important_usage_bytes": values?
-        .volumeAvailableCapacityForImportantUsage.map { .number(Double($0)) } ?? .null,
+        .volumeAvailableCapacityForImportantUsage.map { .integer(Int64($0)) } ?? .null,
       "available_capacity_for_opportunistic_usage_bytes": values?
-        .volumeAvailableCapacityForOpportunisticUsage.map { .number(Double($0)) } ?? .null,
+        .volumeAvailableCapacityForOpportunisticUsage.map { .integer(Int64($0)) } ?? .null,
       "is_local": values?.volumeIsLocal.map(JSONValue.bool) ?? .null,
       "is_internal": values?.volumeIsInternal.map(JSONValue.bool) ?? .null,
       "is_ejectable": values?.volumeIsEjectable.map(JSONValue.bool) ?? .null,
@@ -27343,7 +27310,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         format: nil
       )
       return MetadataPayload(
-        metadata: propertyListJSON(plist),
+        metadata: try propertyListJSON(plist),
         error: nil,
         omittedReason: nil
       )
@@ -27356,19 +27323,19 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
   }
 
-  private func propertyListJSON(_ value: Any) -> JSONValue {
+  private func propertyListJSON(_ value: Any) throws -> JSONValue {
     if let dictionary = value as? NSDictionary {
       var object: [String: JSONValue] = [:]
       for key in dictionary.allKeys {
         guard let stringKey = key as? String else {
           continue
         }
-        object[stringKey] = propertyListJSON(dictionary[stringKey] as Any)
+        object[stringKey] = try propertyListJSON(dictionary[stringKey] as Any)
       }
       return .object(object)
     }
     if let array = value as? NSArray {
-      return .array(array.map { propertyListJSON($0) })
+      return .array(try array.map { try propertyListJSON($0) })
     }
     if let string = value as? String {
       return .string(string)
@@ -27380,11 +27347,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       return .string(data.base64EncodedString())
     }
     if let number = value as? NSNumber {
-      let type = String(cString: number.objCType)
-      if type == "c" || type == "B" {
-        return .bool(number.boolValue)
-      }
-      return .number(number.doubleValue)
+      return try JSONValue(foundationNumber: number)
     }
     return .null
   }
@@ -27910,10 +27873,10 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     .object([
       "executable": .string(result.executable),
       "arguments": .array(result.arguments.map(JSONValue.string)),
-      "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
+      "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
       "timed_out": .bool(result.timedOut),
       "stderr": .string(result.stderr),
-      "stdout_bytes": .number(Double(result.stdout.utf8.count)),
+      "stdout_bytes": .integer(Int64(result.stdout.utf8.count)),
       "stdout_truncated": .bool(result.stdoutTruncated),
       "stderr_truncated": .bool(result.stderrTruncated),
     ])
@@ -33293,7 +33256,7 @@ private enum StructuredPathSegment {
     case .key(let key):
       return .string(key)
     case .index(let index):
-      return .number(Double(index))
+      return .integer(Int64(index))
     }
   }
 }
@@ -33317,7 +33280,7 @@ private struct StructuredSelectionFailure {
 
   var json: JSONValue {
     .object([
-      "index": .number(Double(index)),
+      "index": .integer(Int64(index)),
       "segment": segment.json,
       "reason": .string(reason),
       "actual_kind": .string(actualKind),
@@ -33336,7 +33299,7 @@ private struct ListedFile {
       "path": .string(info.path),
       "workspace_relative_path": .string(relativePath),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_directory": .bool(info.type == "directory"),
       "is_symlink": .bool(info.isSymlink),
@@ -33353,9 +33316,9 @@ private struct FileOutlineItem {
 
   var json: JSONValue {
     .object([
-      "line": .number(Double(line)),
+      "line": .integer(Int64(line)),
       "kind": .string(kind),
-      "level": level.map { .number(Double($0)) } ?? .null,
+      "level": level.map { .integer(Int64($0)) } ?? .null,
       "name": .string(name),
       "text": .string(text),
     ])
@@ -33373,16 +33336,16 @@ private struct WorkspaceOutlineItem {
       "path": .string(info.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "language": .string(language),
-      "line": .number(Double(item.line)),
+      "line": .integer(Int64(item.line)),
       "kind": .string(item.kind),
-      "level": item.level.map { .number(Double($0)) } ?? .null,
+      "level": item.level.map { .integer(Int64($0)) } ?? .null,
       "name": .string(item.name),
       "text": .string(item.text),
       "file_truncated": .bool(fileTruncated),
       "read_context": .object([
         "tool": .string("file.read_context"),
         "path": .string(info.workspaceRelativePath),
-        "line": .number(Double(item.line)),
+        "line": .integer(Int64(item.line)),
       ]),
       "outline_context": .object([
         "tool": .string("file.outline"),
@@ -33405,7 +33368,7 @@ private struct MarkdownLinkInfo {
 
   var json: JSONValue {
     .object([
-      "line": .number(Double(line)),
+      "line": .integer(Int64(line)),
       "kind": .string(kind),
       "label": label.map(JSONValue.string) ?? .null,
       "reference_label": referenceLabel.map(JSONValue.string) ?? .null,
@@ -33439,18 +33402,18 @@ private struct MarkdownTableInfo {
   func json(maxRowsPerTable: Int) -> JSONValue {
     let returnedRows = Array(rows.prefix(maxRowsPerTable))
     return .object([
-      "start_line": .number(Double(startLine)),
-      "end_line": .number(Double(endLine)),
-      "header_line": .number(Double(headerLine)),
-      "delimiter_line": .number(Double(delimiterLine)),
-      "column_count": .number(Double(headers.count)),
+      "start_line": .integer(Int64(startLine)),
+      "end_line": .integer(Int64(endLine)),
+      "header_line": .integer(Int64(headerLine)),
+      "delimiter_line": .integer(Int64(delimiterLine)),
+      "column_count": .integer(Int64(headers.count)),
       "headers": .array(headers.map(JSONValue.string)),
       "alignments": .array(alignments.map(JSONValue.string)),
-      "row_count": .number(Double(rows.count)),
-      "returned_row_count": .number(Double(returnedRows.count)),
+      "row_count": .integer(Int64(rows.count)),
+      "returned_row_count": .integer(Int64(returnedRows.count)),
       "row_result_truncated": .bool(rows.count > returnedRows.count),
       "raw": .string(raw),
-      "raw_bytes": .number(Double(Data(raw.utf8).count)),
+      "raw_bytes": .integer(Int64(Data(raw.utf8).count)),
       "rows": .array(returnedRows.map { $0.json(columnCount: headers.count) }),
     ])
   }
@@ -33466,11 +33429,11 @@ private struct MarkdownTableRowInfo {
     let normalizedCells = returnedCells + Array(repeating: "", count: missingCount)
     let extraCells = cells.count > columnCount ? Array(cells.dropFirst(columnCount)) : []
     return .object([
-      "line": .number(Double(line)),
-      "cell_count": .number(Double(cells.count)),
+      "line": .integer(Int64(line)),
+      "cell_count": .integer(Int64(cells.count)),
       "cells": .array(normalizedCells.map(JSONValue.string)),
       "raw_cells": .array(cells.map(JSONValue.string)),
-      "missing_cell_count": .number(Double(missingCount)),
+      "missing_cell_count": .integer(Int64(missingCount)),
       "extra_cells": .array(extraCells.map(JSONValue.string)),
     ])
   }
@@ -33502,18 +33465,18 @@ private struct MarkdownLinkCheckResult {
     targetObject["fragment_checked"] = fragmentChecked.map(JSONValue.bool) ?? .null
     targetObject["fragment_found"] = fragmentFound.map(JSONValue.bool) ?? .null
     targetObject["target_bytes_scanned"] =
-      targetBytesScanned.map { .number(Double($0)) } ?? .null
+      targetBytesScanned.map { .integer(Int64($0)) } ?? .null
     targetObject["target_truncated"] = .bool(targetTruncated)
 
     return .object([
-      "line": .number(Double(link.line)),
+      "line": .integer(Int64(link.line)),
       "kind": .string(link.kind),
       "label": link.label.map(JSONValue.string) ?? .null,
       "reference_label": link.referenceLabel.map(JSONValue.string) ?? .null,
       "destination": link.destination.map(JSONValue.string) ?? .null,
       "resolved_destination": resolvedDestination.map(JSONValue.string) ?? .null,
       "resolved_via_reference_definition": .bool(resolvedViaReferenceDefinition),
-      "reference_definition_line": referenceDefinitionLine.map { .number(Double($0)) } ?? .null,
+      "reference_definition_line": referenceDefinitionLine.map { .integer(Int64($0)) } ?? .null,
       "title": link.title.map(JSONValue.string) ?? .null,
       "raw": .string(link.raw),
       "is_image": .bool(link.isImage),
@@ -33554,18 +33517,18 @@ private struct SkillMarkdownLinkCheckResult {
     targetObject["fragment_checked"] = fragmentChecked.map(JSONValue.bool) ?? .null
     targetObject["fragment_found"] = fragmentFound.map(JSONValue.bool) ?? .null
     targetObject["target_bytes_scanned"] =
-      targetBytesScanned.map { .number(Double($0)) } ?? .null
+      targetBytesScanned.map { .integer(Int64($0)) } ?? .null
     targetObject["target_truncated"] = .bool(targetTruncated)
 
     return .object([
-      "line": .number(Double(link.line)),
+      "line": .integer(Int64(link.line)),
       "kind": .string(link.kind),
       "label": link.label.map(JSONValue.string) ?? .null,
       "reference_label": link.referenceLabel.map(JSONValue.string) ?? .null,
       "destination": link.destination.map(JSONValue.string) ?? .null,
       "resolved_destination": resolvedDestination.map(JSONValue.string) ?? .null,
       "resolved_via_reference_definition": .bool(resolvedViaReferenceDefinition),
-      "reference_definition_line": referenceDefinitionLine.map { .number(Double($0)) } ?? .null,
+      "reference_definition_line": referenceDefinitionLine.map { .integer(Int64($0)) } ?? .null,
       "title": link.title.map(JSONValue.string) ?? .null,
       "raw": .string(link.raw),
       "is_image": .bool(link.isImage),
@@ -33662,18 +33625,18 @@ private struct WorkspaceDirectoryStatInfo {
     .object([
       "workspace_relative_path": .string(workspaceRelativePath),
       "name": .string(name),
-      "file_count": .number(Double(fileCount)),
-      "directory_count": .number(Double(directoryCount)),
-      "symlink_count": .number(Double(symlinkCount)),
-      "total_size_bytes": .number(Double(totalSizeBytes)),
-      "source_file_count": .number(Double(sourceFileCount)),
-      "test_file_count": .number(Double(testFileCount)),
-      "dependency_file_count": .number(Double(dependencyFileCount)),
-      "documentation_file_count": .number(Double(documentationFileCount)),
-      "ci_file_count": .number(Double(ciFileCount)),
-      "config_file_count": .number(Double(configFileCount)),
-      "executable_file_count": .number(Double(executableFileCount)),
-      "skipped_subtree_count": .number(Double(skippedSubtreeCount)),
+      "file_count": .integer(Int64(fileCount)),
+      "directory_count": .integer(Int64(directoryCount)),
+      "symlink_count": .integer(Int64(symlinkCount)),
+      "total_size_bytes": .integer(Int64(totalSizeBytes)),
+      "source_file_count": .integer(Int64(sourceFileCount)),
+      "test_file_count": .integer(Int64(testFileCount)),
+      "dependency_file_count": .integer(Int64(dependencyFileCount)),
+      "documentation_file_count": .integer(Int64(documentationFileCount)),
+      "ci_file_count": .integer(Int64(ciFileCount)),
+      "config_file_count": .integer(Int64(configFileCount)),
+      "executable_file_count": .integer(Int64(executableFileCount)),
+      "skipped_subtree_count": .integer(Int64(skippedSubtreeCount)),
     ])
   }
 }
@@ -33701,7 +33664,7 @@ private struct WorkspaceArtifactDirectoryInfo {
       "cleanup_risk": .string(cleanupRisk),
       "match_source": .string(matchSource),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "created_at": info.createdAt.map { .string(iso8601String($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
@@ -33740,7 +33703,7 @@ private struct WorkspaceEmptyDirectoryInfo {
       "path": .string(path),
       "workspace_relative_path": .string(workspaceRelativePath),
       "name": .string(name),
-      "depth": .number(Double(depth)),
+      "depth": .integer(Int64(depth)),
       "is_root": .bool(isRoot),
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "child_count": .number(0),
@@ -33789,8 +33752,8 @@ private struct GitDiffNumstatFile {
       "workspace_relative_path": .string(path),
       "old_path": oldPath.map(JSONValue.string) ?? .null,
       "old_workspace_relative_path": oldPath.map(JSONValue.string) ?? .null,
-      "additions": additions.map { .number(Double($0)) } ?? .null,
-      "deletions": deletions.map { .number(Double($0)) } ?? .null,
+      "additions": additions.map { .integer(Int64($0)) } ?? .null,
+      "deletions": deletions.map { .integer(Int64($0)) } ?? .null,
       "binary": .bool(binary),
     ])
   }
@@ -33839,7 +33802,7 @@ private struct GitDiffSummaryItem {
       "old_mode": oldMode.map(JSONValue.string) ?? .null,
       "new_mode": newMode.map(JSONValue.string) ?? .null,
       "mode": mode.map(JSONValue.string) ?? .null,
-      "similarity": similarity.map { .number(Double($0)) } ?? .null,
+      "similarity": similarity.map { .integer(Int64($0)) } ?? .null,
       "raw_line": .string(rawLine),
     ])
   }
@@ -33855,7 +33818,7 @@ private struct GitDiffCheckIssue {
     .object([
       "path": .string(path),
       "workspace_relative_path": .string(path),
-      "line": .number(Double(line)),
+      "line": .integer(Int64(line)),
       "message": .string(message),
       "raw_line": .string(rawLine),
     ])
@@ -33892,13 +33855,13 @@ private struct GitGrepMatch {
     .object([
       "path": .string(path),
       "workspace_relative_path": .string(path),
-      "line": .number(Double(line)),
+      "line": .integer(Int64(line)),
       "text": .string(text),
       "raw_record": .string(rawRecord),
       "read_context": .object([
         "tool": .string("file.read_lines"),
         "path": .string(path),
-        "start_line": .number(Double(max(1, line - 5))),
+        "start_line": .integer(Int64(max(1, line - 5))),
         "line_count": .number(11),
       ]),
     ])
@@ -33941,7 +33904,7 @@ private struct GitCommitFileChange {
       "workspace_relative_path": .string(path),
       "old_path": oldPath.map(JSONValue.string) ?? .null,
       "old_workspace_relative_path": oldPath.map(JSONValue.string) ?? .null,
-      "score": score.map { .number(Double($0)) } ?? .null,
+      "score": score.map { .integer(Int64($0)) } ?? .null,
       "raw_record": .string(rawRecord),
     ])
   }
@@ -34018,10 +33981,10 @@ private struct GitCompareCounts {
 
   var json: JSONValue {
     .object([
-      "base_only": .number(Double(baseOnly)),
-      "head_only": .number(Double(headOnly)),
-      "head_ahead": .number(Double(headOnly)),
-      "head_behind": .number(Double(baseOnly)),
+      "base_only": .integer(Int64(baseOnly)),
+      "head_only": .integer(Int64(headOnly)),
+      "head_ahead": .integer(Int64(headOnly)),
+      "head_behind": .integer(Int64(baseOnly)),
     ])
   }
 }
@@ -34096,8 +34059,8 @@ private struct GitTrackingStatusInfo {
       "branch": branch.map(JSONValue.string) ?? .null,
       "upstream": upstream.map(JSONValue.string) ?? .null,
       "has_upstream": .bool(hasUpstream),
-      "ahead": ahead.map { .number(Double($0)) } ?? .null,
-      "behind": behind.map { .number(Double($0)) } ?? .null,
+      "ahead": ahead.map { .integer(Int64($0)) } ?? .null,
+      "behind": behind.map { .integer(Int64($0)) } ?? .null,
       "flags": .array(flags.map(JSONValue.string)),
       "detached": .bool(detached),
       "unborn": .bool(unborn),
@@ -34117,8 +34080,8 @@ private struct WorkspaceFileTypeSummary {
     .object([
       "extension": .string(extensionName),
       "display": .string(displayName),
-      "file_count": .number(Double(fileCount)),
-      "size_bytes": .number(Double(sizeBytes)),
+      "file_count": .integer(Int64(fileCount)),
+      "size_bytes": .integer(Int64(sizeBytes)),
     ])
   }
 }
@@ -34160,8 +34123,8 @@ private struct WorkspaceTodoMatch {
       "marker": .string(marker),
       "path": .string(path),
       "workspace_relative_path": .string(workspaceRelativePath),
-      "line": .number(Double(line)),
-      "column": .number(Double(column)),
+      "line": .integer(Int64(line)),
+      "column": .integer(Int64(column)),
       "preview": .string(preview),
       "file_truncated": .bool(fileTruncated),
     ])
@@ -34184,15 +34147,15 @@ private struct WorkspaceEnvFileInfo {
     .object([
       "path": .string(path),
       "workspace_relative_path": .string(workspaceRelativePath),
-      "size_bytes": sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
-      "bytes_scanned": .number(Double(bytesScanned)),
+      "bytes_scanned": .integer(Int64(bytesScanned)),
       "file_truncated": .bool(fileTruncated),
       "keys_truncated": .bool(keysTruncated),
-      "invalid_line_count": .number(Double(invalidLineCount)),
+      "invalid_line_count": .integer(Int64(invalidLineCount)),
       "parse_error": parseError.map(JSONValue.string) ?? .null,
-      "key_count": .number(Double(keys.count)),
-      "distinct_key_count": .number(Double(Set(keys.map(\.name)).count)),
+      "key_count": .integer(Int64(keys.count)),
+      "distinct_key_count": .integer(Int64(Set(keys.map(\.name)).count)),
       "values_redacted": .bool(true),
       "keys": .array(keys.map(\.json)),
     ])
@@ -34209,7 +34172,7 @@ private struct WorkspaceEnvKeyInfo {
   var json: JSONValue {
     .object([
       "name": .string(name),
-      "line": .number(Double(line)),
+      "line": .integer(Int64(line)),
       "exported": .bool(exported),
       "has_value": .bool(hasValue),
       "value_empty": .bool(valueEmpty),
@@ -34245,7 +34208,7 @@ private struct WorkspaceDependencyFileInfo {
       "ecosystem": .string(ecosystem),
       "role": .string(role),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "xml_readable": .bool(xmlReadable),
@@ -34293,7 +34256,7 @@ private struct WorkspaceProjectRootInfo {
       "manifest_files": .array(manifestFiles.map(JSONValue.string)),
       "lock_files": .array(lockFiles.map(JSONValue.string)),
       "checksum_files": .array(checksumFiles.map(JSONValue.string)),
-      "dependency_file_count": .number(Double(dependencyFiles.count)),
+      "dependency_file_count": .integer(Int64(dependencyFiles.count)),
       "dependency_files": .array(dependencyFiles.map(\.json)),
       "is_workspace_root": .bool(isWorkspaceRoot),
     ])
@@ -34324,7 +34287,7 @@ private struct WorkspaceDocumentationFileInfo {
       "category": .string(category),
       "source": .string(source),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "markdown_links_context": isMarkdown
@@ -34367,7 +34330,7 @@ private struct WorkspaceAgentFileInfo {
       "source": .string(source),
       "scope_workspace_relative_path": .string(scopeWorkspaceRelativePath),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "read_context": .object([
@@ -34401,14 +34364,14 @@ private struct WorkspaceInstructionFileInfo {
       "kind": .string(kind),
       "source": .string(source),
       "scope_workspace_relative_path": .string(scopeWorkspaceRelativePath),
-      "apply_order": .number(Double(applyOrder)),
+      "apply_order": .integer(Int64(applyOrder)),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "content_included": .bool(content != nil),
       "content": content?.content.map(JSONValue.string) ?? .null,
-      "content_bytes_read": content.map { .number(Double($0.bytesRead)) } ?? .null,
+      "content_bytes_read": content.map { .integer(Int64($0.bytesRead)) } ?? .null,
       "content_truncated": content.map { .bool($0.truncated) } ?? .null,
       "valid_utf8": content.map { .bool($0.validUTF8) } ?? .null,
       "read_context": .object([
@@ -34440,7 +34403,7 @@ private struct WorkspaceTestFileInfo {
       "match_source": .string(matchSource),
       "style": .string(style),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
     ])
@@ -34468,7 +34431,7 @@ private struct WorkspaceCIFileInfo {
       "category": .string(category),
       "match_source": .string(matchSource),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
     ])
@@ -34521,7 +34484,7 @@ private struct WorkspaceInfraFileInfo {
       "yaml_readable": .bool(yamlReadable),
       "xml_readable": .bool(xmlReadable),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "read_lines_context": .object([
@@ -34585,7 +34548,7 @@ private struct WorkspaceConfigFileInfo {
       "category": .string(category),
       "match_source": .string(matchSource),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
     ])
@@ -34613,7 +34576,7 @@ private struct WorkspaceIgnoreFileInfo {
       "category": .string(category),
       "match_source": .string(matchSource),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "read_context": .object([
@@ -34645,7 +34608,7 @@ private struct WorkspaceAssetFileInfo {
       "category": .string(category),
       "subtype": .string(subtype),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "stat_context": .object([
@@ -34708,7 +34671,7 @@ private struct WorkspaceArchiveFileInfo {
       "format": .string(format),
       "list_supported": .bool(listSupported),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "stat_context": .object([
@@ -34760,7 +34723,7 @@ private struct WorkspaceLogFileInfo {
       "kind": .string(kind),
       "match_source": .string(matchSource),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "tail_context": .object([
@@ -34798,11 +34761,11 @@ private struct YAMLConversionStats {
 
   var json: JSONValue {
     .object([
-      "non_string_key_count": .number(Double(nonStringKeyCount)),
-      "key_collision_count": .number(Double(keyCollisionCount)),
-      "non_finite_number_count": .number(Double(nonFiniteNumberCount)),
-      "date_count": .number(Double(dateCount)),
-      "unsupported_value_count": .number(Double(unsupportedValueCount)),
+      "non_string_key_count": .integer(Int64(nonStringKeyCount)),
+      "key_collision_count": .integer(Int64(keyCollisionCount)),
+      "non_finite_number_count": .integer(Int64(nonFiniteNumberCount)),
+      "date_count": .integer(Int64(dateCount)),
+      "unsupported_value_count": .integer(Int64(unsupportedValueCount)),
     ])
   }
 }
@@ -34979,12 +34942,12 @@ private final class XMLNodeBuilder {
       "name": .string(name),
       "qualified_name": normalizedOptionalString(qualifiedName),
       "namespace_uri": normalizedOptionalString(namespaceURI),
-      "attribute_count": .number(Double(attributes.count)),
+      "attribute_count": .integer(Int64(attributes.count)),
       "attributes": .object(attributeObject),
       "text": displayText.isEmpty ? .null : .string(displayText),
       "text_truncated": .bool(textTruncated),
-      "child_count": .number(Double(childCount)),
-      "returned_child_count": .number(Double(children.count)),
+      "child_count": .integer(Int64(childCount)),
+      "returned_child_count": .integer(Int64(children.count)),
       "children": .array(children.map { $0.json(trimText: trimText) }),
     ])
   }
@@ -35030,7 +34993,7 @@ private struct WorkspaceDataFileInfo {
       "yaml_readable": .bool(yamlReadable),
       "xml_readable": .bool(xmlReadable),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "stat_context": .object([
@@ -35127,7 +35090,7 @@ private struct WorkspaceSchemaFileInfo {
       "yaml_readable": .bool(yamlReadable),
       "xml_readable": .bool(xmlReadable),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
       "read_lines_context": .object([
@@ -35185,7 +35148,7 @@ private struct WorkspaceSourceFileInfo {
       "kind": .string(kind),
       "match_source": .string(matchSource),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(info.isSymlink),
     ])
@@ -35233,7 +35196,7 @@ private struct WorkspaceGovernanceFileInfo {
       "type": .string(info.type),
       "yaml_readable": .bool(yamlReadable),
       "xml_readable": .bool(xmlReadable),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_executable": .bool(info.type == "file" && info.isExecutable),
       "is_symlink": .bool(info.isSymlink),
@@ -35384,7 +35347,7 @@ private struct SkillInfo {
       "description": description.map(JSONValue.string) ?? .null,
       "path": .string(fileURL.path),
       "skill_directory_path": .string(directoryURL.path),
-      "size_bytes": sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "describe_context": .object([
         "tool": .string("skills.describe"),
@@ -35482,7 +35445,7 @@ private struct SkillFileInfo {
       "absolute_path": .string(absolutePath),
       "type": .string(type),
       "outline_language": outlineLanguage.map(JSONValue.string) ?? .null,
-      "size_bytes": sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_readable": .bool(isReadable),
       "is_symlink": .bool(isSymlink),
@@ -35587,14 +35550,14 @@ private struct SkillFileSearchResult {
       "path": .string(file.path),
       "absolute_path": .string(file.absolutePath),
       "type": .string(file.type),
-      "size_bytes": file.sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": file.sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": file.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_readable": .bool(file.isReadable),
       "is_symlink": .bool(file.isSymlink),
       "target_inside_skill": .bool(file.targetInsideSkill),
       "matched_fields": .array(matchedFields.map(JSONValue.string)),
       "content_searched": .bool(contentSearched),
-      "content_match_count": .number(Double(contentMatches.count)),
+      "content_match_count": .integer(Int64(contentMatches.count)),
       "content_matches": .array(contentMatches.map(\.json)),
       "content_truncated": .bool(contentTruncated),
       "valid_utf8": validUTF8.map(JSONValue.bool) ?? .null,
@@ -35678,11 +35641,11 @@ private struct SkillResourceSummary {
       "kind": .string(kind),
       "path": path.map(JSONValue.string) ?? .null,
       "exists": .bool(exists),
-      "file_count": .number(Double(fileCount)),
-      "directory_count": .number(Double(directoryCount)),
-      "symlink_count": .number(Double(symlinkCount)),
-      "other_count": .number(Double(otherCount)),
-      "total_size_bytes": .number(Double(totalSizeBytes)),
+      "file_count": .integer(Int64(fileCount)),
+      "directory_count": .integer(Int64(directoryCount)),
+      "symlink_count": .integer(Int64(symlinkCount)),
+      "other_count": .integer(Int64(otherCount)),
+      "total_size_bytes": .integer(Int64(totalSizeBytes)),
       "list_context": listContext,
     ])
   }
@@ -35702,7 +35665,7 @@ private struct SkillFrontmatterStatus {
       "has_closing_delimiter": .bool(closed),
       "name": name.map(JSONValue.string) ?? .null,
       "description": description.map(JSONValue.string) ?? .null,
-      "line_count": lineCount.map { .number(Double($0)) } ?? .null,
+      "line_count": lineCount.map { .integer(Int64($0)) } ?? .null,
       "parse_error": parseError.map(JSONValue.string) ?? .null,
     ])
   }
@@ -35741,7 +35704,7 @@ private struct SkillContentLineMatch {
 
   var json: JSONValue {
     .object([
-      "line": .number(Double(line)),
+      "line": .integer(Int64(line)),
       "text": .string(text),
     ])
   }
@@ -35795,7 +35758,7 @@ private struct SkillSearchResult {
       "skill_directory_path": .string(skill.directoryURL.path),
       "matched_fields": .array(matchedFields.map(JSONValue.string)),
       "content_searched": .bool(contentSearched),
-      "content_match_count": .number(Double(contentMatches.count)),
+      "content_match_count": .integer(Int64(contentMatches.count)),
       "content_matches": .array(contentMatches.map(\.json)),
       "content_truncated": .bool(contentTruncated),
       "valid_utf8": .bool(validUTF8),
@@ -35883,7 +35846,7 @@ private struct ArchiveCreateSource {
       "path": .string(path),
       "workspace_relative_path": .string(workspaceRelativePath),
       "type": .string(type),
-      "entry_count": .number(Double(entryCount)),
+      "entry_count": .integer(Int64(entryCount)),
     ])
   }
 }
@@ -35965,7 +35928,7 @@ private struct FileInfo {
       "path": .string(path),
       "workspace_relative_path": .string(workspaceRelativePath),
       "type": .string(type),
-      "size_bytes": size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": size.map { .integer(Int64($0)) } ?? .null,
       "created_at": createdAt.map { .string(iso8601String($0)) } ?? .null,
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_readable": .bool(isReadable),
@@ -35990,7 +35953,7 @@ private struct TimelineFileEntry {
       "path": .string(info.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
       "type": .string(info.type),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "created_at": info.createdAt.map { .string(iso8601String($0)) } ?? .null,
       "modified_at": .string(iso8601String(modifiedAt)),
       "is_readable": .bool(info.isReadable),
@@ -36035,11 +35998,11 @@ private struct FileReadEntry {
     .object([
       "path": .string(info.path),
       "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "encoding": .string(encoding),
       "content": .string(content),
-      "bytes_read": .number(Double(bytesRead)),
+      "bytes_read": .integer(Int64(bytesRead)),
       "truncated": .bool(truncated),
       "valid_utf8": .bool(validUTF8),
     ])
@@ -36066,7 +36029,7 @@ private struct DuplicateFileCandidate: Comparable {
     .object([
       "path": .string(url.path),
       "workspace_relative_path": .string(workspaceRelativePath),
-      "size_bytes": .number(Double(sizeBytes)),
+      "size_bytes": .integer(Int64(sizeBytes)),
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "sha256": sha256.map(JSONValue.string) ?? .null,
       "read_context": .object([
@@ -36118,12 +36081,12 @@ private struct DuplicateHashBucket: Comparable {
     let returnedFiles = Array(files.prefix(maxFiles))
     return .object([
       "sha256": .string(sha256),
-      "size_bytes": .number(Double(sizeBytes)),
-      "file_count": .number(Double(files.count)),
-      "returned_file_count": .number(Double(returnedFiles.count)),
+      "size_bytes": .integer(Int64(sizeBytes)),
+      "file_count": .integer(Int64(files.count)),
+      "returned_file_count": .integer(Int64(returnedFiles.count)),
       "file_list_truncated": .bool(returnedFiles.count < files.count),
-      "duplicate_bytes": .number(Double(sizeBytes * Int64(files.count))),
-      "redundant_bytes_if_one_kept": .number(Double(redundantBytes)),
+      "duplicate_bytes": .integer(Int64(sizeBytes * Int64(files.count))),
+      "redundant_bytes_if_one_kept": .integer(Int64(redundantBytes)),
       "files": .array(returnedFiles.map(\.json)),
     ])
   }
@@ -36146,7 +36109,7 @@ private struct TreeCompareEntry {
       "relative_path": .string(relativePath),
       "workspace_relative_path": .string(workspaceRelativePath),
       "type": .string(type),
-      "size_bytes": sizeBytes.map { .number(Double($0)) } ?? .null,
+      "size_bytes": sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_symlink": .bool(isSymlink),
       "symlink_destination": symlinkDestination.map(JSONValue.string) ?? .null,
@@ -36202,16 +36165,16 @@ private struct FileWritePlan {
       "would_create": .bool(!existed),
       "would_overwrite": .bool(existed),
       "would_create_parent_directories": .bool(!parentExists && createDirectories),
-      "bytes_before": .number(Double(existingSizeBytes)),
-      "bytes_after": .number(Double(data.count)),
-      "bytes_to_write": .number(Double(data.count)),
-      "bytes_written": .number(Double(dryRun ? 0 : data.count)),
+      "bytes_before": .integer(Int64(existingSizeBytes)),
+      "bytes_after": .integer(Int64(data.count)),
+      "bytes_to_write": .integer(Int64(data.count)),
+      "bytes_written": .integer(Int64(dryRun ? 0 : data.count)),
       "written": .bool(!dryRun),
     ]
 
     if includePreview {
       object["preview"] = .object([
-        "preview_max_bytes": .number(Double(previewMaxBytes)),
+        "preview_max_bytes": .integer(Int64(previewMaxBytes)),
         "content": .string(preview.text),
         "content_truncated": .bool(preview.truncated),
       ])
@@ -36252,7 +36215,7 @@ private struct MacOSUserDirectoryInfo {
       "path": .string(path),
       "exists": .bool(exists),
       "type": .string(type),
-      "size_bytes": size.map { .number(Double($0)) } ?? .null,
+      "size_bytes": size.map { .integer(Int64($0)) } ?? .null,
       "created_at": createdAt.map { .string(iso8601String($0)) } ?? .null,
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "is_readable": .bool(isReadable),
@@ -36298,7 +36261,7 @@ private struct MacOSRunningApplicationInfo {
       "bundle_identifier": bundleIdentifier.map(JSONValue.string) ?? .null,
       "bundle_path": bundlePath.map(JSONValue.string) ?? .null,
       "executable_path": executablePath.map(JSONValue.string) ?? .null,
-      "process_id": .number(Double(processIdentifier)),
+      "process_id": .integer(Int64(processIdentifier)),
       "activation_policy": .string(activationPolicy),
       "is_active": .bool(isActive),
       "is_hidden": .bool(isHidden),
@@ -36320,8 +36283,8 @@ private struct FileSearchMatch {
     .object([
       "path": .string(path),
       "workspace_relative_path": .string(workspaceRelativePath),
-      "line": .number(Double(line)),
-      "column": .number(Double(column)),
+      "line": .integer(Int64(line)),
+      "column": .integer(Int64(column)),
       "preview": .string(preview),
       "file_truncated": .bool(fileTruncated),
     ])

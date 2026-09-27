@@ -109,6 +109,11 @@ deterministic `json`. String/binary stdin may contain NUL. Input is closed after
 delivery. Encoded invocations are bounded to 16384 arguments, 1 MiB argv bytes,
 and 4 MiB stdin.
 
+Integer values use signed 64-bit storage, including CLI argv, JSON stdin and
+stdout, and numeric schema bounds. Values outside this integer range fail
+validation; integer comparison and enum matching preserve adjacent values above
+2^53. Fractional numbers use binary floating-point precision.
+
 The schema subset supports string/integer/number/boolean/null/array/object types,
 `description`, `enum`, `const`, string `minLength`/`maxLength`, numeric
 `minimum`/`maximum`, array `items`/`minItems`/`maxItems`, and object

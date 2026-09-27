@@ -317,6 +317,8 @@ package struct GatewaySocketMCPResponseCorrelation: Equatable, Sendable {
     switch value {
     case .string(let value):
       return safeExternalIdentifier(value)
+    case .integer(let value):
+      return String(value)
     case .number(let value):
       if let integer = JSONValue.number(value).intValue {
         return String(integer)

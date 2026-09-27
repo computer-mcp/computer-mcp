@@ -108,7 +108,7 @@ enum CLIArgumentEncoder {
       guard !string.contains("\0") else { throw CLITreeError.invalid("Argv cannot contain NUL.") }
       return string
     case .bool(let value): return value ? "true" : "false"
-    case .number:
+    case .number, .integer:
       return String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     default: throw CLITreeError.invalid("Argv value is not a scalar.")
     }

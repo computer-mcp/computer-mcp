@@ -1,20 +1,49 @@
+import CoreFoundation
 import Foundation
 
 /// A small Codable representation for JSON values used by JSON-RPC payloads.
 package enum JSONValue: Codable, Equatable, Sendable {
   case string(String)
   case number(Double)
+  case integer(Int64)
   case bool(Bool)
   case object([String: JSONValue])
   case array([JSONValue])
   case null
+
+  /// Bridges Foundation numeric storage without Boolean coercion or floating-point rounding.
+  init(foundationNumber number: NSNumber) throws {
+    if CFGetTypeID(number) == CFBooleanGetTypeID() {
+      self = .bool(number.boolValue)
+    } else {
+      self = try JSONDecoder().decode(Self.self, from: Data(number.stringValue.utf8))
+    }
+  }
+
+  static func integer(exactly value: some BinaryInteger) throws -> Self {
+    guard let integer = Int64(exactly: value) else {
+      throw EncodingError.invalidValue(
+        value,
+        .init(
+          codingPath: [],
+          debugDescription: "JSON integer is outside the supported signed 64-bit range."))
+    }
+    return .integer(integer)
+  }
 
   package init(from decoder: any Decoder) throws {
     let container = try decoder.singleValueContainer()
 
     if container.decodeNil() {
       self = .null
+    } else if let value = try? container.decode(Int64.self) {
+      self = .integer(value)
     } else if let value = try? container.decode(Double.self) {
+      guard value.isFinite, value.rounded() != value else {
+        throw DecodingError.dataCorruptedError(
+          in: container,
+          debugDescription: "JSON integer is outside the supported signed 64-bit range.")
+      }
       self = .number(value)
     } else if let value = try? container.decode(Bool.self) {
       self = .bool(value)
@@ -42,6 +71,19 @@ package enum JSONValue: Codable, Equatable, Sendable {
     case .string(let value):
       try container.encode(value)
     case .number(let value):
+      if let integer = Int64(exactly: value) {
+        try container.encode(integer)
+      } else {
+        guard value.rounded() != value else {
+          throw EncodingError.invalidValue(
+            value,
+            .init(
+              codingPath: encoder.codingPath,
+              debugDescription: "JSON integer is outside the supported signed 64-bit range."))
+        }
+        try container.encode(value)
+      }
+    case .integer(let value):
       try container.encode(value)
     case .bool(let value):
       try container.encode(value)
@@ -62,29 +104,68 @@ package enum JSONValue: Codable, Equatable, Sendable {
     return nil
   }
 
-  /// Returns the underlying number if this value is a number.
+  /// Returns a floating-point approximation. Use integer accessors for identities and bounds.
   package var numberValue: Double? {
-    if case .number(let value) = self {
-      return value
+    switch self {
+    case .number(let value): return value
+    case .integer(let value): return Double(value)
+    default: return nil
     }
-    return nil
   }
 
   /// Returns the underlying number as an integer when it is integral.
   package var intValue: Int? {
-    guard let numberValue else {
-      return nil
+    int64Value.flatMap(Int.init(exactly:))
+  }
+
+  /// Returns a signed 64-bit integer without rounding.
+  package var int64Value: Int64? {
+    switch self {
+    case .integer(let value): value
+    case .number(let value): Int64(exactly: value)
+    default: nil
     }
-    let rounded = numberValue.rounded()
-    guard
-      rounded.isFinite,
-      rounded == numberValue,
-      rounded >= Double(Int.min),
-      rounded < -Double(Int.min)
-    else {
-      return nil
+  }
+
+  /// Compares numeric values without converting integer bounds through Double.
+  func numericComparison(to other: Self) -> ComparisonResult? {
+    func compare<T: Comparable>(_ lhs: T, _ rhs: T) -> ComparisonResult {
+      lhs == rhs ? .orderedSame : lhs < rhs ? .orderedAscending : .orderedDescending
     }
-    return Int(rounded)
+    func compare(_ integer: Int64, _ number: Double) -> ComparisonResult? {
+      guard number.isFinite else { return nil }
+      if let exact = Int64(exactly: number) { return compare(integer, exact) }
+      // A nonintegral Double is below the precision boundary; an integral one
+      // that cannot convert to Int64 lies outside its range.
+      return Double(integer) <= number ? .orderedAscending : .orderedDescending
+    }
+    switch (self, other) {
+    case (.integer(let lhs), .integer(let rhs)): return compare(lhs, rhs)
+    case (.number(let lhs), .number(let rhs)):
+      return lhs.isFinite && rhs.isFinite ? compare(lhs, rhs) : nil
+    case (.integer(let lhs), .number(let rhs)): return compare(lhs, rhs)
+    case (.number(let lhs), .integer(let rhs)):
+      guard let result = compare(rhs, lhs) else { return nil }
+      return result == .orderedSame
+        ? .orderedSame
+        : result == .orderedAscending ? .orderedDescending : .orderedAscending
+    default: return nil
+    }
+  }
+
+  package static func == (lhs: Self, rhs: Self) -> Bool {
+    switch (lhs, rhs) {
+    case (.integer(let lhs), .integer(let rhs)): lhs == rhs
+    case (.number(let lhs), .number(let rhs)): lhs == rhs
+    case (.integer(let lhs), .number(let rhs)): Int64(exactly: rhs) == lhs
+    case (.number(let lhs), .integer(let rhs)): Int64(exactly: lhs) == rhs
+    case (.string(let lhs), .string(let rhs)): lhs == rhs
+    case (.bool(let lhs), .bool(let rhs)): lhs == rhs
+    case (.object(let lhs), .object(let rhs)): lhs == rhs
+    case (.array(let lhs), .array(let rhs)): lhs == rhs
+    case (.null, .null): true
+    default: false
+    }
   }
 
   /// Returns the underlying Boolean if this value is a Boolean.

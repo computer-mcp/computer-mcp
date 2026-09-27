@@ -431,16 +431,16 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         payload = .object([
           "version": .string(ComputerMCPCLI.version),
           "build": .string(ComputerMCPCLI.build),
-          "pid": .number(Double(getpid())),
+          "pid": .integer(Int64(getpid())),
           "control_socket": .string(controlPlane.directories.controlSocket.path),
           "gateway_socket": .string(controlPlane.directories.gatewaySocket.path),
           "gateway_desired_running": .bool(try await controlPlane.gatewayDesiredRunning()),
           "active_profile": .string(activeProfile.rawValue),
-          "workspace_count": .number(Double(try await controlPlane.workspaces().count)),
-          "provider_count": .number(Double(try await controlPlane.providerCount())),
+          "workspace_count": .integer(Int64(try await controlPlane.workspaces().count)),
+          "provider_count": .integer(Int64(try await controlPlane.providerCount())),
           "launch_at_login": .string(snapshot.launchAtLogin.rawValue),
-          "openai_tunnel_count": .number(Double(snapshot.openAITunnelConfigurations.count)),
-          "cloudflare_tunnel_count": .number(Double(snapshot.cloudflareProfiles.count)),
+          "openai_tunnel_count": .integer(Int64(snapshot.openAITunnelConfigurations.count)),
+          "cloudflare_tunnel_count": .integer(Int64(snapshot.cloudflareProfiles.count)),
         ])
       case "app.start":
         payload = try encodedPayload(try await operations.startGateway())
@@ -653,8 +653,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         if object["kind"] != nil && kind == nil {
           throw GatewayToolError.invalidArguments("kind must be mcp, cli, or skills.")
         }
-        let pageNumber = object["page"]?.numberValue ?? 1
-        guard let page = Int(exactly: pageNumber), (1...100_000).contains(page) else {
+        guard let page = (object["page"] ?? .integer(1)).intValue,
+          (1...100_000).contains(page)
+        else {
           throw PluginCatalogError.invalidQuery
         }
         payload = try encodedPayload(
@@ -662,9 +663,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
             query: object["query"]?.stringValue ?? "", kind: kind, page: page,
             refresh: object["refresh"]?.boolValue ?? false))
       case "plugin.artifacts":
-        guard let number = object["repository_id"]?.numberValue,
-          let repositoryID = Int64(exactly: number), GitHubPluginArtifact.validID(repositoryID),
-          let page = Int(exactly: object["page"]?.numberValue ?? 1), (1...1_000).contains(page)
+        guard let repositoryID = object["repository_id"]?.int64Value,
+          GitHubPluginArtifact.validID(repositoryID),
+          let page = (object["page"] ?? .integer(1)).intValue, (1...1_000).contains(page)
         else { throw PluginCatalogError.invalidQuery }
         payload = try encodedPayload(
           try await controlPlane.pluginReleaseArtifacts(
@@ -685,8 +686,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       case "plugin.register", "plugin.configure", "plugin.enable", "plugin.disable",
         "plugin.select", "plugin.remove", "plugin.install", "plugin.install_release",
         "plugin.uninstall", "plugin.recover":
-        guard let revision = object["expected_revision"]?.numberValue,
-          revision >= 0, revision <= 9_007_199_254_740_991, let expected = Int64(exactly: revision)
+        guard let expected = object["expected_revision"]?.int64Value, expected >= 0
         else {
           throw GatewayToolError.invalidArguments(
             "expected_revision must be a nonnegative exact JSON integer.")
@@ -949,7 +949,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     let gatewayWasRunning = await gatewayService.snapshot().state == .running
     var result: [String: JSONValue] = [
       "ok": .bool(true),
-      "schema_version": .number(Double(parsed.schemaVersion)),
+      "schema_version": .integer(Int64(parsed.schemaVersion)),
       "current_digest": .string(currentDigest),
       "proposed_digest": .string(proposedDigest),
       "changed": .bool(currentDigest != proposedDigest),
@@ -1170,14 +1170,14 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       let proposedLine = proposedLines.indices.contains(index) ? proposedLines[index] : nil
       guard currentLine != proposedLine else { return nil }
       return .object([
-        "line": .number(Double(index + 1)),
+        "line": .integer(Int64(index + 1)),
         "current": currentLine.map(JSONValue.string) ?? .null,
         "proposed": proposedLine.map(JSONValue.string) ?? .null,
       ])
     }
     return .object([
-      "current_line_count": .number(Double(currentLines.count)),
-      "proposed_line_count": .number(Double(proposedLines.count)),
+      "current_line_count": .integer(Int64(currentLines.count)),
+      "proposed_line_count": .integer(Int64(proposedLines.count)),
       "changes": .array(changes),
     ])
   }

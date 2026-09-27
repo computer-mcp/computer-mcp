@@ -1865,9 +1865,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         "path": .string(operationRelativePath(itemURL, rootURL: rootURL)),
         "exists": .bool(true),
         "type": .string(type),
-        "size": .number(Double(size)),
+        "size": .integer(Int64(size)),
         "modified_at": .number(modified),
-        "permissions": .number(Double((attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0)),
+        "permissions": .integer(Int64((attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0)),
       ]
       if type == FileAttributeType.typeRegular.rawValue {
         totalRegularFileBytes += size
@@ -1944,7 +1944,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         for child in children { try validate(child, depth: depth + 1) }
       case .string(let text):
         guard text.utf8.count <= 8_192 else { throw exceedsBudget() }
-      case .number, .bool, .null: break
+      case .number, .integer, .bool, .null: break
       }
     }
     let value = JSONValue.object(arguments)

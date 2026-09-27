@@ -310,7 +310,7 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
     _ result: ComputerUseVerificationResult
   ) -> JSONValue {
     .object([
-      "attempts": .number(Double(result.attempts)),
+      "attempts": .integer(Int64(result.attempts)),
       "observation": verificationObservationValue(result.observation),
     ])
   }
@@ -332,7 +332,7 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
     case .accessibilityElementCount(let count):
       return .object([
         "type": .string("accessibility-element-count"),
-        "count": .number(Double(count)),
+        "count": .integer(Int64(count)),
       ])
     case .frontmostApplication(let application):
       return .object([
@@ -368,6 +368,8 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
       .bool(value)
     case .number(let value):
       .number(value)
+    case .integer(let value):
+      .integer(value)
     case .null:
       .null
     }
@@ -392,8 +394,8 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
 
   private func referenceValue(_ reference: ComputerUseAccessibilityReference) -> JSONValue {
     .object([
-      "process_id": .number(Double(reference.processID)),
-      "child_path": .array(reference.childPath.map { .number(Double($0)) }),
+      "process_id": .integer(Int64(reference.processID)),
+      "child_path": .array(reference.childPath.map { .integer(Int64($0)) }),
     ])
   }
 
@@ -401,7 +403,7 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
     _ application: ComputerUseApplicationObservation
   ) -> JSONValue {
     .object([
-      "process_id": .number(Double(application.processID)),
+      "process_id": .integer(Int64(application.processID)),
       "bundle_identifier": application.bundleIdentifier.map(JSONValue.string) ?? .null,
       "localized_name": application.localizedName.map(JSONValue.string) ?? .null,
     ])
@@ -813,6 +815,8 @@ private struct VerificationArguments: Decodable {
       return .bool(value)
     case .number(let value):
       return .number(value)
+    case .integer(let value):
+      return .integer(value)
     case .null:
       return .null
     case .array, .object:
@@ -860,10 +864,10 @@ extension ComputerUseGatewayProvider {
       schema["enum"] = .array(values.map(JSONValue.string))
     }
     if let minLength {
-      schema["minLength"] = .number(Double(minLength))
+      schema["minLength"] = .integer(Int64(minLength))
     }
     if let maxLength {
-      schema["maxLength"] = .number(Double(maxLength))
+      schema["maxLength"] = .integer(Int64(maxLength))
     }
     return .object(schema)
   }
@@ -877,8 +881,8 @@ extension ComputerUseGatewayProvider {
       "type": .string("integer"),
       "description": .string(description),
     ]
-    if let minimum { schema["minimum"] = .number(Double(minimum)) }
-    if let maximum { schema["maximum"] = .number(Double(maximum)) }
+    if let minimum { schema["minimum"] = .integer(Int64(minimum)) }
+    if let maximum { schema["maximum"] = .integer(Int64(maximum)) }
     return .object(schema)
   }
 

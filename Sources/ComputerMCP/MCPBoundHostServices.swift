@@ -197,9 +197,9 @@ actor MCPBoundHostServices {
             "tunnel_instance_id": audit.tunnelInstanceID.map(JSONValue.string) ?? .null,
             "tunnel_profile_id": audit.tunnelProfileID.map(JSONValue.string) ?? .null,
             "error_code": audit.errorCode.map(JSONValue.string) ?? .null,
-            "duration_milliseconds": audit.durationMilliseconds.map { .number(Double($0)) }
+            "duration_milliseconds": audit.durationMilliseconds.map { .integer(Int64($0)) }
               ?? .null,
-            "output_byte_count": audit.outputByteCount.map { .number(Double($0)) } ?? .null,
+            "output_byte_count": audit.outputByteCount.map { .integer(Int64($0)) } ?? .null,
             "output_truncated": audit.outputTruncated.map(JSONValue.bool) ?? .null,
             "input_digest": audit.inputDigest.map(JSONValue.string) ?? .null,
             "output_digest": audit.outputDigest.map(JSONValue.string) ?? .null,

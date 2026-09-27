@@ -6,6 +6,19 @@ import Testing
 struct MCPExecutionRecordTests {
   private let server = MCPServerConfig(id: "fixture", transport: .stdio, command: "/usr/bin/false")
 
+  @Test func receiptBindingRejectsAnAdjacentLargeInteger() throws {
+    let journal = MCPExecutionJournal(database: try GatewayDatabase(inMemory: ()), scope: "exact")
+    func input(_ literal: String) throws -> JSONValue {
+      try JSONDecoder().decode(JSONValue.self, from: Data("{\"id\":\(literal)}".utf8))
+    }
+    let first = try input("9007199254740992")
+    let next = try input("9007199254740993")
+    _ = try journal.reserve(server: server, tool: "write", arguments: first, requestID: "same")
+    #expect(throws: (any Error).self) {
+      try journal.reserve(server: server, tool: "write", arguments: next, requestID: "same")
+    }
+  }
+
   @Test func stableIdentityBindsInputAndSurvivesAHostInstanceChange() throws {
     let database = try GatewayDatabase(inMemory: ())
     let first = MCPExecutionJournal(database: database, scope: "credential-a/workspace")

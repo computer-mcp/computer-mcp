@@ -54,7 +54,8 @@ enum CLIValueValidation {
         throw CLITreeError.invalid("Schema numeric bounds must be finite numbers.")
       }
     }
-    if let min = object["minimum"]?.numberValue, let max = object["maximum"]?.numberValue, min > max
+    if let min = object["minimum"], let max = object["maximum"],
+      min.numericComparison(to: max) == .orderedDescending
     {
       throw CLITreeError.invalid("Reversed numeric bounds.")
     }
@@ -89,9 +90,13 @@ enum CLIValueValidation {
       if let max = shape["maxLength"]?.intValue, count > max { throw reject() }
     case "number", "integer":
       guard let number = value.numberValue, number.isFinite else { throw reject() }
-      if shape["type"] == .string("integer"), number.rounded() != number { throw reject() }
-      if let min = shape["minimum"]?.numberValue, number < min { throw reject() }
-      if let max = shape["maximum"]?.numberValue, number > max { throw reject() }
+      if shape["type"] == .string("integer"), value.int64Value == nil { throw reject() }
+      if let min = shape["minimum"], value.numericComparison(to: min) == .orderedAscending {
+        throw reject()
+      }
+      if let max = shape["maximum"], value.numericComparison(to: max) == .orderedDescending {
+        throw reject()
+      }
     case "boolean": guard value.boolValue != nil else { throw reject() }
     case "null": guard value == .null else { throw reject() }
     case "array":

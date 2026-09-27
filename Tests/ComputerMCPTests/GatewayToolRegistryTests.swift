@@ -11,6 +11,50 @@ import Testing
 
 final class GatewayToolRegistryTests {
   @Test
+  func structuredFileToolsPreserveIntegerIdentity() throws {
+    let directory = try temporaryDirectory()
+    let values: [String: JSONValue] = [
+      "large": .integer(9_007_199_254_740_993), "maximum": .integer(.max),
+      "minimum": .integer(.min), "zero": .integer(0), "one": .integer(1),
+      "enabled": .bool(true), "fraction": .number(1.25),
+    ]
+    try JSONEncoder().encode(JSONValue.object(values)).write(
+      to: directory.appendingPathComponent("numbers.json"))
+    try
+      "large = 9007199254740993\nmaximum = 9223372036854775807\nminimum = -9223372036854775808\nzero = 0\none = 1\nenabled = true\nfraction = 1.25\n"
+      .write(
+        to: directory.appendingPathComponent("numbers.toml"), atomically: true, encoding: .utf8)
+    try
+      "large: 9007199254740993\nmaximum: 9223372036854775807\nminimum: -9223372036854775808\nzero: 0\none: 1\nenabled: true\nfraction: 1.25\n"
+      .write(
+        to: directory.appendingPathComponent("numbers.yaml"), atomically: true, encoding: .utf8)
+    let registry = GatewayToolRegistry(
+      configuration: GatewayConfiguration(
+        builtin: BuiltinConfig(enabled: [
+          "json.read", "toml.read", "yaml.read", "plist.read", "plist.write",
+        ]),
+        workspaceDirectory: directory))
+    _ = try registry.callTool(
+      name: "plist.write",
+      arguments: .object([
+        "path": .string("numbers.plist"), "value": .object(values),
+        "dry_run": .bool(false), "confirm_write": .bool(true),
+      ]))
+    for format in ["json", "toml", "yaml", "plist"] {
+      let result = try registry.callTool(
+        name: "\(format).read",
+        arguments: .object([
+          "path": .string("numbers.\(format)")
+        ]))
+      let payload = try decodeTextPayload(result)
+      let decoded =
+        payload.objectValue?["value"]
+        ?? payload.objectValue?["documents"]?.arrayValue?.first?.objectValue?["value"]
+      #expect(decoded == .object(values), "Exact values in \(format)")
+    }
+  }
+
+  @Test
   func testGatewayToolsExposeCLIAndMCPTools() throws {
     let registry = GatewayToolRegistry(configuration: .fixture())
     let names = try registry.listTools().map(\.name)

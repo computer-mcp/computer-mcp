@@ -63,7 +63,7 @@ package enum ComputerMCPProductContracts {
       ),
     ]
     if let exitCode = provider.doctorStatus.exitCode {
-      doctor["exit_code"] = .number(Double(exitCode))
+      doctor["exit_code"] = .integer(Int64(exitCode))
     }
 
     var object: [String: JSONValue] = [

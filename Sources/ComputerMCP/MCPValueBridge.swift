@@ -6,6 +6,8 @@ extension JSONValue {
     switch self {
     case .string(let value):
       return .string(value)
+    case .integer(let value):
+      return .int(Int(value))
     case .number(let value):
       let rounded = value.rounded()
       if rounded.isFinite,
@@ -34,7 +36,7 @@ extension JSONValue {
     case .bool(let value):
       self = .bool(value)
     case .int(let value):
-      self = .number(Double(value))
+      self = .integer(Int64(value))
     case .double(let value):
       self = .number(value)
     case .string(let value):

@@ -218,11 +218,20 @@ a shell session through process and stream cleanup, and an MCP request through
 its observed response or confirmed local transport teardown. Cancelling a
 request does not release that ownership. Lost observation marks it uncertain;
 closing an HTTP connection cannot establish that remote execution stopped.
-These records account for host-observed work and do not infer the lifetime of
-jobs a provider starts after replying.
+Providers that advertise the versioned MCP work resource also retain ownership
+for jobs and handles that outlive their tool response. The host binds each
+acquisition to a host-generated invocation reference on that exact scoped
+connection. Complete, bounded reports can release these owners; stale,
+malformed, foreign-instance or unavailable reports retain uncertainty. A local
+supervisor's exit alone cannot prove its detached jobs stopped. Providers without
+this declaration retain ordinary MCP behavior; their replies do not establish
+the lifetime of opaque background work. See the
+[provider work contract](../Reference/MCPProtocol.md#downstream-provider-work).
 
 Downstream MCP initialization and ready-session requests have independent
 budgets. Expiry invalidates the connection and identifies the failed stage.
+Automatic provider work observations use a separate single-flight read: expiry
+marks observation uncertain without closing the provider or cancelling its work.
 Cancellation is checked before queued work begins and after initialization;
 an already issued action can still have an uncertain outcome. Tool calls are
 not replayed automatically. Configuration values are described

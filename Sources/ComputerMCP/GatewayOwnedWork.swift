@@ -7,6 +7,8 @@ final class GatewayOwnedWork: Sendable {
     case invocation
     case shell
     case mcpRequest
+    case mcpResource
+    case mcpObservation
   }
 
   struct Record: Sendable, Equatable {
@@ -40,10 +42,10 @@ final class GatewayOwnedWork: Sendable {
     if records.withLock({ $0.removeValue(forKey: id) != nil }) { changes.send() }
   }
 
-  private func markUncertain(_ id: UUID) {
+  private func setUncertain(_ id: UUID, _ uncertain: Bool) {
     let changed = records.withLock { records in
-      guard records[id]?.uncertain == false else { return false }
-      records[id]?.uncertain = true
+      guard let record = records[id], record.uncertain != uncertain else { return false }
+      records[id]?.uncertain = uncertain
       return true
     }
     if changed { changes.send() }
@@ -60,7 +62,8 @@ final class GatewayOwnedWork: Sendable {
     }
 
     func finish() { owner.finish(id) }
-    func markUncertain() { owner.markUncertain(id) }
-    deinit { owner.markUncertain(id) }
+    func markUncertain() { owner.setUncertain(id, true) }
+    func confirmObservation() { owner.setUncertain(id, false) }
+    deinit { owner.setUncertain(id, true) }
   }
 }

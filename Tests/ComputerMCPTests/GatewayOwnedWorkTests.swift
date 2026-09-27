@@ -22,6 +22,7 @@ struct GatewayOwnedWorkTests {
       for _ in 0..<20 {
         group.addTask { ownership.finish() }
         group.addTask { ownership.markUncertain() }
+        group.addTask { ownership.confirmObservation() }
       }
     }
     #expect(work.snapshot.isEmpty)

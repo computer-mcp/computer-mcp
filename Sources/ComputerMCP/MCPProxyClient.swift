@@ -607,8 +607,17 @@ private actor MCPProxyConnection {
     let id = UUID()
     let work: GatewayOwnedWork.Lease?
     let invocation: MCPHostToolDirectory.InvocationLease?
+    let providerInvocationID: UUID?
   }
   private var requestOwnership: [UUID: RequestOwnership] = [:]
+  private var providerWork: MCPProviderWork?
+  private var workCatalogObserved = false
+  private var workObservation: Task<Void, Never>?
+  private var workObservationID: UUID?
+  private var workDeadline: Task<Void, Never>?
+  private var workPoll: Task<Void, Never>?
+  private var workRefreshPending = false
+  private var workClosed = false
   private let toolsChanged: @Sendable () -> Void
 
   init(
@@ -641,7 +650,7 @@ private actor MCPProxyConnection {
     let tools = try await MCPToolCatalogLoader.load { [client] cursor in
       try await client.listTools(cursor: cursor)
     }
-    return tools.map { tool in
+    let catalog = tools.map { tool in
       MCPTool(
         name: tool.name,
         title: tool.title,
@@ -659,6 +668,27 @@ private actor MCPProxyConnection {
         meta: tool._meta.map { .object($0.fields.mapValues(JSONValue.init(sdkValue:))) }
       )
     }
+    do {
+      let advertised = try MCPProviderWork.advertised(by: catalog)
+      guard !advertised || initializeResult?.capabilities.resources != nil,
+        providerWork == nil || advertised
+      else {
+        throw GatewayToolError.executionFailed(
+          "[mcp.work_unavailable] The provider must retain its advertised work resource for the connection lifetime."
+        )
+      }
+      if advertised && providerWork == nil {
+        providerWork = MCPProviderWork(
+          work: ownedWork ?? GatewayOwnedWork(), workspaceID: workspaceID, registrationID: server.id
+        )
+        refreshProviderWork()
+      }
+      workCatalogObserved = true
+    } catch {
+      providerWork?.observationLost()
+      throw error
+    }
+    return catalog
   }
 
   func callTool(
@@ -887,6 +917,7 @@ private actor MCPProxyConnection {
       "latest_event_cursor": .integer(Int64(nextEventCursor - 1)),
       "last_error": lastError.map(JSONValue.string) ?? .null,
       "initialize": initializeResult.flatMap { try? JSONValue.encoded($0) } ?? .null,
+      "provider_work": providerWork?.status ?? .null,
     ])
   }
 
@@ -1023,6 +1054,10 @@ private actor MCPProxyConnection {
   private func dispatchTool(
     name: String, arguments: [String: JSONValue], gatewayRequestID: String, hostInvocationID: UUID?
   ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
+    if !workCatalogObserved && initializeResult?.capabilities.resources != nil {
+      _ = try await listTools()
+    }
+    guard closeTask == nil else { throw MCPError.connectionClosed }
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
       guard let hostTools, let workspaceID else { throw MCPError.connectionClosed }
@@ -1031,17 +1066,24 @@ private actor MCPProxyConnection {
     } else {
       invocation = nil
     }
+    let providerInvocationID = try providerWork?.beginInvocation(tool: name)
     let work = ownedWork?.retain(
       .mcpRequest, workspaceID: workspaceID, registrationID: server.id,
       resourceID: gatewayRequestID)
     let ownership =
-      work != nil || invocation != nil
-      ? RequestOwnership(work: work, invocation: invocation) : nil
+      work != nil || invocation != nil || providerInvocationID != nil
+      ? RequestOwnership(
+        work: work, invocation: invocation, providerInvocationID: providerInvocationID) : nil
     if let ownership { requestOwnership[ownership.id] = ownership }
     do {
-      let meta = hostInvocationID.map {
-        MCP.Metadata(additionalFields: [MCPHostInvocation.metadataKey: .string($0.uuidString)])
+      var fields: [String: MCP.Value] = [:]
+      if let hostInvocationID {
+        fields[MCPHostInvocation.metadataKey] = .string(hostInvocationID.uuidString)
       }
+      if let providerInvocationID {
+        fields[MCPProviderWork.invocationKey] = .string(providerInvocationID.uuidString)
+      }
+      let meta = fields.isEmpty ? nil : MCP.Metadata(additionalFields: fields)
       return (
         try await client.callTool(
           name: name, arguments: arguments.mapValues(\.sdkValue), meta: meta),
@@ -1053,8 +1095,14 @@ private actor MCPProxyConnection {
     }
   }
 
-  private func settleOwnership(_ ownership: RequestOwnership?, confirmed: Bool) {
+  private func settleOwnership(
+    _ ownership: RequestOwnership?, confirmed: Bool, providerResponse: Bool = true
+  ) {
     guard let ownership else { return }
+    if let id = ownership.providerInvocationID {
+      providerWork?.finishInvocation(id, confirmed: confirmed && providerResponse)
+      refreshProviderWork()
+    }
     if confirmed {
       ownership.work?.finish()
       ownership.invocation?.finish()
@@ -1074,6 +1122,11 @@ private actor MCPProxyConnection {
 
   func disconnect() async -> Bool {
     if let closeTask { return await closeTask.value }
+    workClosed = true
+    workPoll?.cancel()
+    workDeadline?.cancel()
+    providerWork?.disconnected()
+    let workObservation = workObservation
     let startup = connectTask
     let terminationObserver = terminationObserver
     startup?.cancel()
@@ -1103,6 +1156,7 @@ private actor MCPProxyConnection {
       let deliveryObserver = await Self.waitForCancellationDelivery(cancellation)
       await client.disconnect()
       await transport.disconnect()
+      await workObservation?.value
       await terminationObserver?.value
       _ = await startup?.result
       // SDK startup may have been suspended in transport.connect at the first close.
@@ -1124,7 +1178,9 @@ private actor MCPProxyConnection {
     // Closing a remote transport is not evidence that remote execution stopped.
     // A local managed child can release unknown requests only after verified exit.
     for ownership in Array(requestOwnership.values) {
-      settleOwnership(ownership, confirmed: confirmed && transport is MCPChildProcessTransport)
+      settleOwnership(
+        ownership, confirmed: confirmed && transport is MCPChildProcessTransport,
+        providerResponse: false)
     }
     for request in retainedRequests {
       do {
@@ -1229,8 +1285,77 @@ private actor MCPProxyConnection {
     await client.onNotification(ResourceListChangedNotification.self) { [weak self] _ in
       await self?.appendEvent(kind: ResourceListChangedNotification.name)
     }
+    await client.onNotification(ResourceUpdatedNotification.self) { [weak self] notification in
+      if notification.params.uri == MCPProviderWork.resourceURI {
+        await self?.refreshProviderWork()
+      }
+    }
     await client.onNotification(PromptListChangedNotification.self) { [weak self] _ in
       await self?.appendEvent(kind: PromptListChangedNotification.name)
+    }
+  }
+
+  /// Observation never tears down a provider or cancels its work on a read timeout.
+  private func refreshProviderWork() {
+    guard !workClosed, let providerWork else { return }
+    workPoll?.cancel()
+    workPoll = nil
+    guard workObservation == nil else {
+      workRefreshPending = true
+      return
+    }
+    workRefreshPending = false
+    let id = UUID()
+    workObservationID = id
+    let completed = providerWork.completedInvocations
+    workObservation = Task { [weak self, client] in
+      let result: Result<MCPProviderWork.Report, any Error>
+      do {
+        result = .success(
+          try await MCPProviderWork.Report(
+            contents: client.readResource(uri: MCPProviderWork.resourceURI)))
+      } catch { result = .failure(error) }
+      await self?.finishWorkObservation(id: id, result: result, completed: completed)
+    }
+    let timeout = min(max(server.requestTimeoutMs ?? 30_000, 100), 30_000)
+    workDeadline = Task { [weak self] in
+      do {
+        try await Task.sleep(for: .milliseconds(timeout))
+        await self?.workObservationExpired(id: id)
+      } catch {}
+    }
+  }
+
+  private func workObservationExpired(id: UUID) {
+    guard !workClosed, workObservationID == id else { return }
+    providerWork?.observationLost()
+    appendEvent(kind: "work.observation_timed_out")
+  }
+
+  private func finishWorkObservation(
+    id: UUID, result: Result<MCPProviderWork.Report, any Error>, completed: Set<UUID>
+  ) {
+    guard workObservationID == id else { return }
+    workObservation = nil
+    workObservationID = nil
+    workDeadline?.cancel()
+    workDeadline = nil
+    guard !workClosed else { return }
+    do {
+      try providerWork?.accept(result.get(), covering: completed)
+    } catch {
+      providerWork?.observationLost()
+      appendEvent(kind: "work.observation_failed")
+    }
+    if workRefreshPending {
+      refreshProviderWork()
+    } else if providerWork?.needsObservation == true {
+      workPoll = Task { [weak self] in
+        do {
+          try await Task.sleep(for: .seconds(1))
+          await self?.refreshProviderWork()
+        } catch {}
+      }
     }
   }
 

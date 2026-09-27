@@ -60,7 +60,7 @@ extension MCPTool {
       inputSchema: inputSchema.sdkValue,
       annotations: annotations?.sdkAnnotations ?? nil,
       outputSchema: outputSchema?.sdkValue,
-      _meta: meta?.sdkMetadata
+      _meta: exportedMetadata?.sdkMetadata
     )
   }
 }

@@ -106,7 +106,7 @@ package struct MCPTool: Equatable, Sendable {
     if let annotations {
       object["annotations"] = annotations.json
     }
-    if let meta {
+    if let meta = exportedMetadata {
       object["_meta"] = meta
     }
     return .object(object)

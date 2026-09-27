@@ -39,6 +39,100 @@ declaration; a higher risk observed after admission is rejected with `mcp.risk_c
 before dispatch. Retry through current host authorization and consent. Background
 calls use the same checks before starting work.
 
+## Downstream provider work
+
+A provider may expose its live jobs and retained handles through ordinary MCP
+resources. This is lifecycle evidence, not a capability grant, a task framework,
+or permission to call private Host Services. A provider without this declaration
+receives no work-invocation metadata and continues to use ordinary MCP.
+
+Advertise `resources` in initialization and put this declaration in one or more
+tool definitions. Keep it available for the lifetime of the connection:
+
+```json
+{
+  "_meta": {
+    "io.github.computer-mcp/work": {
+      "format_version": 1,
+      "uri": "computer-mcp://runtime/work/v1"
+    }
+  }
+}
+```
+
+The declaration names a resource on the downstream connection. The gateway
+retains it internally but omits it from aliases and reexported tool definitions;
+those definitions must not advertise the provider's URI as a gateway resource.
+Other tool metadata, including the publisher's risk floor, remains available.
+
+For each dispatched tool call, the host supplies a unique UUID in request
+`_meta["io.github.computer-mcp/work-invocation"]`. This reference is generated
+after host admission and belongs to that connection's workspace, registration,
+principal and runtime scope. It cannot be replaced by a tool argument. It is
+separate from the optional private Host Services invocation identity and grants
+no callback access.
+
+The provider's `resources/read` response for the declared URI contains exactly
+one text content entry with that URI and MIME type `application/json`. Its text
+is a complete snapshot:
+
+```json
+{
+  "format_version": 1,
+  "instance_id": "165c02b9-fb55-4d19-8f02-b8eb108bf1b7",
+  "revision": 1,
+  "resources": [
+    {
+      "kind": "session",
+      "id": "provider-native-handle",
+      "acquired_by": "09e2ae96-d486-45e1-9920-e54245210732",
+      "state": "active"
+    }
+  ]
+}
+```
+
+- `instance_id` is a UUID fixed for this provider connection instance. Reports
+  must contain only resources acquired on that connection, including over HTTP.
+- `revision` is a nonnegative signed 64-bit integer. Increase it whenever the
+  snapshot changes. Equal revisions must describe equal resource sets; lower
+  revisions and replacement instance IDs cannot discharge existing ownership.
+- `kind` is a provider-defined identifier. `id` is its native string or exact
+  signed 64-bit integer. Strings and integers remain distinct. The pair must be
+  unique; strings are nonempty, at most 1,024 UTF-8 bytes, and contain no control
+  characters.
+- `acquired_by` is the host-supplied work-invocation UUID that acquired this
+  resource. Keep that value while the resource exists. Unknown or expired
+  references, foreign-connection references and changed creators are rejected.
+- `state` is `active` or `uncertain`. Include work whose completion is unknown.
+  Remove a resource only after its actual release or completion is established.
+
+The version-1 fields are exact. Additional fields require another supported
+contract version. Snapshots are bounded to 512 KiB and 1,024 resources. A retained
+thread, subscription, approval, interactive request, process or pending launch
+can own work between tool calls. Record the acquisition before replying to its
+tool call; a response must not leave unreported future background work. An
+acquisition reference remains live while its invocation is unsettled or at least
+one resource carries that binding. Derived work may inherit that still-live
+binding, including a parent-to-child transfer in one snapshot. Once a completed
+invocation has been covered by a valid snapshot and its final resource is gone,
+the reference expires. Reacquisition then needs a current invocation reference.
+
+The host reads after discovery and tool completion, coalesces resource update
+notifications, and polls once per second while ownership or uncertainty remains.
+There is at most one outstanding work read per connection. A stalled read marks
+ownership uncertain without terminating the provider or issuing duplicate reads;
+a late valid response can restore observation. A read started before an
+invocation completed cannot discharge that invocation's observation barrier.
+No tool is replayed by this process.
+
+Malformed reports, lost transport and supervisor exit cannot prove detached work
+completed. Only a valid complete snapshot on the owning instance releases absent
+resources. Connection status includes `provider_work` counts and the last
+accepted instance/revision; the bounded event stream records failed or timed-out
+observations. This accounting does not itself enable live configuration mutation
+or route continuation calls across runtime generations.
+
 ## Downstream Host Context
 
 For stdio registrations created by `GatewayRuntime`, the host supplies

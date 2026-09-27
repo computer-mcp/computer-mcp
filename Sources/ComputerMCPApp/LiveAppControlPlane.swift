@@ -509,6 +509,11 @@ final class LiveAppControlPlane: AppControlPlane {
     )
   }
 
+  func repairWorkspace(id: String, at url: URL) async throws {
+    let workspace = try await operations.repairWorkspace(id: id, at: url)
+    fileLogger.append(.info, event: "workspace.repaired", fields: ["workspace_id": workspace.id])
+  }
+
   func removeWorkspace(id: String) async throws {
     try await operations.removeWorkspace(id: id)
     fileLogger.append(.info, event: "workspace.removed", fields: ["workspace_id": id])

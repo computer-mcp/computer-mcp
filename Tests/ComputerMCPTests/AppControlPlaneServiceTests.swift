@@ -10,8 +10,10 @@ import Testing
 @Suite(.serialized)
 
 final class AppControlPlaneServiceTests {
-  @Test(arguments: [false, true])
-  func workspaceChangesPreserveResolvedLegacyPermissions(removing: Bool) async throws {
+  @Test(arguments: ["remove", "deduplicate", "repair", "repair-wildcard"])
+  func workspaceChangesPreserveResolvedLegacyPermissions(operation: String) async throws {
+    let removing = operation == "remove"
+    let wildcard = operation == "repair-wildcard"
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     let configuration = GatewayConfiguration(
@@ -33,7 +35,7 @@ final class AppControlPlaneServiceTests {
           createdAt: Date(timeIntervalSince1970: date)))
     }
     var profile = ProfileGrant.operate
-    profile.workspaceIDs = ["duplicate", "unrelated"]
+    profile.workspaceIDs = wildcard ? ["*"] : ["duplicate", "unrelated"]
     profile.confirmationPolicy = .allWrites
     try fixture.database.saveProfile(profile)
     let connection = try DatabaseQueue(path: fixture.directories.database.path)
@@ -41,7 +43,17 @@ final class AppControlPlaneServiceTests {
       try $0.execute(sql: "UPDATE profiles SET authorizationRevision = 0")
     }
     try connection.close()
-    if removing {
+    if operation.hasPrefix("repair") {
+      let destination = fixture.root.appendingPathComponent("selected")
+      try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+      let service = AppGatewayService(
+        controlPlane: fixture.controlPlane,
+        socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("repair.sock")))
+      _ = try await AppControlPlaneOperations(
+        controlPlane: fixture.controlPlane, gatewayService: service
+      ).repairWorkspace(id: "duplicate", at: destination)
+      await service.stop()
+    } else if removing {
       try await fixture.controlPlane.removeWorkspace(id: "duplicate")
     } else {
       let plan = try fixture.database.workspaceDeduplicationPlan()
@@ -50,7 +62,11 @@ final class AppControlPlaneServiceTests {
     }
     let saved = try #require(try fixture.database.profiles().first { $0.id == profile.id })
     #expect(saved.capabilityIDs == ["file.read", "file.write"])
-    #expect(saved.workspaceIDs == (removing ? ["unrelated"] : ["canonical", "unrelated"]))
+    let expectedIDs: Set<String> =
+      removing
+      ? ["unrelated"]
+      : operation == "deduplicate" ? ["canonical", "unrelated"] : profile.workspaceIDs
+    #expect(saved.workspaceIDs == expectedIDs)
     #expect(saved.allowedCallers == [.secureTunnel])
     #expect(saved.mode == .workspaceOperations)
     #expect(saved.confirmationPolicy == .allWrites)

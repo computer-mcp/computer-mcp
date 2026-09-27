@@ -428,6 +428,7 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging {
   func setLaunchAtLoginEnabled(_ enabled: Bool) async throws
 
   func registerWorkspace(at url: URL) async throws
+  func repairWorkspace(id: String, at url: URL) async throws
   func removeWorkspace(id: String) async throws
   func setWorkspaceEnabled(
     _ enabled: Bool,
@@ -547,6 +548,7 @@ final class UnavailableControlPlane: AppControlPlane {
   func stopGateway() async throws { throw unavailable() }
   func setLaunchAtLoginEnabled(_ enabled: Bool) async throws { throw unavailable() }
   func registerWorkspace(at url: URL) async throws { throw unavailable() }
+  func repairWorkspace(id: String, at url: URL) async throws { throw unavailable() }
   func removeWorkspace(id: String) async throws { throw unavailable() }
   func setWorkspaceEnabled(
     _ enabled: Bool,

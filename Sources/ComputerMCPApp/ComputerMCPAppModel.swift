@@ -271,6 +271,15 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
+  func repairWorkspace(id: String, at url: URL) {
+    performAction(
+      key: "workspace.repair.\(id)", title: "Unable to repair workspace",
+      refresh: [.workspaces, .home, .profiles]
+    ) {
+      try await self.controlPlane.repairWorkspace(id: id, at: url)
+    }
+  }
+
   func requestWorkspaceRemoval(_ workspace: WorkspaceSummary) {
     pendingWorkspaceRemoval = workspace
   }

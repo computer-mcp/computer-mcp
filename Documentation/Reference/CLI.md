@@ -43,6 +43,7 @@ computer-mcp config history [--control-socket <control-socket>] [--limit <limit>
 computer-mcp config rollback [--control-socket <control-socket>] <revision-id>
 computer-mcp workspace list [--control-socket <control-socket>]
 computer-mcp workspace add [--control-socket <control-socket>] <path> [--display-name <display-name>]
+computer-mcp workspace repair [--control-socket <control-socket>] <id> <path> [--display-name <display-name>]
 computer-mcp workspace remove [--control-socket <control-socket>] <id>
 computer-mcp workspace enable [--control-socket <control-socket>] <id> --profile <profile> [--enabled] [--no-enabled]
 computer-mcp workspace deduplicate [--control-socket <control-socket>] [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
@@ -357,7 +358,20 @@ opens Codex persistence read-only and never loads the full history by default.
 ## Workspace registration repair
 
 `workspace add` resolves symlinks and is idempotent for an existing canonical
-root. To repair older duplicates, first preview:
+root. `workspace repair <id> <path>` renews folder access or binds an existing
+workspace to a selected folder. It preserves the canonical ID, creation time,
+aliases and profile grants; the display name stays unchanged unless supplied.
+The selected folder receives those existing permissions. A folder registered to
+another canonical workspace is rejected. The App exposes the same operation
+through each workspace's Repair action and native folder chooser.
+
+Repair invalidates unused approvals for the affected workspace and advances
+affected profile authorization, including wildcard grants. Executing operations
+retain their state. New calls use the selected folder after candidate validation;
+old-owner calls still require their original folder identity and current access.
+Failure or concurrent configuration changes preserve the previous registration.
+
+To repair older duplicates, first preview:
 
 ```sh
 computer-mcp workspace deduplicate [--control-socket <control-socket>]
@@ -375,7 +389,7 @@ affected profile receives one new authorization revision; already executing
 operations and historical audit records retain their original state. Concurrent
 configuration changes invalidate prepared workspace changes and require a retry.
 
-The owner commands for adding, removing and deduplicating workspaces prepare the
+The owner commands for adding, repairing, removing and deduplicating workspaces prepare the
 new runtime configuration before committing. Connected clients stay connected;
 new calls use the published configuration while existing work keeps its original
 runtime. A failed candidate leaves prior registration and routing intact. Removing

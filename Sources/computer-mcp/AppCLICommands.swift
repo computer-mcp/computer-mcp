@@ -199,7 +199,8 @@ struct Workspace: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "workspace",
     subcommands: [
-      WorkspaceList.self, WorkspaceAdd.self, WorkspaceRemove.self, WorkspaceEnable.self,
+      WorkspaceList.self, WorkspaceAdd.self, WorkspaceRepair.self, WorkspaceRemove.self,
+      WorkspaceEnable.self,
       WorkspaceDeduplicate.self,
     ]
   )
@@ -227,6 +228,23 @@ struct WorkspaceAdd: AsyncParsableCommand {
       try await connection.client().call(
         "workspace.add", arguments: .object(arguments))
     )
+  }
+}
+
+struct WorkspaceRepair: AsyncParsableCommand {
+  @OptionGroup var connection: AppControlConnectionOptions
+
+  static let configuration = CommandConfiguration(
+    commandName: "repair",
+    abstract: "Renew folder access or rebind a workspace while keeping its ID and grants.")
+  @Argument var id: String
+  @Argument var path: String
+  @Option(name: .long) var displayName: String?
+
+  func run() async throws {
+    var arguments: [String: JSONValue] = ["id": .string(id), "path": .string(path)]
+    if let displayName { arguments["display_name"] = .string(displayName) }
+    printJSON(try await connection.client().call("workspace.repair", arguments: .object(arguments)))
   }
 }
 

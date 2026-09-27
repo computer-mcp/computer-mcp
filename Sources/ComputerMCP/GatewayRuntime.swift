@@ -137,6 +137,19 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard !lifetime.isClosing else { throw GatewaySocketError.notConnected }
   }
 
+  /// A repaired workspace must retain the selected folder through candidate publication.
+  func requirePreparedWorkspace(id: String, root: WorkspaceRootIdentity) throws {
+    if let error = workspaceErrors[id] { throw error }
+    guard let workspace = workspaces[id], let admitted = workspaceAccesses[id],
+      admitted.isActive, admitted.rootIdentity == root
+    else { throw WorkspaceBookmarkError.rootChanged(workspaceID: id) }
+    let access = try bookmarkService.resolve(workspace)
+    defer { access.close() }
+    guard access.rootIdentity == root else {
+      throw WorkspaceBookmarkError.rootChanged(workspaceID: id)
+    }
+  }
+
   func publishPrepared() {
     publication.publish()
     hostToolDirectory.attach(self)

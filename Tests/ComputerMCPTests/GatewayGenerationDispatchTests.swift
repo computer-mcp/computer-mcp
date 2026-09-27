@@ -8,6 +8,104 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
+  @Test(arguments: [1, 2, 3], [false, true])
+  func repairRejectsLostSelectedAccessBeforePublication(resolveNumber: Int, replace: Bool)
+    async throws
+  {
+    let bookmark = RepairFailureBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmark)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let destination = fixture.root.appendingPathComponent("selected")
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    bookmark.arm(root: destination, resolveNumber: resolveNumber, replace: replace)
+    let before = try fixture.database.configurationState()
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.control, gatewayService: fixture.service)
+    await #expect(throws: (any Error).self) {
+      try await operations.repairWorkspace(id: "fixture", at: destination)
+    }
+    #expect(bookmark.failureInjected)
+    #expect(try fixture.database.configurationState() == before)
+    #expect(await fixture.service.snapshot().state != .running)
+    #expect(try fixture.pids().allSatisfy { !alive($0) })
+    await fixture.service.stop()
+  }
+
+  @Test
+  func connectedRepairRebindsCanonicalIdentityAndRetainsDeniedOldWork() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    var metadata = try #require(try fixture.database.workspace(id: "fixture"))
+    metadata.displayName = "  原有 Project  "
+    try fixture.database.saveWorkspace(metadata)
+    try await fixture.activate(version: 1)
+    let original = try #require(try fixture.database.workspace(id: "fixture"))
+    var alias = original
+    alias.id = "alias"
+    alias.createdAt = original.createdAt.addingTimeInterval(1)
+    try fixture.database.saveWorkspace(alias)
+    _ = try fixture.database.applyWorkspaceDeduplication(
+      expectedPlanDigest: fixture.database.workspaceDeduplicationPlan().planDigest,
+      allowMetadataConflicts: false)
+    let destination = fixture.root.appendingPathComponent("rebound")
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.control, gatewayService: fixture.service)
+    do {
+      let startedAt = await fixture.service.snapshot().startedAt
+      let arguments: [String: JSONValue] = ["handle": .string("original")]
+      let oldPID = try pid(
+        await client.call(toolName: "fixture.start", arguments: .object(arguments)))
+      let owner = try #require(try await owners(client, kind: "mcpResource").first)
+      let before = try fixture.database.configurationState()
+      let providerURL = fixture.root.appendingPathComponent("provider.py")
+      let provider = try Data(contentsOf: providerURL)
+      try Data("raise SystemExit(2)\n".utf8).write(to: providerURL)
+      await #expect(throws: (any Error).self) {
+        try await operations.repairWorkspace(id: alias.id, at: destination)
+      }
+      #expect(try fixture.database.configurationState() == before)
+      #expect(
+        try pid(await call(client, owner: owner, tool: "fixture.inspect", arguments: arguments))
+          == oldPID)
+      try provider.write(to: providerURL)
+      let repaired = try await operations.repairWorkspace(id: alias.id, at: destination)
+      #expect(repaired.id == original.id && repaired.createdAt == original.createdAt)
+      #expect(repaired.displayName == original.displayName)
+      #expect(
+        repaired.rootPath == destination.resolvingSymlinksInPath().path
+          && repaired.bookmarkData != nil)
+      #expect(try fixture.database.workspace(id: alias.id) == repaired)
+      #expect(
+        try fixture.database.profiles().first?.workspaceIDs == before.profiles.first?.workspaceIDs)
+      let currentPID = try pid(await client.call(toolName: "fixture.identity"))
+      #expect(currentPID != oldPID && alive(oldPID))
+      let calls = try fixture.calls()
+      let denied = try await call(
+        client, owner: owner, tool: "fixture.inspect", arguments: arguments)
+      #expect(denied.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == calls)
+      #expect(await fixture.service.snapshot().startedAt == startedAt)
+      #expect(await fixture.service.snapshot().connectionCount == 1)
+      _ = try await operations.repairWorkspace(
+        id: original.id, at: fixture.root, displayName: "Restored")
+      #expect(try fixture.database.workspace(id: original.id)?.displayName == "Restored")
+      #expect(
+        try pid(await call(client, owner: owner, tool: "fixture.finish", arguments: arguments))
+          == oldPID)
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
   @Test
   func implicitContinuationRequiresOneExactOwnerAcrossWorkspaceChanges() async throws {
     let fixture = try GenerationFixture()
@@ -345,8 +443,9 @@ struct GatewayGenerationDispatchTests {
     }
   }
 
-  @Test(arguments: [false, true], [false, true])
-  func listenerStopJoinsConfigurationPublication(cancel: Bool, workspace: Bool) async throws {
+  @Test(arguments: [false, true], ["plugin", "register", "repair"])
+  func listenerStopJoinsConfigurationPublication(cancel: Bool, change: String) async throws {
+    let workspace = change != "plugin"
     let bookmark = GatedBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmark)
     defer { fixture.removeFiles() }
@@ -357,7 +456,10 @@ struct GatewayGenerationDispatchTests {
     try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
     bookmark.arm()
     let mutation = Task {
-      if workspace {
+      if change == "repair" {
+        _ = try await fixture.service.changeWorkspaces(
+          .repair(id: "fixture", root: fixture.root, displayName: nil))
+      } else if workspace {
         _ = try await fixture.service.changeWorkspaces(.register(addedRoot, displayName: "Added"))
       } else {
         _ = try await fixture.service.changePlugins(
@@ -377,7 +479,7 @@ struct GatewayGenerationDispatchTests {
       await stopping.value
       #expect(await fixture.service.snapshot().state == .stopped)
       #expect(try fixture.database.pluginStoreSnapshot().revision == (cancel || workspace ? 0 : 1))
-      #expect(try fixture.database.workspaces().count == (workspace && !cancel ? 2 : 1))
+      #expect(try fixture.database.workspaces().count == (change == "register" && !cancel ? 2 : 1))
       #expect(try fixture.pids().allSatisfy { !alive($0) })
       await client.disconnect()
       try await fixture.service.start(profile: .chatGPTOperate)
@@ -439,10 +541,11 @@ struct GatewayGenerationDispatchTests {
     }
   }
 
-  @Test(arguments: ["publish", "cancel", "profile", "manifest"], [false, true])
+  @Test(arguments: ["publish", "cancel", "profile", "manifest"], ["plugin", "register", "repair"])
   func configurationPublicationCoordinatesExistingAndNewProfileAdmissions(
-    outcome: String, workspace: Bool
+    outcome: String, change: String
   ) async throws {
+    let workspace = change != "plugin"
     let bookmark = GatedBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmark)
     defer { fixture.removeFiles() }
@@ -469,7 +572,10 @@ struct GatewayGenerationDispatchTests {
     try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
     bookmark.arm()
     let mutation = Task {
-      if workspace {
+      if change == "repair" {
+        _ = try await fixture.service.changeWorkspaces(
+          .repair(id: "fixture", root: fixture.root, displayName: nil))
+      } else if workspace {
         _ = try await fixture.service.changeWorkspaces(.register(addedRoot, displayName: "Added"))
       } else {
         _ = try await fixture.service.changePlugins(
@@ -512,7 +618,7 @@ struct GatewayGenerationDispatchTests {
       if outcome == "publish" {
         try await mutation.value
         #expect(try fixture.database.pluginStoreSnapshot().revision == (workspace ? 0 : 1))
-        #expect(try fixture.database.workspaces().count == (workspace ? 2 : 1))
+        #expect(try fixture.database.workspaces().count == (change == "register" ? 2 : 1))
       } else {
         await #expect(throws: (any Error).self) { try await mutation.value }
         #expect(try fixture.database.pluginStoreSnapshot() == before.plugins)
@@ -1536,4 +1642,46 @@ private struct GenerationFixture: Sendable {
             result = {}
         print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
     """#
+}
+
+private final class RepairFailureBookmarkService: WorkspaceBookmarkServicing, @unchecked Sendable {
+  private let base = WorkspaceBookmarkService()
+  private let lock = NSLock()
+  private var root: URL?
+  private var resolveNumber = 0
+  private var calls = 0
+  private var replace = false
+  var failureInjected: Bool { lock.withLock { calls >= resolveNumber && resolveNumber > 0 } }
+
+  func arm(root: URL, resolveNumber: Int, replace: Bool) {
+    lock.withLock {
+      self.root = root
+      self.resolveNumber = resolveNumber
+      self.replace = replace
+    }
+  }
+
+  func registerFolder(at url: URL, displayName: String?) throws -> RegisteredWorkspace {
+    try base.registerFolder(at: url, displayName: displayName)
+  }
+
+  func resolve(_ workspace: RegisteredWorkspace) throws -> ResolvedWorkspaceAccess {
+    let failure = lock.withLock { () -> (URL, Bool)? in
+      guard let root,
+        URL(fileURLWithPath: workspace.rootPath).resolvingSymlinksInPath().path
+          == root.resolvingSymlinksInPath().path
+      else { return nil }
+      calls += 1
+      return calls == resolveNumber ? (root, replace) : nil
+    }
+    if let (root, replace) = failure {
+      if replace {
+        try FileManager.default.moveItem(at: root, to: root.appendingPathExtension("original"))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      } else {
+        throw WorkspaceBookmarkError.securityScopeAccessDenied(workspaceID: workspace.id)
+      }
+    }
+    return try base.resolve(workspace)
+  }
 }

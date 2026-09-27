@@ -292,11 +292,14 @@ package actor AppControlPlaneService {
   }
 
   private func resolveLegacyWorkspaceProfiles(
-    _ expected: GatewayDatabase.ConfigurationState, workspaceIDs: Set<String>
+    _ expected: GatewayDatabase.ConfigurationState, workspaceIDs: Set<String>,
+    includeWildcard: Bool = false
   ) async throws -> (profiles: [ProfileGrant], configuration: GatewayConfiguration?) {
     guard
       expected.profiles.contains(where: {
-        $0.authorizationRevision == 0 && !$0.workspaceIDs.isDisjoint(with: workspaceIDs)
+        $0.authorizationRevision == 0
+          && (!$0.workspaceIDs.isDisjoint(with: workspaceIDs)
+            || (includeWildcard && $0.workspaceIDs.contains("*")))
       })
     else { return ([], nil) }
     let inputs = try gatewayInputs()
@@ -319,6 +322,7 @@ package actor AppControlPlaneService {
     let mutation: WorkspaceConfigurationMutation
     let affectedWorkspaceIDs: Set<String>
     var requestedDisplayName: String?
+    var includeWildcard = false
     switch change {
     case .register(let url, let displayName):
       let workspace = try bookmarkService.registerFolder(at: url, displayName: displayName)
@@ -327,6 +331,33 @@ package actor AppControlPlaneService {
       if displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
         requestedDisplayName = workspace.displayName
       }
+    case .repair(let id, let root, let displayName):
+      let canonicalID = inputs.persisted.workspaceAliases[id] ?? id
+      guard let original = inputs.workspaces.first(where: { $0.id == canonicalID }) else {
+        throw AppControlPlaneServiceError.unknownWorkspace(id)
+      }
+      let bookmarks = bookmarkService
+      let (selected, identity) = try await gatewayOperations.perform {
+        let selected = try bookmarks.registerFolder(
+          at: root, displayName: displayName ?? original.displayName)
+        let identity = try WorkspaceRootIdentity(URL(fileURLWithPath: selected.rootPath))
+        let access = try bookmarks.resolve(selected)
+        defer { access.close() }
+        guard access.rootIdentity == identity else {
+          throw WorkspaceBookmarkError.rootChanged(workspaceID: original.id)
+        }
+        return (access.workspace, identity)
+      }
+      var repaired = selected
+      repaired.id = original.id
+      repaired.createdAt = original.createdAt
+      if displayName == nil { repaired.displayName = original.displayName }
+      mutation = .repair(repaired, root: identity)
+      affectedWorkspaceIDs = Set(
+        inputs.persisted.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [
+          canonicalID
+        ])
+      includeWildcard = true
     case .remove(let id):
       let canonicalID = inputs.persisted.workspaceAliases[id] ?? id
       guard inputs.workspaces.contains(where: { $0.id == canonicalID }) else {
@@ -347,7 +378,7 @@ package actor AppControlPlaneService {
       affectedWorkspaceIDs = Set(plan.groups.flatMap(\.duplicateWorkspaceIDs))
     }
     let resolved = try await resolveLegacyWorkspaceProfiles(
-      inputs.persisted, workspaceIDs: affectedWorkspaceIDs)
+      inputs.persisted, workspaceIDs: affectedWorkspaceIDs, includeWildcard: includeWildcard)
     try requireCurrentGatewayInputs(inputs)
     let prepared = try database.prepareWorkspaceChange(
       mutation, expected: inputs.persisted, resolvedProfiles: resolved.profiles)
@@ -363,6 +394,11 @@ package actor AppControlPlaneService {
       let published = committed.workspaces.first(where: { $0.id == workspace.id })
     {
       return .registered(published, created: created)
+    }
+    if case .repaired(let workspace) = prepared.result,
+      let published = committed.workspaces.first(where: { $0.id == workspace.id })
+    {
+      return .repaired(published)
     }
     return prepared.result
   }

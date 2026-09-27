@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Repair %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Repair %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"修复 %@"}}}},
+    "Repair Workspace" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Repair Workspace"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"修复工作区"}}}},
+    "Use Folder" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Use Folder"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用文件夹"}}}},
+    "Repair…" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Repair…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"修复…"}}}},
+    "Unable to repair workspace" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Unable to repair workspace"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法修复工作区"}}}},
+    "Choose the folder for %@. Existing workspace permissions will apply to this folder." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose the folder for %@. Existing workspace permissions will apply to this folder."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"为 %@ 选择文件夹。现有工作区权限将适用于此文件夹。"}}}},
     "Profile" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Profile"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限方案"}}}},
     "Secure Tunnel" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Secure Tunnel"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"安全隧道"}}}},
     "Cloudflare Tunnel" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cloudflare Tunnel"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"Cloudflare 隧道"}}}},

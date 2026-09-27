@@ -639,8 +639,15 @@ package actor AppGatewayService {
   func changeWorkspaces(_ change: WorkspaceHostChange) async throws -> WorkspaceChangeResult {
     try await withConfigurationChange {
       try await controlPlane.applyWorkspaceChange(change) { [self] expected, prepared in
-        try await preparePublication(expected: expected, proposed: prepared.proposed, storage: nil)
-        {
+        let selected: (id: String, root: WorkspaceRootIdentity)?
+        if case .repair(let workspace, let root) = prepared.mutation {
+          selected = (workspace.id, root)
+        } else {
+          selected = nil
+        }
+        return try await preparePublication(
+          expected: expected, proposed: prepared.proposed, storage: nil, requiredWorkspace: selected
+        ) {
           try self.controlPlane.database.saveWorkspaceChange(prepared, resolution: $0)
         }
       }
@@ -698,6 +705,7 @@ package actor AppGatewayService {
   private func preparePublication(
     expected: AppControlPlaneService.GatewayInputs, proposed: GatewayDatabase.ConfigurationState,
     storage: PluginInstallationStorage?,
+    requiredWorkspace: (id: String, root: WorkspaceRootIdentity)? = nil,
     commit: @Sendable (GatewayConfigurationResolution) throws -> GatewayDatabase.ConfigurationState
   ) async throws -> GatewayDatabase.ConfigurationState {
     let epoch = listenerEpoch
@@ -738,6 +746,10 @@ package actor AppGatewayService {
       var resolution = GatewayConfigurationResolution()
       for candidate in Array(candidates.values) + [validation].compactMap({ $0 }) {
         try candidate.runtime.requirePreparedPublication()
+        if let requiredWorkspace {
+          try candidate.runtime.requirePreparedWorkspace(
+            id: requiredWorkspace.id, root: requiredWorkspace.root)
+        }
         try resolution.merge(candidate.resolution)
       }
       let committed = try controlPlane.manifestStore.withCurrentConfiguration(

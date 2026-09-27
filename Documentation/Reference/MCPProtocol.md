@@ -240,7 +240,7 @@ new admission during shutdown. Pending construction and cleanup count toward the
 128-runtime listener budget. Listener stop joins candidate construction and
 invalidates its publication epoch, so a late candidate cannot enter a restarted
 listener. Owner-side manifest and manual MCP management still use an explicit
-listener restart. Plugin mutations and workspace add, remove and deduplication
+listener restart. Plugin mutations and workspace add, repair, remove and deduplication
 prepare candidates for every admitted identity and profile while existing calls
 continue. New identities wait at a bounded publication barrier. The host checks
 the manifest and persisted inputs, commits the prepared configuration and

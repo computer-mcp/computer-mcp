@@ -196,6 +196,18 @@ package struct AppControlPlaneOperations: Sendable {
     return workspace
   }
 
+  package func repairWorkspace(
+    id: String, at url: URL, displayName: String? = nil
+  ) async throws -> RegisteredWorkspace {
+    guard
+      case .repaired(let workspace) = try await gatewayService.changeWorkspaces(
+        .repair(id: id, root: url, displayName: displayName))
+    else {
+      throw GatewayDatabaseError.invalidStoredValue("Workspace repair result is unavailable.")
+    }
+    return workspace
+  }
+
   package func removeWorkspace(id: String) async throws {
     _ = try await gatewayService.changeWorkspaces(.remove(id))
   }

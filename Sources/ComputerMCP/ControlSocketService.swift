@@ -519,6 +519,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         } else {
           payload = try encodedPayload(try await controlPlane.workspaceDeduplicationPlan())
         }
+      case "workspace.repair":
+        let workspace = try await operations.repairWorkspace(
+          id: requiredString("id", in: object),
+          at: URL(fileURLWithPath: requiredString("path", in: object)).standardizedFileURL,
+          displayName: object["display_name"]?.stringValue)
+        payload = try encodedPayload(ControlWorkspaceSummary(workspace))
       case "workspace.remove":
         let id = try requiredString("id", in: object)
         try await operations.removeWorkspace(id: id)
@@ -1337,6 +1343,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         "expected_plan_digest": .string,
         "allow_metadata_conflicts": .boolean,
       ],
+      readOnly: false
+    ),
+    ControlToolContract(
+      "workspace.repair",
+      arguments: ["id": .string, "path": .string, "display_name": .string],
+      required: ["id", "path"],
       readOnly: false
     ),
     ControlToolContract(

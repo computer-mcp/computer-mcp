@@ -103,6 +103,43 @@ package final class GatewayDatabase: @unchecked Sendable {
     case .register(let workspace):
       let result = try registerWorkspaceIdempotently(workspace, in: database)
       return .registered(result.workspace, created: result.created)
+    case .repair(let workspace, _):
+      guard let original = expected.workspaces.first(where: { $0.id == workspace.id }),
+        original.createdAt == workspace.createdAt,
+        expected.workspaceAliases[workspace.id] == nil
+      else { throw GatewayDatabaseError.configurationChanged }
+      if let existing = try registeredWorkspace(
+        canonicalRoot: canonicalWorkspaceRoot(workspace.rootPath), in: database),
+        existing.id != workspace.id
+      {
+        throw WorkspaceRepairError.rootAlreadyRegistered(workspaceID: existing.id)
+      }
+      try saveWorkspace(workspace, in: database)
+      let affectedIDs = Set(
+        expected.workspaceAliases.filter { $0.value == workspace.id }.map(\.key) + [workspace.id])
+      for stored in expected.profiles
+      where stored.workspaceIDs.contains("*") || !stored.workspaceIDs.isDisjoint(with: affectedIDs)
+      {
+        let profile = try resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
+        try profile.validate()
+        try saveProfile(
+          profile, updatedAt: timestamp, expectedRevision: stored.authorizationRevision,
+          in: database)
+      }
+      // Scope-bound tickets can outlive a stored profile. Repair must not reinterpret them.
+      for id in affectedIDs {
+        try database.execute(
+          sql: """
+            UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
+            WHERE workspaceID = ? AND state IN (?, ?, ?)
+            """,
+          arguments: [
+            OperationTicketState.denied.rawValue, timestamp, "operations.workspace_changed", id,
+            OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
+            OperationTicketState.approved.rawValue,
+          ])
+      }
+      return .repaired(workspace)
     case .remove(let id):
       _ = try removeWorkspace(
         id: id, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
@@ -307,6 +344,21 @@ package final class GatewayDatabase: @unchecked Sendable {
     _ proposed: RegisteredWorkspace, in database: Database
   ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
     let canonicalRoot = canonicalWorkspaceRoot(proposed.rootPath)
+    if let existing = try registeredWorkspace(canonicalRoot: canonicalRoot, in: database) {
+      return (existing, false)
+    }
+    try WorkspaceRecord(proposed).insert(database)
+    try WorkspaceCanonicalRootRecord(
+      canonicalRootPath: canonicalRoot,
+      workspaceID: proposed.id,
+      createdAt: proposed.createdAt
+    ).insert(database)
+    return (proposed, true)
+  }
+
+  private static func registeredWorkspace(canonicalRoot: String, in database: Database) throws
+    -> RegisteredWorkspace?
+  {
     if let binding = try WorkspaceCanonicalRootRecord.fetchOne(
       database,
       key: canonicalRoot
@@ -324,7 +376,7 @@ package final class GatewayDatabase: @unchecked Sendable {
             createdAt: existing.createdAt
           ).save(database)
         }
-        return (existing.value, false)
+        return existing.value
       }
       _ = try WorkspaceCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
     }
@@ -336,15 +388,9 @@ package final class GatewayDatabase: @unchecked Sendable {
         workspaceID: existing.id,
         createdAt: existing.createdAt
       ).insert(database, onConflict: .ignore)
-      return (existing, false)
+      return existing
     }
-    try WorkspaceRecord(proposed).insert(database)
-    try WorkspaceCanonicalRootRecord(
-      canonicalRootPath: canonicalRoot,
-      workspaceID: proposed.id,
-      createdAt: proposed.createdAt
-    ).insert(database)
-    return (proposed, true)
+    return nil
   }
 
   package func workspaces() throws -> [RegisteredWorkspace] {

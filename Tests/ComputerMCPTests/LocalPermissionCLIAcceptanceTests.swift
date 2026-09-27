@@ -11,6 +11,48 @@ import Testing
   .timeLimit(.minutes(2)))
 struct LocalPermissionCLIAcceptanceTests {
   @Test
+  func repairCommandPublishesTheSelectedFolderOnTheSameConnection() async throws {
+    let fixture = try PermissionCLIFixture(
+      executable: #require(
+        ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"]))
+    var client: GatewayClientSession?
+    do {
+      let destination = fixture.root.appendingPathComponent("repaired")
+      try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+      try Data("new folder".utf8).write(to: destination.appendingPathComponent("value.txt"))
+      try await fixture.controlSocket.start()
+      try await fixture.gatewayService.start(profile: .chatGPTOperate)
+      let connected = try await GatewayClientSession.connectSocket(socketURL: fixture.gatewaySocket)
+      client = connected
+      let original = try #require(try fixture.database.workspace(id: "fixture"))
+      let before = await fixture.gatewayService.snapshot()
+      let repaired = try await fixture.json(["workspace", "repair", original.id, destination.path])
+      #expect(repaired.objectValue?["id"] == .string(original.id))
+      let stored = try #require(try fixture.database.workspace(id: original.id))
+      #expect(stored.createdAt == original.createdAt && stored.displayName == original.displayName)
+      #expect(
+        stored.rootPath == destination.resolvingSymlinksInPath().path && stored.bookmarkData != nil)
+      let read = try await connected.call(
+        toolName: "file.read", arguments: .object(["path": .string("value.txt")]))
+      #expect(
+        read.result.objectValue?["structuredContent"]?.objectValue?["result"]?
+          .objectValue?["content"] == .string("new folder"))
+      let failed = try await fixture.run(["workspace", "repair", original.id, "/missing-\(UUID())"])
+      #expect(failed.exitCode != 0)
+      #expect(try fixture.database.workspace(id: original.id) == stored)
+      #expect(await fixture.gatewayService.snapshot().startedAt == before.startedAt)
+      #expect(await fixture.gatewayService.snapshot().connectionCount == 1)
+      await connected.disconnect()
+      client = nil
+      await fixture.stopAndRemove()
+    } catch {
+      await client?.disconnect()
+      await fixture.stopAndRemove()
+      throw error
+    }
+  }
+
+  @Test
   func managementCommandsTargetOnlyTheSelectedApp() async throws {
     let executable = try #require(
       ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"])

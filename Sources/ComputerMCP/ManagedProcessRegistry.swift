@@ -60,7 +60,7 @@ internal enum ProcessRegistryError: Error, LocalizedError, Equatable {
   internal var errorDescription: String? {
     switch self {
     case .unknownProcess(let id):
-      return "Unknown process id: \(id)"
+      return "Unknown process id: \(id). Results may have expired or been evicted."
     case .launchFailed(let message):
       return message
     }
@@ -135,15 +135,13 @@ internal final class ManagedProcessRegistry: ProcessManaging, @unchecked Sendabl
   }
 }
 
-internal final class SubprocessProcessRegistry: ProcessManaging, @unchecked Sendable {
-  private let shellManager: any ShellManaging
+internal final class SubprocessProcessRegistry: ProcessManaging, Sendable {
+  private let shellManager: SubprocessShellRuntime
   private let maxSessions: Int
   private let terminationGraceMilliseconds: Int
-  private let lock = NSLock()
-  private var outputLimits: [String: Int] = [:]
 
   internal init(
-    shellManager: any ShellManaging = SubprocessShellRuntime(),
+    shellManager: SubprocessShellRuntime = SubprocessShellRuntime(),
     maxSessions: Int = 32,
     terminationGraceMilliseconds: Int = 1_000
   ) {
@@ -162,80 +160,24 @@ internal final class SubprocessProcessRegistry: ProcessManaging, @unchecked Send
     let defaultDirectory =
       workingDirectory
       ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-    let id = try shellManager.spawn(
+    return try shellManager.spawnProcess(
       request: ShellLaunchRequest(
-        mode: .argv,
-        executable: executable,
-        argv: arguments,
-        workingDirectory: defaultDirectory.path,
-        environment: environment
-      ),
-      defaultShell: "/bin/zsh",
-      defaultWorkingDirectory: defaultDirectory,
-      timeoutMilliseconds: nil,
-      maxOutputBytes: maxOutputBytes,
-      maxSessions: maxSessions,
-      terminationGraceMilliseconds: terminationGraceMilliseconds
-    )
-    lock.lock()
-    outputLimits[id] = maxOutputBytes
-    lock.unlock()
-    return id
+        mode: .argv, executable: executable, argv: arguments,
+        workingDirectory: defaultDirectory.path, environment: environment),
+      defaultWorkingDirectory: defaultDirectory, maxOutputBytes: maxOutputBytes,
+      maxSessions: maxSessions, terminationGraceMilliseconds: terminationGraceMilliseconds)
   }
 
   internal func list() throws -> [ManagedProcessSnapshot] {
-    lock.lock()
-    let sessions = outputLimits.sorted { $0.key < $1.key }
-    lock.unlock()
-    return try sessions.map { id, maxOutputBytes in
-      try snapshot(processID: id, maxOutputBytes: maxOutputBytes)
-    }
+    shellManager.processSnapshots()
   }
 
   internal func read(processID: String) throws -> ManagedProcessSnapshot {
-    lock.lock()
-    let maxOutputBytes = outputLimits[processID]
-    lock.unlock()
-    guard let maxOutputBytes else {
-      throw ProcessRegistryError.unknownProcess(processID)
-    }
-    return try snapshot(processID: processID, maxOutputBytes: maxOutputBytes)
+    try shellManager.processSnapshot(processID)
   }
 
   internal func cancel(processID: String) throws -> ManagedProcessCancelResult {
-    lock.lock()
-    let known = outputLimits[processID] != nil
-    lock.unlock()
-    guard known else {
-      throw ProcessRegistryError.unknownProcess(processID)
-    }
-    let result = try shellManager.cancel(sessionID: processID)
-    return ManagedProcessCancelResult(
-      processID: processID,
-      cancelled: result.cancellationRequested,
-      exitCode: nil
-    )
-  }
-
-  private func snapshot(processID: String, maxOutputBytes: Int) throws
-    -> ManagedProcessSnapshot
-  {
-    let snapshot = try shellManager.read(
-      sessionID: processID,
-      stdoutCursor: 0,
-      stderrCursor: 0,
-      maxReadBytes: maxOutputBytes,
-      encoding: .utf8
-    )
-    return ManagedProcessSnapshot(
-      processID: processID,
-      isRunning: snapshot.isRunning,
-      exitCode: snapshot.exitCode,
-      stdout: snapshot.stdout.text ?? "",
-      stderr: snapshot.stderr.text ?? "",
-      stdoutTruncated: snapshot.stdout.truncated,
-      stderrTruncated: snapshot.stderr.truncated
-    )
+    try shellManager.cancelProcess(processID)
   }
 }
 

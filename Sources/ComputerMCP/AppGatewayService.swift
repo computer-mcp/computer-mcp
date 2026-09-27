@@ -60,6 +60,7 @@ package actor AppGatewayService {
   private var runtimes: [RuntimeKey: AdmittedRuntime] = [:]
   private var pendingRuntimes: [RuntimeKey: Task<AdmittedRuntime, any Error>] = [:]
   private var retiredRuntimes: [GatewayRuntime] = []
+  private var terminalSessions = GatewayTerminalSessions()
   private var lifecycleInProgress = false
   private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -179,6 +180,7 @@ package actor AppGatewayService {
     runtimes.removeAll()
     retiredRuntimes.removeAll()
     for runtime in ownedRuntimes { await runtime.shutdown() }
+    terminalSessions = GatewayTerminalSessions()
     if let credentialFile = socketConfiguration.tunnelCredentialFile {
       GatewaySocketCredentialStore.remove(at: credentialFile)
     }
@@ -231,7 +233,7 @@ package actor AppGatewayService {
       do {
         let admitted = try await controlPlane.makeGatewaySocketRuntime(
           caller: key.caller, profileID: key.profileID, transportTrace: trace,
-          trustedPrincipalID: key.principalID)
+          trustedPrincipalID: key.principalID, terminalSessions: terminalSessions)
         if let previous = runtimes.updateValue(admitted, forKey: key) {
           retiredRuntimes.append(previous.gateway)
         }

@@ -5127,6 +5127,21 @@ workspace/cwd binding, stdin, separate stdout/stderr cursors, timeout,
 cancellation, exit status, signals, truncation metadata, and process-group
 cleanup.
 
+The App listener retains Shell and registered-process sessions across runtime
+configuration changes within the same authenticated principal, profile, caller,
+workspace registration, and resolved folder identity. Reads, writes, cancellation,
+and listing still require current permission. A task continues using its original
+launch settings and output limit; the executing runtime owns it until the process
+and its output streams finish.
+
+Completed results remain in memory for up to 24 hours, within a shared listener
+budget of 64 completed sessions and 8 MiB of stdout/stderr. The newest results that
+fit these budgets are retained; running sessions are not evicted. Expired or
+evicted results are omitted from lists and report an unknown session or process
+id on lookup. Output already returned by `shell.run` is unaffected by retention.
+Stopping the listener clears its result store. Save needed output before these
+limits apply.
+
 Full Shell gives the caller the current macOS user's effective terminal
 authority. Prefer typed tools or registered CLI argv execution when that
 authority is unnecessary.

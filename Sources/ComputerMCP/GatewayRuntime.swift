@@ -48,13 +48,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     plugins: [ResolvedPlugin]? = nil,
-    bundledPlugins: BundledPlugins = .current
+    bundledPlugins: BundledPlugins = .current,
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
   ) throws {
     try self.init(
       configuration: configuration, context: context, database: database,
       registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
       policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
-      bundledPlugins: bundledPlugins, lifetime: GatewayRuntimeLifetime())
+      bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
+      lifetime: GatewayRuntimeLifetime())
   }
 
   package static func make(
@@ -66,7 +68,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     plugins: [ResolvedPlugin]? = nil,
-    bundledPlugins: BundledPlugins = .current
+    bundledPlugins: BundledPlugins = .current,
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
   ) async throws -> GatewayRuntime {
     try Task.checkCancellation()
     let lifetime = GatewayRuntimeLifetime()
@@ -76,7 +79,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           configuration: configuration, context: context, database: database,
           registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
           policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
-          bundledPlugins: bundledPlugins, lifetime: lifetime)
+          bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime)
       }
       try Task.checkCancellation()
       return runtime
@@ -90,7 +93,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     configuration: GatewayConfiguration, context: ExecutionContext?, database: GatewayDatabase?,
     registeredWorkspaces: [RegisteredWorkspace]?, bookmarkService: any WorkspaceBookmarkServicing,
     policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
-    plugins: [ResolvedPlugin]?, bundledPlugins: BundledPlugins, lifetime: GatewayRuntimeLifetime
+    plugins: [ResolvedPlugin]?, bundledPlugins: BundledPlugins,
+    terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime
   ) throws {
     let initializationConfiguration = configuration
     self.lifetime = lifetime
@@ -171,7 +175,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       lifetime.onShutdown { access.close() }
       var workspaceConfiguration = configuration
       workspaceConfiguration.workspaceDirectory = access.rootURL.standardizedFileURL
-      let shellManager = SubprocessShellRuntime(ownedWork: ownedWork, workspaceID: workspace.id)
+      let shellManager = SubprocessShellRuntime(
+        ownedWork: ownedWork, workspaceID: workspace.id, sessions: terminalSessions,
+        scope: try .workspace(
+          context: effectiveContext, workspace: access.workspace, root: access.rootURL,
+          registered: registeredWorkspaces != nil || !persistedWorkspaces.isEmpty))
       let processManager = SubprocessProcessRegistry(
         shellManager: shellManager,
         maxSessions: configuration.policy.maxShellSessions,
@@ -272,7 +280,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         configuration: initializationConfiguration, context: bound, database: database,
         registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
-        bundledPlugins: bundledPlugins)
+        bundledPlugins: bundledPlugins, terminalSessions: terminalSessions)
     }
     self.requiresPersistedGrant = persistedGrant != nil
     self.persistedWorkspaceIDs = Set(persistedWorkspaces.map(\.id))

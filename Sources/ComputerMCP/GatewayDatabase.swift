@@ -797,6 +797,21 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
+  /// The manifest replacement and activated revision share a single commit decision.
+  /// A recovery journal restores file state if SQLite rolls this transaction back.
+  func activateConfigurationRevision(
+    _ revision: ConfigurationRevision, replaceManifest: () throws -> Void
+  ) throws {
+    try writer.write { database in
+      try ConfigurationRevisionRecord(revision).insert(database)
+      try replaceManifest()
+    }
+  }
+
+  func configurationRevision(id: String) throws -> ConfigurationRevision? {
+    try writer.read { try ConfigurationRevisionRecord.fetchOne($0, key: id)?.value }
+  }
+
   package func configurationRevisions(limit: Int = 50) throws -> [ConfigurationRevision] {
     try writer.read { database in
       try ConfigurationRevisionRecord

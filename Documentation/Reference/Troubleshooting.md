@@ -74,6 +74,22 @@ Typical failures include duplicate IDs, invalid workspace grants, a remote
 `local-admin` binding, unknown capabilities, missing MCP transport fields,
 reexport prefix conflicts, and `danger-full-access` Codex sandbox.
 
+## Manifest Recovery Reports a Conflict
+
+Managed activation records the previous file and proposed revision in a private
+recovery file beside the manifest. After an interrupted write, recovery uses the
+database's committed revision to finish the replacement or restore the previous
+file. An unsuccessful transaction does not create an activated history entry.
+
+If the manifest contains an unrecognized external edit, recovery preserves both
+the edit and recovery record and reports a conflict. Preserve the manifest,
+recovery record, and control-plane database together for diagnosis; do not delete
+the record or discard the external edit to bypass the error. Treat these files as
+private configuration and do not post their contents in a public issue.
+
+Another active writer produces a retryable transaction-in-progress error. A
+stale preview requires a fresh preview before applying the change.
+
 ## ChatGPT Cannot Connect
 
 ChatGPT Web cannot connect directly to local stdio or `localhost`. Follow the

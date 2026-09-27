@@ -8,6 +8,190 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
+  @Test(arguments: [false, true])
+  func externalManifestChangesPreserveConnectionWorkAndEditorBytes(atomic: Bool) async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let startedAt = await fixture.service.snapshot().startedAt
+      let oldPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("old")])))
+      let candidate = try await fixture.externalManifest(version: 2)
+      try fixture.writeManifest(candidate, atomic: atomic)
+      let file = fixture.control.directories.manifest
+      let identity = try #require(
+        FileManager.default.attributesOfItem(atPath: file.path)[.systemFileNumber] as? NSNumber)
+      try await waitUntil {
+        try await fixture.control.activeConfiguration().server.name == "version-2"
+      }
+      #expect(
+        try FileManager.default.attributesOfItem(atPath: file.path)[.systemFileNumber] as? NSNumber
+          == identity)
+      let currentPID = try pid(await client.call(toolName: "fixture.identity"))
+      #expect(currentPID != oldPID)
+      #expect(try await client.listTools().contains { $0.name == "fixture.generation_2" })
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.inspect", arguments: .object(["handle": .string("old")]))) == oldPID)
+      let history = try fixture.database.configurationRevisions()
+      let failure = fixture.root.appendingPathComponent("failure.py")
+      try Data(
+        """
+        import os, sys
+        from pathlib import Path
+        with (Path(sys.argv[1]) / "pids").open("a") as output: output.write(str(os.getpid()) + "\\n")
+        raise SystemExit(2)
+        """.utf8
+      ).write(to: failure)
+      var rejected = try await fixture.control.activeConfiguration()
+      rejected.mcp.servers[0].args[0] = failure.path
+      let rejectedText = try rejected.exportedTOML()
+      try fixture.writeManifest(rejectedText, atomic: atomic)
+      try await waitUntil { await fixture.service.snapshot().lastError != nil }
+      let attempts = try fixture.pids()
+      try await Task.sleep(for: .milliseconds(1500))
+      let subsequent = try fixture.pids()
+      #expect(subsequent == attempts)
+      #expect(try fixture.database.configurationRevisions() == history)
+      #expect(try Data(contentsOf: file) == Data(rejectedText.utf8))
+      #expect(try pid(await client.call(toolName: "fixture.identity")) == currentPID)
+      try Data(contentsOf: fixture.root.appendingPathComponent("provider.py")).write(to: failure)
+      try fixture.writeManifest(rejectedText, atomic: atomic)
+      try await waitUntil {
+        try await fixture.control.activeConfiguration().mcp.servers[0].args[0] == failure.path
+      }
+      #expect(await fixture.service.snapshot().lastError == nil)
+      #expect(try fixture.database.configurationRevisions().count == history.count + 1)
+      try fixture.writeManifest(try await fixture.externalManifest(version: 3), atomic: atomic)
+      try await waitUntil {
+        try await fixture.control.activeConfiguration().server.name == "version-3"
+      }
+      #expect(await fixture.service.snapshot().lastError == nil)
+      #expect(await fixture.service.snapshot().startedAt == startedAt)
+      #expect(await fixture.service.snapshot().connectionCount == 1)
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))) == oldPID)
+      try await wait { !alive(oldPID) && !alive(currentPID) }
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func externalReloadCoalescesAndRecoversFromConflictingPublication(managed: Bool) async throws {
+    let bookmarks = GatedBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmarks)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    var mutation: Task<Void, any Error>?
+    do {
+      let oldPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("old")])))
+      bookmarks.arm()
+      if managed {
+        mutation = Task {
+          _ = try await fixture.service.changePlugins(
+            .enabled(pluginID: "future", true), expectedRevision: 0)
+        }
+      } else {
+        try fixture.writeManifest(try await fixture.externalManifest(version: 2), atomic: true)
+      }
+      try await wait { bookmarks.entered }
+      for version in 3...8 {
+        try fixture.writeManifest(
+          try await fixture.externalManifest(version: version), atomic: true)
+      }
+      #expect(try pid(await client.call(toolName: "fixture.identity")) == oldPID)
+      bookmarks.release()
+      if let mutation { await #expect(throws: (any Error).self) { try await mutation.value } }
+      try await waitUntil {
+        try await fixture.control.activeConfiguration().server.name == "version-8"
+      }
+      #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
+      #expect(try fixture.database.configurationRevisions().count == 2)
+      #expect(try fixture.pids().count <= 3)
+      #expect(try await client.listTools().contains { $0.name == "fixture.generation_8" })
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))) == oldPID)
+      await client.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      mutation?.cancel()
+      bookmarks.release()
+      _ = await mutation?.result
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func stopJoinsExternalPreparationAndRestartReconsidersLatestFile() async throws {
+    let bookmarks = GatedBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmarks)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    var stopping: Task<Void, Never>?
+    do {
+      bookmarks.arm()
+      try fixture.writeManifest(try await fixture.externalManifest(version: 2), atomic: true)
+      try await wait { bookmarks.entered }
+      stopping = Task { await fixture.service.stop() }
+      try fixture.writeManifest(try await fixture.externalManifest(version: 3), atomic: true)
+      bookmarks.release()
+      await stopping?.value
+      #expect(await fixture.service.snapshot().state == .stopped)
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+      await client.disconnect()
+      try fixture.writeManifest(try await fixture.externalManifest(version: 4), atomic: false)
+      try await fixture.service.start(profile: .chatGPTOperate)
+      try await waitUntil {
+        try await fixture.control.activeConfiguration().server.name == "version-4"
+      }
+      let reconnected = try await fixture.connect()
+      #expect(try await reconnected.listTools().contains { $0.name == "fixture.generation_4" })
+      await reconnected.disconnect()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      bookmarks.release()
+      await stopping?.value
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  private func waitUntil(_ condition: () async throws -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
+      if try await condition() { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let completed = try await condition()
+    try #require(completed, "Timed out waiting for external manifest publication.")
+  }
+
   @Test
   func managedManifestAndRollbackPublishWithoutDisconnectingOrLosingOldWork() async throws {
     let fixture = try GenerationFixture()
@@ -1533,6 +1717,27 @@ private struct GenerationFixture: Sendable {
   let control: AppControlPlaneService
   let service: AppGatewayService
   let reportWork: Bool
+
+  func externalManifest(version: Int) async throws -> String {
+    var configuration = try await control.activeConfiguration()
+    configuration.server.name = "version-\(version)"
+    configuration.mcp.servers[0].args[2] = String(version)
+    configuration.mcp.servers[0].toolRisks["generation_\(version)"] = .readOnly
+    return try configuration.exportedTOML()
+  }
+
+  func writeManifest(_ text: String, atomic: Bool) throws {
+    let file = control.directories.manifest
+    if atomic {
+      try Data(text.utf8).write(to: file, options: .atomic)
+    } else {
+      let handle = try FileHandle(forWritingTo: file)
+      defer { try? handle.close() }
+      try handle.truncate(atOffset: 0)
+      try handle.write(contentsOf: Data(text.utf8))
+      try handle.synchronize()
+    }
+  }
 
   init(
     reportWork: Bool = true,

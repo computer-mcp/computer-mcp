@@ -142,12 +142,10 @@ package actor AppControlPlaneService {
     try directories.prepare()
     try directories.secureDatabaseFiles()
     try await recoverPluginsAtStartup()
-    try manifestStore.startHotReloadMonitoring()
 
   }
 
   package func stop() async throws {
-    manifestStore.stopHotReloadMonitoring()
     let cloudflareIDs = Set(cloudflareRuntimes.keys)
       .union(cloudflareStartTasks.keys).union(cloudflareStopTasks.keys)
     for profileID in cloudflareIDs.sorted() {

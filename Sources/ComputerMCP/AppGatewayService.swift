@@ -38,6 +38,10 @@ package struct AppGatewayServiceSnapshot: Codable, Equatable, Sendable {
 }
 
 package actor AppGatewayService {
+  private struct ManifestAttempt: Equatable {
+    let fingerprint: ManifestFileMonitor.Fingerprint?
+  }
+
   private struct RuntimeKey: Hashable {
     let principalID: String
     let profileID: GatewayProfileID
@@ -110,6 +114,10 @@ package actor AppGatewayService {
   private var runtimeObservers: [UUID: [Task<Void, Never>]] = [:]
   private var catalogChanges: [RuntimeKey: GatewayToolChangeBroadcaster] = [:]
   private var manifestObserver: Task<Void, Never>?
+  private var manifestMonitor: ManifestFileMonitor?
+  private var manifestReloadObserver: Task<Void, Never>?
+  private var manifestReloadError: String?
+  private var lastManifestAttempt: ManifestAttempt?
   private var listenerEpoch = UUID()
   private var terminalSessions = GatewayTerminalSessions()
   private var lifecycleInProgress = false
@@ -151,6 +159,8 @@ package actor AppGatewayService {
     state = .starting
     listenerEpoch = UUID()
     lastError = nil
+    manifestReloadError = nil
+    lastManifestAttempt = nil
     let selectedProfile: GatewayProfileID
     do {
       if let requestedProfile {
@@ -172,6 +182,8 @@ package actor AppGatewayService {
           await self?.configurationChanged(epoch: epoch)
         }
       }
+      let monitor = try ManifestFileMonitor(manifestURL: controlPlane.directories.manifest)
+      manifestMonitor = monitor
       if let credentialFile = socketConfiguration.tunnelCredentialFile {
         try GatewaySocketCredentialStore.create(at: credentialFile)
       }
@@ -194,9 +206,17 @@ package actor AppGatewayService {
       self.server = server
       self.startedAt = Date()
       state = .running
+      manifestReloadObserver = Task { [weak self, changes = monitor.changes] in
+        for await _ in changes {
+          guard !Task.isCancelled else { break }
+          do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+          while await self?.reloadExternalManifest(epoch: epoch) == true {
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+          }
+        }
+      }
     } catch {
-      manifestObserver?.cancel()
-      manifestObserver = nil
+      await stopManifestMonitoring()
       if let credentialFile = socketConfiguration.tunnelCredentialFile {
         GatewaySocketCredentialStore.remove(at: credentialFile)
       }
@@ -218,6 +238,7 @@ package actor AppGatewayService {
   }
 
   package func restart(profile: GatewayProfileID? = nil) async throws {
+    manifestReloadObserver?.cancel()
     await acquireLifecycle()
     defer { releaseLifecycle() }
     await stopOwnedRuntime()
@@ -225,6 +246,7 @@ package actor AppGatewayService {
   }
 
   package func stop() async {
+    manifestReloadObserver?.cancel()
     await acquireLifecycle()
     defer { releaseLifecycle() }
     await stopOwnedRuntime()
@@ -236,8 +258,7 @@ package actor AppGatewayService {
     }
     state = .stopping
     listenerEpoch = UUID()
-    manifestObserver?.cancel()
-    manifestObserver = nil
+    await stopManifestMonitoring()
     let pending = pendingRuntimes.values.map(\.task)
     pendingRuntimes.removeAll()
     for task in pending { task.cancel() }
@@ -613,7 +634,7 @@ package actor AppGatewayService {
       processIdentifier: getpid(),
       startedAt: startedAt,
       connectionCount: await server?.connectionCount() ?? 0,
-      lastError: lastError
+      lastError: lastError ?? manifestReloadError
     )
   }
 
@@ -657,19 +678,82 @@ package actor AppGatewayService {
   func changeManifest(
     _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String? = nil
   ) async throws -> ConfigurationRevision {
-    try await withConfigurationChange {
-      try await controlPlane.applyManifestChange(
-        manifest, reason: reason, expectedDigest: expectedDigest
-      ) { [self] _, prepared in
-        try await preparePublication(
-          inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
-          storage: nil
-        ) { resolution, install in
-          try self.controlPlane.manifestStore.commit(
-            prepared, resolution: resolution, install: install)
-        }
+    let revision = try await withConfigurationChange {
+      try await publishManifest(manifest, reason: reason, expectedDigest: expectedDigest)
+    }
+    manifestReloadError = nil
+    lastManifestAttempt = nil
+    return revision
+  }
+
+  private func publishManifest(
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String?
+  ) async throws -> ConfigurationRevision {
+    try await controlPlane.applyManifestChange(
+      manifest, reason: reason, expectedDigest: expectedDigest
+    ) { [self] _, prepared in
+      try await preparePublication(
+        inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
+        storage: nil
+      ) { resolution, install in
+        try self.controlPlane.manifestStore.commit(
+          prepared, resolution: resolution, install: install)
       }
     }
+  }
+
+  /// True retries a transient conflict within the one owned, cancellable consumer.
+  private func reloadExternalManifest(epoch: UUID) async -> Bool {
+    guard !Task.isCancelled, epoch == listenerEpoch, state == .running else { return false }
+    guard !lifecycleInProgress else { return true }
+    let attempt = ManifestAttempt(
+      fingerprint: ManifestFileMonitor.fingerprint(controlPlane.directories.manifest))
+    guard attempt != lastManifestAttempt else { return false }
+    do {
+      guard let input = try controlPlane.manifestStore.externalInput() else {
+        lastManifestAttempt = attempt
+        manifestReloadError = nil
+        return false
+      }
+      guard
+        attempt.fingerprint == ManifestFileMonitor.fingerprint(controlPlane.directories.manifest)
+      else { return true }
+      try await withConfigurationChange {
+        _ = try await publishManifest(
+          input.manifest, reason: .externalReload, expectedDigest: input.digest)
+      }
+      manifestReloadError = nil
+      lastManifestAttempt = attempt
+    } catch PluginHostError.changeInProgress {
+      return true
+    } catch AtomicManifestStoreError.changeInProgress {
+      return true
+    } catch AtomicManifestStoreError.staleDigest {
+      return true
+    } catch GatewayDatabaseError.configurationChanged {
+      return true
+    } catch is CancellationError {
+      return false
+    } catch {
+      lastManifestAttempt = attempt
+      manifestReloadError = "Configuration reload failed: \(Self.stableDescription(error))"
+    }
+    return false
+  }
+
+  private func stopManifestMonitoring() async {
+    let admittedObserver = manifestObserver
+    manifestObserver = nil
+    admittedObserver?.cancel()
+    let observer = manifestReloadObserver
+    manifestReloadObserver = nil
+    observer?.cancel()
+    let monitor = manifestMonitor
+    manifestMonitor = nil
+    await monitor?.close()
+    await observer?.value
+    await admittedObserver?.value
+    manifestReloadError = nil
   }
 
   private func withConfigurationChange<Result: Sendable>(

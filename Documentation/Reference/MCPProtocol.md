@@ -239,14 +239,18 @@ drained. Retirement reserves the runtime before asynchronous cleanup, preventing
 new admission during shutdown. Pending construction and cleanup count toward the
 128-runtime listener budget. Listener stop joins candidate construction and
 invalidates its publication epoch, so a late candidate cannot enter a restarted
-listener. Managed manifest activation/rollback, manual MCP changes, plugin
+listener. Managed manifest activation/rollback, external file edits, manual MCP changes, plugin
 mutations and workspace add, repair, remove and deduplication
 prepare candidates for every admitted identity and profile while existing calls
 continue. New identities wait at a bounded publication barrier. The host checks
 the manifest and persisted inputs, commits the prepared configuration and
 installs routing before notifying clients. A failed candidate or conflicting
 input change leaves prior configuration and routing intact. Shutdown waits for
-in-progress publication and its cleanup before completing.
+in-progress publication and its cleanup before completing. External saves are
+coalesced through one listener-owned consumer. Rejection preserves the editor's
+file and exposes a gateway diagnostic; admission never rewrites that file. A
+corrected re-save is reconsidered, including changes made while the gateway was
+stopped in the same App process.
 
 When a continuation omits its workspace, cached ownership can identify its exact
 original scope across registered workspaces. Multiple matching owners require an

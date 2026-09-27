@@ -1,5 +1,4 @@
 import CryptoKit
-import Darwin
 import Foundation
 
 internal enum ManifestChangeReason: String, Codable, Equatable, Sendable {
@@ -52,8 +51,6 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   private let lock = NSLock()
   private let writeLock = NSLock()
   private var continuations: [UUID: AsyncStream<ManifestChange>.Continuation] = [:]
-  private var directorySource: DispatchSourceFileSystemObject?
-  private var directoryDescriptor: Int32 = -1
   private var knownDigest: String?
   // Protected by writeLock; disk edits become active only after validation.
   private var configuration: GatewayConfiguration?
@@ -84,7 +81,6 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   }
 
   deinit {
-    stopHotReloadMonitoring()
     lock.lock()
     let activeContinuations = Array(continuations.values)
     continuations.removeAll()
@@ -95,7 +91,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   }
 
   internal func changes() -> AsyncStream<ManifestChange> {
-    AsyncStream { continuation in
+    AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
       let id = UUID()
       lock.lock()
       continuations[id] = continuation
@@ -170,52 +166,6 @@ internal final class AtomicManifestStore: @unchecked Sendable {
     return try write(manifest: revision.manifest, reason: .rolledBack)
   }
 
-  internal func startHotReloadMonitoring() throws {
-    lock.lock()
-    if directorySource != nil {
-      lock.unlock()
-      return
-    }
-    lock.unlock()
-
-    let directory = manifestURL.deletingLastPathComponent()
-    let descriptor = open(directory.path, O_EVTONLY)
-    guard descriptor >= 0 else {
-      throw AtomicManifestStoreError.posix(operation: "open directory", code: errno)
-    }
-    let source = DispatchSource.makeFileSystemObjectSource(
-      fileDescriptor: descriptor,
-      eventMask: [.write, .rename, .delete],
-      queue: DispatchQueue(label: "com.showxu.computer-mcp.manifest-watch")
-    )
-    source.setEventHandler { [weak self] in
-      self?.reloadExternalChange()
-    }
-    source.setCancelHandler {
-      close(descriptor)
-    }
-
-    lock.lock()
-    guard directorySource == nil else {
-      lock.unlock()
-      source.cancel()
-      return
-    }
-    directoryDescriptor = descriptor
-    directorySource = source
-    lock.unlock()
-    source.resume()
-  }
-
-  internal func stopHotReloadMonitoring() {
-    lock.lock()
-    let source = directorySource
-    directorySource = nil
-    directoryDescriptor = -1
-    lock.unlock()
-    source?.cancel()
-  }
-
   private func write(manifest: String, reason: ManifestChangeReason, expectedDigest: String? = nil)
     throws
     -> ConfigurationRevision
@@ -272,15 +222,31 @@ internal final class AtomicManifestStore: @unchecked Sendable {
       guard prepared.admissionID == admissionID,
         try files.currentData() == prepared.previous
       else { throw AtomicManifestStoreError.staleDigest }
-      let stagedURL = manifestURL.deletingLastPathComponent().appendingPathComponent(
-        ".\(manifestURL.lastPathComponent).staged.\(UUID().uuidString)")
-      defer { try? fileManager.removeItem(at: stagedURL) }
       var revision = prepared.revision
       revision.activatedAt = Date()
-      try ManifestFileTransaction.writeAndSynchronize(Data(revision.manifest.utf8), to: stagedURL)
-      let persisted = try files.commit(
-        stagedURL: stagedURL, previous: prepared.previous, revision: revision,
-        expected: prepared.persisted, resolution: resolution)
+      let persisted: GatewayDatabase.ConfigurationState
+      if prepared.reason == .externalReload {
+        // The editor owns these bytes. Admission records them without rewriting
+        // the file or creating a new filesystem event on a failed DB commit.
+        guard prepared.previous == Data(revision.manifest.utf8) else {
+          throw AtomicManifestStoreError.staleDigest
+        }
+        persisted = try database.activateConfigurationRevision(
+          revision, expected: prepared.persisted, resolution: resolution
+        ) { _ in
+          guard try files.currentData() == prepared.previous else {
+            throw AtomicManifestStoreError.staleDigest
+          }
+        }
+      } else {
+        let stagedURL = manifestURL.deletingLastPathComponent().appendingPathComponent(
+          ".\(manifestURL.lastPathComponent).staged.\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: stagedURL) }
+        try ManifestFileTransaction.writeAndSynchronize(Data(revision.manifest.utf8), to: stagedURL)
+        persisted = try files.commit(
+          stagedURL: stagedURL, previous: prepared.previous, revision: revision,
+          expected: prepared.persisted, resolution: resolution)
+      }
       configuration = prepared.configuration
       admissionID = UUID()
       setKnownDigest(revision.digest)
@@ -290,28 +256,20 @@ internal final class AtomicManifestStore: @unchecked Sendable {
     }
   }
 
-  private func reloadExternalChange() {
+  func externalInput() throws -> (manifest: String, digest: String)? {
     writeLock.lock()
     defer { writeLock.unlock() }
-    do {
-      try files.withExclusiveAccess {
-        try files.recover()
-        guard let data = try files.currentData() else { return }
-        let digest = try Self.digest(of: data)
-        guard digest != currentKnownDigest() else { return }
-        let manifest = String(decoding: data, as: UTF8.self)
-        let loaded = try loader.load(path: manifestURL.path)
-        guard try Data(contentsOf: manifestURL) == data else { return }
-        let revision = ConfigurationRevision(
-          digest: digest, manifest: manifest, activatedAt: Date())
-        try database.saveConfigurationRevision(revision)
-        configuration = loaded
-        admissionID = UUID()
-        setKnownDigest(digest)
-        publish(ManifestChange(revision: revision, reason: .externalReload))
+    return try files.withExclusiveAccess {
+      try files.recover()
+      guard let data = try files.currentData() else {
+        throw AtomicManifestStoreError.manifestMissing
       }
-    } catch {
-      // External invalid changes never become active control-plane state.
+      let digest = try Self.digest(of: data)
+      guard digest != currentKnownDigest() else { return nil }
+      guard let manifest = String(data: data, encoding: .utf8) else {
+        throw AtomicManifestStoreError.invalidManifestEncoding
+      }
+      return (manifest, digest)
     }
   }
 

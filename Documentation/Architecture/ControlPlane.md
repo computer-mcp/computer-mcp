@@ -24,7 +24,12 @@ candidates leave the admitted configuration active.
 `AppControlPlaneService` owns durable state and direct domain mechanisms:
 manifest revisions, GRDB records, security-scoped bookmarks, Keychain secrets,
 provider discovery, Tunnel supervisors, and launch at login.
-`AppGatewayService` owns the current gateway runtime and private gateway socket.
+`AppGatewayService` owns the current gateway runtime, private gateway socket and
+external manifest monitoring. Its bounded invalidation stream and one owned
+consumer coalesce file saves and prepare the latest candidate through the same
+publication boundary. Rejected edits remain on disk with a gateway diagnostic;
+the admitted configuration and existing work remain active. Gateway stop cancels
+and joins monitoring and candidate cleanup; start rechecks the file.
 SwiftUI maps shared results into view models; the CLI maps the same results into
 stable JSON over `ControlSocketService`.
 

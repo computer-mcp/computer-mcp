@@ -8,6 +8,58 @@ import Testing
 @Suite
 
 final class AtomicManifestStoreTests {
+  @Test(arguments: [nil, Data(), Data([0xFF]), Data("schema_version = 999\n".utf8)] as [Data?])
+  func rejectedExternalBytesRemainUnmodifiedAndUnadmitted(data: Data?) throws {
+    let fixture = try ManifestStoreFixture()
+    defer { fixture.cleanup() }
+    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    if let data {
+      try data.write(to: fixture.manifestURL, options: .atomic)
+    } else {
+      try FileManager.default.removeItem(at: fixture.manifestURL)
+    }
+    #expect(throws: (any Error).self) {
+      let input = try #require(try fixture.store.externalInput())
+      _ = try fixture.store.commit(
+        fixture.store.prepare(
+          manifest: input.manifest, reason: .externalReload, expectedDigest: input.digest))
+    }
+    #expect(try fixture.files.currentData() == data)
+    #expect(try fixture.store.activeConfiguration().server.name == "original")
+    #expect(try fixture.store.history().map(\.id) == [original.id])
+  }
+
+  @Test
+  func rejectedExternalDatabaseCommitDoesNotRewriteTheEditorFile() throws {
+    let fixture = try ManifestStoreFixture(persistent: true)
+    defer { fixture.cleanup() }
+    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let text = Self.manifest(name: "external")
+    try Data(text.utf8).write(to: fixture.manifestURL, options: .atomic)
+    let before = try #require(ManifestFileMonitor.fingerprint(fixture.manifestURL))
+    let input = try #require(try fixture.store.externalInput())
+    let prepared = try fixture.store.prepare(
+      manifest: input.manifest, reason: .externalReload, expectedDigest: input.digest)
+    let connection = try DatabaseQueue(path: try #require(fixture.database.fileURL).path)
+    defer { try? connection.close() }
+    try connection.write {
+      try $0.execute(
+        sql: """
+          CREATE TABLE externalManifestParent (id INTEGER PRIMARY KEY);
+          CREATE TABLE externalManifestChild (
+            id INTEGER REFERENCES externalManifestParent(id) DEFERRABLE INITIALLY DEFERRED);
+          CREATE TRIGGER refuse_external_commit AFTER INSERT ON configurationRevisions
+          BEGIN INSERT INTO externalManifestChild VALUES (1); END;
+          """)
+    }
+    #expect(throws: DatabaseError.self) { try fixture.store.commit(prepared) }
+    #expect(ManifestFileMonitor.fingerprint(fixture.manifestURL) == before)
+    #expect(try Data(contentsOf: fixture.manifestURL) == Data(text.utf8))
+    #expect(try fixture.store.activeConfiguration().server.name == "original")
+    #expect(try fixture.store.history().map(\.id) == [original.id])
+    #expect(!FileManager.default.fileExists(atPath: fixture.files.recoveryURL.path))
+  }
+
   @Test(arguments: ["publish", "conflict", "file"])
   func preparedPublicationCommitsFileAndResolutionTogether(outcome: String) throws {
     let fixture = try ManifestStoreFixture()
@@ -308,21 +360,30 @@ final class AtomicManifestStoreTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func externalReloadAdmitsValidatedConfiguration() async throws {
+  func externalFileNotificationsRequireExplicitAdmission() async throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
     _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
-    try fixture.store.startHotReloadMonitoring()
-    defer { fixture.store.stopHotReloadMonitoring() }
+    let monitor = try ManifestFileMonitor(manifestURL: fixture.manifestURL)
+    var invalidations = monitor.changes.makeAsyncIterator()
+    _ = await invalidations.next()
     let stream = fixture.store.changes()
     let change = Task { await stream.first(where: { $0.reason == .externalReload }) }
     defer { change.cancel() }
     try Self.manifest(name: "external").write(
       to: fixture.manifestURL, atomically: true, encoding: .utf8)
+    _ = await invalidations.next()
+    #expect(try fixture.store.activeConfiguration().server.name == "original")
+    #expect(try fixture.store.history().count == 1)
+    let input = try #require(try fixture.store.externalInput())
+    _ = try fixture.store.commit(
+      fixture.store.prepare(
+        manifest: input.manifest, reason: .externalReload, expectedDigest: input.digest))
     let event = try #require(await change.value)
     #expect(event.reason == .externalReload)
     #expect(try fixture.store.activeConfiguration().server.name == "external")
     #expect(try fixture.store.history().count == 2)
+    await monitor.close()
   }
 
   @Test

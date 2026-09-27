@@ -74,6 +74,21 @@ Typical failures include duplicate IDs, invalid workspace grants, a remote
 `local-admin` binding, unknown capabilities, missing MCP transport fields,
 reexport prefix conflicts, and `danger-full-access` Codex sandbox.
 
+## An External Manifest Edit Does Not Take Effect
+
+While the gateway is running, saving its manifest prepares a candidate before
+changing active configuration. Existing connections and task owners remain
+available. If syntax, provider startup, workspace access or persistence fails,
+the gateway status reports a configuration reload error and keeps the previously
+admitted configuration active. Your edited file remains unchanged.
+
+Fix the reported cause and save the manifest again, or apply the corrected
+configuration through the App or owner CLI. Saving the same text again retries
+after an external cause, such as an unavailable provider, has been fixed.
+Starting the gateway again in the same App process also rechecks edits made while
+it was stopped. On a fresh App process launch, the startup manifest must validate;
+the retained running configuration is not a fallback for an invalid startup file.
+
 ## Manifest Recovery Reports a Conflict
 
 Managed activation records the previous file and proposed revision in a private

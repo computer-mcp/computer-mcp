@@ -94,6 +94,17 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
   PE compatibility, launch permission, trust or protocol health. The Windows
   CI job compiles and tests this target against native files in debug and
   release configurations; broader host platform support has separate gates.
+- Keep workspace path resolution in the platform target. macOS uses its existing
+  `lstat`/`realpath` ancestor checks. Windows resolves the nearest existing ancestor
+  through native handles, then checks volume and 128-bit file identities along
+  the resolved ancestor chain. Lexical case folding is only an initial check;
+  distinct case-sensitive directories do not share authority. Missing suffixes
+  require a verified directory. Reparse escapes, dangling links, device names,
+  alternate streams and ambiguous names fail closed. Names are bounded to fewer
+  than 32,767 UTF-16 units and ancestor walks to 1,024 steps. An unsupported
+  identity query fails instead of falling back to a string comparison. These
+  are path observations; mutation owners still need their own handle-bound
+  containment and replacement checks.
 - Share declared platform/architecture matching between package preparation,
   retained source activation, diagnostics, static discovery and selected-asset
   provenance checks. Per-archive targets come from the exact tagged manifest;

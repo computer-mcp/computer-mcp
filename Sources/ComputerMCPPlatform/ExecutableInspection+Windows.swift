@@ -13,21 +13,21 @@
       var result = Self(
         executable: executable.utf16.count < 32_767 ? executable : "", path: nil,
         source: explicit
-          ? (isWindowsAbsolute(executable) ? "absolute_path" : "relative_path") : "path")
-      guard validWindowsPath(executable), workingDirectory.isFileURL else {
+          ? (WindowsFilePath.isAbsolute(executable) ? "absolute_path" : "relative_path") : "path")
+      guard WindowsFilePath.isValid(executable), workingDirectory.isFileURL else {
         result.status = .invalidPath
         return result
       }
       let cwd = workingDirectory.withUnsafeFileSystemRepresentation {
         $0.map(String.init(cString:))
       }
-      guard let cwd, isWindowsAbsolute(cwd) else {
+      guard let cwd, WindowsFilePath.isAbsolute(cwd) else {
         result.status = .invalidPath
         return result
       }
       let candidates: [String]
       if explicit {
-        guard let path = windowsAbsolute(executable, cwd: cwd) else {
+        guard let path = WindowsFilePath.absolute(executable, cwd: cwd) else {
           result.status = .invalidPath
           return result
         }
@@ -52,7 +52,8 @@
           if directory.hasPrefix("\""), directory.hasSuffix("\""), directory.count >= 2 {
             directory = String(directory.dropFirst().dropLast())
           }
-          guard let root = windowsAbsolute(directory.isEmpty ? "." : directory, cwd: cwd) else {
+          guard let root = WindowsFilePath.absolute(directory.isEmpty ? "." : directory, cwd: cwd)
+          else {
             return nil
           }
           return root + "\\" + withExecutableExtension(executable)
@@ -125,54 +126,5 @@
       (path as NSString).pathExtension.isEmpty ? path + ".exe" : path
     }
 
-    private static func isWindowsAbsolute(_ value: String) -> Bool {
-      let path = value.replacingOccurrences(of: "/", with: "\\")
-      let bytes = Array(path.utf8.prefix(3))
-      return path.hasPrefix("\\\\")
-        || (bytes.count == 3 && isDriveLetter(bytes[0]) && bytes[1] == 58 && bytes[2] == 92)
-    }
-
-    private static func isDriveLetter(_ value: UInt8) -> Bool {
-      (65...90).contains(value) || (97...122).contains(value)
-    }
-
-    private static func validWindowsPath(_ value: String) -> Bool {
-      guard !value.isEmpty, value.utf16.count < 32_767, !value.contains("\0") else { return false }
-      let path = value.replacingOccurrences(of: "/", with: "\\")
-      guard !path.hasPrefix("\\\\?\\"), !path.hasPrefix("\\\\.\\"), !path.hasPrefix("\\??\\"),
-        !path.contains(where: { "<>\"|?*".contains($0) })
-      else { return false }
-      let bytes = Array(path.utf8)
-      let withoutDrive =
-        bytes.count >= 3 && isDriveLetter(bytes[0]) && bytes[1] == 58 && bytes[2] == 92
-        ? String(path.dropFirst(2)) : path
-      guard !withoutDrive.contains(":") else { return false }
-      let components = withoutDrive.split(separator: "\\")
-      if path.hasPrefix("\\\\"), components.count >= 2,
-        ["pipe", "mailslot"].contains(components[1].lowercased())
-      {
-        return false
-      }
-      return components.allSatisfy { component in
-        if component == "." || component == ".." { return true }
-        guard component.last != ".", component.last != " " else { return false }
-        let stem = component.split(separator: ".", maxSplits: 1).first?.uppercased() ?? ""
-        return !["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(stem)
-          && !["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"].contains(stem)
-          && !(1...9).contains(where: { stem == "COM\($0)" || stem == "LPT\($0)" })
-      }
-    }
-
-    private static func windowsAbsolute(_ value: String, cwd: String) -> String? {
-      guard validWindowsPath(value) else { return nil }
-      let path = value.replacingOccurrences(of: "/", with: "\\")
-      guard !path.hasPrefix("\\") || path.hasPrefix("\\\\") else { return nil }
-      let joined = isWindowsAbsolute(path) ? path : cwd + "\\" + path
-      guard joined.utf16.count < 32_767 else { return nil }
-      var output = [WCHAR](repeating: 0, count: 32_768)
-      let length = GetFullPathNameW(Array(joined.utf16) + [0], DWORD(output.count), &output, nil)
-      guard length > 0, length < output.count else { return nil }
-      return String(decoding: output.prefix(Int(length)), as: UTF16.self)
-    }
   }
 #endif

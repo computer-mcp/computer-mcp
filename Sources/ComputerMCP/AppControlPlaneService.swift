@@ -596,10 +596,17 @@ package actor AppControlPlaneService {
     workspaceIDs: Set<String>? = nil,
     mcpServerIDs: Set<String>? = nil,
     allowedCallers: Set<GatewayCallerKind>? = nil,
-    expectedRevision: Int64? = nil
+    expectedRevision: Int64? = nil,
+    reviewedOptions: ProfilePermissionOptions? = nil
   ) async throws -> ProfileGrant {
     guard var grant = try await profileGrants().first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
+    }
+    if let reviewedOptions {
+      try requireCurrentGatewayInputs(reviewedOptions.inputs)
+      guard reviewedOptions.grant == grant else {
+        throw AppControlPlaneServiceError.gatewayInputsChanged
+      }
     }
     let revision = expectedRevision ?? grant.authorizationRevision
     if let mode {
@@ -635,7 +642,16 @@ package actor AppControlPlaneService {
     ).validate(
       knownWorkspaceIDs: knownWorkspaceIDs,
       knownMCPServerIDs: Set(composition.runtimeConfiguration.mcp.servers.map(\.id)))
-    try database.saveProfile(grant, expectedRevision: revision)
+    if let reviewedOptions {
+      try manifestStore.withCurrentConfiguration(configuration) {
+        guard try database.configurationState() == reviewedOptions.inputs.persisted else {
+          throw AppControlPlaneServiceError.gatewayInputsChanged
+        }
+        try database.saveProfile(grant, expectedRevision: revision)
+      }
+    } else {
+      try database.saveProfile(grant, expectedRevision: revision)
+    }
     return try database.profiles().first { $0.id == profileID } ?? grant
   }
 
@@ -762,7 +778,7 @@ package actor AppControlPlaneService {
     }
   }
 
-  private func makeGateway(
+  func makeGateway(
     inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
     transportTrace: GatewayTransportTrace? = nil, persistentState: Bool = true,
     trustedPrincipalID: String? = nil,

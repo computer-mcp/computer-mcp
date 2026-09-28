@@ -4,7 +4,7 @@ import SwiftUI
 
 struct ProfilesView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
-  @State private var editingProfile: ProfileSummary?
+  @State private var editingProfile: GatewayProfileID?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -21,17 +21,23 @@ struct ProfilesView: View {
 
       ScrollView {
         VStack(alignment: .leading, spacing: 20) {
-          ClientAccessView(model: model.clientAccess)
+          ClientAccessView(model: model.clientAccess) { editingProfile = $0 }
           Divider()
           profileDefaults
         }.padding(16)
       }
     }
-    .sheet(item: $editingProfile) { profile in
-      ProfilePermissionsEditor(
-        initial: profile.permissions,
-        workspaces: availableWorkspaces,
-        save: { try await model.updateProfilePermissions($0) })
+    .sheet(
+      isPresented: Binding(
+        get: { editingProfile != nil },
+        set: { if !$0 { editingProfile = nil } }
+      )
+    ) {
+      if let profile = editingProfile {
+        ProfilePermissionsEditor(model: model.profilePermissionsEditor(id: profile)) {
+          model.refresh(.profiles)
+        }
+      }
     }
     .alert(item: $model.pendingProfileConfirmation) { confirmation in
       Alert(
@@ -56,7 +62,7 @@ struct ProfilesView: View {
       case .failed(let message):
         FailedWorkspaceView(message: message) { model.refresh(.profiles) }
       case .loaded(let profiles):
-        ForEach(profiles) { profile in
+        ForEach(profiles.filter(\.isEnabled)) { profile in
           profileRow(profile)
           Divider()
         }
@@ -76,12 +82,10 @@ struct ProfilesView: View {
           StateBadge(text: "Active", color: .green, systemImage: "checkmark.circle.fill")
         }
 
-        StateBadge(text: profile.riskLevel.label, color: profile.riskLevel.color)
-
         Spacer()
 
         Button {
-          editingProfile = profile
+          editingProfile = profile.permissions.id
         } label: {
           Text("Edit permissions", bundle: AppLocalization.resourceBundle)
         }
@@ -121,229 +125,6 @@ struct ProfilesView: View {
     .padding(.vertical, 8)
   }
 
-  private var availableWorkspaces: [WorkspaceSummary] {
-    if case .loaded(let workspaces) = model.workspaces { return workspaces }
-    return []
-  }
-
-}
-
-private struct ProfilePermissionsEditor: View {
-  @Environment(\.dismiss) private var dismiss
-  @State private var grant: ProfileGrant
-  @State private var capabilities: String
-  @State private var mcpServers: String
-  @State private var isSaving = false
-  @State private var confirmSave = false
-  @State private var errorMessage: String?
-  let workspaces: [WorkspaceSummary]
-  let save: (ProfileGrant) async throws -> Void
-
-  init(
-    initial: ProfileGrant, workspaces: [WorkspaceSummary],
-    save: @escaping (ProfileGrant) async throws -> Void
-  ) {
-    _grant = State(initialValue: initial)
-    _capabilities = State(initialValue: initial.capabilityIDs.sorted().joined(separator: "\n"))
-    _mcpServers = State(initialValue: initial.mcpServerIDs.sorted().joined(separator: "\n"))
-    self.workspaces = workspaces
-    self.save = save
-  }
-
-  var body: some View {
-    VStack(spacing: 0) {
-      Form {
-        LabeledContent("Profile", value: grant.id.rawValue)
-        Section {
-          Picker(selection: $grant.mode) {
-            ForEach(GatewayPermissionMode.allCases, id: \.self) { mode in
-              Text(verbatim: AppLocalization.string(mode.permissionLabel)).tag(mode)
-            }
-          } label: {
-            Text("Permission mode", bundle: AppLocalization.resourceBundle)
-          }
-          .accessibilityIdentifier("profile.permissions.mode")
-          Picker(selection: $grant.confirmationPolicy) {
-            ForEach(GatewayConfirmationPolicy.allCases, id: \.self) { policy in
-              Text(verbatim: AppLocalization.string(policy.permissionLabel)).tag(policy)
-            }
-          } label: {
-            Text("Confirmation policy", bundle: AppLocalization.resourceBundle)
-          }
-          .accessibilityIdentifier("profile.permissions.confirmation-policy")
-          if grant.mode == .localFullAccess {
-            Toggle(isOn: $grant.fullShellEnabled) {
-              Text("Allow arbitrary execution", bundle: AppLocalization.resourceBundle)
-            }
-            .accessibilityIdentifier("profile.permissions.arbitrary-execution")
-            Text(
-              "Arbitrary execution has this macOS user's file, process, network, and credential access. A workspace is not a sandbox.",
-              bundle: AppLocalization.resourceBundle
-            )
-            .font(.caption).foregroundStyle(.secondary)
-          }
-          Text(
-            "Host permissions do not replace Codex's native sandbox or approval settings.",
-            bundle: AppLocalization.resourceBundle
-          )
-          .font(.caption).foregroundStyle(.secondary)
-        }
-        Section {
-          Toggle(isOn: selection("*", in: $grant.workspaceIDs)) {
-            Text("All registered and future workspaces", bundle: AppLocalization.resourceBundle)
-          }
-          .accessibilityIdentifier("profile.permissions.all-workspaces")
-          if workspaces.isEmpty {
-            Text("Register a workspace to select it here.", bundle: AppLocalization.resourceBundle)
-          }
-          ForEach(workspaces) { workspace in
-            Toggle(isOn: selection(workspace.id, in: $grant.workspaceIDs)) {
-              Text(verbatim: workspace.displayName)
-            }
-            .disabled(grant.workspaceIDs.contains("*"))
-            .accessibilityIdentifier("profile.permissions.workspace.\(workspace.id)")
-          }
-        } header: {
-          Text("Workspaces", bundle: AppLocalization.resourceBundle)
-        }
-        DisclosureGroup {
-          TextField(text: $capabilities, axis: .vertical) {
-            Text("Capability IDs, one per line", bundle: AppLocalization.resourceBundle)
-          }
-          .lineLimit(3...8)
-          .accessibilityIdentifier("profile.permissions.capabilities")
-          TextField(text: $mcpServers, axis: .vertical) {
-            Text("MCP registration IDs, one per line", bundle: AppLocalization.resourceBundle)
-          }
-          .lineLimit(2...5)
-          .accessibilityIdentifier("profile.permissions.mcp-servers")
-          Text(
-            "Only selected capabilities are granted. Empty lists grant none; a registration grant includes its host-selected tools.",
-            bundle: AppLocalization.resourceBundle
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          ForEach(
-            [GatewayCallerKind.localApp, .localCLI, .localMCP, .secureTunnel, .cloudflareTunnel],
-            id: \.self
-          ) { caller in
-            Toggle(isOn: selection(caller, in: $grant.allowedCallers)) {
-              Text(verbatim: AppLocalization.string(caller.permissionLabel))
-            }
-            .accessibilityIdentifier("profile.permissions.caller.\(caller.rawValue)")
-          }
-        } label: {
-          Text("Advanced permissions", bundle: AppLocalization.resourceBundle)
-        }
-        .accessibilityIdentifier("profile.permissions.advanced")
-      }
-      .formStyle(.grouped)
-      .disabled(isSaving)
-      .onChange(of: grant.mode) { _, mode in
-        if mode != .localFullAccess { grant.fullShellEnabled = false }
-      }
-      if let errorMessage {
-        Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled).padding()
-      }
-      Divider()
-      HStack {
-        Button {
-          dismiss()
-        } label: {
-          Text("Cancel", bundle: AppLocalization.resourceBundle)
-        }
-        .keyboardShortcut(.cancelAction)
-        .accessibilityIdentifier("profile.permissions.cancel")
-        Spacer()
-        if isSaving { ProgressView().controlSize(.small) }
-        Button {
-          confirmSave = true
-        } label: {
-          Text("Save", bundle: AppLocalization.resourceBundle)
-        }
-        .keyboardShortcut(.defaultAction)
-        .accessibilityIdentifier("profile.permissions.save")
-      }
-      .padding().disabled(isSaving)
-    }
-    .frame(minWidth: 560, minHeight: 540)
-    .confirmationDialog("Apply permission changes?", isPresented: $confirmSave) {
-      Button(role: .destructive) {
-        apply()
-      } label: {
-        Text("Apply", bundle: AppLocalization.resourceBundle)
-      }
-      .accessibilityIdentifier("profile.permissions.apply")
-    } message: {
-      Text(
-        "New requests use these settings immediately. Existing work is not stopped. Pending confirmations become invalid.",
-        bundle: AppLocalization.resourceBundle)
-    }
-  }
-
-  private func selection<Value: Hashable>(_ value: Value, in values: Binding<Set<Value>>)
-    -> Binding<Bool>
-  {
-    Binding(
-      get: { values.wrappedValue.contains(value) },
-      set: { selected in
-        if selected { values.wrappedValue.insert(value) } else { values.wrappedValue.remove(value) }
-      })
-  }
-
-  private func apply() {
-    grant.capabilityIDs = identifiers(capabilities)
-    grant.mcpServerIDs = identifiers(mcpServers)
-    isSaving = true
-    errorMessage = nil
-    Task {
-      defer { isSaving = false }
-      do {
-        try await save(grant)
-        dismiss()
-      } catch {
-        errorMessage = AppLocalization.errorDescription(error)
-      }
-    }
-  }
-
-  private func identifiers(_ text: String) -> Set<String> {
-    Set(
-      text.split(whereSeparator: \.isNewline).map {
-        $0.trimmingCharacters(in: .whitespacesAndNewlines)
-      }.filter { !$0.isEmpty })
-  }
-}
-
-extension GatewayPermissionMode {
-  fileprivate var permissionLabel: String {
-    switch self {
-    case .readOnly: "Read-only"
-    case .workspaceOperations: "Workspace operations"
-    case .localFullAccess: "Local Full Access"
-    }
-  }
-}
-
-extension GatewayConfirmationPolicy {
-  fileprivate var permissionLabel: String {
-    switch self {
-    case .riskBased: "Confirm risky actions"
-    case .allWrites: "Confirm all writes"
-    case .never: "No confirmation"
-    }
-  }
-}
-
-extension GatewayCallerKind {
-  fileprivate var permissionLabel: String {
-    switch self {
-    case .localApp: "Local App"
-    case .localCLI: "Local CLI"
-    case .localMCP: "Local MCP clients"
-    case .secureTunnel: "Secure Tunnel"
-    case .cloudflareTunnel: "Cloudflare Tunnel"
-    }
-  }
 }
 
 struct ProvidersView: View {
@@ -843,7 +624,7 @@ struct CloudflareTunnelEditorView: View {
           .textContentType(.URL)
         Picker("Gateway profile", selection: $draft.gatewayProfileID) {
           Text("Cloudflare Observe").tag(GatewayProfileID.cloudflareObserve.rawValue)
-          Text("Cloudflare Operate").tag(GatewayProfileID.cloudflareOperate.rawValue)
+          Text("Cloudflare Control").tag(GatewayProfileID.cloudflareOperate.rawValue)
         }
         SecureField(
           AppLocalization.string(
@@ -1267,7 +1048,7 @@ struct OpenAITunnelEditorView: View {
         Picker("Gateway profile", selection: $draft.gatewayProfileID) {
           Text("ChatGPT Observe")
             .tag(GatewayProfileID.chatGPTObserve.rawValue)
-          Text("ChatGPT Operate")
+          Text("ChatGPT Control")
             .tag(GatewayProfileID.chatGPTOperate.rawValue)
         }
 

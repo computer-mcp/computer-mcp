@@ -302,13 +302,15 @@ package struct AppControlPlaneOperations: Sendable {
     confirmationPolicy: GatewayConfirmationPolicy? = nil, fullShellEnabled: Bool? = nil,
     capabilityIDs: Set<String>? = nil, workspaceIDs: Set<String>? = nil,
     mcpServerIDs: Set<String>? = nil, allowedCallers: Set<GatewayCallerKind>? = nil,
-    expectedRevision: Int64? = nil
+    expectedRevision: Int64? = nil,
+    reviewedOptions: ProfilePermissionOptions? = nil
   ) async throws -> ProfileGrant {
     try await controlPlane.updateProfilePermissions(
       profileID: profileID, mode: mode, confirmationPolicy: confirmationPolicy,
       fullShellEnabled: fullShellEnabled, capabilityIDs: capabilityIDs,
       workspaceIDs: workspaceIDs, mcpServerIDs: mcpServerIDs,
-      allowedCallers: allowedCallers, expectedRevision: expectedRevision)
+      allowedCallers: allowedCallers, expectedRevision: expectedRevision,
+      reviewedOptions: reviewedOptions)
   }
 
   package func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws

@@ -587,12 +587,20 @@ final class LiveAppControlPlane: AppControlPlane {
     )
   }
 
-  func updateProfilePermissions(_ grant: ProfileGrant) async throws {
+  func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
+  {
+    try await controlPlane.profilePermissionOptions(profileID: id)
+  }
+
+  func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
+    async throws
+  {
     _ = try await operations.updateProfilePermissions(
       profileID: grant.id, mode: grant.mode, confirmationPolicy: grant.confirmationPolicy,
       fullShellEnabled: grant.fullShellEnabled, capabilityIDs: grant.capabilityIDs,
       workspaceIDs: grant.workspaceIDs, mcpServerIDs: grant.mcpServerIDs,
-      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision)
+      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision,
+      reviewedOptions: reviewed)
     fileLogger.append(
       .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
   }
@@ -1246,9 +1254,9 @@ extension LaunchAtLoginState {
 extension GatewayProfileID {
   var displayName: String {
     if self == .chatGPTObserve { return "ChatGPT Observe" }
-    if self == .chatGPTOperate { return "ChatGPT Operate" }
+    if self == .chatGPTOperate { return "ChatGPT Control" }
     if self == .cloudflareObserve { return "Cloudflare Observe" }
-    if self == .cloudflareOperate { return "Cloudflare Operate" }
+    if self == .cloudflareOperate { return "Cloudflare Control" }
     if self == .localAdmin { return "Local Admin" }
     return rawValue
   }
@@ -1260,9 +1268,9 @@ extension GatewayPermissionMode {
     switch self {
     case .readOnly: "Read selected tools and workspaces without changing them."
     case .workspaceOperations:
-      "Use selected tools and workspaces under the configured confirmation policy."
+      "Control selected capabilities, projects, and integrations."
     case .localFullAccess:
-      "Use selected capabilities with this macOS user's access. Arbitrary execution needs separate permission."
+      "Control selected capabilities. Full Access requires approval for a connected client."
     }
   }
   fileprivate var riskLevel: RiskLevel {

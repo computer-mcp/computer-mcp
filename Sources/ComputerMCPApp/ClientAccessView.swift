@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ClientAccessView: View {
   @ObservedObject var model: ClientAccessModel
+  var editPermissions: ((GatewayProfileID) -> Void)? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -89,6 +90,12 @@ struct ClientAccessView: View {
         ).font(.callout)
       }
       if !session.ended {
+        if session.profile?.grant.allowedCallers.contains(session.caller) == false {
+          Text(
+            "This connection type is not allowed by its profile. Review the connection permissions to allow it.",
+            bundle: AppLocalization.resourceBundle
+          ).font(.callout).foregroundStyle(.secondary)
+        }
         HStack {
           Menu {
             Button {
@@ -112,6 +119,13 @@ struct ClientAccessView: View {
           }
           .accessibilityIdentifier("client-access.session.\(session.id).change")
           .disabled(!model.isAvailable || session.currentAccess == nil)
+          if let editPermissions, session.profileID != .localAdmin {
+            Button {
+              editPermissions(session.profileID)
+            } label: {
+              Text("Choose restricted permissions…", bundle: AppLocalization.resourceBundle)
+            }.disabled(!model.isAvailable)
+          }
           Spacer()
           Button(role: .destructive) {
             Task { await model.end(session) }

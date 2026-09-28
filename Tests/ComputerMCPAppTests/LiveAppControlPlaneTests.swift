@@ -258,7 +258,8 @@ final class LiveAppControlPlaneTests {
       grant.confirmationPolicy = .allWrites
       grant.capabilityIDs = ["system.time"]
       grant.allowedCallers = [.localMCP]
-      try await fixture.app.updateProfilePermissions(grant)
+      let options = try await fixture.app.fetchProfilePermissionOptions(id: grant.id)
+      try await fixture.app.saveProfilePermissions(grant, reviewed: options)
       let updated = try #require(
         try await fixture.app.fetchProfiles().first { $0.id == profile.id })
       #expect(updated.permissions.mode == .readOnly)
@@ -269,6 +270,54 @@ final class LiveAppControlPlaneTests {
       let current = await fixture.gatewayService.snapshot()
       #expect(current.state == .running)
       #expect(current.startedAt == original.startedAt)
+    }
+  }
+
+  @Test
+  func restrictedSelectionRequiresDeliberateCallerAdmissionAndUpdatesTheSameConnection()
+    async throws
+  {
+    try await withAppControlPlaneFixture { fixture in
+      let configuration = GatewayConfiguration(
+        runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
+        profiles: [
+          .init(
+            id: .chatGPTOperate, capabilities: ["system.time"], workspaces: ["project"],
+            allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+        ], builtin: .init(enabled: ["system.time", "file.read", "file.write"]),
+        workspaceDirectory: fixture.root)
+      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+      try await fixture.controlPlane.database.saveWorkspace(
+        .init(id: "project", displayName: "My Project", rootPath: fixture.root.path))
+      try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
+      try await fixture.app.startApplication()
+      let started = await fixture.gatewayService.snapshot().startedAt
+      let client = try await GatewayClientSession.connectSocket(socketURL: fixture.socketURL)
+      do {
+        #expect(try await client.listToolNames().isEmpty)
+        let first = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+        var draft = ProfilePermissionsDraft(options: first)
+        draft.grant.capabilityIDs = ["system.time", "file.read"]
+        try await fixture.app.saveProfilePermissions(draft.savedGrant, reviewed: first)
+        #expect(try await client.listToolNames().isEmpty)
+        let reviewed = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+        draft = ProfilePermissionsDraft(options: reviewed)
+        draft.grant.allowedCallers.insert(.localMCP)
+        try await fixture.app.saveProfilePermissions(draft.savedGrant, reviewed: reviewed)
+        let tools = try await client.listToolNames()
+        #expect(tools.contains("system.time") && tools.contains("file.read"))
+        #expect(!tools.contains("file.write") && !tools.contains("shell.run"))
+        #expect(
+          try await client.call(toolName: "system.time").result.objectValue?["isError"]
+            != .bool(true))
+        #expect(await fixture.gatewayService.snapshot().startedAt == started)
+        #expect(try await fixture.app.fetchClientAccess().sessions.first?.fullAccessConsent == nil)
+        #expect(try await fixture.app.fetchClientAccess().trusts.isEmpty)
+        await client.disconnect()
+      } catch {
+        await client.disconnect()
+        throw error
+      }
     }
   }
 

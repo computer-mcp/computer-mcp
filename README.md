@@ -109,6 +109,11 @@ execution as your macOS user; workspaces provide project context, not a sandbox.
 connection's access and separately revoke saved client approvals. Access changes
 apply to new requests without cancelling work already started.
 
+Choose **restricted permissions** to select readable capabilities, projects and
+integrations, and the connection types allowed to use them. These defaults apply
+to clients sharing the profile; each session can impose a lower access level.
+Saving a selection invalidates previous Full Access approvals for that profile.
+
 An individual action confirmation never expands the client's current access.
 Restricted Access uses its selected tools and workspaces and prohibits arbitrary
 execution. Credentials stay in the signed App's macOS Data Protection Keychain;

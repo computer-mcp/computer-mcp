@@ -11,6 +11,73 @@ import Testing
 
 final class AppControlPlaneServiceTests {
   @Test
+  func permissionChoicesUseTheHostCatalogWithoutPersistingAuthority() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    var configuration = GatewayConfiguration(
+      mcp: .init(servers: [
+        .init(id: "notes", transport: .stdio, command: "/usr/bin/false", enabled: false)
+      ]),
+      builtin: .init(enabled: ["system.time", "file.read", "file.write"]),
+      workspaceDirectory: fixture.root)
+    configuration.policy.shellEnabled = true
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    try fixture.database.saveWorkspace(
+      .init(id: "project", displayName: "My Project", rootPath: fixture.root.path))
+    let before = try fixture.database.configurationState()
+    let options = try await fixture.controlPlane.profilePermissionOptions(
+      profileID: .chatGPTOperate)
+    #expect(try fixture.database.configurationState() == before)
+    #expect(options.workspaces.map(\.displayName) == ["My Project"])
+    #expect(options.integrations.contains { $0.id == "notes" && !$0.isEnabled })
+    #expect(
+      options.capabilities.contains {
+        $0.id == "file.write" && !$0.title.isEmpty && !$0.summary.isEmpty
+      })
+    #expect(options.capabilities.allSatisfy { $0.descriptor.risk != .fullShell })
+    #expect(!options.capabilities.contains { $0.id == "mcp.tools.call" || $0.id == "shell.run" })
+  }
+
+  @Test(arguments: ["profile", "manifest", "external-edit", "workspace", "plugin"])
+  func permissionSelectionRefusesChangedReviewedInputs(change: String) async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    let options = try await fixture.controlPlane.profilePermissionOptions(
+      profileID: .chatGPTOperate)
+    switch change {
+    case "profile":
+      _ = try await fixture.controlPlane.updateProfilePermissions(
+        profileID: .chatGPTOperate, capabilityIDs: ["system.time"])
+    case "manifest":
+      configuration.policy.shellEnabled = true
+      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    case "external-edit":
+      try (configuration.exportedTOML() + "\n# Unadmitted external edit\n").write(
+        to: fixture.directories.manifest, atomically: true, encoding: .utf8)
+    case "workspace":
+      try fixture.database.saveWorkspace(
+        .init(id: "new", displayName: "New Project", rootPath: fixture.root.path))
+    case "plugin":
+      var state = try fixture.database.pluginStoreSnapshot()
+      let revision = state.revision
+      state.revision += 1
+      try fixture.database.savePluginStoreSnapshot(state, expectedRevision: revision)
+    default: Issue.record("Unexpected test input")
+    }
+    let profiles = try fixture.database.profiles()
+    let manifest = try Data(contentsOf: fixture.directories.manifest)
+    await #expect(throws: (any Error).self) {
+      try await fixture.controlPlane.updateProfilePermissions(
+        profileID: .chatGPTOperate, capabilityIDs: ["file.write"],
+        expectedRevision: options.grant.authorizationRevision, reviewedOptions: options)
+    }
+    #expect(try fixture.database.profiles() == profiles)
+    #expect(try Data(contentsOf: fixture.directories.manifest) == manifest)
+  }
+
+  @Test
   func explicitFullAccessFollowsTheSelectedSocketSessionAndPersistentClientTrust() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }

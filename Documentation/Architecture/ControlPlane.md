@@ -77,6 +77,22 @@ reviewed session and trust revisions; refresh cannot rebase an open confirmation
 The menu shows current control status and directs the owner to that page. A failed
 refresh remains unavailable while retaining the last visible records.
 
+Restricted permission editing uses the host's current classified tool catalog,
+registered projects and composed MCP integrations. The App presents readable
+capability titles and explicit selections; arbitrary execution stays outside this
+flow. Broad grants become explicit current choices when saved. An integration
+selection includes its future host-allowed tools within the permission mode's
+risk ceiling. Caller types require deliberate selection. Current session limits
+can further restrict a profile, and Full Access remains a separate session consent.
+
+The editor retains its reviewed profile and gateway inputs. After async discovery,
+the service checks that snapshot again before saving the profile under the
+manifest admission lock and exact authorization revision. A stale editor cannot
+overwrite an external manifest edit or silently approve changed profile, workspace
+or plugin state. Catalog discovery uses temporary non-persisting runtimes and
+joins their shutdown. Saving changes affects subsequent requests for connections
+sharing the profile and invalidates earlier approvals without stopping owned work.
+
 Explicit owner Full Access consent can enable the Shell facility through prepared
 manifest publication before granting the selected session. The admitted manifest
 digest prevents overwriting external edits; session and trust checks still precede

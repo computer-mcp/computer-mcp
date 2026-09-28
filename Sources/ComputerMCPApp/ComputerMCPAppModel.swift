@@ -324,13 +324,8 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  func updateProfilePermissions(_ grant: ProfileGrant) async throws {
-    let key = "profile.permissions.\(grant.id.rawValue)"
-    runningActions.insert(key)
-    defer { runningActions.remove(key) }
-    try await controlPlane.updateProfilePermissions(grant)
-    await loadProfiles()
-    await loadWorkspaces()
+  func profilePermissionsEditor(id: GatewayProfileID) -> ProfilePermissionsModel {
+    ProfilePermissionsModel(profileID: id, controlPlane: controlPlane)
   }
 
   func startProvider(id: String) {

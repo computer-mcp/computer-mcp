@@ -402,7 +402,9 @@ struct DiagnosticsSnapshot: Sendable {
 }
 
 @MainActor
-protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging {
+protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging,
+  ProfilePermissionManaging
+{
   func startApplication() async throws
   func maintainApplication() async
   func stopApplication() async
@@ -435,7 +437,6 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   ) async throws
 
   func activateProfile(id: String) async throws
-  func updateProfilePermissions(_ grant: ProfileGrant) async throws
 
   func startProvider(id: String) async throws
   func stopProvider(id: String) async throws
@@ -555,7 +556,6 @@ final class UnavailableControlPlane: AppControlPlane {
     throw unavailable()
   }
   func activateProfile(id: String) async throws { throw unavailable() }
-  func updateProfilePermissions(_ grant: ProfileGrant) async throws { throw unavailable() }
   func startProvider(id: String) async throws { throw unavailable() }
   func stopProvider(id: String) async throws { throw unavailable() }
   func doctorProvider(id: String) async throws { throw unavailable() }

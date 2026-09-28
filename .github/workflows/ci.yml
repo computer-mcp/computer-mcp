@@ -28,12 +28,34 @@ jobs:
       - name: Build and test platform core
         shell: pwsh
         run: |
+          $started = Get-Date
+          New-Item -ItemType Directory -Force .build/windows-validation | Out-Null
           swift --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift test --no-parallel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift test --configuration release --no-parallel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $results = @()
+          foreach ($configuration in @('debug', 'release')) {
+            $log = ".build/windows-validation/$configuration.log"
+            swift test --configuration $configuration --no-parallel --verbose *> $log
+            $code = $LASTEXITCODE
+            $results += [pscustomobject]@{ configuration = $configuration; exitCode = $code }
+            Get-Content $log -Tail 80 | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 2000)) }
+          }
+          $results | ConvertTo-Json | Set-Content .build/windows-validation/results.json
+          if ($results.Where({ $_.exitCode -ne 0 }).Count -gt 0) {
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $started } -ErrorAction SilentlyContinue |
+              Where-Object { $_.Level -le 2 } | Select-Object -First 20 TimeCreated, ProviderName, Id, Message |
+              Format-List | Out-File .build/windows-validation/application-errors.log
+            exit 1
+          }
+
+      - name: Preserve Windows validation results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/windows-validation/
+          include-hidden-files: true
+          if-no-files-found: error
 
   dependency-gate:
     runs-on: macos-26

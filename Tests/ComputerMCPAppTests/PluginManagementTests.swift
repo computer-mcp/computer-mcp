@@ -342,6 +342,8 @@ func render<V: View>(
 ) throws {
   _ = NSApplication.shared
   let host = NSHostingView(rootView: view.background(Color(nsColor: .controlBackgroundColor)))
+  // The fixture owns the viewport; content sizing must not resize its window.
+  host.sizingOptions = []
   host.frame = NSRect(origin: .zero, size: size)
   host.appearance = appearance
   let window = NSWindow(
@@ -370,6 +372,7 @@ func render<V: View>(
   window.display()
   host.displayIfNeeded()
   CATransaction.flush()
+  try #require(host.bounds.size == size)
   let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
   host.cacheDisplay(in: host.bounds, to: bitmap)
   let png = try #require(bitmap.representation(using: .png, properties: [:]))

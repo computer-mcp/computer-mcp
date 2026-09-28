@@ -45,6 +45,28 @@ jobs:
             $code = $LASTEXITCODE
             $results += [pscustomobject]@{ configuration = $configuration; exitCode = $code }
             Get-Content $log -Tail 80 | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 2000)) }
+            if ($code -ne 0) {
+              $binary = Join-Path (Get-Location) ".build/x86_64-unknown-windows-msvc/$configuration/computer-mcpPackageTests.xctest"
+              if (Test-Path $binary) {
+                $info = [System.Diagnostics.ProcessStartInfo]::new($binary)
+                $info.UseShellExecute = $false
+                $info.RedirectStandardOutput = $true
+                $info.RedirectStandardError = $true
+                $info.ArgumentList.Add('--testing-library')
+                $info.ArgumentList.Add('swift-testing')
+                $info.ArgumentList.Add('--no-parallel')
+                $runner = [System.Diagnostics.Process]::Start($info)
+                $stdout = $runner.StandardOutput.ReadToEndAsync()
+                $stderr = $runner.StandardError.ReadToEndAsync()
+                $exited = $runner.WaitForExit(60000)
+                if (-not $exited) { $runner.Kill($true); $runner.WaitForExit() }
+                $stdout.GetAwaiter().GetResult() | Set-Content ".build/windows-validation/$configuration-direct.stdout.log"
+                $stderr.GetAwaiter().GetResult() | Set-Content ".build/windows-validation/$configuration-direct.stderr.log"
+                @{ exitCode = $runner.ExitCode; timedOut = -not $exited } | ConvertTo-Json |
+                  Set-Content ".build/windows-validation/$configuration-direct.json"
+                $runner.Dispose()
+              }
+            }
           }
           $results | ConvertTo-Json | Set-Content .build/windows-validation/results.json
           if ($results.Where({ $_.exitCode -ne 0 }).Count -gt 0) {

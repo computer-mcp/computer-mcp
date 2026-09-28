@@ -23,7 +23,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   let ownedWork = GatewayOwnedWork()
   let generationID = UUID()
   private let authenticatedSessionFactory:
-    @Sendable (String, GatewayTransportTrace?) throws -> GatewayRuntime
+    @Sendable (String, GatewayTransportTrace?, Bool) throws -> GatewayRuntime
   private static let construction = BlockingOperationExecutor(
     label: "computer-mcp.gateway-construction", serial: false)
   private static let admission = BlockingOperationExecutor(
@@ -369,17 +369,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.configuration = configuration
     self.context = effectiveContext
     self.grant = effectiveGrant
-    self.authenticatedSessionFactory = { principalID, trace in
+    self.authenticatedSessionFactory = { principalID, trace, sessionRequired in
       var bound = effectiveContext
       bound.trustedPrincipalID = principalID
       bound.transportTrace = trace
+      bound.controlSession = nil
       return try GatewayRuntime(
         configuration: initializationConfiguration, context: bound, database: database,
         registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
         pluginState: pluginState,
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
-        requiresControlSession: requiresControlSession)
+        requiresControlSession: requiresControlSession || sessionRequired)
     }
     self.requiresPersistedGrant = persistedGrant != nil
     self.persistedWorkspaceRegistrations = Dictionary(
@@ -712,10 +713,20 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func authenticatedSession(
-    principalID: String, transportTrace: GatewayTransportTrace?
+    principalID: String, transportTrace: GatewayTransportTrace?,
+    requiresControlSession: Bool = false
   ) throws -> GatewayRuntime {
     try publication.requirePublished()
-    return try authenticatedSessionFactory(principalID, transportTrace)
+    return try authenticatedSessionFactory(principalID, transportTrace, requiresControlSession)
+  }
+
+  func makeControlSession() throws -> GatewayControlSession {
+    try publication.requirePublished()
+    guard let principalID = context.trustedPrincipalID, !principalID.isEmpty else {
+      throw ConfigurationError.invalid("Control sessions require a verified principal.")
+    }
+    return GatewayControlSession(
+      principalID: principalID, profileID: context.profileID, caller: context.caller)
   }
 
   package func listTools() throws -> [MCPTool] {

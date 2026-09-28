@@ -100,11 +100,26 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
   internal func boundPort() async -> Int? {
     await app.boundPort()
   }
+
+  func controlSessions() async -> [GatewayControlSessionSnapshot] {
+    await app.controlSessions()
+  }
+
+  func limitControlSession(
+    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+  ) async throws -> GatewayControlSessionSnapshot {
+    try await app.limitControlSession(id: id, to: mode, expectedRevision: expectedRevision)
+  }
+
+  func endControlSession(id: String, expectedRevision: Int64) async throws {
+    try await app.endControlSession(id: id, expectedRevision: expectedRevision)
+  }
 }
 
 private actor GatewayHTTPApp {
   private struct SessionContext {
     let principalID: String
+    let controlSession: GatewayControlSession?
     let server: MCP.Server
     let transport: StatefulHTTPServerTransport
     let eventTransport: MCPHTTPEventSubscriptionTransport
@@ -382,7 +397,7 @@ private actor GatewayHTTPApp {
       } else if let gateway = registry as? GatewayRuntime {
         let admitted = try gateway.authenticatedSession(
           principalID: principalID,
-          transportTrace: GatewayTransportTrace(transport: "http"))
+          transportTrace: GatewayTransportTrace(transport: "http"), requiresControlSession: true)
         principalRegistries[principalID] = admitted
         admittedRegistry = admitted
       } else {
@@ -391,9 +406,23 @@ private actor GatewayHTTPApp {
     } catch {
       return gatewayHTTPError(statusCode: 500, code: "principal_runtime_unavailable")
     }
+    let controlSession: GatewayControlSession?
+    let sessionRegistry: any GatewayAsyncToolServing
+    do {
+      if let gateway = admittedRegistry as? GatewayRuntime {
+        let scope = try gateway.makeControlSession()
+        controlSession = scope
+        sessionRegistry = GatewayControlSessionServing(base: gateway, session: scope)
+      } else {
+        controlSession = nil
+        sessionRegistry = admittedRegistry
+      }
+    } catch {
+      return gatewayHTTPError(statusCode: 500, code: "control_session_unavailable")
+    }
     let server = await MCPRuntimeAdapter.makeGatewayServer(
       configuration: configuration,
-      registry: admittedRegistry
+      registry: sessionRegistry
     )
     let eventTransport = MCPHTTPEventSubscriptionTransport(wrapping: transport, logger: logger)
     let normalizationTransport = MCPInitializeNormalizationTransport(wrapping: eventTransport)
@@ -401,16 +430,19 @@ private actor GatewayHTTPApp {
     do {
       try await server.start(transport: normalizationTransport)
     } catch {
+      controlSession?.end()
       await server.stop()
       return .error(statusCode: 500, .internalError(error.localizedDescription))
     }
 
     guard !isStopping, channel != nil else {
+      controlSession?.end()
       await server.stop()
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
     sessions[sessionID] = SessionContext(
       principalID: principalID,
+      controlSession: controlSession,
       server: server,
       transport: transport,
       eventTransport: eventTransport,
@@ -423,6 +455,30 @@ private actor GatewayHTTPApp {
     sessions.count
   }
 
+  func controlSessions() -> [GatewayControlSessionSnapshot] {
+    sessions.values.compactMap { $0.controlSession?.snapshot }.sorted { $0.id < $1.id }
+  }
+
+  func limitControlSession(
+    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+  ) throws -> GatewayControlSessionSnapshot {
+    let scope = try controlSession(id: id)
+    try scope.limitAccess(to: mode, expectedRevision: expectedRevision)
+    return scope.snapshot
+  }
+
+  func endControlSession(id: String, expectedRevision: Int64) throws {
+    let scope = try controlSession(id: id)
+    try scope.requireRevision(expectedRevision)
+    scope.end()
+  }
+
+  private func controlSession(id: String) throws -> GatewayControlSession {
+    guard let scope = sessions.values.compactMap(\.controlSession).first(where: { $0.id == id })
+    else { throw ConfigurationError.invalid("The HTTP control session is no longer connected.") }
+    return scope
+  }
+
   func removeSession(_ sessionID: String) async {
     if let retiring = retiringSessions[sessionID] {
       await retiring.value
@@ -431,6 +487,7 @@ private actor GatewayHTTPApp {
     guard let session = sessions.removeValue(forKey: sessionID) else {
       return
     }
+    session.controlSession?.end()
     let retiring = Task { await session.server.stop() }
     retiringSessions[sessionID] = retiring
     await retiring.value

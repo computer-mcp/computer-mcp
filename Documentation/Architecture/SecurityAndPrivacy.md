@@ -55,14 +55,18 @@ authority. Reconnection with the same credential retains the same principal;
 clients sharing a credential share principal-level grants. Client-supplied labels
 cannot establish a separate principal. Profile, workspace and caller checks still apply.
 
-The App gateway binds each admitted socket session to a host-created authorization
-object. The local owner can limit or end that session without changing another
+The App gateway and standalone HTTP gateway bind each admitted MCP session to a
+host-created authorization object. The local owner can limit or end that session without changing another
 connection's grant or stopping its runtime. Session limits constrain the current
 profile; they cannot grant missing capabilities. New calls, discovery, selected
 execution-owner calls and retained Host Services invocations reread the session's
 current authority. A disconnected session loses this authority while its existing
 execution resources remain owned until they drain. Serialized execution context,
 connection labels and tool arguments cannot recreate the authorization object.
+An HTTP session retains its scope across requests and event-stream reconnections.
+Session DELETE, idle expiry and listener shutdown end that scope. A newly initialized
+session receives a new scope while the same principal retains its execution runtime
+until the listener stops.
 
 Operation tickets issued in a control session also bind that session's identity
 and revision. Another session using the same credential cannot consume the ticket,

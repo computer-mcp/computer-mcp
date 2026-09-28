@@ -8,6 +8,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   let principalID: String
   let profileID: GatewayProfileID
   let caller: GatewayCallerKind
+  let changes = GatewayToolChangeBroadcaster()
   private let lock = NSLock()
   private var revision: Int64 = 0
   private var accessLimit = GatewayPermissionMode.localFullAccess
@@ -37,12 +38,14 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
       accessLimit = mode
       revision += 1
     }
+    changes.send()
   }
 
   func end() {
     lock.withLock {
       ended = true
     }
+    changes.send()
   }
 
   func apply(to grant: ProfileGrant, context: ExecutionContext) throws -> ProfileGrant {
@@ -77,6 +80,60 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   private static func denied(_ message: String) -> GatewayToolError {
     .invalidArguments("[policy.control_session_denied] " + message)
   }
+}
+
+/// A connection borrows its principal's runtime; closing consent does not own runtime shutdown.
+struct GatewayControlSessionServing: GatewayAsyncToolServing {
+  let base: any GatewayAsyncToolServing
+  let session: GatewayControlSession
+
+  func listToolsAsync() async throws -> [MCPTool] {
+    try await GatewayControlSession.$current.withValue(session) {
+      try await base.listToolsAsync()
+    }
+  }
+
+  func refreshTools() async throws {
+    try await GatewayControlSession.$current.withValue(session) {
+      try await base.refreshTools()
+    }
+  }
+
+  func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+    try await GatewayControlSession.$current.withValue(session) {
+      try await base.callToolAsync(name: name, arguments: arguments)
+    }
+  }
+
+  func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+    try await GatewayControlSession.$current.withValue(session) {
+      try await base.callToolForMCPAsync(name: name, arguments: arguments)
+    }
+  }
+
+  func toolChanges() -> AsyncStream<Void> {
+    let sources = GatewayControlSession.$current.withValue(session) {
+      [base.toolChanges(), session.changes.stream()]
+    }
+    let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let forwarding = Task {
+      await withTaskGroup(of: Void.self) { group in
+        for source in sources {
+          group.addTask {
+            for await _ in source {
+              guard !Task.isCancelled else { break }
+              continuation.yield(())
+            }
+          }
+        }
+      }
+      continuation.finish()
+    }
+    continuation.onTermination = { _ in forwarding.cancel() }
+    return stream
+  }
+
+  func shutdown() async { session.end() }
 }
 
 package struct GatewayControlSessionSnapshot: Codable, Equatable, Sendable, Identifiable {

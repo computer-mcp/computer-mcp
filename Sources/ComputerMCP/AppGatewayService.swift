@@ -84,38 +84,29 @@ package actor AppGatewayService {
     let epoch: UUID
     let trace: GatewayTransportTrace
     let changes: GatewayToolChangeBroadcaster
-    let controlSession: GatewayControlSession
 
     func toolChanges() -> AsyncStream<Void> { changes.stream() }
 
     func listToolsAsync() async throws -> [MCPTool] {
       guard let service else { throw GatewaySocketError.notConnected }
-      return try await GatewayControlSession.$current.withValue(controlSession) {
-        try await service.listTools(key: key, epoch: epoch, trace: trace)
-      }
+      return try await service.listTools(key: key, epoch: epoch, trace: trace)
     }
 
     func refreshTools() async throws {
       guard let service else { throw GatewaySocketError.notConnected }
-      try await GatewayControlSession.$current.withValue(controlSession) {
-        try await service.refreshTools(key: key, epoch: epoch, trace: trace)
-      }
+      try await service.refreshTools(key: key, epoch: epoch, trace: trace)
     }
 
     func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
       guard let service else { throw GatewaySocketError.notConnected }
-      return try await GatewayControlSession.$current.withValue(controlSession) {
-        try await service.callTool(
-          name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false)
-      }
+      return try await service.callTool(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false)
     }
 
     func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
       guard let service else { throw GatewaySocketError.notConnected }
-      return try await GatewayControlSession.$current.withValue(controlSession) {
-        try await service.callTool(
-          name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
-      }
+      return try await service.callTool(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
     }
   }
 
@@ -403,9 +394,10 @@ package actor AppGatewayService {
     controlSessionRecords[controlSession.id] = (key, controlSession)
     let dispatcher = SessionDispatcher(
       service: self, key: key, epoch: epoch, trace: identity.transportTrace,
-      changes: changes(for: key), controlSession: controlSession)
+      changes: changes(for: key))
     let server = await MCPRuntimeAdapter.makeGatewayServer(
-      configuration: admitted.inputs.configuration, registry: dispatcher,
+      configuration: admitted.inputs.configuration,
+      registry: GatewayControlSessionServing(base: dispatcher, session: controlSession),
       transportTrace: identity.transportTrace)
     do {
       try requireAdmission(key: key, epoch: epoch)
@@ -429,7 +421,6 @@ package actor AppGatewayService {
   ) throws -> GatewayControlSessionSnapshot {
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
     try record.session.limitAccess(to: mode, expectedRevision: expectedRevision)
-    changes(for: record.key).send()
     return record.session.snapshot
   }
 
@@ -437,7 +428,6 @@ package actor AppGatewayService {
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
     try record.session.requireRevision(expectedRevision)
     record.session.end()
-    changes(for: record.key).send()
   }
 
   private func closeControlSession(id: String) {

@@ -355,7 +355,7 @@ Common workflow failures are intentionally fail-closed:
   a Homebrew tool installed by `verify` is not available to `release`. The
   formal build/sign/notarize path must remain free of Homebrew and ripgrep;
   `verify-protected-release-boundary.sh` and its negative regression enforce
-  this before tagging.
+  this before the protected candidate build.
 - `Release ref verification failed` means the tag is unsigned, not annotated,
   does not match the App version, or is not reachable from `origin/master`.
 - `Release readiness verification failed` means legal approval is incomplete
@@ -368,17 +368,21 @@ Common workflow failures are intentionally fail-closed:
 - `Invalid credentials` from `notarytool` means the Team API key, key ID, or
   issuer ID is wrong. Individual API keys cannot notarize.
 - `Notarization record verification failed` means the receipt is rejected,
-  missing, malformed, or bound to a different submission. This check runs
-  before any production Secret is available. Do not move the failed tag; fix
-  the source and increment the patch version.
+  missing, malformed, or bound to a different submission. Inspect the failed
+  stage and its retained receipt. Changes to artifact bytes or signing inputs
+  require a new candidate and acceptance. A checker-only correction may reuse
+  unchanged candidate bytes through the authenticated recovery flow in
+  [Release Reference](Release.md). Preserve existing formal tags and published
+  artifacts.
 - `source=no usable signature` for a DMG means the disk-image container was not
   Developer ID signed, even if Apple accepted and stapled its notarization
   ticket and the App inside is valid. The formal order is: create DMG, sign the
   exact DMG with `Developer ID Application` plus a secure timestamp, verify its
   authority, unique signing identifier, and Team ID, notarize, staple, then
-  assess with Gatekeeper. Never repair a published candidate by signing it
-  afterward; increment the patch version and reproduce the artifact through
-  the signed-tag workflow.
+  assess with Gatekeeper. Correct the signing inputs and build a new candidate
+  through the protected workflow, then accept those exact bytes before tagging
+  and publishing. If the defective artifact was already published, preserve
+  that release and deliver the fix under the next compatible version.
 - `SHA256SUMS` reports `No such file or directory` for an App or DMG
   notarization JSON when the release asset root is incomplete or inconsistent.
   An accepted Apple receipt does not excuse an incomplete Release. The

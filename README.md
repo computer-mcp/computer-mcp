@@ -322,9 +322,10 @@ tunnel credentials and must not run as a second owner of the App's state. See
 [Examples](Examples/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before
 opening a change.
 
-Official releases come only from the protected signed-tag workflow. The
-workflow builds, Developer ID signs, notarizes, staples, verifies, and creates
-a draft GitHub Release; publishing remains a separate operator acceptance
-step. See [Release Reference](Documentation/Reference/Release.md).
+Official releases start from an exact trusted-master candidate commit. The
+protected workflow builds, Developer ID signs, notarizes, staples, and preserves
+the candidate artifacts. After acceptance of those exact artifacts, publication
+creates the signed release tag and publishes the same bytes. See
+[Release Reference](Documentation/Reference/Release.md).
 
 Computer MCP is available under the terms in [LICENSE](LICENSE).

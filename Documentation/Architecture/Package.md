@@ -56,9 +56,12 @@ package product and does not install or bundle vendor binaries.
 
 The release scripts assemble the SwiftPM App executable and embedded CLI into a
 standard `.app`, sign both code objects, and package the bundle in a DMG. The
-only supported official release topology is a signed `v*` tag processed by the
-protected GitHub Actions `production` Environment. Local invocations exercise
-development signing and distribution structure but do not publish releases.
+official candidate workflow builds an exact trusted-master commit through the
+protected GitHub Actions `production` Environment. Installed acceptance binds
+the signed and notarized artifacts before publication creates a signed `v*` tag
+on that commit and publishes the same bytes. Local development signing verifies
+distribution structure; it does not supply an official candidate. See
+[Versioning and Release](VersioningAndRelease.md) for the evidence policy.
 
 The GitHub release job imports a password-protected Developer ID PKCS#12 file
 and provisioning profile into an ephemeral runner Keychain, authenticates

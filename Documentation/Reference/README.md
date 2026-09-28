@@ -93,8 +93,8 @@ This directory contains detailed operational reference material.
   historical pre-release fail-closed status and blockers.
 - [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
 - [Tools](Tools.md): MCP gateway tools and result contracts.
-- [Release](Release.md): signed-tag GitHub Actions release, protected Apple
-  credentials, notarization, artifact provenance, atomic publication, and local
+- [Release](Release.md): protected candidate builds, Apple credentials,
+  notarization, exact artifact acceptance, signed-tag publication, and local
   rehearsal scope.
 - [Troubleshooting](Troubleshooting.md): common failures and checks.
 - [简体中文](zh-CN/README.md): mirrored onboarding and recovery guides.

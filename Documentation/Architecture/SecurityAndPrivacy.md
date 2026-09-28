@@ -52,8 +52,23 @@ Verified local peer credentials establish the local-user principal. Secure
 Tunnel admission binds the registered bridge identity; authenticated HTTP
 binds the validated credential. A connection id is tracing information, not
 authority. Reconnection with the same credential retains the same principal;
-clients sharing a credential share authority and cannot be distinguished by
-client-supplied labels. Profile, workspace and caller checks still apply.
+clients sharing a credential share principal-level grants. Client-supplied labels
+cannot establish a separate principal. Profile, workspace and caller checks still apply.
+
+The App gateway binds each admitted socket session to a host-created authorization
+object. The local owner can limit or end that session without changing another
+connection's grant or stopping its runtime. Session limits constrain the current
+profile; they cannot grant missing capabilities. New calls, discovery, selected
+execution-owner calls and retained Host Services invocations reread the session's
+current authority. A disconnected session loses this authority while its existing
+execution resources remain owned until they drain. Serialized execution context,
+connection labels and tool arguments cannot recreate the authorization object.
+
+Operation tickets issued in a control session also bind that session's identity
+and revision. Another session using the same credential cannot consume the ticket,
+and restoring access after a change does not revive an older ticket. Generic host
+callbacks require a common live control session among their originating invocations;
+ambiguous sessions cannot borrow one another's permissions.
 
 The default `risk-based` policy requires local confirmation for host-classified
 destructive, external-write and arbitrary-execution operations. `all-writes`

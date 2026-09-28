@@ -1442,6 +1442,12 @@ package final class GatewayDatabase: @unchecked Sendable {
         index: "auditEvents_on_verified_scope", on: "auditEvents",
         columns: ["principalDigest", "profileID", "workspaceID", "occurredAt"])
     }
+    migrator.registerMigration("operation-control-session") { database in
+      try database.alter(table: "operationTickets") { table in
+        table.add(column: "controlSessionID", .text)
+        table.add(column: "controlSessionRevision", .integer)
+      }
+    }
     return migrator
   }()
 
@@ -1838,6 +1844,8 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
   var completedAt: Date?
   var failureCode: String?
   var authorizationRevision: Int64?
+  var controlSessionID: String?
+  var controlSessionRevision: Int64?
   var reviewSummary: String?
 
   init(_ value: OperationTicket) {
@@ -1859,6 +1867,8 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
     self.completedAt = value.completedAt
     self.failureCode = value.failureCode
     self.authorizationRevision = value.authorizationRevision
+    self.controlSessionID = value.controlSessionID
+    self.controlSessionRevision = value.controlSessionRevision
     self.reviewSummary = value.reviewSummary
   }
 
@@ -1890,6 +1900,7 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
       completedAt: completedAt,
       failureCode: failureCode,
       authorizationRevision: authorizationRevision,
+      controlSessionID: controlSessionID, controlSessionRevision: controlSessionRevision,
       reviewSummary: reviewSummary
     )
   }

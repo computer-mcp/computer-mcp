@@ -5,6 +5,7 @@ import Foundation
 package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let configuration: GatewayConfiguration
   private let context: ExecutionContext
+  private let requiresControlSession: Bool
   private let grant: ProfileGrant
   private let requiresPersistedGrant: Bool
   private let persistedWorkspaceRegistrations: [String: RegisteredWorkspace]
@@ -32,9 +33,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   ) async throws -> Value {
     let target = MCPContinuationTarget.current
     let owner = GatewayOwnerRouting.selection
+    let session = GatewayControlSession.current
     return try await admission.perform {
       try GatewayOwnerRouting.$selection.withValue(owner) {
-        try MCPContinuationTarget.$current.withValue(target, operation: operation)
+        try GatewayControlSession.$current.withValue(session) {
+          try MCPContinuationTarget.$current.withValue(target, operation: operation)
+        }
       }
     }
   }
@@ -56,7 +60,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     plugins: [ResolvedPlugin]? = nil,
     pluginState: PluginStoreSnapshot? = nil,
     bundledPlugins: BundledPlugins = .current,
-    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
+    requiresControlSession: Bool = false
   ) throws {
     try self.init(
       configuration: configuration, context: context, database: database,
@@ -64,7 +69,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
       pluginState: pluginState,
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
-      lifetime: GatewayRuntimeLifetime(), preparationState: nil, artifactStorage: nil)
+      lifetime: GatewayRuntimeLifetime(), preparationState: nil, artifactStorage: nil,
+      requiresControlSession: requiresControlSession)
   }
 
   package static func make(
@@ -78,7 +84,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     plugins: [ResolvedPlugin]? = nil,
     pluginState: PluginStoreSnapshot? = nil,
     bundledPlugins: BundledPlugins = .current,
-    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
+    requiresControlSession: Bool = false
   ) async throws -> GatewayRuntime {
     try Task.checkCancellation()
     let lifetime = GatewayRuntimeLifetime()
@@ -90,7 +97,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
           pluginState: pluginState,
           bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime,
-          preparationState: nil, artifactStorage: nil)
+          preparationState: nil, artifactStorage: nil,
+          requiresControlSession: requiresControlSession)
       }
       try Task.checkCancellation()
       return runtime
@@ -109,7 +117,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
-    artifactStorage: PluginInstallationStorage? = nil
+    artifactStorage: PluginInstallationStorage? = nil,
+    requiresControlSession: Bool = false
   ) async throws -> GatewayRuntimePreparation {
     try Task.checkCancellation()
     let lifetime = GatewayRuntimeLifetime()
@@ -121,7 +130,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           policyEvaluator: GatewayPolicyEvaluator(), mcpClient: mcpClient,
           plugins: nil, pluginState: state.plugins, bundledPlugins: bundledPlugins,
           terminalSessions: terminalSessions, lifetime: lifetime,
-          preparationState: state, artifactStorage: artifactStorage)
+          preparationState: state, artifactStorage: artifactStorage,
+          requiresControlSession: requiresControlSession)
       }
       try Task.checkCancellation()
       return GatewayRuntimePreparation(
@@ -162,10 +172,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     plugins: [ResolvedPlugin]?, pluginState: PluginStoreSnapshot?, bundledPlugins: BundledPlugins,
     terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime,
     preparationState: GatewayDatabase.ConfigurationState?,
-    artifactStorage: PluginInstallationStorage?
+    artifactStorage: PluginInstallationStorage?, requiresControlSession: Bool
   ) throws {
     let initializationConfiguration = configuration
     self.lifetime = lifetime
+    self.requiresControlSession = requiresControlSession
     var initialized = false
     defer { if !initialized { _ = lifetime.beginShutdown() } }
     var sourceConfiguration = configuration
@@ -214,7 +225,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         }
         return MCPToolAccessPolicy(
           configuration: configuration,
-          grant: persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
+          grant: try GatewayControlSession.current?.apply(
+            to: persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
+            context: effectiveContext)
+            ?? (persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant),
           derivesObserveGrant: derivesObserveGrant && (persisted?.authorizationRevision ?? 0) == 0)
       })
 
@@ -364,7 +378,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
         pluginState: pluginState,
-        bundledPlugins: bundledPlugins, terminalSessions: terminalSessions)
+        bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
+        requiresControlSession: requiresControlSession)
     }
     self.requiresPersistedGrant = persistedGrant != nil
     self.persistedWorkspaceRegistrations = Dictionary(
@@ -387,10 +402,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   /// Catalog and calls borrow this runtime but cannot widen its bound workspace or recurse.
   func hostToolCatalog(workspaceID: String, origin: String) throws -> [MCPTool] {
     try validateHostOrigin(workspaceID: workspaceID, origin: origin)
-    var bound = context
-    bound.workspaceID = workspaceID
-    let currentGrant = try currentHostGrant()
-    return try listTools().filter { tool in
+    guard let bound = try? hostCallContext(workspaceID: workspaceID, origin: origin) else {
+      return []
+    }
+    let currentGrant = try currentHostGrant(context: bound)
+    return try GatewayControlSession.$current.withValue(bound.controlSession) {
+      try listTools(context: bound)
+    }.filter { tool in
       guard let descriptor = try? descriptor(named: tool.name),
         !descriptor.localOnly,
         descriptor.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true
@@ -413,6 +431,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let started = ContinuousClock.now
     do {
       try validateHostOrigin(workspaceID: workspaceID, origin: origin)
+      bound = try hostCallContext(workspaceID: workspaceID, origin: origin)
+      bound.requestID = requestID
       try validateHostTarget(name: name, arguments: arguments, context: bound, depth: 0)
       if name == "workspace.list" {
         let rows = workspaceList(context: bound).objectValue?["workspaces"]?.arrayValue ?? []
@@ -445,6 +465,25 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       }
       return result
     }
+  }
+
+  private func hostCallContext(workspaceID: String, origin: String) throws -> ExecutionContext {
+    var bound = context
+    bound.workspaceID = workspaceID
+    if requiresControlSession {
+      let invocations = hostToolDirectory.active(
+        workspaceID: workspaceID, origin: origin, includingRetainedWork: true)
+      let sessions = invocations.compactMap { $0.context.controlSession }
+      guard !sessions.isEmpty, sessions.count == invocations.count,
+        Set(sessions.map(\.id)).count == 1
+      else {
+        throw Self.invalid(
+          code: "policy.host_invocation_required",
+          message: "Host tools require an unambiguous live control session.")
+      }
+      bound.controlSession = sessions[0]
+    }
+    return bound
   }
 
   private var hostServiceRegistrations: Set<String> {
@@ -510,17 +549,30 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
-  private func currentHostGrant() throws -> ProfileGrant {
-    guard let database else { return grant }
-    guard let persisted = try database.profiles().first(where: { $0.id == grant.id }) else {
-      // Configuration and builtin grants do not require a database record. A runtime
-      // initialized with persisted authority must not recover it after revocation.
-      guard requiresPersistedGrant else { return grant }
-      throw Self.invalid(
-        code: "policy.host_grant_revoked",
-        message: "The persisted host profile is no longer available.")
+  private func currentHostGrant(context: ExecutionContext) throws -> ProfileGrant {
+    let current: ProfileGrant
+    if let database {
+      if let persisted = try database.profiles().first(where: { $0.id == grant.id }) {
+        current = grant.applyingPersistedRuntimeState(persisted)
+      } else {
+        guard !requiresPersistedGrant else {
+          throw Self.invalid(
+            code: "policy.host_grant_revoked",
+            message: "The persisted host profile is no longer available.")
+        }
+        current = grant
+      }
+    } else {
+      current = grant
     }
-    return grant.applyingPersistedRuntimeState(persisted)
+    guard let session = context.controlSession else {
+      guard !requiresControlSession else {
+        throw Self.invalid(
+          code: "policy.control_session_required", message: "A live control session is required.")
+      }
+      return current
+    }
+    return try session.apply(to: current, context: context)
   }
 
   private func validateHostTarget(
@@ -546,7 +598,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let descriptor = try invocationDescriptor(named: name, arguments: arguments, context: context)
     let routed = try route(descriptor: descriptor, arguments: arguments, context: context)
     try authorize(descriptor, context: routed.context)
-    let current = try currentHostGrant()
+    let current = try currentHostGrant(context: routed.context)
     let decision = policyEvaluator.evaluate(
       capability: descriptor, context: routed.context, grant: current,
       registeredWorkspaceIDs: Set(workspaceOrder))
@@ -625,7 +677,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard descriptor.mcpReference == invocation.reference,
       policyEvaluator.evaluate(
         capability: descriptor, context: invocation.context,
-        grant: try currentHostGrant(), registeredWorkspaceIDs: Set(workspaceOrder)
+        grant: try currentHostGrant(context: invocation.context),
+        registeredWorkspaceIDs: Set(workspaceOrder)
       ).isAllowed
     else {
       throw Self.invalid(
@@ -666,7 +719,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func listTools() throws -> [MCPTool] {
-    try listTools(context: context)
+    try listTools(context: contextForCall())
+  }
+
+  package func listToolsAsync() async throws -> [MCPTool] {
+    try await Self.performAdmission { try self.listTools() }
   }
 
   package func toolChanges() -> AsyncStream<Void> {
@@ -696,6 +753,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func listTools(context: ExecutionContext) throws -> [MCPTool] {
+    guard (try? currentHostGrant(context: context)) != nil else { return [] }
     let catalog = GatewayCapabilityCatalog()
     let coreTools = Self.coreTools(databaseEnabled: database != nil)
     let routedTools =
@@ -841,7 +899,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     for runtime in candidates {
       guard runtime.context.principalID == context.principalID,
         runtime.context.profileID == context.profileID, runtime.context.caller == context.caller,
-        let grant = try? runtime.currentHostGrant(),
+        let grant = try? runtime.currentHostGrant(context: context),
         grant.workspaceIDs.contains("*") || grant.workspaceIDs.contains(workspaceID),
         grant.allowedCallers.contains(context.caller),
         (try? runtime.validateExecutionWorkspace(workspaceID)) != nil
@@ -1075,13 +1133,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
-    return try perform(
-      name: name,
-      arguments: arguments?.objectValue ?? [:],
-      context: context,
-      bypassOperationTicket: false,
-      operationLinkage: nil
-    )
+    return try GatewayControlSession.$current.withValue(context.controlSession) {
+      try perform(
+        name: name, arguments: arguments?.objectValue ?? [:], context: context,
+        bypassOperationTicket: false, operationLinkage: nil)
+    }
   }
 
   package func callToolAsync(
@@ -1093,13 +1149,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
-    return try await performAsync(
-      name: name,
-      arguments: arguments?.objectValue ?? [:],
-      context: context,
-      bypassOperationTicket: false,
-      operationLinkage: nil
-    )
+    return try await GatewayControlSession.$current.withValue(context.controlSession) {
+      try await performAsync(
+        name: name, arguments: arguments?.objectValue ?? [:], context: context,
+        bypassOperationTicket: false, operationLinkage: nil)
+    }
   }
 
   private func perform(
@@ -1391,6 +1445,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message: "Operation tools cannot target themselves."
       )
     }
+    let session = context.controlSession?.snapshot
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
     let targetDescriptor = try invocationDescriptor(
       named: toolName, arguments: targetArguments, context: context)
@@ -1448,11 +1503,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       createdAt: now,
       expiresAt: now.addingTimeInterval(Double(ttlMilliseconds) / 1_000),
       authorizationRevision: currentGrant.authorizationRevision,
+      controlSessionID: session?.id, controlSessionRevision: session?.revision,
       reviewSummary: try Self.operationReviewSummary(
         GatewayOwnerRouting.selection.map {
           ["execution_owner": $0.json, "arguments": .object(routed.arguments)]
         } ?? routed.arguments)
     )
+    try context.controlSession?.requireRevision(session?.revision)
     try database.saveOperationTicket(ticket)
     return PreparedOperation(
       ticketID: ticket.id,
@@ -1516,6 +1573,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let ticket = try database.operationTicket(id: ticketID) else {
       throw Self.invalid(code: "operations.ticket_unknown", message: "Unknown operation ticket.")
     }
+    try requireTicketSession(ticket, context: context)
     let principalID = Self.principalID(for: context)
     guard ticket.capabilityID == toolName,
       ticket.caller == context.caller,
@@ -1613,6 +1671,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "operations.ticket_context_mismatch",
         message: "The executing target no longer matches its consumed operation ticket.")
     }
+    try requireTicketSession(ticket, context: context)
     guard ticket.authorizationRevision == grant.authorizationRevision else {
       throw Self.invalid(
         code: "operations.authorization_changed",
@@ -1625,6 +1684,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "operations.ticket_arguments_mismatch",
         message: "The target action, arguments or provider changed after ticket consumption.")
     }
+  }
+
+  private func requireTicketSession(_ ticket: OperationTicket, context: ExecutionContext) throws {
+    guard ticket.controlSessionID == context.controlSession?.id else {
+      throw Self.invalid(
+        code: "operations.ticket_context_mismatch",
+        message: "The operation ticket belongs to another control session.")
+    }
+    try context.controlSession?.requireRevision(ticket.controlSessionRevision)
   }
 
   private func executeCommittedOperation(
@@ -1694,7 +1762,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private func workspaceList(context: ExecutionContext) -> JSONValue {
-    let current = try? currentHostGrant()
+    let current = try? currentHostGrant(context: context)
     let rows = workspaceOrder.compactMap { id -> JSONValue? in
       guard let workspace = workspaces[id],
         current?.workspaceIDs.contains("*") == true || current?.workspaceIDs.contains(id) == true
@@ -1812,7 +1880,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
             "Runtime-owned calls must retain their gateway connection's caller and provenance.")
       }
     }
-    let authorizedGrant = try currentHostGrant()
+    let authorizedGrant = try currentHostGrant(context: context)
     let decision = policyEvaluator.evaluate(
       capability: descriptor,
       context: context,
@@ -1857,7 +1925,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     _ descriptor: CapabilityDescriptor,
     context: ExecutionContext
   ) -> Bool {
-    guard let grant = try? currentHostGrant() else { return false }
+    guard let grant = try? currentHostGrant(context: context) else { return false }
     if context.workspaceID != nil,
       !policyEvaluator.evaluate(
         capability: descriptor, context: context, grant: grant,
@@ -1919,7 +1987,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       descriptor.equivalentCapabilityIDs = configuration.mcpCapabilityIDs(for: reference)
       descriptor.risk = configuration.mcpRisk(for: reference)
       // Denial must not reveal whether an out-of-scope registration or selection exists.
-      guard try currentHostGrant().grants(descriptor) else {
+      guard try currentHostGrant(context: context).grants(descriptor) else {
         throw Self.invalid(
           code: PolicyDenialCode.capabilityDenied.rawValue,
           message: "The profile does not grant this downstream MCP tool.")
@@ -1954,6 +2022,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func contextForCall() -> ExecutionContext {
     var callContext = context
     callContext.requestID = UUID().uuidString
+    if let session = GatewayControlSession.current { callContext.controlSession = session }
     if let trace = MCPRuntimeAdapter.requestTrace { callContext.transportTrace = trace }
     return callContext
   }

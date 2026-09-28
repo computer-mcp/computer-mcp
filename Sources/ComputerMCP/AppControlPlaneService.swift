@@ -712,7 +712,8 @@ package actor AppControlPlaneService {
     profileID: GatewayProfileID,
     transportTrace: GatewayTransportTrace? = nil,
     trustedPrincipalID: String? = nil,
-    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
+    requiresControlSession: Bool = false
   ) async throws -> (inputs: GatewayInputs, gateway: GatewayRuntime) {
     if caller.isRemote && profileID == .localAdmin {
       throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
@@ -720,14 +721,15 @@ package actor AppControlPlaneService {
     let inputs = try gatewayInputs()
     let gateway = try await makeGateway(
       inputs: inputs, caller: caller, profileID: profileID, transportTrace: transportTrace,
-      trustedPrincipalID: trustedPrincipalID, terminalSessions: terminalSessions)
+      trustedPrincipalID: trustedPrincipalID, terminalSessions: terminalSessions,
+      requiresControlSession: requiresControlSession)
     return (inputs, gateway)
   }
 
   func prepareGateway(
     inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
     trustedPrincipalID: String?, terminalSessions: GatewayTerminalSessions,
-    artifactStorage: PluginInstallationStorage?
+    artifactStorage: PluginInstallationStorage?, requiresControlSession: Bool = false
   ) async throws -> GatewayRuntimePreparation {
     var context = inputs.configuration.executionContext(caller: caller, profileID: profileID)
     context.trustedPrincipalID = trustedPrincipalID
@@ -736,7 +738,7 @@ package actor AppControlPlaneService {
       state: inputs.persisted,
       bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
-      artifactStorage: artifactStorage)
+      artifactStorage: artifactStorage, requiresControlSession: requiresControlSession)
   }
 
   /// Values whose changes invalidate a pending catalog or session construction.
@@ -764,7 +766,8 @@ package actor AppControlPlaneService {
     inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
     transportTrace: GatewayTransportTrace? = nil, persistentState: Bool = true,
     trustedPrincipalID: String? = nil,
-    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
+    requiresControlSession: Bool = false
   ) async throws -> GatewayRuntime {
     try requireCurrentGatewayInputs(inputs)
     let database = persistentState ? database : nil
@@ -784,7 +787,7 @@ package actor AppControlPlaneService {
       database: database, registeredWorkspaces: inputs.workspaces,
       bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
       plugins: plugins, pluginState: inputs.plugins, bundledPlugins: bundledPlugins,
-      terminalSessions: terminalSessions)
+      terminalSessions: terminalSessions, requiresControlSession: requiresControlSession)
     do {
       try requireCurrentGatewayInputs(inputs)
       return gateway

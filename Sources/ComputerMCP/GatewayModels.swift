@@ -201,6 +201,8 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
   package var completedAt: Date?
   package var failureCode: String?
   package var authorizationRevision: Int64?
+  package var controlSessionID: String?
+  package var controlSessionRevision: Int64?
   package var reviewSummary: String?
 
   package init(
@@ -222,6 +224,8 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     completedAt: Date? = nil,
     failureCode: String? = nil,
     authorizationRevision: Int64? = nil,
+    controlSessionID: String? = nil,
+    controlSessionRevision: Int64? = nil,
     reviewSummary: String? = nil
   ) {
     self.id = id
@@ -244,6 +248,8 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     self.completedAt = completedAt
     self.failureCode = failureCode
     self.authorizationRevision = authorizationRevision
+    self.controlSessionID = controlSessionID
+    self.controlSessionRevision = controlSessionRevision
     self.reviewSummary = reviewSummary
   }
 }

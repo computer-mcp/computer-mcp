@@ -10,6 +10,75 @@ import Testing
 @Suite(.nativeIntegration, .serialized)
 
 final class AppControlPlaneServiceTests {
+  @Test
+  func ownerLimitsOneVerifiedSessionWithoutChangingOtherConnectionsOrTheProfile() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let configuration = GatewayConfiguration(
+      runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
+      profiles: [
+        .init(
+          id: .chatGPTOperate, capabilities: ["*"], workspaces: ["fixture"],
+          allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
+      ], builtin: .init(enabled: ["system.time", "file.write"]), workspaceDirectory: fixture.root)
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    try fixture.database.saveWorkspace(
+      .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+    let service = AppGatewayService(
+      controlPlane: fixture.controlPlane,
+      socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.controlPlane, gatewayService: service)
+    try await service.start(profile: .chatGPTOperate)
+    do {
+      let first = try await GatewayClientSession.connectSocket(
+        socketURL: service.socketConfiguration.socketURL)
+      let firstScope = try #require(await operations.controlSessions().first)
+      let second = try await GatewayClientSession.connectSocket(
+        socketURL: service.socketConfiguration.socketURL)
+      let secondScope = try #require(
+        await operations.controlSessions().first { $0.id != firstScope.id })
+      #expect(firstScope.principalID == secondScope.principalID)
+      let saved = try fixture.database.profiles()
+      _ = try await operations.limitControlSession(
+        id: firstScope.id, to: .readOnly, expectedRevision: firstScope.revision)
+      #expect(try await !first.listToolNames().contains("file.write"))
+      #expect(try await second.listToolNames().contains("file.write"))
+      let target = JSONValue.object([
+        "workspace_id": .string("fixture"), "path": .string("session.txt"),
+        "content": .string("second"), "confirm": .bool(true),
+      ])
+      #expect(
+        try await first.call(toolName: "file.write", arguments: target).result.objectValue?[
+          "isError"] == .bool(true))
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: fixture.root.appendingPathComponent("session.txt").path))
+      #expect(
+        try await second.call(toolName: "file.write", arguments: target).result.objectValue?[
+          "isError"] != .bool(true))
+      #expect(
+        try String(contentsOf: fixture.root.appendingPathComponent("session.txt"), encoding: .utf8)
+          == "second")
+      try await operations.endControlSession(
+        id: secondScope.id, expectedRevision: secondScope.revision)
+      #expect(
+        try await second.call(toolName: "system.time").result.objectValue?["isError"] == .bool(true)
+      )
+      #expect(
+        try await first.call(toolName: "system.time").result.objectValue?["isError"] != .bool(true))
+      #expect(try fixture.database.profiles() == saved)
+      #expect(await service.snapshot().state == .running)
+      await first.disconnect()
+      await second.disconnect()
+      await service.stop()
+      #expect(await operations.controlSessions().isEmpty)
+    } catch {
+      await service.stop()
+      throw error
+    }
+  }
+
   @Test(arguments: ["remove", "deduplicate", "repair", "repair-wildcard"])
   func workspaceChangesPreserveResolvedLegacyPermissions(operation: String) async throws {
     let removing = operation == "remove"

@@ -84,35 +84,46 @@ package actor AppGatewayService {
     let epoch: UUID
     let trace: GatewayTransportTrace
     let changes: GatewayToolChangeBroadcaster
+    let controlSession: GatewayControlSession
 
     func toolChanges() -> AsyncStream<Void> { changes.stream() }
 
     func listToolsAsync() async throws -> [MCPTool] {
       guard let service else { throw GatewaySocketError.notConnected }
-      return try await service.listTools(key: key, epoch: epoch, trace: trace)
+      return try await GatewayControlSession.$current.withValue(controlSession) {
+        try await service.listTools(key: key, epoch: epoch, trace: trace)
+      }
     }
 
     func refreshTools() async throws {
       guard let service else { throw GatewaySocketError.notConnected }
-      try await service.refreshTools(key: key, epoch: epoch, trace: trace)
+      try await GatewayControlSession.$current.withValue(controlSession) {
+        try await service.refreshTools(key: key, epoch: epoch, trace: trace)
+      }
     }
 
     func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
       guard let service else { throw GatewaySocketError.notConnected }
-      return try await service.callTool(
-        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false)
+      return try await GatewayControlSession.$current.withValue(controlSession) {
+        try await service.callTool(
+          name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false)
+      }
     }
 
     func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
       guard let service else { throw GatewaySocketError.notConnected }
-      return try await service.callTool(
-        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
+      return try await GatewayControlSession.$current.withValue(controlSession) {
+        try await service.callTool(
+          name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
+      }
     }
   }
 
   package nonisolated let socketConfiguration: GatewaySocketConfiguration
 
   private let controlPlane: AppControlPlaneService
+  private var controlSessionRecords: [String: (key: RuntimeKey, session: GatewayControlSession)] =
+    [:]
   private var server: GatewaySocketServer?
   private var state: AppGatewayServiceState = .stopped
   private var profileID: GatewayProfileID?
@@ -318,6 +329,10 @@ package actor AppGatewayService {
   }
 
   private func stopRuntimes(owner: RuntimeOwner) async {
+    for (id, record) in controlSessionRecords where record.key.owner == owner {
+      record.session.end()
+      controlSessionRecords.removeValue(forKey: id)
+    }
     let keys = Set(runtimes.keys).union(pendingRuntimes.keys).union(retiredRuntimes.keys)
       .union(catalogChanges.keys).filter { $0.owner == owner }
     var pending: [Task<AdmittedRuntime, any Error>] = []
@@ -379,20 +394,54 @@ package actor AppGatewayService {
       principalID: identity.trustedPrincipalID, profileID: profileID, caller: identity.caller)
     let admitted = try await admittedRuntime(key: key, epoch: epoch, trace: identity.transportTrace)
     try requireAdmission(key: key, epoch: epoch)
+    guard controlSessionRecords.count < 128 else {
+      throw GatewaySocketError.invalidConfiguration(
+        "The gateway has reached its control session capacity.")
+    }
+    let controlSession = GatewayControlSession(
+      principalID: key.principalID, profileID: key.profileID, caller: key.caller)
+    controlSessionRecords[controlSession.id] = (key, controlSession)
     let dispatcher = SessionDispatcher(
       service: self, key: key, epoch: epoch, trace: identity.transportTrace,
-      changes: changes(for: key))
+      changes: changes(for: key), controlSession: controlSession)
     let server = await MCPRuntimeAdapter.makeGatewayServer(
       configuration: admitted.inputs.configuration, registry: dispatcher,
       transportTrace: identity.transportTrace)
     do {
       try requireAdmission(key: key, epoch: epoch)
     } catch {
+      closeControlSession(id: controlSession.id)
       await server.stop()
       throw error
     }
-    // A disconnected MCP session releases its protocol server, not listener-owned work.
-    return GatewaySocketServerSession(server: server)
+    return GatewaySocketServerSession(server: server) { [weak self] in
+      controlSession.end()
+      await self?.closeControlSession(id: controlSession.id)
+    }
+  }
+
+  package func controlSessions() -> [GatewayControlSessionSnapshot] {
+    controlSessionRecords.values.map { $0.session.snapshot }.sorted { $0.id < $1.id }
+  }
+
+  package func limitControlSession(
+    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+  ) throws -> GatewayControlSessionSnapshot {
+    guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
+    try record.session.limitAccess(to: mode, expectedRevision: expectedRevision)
+    changes(for: record.key).send()
+    return record.session.snapshot
+  }
+
+  package func endControlSession(id: String, expectedRevision: Int64) throws {
+    guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
+    try record.session.requireRevision(expectedRevision)
+    record.session.end()
+    changes(for: record.key).send()
+  }
+
+  private func closeControlSession(id: String) {
+    controlSessionRecords.removeValue(forKey: id)?.session.end()
   }
 
   private func currentEpoch(for owner: RuntimeOwner) -> UUID? {
@@ -446,7 +495,8 @@ package actor AppGatewayService {
       do {
         let admitted = try await controlPlane.makeGatewaySocketRuntime(
           caller: key.caller, profileID: key.profileID, transportTrace: trace,
-          trustedPrincipalID: key.principalID, terminalSessions: terminalSessions)
+          trustedPrincipalID: key.principalID, terminalSessions: terminalSessions,
+          requiresControlSession: key.owner == .listener)
         do {
           try requireAdmission(key: key, epoch: epoch)
           guard pendingRuntimes[key]?.id == id else { throw GatewaySocketError.notConnected }
@@ -974,7 +1024,7 @@ package actor AppGatewayService {
           let preparation = try await controlPlane.prepareGateway(
             inputs: inputs, caller: key.caller, profileID: key.profileID,
             trustedPrincipalID: key.principalID, terminalSessions: sessions(for: key.owner),
-            artifactStorage: storage)
+            artifactStorage: storage, requiresControlSession: key.owner == .listener)
           candidates[key] = (preparation, ownerEpoch)
         }
       }

@@ -172,6 +172,12 @@ package struct ExecutionContext: Codable, Equatable, Sendable {
   package var transportTrace: GatewayTransportTrace?
   /// Established by the host's authenticated admission path, never by tool arguments.
   package var trustedPrincipalID: String?
+  /// In-process admission evidence. Encoding a context never conveys session authority.
+  var controlSession: GatewayControlSession? = nil
+
+  private enum CodingKeys: String, CodingKey {
+    case requestID, caller, profileID, workspaceID, transportTrace, trustedPrincipalID
+  }
 
   package var principalID: String {
     if let trustedPrincipalID, !trustedPrincipalID.isEmpty { return trustedPrincipalID }

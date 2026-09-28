@@ -67,9 +67,12 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     try Task.checkCancellation()
     let authorization = MCPInvocationAdmission.current
     let continuation = MCPContinuationTarget.current
+    let session = GatewayControlSession.current
     try await Self.discovery.perform {
       try MCPContinuationTarget.$current.withValue(continuation) {
-        try requireTool(name, server: server, authorization: authorization)
+        try GatewayControlSession.$current.withValue(session) {
+          try requireTool(name, server: server, authorization: authorization)
+        }
       }
     }
     try Task.checkCancellation()

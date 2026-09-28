@@ -264,6 +264,21 @@ package struct AppControlPlaneOperations: Sendable {
     return grant
   }
 
+  package func controlSessions() async -> [GatewayControlSessionSnapshot] {
+    await gatewayService.controlSessions()
+  }
+
+  package func limitControlSession(
+    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+  ) async throws -> GatewayControlSessionSnapshot {
+    try await gatewayService.limitControlSession(
+      id: id, to: mode, expectedRevision: expectedRevision)
+  }
+
+  package func endControlSession(id: String, expectedRevision: Int64) async throws {
+    try await gatewayService.endControlSession(id: id, expectedRevision: expectedRevision)
+  }
+
   package func updateProfilePermissions(
     profileID: GatewayProfileID, mode: GatewayPermissionMode? = nil,
     confirmationPolicy: GatewayConfirmationPolicy? = nil, fullShellEnabled: Bool? = nil,

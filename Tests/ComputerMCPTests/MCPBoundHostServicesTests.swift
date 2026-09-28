@@ -8,6 +8,102 @@ import Testing
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPBoundHostServicesTests {
   @Test
+  func retainedInvocationRechecksItsControlSessionOutsideTheOriginalTask() async throws {
+    let fixture = try HostAuthorityFixture(requiresControlSession: true)
+    defer { fixture.remove() }
+    let session = GatewayControlSession(
+      principalID: "fixture-principal", profileID: .chatGPTOperate, caller: .secureTunnel)
+    let directory = try #require(fixture.peer.context?.tools)
+    let retained = RetainedControlInvocation()
+    do {
+      _ = try await GatewayControlSession.$current.withValue(session) {
+        try await fixture.during("fixture.audit", ["limit": .integer(1)]) { _ in
+          let invocation = try #require(
+            directory.active(workspaceID: "scope", origin: "probe").first)
+          let lease = try directory.retainWork(
+            id: invocation.id, workspaceID: "scope", origin: "probe")
+          await retained.hold(id: invocation.id, lease: lease)
+          return .object([:])
+        }
+      }
+      let id = try #require(await retained.id)
+      #expect(directory.active(workspaceID: "scope", origin: "probe").isEmpty)
+      _ = try await Task.detached {
+        try fixture.runtime.requireHostInvocation(workspaceID: "scope", origin: "probe", id: id)
+      }.value
+      try session.limitAccess(to: .readOnly, expectedRevision: 0)
+      await #expect(throws: (any Error).self) {
+        try await Task.detached {
+          try fixture.runtime.requireHostInvocation(workspaceID: "scope", origin: "probe", id: id)
+        }.value
+      }
+      #expect(
+        directory.active(workspaceID: "scope", origin: "probe", includingRetainedWork: true).count
+          == 1)
+      let read = try await fixture.runtime.callHostTool(
+        name: "workspace.list", arguments: [:], workspaceID: "scope", origin: "probe",
+        requestID: "callback-read")
+      #expect(read.objectValue?["isError"] == .bool(false))
+      session.end()
+      let denied = try await fixture.runtime.callHostTool(
+        name: "workspace.list", arguments: [:], workspaceID: "scope", origin: "probe",
+        requestID: "callback-ended")
+      #expect(denied.objectValue?["isError"] == .bool(true))
+      #expect(throws: (any Error).self) {
+        try fixture.runtime.requireHostInvocation(workspaceID: "scope", origin: "probe", id: id)
+      }
+      await retained.finish()
+      #expect(
+        directory.active(workspaceID: "scope", origin: "probe", includingRetainedWork: true).isEmpty
+      )
+      await fixture.close()
+    } catch {
+      await retained.finish()
+      await fixture.close()
+      throw error
+    }
+  }
+
+  @Test(arguments: [true, false])
+  func genericCallbacksResolveCommonConsentAndRefuseMixedSessions(sameSession: Bool) async throws {
+    let fixture = try HostAuthorityFixture(requiresControlSession: true)
+    defer { fixture.remove() }
+    let firstSession = GatewayControlSession(
+      principalID: "fixture-principal", profileID: .chatGPTOperate, caller: .secureTunnel)
+    let secondSession =
+      sameSession
+      ? firstSession
+      : GatewayControlSession(
+        principalID: "fixture-principal", profileID: .chatGPTOperate, caller: .secureTunnel)
+    let entered = HostServicePairBarrier()
+    let finished = HostServicePairBarrier()
+    fixture.peer.allowConcurrentDiscovery()
+    fixture.peer.setHandler {
+      await entered.arrive()
+      let result = try await fixture.runtime.callHostTool(
+        name: "workspace.list", arguments: [:], workspaceID: "scope", origin: "probe",
+        requestID: UUID().uuidString)
+      await finished.arrive()
+      return result
+    }
+    let args = JSONValue.object(["workspace_id": .string("scope"), "limit": .integer(1)])
+    do {
+      async let first = GatewayControlSession.$current.withValue(firstSession) {
+        try await fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
+      }
+      async let second = GatewayControlSession.$current.withValue(secondSession) {
+        try await fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
+      }
+      let results = try await [first, second]
+      #expect(results.allSatisfy { $0.objectValue?["isError"] == .bool(!sameSession) })
+      await fixture.close()
+    } catch {
+      await fixture.close()
+      throw error
+    }
+  }
+
+  @Test
   func vendorNeutralDiagnosticsUseTheAdmittedSemanticAction() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -419,7 +515,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   private let nativeGit: Bool
   init(
     worktrees: Bool = false, persistedProfile: Bool = true, additionalWorkspace: Bool = false,
-    nativeGit: Bool = false
+    nativeGit: Bool = false, requiresControlSession: Bool = false
   ) throws {
     self.nativeGit = nativeGit
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -433,7 +529,9 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       try database.saveWorkspace(other)
       workspaces.append(other)
     }
-    let caps = ["mcp.tools.call", "operations.prepare", "operations.commit"]
+    let caps =
+      ["mcp.tools.call", "operations.prepare", "operations.commit"]
+      + (requiresControlSession ? ["workspace.list"] : [])
     if persistedProfile {
       try database.saveProfile(
         .init(
@@ -460,7 +558,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         caller: .secureTunnel, profileID: .chatGPTOperate,
         transportTrace: .init(transport: "gateway_socket", socketConnectionID: "connection"),
         trustedPrincipalID: "fixture-principal"),
-      database: database, registeredWorkspaces: workspaces, mcpClient: peer)
+      database: database, registeredWorkspaces: workspaces, mcpClient: peer,
+      requiresControlSession: requiresControlSession)
     let captured = try #require(peer.context)
     if worktrees {
       let managed = root.resolvingSymlinksInPath().appendingPathComponent("managed")
@@ -686,4 +785,17 @@ private final class HostProbeResult: @unchecked Sendable {
   private var value: Result<JSONValue, any Error>?
   func set(_ value: Result<JSONValue, any Error>) { lock.withLock { self.value = value } }
   func get() throws -> JSONValue { try lock.withLock { try value!.get() } }
+}
+
+private actor RetainedControlInvocation {
+  private(set) var id: UUID?
+  private var lease: MCPHostToolDirectory.InvocationLease?
+  func hold(id: UUID, lease: MCPHostToolDirectory.InvocationLease) {
+    self.id = id
+    self.lease = lease
+  }
+  func finish() {
+    lease?.finish()
+    lease = nil
+  }
 }

@@ -135,6 +135,13 @@ internal final class AtomicManifestStore: @unchecked Sendable {
     }
   }
 
+  func admittedDigest(for expected: GatewayConfiguration) throws -> String {
+    try withCurrentConfiguration(expected) {
+      guard let digest = currentKnownDigest() else { throw AtomicManifestStoreError.staleDigest }
+      return digest
+    }
+  }
+
   private func admittedConfiguration() throws -> GatewayConfiguration {
     if let configuration { return configuration }
     guard fileManager.fileExists(atPath: manifestURL.path) else {

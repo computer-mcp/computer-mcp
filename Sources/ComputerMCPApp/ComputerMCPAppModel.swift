@@ -32,14 +32,8 @@ struct PresentedAppError: Identifiable {
   let message: String
 }
 
-enum ProfileConfirmationKind {
-  case activate
-  case enableFullShell
-}
-
 struct ProfileConfirmation: Identifiable {
   let profile: ProfileSummary
-  let kind: ProfileConfirmationKind
   let id = UUID()
 }
 
@@ -87,6 +81,7 @@ final class ComputerMCPAppModel: ObservableObject {
   private let controlPlane: any AppControlPlane
   let pluginManagement: PluginManagementModel
   let mcpRegistrations: MCPRegistrationModel
+  let clientAccess: ClientAccessModel
   private let onboardingPreferences: any OnboardingPreferenceStoring
   private let permissionCoach = PermissionCoachWindowController()
   private var didStart = false
@@ -100,6 +95,7 @@ final class ComputerMCPAppModel: ObservableObject {
     self.controlPlane = controlPlane
     self.pluginManagement = PluginManagementModel(controlPlane: controlPlane)
     self.mcpRegistrations = MCPRegistrationModel(controlPlane: controlPlane)
+    self.clientAccess = ClientAccessModel(controlPlane: controlPlane)
     self.onboardingPreferences = onboardingPreferences
     self.isPresentingWelcome =
       onboardingPreferences.completedVersion < UserDefaultsOnboardingPreferences.currentVersion
@@ -168,6 +164,7 @@ final class ComputerMCPAppModel: ObservableObject {
         await controlPlane.maintainApplication()
         refresh(.home)
         refresh(.tunnels)
+        await clientAccess.reload()
         if selectedWorkspace == .permissions { await loadOperationApprovals() }
       }
     }
@@ -211,6 +208,7 @@ final class ComputerMCPAppModel: ObservableObject {
       Task { await loadWorkspaces() }
     case .profiles:
       Task {
+        await clientAccess.reload()
         await loadProfiles()
         await loadWorkspaces()
       }
@@ -322,28 +320,7 @@ final class ComputerMCPAppModel: ObservableObject {
     if profile.riskLevel == .low {
       activateProfile(id: profile.id)
     } else {
-      pendingProfileConfirmation = ProfileConfirmation(profile: profile, kind: .activate)
-    }
-  }
-
-  func requestFullShellChange(_ enabled: Bool, profile: ProfileSummary) {
-    if enabled {
-      pendingProfileConfirmation = ProfileConfirmation(
-        profile: profile,
-        kind: .enableFullShell
-      )
-    } else {
-      setFullShellEnabled(false, profileID: profile.id)
-    }
-  }
-
-  func setFullShellEnabled(_ enabled: Bool, profileID: String) {
-    performAction(
-      key: "profile.shell.\(profileID)",
-      title: "Unable to update Full Shell",
-      refresh: [.profiles, .home]
-    ) {
-      try await self.controlPlane.setFullShellEnabled(enabled, profileID: profileID)
+      pendingProfileConfirmation = ProfileConfirmation(profile: profile)
     }
   }
 

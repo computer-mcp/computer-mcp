@@ -89,8 +89,9 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   ) throws -> GatewayControlSessionSnapshot {
     try lock.withLock {
       refreshConsent()
+      let current = try currentProfile()
       guard !ended, revision == expectedRevision, revision < Int64.max,
-        let database, !principalID.isEmpty, let current = try currentProfile()
+        let database, !principalID.isEmpty, let current
       else { throw Self.denied("Reload the connected client before granting access.") }
       // Persistence and audit must succeed before this session receives authority.
       let consent = try database.recordFullAccessConsent(
@@ -108,9 +109,19 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   func updateProfile(_ current: GatewayControlProfile) {
     lock.withLock {
       guard current.grant.id == profileID else { return }
-      profile = current
-      if let consent = fullAccessConsent, !current.hasSameAuthorization(as: consent.profile) {
+      adoptProfile(current)
+    }
+  }
+
+  private func adoptProfile(_ current: GatewayControlProfile) {
+    let changed = profile.map { !current.hasSameAuthorization(as: $0) } ?? false
+    profile = current
+    if changed {
+      if fullAccessConsent != nil {
         clearConsent(mode: current.grant.mode)
+      } else {
+        if revision < Int64.max { revision += 1 } else { ended = true }
+        changes.send()
       }
     }
   }
@@ -118,7 +129,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   private func currentProfile() throws -> GatewayControlProfile? {
     if let stored = try database?.profiles().first(where: { $0.id == profileID }) {
       let current = GatewayControlProfile(grant: stored, persisted: true)
-      profile = current
+      adoptProfile(current)
       return current
     }
     return profile?.persisted == true ? nil : profile
@@ -150,16 +161,18 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
 
   var snapshot: GatewayControlSessionSnapshot {
     lock.withLock {
+      let current = try? currentProfile()
       refreshConsent()
       return GatewayControlSessionSnapshot(
         id: id, principalID: principalID, profileID: profileID, caller: caller,
         revision: revision, accessLimit: accessLimit, ended: ended,
-        fullAccessConsent: fullAccessConsent)
+        fullAccessConsent: fullAccessConsent, profile: current)
     }
   }
 
   func limitAccess(to mode: GatewayPermissionMode, expectedRevision: Int64) throws {
     try lock.withLock {
+      _ = try currentProfile()
       refreshConsent()
       guard !ended, revision == expectedRevision, revision < Int64.max else {
         throw Self.denied("The control session changed. Reload before changing its access.")
@@ -217,6 +230,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
 
   func requireRevision(_ expected: Int64?) throws {
     try lock.withLock {
+      _ = try currentProfile()
       refreshConsent()
       guard !ended, expected == revision else {
         throw Self.denied("The control session changed after this operation was prepared.")
@@ -292,4 +306,5 @@ package struct GatewayControlSessionSnapshot: Codable, Equatable, Sendable, Iden
   package let accessLimit: GatewayPermissionMode
   package let ended: Bool
   package let fullAccessConsent: GatewayFullAccessConsent?
+  package var profile: GatewayControlProfile? = nil
 }

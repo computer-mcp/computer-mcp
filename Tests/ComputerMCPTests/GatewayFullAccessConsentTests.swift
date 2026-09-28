@@ -5,6 +5,36 @@ import Testing
 @testable import ComputerMCP
 
 struct GatewayFullAccessConsentTests {
+  @Test(arguments: [false, true])
+  func changedRestrictedProfileRejectsAnOpenFullAccessConfirmation(persisted: Bool) throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let original = ProfileGrant(
+      id: .chatGPTOperate, capabilityIDs: ["file.read"], workspaceIDs: ["fixture"],
+      allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+    if persisted { try database.saveProfile(original) }
+    let session = GatewayControlSession(
+      principalID: "verified-client", profileID: original.id, caller: .secureTunnel,
+      database: database, profile: .init(grant: original, persisted: persisted))
+    let reviewed = session.snapshot
+    var changed = original
+    changed.workspaceIDs.insert("another-project")
+    if persisted {
+      try database.saveProfile(changed, expectedRevision: original.authorizationRevision)
+    } else {
+      session.updateProfile(.init(grant: changed, persisted: false))
+    }
+    #expect(throws: (any Error).self) {
+      try session.approveFullAccess(expectedRevision: reviewed.revision)
+    }
+    #expect(session.snapshot.revision > reviewed.revision)
+    #expect(session.snapshot.profile?.grant.workspaceIDs == changed.workspaceIDs)
+    #expect(session.snapshot.fullAccessConsent == nil)
+    #expect(try database.clientTrusts().isEmpty)
+    #expect(try database.auditEvents().isEmpty)
+    _ = try session.approveFullAccess(expectedRevision: session.snapshot.revision)
+    #expect(session.snapshot.fullAccessConsent?.lifetime == .thisSession)
+  }
+
   @Test
   func configuredProfilePublicationRevokesConsentForRetainedContexts() throws {
     let database = try GatewayDatabase(inMemory: ())

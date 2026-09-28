@@ -23,7 +23,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
       case .chatgpt: "ChatGPT"
       case .cloudflare: "Cloudflare"
       case .workspaces: "Workspaces"
-      case .profiles: "Profiles"
+      case .profiles: "Client access"
       case .providers: "Providers"
       case .plugins: "Plugins"
       case .tunnels: "Tunnels"
@@ -183,8 +183,6 @@ struct ProfileSummary: Identifiable, Sendable {
   var isEnabled: Bool
   var riskLevel: RiskLevel
   var permitsRemoteAccess: Bool
-  var supportsFullShell: Bool
-  var fullShellEnabled: Bool
   var permissions: ProfileGrant
 }
 
@@ -404,7 +402,7 @@ struct DiagnosticsSnapshot: Sendable {
 }
 
 @MainActor
-protocol AppControlPlane: PluginManaging, MCPRegistrationManaging {
+protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging {
   func startApplication() async throws
   func maintainApplication() async
   func stopApplication() async
@@ -437,7 +435,6 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging {
   ) async throws
 
   func activateProfile(id: String) async throws
-  func setFullShellEnabled(_ enabled: Bool, profileID: String) async throws
   func updateProfilePermissions(_ grant: ProfileGrant) async throws
 
   func startProvider(id: String) async throws
@@ -558,9 +555,6 @@ final class UnavailableControlPlane: AppControlPlane {
     throw unavailable()
   }
   func activateProfile(id: String) async throws { throw unavailable() }
-  func setFullShellEnabled(_ enabled: Bool, profileID: String) async throws {
-    throw unavailable()
-  }
   func updateProfilePermissions(_ grant: ProfileGrant) async throws { throw unavailable() }
   func startProvider(id: String) async throws { throw unavailable() }
   func stopProvider(id: String) async throws { throw unavailable() }

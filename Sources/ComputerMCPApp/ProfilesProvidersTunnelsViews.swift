@@ -9,8 +9,8 @@ struct ProfilesView: View {
   var body: some View {
     VStack(spacing: 0) {
       WorkspaceHeader(
-        "Profiles",
-        subtitle: "Permissions for selected tools, workspaces, and connections"
+        "Client access",
+        subtitle: "Choose what connected clients can do"
       ) {
         RefreshButton {
           model.refresh(.profiles)
@@ -19,29 +19,12 @@ struct ProfilesView: View {
 
       Divider()
 
-      switch model.profiles {
-      case .idle, .loading:
-        LoadingWorkspaceView(title: "Loading profiles")
-      case .failed(let message):
-        FailedWorkspaceView(message: message) {
-          model.refresh(.profiles)
-        }
-      case .loaded(let profiles) where profiles.isEmpty:
-        EmptyWorkspaceView(
-          title: "No profiles configured",
-          detail: "Add a validated profile to the Computer MCP configuration.",
-          systemImage: "person.badge.key"
-        )
-      case .loaded(let profiles):
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(profiles) { profile in
-              profileRow(profile)
-              Divider()
-            }
-          }
-          .padding(.horizontal, 16)
-        }
+      ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+          ClientAccessView(model: model.clientAccess)
+          Divider()
+          profileDefaults
+        }.padding(16)
       }
     }
     .sheet(item: $editingProfile) { profile in
@@ -51,36 +34,35 @@ struct ProfilesView: View {
         save: { try await model.updateProfilePermissions($0) })
     }
     .alert(item: $model.pendingProfileConfirmation) { confirmation in
-      switch confirmation.kind {
-      case .activate:
-        Alert(
-          title: AppLocalization.verbatimText(
-            AppLocalization.formatted(
-              "Activate %@?",
-              confirmation.profile.displayName
-            )
-          ),
-          message: Text(
-            "New connections use this profile. Existing connections keep their current profile; active work is not stopped.",
-            bundle: AppLocalization.resourceBundle
-          ),
-          primaryButton: .destructive(Text("Activate")) {
-            model.activateProfile(id: confirmation.profile.id)
-          },
-          secondaryButton: .cancel()
-        )
-      case .enableFullShell:
-        Alert(
-          title: Text("Enable Full Shell?"),
-          message: Text(
-            "Full Shell gives authorized callers the current macOS user's effective file, process, network, and credential access. Workspace grants are not a containment boundary while it is enabled."
-          ),
-          primaryButton: .destructive(Text("Enable Full Shell")) {
-            model.setFullShellEnabled(true, profileID: confirmation.profile.id)
-          },
-          secondaryButton: .cancel()
-        )
+      Alert(
+        title: AppLocalization.verbatimText(
+          AppLocalization.formatted("Activate %@?", confirmation.profile.displayName)),
+        message: Text(
+          "New connections use this profile. Existing connections keep their current profile; active work is not stopped.",
+          bundle: AppLocalization.resourceBundle),
+        primaryButton: .destructive(Text("Activate")) {
+          model.activateProfile(id: confirmation.profile.id)
+        },
+        secondaryButton: .cancel())
+    }
+  }
+
+  @ViewBuilder
+  private var profileDefaults: some View {
+    DisclosureGroup {
+      switch model.profiles {
+      case .idle, .loading:
+        LoadingWorkspaceView(title: "Loading profiles")
+      case .failed(let message):
+        FailedWorkspaceView(message: message) { model.refresh(.profiles) }
+      case .loaded(let profiles):
+        ForEach(profiles) { profile in
+          profileRow(profile)
+          Divider()
+        }
       }
+    } label: {
+      Text("Connection defaults", bundle: AppLocalization.resourceBundle).font(.headline)
     }
   }
 
@@ -120,8 +102,6 @@ struct ProfilesView: View {
 
       Text(verbatim: AppLocalization.string(profile.summary))
         .foregroundStyle(.secondary)
-      Text(verbatim: AppLocalization.string(profile.permissions.confirmationPolicy.permissionLabel))
-        .font(.caption).foregroundStyle(.secondary)
 
       HStack(spacing: 18) {
         Label {
@@ -135,26 +115,6 @@ struct ProfilesView: View {
         }
         .foregroundStyle(.secondary)
 
-        if profile.supportsFullShell {
-          Toggle(
-            "Full Shell",
-            isOn: Binding(
-              get: { profile.fullShellEnabled },
-              set: { enabled in
-                model.requestFullShellChange(enabled, profile: profile)
-              }
-            )
-          )
-          .toggleStyle(.switch)
-          .disabled(model.isActionRunning("profile.shell.\(profile.id)"))
-          .help(
-            AppLocalization.string(
-              profile.permitsRemoteAccess
-                ? "Arbitrary shell execution for authorized remote callers"
-                : "Arbitrary shell execution for this local profile"
-            )
-          )
-        }
       }
       .font(.caption)
     }

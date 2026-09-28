@@ -102,12 +102,18 @@ Computer MCP makes two separate decisions:
 2. **Action consent:** If host policy requires confirmation, has the local user
    approved this exact operation?
 
-Approval never expands policy. A denied capability cannot become allowed just
-because someone clicks Approve. `shell.run`, generic CLI execution, process
-spawning, workspace writes, destructive operations, and Full Shell remain off
-unless the active configuration grants the exact path. Credentials stay in the
-signed App's macOS Data Protection Keychain; examples, diagnostics, logs, and
-audit rows keep only placeholders or redacted summaries.
+In the App's **Client access** page, review connected clients and explicitly
+grant Full Access, defaulting to **This Session**. Full Access permits arbitrary
+execution as your macOS user; workspaces provide project context, not a sandbox.
+**Always Allow this Client** is a separate choice. You can downgrade or end a
+connection's access and separately revoke saved client approvals. Access changes
+apply to new requests without cancelling work already started.
+
+An individual action confirmation never expands the client's current access.
+Restricted Access uses its selected tools and workspaces and prohibits arbitrary
+execution. Credentials stay in the signed App's macOS Data Protection Keychain;
+examples, diagnostics, logs, and audit rows keep only placeholders or redacted
+summaries.
 
 The optional Codex plugin follows Codex's own configuration and approval
 model, including native Full Access defaults and explicit overrides. The host

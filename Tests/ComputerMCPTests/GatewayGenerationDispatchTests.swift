@@ -9,6 +9,95 @@ import Testing
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
   @Test
+  func ownerConsentPreservesAnUnadmittedExternalManifestEdit() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect()
+    do {
+      let scope = try #require(await fixture.service.controlSessions().first)
+      let manifest = fixture.control.directories.manifest
+      let external = "schema_version = 999\n"
+      try external.write(to: manifest, atomically: true, encoding: .utf8)
+      await #expect(throws: AtomicManifestStoreError.staleDigest) {
+        _ = try await fixture.service.approveControlSession(
+          id: scope.id, expectedRevision: scope.revision, enableShellFacility: true)
+      }
+      #expect(try String(contentsOf: manifest, encoding: .utf8) == external)
+      #expect(try await !fixture.control.activeConfiguration().policy.shellEnabled)
+      #expect(await fixture.service.controlSessions().first?.fullAccessConsent == nil)
+      #expect(try fixture.database.clientTrusts().isEmpty)
+      await client.disconnect()
+      await fixture.service.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func explicitOwnerConsentEnablesShellWithLivePublication(http: Bool) async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.localMCP, .cloudflareTunnel])
+    let before = try await fixture.control.activeConfiguration()
+    let profiles = try fixture.database.profiles()
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.control, gatewayService: fixture.service)
+    var origin: GatewayHTTPRuntime?
+    let client: GatewayClientSession
+    if http {
+      let source = try await fixture.service.makeHTTPSessions(
+        profileID: .chatGPTOperate, trace: .init(transport: "http"))
+      let runtime = GatewayHTTPRuntime(
+        configuration: before, source: .managed(source), host: "127.0.0.1", port: 0,
+        publicBaseURL: nil, accessToken: "fixture-credential")
+      origin = runtime
+      try await runtime.startListening()
+      let port = try #require(await runtime.boundPort())
+      client = try await GatewayClientSession.connectHTTP(
+        endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp")),
+        accessToken: "fixture-credential")
+    } else {
+      try await fixture.service.start(profile: .chatGPTOperate)
+      client = try await fixture.connect()
+    }
+    do {
+      let pid = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("retained")])))
+      let owner = try #require(try await owners(client, kind: "mcpResource").first)
+      let scope = try #require(await operations.controlSessions().first)
+      #expect(!before.policy.shellEnabled)
+      #expect(try await !client.listToolNames().contains("shell.run"))
+      let approved = try await operations.approveControlSession(
+        id: scope.id, expectedRevision: scope.revision, enableShellFacility: true)
+      #expect(approved.fullAccessConsent?.lifetime == .thisSession)
+      var expected = before
+      expected.policy.shellEnabled = true
+      #expect(try await fixture.control.activeConfiguration() == expected)
+      #expect(try fixture.database.profiles() == profiles)
+      #expect(try fixture.database.clientTrusts().isEmpty)
+      #expect(try await client.listToolNames().contains("shell.run"))
+      #expect(alive(pid))
+      let retained = try await call(
+        client, owner: owner, tool: "fixture.inspect", arguments: ["handle": .string("retained")])
+      #expect(value(retained, "pid") == .integer(Int64(pid)))
+      await client.disconnect()
+      await origin?.stop()
+      await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await origin?.stop()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test
   func managedHTTPPublicationPreservesOwnedWorkAndIndependentListenerConsent() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }

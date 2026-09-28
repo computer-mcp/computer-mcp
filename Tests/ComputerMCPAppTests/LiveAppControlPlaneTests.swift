@@ -8,6 +8,74 @@ import Testing
 @MainActor
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
+  @Test
+  func incompatibleCallerConsentCannotEnableTheShellFacility() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      try await fixture.app.startApplication()
+      try await fixture.app.startGateway()
+      let client = try await GatewayClientSession.connectSocket(socketURL: fixture.socketURL)
+      let snapshot = try #require(try await fixture.app.fetchClientAccess().sessions.first)
+      #expect(snapshot.profile?.grant.allowedCallers.contains(snapshot.caller) == false)
+      let before = try await fixture.controlPlane.activeConfiguration()
+      #expect(!before.policy.shellEnabled)
+      await #expect(throws: (any Error).self) {
+        try await fixture.app.grantClientFullAccess(
+          id: snapshot.id, lifetime: .thisSession, expectedRevision: snapshot.revision,
+          expectedTrustRevision: 0)
+      }
+      #expect(try await fixture.controlPlane.activeConfiguration() == before)
+      #expect(try await fixture.app.fetchClientAccess().sessions.first?.fullAccessConsent == nil)
+      await client.disconnect()
+    }
+  }
+
+  @Test
+  func ownerPresentationControlsTheConnectedSessionAndSeparatePersistentTrust() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let configuration = GatewayConfiguration(
+        profiles: [
+          .init(
+            id: .chatGPTOperate, capabilities: ["file.read"], workspaces: ["*"],
+            allowedCallers: [.localMCP], mode: .workspaceOperations)
+        ], workspaceDirectory: fixture.root)
+      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+      try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
+      try await fixture.app.startApplication()
+      try await fixture.app.registerWorkspace(at: fixture.root)
+      try await fixture.app.startGateway()
+      let client = try await GatewayClientSession.connectSocket(socketURL: fixture.socketURL)
+      do {
+        let initial = try #require(try await fixture.app.fetchClientAccess().sessions.first)
+        #expect(initial.fullAccessConsent == nil)
+        try await fixture.app.grantClientFullAccess(
+          id: initial.id, lifetime: .thisSession, expectedRevision: initial.revision,
+          expectedTrustRevision: 0)
+        #expect(try await client.listToolNames().contains("shell.run"))
+        let approved = try #require(try await fixture.app.fetchClientAccess().sessions.first)
+        try await fixture.app.limitClientAccess(
+          id: approved.id, mode: .readOnly, expectedRevision: approved.revision)
+        #expect(try await !client.listToolNames().contains("shell.run"))
+        let limited = try #require(try await fixture.app.fetchClientAccess().sessions.first)
+        try await fixture.app.grantClientFullAccess(
+          id: limited.id, lifetime: .alwaysAllowClient, expectedRevision: limited.revision,
+          expectedTrustRevision: 0)
+        let trusted = try await fixture.app.fetchClientAccess()
+        let trust = try #require(trusted.trusts.first)
+        #expect(trust.fullAccessAllowed)
+        #expect(try await client.listToolNames().contains("shell.run"))
+        try await fixture.app.revokeClientTrust(id: trust.id, expectedRevision: trust.revision)
+        #expect(try await !client.listToolNames().contains("shell.run"))
+        let revoked = try #require(try await fixture.app.fetchClientAccess().sessions.first)
+        try await fixture.app.endClientAccess(id: revoked.id, expectedRevision: revoked.revision)
+        #expect(try await client.listToolNames().isEmpty)
+        await client.disconnect()
+      } catch {
+        await client.disconnect()
+        throw error
+      }
+    }
+  }
+
   @Test(arguments: [false, true])
   func applicationStopJoinsOwnerWorkWithEitherGatewayState(gatewayRunning: Bool) async throws {
     try await withAppControlPlaneFixture { fixture in

@@ -270,11 +270,12 @@ package struct AppControlPlaneOperations: Sendable {
 
   package func approveControlSession(
     id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
-    expectedRevision: Int64, expectedTrustRevision: Int64 = 0
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
+    enableShellFacility: Bool = false
   ) async throws -> GatewayControlSessionSnapshot {
     try await gatewayService.approveControlSession(
       id: id, lifetime: lifetime, expectedRevision: expectedRevision,
-      expectedTrustRevision: expectedTrustRevision)
+      expectedTrustRevision: expectedTrustRevision, enableShellFacility: enableShellFacility)
   }
 
   package func clientTrusts() throws -> [GatewayClientTrust] {

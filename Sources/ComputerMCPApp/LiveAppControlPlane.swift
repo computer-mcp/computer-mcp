@@ -196,11 +196,38 @@ final class LiveAppControlPlane: AppControlPlane {
         isEnabled: grant.id != .localAdmin,
         riskLevel: grant.mode.riskLevel,
         permitsRemoteAccess: grant.allowedCallers.contains(where: \.isRemote),
-        supportsFullShell: grant.supportsFullShell,
-        fullShellEnabled: grant.fullShellEnabled,
         permissions: grant
       )
     }
+  }
+
+  func fetchClientAccess() async throws -> ClientAccessSnapshot {
+    let sessions = await operations.controlSessions()
+    return try ClientAccessSnapshot(sessions: sessions, trusts: operations.clientTrusts())
+  }
+
+  func grantClientFullAccess(
+    id: String, lifetime: GatewayFullAccessLifetime,
+    expectedRevision: Int64, expectedTrustRevision: Int64
+  ) async throws {
+    _ = try await operations.approveControlSession(
+      id: id, lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision, enableShellFacility: true)
+  }
+
+  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+    async throws
+  {
+    _ = try await operations.limitControlSession(
+      id: id, to: mode, expectedRevision: expectedRevision)
+  }
+
+  func endClientAccess(id: String, expectedRevision: Int64) async throws {
+    try await operations.endControlSession(id: id, expectedRevision: expectedRevision)
+  }
+
+  func revokeClientTrust(id: String, expectedRevision: Int64) async throws {
+    try operations.revokeClientTrust(id: id, expectedRevision: expectedRevision)
   }
 
   func fetchProviders() async throws -> [ProviderSummary] {
@@ -556,20 +583,6 @@ final class LiveAppControlPlane: AppControlPlane {
     fileLogger.append(
       .info,
       event: "profile.activated",
-      fields: ["profile_id": profile.rawValue]
-    )
-  }
-
-  func setFullShellEnabled(_ enabled: Bool, profileID: String) async throws {
-    guard let profile = GatewayProfileID(rawValue: profileID) else {
-      throw AppControlPlaneError.unavailable(
-        AppLocalization.formatted("Unknown gateway profile: %@", profileID)
-      )
-    }
-    _ = try await operations.setFullShellEnabled(enabled, profileID: profile)
-    fileLogger.append(
-      .warning,
-      event: enabled ? "profile.full_shell.enabled" : "profile.full_shell.disabled",
       fields: ["profile_id": profile.rawValue]
     )
   }
@@ -1231,7 +1244,7 @@ extension LaunchAtLoginState {
 }
 
 extension GatewayProfileID {
-  fileprivate var displayName: String {
+  var displayName: String {
     if self == .chatGPTObserve { return "ChatGPT Observe" }
     if self == .chatGPTOperate { return "ChatGPT Operate" }
     if self == .cloudflareObserve { return "Cloudflare Observe" }

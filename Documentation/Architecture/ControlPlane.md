@@ -71,6 +71,20 @@ main-thread dispatch before entering macOS AX/AppKit behavior.
 
 ## Adapter coverage
 
+The App's Client access page presents connected socket/HTTP sessions separately
+from saved client approvals. Its ObservableObject feature model captures the
+reviewed session and trust revisions; refresh cannot rebase an open confirmation.
+The menu shows current control status and directs the owner to that page. A failed
+refresh remains unavailable while retaining the last visible records.
+
+Explicit owner Full Access consent can enable the Shell facility through prepared
+manifest publication before granting the selected session. The admitted manifest
+digest prevents overwriting external edits; session and trust checks still precede
+the authority transaction. A failed consent grants no client authority even if a
+facility update already committed. Profile authorization changes advance session
+revisions before initial consent as well as after it. The standalone HTTP registry
+does not acquire an App owner merely by using the same authorization types.
+
 Stable noninteractive App management should be exposed by the CLI. Operations
 that inherently require local visual interaction, such as choosing a folder in
 an open panel or presenting a macOS TCC prompt, remain UI interactions; their

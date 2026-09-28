@@ -502,12 +502,31 @@ package actor AppGatewayService {
 
   package func approveControlSession(
     id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
-    expectedRevision: Int64, expectedTrustRevision: Int64 = 0
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
+    enableShellFacility: Bool = false
   ) async throws -> GatewayControlSessionSnapshot {
-    guard try await controlPlane.activeConfiguration().policy.shellEnabled else {
-      throw AppControlPlaneServiceError.fullShellManifestDisabled
-    }
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
+    try record.session.requireRevision(expectedRevision)
+    var configuration = try await controlPlane.activeConfiguration()
+    try record.session.requireRevision(expectedRevision)
+    if !configuration.policy.shellEnabled {
+      guard enableShellFacility else { throw AppControlPlaneServiceError.fullShellManifestDisabled }
+      guard
+        record.session.snapshot.profile?.grant.allowedCallers.contains(record.key.caller) == true
+      else {
+        throw GatewayToolError.invalidArguments(
+          "[policy.control_session_denied] The client is not admitted by its profile.")
+      }
+      let trust = try controlPlane.database.clientTrust(
+        principalID: record.key.principalID, profileID: record.key.profileID,
+        caller: record.key.caller)
+      guard (trust?.revision ?? 0) == expectedTrustRevision else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      let digest = try controlPlane.manifestStore.admittedDigest(for: configuration)
+      configuration.policy.shellEnabled = true
+      _ = try await changeManifest(configuration.exportedTOML(), expectedDigest: digest)
+    }
     return try record.session.approveFullAccess(
       lifetime: lifetime, expectedRevision: expectedRevision,
       expectedTrustRevision: expectedTrustRevision)

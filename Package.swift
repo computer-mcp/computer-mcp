@@ -2,10 +2,32 @@
 
 import PackageDescription
 
-let platformTargets: [Target] = [
-  .target(name: "ComputerMCPPlatform"),
-  .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
-]
+let subprocessDependency: Package.Dependency =
+  .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0")
+
+#if os(Windows)
+  let platformDependencies: [Target.Dependency] = [
+    .product(name: "Subprocess", package: "swift-subprocess")
+  ]
+  let platformTestDependencies: [Target.Dependency] = [
+    "ComputerMCPPlatform", "PlatformProcessFixture",
+  ]
+  let platformFixtures: [Target] = [
+    .executableTarget(
+      name: "PlatformProcessFixture", dependencies: platformDependencies,
+      path: "Tests/PlatformProcessFixture")
+  ]
+#else
+  let platformDependencies: [Target.Dependency] = []
+  let platformTestDependencies: [Target.Dependency] = ["ComputerMCPPlatform"]
+  let platformFixtures: [Target] = []
+#endif
+
+let platformTargets: [Target] =
+  [
+    .target(name: "ComputerMCPPlatform", dependencies: platformDependencies),
+    .testTarget(name: "ComputerMCPPlatformTests", dependencies: platformTestDependencies),
+  ] + platformFixtures
 
 #if os(macOS)
   let package = Package(
@@ -28,7 +50,7 @@ let platformTargets: [Target] = [
       .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.0"),
       .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
       .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
-      .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0"),
+      subprocessDependency,
       .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
       .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0"),
@@ -79,7 +101,8 @@ let platformTargets: [Target] = [
     ]
   )
 #elseif os(Windows)
-  let package = Package(name: "computer-mcp", targets: platformTargets)
+  let package = Package(
+    name: "computer-mcp", dependencies: [subprocessDependency], targets: platformTargets)
 #else
   #error("Computer MCP builds its App on macOS and its platform core on Windows.")
 #endif

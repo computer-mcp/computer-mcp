@@ -94,6 +94,19 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
   PE compatibility, launch permission, trust or protocol health. The Windows
   CI job compiles and tests this target against native files in debug and
   release configurations; broader host platform support has separate gates.
+- Keep finite command inputs and results in the platform target. macOS adapters
+  retain their existing process and managed-runtime ownership. The Windows
+  adapter reuses the pinned swift-subprocess dependency for startup and byte IO,
+  assigning its suspended child to an unnamed, non-inheritable Job Object before
+  resuming it. Root exit, timeout and cancellation terminate owned descendants;
+  both output streams drain and job accounting confirms no active processes
+  before a result returns. Capture retains a bounded prefix and a truncation
+  flag per stream. Async cancellation joins an uncancelled IO owner so pending
+  native reads finish before buffers are released. Synchronous compatibility
+  calls block and belong on a blocking executor. Explicit child environments
+  merge case-insensitively; an absent PATH stays empty. Windows calls use the
+  existing CLI bounds of 1–3,600,000 ms and 1–32,000,000 bytes per stream. This
+  internal finite-command adapter does not provide Windows gateway sessions.
 - Keep workspace path resolution in the platform target. macOS uses its existing
   `lstat`/`realpath` ancestor checks. Windows resolves the nearest existing ancestor
   through native handles, then checks volume and 128-bit file identities along

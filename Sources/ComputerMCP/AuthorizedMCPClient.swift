@@ -157,7 +157,8 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       )
     }
     try authorization?.validate(
-      reference: reference, risk: policy.configuration.mcpRisk(for: reference).raised(to: floor))
+      reference: reference, risk: policy.configuration.mcpRisk(for: reference).raised(to: floor),
+      hostServiceAction: tool.hostServiceAction)
   }
 
   func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int) throws

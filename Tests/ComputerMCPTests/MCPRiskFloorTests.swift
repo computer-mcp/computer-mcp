@@ -6,6 +6,116 @@ import os
 
 struct MCPRiskFloorTests {
   @Test
+  func hostActionsEnforceTheirOwnRiskFloorAndRejectUnknownDeclarations() throws {
+    for (action, risk) in [
+      ("diagnostics.snapshot", CapabilityRisk.readOnly),
+      ("workspaces.provision", .workspaceWrite), ("workspaces.remove", .destructive),
+    ] {
+      let tool = MCPTool(
+        name: "fixture", description: "Fixture", inputSchema: .object([:]),
+        meta: .object([
+          "io.github.computer-mcp/risk": .string("read-only"),
+          "io.github.computer-mcp/host-action": .string(action),
+        ]))
+      #expect(try tool.declaredRiskFloor == risk)
+    }
+    for value in [JSONValue.null, .bool(true), .object([:]), .string("workspace.admin")] {
+      let tool = MCPTool(
+        name: "fixture", description: "Fixture", inputSchema: .object([:]),
+        meta: .object(["io.github.computer-mcp/host-action": value]))
+      #expect(throws: (any Error).self) { try tool.declaredRiskFloor }
+    }
+  }
+
+  @Test(arguments: ["sync", "async", "detached"])
+  func sameRiskHostActionChangeCannotFollowAdmission(path: String) async throws {
+    let fixture = try RiskFixture(fullAccess: true, risk: .string("workspace-write"))
+    defer { fixture.remove() }
+    fixture.client.setAction(.string("workspaces.provision"))
+    fixture.client.changeActionAfterNextDiscovery(.string("diagnostics.snapshot"))
+    var args = arguments(for: "mcp.tools.call").objectValue!
+    args["wait_for_result"] = .bool(path != "detached")
+    args["request_id"] = .string("semantic-request")
+    do {
+      if path == "sync" {
+        _ = try fixture.runtime.callTool(name: "mcp.tools.call", arguments: .object(args))
+      } else {
+        _ = try await fixture.runtime.callToolAsync(
+          name: "mcp.tools.call", arguments: .object(args))
+      }
+      Issue.record("An action changed after host admission reached the downstream provider.")
+    } catch {
+      #expect(error.localizedDescription.contains("mcp.host_action_changed"), "\(error)")
+    }
+    #expect(fixture.client.calls == 0)
+    await fixture.runtime.shutdown()
+  }
+
+  @Test
+  func sameRiskHostActionChangeInvalidatesPreparedTicket() async throws {
+    let fixture = try RiskFixture(fullAccess: true, risk: .string("workspace-write"))
+    defer { fixture.remove() }
+    fixture.client.setAction(.string("workspaces.provision"))
+    let prepared = try fixture.runtime.callTool(
+      name: "operations.prepare",
+      arguments: .object([
+        "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
+      ]))
+    let ticket = try #require(
+      prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
+        .objectValue?["ticket_id"]?.stringValue)
+    #expect(try fixture.database.operationTicket(id: ticket)?.state == .prepared)
+    fixture.client.setAction(.string("diagnostics.snapshot"))
+    do {
+      _ = try await fixture.runtime.callToolAsync(
+        name: "operations.commit",
+        arguments: .object([
+          "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
+          "arguments": arguments(for: "mcp.tools.call"),
+        ]))
+      Issue.record("An unchanged risk must not let an approval change its semantic action.")
+    } catch {
+      #expect(error.localizedDescription.contains("operations.ticket_arguments_mismatch"))
+    }
+    #expect(try fixture.database.operationTicket(id: ticket)?.state == .prepared)
+    #expect(fixture.client.calls == 0)
+    await fixture.runtime.shutdown()
+  }
+
+  @Test(arguments: [false, true])
+  func consumedTicketCannotChangeActionBeforeTargetAdmission(asynchronous: Bool) async throws {
+    let fixture = try RiskFixture(fullAccess: true, risk: .string("workspace-write"))
+    defer { fixture.remove() }
+    fixture.client.setAction(.string("workspaces.provision"))
+    let prepared = try fixture.runtime.callTool(
+      name: "operations.prepare",
+      arguments: .object([
+        "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
+      ]))
+    let ticket = try #require(
+      prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
+        .objectValue?["ticket_id"]?.stringValue)
+    fixture.client.changeActionAfterNextDiscovery(.string("diagnostics.snapshot"))
+    let args = JSONValue.object([
+      "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
+      "arguments": arguments(for: "mcp.tools.call"),
+    ])
+    do {
+      if asynchronous {
+        _ = try await fixture.runtime.callToolAsync(name: "operations.commit", arguments: args)
+      } else {
+        _ = try fixture.runtime.callTool(name: "operations.commit", arguments: args)
+      }
+      Issue.record("A consumed ticket changed its reviewed action before target admission.")
+    } catch {
+      #expect(error.localizedDescription.contains("operations.ticket_arguments_mismatch"))
+    }
+    #expect(fixture.client.calls == 0)
+    #expect(try fixture.database.operationTicket(id: ticket)?.state == .failed)
+    await fixture.runtime.shutdown()
+  }
+
+  @Test
   func pendingReceiptReadsUseCurrentGrantWithoutProviderDiscovery() throws {
     let server = MCPServerConfig(
       id: "vendor", transport: .stdio, command: "/bin/cat", allowAnyTool: true,
@@ -283,6 +393,8 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
     var raiseAfterDiscovery = false
     var discoverySuspended = false
     var calls = 0
+    var action: JSONValue?
+    var nextAction: JSONValue?
   }
   private let state: OSAllocatedUnfairLock<State>
   private let scopedHighRisk: String?
@@ -292,6 +404,10 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
   }
   var calls: Int { state.withLock { $0.calls } }
   func setRisk(_ risk: JSONValue) { state.withLock { $0.risk = risk } }
+  func setAction(_ action: JSONValue) { state.withLock { $0.action = action } }
+  func changeActionAfterNextDiscovery(_ action: JSONValue) {
+    state.withLock { $0.nextAction = action }
+  }
   func raiseAfterNextDiscovery() { state.withLock { $0.raiseAfterDiscovery = true } }
   func suspendDiscovery() { state.withLock { $0.discoverySuspended = true } }
   func makeScopedClient(
@@ -305,6 +421,12 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
         throw GatewayToolError.executionFailed("Provider is waiting for an active operation.")
       }
       let risk = state.risk
+      var metadata = ["io.github.computer-mcp/risk": risk]
+      metadata["io.github.computer-mcp/host-action"] = state.action
+      if let nextAction = state.nextAction {
+        state.action = nextAction
+        state.nextAction = nil
+      }
       if state.raiseAfterDiscovery {
         state.risk = .string("full-shell")
         state.raiseAfterDiscovery = false
@@ -313,7 +435,7 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
         .init(
           name: "inspect", description: "Fixture",
           inputSchema: .object(["type": .string("object")]),
-          meta: .object(["io.github.computer-mcp/risk": risk]))
+          meta: .object(metadata))
       ]
     }
   }

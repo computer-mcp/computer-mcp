@@ -45,6 +45,7 @@ struct MCPHostInvocationTests {
         Self.payload(replay).objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
       #expect(original["tool"] == .string("background"))
       #expect(original["registration_id"] == .string("provider"))
+      #expect(original["host_action"] == .string("diagnostics.snapshot"))
       _ = try await runtime.callToolAsync(
         name: "mcp.tools.call", arguments: Self.arguments(tool: "derive"))
       try await Self.waitForResourceCount(1, runtime: runtime)
@@ -62,7 +63,7 @@ struct MCPHostInvocationTests {
       // Background context is not an active operation-ticket mutation window.
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(
-          workspaceID: "fixture", origin: "provider", methods: ["background"])
+          workspaceID: "fixture", origin: "provider", action: .diagnosticsSnapshot)
       }
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(workspaceID: "fixture", origin: "other", id: retainedID)
@@ -278,6 +279,8 @@ struct MCPHostInvocationTests {
             if work_enabled:
                 for tool in result["tools"]:
                     tool["_meta"] = {"io.github.computer-mcp/work": {"format_version": 1, "uri": work_uri}}
+                    if tool["name"] == "background":
+                        tool["_meta"]["io.github.computer-mcp/host-action"] = "diagnostics.snapshot"
         elif method == "resources/read":
             assert work_enabled and params["uri"] == work_uri
             result = {"contents": [{"uri": work_uri, "mimeType": "application/json", "text": json.dumps({"format_version": 1, "instance_id": instance, "revision": revision, "resources": resources})}]}

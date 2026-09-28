@@ -21,17 +21,18 @@ extension MCPTool {
   /// Publisher metadata can raise host policy, but cannot grant authority or lower it.
   var declaredRiskFloor: CapabilityRisk? {
     get throws {
-      guard let meta else { return nil }
+      let actionFloor = try hostServiceAction?.minimumRisk
+      guard let meta else { return actionFloor }
       guard let object = meta.objectValue else {
         throw GatewayToolError.invalidArguments(
           "[mcp.invalid_risk_metadata] Tool metadata must be an object.")
       }
-      guard let value = object["io.github.computer-mcp/risk"] else { return nil }
+      guard let value = object["io.github.computer-mcp/risk"] else { return actionFloor }
       guard let raw = value.stringValue, let risk = CapabilityRisk(rawValue: raw) else {
         throw GatewayToolError.invalidArguments(
           "[mcp.invalid_risk_metadata] The tool declares an unsupported risk classification.")
       }
-      return risk
+      return risk.raised(to: actionFloor)
     }
   }
 }
@@ -48,19 +49,29 @@ struct MCPInvocationAdmission: Sendable {
 
   let reference: MCPToolReference
   let risk: CapabilityRisk
+  let hostServiceAction: MCPHostServiceAction?
   let hostInvocationID: UUID?
 
   init?(descriptor: CapabilityDescriptor, hostInvocationID: UUID? = nil) {
     guard let reference = descriptor.mcpReference else { return nil }
     self.reference = reference
     risk = descriptor.risk
+    hostServiceAction = descriptor.hostServiceAction
     self.hostInvocationID = hostInvocationID
   }
 
-  func validate(reference: MCPToolReference, risk: CapabilityRisk) throws {
+  func validate(
+    reference: MCPToolReference, risk: CapabilityRisk,
+    hostServiceAction: MCPHostServiceAction?
+  ) throws {
     guard self.reference == reference, self.risk.raised(to: risk) == self.risk else {
       throw GatewayToolError.invalidArguments(
         "[mcp.risk_changed] The downstream tool risk changed after host authorization. Retry through the current host policy and approval flow."
+      )
+    }
+    guard self.hostServiceAction == hostServiceAction else {
+      throw GatewayToolError.invalidArguments(
+        "[mcp.host_action_changed] The downstream host action changed after authorization. Retry through the current policy and approval flow."
       )
     }
   }

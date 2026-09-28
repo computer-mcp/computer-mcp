@@ -391,7 +391,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     bound.workspaceID = workspaceID
     let currentGrant = try currentHostGrant()
     return try listTools().filter { tool in
-      guard !tool.name.hasPrefix("codex."), let descriptor = try? descriptor(named: tool.name),
+      guard let descriptor = try? descriptor(named: tool.name),
         !descriptor.localOnly,
         descriptor.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true
       else { return false }
@@ -526,7 +526,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func validateHostTarget(
     name: String, arguments: [String: JSONValue], context: ExecutionContext, depth: Int
   ) throws {
-    guard depth < 8, !name.hasPrefix("codex."), !name.hasPrefix("host.") else {
+    guard depth < 8, !name.hasPrefix("host.") else {
       throw Self.invalid(
         code: "policy.host_recursion_denied",
         message: "A host callback cannot enter a domain runtime recursively.")
@@ -589,11 +589,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   func requireHostInvocation(
-    workspaceID: String, origin: String, methods: Set<String>,
+    workspaceID: String, origin: String, action: MCPHostServiceAction,
     matching: (MCPHostInvocation) -> Bool = { _ in true }
   ) throws -> MCPHostInvocation {
     try requireHostInvocation(workspaceID: workspaceID, origin: origin) {
-      methods.contains($0.reference.toolName) && matching($0)
+      $0.admittedCapability.hostServiceAction == action && matching($0)
     }
   }
 
@@ -1127,6 +1127,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       auditContext = routed.context
       inputDigest = try Self.inputDigest(tool: name, arguments: routed.arguments)
       let authorizedGrant = try authorize(descriptor, context: routed.context)
+      if bypassOperationTicket {
+        try validateExecutingOperation(
+          descriptor: descriptor, arguments: routed.arguments, context: routed.context,
+          grant: authorizedGrant, linkage: operationLinkage)
+      }
       if !bypassOperationTicket, name != "operations.commit", name != "operations.prepare",
         authorizedGrant.confirmationPolicy.requiresConfirmation(
           for: effectiveOperationDescriptor(descriptor, arguments: routed.arguments).risk)
@@ -1258,6 +1263,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       auditContext = routed.context
       inputDigest = try Self.inputDigest(tool: name, arguments: routed.arguments)
       let authorizedGrant = try authorize(descriptor, context: routed.context)
+      if bypassOperationTicket {
+        try validateExecutingOperation(
+          descriptor: descriptor, arguments: routed.arguments, context: routed.context,
+          grant: authorizedGrant, linkage: operationLinkage)
+      }
       if !bypassOperationTicket, name != "operations.commit", name != "operations.prepare",
         authorizedGrant.confirmationPolicy.requiresConfirmation(
           for: effectiveOperationDescriptor(descriptor, arguments: routed.arguments).risk)
@@ -1585,6 +1595,38 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     )
   }
 
+  /// Target admission can rediscover provider semantics after consuming the ticket.
+  /// Consent remains bound to the exact descriptor reviewed before consumption.
+  private func validateExecutingOperation(
+    descriptor: CapabilityDescriptor, arguments: [String: JSONValue], context: ExecutionContext,
+    grant: ProfileGrant, linkage: OperationAuditLinkage?
+  ) throws {
+    guard let database, let linkage,
+      let ticket = try database.operationTicket(id: linkage.ticketID),
+      ticket.state == .executing, ticket.invocationID == linkage.invocationID,
+      ticket.invocationID == context.requestID, ticket.parentRequestID == linkage.parentRequestID,
+      ticket.capabilityID == descriptor.id, ticket.principalID == Self.principalID(for: context),
+      ticket.caller == context.caller, ticket.profileID == context.profileID,
+      ticket.workspaceID == context.workspaceID
+    else {
+      throw Self.invalid(
+        code: "operations.ticket_context_mismatch",
+        message: "The executing target no longer matches its consumed operation ticket.")
+    }
+    guard ticket.authorizationRevision == grant.authorizationRevision else {
+      throw Self.invalid(
+        code: "operations.authorization_changed",
+        message: "Authorization changed before the committed target was admitted.")
+    }
+    guard
+      try operationInputDigest(descriptor: descriptor, arguments: arguments) == ticket.inputDigest
+    else {
+      throw Self.invalid(
+        code: "operations.ticket_arguments_mismatch",
+        message: "The target action, arguments or provider changed after ticket consumption.")
+    }
+  }
+
   private func executeCommittedOperation(
     _ invocation: OperationInvocation
   ) throws -> JSONValue {
@@ -1899,7 +1941,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let workspaceID = routed.registryWorkspaceID,
       let router = providerRouters[workspaceID]
     else { throw GatewayRuntimeError.noWorkspaces }
-    descriptor.risk = try router.downstreamRisk(for: reference)
+    let admission = try router.downstreamPolicy(for: reference)
+    descriptor.risk = admission.risk
+    descriptor.hostServiceAction = admission.hostServiceAction
     return descriptor
   }
 

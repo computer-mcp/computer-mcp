@@ -178,7 +178,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private let source: @Sendable () throws -> [any GatewayToolProvider]
   private let reservedToolNames: Set<String>
   private let shutdownSource: @Sendable () async -> Void
-  private let mcpRiskResolver: (@Sendable (MCPToolReference) throws -> CapabilityRisk)?
+  private let mcpPolicyResolver: (@Sendable (MCPToolReference) throws -> MCPToolAdmissionPolicy)?
   private let retainsContinuation: @Sendable (MCPToolReference) -> Bool
   private let refreshCoordinator = GatewayCatalogRefreshCoordinator()
   private let changes = GatewayToolChangeBroadcaster()
@@ -192,14 +192,14 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     invalidations: AsyncStream<Void>? = nil,
     refreshInterval: Duration? = nil,
     reservedToolNames: Set<String> = [],
-    mcpRiskResolver: (@Sendable (MCPToolReference) throws -> CapabilityRisk)? = nil,
+    mcpPolicyResolver: (@Sendable (MCPToolReference) throws -> MCPToolAdmissionPolicy)? = nil,
     retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false },
     shutdownSource: @escaping @Sendable () async -> Void = {}
   ) throws {
     self.source = source
     self.reservedToolNames = reservedToolNames
     self.shutdownSource = shutdownSource
-    self.mcpRiskResolver = mcpRiskResolver
+    self.mcpPolicyResolver = mcpPolicyResolver
     self.retainsContinuation = retainsContinuation
     self.state = OSAllocatedUnfairLock(
       initialState: State(
@@ -254,7 +254,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
       refreshInterval: registry.hasReexportedMCPServers || registry.hasCLITrees
         ? .seconds(30) : nil,
       reservedToolNames: reservedToolNames,
-      mcpRiskResolver: { try registry.downstreamRisk(for: $0) },
+      mcpPolicyResolver: { try registry.downstreamPolicy(for: $0) },
       retainsContinuation: retainsContinuation,
       shutdownSource: { await registry.shutdown() }
     )
@@ -280,9 +280,9 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     }
   }
 
-  internal func downstreamRisk(for reference: MCPToolReference) throws -> CapabilityRisk {
-    guard let mcpRiskResolver else { throw GatewayToolError.unknownTool(reference.toolName) }
-    return try mcpRiskResolver(reference)
+  internal func downstreamPolicy(for reference: MCPToolReference) throws -> MCPToolAdmissionPolicy {
+    guard let mcpPolicyResolver else { throw GatewayToolError.unknownTool(reference.toolName) }
+    return try mcpPolicyResolver(reference)
   }
 
   internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {

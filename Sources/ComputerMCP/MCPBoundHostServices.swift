@@ -160,11 +160,11 @@ actor MCPBoundHostServices {
   }
 
   private func invocation(
-    _ methods: Set<String>, matching: (MCPHostInvocation) -> Bool = { _ in true }
+    _ action: MCPHostServiceAction, matching: (MCPHostInvocation) -> Bool = { _ in true }
   ) throws -> MCPHostInvocation {
     let invocation = try directory.resolve().requireHostInvocation(
       workspaceID: context.workspace.id, origin: origin,
-      methods: methods, matching: matching)
+      action: action, matching: matching)
     auditInvocation = invocation
     return invocation
   }
@@ -173,7 +173,7 @@ actor MCPBoundHostServices {
     guard let limit = args["limit"]?.intValue, (1...1000).contains(limit) else {
       throw MCPHostServiceError.denied("Diagnostic limit must be 1...1000.")
     }
-    _ = try invocation(["codex.diagnostics.snapshot"]) {
+    _ = try invocation(.diagnosticsSnapshot) {
       ($0.arguments["limit"]?.intValue ?? 100) >= limit
     }
     var execution = ExecutionContext(
@@ -236,6 +236,8 @@ actor MCPBoundHostServices {
       "authorization_revision": .integer(active.authorizationRevision),
       "capability_id": .string(active.upstreamName), "tool": .string(active.reference.toolName),
       "risk": .string(active.admittedCapability.risk.rawValue),
+      "host_action": active.admittedCapability.hostServiceAction.map { .string($0.rawValue) }
+        ?? .null,
       "arguments_digest": .string(try Self.digest(.object(active.arguments))),
       "ticket_id": active.ticketID.map(JSONValue.string) ?? .null,
     ])
@@ -270,7 +272,7 @@ actor MCPBoundHostServices {
 
   private func authorizeRemoval(_ args: [String: JSONValue]) throws -> JSONValue {
     let record = try derived(args)
-    let active = try invocation(["codex.worktree.remove.perform"]) {
+    let active = try invocation(.workspaceRemoval) {
       $0.arguments["managed_worktree_id"] == .string(record.id)
         && $0.arguments["expected_revision"]?.intValue == record.revision
         && $0.arguments["confirm_remove"] == .bool(true)
@@ -338,7 +340,7 @@ actor MCPBoundHostServices {
     guard record.state == "provisioning" else {
       throw MCPHostServiceError.denied("Registration requires a provisioning receipt.")
     }
-    return try invocation(["codex.worktree.provision.perform"]) {
+    return try invocation(.workspaceProvision) {
       $0.arguments["plan_id"] == .string(record.id)
         && $0.arguments["expected_revision"]?.intValue == record.revision - 1
         && $0.arguments["confirm_provision"] == .bool(true)
@@ -366,7 +368,8 @@ actor MCPBoundHostServices {
       context.verifiedPrincipalID == context.principalID,
       record.sourceWorkspaceID == context.workspace.id, record.sourceRoot == canonicalRoot,
       record.profileID == context.profileID.rawValue, record.principalID == context.principalID,
-      record.workspaceID == "codex-worktree-" + record.id,
+      record.workspaceID == "derived-workspace-" + record.id
+        || record.workspaceID == "codex-worktree-" + record.id,
       UUID(uuidString: record.id)?.uuidString.lowercased() == record.id
     else {
       throw MCPHostServiceError.denied("The derived receipt does not match this host scope.")

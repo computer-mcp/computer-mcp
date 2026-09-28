@@ -139,6 +139,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var tccServices: [String]
   package var mcpReference: MCPToolReference?
   package var equivalentCapabilityIDs: [String]?
+  package var hostServiceAction: MCPHostServiceAction?
 
   package init(
     id: String,
@@ -148,7 +149,8 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     usesNetwork: Bool = false,
     tccServices: [String] = [],
     mcpReference: MCPToolReference? = nil,
-    equivalentCapabilityIDs: [String]? = nil
+    equivalentCapabilityIDs: [String]? = nil,
+    hostServiceAction: MCPHostServiceAction? = nil
   ) {
     self.id = id
     self.risk = risk
@@ -158,6 +160,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     self.tccServices = tccServices
     self.mcpReference = mcpReference
     self.equivalentCapabilityIDs = equivalentCapabilityIDs
+    self.hostServiceAction = hostServiceAction
   }
 }
 

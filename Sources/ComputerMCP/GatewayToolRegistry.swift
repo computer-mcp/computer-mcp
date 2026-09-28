@@ -28031,11 +28031,12 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       workspaceRequirement: .optional,
       usesNetwork: true,
       mcpReference: reference,
-      equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference)
+      equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference),
+      hostServiceAction: try tool.hostServiceAction
     )
   }
 
-  internal func downstreamRisk(for reference: MCPToolReference) throws -> CapabilityRisk {
+  internal func downstreamPolicy(for reference: MCPToolReference) throws -> MCPToolAdmissionPolicy {
     let server = try mcpServer(reference.serverID)
     try requireDownstreamToolAllowed(reference.toolName, server: server)
     guard
@@ -28047,7 +28048,9 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
         "[mcp.tool_unavailable] The downstream tool is not available in the current authorized catalog."
       )
     }
-    return try configuration.mcpRisk(for: reference, declaredBy: tool)
+    return try .init(
+      risk: configuration.mcpRisk(for: reference, declaredBy: tool),
+      hostServiceAction: tool.hostServiceAction)
   }
 
   internal func callTool(definition: MCPTool, arguments: JSONValue?) throws -> JSONValue {

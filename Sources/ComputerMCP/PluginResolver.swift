@@ -211,7 +211,7 @@ package enum PluginResolver {
     dependencyExecutables: [String: URL], workingDirectory: URL, environment: [String: String]
   ) throws -> ExecutableInspection? {
     let command: String?
-    if let relative = reference.path {
+    if let relative = try reference.packagePath() {
       try PluginPackageFiles(root: plugin.root).validate(relative, kind: .executable)
       command = try WorkspacePathResolver.resolve(relative, relativeTo: plugin.root).path
     } else if let id = reference.dependency {

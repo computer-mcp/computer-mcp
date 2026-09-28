@@ -220,6 +220,49 @@ struct PluginManifestTests {
     #expect(throws: (any Error).self) { try PluginManifest.parse(changed) }
   }
 
+  @Test
+  func platformExecutableSelectionPreservesLegacyFingerprints() throws {
+    #expect(
+      try JSONValue.encoded(PluginExecutable(path: "bin/helper"))
+        == .object(["path": .string("bin/helper")]))
+    #expect(
+      try JSONValue.encoded(PluginExecutable(dependency: "vendor"))
+        == .object(["dependency": .string("vendor")]))
+    let manifest = try PluginManifest.parse(Self.platformExecutables)
+    let executable = try #require(manifest.mcp[0].executable)
+    #expect(try executable.packagePath(for: "macos") == "helper")
+    #expect(try executable.packagePath(for: "windows") == "helper.exe")
+    #expect(throws: PluginManifestError.self) { try executable.packagePath(for: "linux") }
+    #expect(
+      try JSONDecoder().decode(PluginManifest.self, from: JSONEncoder().encode(manifest))
+        == manifest)
+  }
+
+  @Test(arguments: [
+    "platform_paths = { macos = 'helper' }",
+    "platform_paths = { macos = 'helper', windows = 'helper.exe' }, path = 'helper'",
+    "platform_paths = { macos = 'helper', windows = 'helper.exe' }, dependency = 'vendor'",
+    "platform_paths = {}",
+  ])
+  func platformExecutableCannotMixOwnershipOrOmitDeclaredTargets(fields: String) {
+    let text = Self.platformExecutables.replacingOccurrences(
+      of: "platform_paths = { macos = 'helper', windows = 'helper.exe' }", with: fields)
+    #expect(throws: (any Error).self) { try PluginManifest.parse(text) }
+  }
+
+  static let platformExecutables =
+    platformArtifacts + """
+
+      [[mcp]]
+      id = 'native'
+      transport = 'stdio'
+      executable = { platform_paths = { macos = 'helper', windows = 'helper.exe' } }
+      [[cli]]
+      id = 'commands'
+      executable = { platform_paths = { macos = 'helper', windows = 'helper.exe' } }
+      tree = { kind = 'helper', helper = { platform_paths = { macos = 'helper', windows = 'helper.exe' } }, args = ['schema'] }
+      """
+
   static let platformArtifacts =
     header + """
       [compatibility]
@@ -288,6 +331,34 @@ struct PluginPackageTests {
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("executed").path))
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: helper.path)
     #expect(throws: PluginManifestError.self) { try PluginPackage.load(at: root) }
+  }
+
+  @Test
+  func packageLoadingAndInspectionUseTheSamePlatformEntryPoint() throws {
+    let root = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let helper = root.appendingPathComponent("helper")
+    try "#!/bin/sh\ntouch executed\n".write(to: helper, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+    try PluginManifestTests.platformExecutables.write(
+      to: root.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8)
+    let package = try PluginPackage.load(at: root)
+    let executables =
+      package.manifest.mcp.compactMap(\.executable)
+      + package.manifest.cli.map(\.executable) + package.manifest.cli.compactMap { $0.tree?.helper }
+    #expect(executables.count == 3)
+    for executable in executables {
+      let inspected = try #require(
+        try PluginResolver.inspectExecutable(
+          executable, package: package,
+          dependencyExecutables: [:], workingDirectory: root, environment: [:]))
+      #expect(inspected.path == helper.path)
+      #expect(inspected.status == .passed)
+    }
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("helper.exe").path))
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("executed").path))
+    try FileManager.default.moveItem(at: helper, to: root.appendingPathComponent("helper.exe"))
+    #expect(throws: (any Error).self) { try PluginPackage.load(at: root) }
   }
 
   @Test

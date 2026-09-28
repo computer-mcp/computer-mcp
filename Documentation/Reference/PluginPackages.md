@@ -56,10 +56,23 @@ or external application available on Windows.
 
 ## Executables and External Dependencies
 
-An `executable` has exactly one of two fields:
+An `executable` has exactly one of three fields:
 
 - `path`: a normalized package-relative path to a package-owned executable.
+- `platform_paths`: a map from each declared platform to its package-relative
+  executable, such as `{ macos = "bin/adapter", windows = "bin/adapter.exe" }`.
 - `dependency`: the ID of a declared, user/vendor-owned external dependency.
+
+A `platform_paths` map covers exactly `compatibility.platforms` (default
+`macos`). Every value must be a normalized relative path; Windows values also
+reject drive/device names, alternate streams and ambiguous Win32 components.
+Package loading and executable inspection select the current host platform's
+path. A platform archive needs that selected executable, while the same manifest
+can name the other platforms' files without including them in this archive.
+A missing selected file is an error; the host never tries another platform or
+adds an executable suffix. CLI Tree helpers follow the same selection rule.
+Set `minimum_host` to a released host supporting this field before publishing
+a package that uses it.
 
 Each `[[dependencies]]` entry has `id`, ordered executable base names in
 `commands`, optional ordered `applications` locators, human-readable

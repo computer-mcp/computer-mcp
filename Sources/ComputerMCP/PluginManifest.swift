@@ -1,3 +1,4 @@
+import ComputerMCPPlatform
 import Foundation
 import TOML
 
@@ -69,6 +70,12 @@ package struct PluginManifest: Codable, Equatable, Sendable {
     for executable in mcp.compactMap(\.executable) + cli.map(\.executable)
       + cli.compactMap({ $0.tree?.helper })
     {
+      if let paths = executable.platformPaths,
+        paths.platforms != Set(compatibility?.platforms ?? ["macos"])
+      {
+        throw PluginManifestError.invalid(
+          "Executable platform_paths must cover exactly the package compatibility platforms.")
+      }
       if let dependency = executable.dependency, !dependencyIDs.contains(dependency) {
         throw PluginManifestError.invalid(
           "Executable references unknown dependency '\(dependency)'.")
@@ -150,25 +157,45 @@ package struct PluginApplicationLocator: Codable, Hashable, Sendable {
 /// A package-owned relative executable or a reference to a user-owned external dependency.
 package struct PluginExecutable: Codable, Equatable, Sendable {
   package let path: String?
+  package let platformPaths: PluginExecutablePaths?
   package let dependency: String?
 
-  private enum CodingKeys: String, CodingKey, CaseIterable { case path, dependency }
+  private enum CodingKeys: String, CodingKey, CaseIterable {
+    case path, dependency
+    case platformPaths = "platform_paths"
+  }
 
   package init(from decoder: any Decoder) throws {
     let c = try decoder.pluginContainer(keyedBy: CodingKeys.self)
     try self.init(
       path: c.decodeIfPresent(String.self, forKey: .path),
+      platformPaths: c.decodeIfPresent(PluginExecutablePaths.self, forKey: .platformPaths),
       dependency: c.decodeIfPresent(String.self, forKey: .dependency))
   }
 
-  init(path: String? = nil, dependency: String? = nil) throws {
-    guard (path != nil) != (dependency != nil) else {
-      throw PluginManifestError.invalid("Executable requires exactly one of path or dependency.")
+  init(
+    path: String? = nil, platformPaths: PluginExecutablePaths? = nil, dependency: String? = nil
+  ) throws {
+    guard [path != nil, platformPaths != nil, dependency != nil].filter({ $0 }).count == 1 else {
+      throw PluginManifestError.invalid(
+        "Executable requires exactly one of path, platform_paths or dependency.")
     }
     if let path { try validatePluginRelativePath(path) }
     if let dependency { try validatePluginID(dependency) }
     self.path = path
+    self.platformPaths = platformPaths
     self.dependency = dependency
+  }
+
+  package func packagePath(
+    for platform: String = PluginPlatformCompatibility.currentPlatform
+  ) throws -> String? {
+    if let platformPaths {
+      do { return try platformPaths.path(for: platform) } catch {
+        throw PluginManifestError.invalid("Executable has no path for platform '\(platform)'.")
+      }
+    }
+    return path
   }
 }
 
@@ -283,10 +310,7 @@ package struct PluginSkillContribution: Codable, Equatable, Sendable {
 }
 
 func validatePluginRelativePath(_ path: String) throws {
-  let parts = path.split(separator: "/", omittingEmptySubsequences: false)
-  guard !path.isEmpty, !path.hasPrefix("~"), !path.contains("\\"), !path.contains("\0"),
-    parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
-  else {
+  guard PluginExecutablePaths.isNormalizedRelativePath(path) else {
     throw PluginManifestError.invalid("Package paths must be normalized relative paths.")
   }
 }

@@ -6,9 +6,11 @@
     package static func resolve(_ path: String, relativeTo workspaceURL: URL) throws -> URL {
       guard let lexicalRoot = normalized(workspaceURL),
         let target = WindowsFilePath.absolute(path, cwd: lexicalRoot)
-      else { throw inspectionError(path, ERROR_INVALID_NAME) }
+      else { throw inspectionError(path, DWORD(ERROR_INVALID_NAME)) }
       let workspace = try observe(lexicalRoot)
-      guard workspace.isDirectory else { throw inspectionError(lexicalRoot, ERROR_DIRECTORY) }
+      guard workspace.isDirectory else {
+        throw inspectionError(lexicalRoot, DWORD(ERROR_DIRECTORY))
+      }
       // Lexical admission is only a precheck; native identity proves physical containment below.
       guard
         lexicalContains(target, root: lexicalRoot)
@@ -37,7 +39,7 @@
 
       let existing = try observe(ancestor)
       guard missing.isEmpty || existing.isDirectory else {
-        throw inspectionError(ancestor, ERROR_DIRECTORY)
+        throw inspectionError(ancestor, DWORD(ERROR_DIRECTORY))
       }
       var current = existing
       var visited = Set<String>()
@@ -54,17 +56,17 @@
         resolved += (resolved.hasSuffix("\\") ? "" : "\\") + component
       }
       guard WindowsFilePath.isValid(resolved) else {
-        throw inspectionError(resolved, ERROR_INVALID_NAME)
+        throw inspectionError(resolved, DWORD(ERROR_INVALID_NAME))
       }
       return URL(fileURLWithPath: resolved)
     }
 
     package static func canonicalWorkspace(_ workspaceURL: URL) throws -> URL {
       guard let path = normalized(workspaceURL) else {
-        throw inspectionError(workspaceURL.path, ERROR_INVALID_NAME)
+        throw inspectionError(workspaceURL.path, DWORD(ERROR_INVALID_NAME))
       }
       let result = try observe(path)
-      guard result.isDirectory else { throw inspectionError(path, ERROR_DIRECTORY) }
+      guard result.isDirectory else { throw inspectionError(path, DWORD(ERROR_DIRECTORY)) }
       return URL(fileURLWithPath: result.path)
     }
 
@@ -115,7 +117,7 @@
 
     private static func observe(_ path: String) throws -> Observation {
       guard WindowsFilePath.isValid(path), WindowsFilePath.isAbsolute(path) else {
-        throw inspectionError(path, ERROR_INVALID_NAME)
+        throw inspectionError(path, DWORD(ERROR_INVALID_NAME))
       }
       // Following reparses is intentional: the final object must prove ancestry by identity.
       let handle = CreateFileW(
@@ -128,7 +130,7 @@
       defer { CloseHandle(handle) }
       var info = BY_HANDLE_FILE_INFORMATION()
       guard GetFileType(handle) == FILE_TYPE_DISK else {
-        throw inspectionError(path, ERROR_INVALID_HANDLE)
+        throw inspectionError(path, DWORD(ERROR_INVALID_HANDLE))
       }
       guard GetFileInformationByHandle(handle, &info) else {
         throw inspectionError(path, GetLastError())
@@ -142,7 +144,9 @@
       let count = GetFinalPathNameByHandleW(
         handle, &output, DWORD(output.count), DWORD(FILE_NAME_NORMALIZED | VOLUME_NAME_DOS))
       guard count > 0 else { throw inspectionError(path, GetLastError()) }
-      guard count < output.count else { throw inspectionError(path, ERROR_FILENAME_EXCED_RANGE) }
+      guard count < output.count else {
+        throw inspectionError(path, DWORD(ERROR_FILENAME_EXCED_RANGE))
+      }
       let final = String(decoding: output.prefix(Int(count)), as: UTF16.self)
       let canonical: String
       if final.hasPrefix("\\\\?\\UNC\\") {
@@ -150,10 +154,10 @@
       } else if final.hasPrefix("\\\\?\\") {
         canonical = String(final.dropFirst(4))
       } else {
-        throw inspectionError(path, ERROR_INVALID_NAME)
+        throw inspectionError(path, DWORD(ERROR_INVALID_NAME))
       }
       guard WindowsFilePath.isValid(canonical), WindowsFilePath.isAbsolute(canonical) else {
-        throw inspectionError(path, ERROR_INVALID_NAME)
+        throw inspectionError(path, DWORD(ERROR_INVALID_NAME))
       }
       return Observation(
         path: canonical,

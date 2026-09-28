@@ -374,13 +374,18 @@ struct GatewayGenerationDispatchTests {
       try Data(contentsOf: fixture.root.appendingPathComponent("provider.py")).write(to: failure)
       try fixture.writeManifest(rejectedText, atomic: atomic)
       try await waitUntil {
-        try await fixture.control.activeConfiguration().mcp.servers[0].args[0] == failure.path
+        let published = try await fixture.control.activeConfiguration().mcp.servers[0].args[0]
+        let status = await fixture.service.snapshot()
+        // Persistence is observable before the external reload task finishes its status update.
+        return published == failure.path && status.lastError == nil
       }
       #expect(await fixture.service.snapshot().lastError == nil)
       #expect(try fixture.database.configurationRevisions().count == history.count + 1)
       try fixture.writeManifest(try await fixture.externalManifest(version: 3), atomic: atomic)
       try await waitUntil {
-        try await fixture.control.activeConfiguration().server.name == "version-3"
+        let published = try await fixture.control.activeConfiguration().server.name
+        let status = await fixture.service.snapshot()
+        return published == "version-3" && status.lastError == nil
       }
       #expect(await fixture.service.snapshot().lastError == nil)
       #expect(await fixture.service.snapshot().startedAt == startedAt)

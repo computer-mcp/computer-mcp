@@ -475,7 +475,7 @@ final class MCPProxyClientTests {
       let root = fixture.sessionMarker.deletingLastPathComponent()
       defer {
         if fixture.process.isRunning { fixture.process.terminate() }
-        fixture.process.waitUntilExit()
+        #expect(fixture.termination.wait(timeout: .now() + .seconds(5)) == .success)
         try? FileManager.default.removeItem(at: root)
       }
       let work = GatewayOwnedWork()
@@ -516,7 +516,7 @@ final class MCPProxyClientTests {
       let fixture = try self.fakeHTTPMCPServer()
       defer {
         fixture.process.terminate()
-        fixture.process.waitUntilExit()
+        #expect(fixture.termination.wait(timeout: .now() + .seconds(5)) == .success)
       }
       let server = MCPServerConfig(
         id: "http",
@@ -824,67 +824,74 @@ final class MCPProxyClientTests {
   func failedCancellationDeliveryRetainsUnknownReceiptAndCannotReplayTheWrite() async throws {
     let fixture = try fakeHTTPMCPServer(failCancellation: true)
     let directory = fixture.sessionMarker.deletingLastPathComponent()
-    defer {
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cleanup = {
       if fixture.process.isRunning { fixture.process.terminate() }
-      fixture.process.waitUntilExit()
-      try? FileManager.default.removeItem(at: directory)
-    }
-    let database = try GatewayDatabase(inMemory: ())
-    let ownedWork = GatewayOwnedWork()
-    var hostContext = MCPHostContext(
-      runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaceID: "fixture", rootURL: directory, readOnly: false)
-    hostContext.ownedWork = ownedWork
-    let client = MCPProxyClient(
-      hostContext: hostContext, executionDatabase: database, executionScope: "cancel-failure")
-    let server = MCPServerConfig(
-      id: "cancel-failure", transport: .http,
-      url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
-    let waiting = Task {
-      try await client.callToolAsync(
-        server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+      #expect(fixture.termination.wait(timeout: .now() + .seconds(5)) == .success)
     }
     do {
-      let marker = directory.appendingPathComponent("call-started.txt")
-      let deadline = ContinuousClock.now + .seconds(5)
-      while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
-      }
-      #expect(FileManager.default.fileExists(atPath: marker.path))
-      waiting.cancel()
-      await #expect(throws: (any Error).self) { _ = try await waiting.value }
-      let receipt = try client.readRequest(
-        server: server, requestID: "write-once", offset: 0, maxBytes: 4096)
-      #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
-      #expect(receipt.objectValue?["cancellation"] == .string("failed"))
-      #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
-      #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
-      #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
-      #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
-      #expect(throws: (any Error).self) {
-        try client.callTool(
+      let database = try GatewayDatabase(inMemory: ())
+      let ownedWork = GatewayOwnedWork()
+      var hostContext = MCPHostContext(
+        runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
+        workspaceID: "fixture", rootURL: directory, readOnly: false)
+      hostContext.ownedWork = ownedWork
+      let client = MCPProxyClient(
+        hostContext: hostContext, executionDatabase: database, executionScope: "cancel-failure")
+      let server = MCPServerConfig(
+        id: "cancel-failure", transport: .http,
+        url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
+      let waiting = Task {
+        try await client.callToolAsync(
           server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
       }
-      let repeated = try client.startToolCall(
-        server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
-      #expect(repeated.objectValue?["state"] == .string("outcome_unknown"))
-      #expect(try String(contentsOf: marker, encoding: .utf8) == "called\n")
-      try Data().write(to: directory.appendingPathComponent("release.txt"))
-      await client.shutdown()
-      // Remote completion was not observed even though the transport has closed.
-      #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
-      #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
+      do {
+        let marker = directory.appendingPathComponent("call-started.txt")
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        waiting.cancel()
+        await #expect(throws: (any Error).self) { _ = try await waiting.value }
+        let receipt = try client.readRequest(
+          server: server, requestID: "write-once", offset: 0, maxBytes: 4096)
+        #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(receipt.objectValue?["cancellation"] == .string("failed"))
+        #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
+        #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
+        #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
+        #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
+        #expect(throws: (any Error).self) {
+          try client.callTool(
+            server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+        }
+        let repeated = try client.startToolCall(
+          server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+        #expect(repeated.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(try String(contentsOf: marker, encoding: .utf8) == "called\n")
+        try Data().write(to: directory.appendingPathComponent("release.txt"))
+        await client.shutdown()
+        // Remote completion was not observed even though the transport has closed.
+        #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
+        #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
+      } catch {
+        waiting.cancel()
+        try? Data().write(to: directory.appendingPathComponent("release.txt"))
+        await client.shutdown()
+        _ = await waiting.result
+        throw error
+      }
     } catch {
-      waiting.cancel()
-      try? Data().write(to: directory.appendingPathComponent("release.txt"))
-      await client.shutdown()
-      _ = await waiting.result
+      try await runBlockingTest(cleanup)
       throw error
     }
+    try await runBlockingTest(cleanup)
   }
 
   private func fakeHTTPMCPServer(failCancellation: Bool = false) throws -> (
     process: Process,
+    termination: DispatchSemaphore,
     port: Int,
     sessionMarker: URL
   ) {
@@ -992,6 +999,10 @@ final class MCPProxyClientTests {
     ]
     process.standardOutput = FileHandle.nullDevice
     process.standardError = errorPipe
+    // Async callers can resume on another thread. Observe termination before
+    // launch rather than waiting on a thread-local run loop during cleanup.
+    let termination = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in termination.signal() }
     try process.run()
 
     for _ in 0..<200 where !FileManager.default.fileExists(atPath: portFile.path) {
@@ -1003,7 +1014,11 @@ final class MCPProxyClientTests {
     else {
       let wasRunning = process.isRunning
       process.terminate()
-      process.waitUntilExit()
+      guard termination.wait(timeout: .now() + .seconds(5)) == .success else {
+        throw GatewayToolError.executionFailed(
+          "Fake HTTP MCP server did not report termination after startup failure: \(directory.path)"
+        )
+      }
       let stderr =
         String(
           data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
@@ -1013,7 +1028,7 @@ final class MCPProxyClientTests {
         "Fake HTTP MCP server failed to start (running: \(wasRunning), status: \(process.terminationStatus), directory: \(directory.path)): \(stderr)"
       )
     }
-    return (process, port, sessionMarker)
+    return (process, termination, port, sessionMarker)
   }
 
   private func fakeExitingMCPServer() throws -> (

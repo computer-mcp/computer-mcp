@@ -51,10 +51,18 @@ jobs:
           $testRuntimes | ConvertTo-Json | Set-Content .build/windows-validation/test-runtime-directories.json
           $results = @()
           foreach ($configuration in @('debug', 'release')) {
+            $fixtureLog = ".build/windows-validation/$configuration-fixture.log"
+            swift build --product PlatformProcessFixture --configuration $configuration *> $fixtureLog
+            $fixtureCode = $LASTEXITCODE
+            if ($fixtureCode -ne 0) {
+              Get-Content $fixtureLog -Tail 80
+              $results += [pscustomobject]@{ configuration = $configuration; fixtureExitCode = $fixtureCode; exitCode = $fixtureCode }
+              continue
+            }
             $log = ".build/windows-validation/$configuration.log"
             swift test --configuration $configuration --no-parallel --verbose *> $log
             $code = $LASTEXITCODE
-            $results += [pscustomobject]@{ configuration = $configuration; exitCode = $code }
+            $results += [pscustomobject]@{ configuration = $configuration; fixtureExitCode = $fixtureCode; exitCode = $code }
             Get-Content $log -Tail 80 | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 2000)) }
             if ($code -ne 0) {
               $binary = Join-Path (Get-Location) ".build/x86_64-unknown-windows-msvc/$configuration/computer-mcpPackageTests.xctest"

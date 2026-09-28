@@ -6,9 +6,8 @@ let subprocessDependency: Package.Dependency =
   .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0")
 
 #if os(Windows)
-  let platformTestDependencies: [Target.Dependency] = [
-    "ComputerMCPPlatform", "PlatformProcessFixture",
-  ]
+  // Tests launch the fixture as a separate executable. Its entry point must
+  // remain outside the test runner's link dependencies.
   let platformFixtures: [Target] = [
     .executableTarget(
       name: "PlatformProcessFixture",
@@ -16,14 +15,13 @@ let subprocessDependency: Package.Dependency =
       path: "Tests/PlatformProcessFixture")
   ]
 #else
-  let platformTestDependencies: [Target.Dependency] = ["ComputerMCPPlatform"]
   let platformFixtures: [Target] = []
 #endif
 
 let platformTargets: [Target] =
   [
     .target(name: "ComputerMCPPlatform"),
-    .testTarget(name: "ComputerMCPPlatformTests", dependencies: platformTestDependencies),
+    .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
   ] + platformFixtures
 
 #if os(macOS)

@@ -38,6 +38,17 @@ jobs:
           New-Item -ItemType Directory -Force .build/windows-validation | Out-Null
           swift --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not $env:SDKROOT) { throw 'Swift SDKROOT is required for native test runtime discovery' }
+          $developer = Split-Path (Split-Path $env:SDKROOT.TrimEnd([char[]]'\/'))
+          $testRuntimes = @('Testing', 'XCTest') | ForEach-Object {
+            $directory = Join-Path $developer "Library/$_-development/usr/bin64"
+            if (-not (Test-Path (Join-Path $directory "$_.dll") -PathType Leaf)) {
+              throw "Missing SDK-owned x64 test runtime: $directory/$_.dll"
+            }
+            $directory
+          }
+          $env:PATH = ($testRuntimes -join ';') + ';' + $env:PATH
+          $testRuntimes | ConvertTo-Json | Set-Content .build/windows-validation/test-runtime-directories.json
           $results = @()
           foreach ($configuration in @('debug', 'release')) {
             $log = ".build/windows-validation/$configuration.log"

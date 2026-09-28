@@ -5,12 +5,18 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      validation_scope:
+        description: Validation to run
+        type: choice
+        options: [full, windows]
+        default: full
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ inputs.validation_scope || 'full' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -58,6 +64,7 @@ jobs:
           if-no-files-found: error
 
   dependency-gate:
+    if: inputs.validation_scope != 'windows'
     runs-on: macos-26
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer

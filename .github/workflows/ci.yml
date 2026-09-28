@@ -48,6 +48,21 @@ jobs:
             if ($code -ne 0) {
               $binary = Join-Path (Get-Location) ".build/x86_64-unknown-windows-msvc/$configuration/computer-mcpPackageTests.xctest"
               if (Test-Path $binary) {
+                $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+                $dumpbin = & $vswhere -latest -products '*' -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
+                if ($dumpbin) {
+                  $imports = & $dumpbin /dependents $binary
+                  $imports | Set-Content ".build/windows-validation/$configuration-imports.log"
+                  $search = @((Split-Path $binary), (Get-Location).Path, "$env:SystemRoot/System32", "$env:SystemRoot") + ($env:PATH -split ';')
+                  $resolved = foreach ($line in $imports) {
+                    if ($line -match '^\s+([^\s]+\.dll)\s*$') {
+                      $name = $Matches[1]
+                      $locations = @($search | Where-Object { $_ } | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path $_ })
+                      [pscustomobject]@{ name = $name; locations = $locations }
+                    }
+                  }
+                  $resolved | ConvertTo-Json -Depth 4 | Set-Content ".build/windows-validation/$configuration-dll-resolution.json"
+                }
                 $info = [System.Diagnostics.ProcessStartInfo]::new($binary)
                 $info.UseShellExecute = $false
                 $info.RedirectStandardOutput = $true

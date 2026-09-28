@@ -11,15 +11,18 @@ Each entry contains `id`, `cli_command`, `surface`, `read_only`, `destructive`,
 `idempotent`, and `local_only`. The embedded CLI reads the catalog directly, so
 it remains available when the App is stopped. The same catalog validates the
 current-user control socket and is never part of a remote profile's MCP tool
-list.
+list. Standalone HTTP hosts expose the same six `clients` contracts on their
+explicit private owner socket; they do not expose App lifecycle or configuration
+commands.
 
 | Family | Shared operations | CLI entry points | UI |
 | --- | --- | --- | --- |
 | App | status, start, stop, restart, launch at login | `app …` | Home and Settings |
+| Client access | list, explicit Full Access consent, limit/end connection access, saved trust list/revoke | `clients …` | Client access |
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
 | Workspaces | list, canonical add, remove, profile enable/disable, deduplication | `workspace …` | Workspaces |
-| Profiles | list, show, activate, workspace grant/revoke, permission mode, confirmation policy, Full Shell | `profile …` | Profiles |
+| Profiles | list, show, activate, workspace grant/revoke, permission mode, confirmation policy, advanced grants | `profile …` | Connection defaults and restricted permission selection |
 | Providers | recorded health and bounded Doctor refresh | `providers list|doctor` | Providers |
 | Permissions | non-prompting TCC status; list, approve, or deny exact host operation tickets | `permissions status`, `permissions approvals …` | Permissions and pending host approvals; TCC prompting remains an explicit local UI action |
 | Audit | bounded redacted event list | `audit list` | Audit |

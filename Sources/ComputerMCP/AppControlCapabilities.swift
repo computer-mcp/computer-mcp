@@ -30,6 +30,24 @@ package struct AppControlCapability: Codable, Equatable, Sendable, Identifiable 
 package enum AppControlCapabilityCatalog {
   package static let all: [AppControlCapability] = [
     item(
+      "clients.list", "computer-mcp clients list",
+      "List connected client access and exact approval revisions.", readOnly: true),
+    item(
+      "clients.allow", "computer-mcp clients allow",
+      "Explicitly approve Full Access for one client connection.", idempotent: false),
+    item(
+      "clients.limit", "computer-mcp clients limit",
+      "Limit one connection to Observe or Restricted Access.", idempotent: false),
+    item(
+      "clients.end", "computer-mcp clients end",
+      "End access for one client connection without cancelling started work.", idempotent: false),
+    item(
+      "clients.trusts", "computer-mcp clients trusts",
+      "List saved client approvals and their revisions.", readOnly: true),
+    item(
+      "clients.revoke", "computer-mcp clients revoke", "Revoke one saved client approval.",
+      destructive: true, idempotent: false),
+    item(
       "mcp.process.recover", "computer-mcp mcp recover-process",
       "Retire one reviewed MCP process receipt after confirmed process and host cleanup.",
       destructive: true, idempotent: false),

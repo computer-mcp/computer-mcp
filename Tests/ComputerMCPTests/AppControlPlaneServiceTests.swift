@@ -11,6 +11,73 @@ import Testing
 
 final class AppControlPlaneServiceTests {
   @Test
+  func clientControlCommandsShareAppAuthorityAndPublishShellWithoutRestarting() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let configuration = GatewayConfiguration(
+      profiles: [
+        .init(
+          id: .chatGPTOperate, capabilities: ["system.time"], workspaces: ["fixture"],
+          allowedCallers: [.localMCP], mode: .workspaceOperations)
+      ],
+      builtin: .init(enabled: ["system.time"]), workspaceDirectory: fixture.root)
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    try fixture.database.saveWorkspace(
+      .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let socket = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await socket.start()
+    do {
+      try await gateway.start(profile: .chatGPTOperate)
+      let before = await gateway.snapshot()
+      let remote = try await GatewayClientSession.connectSocket(
+        socketURL: fixture.directories.gatewaySocket)
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      let listed = try await client.call("clients.list")
+      let selected = try #require(listed.objectValue?["sessions"]?.arrayValue?.first?.objectValue)
+      let id = try #require(selected["id"]?.stringValue)
+      let revision = try #require(selected["revision"]?.intValue)
+      let trustRevision = try #require(selected["trust_revision"]?.intValue)
+      let approved = try await client.call(
+        "clients.allow",
+        arguments: .object([
+          "id": .string(id), "expected_revision": .integer(Int64(revision)),
+          "expected_trust_revision": .integer(Int64(trustRevision)), "full_access": .bool(true),
+        ]))
+      #expect(try await remote.listToolNames().contains("shell.run"))
+      #expect(
+        approved.objectValue?["full_access_consent"]?.objectValue?["lifetime"]
+          == .string("this-session"))
+      #expect(try fixture.database.clientTrusts().isEmpty)
+      #expect(await gateway.snapshot().startedAt == before.startedAt)
+      let approvedRevision = try #require(approved.objectValue?["revision"]?.intValue)
+      let limited = try await client.call(
+        "clients.limit",
+        arguments: .object([
+          "id": .string(id), "expected_revision": .integer(Int64(approvedRevision)),
+          "mode": .string("restricted"),
+        ]))
+      #expect(try await !remote.listToolNames().contains("shell.run"))
+      _ = try await client.call(
+        "clients.end",
+        arguments: .object([
+          "id": .string(id), "expected_revision": try #require(limited.objectValue?["revision"]),
+        ]))
+      #expect(try await remote.listToolNames().isEmpty)
+      await remote.disconnect()
+      await gateway.stop()
+      await socket.stop()
+    } catch {
+      await gateway.stop()
+      await socket.stop()
+      throw error
+    }
+  }
+
+  @Test
   func permissionChoicesUseTheHostCatalogWithoutPersistingAuthority() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }

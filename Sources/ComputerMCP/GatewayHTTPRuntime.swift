@@ -53,6 +53,16 @@ enum GatewayHTTPSessionSource: Sendable {
   case managed(GatewayHTTPManagedSessions)
 }
 
+package struct GatewayHTTPControlConfiguration: Sendable {
+  let socketURL: URL
+  let database: GatewayDatabase
+
+  package init(socketURL: URL, database: GatewayDatabase) {
+    self.socketURL = socketURL
+    self.database = database
+  }
+}
+
 internal final class GatewayHTTPRuntime: @unchecked Sendable {
   private let configuration: GatewayConfiguration
   private let host: String
@@ -69,17 +79,20 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
     publicBaseURL: String?,
     accessToken: String? = nil,
     logger: Logger? = nil,
-    limits: GatewayHTTPLimits = .v1
+    limits: GatewayHTTPLimits = .v1,
+    control: GatewayHTTPControlConfiguration? = nil
   ) {
     self.init(
       configuration: configuration, source: .registry(registry), host: host, port: port,
-      publicBaseURL: publicBaseURL, accessToken: accessToken, logger: logger, limits: limits)
+      publicBaseURL: publicBaseURL, accessToken: accessToken, logger: logger, limits: limits,
+      control: control)
   }
 
   init(
     configuration: GatewayConfiguration, source: GatewayHTTPSessionSource,
     host: String, port: Int, publicBaseURL: String?, accessToken: String? = nil,
-    logger: Logger? = nil, limits: GatewayHTTPLimits = .v1
+    logger: Logger? = nil, limits: GatewayHTTPLimits = .v1,
+    control: GatewayHTTPControlConfiguration? = nil
   ) {
     self.configuration = configuration
     self.host = host
@@ -94,7 +107,8 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
       publicBaseURL: publicBaseURL,
       accessToken: accessToken,
       logger: resolvedLogger,
-      limits: limits
+      limits: limits,
+      control: control
     )
   }
 
@@ -147,7 +161,7 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
   }
 }
 
-private actor GatewayHTTPApp {
+actor GatewayHTTPApp {
   private struct SessionContext {
     let principalID: String
     let controlSession: GatewayControlSession?
@@ -183,6 +197,8 @@ private actor GatewayHTTPApp {
   private var stopTask: Task<Void, Never>?
   private var stopCompleted = false
   private var generation = UUID()
+  private let control: GatewayHTTPControlConfiguration?
+  private var controlServer: GatewaySocketServer?
 
   init(
     configuration: GatewayConfiguration,
@@ -191,7 +207,8 @@ private actor GatewayHTTPApp {
     publicBaseURL: String?,
     accessToken: String?,
     logger: Logger,
-    limits: GatewayHTTPLimits
+    limits: GatewayHTTPLimits,
+    control: GatewayHTTPControlConfiguration?
   ) {
     self.configuration = configuration
     self.source = source
@@ -203,6 +220,7 @@ private actor GatewayHTTPApp {
     )
     self.logger = logger
     self.limits = limits
+    self.control = control
   }
 
   func startListening(host: String, port: Int) async throws {
@@ -256,6 +274,28 @@ private actor GatewayHTTPApp {
       metadata: ["host": "\(host)", "port": "\(port)", "path": "\(configuration.server.http.path)"]
     )
     do {
+      if let control {
+        let generation = generation
+        let server = GatewaySocketServer(
+          configuration: .init(socketURL: control.socketURL, clientIdentity: .localCLI),
+          serverFactory: { identity in
+            guard identity.origin == .localCLI else {
+              throw GatewaySocketError.authenticationFailed(
+                "the control socket requires local CLI identity")
+            }
+            return await MCPRuntimeAdapter.makeGatewayServer(
+              configuration: GatewayConfiguration(
+                server: ServerConfig(name: "computer-mcp-control")),
+              registry: HTTPClientControlRegistry(
+                owner: self, generation: generation, database: control.database, identity: identity)
+            )
+          })
+        controlServer = server
+        try await server.start()
+        guard !isStopping else {
+          throw ConfigurationError.invalid("The HTTP gateway stopped during startup.")
+        }
+      }
       let bound = try await bootstrap.bind(host: host, port: port).get()
       guard !isStopping else {
         try? await bound.close()
@@ -265,6 +305,9 @@ private actor GatewayHTTPApp {
       listeningPort = channel?.localAddress?.port ?? port
       startCleanupTask()
     } catch {
+      let ownerServer = controlServer
+      controlServer = nil
+      await ownerServer?.stop()
       eventLoopGroup = nil
       try? await group.shutdownGracefully()
       throw error
@@ -298,6 +341,9 @@ private actor GatewayHTTPApp {
     }
     cleanupTask?.cancel()
     cleanupTask = nil
+    let ownerServer = controlServer
+    controlServer = nil
+    async let ownerStopped: Void? = ownerServer?.stop()
     let activeChannel = channel
     channel = nil
     if activeChannel?.isActive == true {
@@ -306,6 +352,7 @@ private actor GatewayHTTPApp {
     // Stop managed admission before joining in-progress MCP initialization.
     if case .managed(let owner) = source { await owner.shutdown() }
     await stopAllSessions()
+    _ = await ownerStopped
     // A session being constructed still owns discovery work in the shared registry.
     if !pendingSessionIDs.isEmpty {
       await withCheckedContinuation { pendingSessionWaiters.append($0) }
@@ -500,16 +547,68 @@ private actor GatewayHTTPApp {
     sessions.values.compactMap { $0.controlSession?.snapshot }.sorted { $0.id < $1.id }
   }
 
+  private func requireLocalControl(_ expectedGeneration: UUID) throws -> GatewayDatabase {
+    guard expectedGeneration == generation, !isStopping, channel != nil, let control else {
+      throw ConfigurationError.invalid("The HTTP owner connection is no longer active.")
+    }
+    return control.database
+  }
+
+  func localControlSessions(generation: UUID) throws -> [GatewayControlSessionSnapshot] {
+    _ = try requireLocalControl(generation)
+    return controlSessions()
+  }
+
+  func localClientTrusts(generation: UUID) throws -> [GatewayClientTrust] {
+    try requireLocalControl(generation).clientTrusts()
+  }
+
+  func approveLocalControlSession(
+    id: String, lifetime: GatewayFullAccessLifetime,
+    expectedRevision: Int64, expectedTrustRevision: Int64, generation: UUID
+  ) throws -> GatewayControlSessionSnapshot {
+    let database = try requireLocalControl(generation)
+    if lifetime == .alwaysAllowClient {
+      guard database.fileURL != nil,
+        !((try controlSession(id: id)).principalID.hasPrefix("http-anonymous:"))
+      else {
+        throw GatewayToolError.invalidArguments(
+          "Always Allow requires a persistent database and an authenticated HTTP client. Use This Session instead."
+        )
+      }
+    }
+    return try approveControlSession(
+      id: id, lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision, approver: .localCLI)
+  }
+
+  func limitLocalControlSession(
+    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64, generation: UUID
+  ) throws -> GatewayControlSessionSnapshot {
+    _ = try requireLocalControl(generation)
+    return try limitControlSession(id: id, to: mode, expectedRevision: expectedRevision)
+  }
+
+  func endLocalControlSession(id: String, expectedRevision: Int64, generation: UUID) throws {
+    _ = try requireLocalControl(generation)
+    try endControlSession(id: id, expectedRevision: expectedRevision)
+  }
+
+  func revokeLocalClientTrust(id: String, expectedRevision: Int64, generation: UUID) throws {
+    try requireLocalControl(generation).revokeClientTrust(
+      id: id, expectedRevision: expectedRevision, approver: .localCLI)
+  }
+
   func approveControlSession(
     id: String, lifetime: GatewayFullAccessLifetime,
-    expectedRevision: Int64, expectedTrustRevision: Int64
+    expectedRevision: Int64, expectedTrustRevision: Int64, approver: GatewayCallerKind = .localApp
   ) throws -> GatewayControlSessionSnapshot {
     guard configuration.policy.shellEnabled else {
       throw AppControlPlaneServiceError.fullShellManifestDisabled
     }
     return try controlSession(id: id).approveFullAccess(
       lifetime: lifetime, expectedRevision: expectedRevision,
-      expectedTrustRevision: expectedTrustRevision)
+      expectedTrustRevision: expectedTrustRevision, approver: approver)
   }
 
   func limitControlSession(
@@ -527,6 +626,9 @@ private actor GatewayHTTPApp {
   }
 
   private func controlSession(id: String) throws -> GatewayControlSession {
+    guard !isStopping, channel != nil else {
+      throw ConfigurationError.invalid("The HTTP gateway is not listening.")
+    }
     guard let scope = sessions.values.compactMap(\.controlSession).first(where: { $0.id == id })
     else { throw ConfigurationError.invalid("The HTTP control session is no longer connected.") }
     return scope

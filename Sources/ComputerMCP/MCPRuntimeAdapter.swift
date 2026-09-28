@@ -49,7 +49,8 @@ package enum MCPRuntimeAdapter: Sendable {
     registry: any GatewayAsyncToolServing,
     host: String?,
     port: Int?,
-    publicBaseURL: String?
+    publicBaseURL: String?,
+    control: GatewayHTTPControlConfiguration? = nil
   ) async throws {
     let http = configuration.server.http
     let runtime = GatewayHTTPRuntime(
@@ -57,9 +58,16 @@ package enum MCPRuntimeAdapter: Sendable {
       registry: registry,
       host: host ?? http.host,
       port: port ?? http.port,
-      publicBaseURL: publicBaseURL ?? http.publicBaseURL
+      publicBaseURL: publicBaseURL ?? http.publicBaseURL,
+      control: control
     )
-    try await runtime.start()
+    do {
+      try await runtime.start()
+      await runtime.stop()
+    } catch {
+      await runtime.stop()
+      throw error
+    }
   }
 
   private static func registerGatewayHandlers(

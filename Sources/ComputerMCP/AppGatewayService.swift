@@ -503,8 +503,11 @@ package actor AppGatewayService {
   package func approveControlSession(
     id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
     expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
-    enableShellFacility: Bool = false
+    enableShellFacility: Bool = false, approver: GatewayCallerKind = .localApp
   ) async throws -> GatewayControlSessionSnapshot {
+    guard approver == .localApp || approver == .localCLI else {
+      throw GatewayToolError.invalidArguments("Client consent requires a local owner.")
+    }
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
     try record.session.requireRevision(expectedRevision)
     var configuration = try await controlPlane.activeConfiguration()
@@ -529,7 +532,7 @@ package actor AppGatewayService {
     }
     return try record.session.approveFullAccess(
       lifetime: lifetime, expectedRevision: expectedRevision,
-      expectedTrustRevision: expectedTrustRevision)
+      expectedTrustRevision: expectedTrustRevision, approver: approver)
   }
 
   package func limitControlSession(

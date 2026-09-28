@@ -98,8 +98,19 @@ manifest publication before granting the selected session. The admitted manifest
 digest prevents overwriting external edits; session and trust checks still precede
 the authority transaction. A failed consent grants no client authority even if a
 facility update already committed. Profile authorization changes advance session
-revisions before initial consent as well as after it. The standalone HTTP registry
-does not acquire an App owner merely by using the same authorization types.
+revisions before initial consent as well as after it.
+
+The `clients` CLI family and App delegate to the same connection authority.
+Standalone `serve http --control-socket` owns an optional current-user local
+control listener exposing only the six client-access contracts. The listener
+starts before HTTP admission; startup failure closes it, and runtime stop joins
+its accepted connections. Every request retains its admitting HTTP generation;
+closed or superseded generations cannot read or mutate current authority.
+Standalone Full Access requires the fixed manifest's Shell facility to be enabled.
+Persistent trust additionally requires durable storage and an authenticated
+principal. Standalone control cannot mutate App state or publish configuration.
+Shared schemas, exact session/trust revisions and structured replies keep both
+owner adapters consistent. No owner command is re-exported as a remote tool.
 
 Stable noninteractive App management should be exposed by the CLI. Operations
 that inherently require local visual interaction, such as choosing a folder in

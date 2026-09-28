@@ -85,7 +85,8 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   /// Called only by the local owner control plane after explicit user consent.
   func approveFullAccess(
     lifetime: GatewayFullAccessLifetime = .thisSession,
-    expectedRevision: Int64, expectedTrustRevision: Int64 = 0
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
+    approver: GatewayCallerKind = .localApp
   ) throws -> GatewayControlSessionSnapshot {
     try lock.withLock {
       refreshConsent()
@@ -96,7 +97,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
       // Persistence and audit must succeed before this session receives authority.
       let consent = try database.recordFullAccessConsent(
         sessionID: id, principalID: principalID, profile: current, caller: caller,
-        lifetime: lifetime, expectedTrustRevision: expectedTrustRevision)
+        lifetime: lifetime, expectedTrustRevision: expectedTrustRevision, approver: approver)
       fullAccessConsent = consent
       accessLimit = .localFullAccess
       revision += 1

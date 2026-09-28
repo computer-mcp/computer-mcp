@@ -694,8 +694,11 @@ package final class GatewayDatabase: @unchecked Sendable {
   func recordFullAccessConsent(
     sessionID: String, principalID: String, profile authority: GatewayControlProfile,
     caller: GatewayCallerKind, lifetime: GatewayFullAccessLifetime,
-    expectedTrustRevision: Int64
+    expectedTrustRevision: Int64, approver: GatewayCallerKind = .localApp
   ) throws -> GatewayFullAccessConsent {
+    guard approver == .localApp || approver == .localCLI else {
+      throw GatewayDatabaseError.invalidStoredValue("Client consent requires a local owner.")
+    }
     let profileID = authority.grant.id
     let (consent, trustChanged) = try writer.write { database in
       let storedProfile = try ProfileRecord.fetchOne(database, key: profileID.rawValue)?.value()
@@ -736,7 +739,7 @@ package final class GatewayDatabase: @unchecked Sendable {
       }
       try AuditEventRecord(
         AuditEvent(
-          requestID: UUID().uuidString, invocationID: sessionID, caller: .localApp,
+          requestID: UUID().uuidString, invocationID: sessionID, caller: approver,
           principalDigest: AuditEvent.verifiedPrincipalDigest(principalID),
           profileID: profileID,
           capabilityID: persistent
@@ -754,7 +757,13 @@ package final class GatewayDatabase: @unchecked Sendable {
     return consent
   }
 
-  package func revokeClientTrust(id: String, expectedRevision: Int64) throws {
+  package func revokeClientTrust(
+    id: String, expectedRevision: Int64, approver: GatewayCallerKind = .localApp
+  ) throws {
+    guard approver == .localApp || approver == .localCLI else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Client trust revocation requires a local owner.")
+    }
     let profileID = try writer.write { database in
       guard var trust = try GatewayClientTrust.fetchOne(database, key: id),
         trust.revision == expectedRevision, trust.revision < Int64.max
@@ -768,7 +777,7 @@ package final class GatewayDatabase: @unchecked Sendable {
       try trust.save(database)
       try AuditEventRecord(
         AuditEvent(
-          requestID: UUID().uuidString, caller: .localApp,
+          requestID: UUID().uuidString, caller: approver,
           principalDigest: AuditEvent.verifiedPrincipalDigest(trust.principalID),
           profileID: trust.profileID, capabilityID: "control.client-trust.revoke",
           decision: .allowed)

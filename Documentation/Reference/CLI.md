@@ -5,8 +5,9 @@ commands connect to the owner-only control socket under Application Support and
 operate the same manifest, database, bookmarks, Keychain records, providers,
 transports, and audit stream as the App. Each App-owned command accepts
 `--control-socket <path>` to select a specific running App instance. An explicit
-socket never falls back to another App. Standalone `--config` and App-owned
-`--control-socket` modes are mutually exclusive.
+socket never falls back to another App. App management commands reject combining
+`--config` and `--control-socket`. Standalone `serve http` can expose its own
+client-access control socket explicitly, as described below.
 
 Install it from the App or from the bundled executable:
 
@@ -28,6 +29,12 @@ computer-mcp app start [--control-socket <control-socket>]
 computer-mcp app stop [--control-socket <control-socket>]
 computer-mcp app restart [--control-socket <control-socket>]
 computer-mcp app launch-at-login [--control-socket <control-socket>] [--enabled] [--no-enabled]
+computer-mcp clients list [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
+computer-mcp clients allow [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>] [--full-access] [--always-allow-client] [--expected-trust-revision <expected-trust-revision>]
+computer-mcp clients limit [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>] --mode <mode>
+computer-mcp clients end [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
+computer-mcp clients trusts [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
+computer-mcp clients revoke [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
 computer-mcp doctor [--journey <journey>] [--json] [--control-socket <control-socket>]
 computer-mcp build-info
 computer-mcp config path [--control-socket <control-socket>]
@@ -118,11 +125,67 @@ computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
 computer-mcp install codex [--config <config>] [--app] [--socket <socket>] [--name <name>] [--codex-cli <codex-cli>] [--server-executable <server-executable>] [--dry-run]
 computer-mcp serve stdio --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>]
-computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>]
+computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>] [--control-socket <control-socket>]
 computer-mcp bridge [--socket <socket>] [--tunnel-credential-file <tunnel-credential-file>] [--tunnel-profile-id <tunnel-profile-id>] [--client-identity <client-identity>]
 ```
 
 Use `--help` on any command for the authoritative options and exit behavior.
+
+## Client access
+
+`clients list` returns `sessions` sorted by ID and a `next_after_id` cursor.
+Each row includes the connection's exact `revision` and matching
+`trust_revision`. `clients trusts` returns saved `trusts` with their revisions,
+including revoked entries. Both accept `--id`, `--after-id` and `--limit`
+(default 100, maximum 200). These are live pages, not a retained snapshot.
+
+```sh
+computer-mcp clients list
+computer-mcp clients allow <connection-id> --full-access
+computer-mcp clients limit <connection-id> --mode observe
+computer-mcp clients end <connection-id>
+computer-mcp clients trusts
+computer-mcp clients revoke <trust-id>
+```
+
+`allow --full-access` is explicit consent to arbitrary execution as the current
+macOS user, including access to that user's files, processes, network and
+credentials. A workspace provides context, not a sandbox; macOS privacy
+permissions still apply. The default is **This Session**. Add
+`--always-allow-client` deliberately to save approval for future connections
+with the same authenticated principal, caller and unchanged profile. Changing
+the profile or revoking its saved trust invalidates that approval.
+
+`limit --mode observe|restricted` sets the selected connection's access ceiling;
+its profile remains an upper bound for Restricted Access. `end` stops new
+requests on that connection. These commands do not cancel already started work.
+`revoke` changes saved approval and affects connections relying on that approval.
+
+Mutations read the selected record once, capture its revisions and submit one
+write. Automation can supply `--expected-revision` and, for `allow`,
+`--expected-trust-revision` to use previously reviewed values. Stale values fail
+without retry or silently adopting new authority. Successful operations return
+JSON; control failures return an `error` object with `code` and `message` and
+exit nonzero. Argument parsing failures use standard CLI diagnostics. After an
+unknown transport outcome, inspect access before deciding whether to try again.
+
+For an independently started HTTP gateway, select a private absolute Unix socket:
+
+```sh
+computer-mcp serve http --config /absolute/computer-mcp.toml --database /absolute/state.sqlite --control-socket /absolute/private/control.sock
+computer-mcp clients list --control-socket /absolute/private/control.sock
+computer-mcp clients allow <connection-id> --full-access --control-socket /absolute/private/control.sock
+```
+
+The standalone manifest must already set `policy.shell_enabled = true` before
+Full Access can be approved. Approval does not rewrite that manifest. Persistent
+approval also requires `--database` and an authenticated HTTP principal; anonymous
+or memory-only hosts can use This Session. The existing HTTP authentication,
+loopback, origin and request-size guards apply. The socket uses current-user peer
+validation and accepts only local-CLI identity. Its commands are absent from the
+remote MCP catalog. Its listener and accepted connections close with the owning
+HTTP runtime, and a control request from an old startup generation cannot affect
+a later one. It has no authority over the production App.
 Structured inspection and mutation results are JSON; configuration display and
 export are TOML.
 

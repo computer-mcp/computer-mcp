@@ -107,7 +107,10 @@ grant Full Access, defaulting to **This Session**. Full Access permits arbitrary
 execution as your macOS user; workspaces provide project context, not a sandbox.
 **Always Allow this Client** is a separate choice. You can downgrade or end a
 connection's access and separately revoke saved client approvals. Access changes
-apply to new requests without cancelling work already started.
+apply to new requests without cancelling work already started. The local
+`computer-mcp clients` commands provide the same access controls; see
+[Client access](Documentation/Reference/CLI.md#client-access) for explicit
+consent and standalone HTTP usage.
 
 Choose **restricted permissions** to select readable capabilities, projects and
 integrations, and the connection types allowed to use them. These defaults apply

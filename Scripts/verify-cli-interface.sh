@@ -62,6 +62,7 @@ verify_help() {
 
 verify_help "$ROOT_CLI"
 verify_help "$ROOT_CLI" app
+verify_help "$ROOT_CLI" clients
 verify_help "$ROOT_CLI" config
 verify_help "$ROOT_CLI" cli-tree
 verify_help "$ROOT_CLI" workspace
@@ -87,6 +88,12 @@ public_leaf_commands=(
   "app stop"
   "app restart"
   "app launch-at-login"
+  "clients list"
+  "clients allow"
+  "clients limit"
+  "clients end"
+  "clients trusts"
+  "clients revoke"
   "doctor"
   "build-info"
   "config path"

@@ -41,7 +41,7 @@ jobs:
           if (-not $env:SDKROOT) { throw 'Swift SDKROOT is required for native test runtime discovery' }
           $developer = Split-Path (Split-Path $env:SDKROOT.TrimEnd([char[]]'\/'))
           $testRuntimes = @('Testing', 'XCTest') | ForEach-Object {
-            $directory = Join-Path $developer "Library/$_-development/usr/bin64"
+            $directory = Join-Path $developer "Library/$_-6.2.3/usr/bin64"
             if (-not (Test-Path (Join-Path $directory "$_.dll") -PathType Leaf)) {
               throw "Missing SDK-owned x64 test runtime: $directory/$_.dll"
             }

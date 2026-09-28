@@ -1,7 +1,6 @@
 #if os(Windows)
   import Dispatch
   import Foundation
-  import Subprocess
   import Synchronization
   import WinSDK
 
@@ -72,7 +71,7 @@
         throw CommandRunnerError.launchFailed(inspection.message)
       }
       let job = try WindowsProcessJob()
-      // Windows overlapped IO must finish before its buffers and handles are released.
+      // Native IO must finish before its buffers and handles are released.
       // Cancellation stops the job, while this owner drains and joins without task cancellation.
       let owner = Task.detached {
         try await self.execute(
@@ -91,15 +90,10 @@
       }
     }
 
-    private struct Captured: Sendable {
-      var data = Data()
-      var truncated = false
-    }
-
     private struct Outcome: Sendable {
       let exitCode: Int32
-      let stdout: Captured
-      let stderr: Captured
+      let stdout: WindowsCommandProcess.Capture
+      let stderr: WindowsCommandProcess.Capture
     }
 
     private func execute(
@@ -112,63 +106,21 @@
           job.stop(.timedOut)
         }
         defer { timers.cancelAll() }
-        var options = PlatformOptions()
-        options.windowStyle = .hidden
-        options.preSpawnProcessConfigurator = { flags, _ in flags |= DWORD(CREATE_SUSPENDED) }
-        let childEnvironment = Dictionary(
-          uniqueKeysWithValues: environment.map {
-            (Subprocess.Environment.Key(stringLiteral: $0.key), $0.value)
-          })
         do {
-          let outcome = try await Subprocess.run(
-            .path(.init(path)), arguments: Arguments(arguments),
-            environment: .custom(childEnvironment),
-            workingDirectory: .init(cwd), platformOptions: options,
-            preferredBufferSize: 16_384
-          ) { execution, input, output, error in
-            job.start(execution.processIdentifier)
-            var inputFailure: (any Error)?
-            do { try await input.finish() } catch {
-              inputFailure = error
-              job.stop(.failed)
-            }
-            async let stdout = Self.capture(output, limit: limit, job: job)
-            async let stderr = Self.capture(error, limit: limit, job: job)
-            async let root: Void = job.monitorRoot(execution.processIdentifier)
-            let values = await (stdout, stderr, root)
-            if let inputFailure { throw inputFailure }
-            return try (values.0.get(), values.1.get())
-          }
+          let process = try WindowsCommandProcess(
+            path: path, arguments: arguments, cwd: cwd, environment: environment, job: job)
+          async let stdout = process.stdout.capture(limit: limit, job: job)
+          async let stderr = process.stderr.capture(limit: limit, job: job)
+          async let root = process.wait(job: job)
+          let values = await (stdout, stderr, root)
           try await job.confirmCleanup()
-          switch outcome.terminationStatus {
-          case .exited(let code):
-            return Outcome(
-              exitCode: Int32(bitPattern: code), stdout: outcome.value.0, stderr: outcome.value.1)
-          }
+          return try Outcome(
+            exitCode: values.2.get(), stdout: values.0.get(), stderr: values.1.get())
         } catch {
           job.stop(.failed)
           try await job.confirmCleanup()
           throw error
         }
-      }
-    }
-
-    private static func capture(
-      _ sequence: AsyncBufferSequence, limit: Int, job: WindowsProcessJob
-    ) async -> Result<Captured, any Error> {
-      var capture = Captured()
-      do {
-        for try await buffer in sequence {
-          buffer.withUnsafeBytes { bytes in
-            let count = min(bytes.count, limit - capture.data.count)
-            capture.data.append(contentsOf: bytes.prefix(count))
-            capture.truncated = capture.truncated || count < bytes.count
-          }
-        }
-        return .success(capture)
-      } catch {
-        job.stop(.failed)
-        return .failure(error)
       }
     }
 
@@ -184,7 +136,6 @@
           merged[folded] = (key, value)
         }
       }
-      // Subprocess otherwise fills a missing PATH from the parent even with a custom environment.
       if merged["path"] == nil { merged["path"] = ("PATH", "") }
       return Dictionary(uniqueKeysWithValues: merged.values.map { ($0.key, $0.value) })
     }

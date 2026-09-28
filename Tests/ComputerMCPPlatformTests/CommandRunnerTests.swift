@@ -10,7 +10,9 @@
     func deliversArgumentsEnvironmentAndWorkingDirectoryWithoutAShell() async throws {
       let fixture = try WindowsCommandFixture()
       defer { fixture.cleanup() }
-      let arguments = ["", "two words", "汉字 🐈", "a\"b", "end\\", "slash\\\"quote", "a&b|c;d"]
+      let arguments = [
+        "", "two words", "", "", "汉字 🐈", "a\"b", "end\\", "slash\\\"quote", "a&b|c;d", "\t\n", "",
+      ]
       let value = try await fixture.run(
         ["echo"] + arguments, environment: ["fixture_value": "覆盖 值"])
       #expect(value.exitCode == 0 && !value.timedOut)
@@ -19,7 +21,18 @@
       #expect(object["arguments"] as? [String] == arguments)
       #expect(object["value"] as? String == "覆盖 值")
       let cwd = try #require(object["cwd"] as? String)
-      #expect(URL(fileURLWithPath: cwd).standardizedFileURL == fixture.root.standardizedFileURL)
+      #expect(
+        URL(fileURLWithPath: cwd, isDirectory: true).standardizedFileURL
+          == URL(fileURLWithPath: fixture.root.path, isDirectory: true).standardizedFileURL)
+    }
+
+    @Test
+    func suppliesStdinEOFWithoutWaitingForParentInput() async throws {
+      let fixture = try WindowsCommandFixture()
+      defer { fixture.cleanup() }
+      let value = try await fixture.run(["stdin_eof"])
+      #expect(value.exitCode == 0 && !value.timedOut)
+      #expect(value.stdoutString == "0")
     }
 
     @Test

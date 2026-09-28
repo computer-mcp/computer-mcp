@@ -6,26 +6,23 @@ let subprocessDependency: Package.Dependency =
   .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0")
 
 #if os(Windows)
-  let platformDependencies: [Target.Dependency] = [
-    .product(name: "Subprocess", package: "swift-subprocess")
-  ]
   let platformTestDependencies: [Target.Dependency] = [
     "ComputerMCPPlatform", "PlatformProcessFixture",
   ]
   let platformFixtures: [Target] = [
     .executableTarget(
-      name: "PlatformProcessFixture", dependencies: platformDependencies,
+      name: "PlatformProcessFixture",
+      dependencies: [.product(name: "Subprocess", package: "swift-subprocess")],
       path: "Tests/PlatformProcessFixture")
   ]
 #else
-  let platformDependencies: [Target.Dependency] = []
   let platformTestDependencies: [Target.Dependency] = ["ComputerMCPPlatform"]
   let platformFixtures: [Target] = []
 #endif
 
 let platformTargets: [Target] =
   [
-    .target(name: "ComputerMCPPlatform", dependencies: platformDependencies),
+    .target(name: "ComputerMCPPlatform"),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: platformTestDependencies),
   ] + platformFixtures
 

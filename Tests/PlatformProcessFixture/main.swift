@@ -29,6 +29,9 @@ struct PlatformProcessFixture {
       try Data("drained".utf8).write(to: URL(fileURLWithPath: arguments[2]))
     case "exit":
       ExitProcess(DWORD(arguments[1])!)
+    case "stdin_eof":
+      let input = try FileHandle.standardInput.readToEnd() ?? Data()
+      try FileHandle.standardOutput.write(contentsOf: Data(String(input.count).utf8))
     case "leaf":
       try record("leaf", directory: arguments[1])
       try await Task.sleep(for: .seconds(60))

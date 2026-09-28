@@ -28,7 +28,7 @@ if [[ "$PRODUCTS" != '["ComputerMCPApp","computer-mcp"]' ]]; then
   exit 1
 fi
 
-if rg -n '^\s*public\b' Sources/ComputerMCP --glob '*.swift'; then
+if rg -n '^\s*public\b' Sources/ComputerMCP Sources/ComputerMCPPlatform --glob '*.swift'; then
   echo "Package boundary gate failed: ComputerMCP implementation declarations must not be public." >&2
   exit 1
 fi

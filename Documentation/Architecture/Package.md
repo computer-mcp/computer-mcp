@@ -1,8 +1,9 @@
 # Package
 
-Computer MCP is a SwiftPM macOS package that builds an internal gateway
-implementation target, the `computer-mcp` CLI/bridge, and the native SwiftUI
-App executable. Only the App and CLI are package products.
+Computer MCP is a SwiftPM package that builds an internal gateway implementation
+target, the `computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only
+the App and CLI are package products. Windows builds the internal platform core
+and its tests; it does not build the gateway, App or macOS providers.
 
 ## Constraints
 
@@ -42,6 +43,7 @@ package product and does not install or bundle vendor binaries.
 | --- | --- |
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
 | `Sources/ComputerMCP/` | Gateway core, transports, providers, policy, persistence, tunnel, and App Control Plane |
+| `Sources/ComputerMCPPlatform/` | Shared platform observations and operating-system implementations, used by the gateway |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
@@ -81,6 +83,17 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
   [env invocations](https://github.com/apple-oss-distributions/shell_cmds/blob/main/env/env.c)
   from invocations needing further verification. Transport and process owners
   remain responsible for actual launch, cancellation, policy and runtime health.
+- Keep executable observation independent of gateway JSON and macOS frameworks.
+  The platform target owns the result and native inspection; the gateway adds
+  its JSON projection. Windows resolves only the supplied child PATH and cwd,
+  with case-insensitive environment keys and `.exe` suffix completion. Process
+  adapters must launch the returned absolute path. There is no implicit shell
+  or PATHEXT expansion. Native file handles limit header reads to 512 bytes;
+  scripts require an explicit interpreter, reparse files remain unverified,
+  and device/pipe namespaces are rejected. File observation does not establish
+  PE compatibility, launch permission, trust or protocol health. The Windows
+  CI job compiles and tests this target against native files in debug and
+  release configurations; broader host platform support has separate gates.
 - Keep explicit package checks in the App-owned control plane, shared by SwiftUI
   and the owner-only management CLI. `PluginDoctorReport` reuses activation's
   source selection, declaration identity, dependency binding and file inspection

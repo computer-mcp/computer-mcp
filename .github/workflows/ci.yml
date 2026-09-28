@@ -13,12 +13,32 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
-
 jobs:
+  windows-core:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Swift
+        uses: compnerd/gha-setup-swift@bbae8ce86bac5a3449f3992b3d88bc4ca25f2057
+        with:
+          swift-version: swift-6.2.3-release
+          swift-build: 6.2.3-RELEASE
+      - name: Build and test platform core
+        shell: pwsh
+        run: |
+          swift --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift test --no-parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift test --configuration release --no-parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   dependency-gate:
     runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -37,6 +57,8 @@ jobs:
     needs: dependency-gate
     runs-on: macos-26
     timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

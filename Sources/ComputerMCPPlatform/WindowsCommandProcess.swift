@@ -11,7 +11,9 @@
       var truncated = false
     }
 
-    private struct Handles {
+    // HANDLE is an opaque kernel token. Only this owner's mutex guards access
+    // and closing; synchronous Job admission borrows the tokens without retaining them.
+    private struct Handles: @unchecked Sendable {
       let process: HANDLE
       let thread: HANDLE
     }
@@ -171,25 +173,31 @@
 
   /// A blocking reader runs on a dispatch worker and retains its handle until EOF.
   final class WindowsCommandPipe: Sendable {
-    private let handle: Mutex<HANDLE?>
+    // The native token is never dereferenced. The mutex guards the reader's
+    // exclusive ownership through ReadFile and CloseHandle.
+    private struct State: @unchecked Sendable {
+      var handle: HANDLE?
+    }
+
+    private let state: Mutex<State>
     private let reader = DispatchQueue(label: "computer-mcp.command.output", qos: .utility)
 
-    init(_ handle: HANDLE) { self.handle = Mutex(handle) }
-    deinit { handle.withLock { if let value = $0 { CloseHandle(value) } } }
+    init(_ handle: HANDLE) { state = Mutex(State(handle: handle)) }
+    deinit { state.withLock { if let value = $0.handle { CloseHandle(value) } } }
 
     func capture(
       limit: Int, job: WindowsProcessJob
     ) async -> Result<WindowsCommandProcess.Capture, CommandRunnerError> {
       await withCheckedContinuation { continuation in
         reader.async {
-          let result = self.handle.withLock {
-            handle -> Result<WindowsCommandProcess.Capture, CommandRunnerError> in
-            guard let pipe = handle else {
+          let result = self.state.withLock {
+            state -> Result<WindowsCommandProcess.Capture, CommandRunnerError> in
+            guard let pipe = state.handle else {
               return .failure(.launchFailed("Command output pipe is closed."))
             }
             defer {
               CloseHandle(pipe)
-              handle = nil
+              state.handle = nil
             }
             var captured = WindowsCommandProcess.Capture()
             var buffer = [UInt8](repeating: 0, count: 16_384)

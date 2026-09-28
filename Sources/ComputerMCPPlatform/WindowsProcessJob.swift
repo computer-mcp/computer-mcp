@@ -7,7 +7,9 @@
   final class WindowsProcessJob: Sendable {
     enum StopReason { case exited, timedOut, cancelled, failed }
 
-    private struct State {
+    // Native handles identify kernel objects, not Swift memory. The enclosing
+    // mutex serializes every state mutation, borrowed admission and handle close.
+    private struct State: @unchecked Sendable {
       let handle: HANDLE
       var assigned = false
       var reason: StopReason?

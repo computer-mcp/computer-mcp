@@ -135,6 +135,12 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
   unsupported result for this locator type. Explicit executable and PATH bindings
   retain precedence. The gateway validates bundle identity and workspace path
   containment before binding a located executable.
+- Keep the byte-level Keychain adapter and native Security calls in the platform
+  target. The gateway owns secret-reference validation, UTF-8 values and blocking
+  operation scheduling. macOS uses the private Data Protection Keychain access
+  group and preserves noninteractive metadata-only existence checks. On Windows,
+  this macOS provider reports an explicit unsupported error for every operation;
+  it does not substitute a file store or return a missing-secret result.
 - Keep explicit package checks in the App-owned control plane, shared by SwiftUI
   and the owner-only management CLI. `PluginDoctorReport` reuses activation's
   source selection, declaration identity, dependency binding and file inspection

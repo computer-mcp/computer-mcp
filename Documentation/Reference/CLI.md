@@ -33,8 +33,8 @@ computer-mcp build-info
 computer-mcp config path [--control-socket <control-socket>]
 computer-mcp config show [--control-socket <control-socket>]
 computer-mcp config defaults
-computer-mcp cli-tree validate <file> [--expected-version <version>]
-computer-mcp cli-tree check <file> --executable <executable> [--working-directory <directory>] [--expected-version <version>]
+computer-mcp cli-tree validate <file> [--expected-version <expected-version>]
+computer-mcp cli-tree check <file> [--expected-version <expected-version>] --executable <executable> [--working-directory <working-directory>]
 computer-mcp config validate [--control-socket <control-socket>] [--config <config>] [--connect]
 computer-mcp config export [--control-socket <control-socket>] [--output <output>]
 computer-mcp config migrate-codex --config <config> --adapter-config <adapter-config> --state-directory <state-directory> [--known-plugin-mcp-server <known-plugin-mcp-server> ...]

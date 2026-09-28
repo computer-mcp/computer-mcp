@@ -63,6 +63,7 @@ verify_help() {
 verify_help "$ROOT_CLI"
 verify_help "$ROOT_CLI" app
 verify_help "$ROOT_CLI" config
+verify_help "$ROOT_CLI" cli-tree
 verify_help "$ROOT_CLI" workspace
 verify_help "$ROOT_CLI" profile
 verify_help "$ROOT_CLI" permissions
@@ -91,6 +92,8 @@ public_leaf_commands=(
   "config path"
   "config show"
   "config defaults"
+  "cli-tree validate"
+  "cli-tree check"
   "config validate"
   "config export"
   "config migrate-codex"
@@ -99,6 +102,7 @@ public_leaf_commands=(
   "config rollback"
   "workspace list"
   "workspace add"
+  "workspace repair"
   "workspace remove"
   "workspace enable"
   "workspace deduplicate"

@@ -18,7 +18,7 @@ actor StaticPluginCatalog: PluginCatalogBrowsing {
   struct Filter: Sendable {
     var host: PluginVersion
     var architecture: String
-    var platform = "macos"
+    var platform = PluginHost.platform
     var includePrereleases = false
     var includeIncompatible = false
   }
@@ -125,7 +125,11 @@ actor StaticPluginCatalog: PluginCatalogBrowsing {
       !selected.withdrawn
       && selected.matches(
         host: filter.host, architecture: filter.architecture, platform: filter.platform)
-    let assets = permitted ? selected.assets.map { selected.artifact($0) } : []
+    let assets =
+      permitted
+      ? selected.assets.filter {
+        $0.matches(platform: filter.platform, architecture: filter.architecture)
+      }.map { selected.artifact($0) } : []
     let offset = (page - 1) * 10
     let pageAssets = Array(assets.dropFirst(offset).prefix(10))
     var issues = snapshot.issues

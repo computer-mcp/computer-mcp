@@ -6,6 +6,26 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct GitHubPluginReleasesTests {
+  @Test(arguments: ["correct", "forged", "omitted"])
+  func selectedTargetIsRevalidatedAgainstTheExactTag(fault: String) async throws {
+    let manifest = PreparationFixture.platformManifest.replacingOccurrences(
+      of: "mac.zip", with: "combined.zip")
+    let http = ReleaseHTTPFake(manifest: manifest)
+    var artifact = pluginArtifactFixture(manifest: manifest)
+    if fault != "omitted" {
+      artifact.compatibility = try PluginPlatformCompatibility(
+        platforms: [fault == "forged" ? "windows" : "macos"], architectures: ["arm64"])
+    }
+    if fault == "correct" {
+      try await GitHubPluginReleases(http: http).revalidate(artifact)
+    } else {
+      await #expect(throws: PluginCatalogError.invalidProvenance) {
+        try await GitHubPluginReleases(http: http).revalidate(artifact)
+      }
+    }
+    #expect(await http.manifestRefs == [artifact.declaration.revision])
+  }
+
   @Test
   func cancellationDuringDownloadReclaimsOnlyItsReceiptedStaging() async throws {
     let fixture = try await PreparationFixture.make(format: "zip")

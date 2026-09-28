@@ -21,13 +21,38 @@ does not establish publisher trust, artifact integrity, or user authorization.
 | `repository` | Optional HTTPS repository URL; a claim, not verified provenance |
 | `compatibility.minimum_host` | Inclusive minimum host release |
 | `compatibility.maximum_host` | Exclusive maximum host release |
-| `compatibility.architectures` | Optional unique subset of `arm64` and `x86_64`; omitted means unrestricted |
+| `compatibility.platforms` | Nonempty unique subset of `macos` and `windows`; omitted means `macos` |
+| `compatibility.architectures` | Optional unique subset of `arm64` and `x86_64`; omitted or empty permits both |
+| `compatibility.artifacts` | Optional named archive targets; required when declaring Windows |
 
 Package, dependency, and contribution IDs contain lowercase ASCII letters,
 digits, hyphens, or underscores, start with a letter or digit, and are at most
 128 bytes. Contribution IDs are unique across all three kinds within a package;
 dependency IDs have their own namespace. There are at most 1024 contributions.
 Compatibility compares semantic precedence; build metadata does not change it.
+
+A release can declare separate archive targets in the same tagged manifest; see
+the [combined declaration example](#combined-declaration-example).
+
+Each target must fit within the release-wide platform and architecture constraints.
+Names identify one ZIP/TAR archive, are unique ignoring case, and match the selected
+release asset exactly. At most 100 declarations are permitted. Every declared
+archive must be published, and every published installable archive must be declared
+when the list is present. All archives contain the exact same root manifest bytes
+as the tag. Targets are declarations; they do not establish binary validity or
+execution permission. Set `minimum_host` to a released host that supports the fields
+used by the package; older hosts reject unknown fields.
+
+Legacy manifests retain their macOS default, architecture constraints and stored
+declaration fingerprints. Without an artifact list, every archive inherits the
+release target. Local installation retains a declared archive's filename; renaming
+it does not choose another target. The installation record preserves the selected
+name, and activation and diagnostics recheck its target. Bundled distribution
+checks the selected archive against every requested App architecture.
+
+The platform model accepts Windows metadata. The shipped App, gateway and package
+installation runtime remain macOS-only; platform metadata does not make a provider
+or external application available on Windows.
 
 ## Executables and External Dependencies
 
@@ -166,6 +191,19 @@ directory in its own repository:
 id = "example-integration"
 name = "Example Integration"
 version = "1.2.3"
+
+[compatibility]
+platforms = ["macos", "windows"]
+
+[[compatibility.artifacts]]
+name = "example-macos.zip"
+platforms = ["macos"]
+architectures = ["arm64", "x86_64"]
+
+[[compatibility.artifacts]]
+name = "example-windows.zip"
+platforms = ["windows"]
+architectures = ["x86_64"]
 
 [[dependencies]]
 id = "vendor"
@@ -538,7 +576,8 @@ App-owned static catalog service. A search never installs a package, runs code,
 changes registrations or grants access. Installed plugin inventory stays local.
 
 The service reads `https://computer-mcp.github.io/plugins/index.json`, a complete
-publisher-generated schema 1 snapshot. The publisher pins the official GitHub
+publisher-generated schema 2 snapshot. Schema 1 remains readable with its legacy
+macOS target semantics. The publisher pins the official GitHub
 organization `computer-mcp` by numeric ID `315005910`, admits repositories by
 numeric identity and verifies published tags, commits, declarations and release
 archives. The catalog includes versions, channels, compatibility, prerequisites,
@@ -547,7 +586,8 @@ signature, execution grant or replacement for installation-time GitHub checks.
 
 Query words match repository, plugin ID, name and description; `--kind` filters
 contributions. Search picks each plugin's latest stable, non-withdrawn release
-compatible with this host version and architecture. Filtering happens before
+compatible with this host version, platform and architecture, with at least one
+matching archive. Each archive is filtered by its declared target. Filtering happens before
 pagination. Each local page contains at most 10 matching plugins. Search, paging
 and release selection use the same complete snapshot and make no organization,
 default-branch or Contents API requests.
@@ -636,7 +676,8 @@ dependencies.
 In the App, open **Plugins → Search official plugins → Choose release archive**.
 Choose the latest compatible stable release or a recorded tag, including a
 prerelease. Withdrawn and incompatible versions remain visible with their status. Choose a ZIP/TAR/gzip archive appropriate for the
-Mac; the host validates the package's architecture and version compatibility.
+Mac; the host validates the selected archive's platform, architecture and host
+version compatibility against the freshly fetched tagged declaration.
 Asset pages stay on the displayed tag. A failed catalog refresh keeps saved
 results visible with stale status; installation still requires fresh selected-release
 GitHub verification and exact archive/manifest checks.

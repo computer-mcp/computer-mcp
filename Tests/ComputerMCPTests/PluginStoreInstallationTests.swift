@@ -7,6 +7,46 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct PluginStoreInstallationTests {
   @Test
+  func installedArchiveRetainsTargetForReopenedActivation() async throws {
+    let fixture = try await PreparationFixture.make(
+      manifest: PreparationFixture.platformManifest, format: "zip")
+    defer { fixture.files.remove() }
+    let archive = fixture.files.root.appendingPathComponent("mac.zip")
+    try FileManager.default.copyItem(at: fixture.archive, to: archive)
+    let path = fixture.files.root.appendingPathComponent("target.sqlite").path
+    let store = PluginStore(database: try GatewayDatabase(path: path))
+    let installed = try await store.installArchive(
+      at: archive, expectedSHA256: fixture.digest, pluginID: "combined",
+      version: PluginVersion("1.2.3"),
+      hostVersion: PluginVersion("1.0.0"), architecture: "arm64",
+      storageRoot: fixture.files.root.appendingPathComponent("Plugins"),
+      workerExecutable: fixture.preparation.workerExecutable, expectedRevision: 0)
+    let reopened = PluginStore(database: try GatewayDatabase(path: path))
+    let snapshot = try await reopened.snapshot()
+    #expect(snapshot == installed.snapshot)
+    let record = try #require(snapshot.installations.first)
+    #expect(record.source.artifactName == "mac.zip")
+    let package = try PluginPackage.load(at: record.source.root)
+    let selected = try #require(snapshot.settings["combined"])
+    var settings = selected
+    settings.enabled = true
+    let compatible = try PluginResolver.resolve(
+      package: package, source: record.source, settings: settings,
+      hostVersion: PluginVersion("1.0.0"), architecture: "arm64")
+    #expect(!compatible.mcpServers.isEmpty)
+    let incompatible = try PluginResolver.resolve(
+      package: package, source: record.source, settings: settings,
+      hostVersion: PluginVersion("1.0.0"), architecture: "x86_64")
+    #expect(
+      incompatible.mcpServers.isEmpty && incompatible.cliCommands.isEmpty
+        && incompatible.skillRoots.isEmpty)
+    #expect(incompatible.diagnostics.map(\.code) == [.hostIncompatible])
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: record.source.root.appendingPathComponent("executed").path))
+  }
+
+  @Test
   func candidatesAcquireIndependentArtifactLeasesInsideTheInstallationTransaction() async throws {
     let fixture = try await PreparationFixture.make(manifest: Self.skillsManifest)
     defer { fixture.files.remove() }

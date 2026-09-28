@@ -77,40 +77,6 @@ package struct PluginManifest: Codable, Equatable, Sendable {
   }
 }
 
-package struct PluginCompatibility: Codable, Equatable, Sendable {
-  package let minimumHost: PluginVersion?
-  package let maximumHost: PluginVersion?
-  package let architectures: [String]
-
-  private enum CodingKeys: String, CodingKey, CaseIterable {
-    case minimumHost = "minimum_host"
-    case maximumHost = "maximum_host"
-    case architectures
-  }
-
-  package init(from decoder: any Decoder) throws {
-    let c = try decoder.pluginContainer(keyedBy: CodingKeys.self)
-    minimumHost = try c.decodeIfPresent(PluginVersion.self, forKey: .minimumHost)
-    maximumHost = try c.decodeIfPresent(PluginVersion.self, forKey: .maximumHost)
-    architectures = try c.decodeIfPresent([String].self, forKey: .architectures) ?? []
-    if let minimumHost, let maximumHost, !minimumHost.precedes(maximumHost) {
-      throw PluginManifestError.invalid("maximum_host must be greater than minimum_host.")
-    }
-    guard Set(architectures).count == architectures.count,
-      architectures.allSatisfy({ ["arm64", "x86_64"].contains($0) })
-    else {
-      throw PluginManifestError.invalid(
-        "Architectures must be unique supported macOS architectures.")
-    }
-  }
-
-  package func permits(host: PluginVersion, architecture: String) -> Bool {
-    (minimumHost.map { !host.precedes($0) } ?? true)
-      && (maximumHost.map { host.precedes($0) } ?? true)
-      && (architectures.isEmpty || architectures.contains(architecture))
-  }
-}
-
 package struct PluginDependency: Codable, Equatable, Sendable {
   package let id: String
   package let commands: [String]

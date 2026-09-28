@@ -147,6 +147,96 @@ struct PluginManifestTests {
     #expect(try !PluginVersion("1.0.0+b").precedes(PluginVersion("1.0.0+a")))
   }
 
+  @Test
+  func legacyCompatibilityPreservesItsEncodedIdentityAndMacOSDefault() throws {
+    let manifest = try PluginManifest.parse(
+      Self.header + """
+        [compatibility]
+        architectures = ['x86_64', 'arm64']
+        [[skills]]
+        id = 'guide'
+        path = 'skills'
+        """)
+    let compatibility = try #require(manifest.compatibility)
+    #expect(
+      try JSONValue.encoded(compatibility)
+        == .object([
+          "architectures": .array([.string("x86_64"), .string("arm64")])
+        ]))
+    #expect(compatibility.platforms == ["macos"])
+    #expect(
+      try !compatibility.permits(
+        host: PluginVersion("1.2.3"), architecture: "arm64", platform: "windows"))
+  }
+
+  @Test
+  func namedArtifactsConstrainTheReleaseWidePlatformRange() throws {
+    let manifest = try PluginManifest.parse(Self.platformArtifacts)
+    let compatibility = try #require(manifest.compatibility)
+    #expect(compatibility.artifactTarget(named: "mac.zip")?.platforms == ["macos"])
+    #expect(compatibility.artifactTarget(named: "windows.zip")?.architectures == ["x86_64"])
+    #expect(compatibility.artifactTarget(named: "renamed.zip") == nil)
+    #expect(compatibility.artifactTarget(named: nil) == nil)
+    let root = URL(fileURLWithPath: "/fixture")
+    let mac = PluginSource(kind: .artifact, root: root, artifactName: "mac.zip")
+    let windows = PluginSource(kind: .artifact, root: root, artifactName: "windows.zip")
+    #expect(
+      try mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64"))
+    #expect(
+      try !mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64"))
+    #expect(
+      try !windows.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64")
+    )
+    #expect(
+      try !PluginSource(kind: .artifact, root: root).permits(
+        manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64"))
+    #expect(try JSONDecoder().decode(PluginSource.self, from: JSONEncoder().encode(mac)) == mac)
+  }
+
+  @Test(arguments: [
+    "duplicate", "unknown-platform", "outside-parent", "missing-artifacts", "invalid-name", "extra",
+  ])
+  func malformedArtifactDeclarationsFailClosed(fault: String) throws {
+    let changed: String
+    switch fault {
+    case "duplicate":
+      changed = Self.platformArtifacts.replacingOccurrences(of: "windows.zip", with: "MAC.zip")
+    case "unknown-platform":
+      changed = Self.platformArtifacts.replacingOccurrences(of: "windows", with: "linux")
+    case "outside-parent":
+      changed = Self.platformArtifacts.replacingOccurrences(
+        of: "platforms = ['macos', 'windows']", with: "platforms = ['macos']")
+    case "missing-artifacts":
+      changed =
+        Self.header
+        + "[compatibility]\nplatforms = ['windows']\n[[skills]]\nid = 'guide'\npath = 'skills'"
+    case "invalid-name":
+      changed = Self.platformArtifacts.replacingOccurrences(
+        of: "windows.zip", with: "../windows.zip")
+    default:
+      changed = Self.platformArtifacts.replacingOccurrences(
+        of: "name = 'mac.zip'", with: "name = 'mac.zip'\nextra = true")
+    }
+    #expect(throws: (any Error).self) { try PluginManifest.parse(changed) }
+  }
+
+  static let platformArtifacts =
+    header + """
+      [compatibility]
+      platforms = ['macos', 'windows']
+      [[compatibility.artifacts]]
+      name = 'mac.zip'
+      platforms = ['macos']
+      architectures = ['arm64']
+      [[compatibility.artifacts]]
+      name = 'windows.zip'
+      platforms = ['windows']
+      architectures = ['x86_64']
+      [[skills]]
+      id = 'guide'
+      path = 'skills'
+      """
+
   static let header = "id = 'test-package'\nname = 'Test package'\nversion = '1.2.3'\n"
   static let combined =
     header + """

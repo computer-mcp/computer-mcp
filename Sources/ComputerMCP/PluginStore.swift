@@ -73,6 +73,14 @@ package struct PluginStoreSnapshot: Codable, Equatable, Sendable {
     }
     for choice in settings.values { try choice.validate() }
     for record in installations {
+      if let name = record.source.artifactName {
+        guard record.source.kind == .artifact, !name.isEmpty, name.utf8.count <= 255,
+          !name.contains("/"), !name.contains("\\"), !name.contains(":"),
+          !name.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+          GitHubPluginArtifact.isArchive(name),
+          record.source.githubRelease.map({ $0.name == name }) ?? true
+        else { throw PluginStoreError.invalidState }
+      }
       if let release = record.source.githubRelease {
         try release.validate()
         guard record.source.kind == .artifact, record.pluginID == release.declaration.pluginID,

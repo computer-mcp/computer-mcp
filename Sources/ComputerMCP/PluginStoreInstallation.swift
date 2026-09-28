@@ -26,6 +26,10 @@ extension PluginStore {
     download: GitHubPluginDownload = GitHubPluginDownload()
   ) async throws -> PluginStoreMutation {
     try artifact.validate()
+    guard
+      artifact.compatibility?.permits(
+        platform: PluginHost.platform, architecture: architecture) ?? true
+    else { throw PluginArchiveError.incompatiblePackage }
     return try await installArchive(
       expectedSHA256: artifact.sha256, pluginID: artifact.declaration.pluginID,
       version: artifact.declaration.version, hostVersion: hostVersion, architecture: architecture,
@@ -90,12 +94,14 @@ extension PluginStore {
       let archive = try await prepareArchive(identity)
       let state = try await preparation.withPreparedPackage(
         archive: archive, expectedSHA256: expectedSHA256, pluginID: pluginID, version: version,
-        hostVersion: hostVersion, architecture: architecture
+        hostVersion: hostVersion, architecture: architecture,
+        artifactName: githubRelease?.name ?? archive.lastPathComponent
       ) { package, receipt in
         try await verifyPackage(package)
         return try await self.commitInstallation(
           package, receipt: receipt, owned: owned, storage: storage,
-          expectedRevision: expectedRevision, githubRelease: githubRelease)
+          expectedRevision: expectedRevision, githubRelease: githubRelease,
+          artifactName: githubRelease?.name ?? archive.lastPathComponent)
       }
       try storage.clean(identity, keepingPackage: true)
       return PluginStoreMutation(snapshot: state, issues: [])
@@ -118,7 +124,7 @@ extension PluginStore {
   private func commitInstallation(
     _ package: PluginPackage, receipt: PluginArchiveReceipt, owned: PluginOwnedDirectory,
     storage: PluginInstallationStorage, expectedRevision: Int64,
-    githubRelease: GitHubPluginArtifact?
+    githubRelease: GitHubPluginArtifact?, artifactName: String
   ) async throws -> PluginStoreSnapshot {
     try Task.checkCancellation()
     // Archive preparation suspends the actor; never reuse its preflight snapshot.
@@ -130,7 +136,9 @@ extension PluginStore {
         kind: .artifact, root: root,
         repository: githubRelease?.declaration.repositoryURL.absoluteString,
         revision: githubRelease?.declaration.revision, artifactSHA256: receipt.sha256,
-        githubRelease: githubRelease),
+        githubRelease: githubRelease,
+        artifactName: package.manifest.compatibility?.artifacts.isEmpty == false
+          ? artifactName : nil),
       manifestDigest: try Self.manifestDigest(package.manifest), registeredAt: .now)
     state.installations.append(record)
     state.selectedInstallations[record.pluginID] = record.id

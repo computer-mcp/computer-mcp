@@ -201,10 +201,13 @@ package struct PluginSource: Codable, Equatable, Sendable {
   package let artifactSHA256: String?
   /// Public GitHub metadata verified during installation, not a code-signing assertion.
   package let githubRelease: GitHubPluginArtifact?
+  /// The archive name validated against its exact manifest during installation.
+  package let artifactName: String?
 
   package init(
     kind: PluginSourceKind, root: URL, repository: String? = nil, revision: String? = nil,
-    artifactSHA256: String? = nil, githubRelease: GitHubPluginArtifact? = nil
+    artifactSHA256: String? = nil, githubRelease: GitHubPluginArtifact? = nil,
+    artifactName: String? = nil
   ) {
     self.kind = kind
     self.root = root
@@ -212,5 +215,6 @@ package struct PluginSource: Codable, Equatable, Sendable {
     self.revision = revision
     self.artifactSHA256 = artifactSHA256
     self.githubRelease = githubRelease
+    self.artifactName = artifactName
   }
 }

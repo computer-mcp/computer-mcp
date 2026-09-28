@@ -2,6 +2,7 @@ import Foundation
 
 /// The host resolves registrations using its launch environment, without changing PATH or installing dependencies.
 package enum PluginHost {
+  package static var platform: String { PluginPlatformCompatibility.currentPlatform }
   package static var architecture: String {
     #if arch(arm64)
       "arm64"

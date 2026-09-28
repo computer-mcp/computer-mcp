@@ -7,6 +7,81 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct StaticPluginCatalogTests {
   @Test
+  func publisherPlatformSnapshotFiltersEachArchiveAndVersionLocally() async throws {
+    let url = try #require(
+      Bundle.module.url(
+        forResource: "plugin-catalog-v2-platforms", withExtension: "json", subdirectory: "Fixtures")
+    )
+    let bytes = try Data(contentsOf: url)
+    let document = try StaticPluginCatalogDocument.decode(bytes)
+    #expect(document.schemaVersion == 2)
+    let catalog = StaticPluginCatalog(
+      http: StaticCatalogHTTPFake([.success(staticCatalogResponse(bytes))]))
+    for (platform, architecture, expected) in [
+      ("macos", "arm64", ["example-macos.zip"]),
+      ("windows", "x86_64", ["example-windows.zip"]),
+      ("macos", "x86_64", []), ("windows", "arm64", []),
+    ] {
+      let filter = StaticPluginCatalog.Filter(
+        host: try PluginVersion("2.0.0"), architecture: architecture, platform: platform)
+      let artifacts = try await catalog.artifacts(
+        repository: "computer-mcp/plugin-example", repositoryID: 10, tag: "v1.0.0", page: 1,
+        filter: filter)
+      #expect(artifacts.artifacts.map(\.name) == expected)
+      #expect(artifacts.versions.first?.compatible == !expected.isEmpty)
+      let search = try await catalog.search(
+        query: "", kind: nil, page: 1, refresh: false, filter: filter)
+      #expect(search.entries.isEmpty == expected.isEmpty)
+      #expect(
+        artifacts.artifacts.allSatisfy {
+          $0.compatibility?.permits(platform: platform, architecture: architecture) == true
+        })
+    }
+  }
+
+  @Test
+  func schemaUpgradeMaterializesInheritedTargetsWithoutChangingReleaseIdentity() throws {
+    let old = try StaticPluginCatalogDocument.decode(staticCatalogFixture())
+    let data = try staticCatalogData { root in
+      root["schema_version"] = .integer(2)
+      root["generation"] = .integer(2)
+      root["releases"] = .array(
+        root["releases"]!.arrayValue!.map { value in
+          var release = value.objectValue!
+          let compatibility = release["compatibility"]!.objectValue!
+          release["assets"] = .array(
+            release["assets"]!.arrayValue!.map { value in
+              var asset = value.objectValue!
+              asset["compatibility"] = .object([
+                "platforms": compatibility["platforms"]!,
+                "architectures": compatibility["architectures"]!,
+              ])
+              return .object(asset)
+            })
+          return .object(release)
+        })
+    }
+    let current = try StaticPluginCatalogDocument.decode(data)
+    try current.validateSuccessor(of: old)
+    let widened = try staticCatalogData { root in
+      root = try! JSONDecoder().decode(JSONValue.self, from: data).objectValue!
+      var release = root["releases"]!.arrayValue![0].objectValue!
+      var asset = release["assets"]!.arrayValue![0].objectValue!
+      asset["compatibility"] = .object([
+        "platforms": .array([.string("windows")]), "architectures": .array([]),
+      ])
+      release["assets"] = .array([.object(asset)])
+      root["releases"] = .array([.object(release)])
+    }
+    #expect(throws: PluginCatalogError.self) { try StaticPluginCatalogDocument.decode(widened) }
+    let downgrade = try StaticPluginCatalogDocument.decode(
+      staticCatalogData { $0["generation"] = .integer(3) })
+    #expect(throws: PluginCatalogError.invalidProvenance) {
+      try downgrade.validateSuccessor(of: current)
+    }
+  }
+
+  @Test
   func decodesPublisherGeneratedCanonicalBytesAndExactIdentity() throws {
     let data = try staticCatalogFixture()
     let document = try StaticPluginCatalogDocument.decode(data)
@@ -36,7 +111,7 @@ struct StaticPluginCatalogTests {
   func rejectsInvalidDocuments(_ fault: String) throws {
     var bytes = try staticCatalogData { root in
       switch fault {
-      case "schema": root["schema_version"] = .integer(2)
+      case "schema": root["schema_version"] = .integer(3)
       case "publisher":
         root["publisher"] = .object(["login": .string("computer-mcp"), "id": .integer(999)])
       case "unknown": root["extra"] = .bool(true)

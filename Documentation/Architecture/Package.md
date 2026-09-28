@@ -94,6 +94,13 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
   PE compatibility, launch permission, trust or protocol health. The Windows
   CI job compiles and tests this target against native files in debug and
   release configurations; broader host platform support has separate gates.
+- Share declared platform/architecture matching between package preparation,
+  retained source activation, diagnostics, static discovery and selected-asset
+  provenance checks. Per-archive targets come from the exact tagged manifest;
+  the installer retains the selected archive name and rechecks that target.
+  Legacy macOS declarations retain their stored fingerprints. Catalog schema 2
+  materializes per-asset targets; schema 1 remains readable, and a schema upgrade
+  cannot alter the implied target or any immutable package identity.
 - Keep explicit package checks in the App-owned control plane, shared by SwiftUI
   and the owner-only management CLI. `PluginDoctorReport` reuses activation's
   source selection, declaration identity, dependency binding and file inspection

@@ -97,13 +97,14 @@ package struct PluginDoctorReport: Codable, Sendable {
       return report()
     }
     let compatible =
-      plugin.manifest.compatibility?.permits(host: hostVersion, architecture: architecture) ?? true
+      source?.permits(manifest: plugin.manifest, host: hostVersion, architecture: architecture)
+      == true
     checks.append(
       .init(
         id: "compatibility", kind: .compatibility, status: compatible ? .passed : .failed,
         message: compatible
-          ? "The declaration permits this host version and architecture."
-          : "The declaration excludes this host version or architecture. Select a compatible package."
+          ? "The selected package permits this host version, platform and architecture."
+          : "The selected package excludes this host version, platform or architecture. Select a compatible package."
       ))
     let resolvedDependencies = PluginDependencyResolver.resolve(
       for: plugin, settings: settings,

@@ -11,6 +11,7 @@ package struct GitHubPluginArtifact: Codable, Equatable, Identifiable, Sendable 
   package let name: String
   package let size: Int64
   package let sha256: String
+  package var compatibility: PluginPlatformCompatibility? = nil
   package var id: String { "\(declaration.repositoryID)/\(releaseID)/\(assetID)" }
 
   var apiPath: String { "/repos/\(declaration.repository)/releases/assets/\(assetID)" }
@@ -96,7 +97,15 @@ struct GitHubPluginReleases: Sendable {
       let result = try await assets(
         repository: release.entry.repository, releaseID: release.release.id, page: page)
       if let asset = result.values.first(where: { $0.id == artifact.assetID }) {
-        let current = try makeArtifact(asset, declaration: release.entry, release: release.release)
+        let target =
+          release.manifest.compatibility?.artifactTarget(named: asset.name)
+          ?? (release.manifest.compatibility == nil ? .macOS : nil)
+        guard let target,
+          artifact.compatibility.map({ $0 == target })
+            ?? (release.manifest.compatibility?.artifacts.isEmpty ?? true)
+        else { throw PluginCatalogError.invalidProvenance }
+        var current = try makeArtifact(asset, declaration: release.entry, release: release.release)
+        current.compatibility = artifact.compatibility == nil ? nil : target
         guard current == artifact else { throw PluginCatalogError.invalidProvenance }
         return
       }
@@ -144,7 +153,7 @@ struct GitHubPluginReleases: Sendable {
 
   private func metadata(
     repository: String, repositoryID: Int64, releaseID: Int64
-  ) async throws -> (entry: PluginCatalogEntry, release: Release) {
+  ) async throws -> (entry: PluginCatalogEntry, manifest: PluginManifest, release: Release) {
     try GitHubPluginSource.Repository.validateName(repository)
     guard GitHubPluginArtifact.validID(repositoryID), GitHubPluginArtifact.validID(releaseID)
     else { throw PluginCatalogError.invalidQuery }
@@ -178,10 +187,10 @@ struct GitHubPluginReleases: Sendable {
     guard
       let revision = String(data: commit.body, encoding: .utf8)?.trimmingCharacters(
         in: .whitespacesAndNewlines), GitHubPluginSource.isGitSHA(revision),
-      let entry = try await GitHubPluginSource.entry(
+      let declaration = try await GitHubPluginSource.declaration(
         repository: repo, revision: revision, http: http)
     else { throw PluginCatalogError.invalidManifest }
-    return (entry, release)
+    return (declaration.entry, declaration.manifest, release)
   }
 
   private func makeArtifact(_ asset: Asset, declaration: PluginCatalogEntry, release: Release)

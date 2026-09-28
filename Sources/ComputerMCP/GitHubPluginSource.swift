@@ -8,6 +8,12 @@ enum GitHubPluginSource {
   static func entry(
     repository: Repository, revision: String, http: any PluginCatalogHTTPFetching
   ) async throws -> PluginCatalogEntry? {
+    try await declaration(repository: repository, revision: revision, http: http)?.entry
+  }
+
+  static func declaration(
+    repository: Repository, revision: String, http: any PluginCatalogHTTPFetching
+  ) async throws -> (entry: PluginCatalogEntry, manifest: PluginManifest)? {
     try repository.validate()
     guard isGitSHA(revision) else { throw PluginCatalogError.invalidResponse }
     let prefix = "/repos/\(repository.fullName)"
@@ -37,13 +43,14 @@ enum GitHubPluginSource {
     else {
       throw PluginCatalogError.responseTooLarge
     }
-    return PluginCatalogEntry(
+    let entry = PluginCatalogEntry(
       repositoryID: repository.id, repository: repository.fullName, publisherID: Self.publisherID,
       revision: revision, manifestBlobSHA: file.sha,
       manifestSHA256: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
       pluginID: manifest.id, name: manifest.name, version: manifest.version,
       summary: manifest.description,
       mcp: manifest.mcp.map(\.id), cli: manifest.cli.map(\.id), skills: manifest.skills.map(\.id))
+    return (entry, manifest)
   }
 
   struct Repository: Decodable {

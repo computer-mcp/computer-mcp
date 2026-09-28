@@ -1,0 +1,78 @@
+{
+  "generated_at": "2026-09-28T01:00:00Z",
+  "generation": 1,
+  "publisher": {
+    "id": 315005910,
+    "login": "computer-mcp"
+  },
+  "releases": [
+    {
+      "assets": [
+        {
+          "compatibility": {
+            "architectures": [
+              "arm64"
+            ],
+            "platforms": [
+              "macos"
+            ]
+          },
+          "id": 30,
+          "name": "example-macos.zip",
+          "sha256": "7b319de6ed80df657f2654a2372ab65a7760a881db393b03ef247e80105ba5dc",
+          "size": 722,
+          "url": "https://github.com/computer-mcp/plugin-example/releases/download/v1.0.0/example-macos.zip"
+        },
+        {
+          "compatibility": {
+            "architectures": [
+              "x86_64"
+            ],
+            "platforms": [
+              "windows"
+            ]
+          },
+          "id": 31,
+          "name": "example-windows.zip",
+          "sha256": "7b319de6ed80df657f2654a2372ab65a7760a881db393b03ef247e80105ba5dc",
+          "size": 722,
+          "url": "https://github.com/computer-mcp/plugin-example/releases/download/v1.0.0/example-windows.zip"
+        }
+      ],
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "compatibility": {
+        "architectures": [],
+        "maximum_host": null,
+        "minimum_host": null,
+        "platforms": [
+          "macos",
+          "windows"
+        ]
+      },
+      "contributions": {
+        "cli": [],
+        "mcp": [
+          "server"
+        ],
+        "skills": []
+      },
+      "dependencies": [],
+      "manifest_blob_sha": "0e703690b945d8df2cd8b8bb45d86c4aa2daadef",
+      "manifest_sha256": "abc9391f6410d56b37541f8797bb0c6008511286a3a15867982a76b8da3aeaed",
+      "name": "Example",
+      "plugin_id": "example",
+      "prerelease": false,
+      "published_at": "2026-09-28T01:00:00Z",
+      "release_id": 20,
+      "repository": "computer-mcp/plugin-example",
+      "repository_id": 10,
+      "summary": null,
+      "tag": "v1.0.0",
+      "version": "1.0.0",
+      "withdrawal_reason": null,
+      "withdrawn": false
+    }
+  ],
+  "revision": "2f6f21d1b1c46fb120c418cce9c804eb77778704ad520aaff866cb45bf349bd5",
+  "schema_version": 2
+}

@@ -7,6 +7,28 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct PluginArchivePreparationTests {
+  @Test(arguments: ["mac.zip", "windows.zip", "unknown.zip", ""])
+  func archiveTargetMustPermitThisHostBeforeActivation(name: String) async throws {
+    let fixture = try await PreparationFixture.make(manifest: PreparationFixture.platformManifest)
+    defer { fixture.files.remove() }
+    if name == "mac.zip" {
+      _ = try await fixture.preparation.withPreparedPackage(
+        archive: fixture.archive, expectedSHA256: fixture.digest, pluginID: "combined",
+        version: PluginVersion("1.2.3"), hostVersion: PluginVersion("1.0.0"),
+        architecture: "arm64", artifactName: name
+      ) { package, _ in package.manifest.id }
+    } else {
+      await #expect(throws: PluginArchiveError.incompatiblePackage) {
+        try await fixture.preparation.withPreparedPackage(
+          archive: fixture.archive, expectedSHA256: fixture.digest, pluginID: "combined",
+          version: PluginVersion("1.2.3"), hostVersion: PluginVersion("1.0.0"),
+          architecture: "arm64", artifactName: name.isEmpty ? nil : name
+        ) { _, _ in Issue.record("Incompatible archive reached activation") }
+      }
+    }
+    #expect(try fixture.stagingContents().isEmpty)
+  }
+
   @Test(arguments: ["tar", "tar.gz", "zip", "zip-stored"])
   func realWorkerPreparesCombinedPackageAndReclaimsItsScope(format: String) async throws {
     let fixture = try await PreparationFixture.make(format: format)
@@ -216,6 +238,23 @@ struct PreparationFixture: Sendable {
     id = 'guide'
     path = 'skills'
     """
+
+  static let platformManifest =
+    manifest
+    .replacingOccurrences(of: "architectures = ['arm64']", with: "platforms = ['macos', 'windows']")
+    .replacingOccurrences(
+      of: "[[mcp]]",
+      with: """
+        [[compatibility.artifacts]]
+        name = 'mac.zip'
+        platforms = ['macos']
+        architectures = ['arm64']
+        [[compatibility.artifacts]]
+        name = 'windows.zip'
+        platforms = ['windows']
+        architectures = ['x86_64']
+        [[mcp]]
+        """)
 
   static func make(manifest: String = Self.manifest, format: String = "tar") async throws -> Self {
     try await blockingFixtureIO { try Self(manifest: manifest, format: format) }

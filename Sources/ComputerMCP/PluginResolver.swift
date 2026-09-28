@@ -68,9 +68,7 @@ package enum PluginResolver {
         origins: origins, diagnostics: diagnostics)
     }
     guard settings.enabled else { return result() }
-    if let compatibility = manifest.compatibility,
-      !compatibility.permits(host: hostVersion, architecture: architecture)
-    {
+    if !source.permits(manifest: manifest, host: hostVersion, architecture: architecture) {
       diagnostics.append(
         .init(
           pluginID: manifest.id, componentID: nil,

@@ -62,15 +62,19 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
     func artifact(_ asset: Asset) -> GitHubPluginArtifact {
       GitHubPluginArtifact(
         declaration: declaration, releaseID: releaseID, tag: tag, prerelease: prerelease,
-        assetID: asset.id, name: asset.name, size: asset.size, sha256: asset.sha256)
+        assetID: asset.id, name: asset.name, size: asset.size, sha256: asset.sha256,
+        compatibility: asset.compatibility)
     }
 
-    func matches(host: PluginVersion, architecture: String, platform: String = "macos") -> Bool {
+    func matches(host: PluginVersion, architecture: String, platform: String = PluginHost.platform)
+      -> Bool
+    {
       compatibility.platforms.contains(platform)
         && (compatibility.architectures.isEmpty
           || compatibility.architectures.contains(architecture))
         && (compatibility.minimumHost.map { !host.precedes($0) } ?? true)
         && (compatibility.maximumHost.map { host.precedes($0) } ?? true)
+        && assets.contains { $0.matches(platform: platform, architecture: architecture) }
     }
 
     func validate() throws {
@@ -105,11 +109,28 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
       }
       for asset in assets {
         try artifact(asset).validate()
+        if let target = asset.compatibility {
+          guard
+            try target.isSubset(
+              of: PluginPlatformCompatibility(
+                platforms: compatibility.platforms, architectures: compatibility.architectures))
+          else { throw PluginCatalogError.invalidResponse }
+        }
         guard let url = URLComponents(string: asset.url), url.scheme == "https",
           url.host == "github.com", url.port == nil, url.user == nil, url.password == nil,
           url.query == nil, url.fragment == nil,
           url.path == "/\(repository)/releases/download/\(tag)/\(asset.name)"
         else { throw PluginCatalogError.invalidProvenance }
+      }
+    }
+
+    func assetsWithTargets() throws -> [Asset] {
+      let inherited = try PluginPlatformCompatibility(
+        platforms: compatibility.platforms, architectures: compatibility.architectures)
+      return assets.map {
+        Asset(
+          id: $0.id, name: $0.name, size: $0.size, sha256: $0.sha256, url: $0.url,
+          compatibility: $0.compatibility ?? inherited)
       }
     }
 
@@ -138,9 +159,8 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
     }
 
     func validate() throws {
-      guard platforms == ["macos"], Set(architectures).count == architectures.count,
-        architectures.allSatisfy({ ["arm64", "x86_64"].contains($0) }),
-        (minimumHost?.description.utf8.count ?? 0) <= 256,
+      _ = try PluginPlatformCompatibility(platforms: platforms, architectures: architectures)
+      guard (minimumHost?.description.utf8.count ?? 0) <= 256,
         (maximumHost?.description.utf8.count ?? 0) <= 256
       else { throw PluginCatalogError.invalidResponse }
       if let minimumHost, let maximumHost, !minimumHost.precedes(maximumHost) {
@@ -155,6 +175,11 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
     let size: Int64
     let sha256: String
     let url: String
+    let compatibility: PluginPlatformCompatibility?
+
+    func matches(platform: String, architecture: String) -> Bool {
+      compatibility?.permits(platform: platform, architecture: architecture) ?? true
+    }
   }
 
   enum CodingKeys: String, CodingKey {
@@ -172,7 +197,9 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
       guard try canonical(raw) == data else { throw PluginCatalogError.invalidResponse }
       try validateShape(raw)
       let value = try JSONDecoder().decode(Self.self, from: data)
-      guard value.schemaVersion == 1,
+      guard [1, 2].contains(value.schemaVersion),
+        value.schemaVersion != 1
+          || value.releases.allSatisfy({ $0.compatibility.platforms == ["macos"] }),
         value.publisher.login == GitHubPluginSource.publisher,
         value.publisher.id == GitHubPluginSource.publisherID,
         GitHubPluginArtifact.validID(value.generation),
@@ -217,7 +244,9 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
 
   /// A newer discovery snapshot cannot resurrect a withdrawal or silently rewrite a package.
   func validateSuccessor(of previous: Self) throws {
-    guard generation >= previous.generation else { throw PluginCatalogError.invalidProvenance }
+    guard schemaVersion >= previous.schemaVersion, generation >= previous.generation else {
+      throw PluginCatalogError.invalidProvenance
+    }
     if generation == previous.generation {
       guard self == previous else { throw PluginCatalogError.invalidProvenance }
       return
@@ -230,7 +259,7 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
         let current = releases.first(where: {
           $0.repositoryID == old.repositoryID && $0.releaseID == old.releaseID
         }), !old.withdrawn || current.withdrawn, current.declaration == old.declaration,
-        current.assets == old.assets, current.tag == old.tag,
+        try current.assetsWithTargets() == old.assetsWithTargets(), current.tag == old.tag,
         current.compatibility == old.compatibility,
         current.dependencies == old.dependencies, current.publishedAt == old.publishedAt
       else { throw PluginCatalogError.invalidProvenance }
@@ -281,6 +310,13 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
     }
     let root = try fields(
       raw, ["schema_version", "publisher", "generation", "revision", "generated_at", "releases"])
+    guard root["schema_version"] == .integer(1) || root["schema_version"] == .integer(2) else {
+      throw PluginCatalogError.invalidResponse
+    }
+    let assetKeys: Set<String> =
+      root["schema_version"] == .integer(2)
+      ? ["id", "name", "size", "sha256", "url", "compatibility"]
+      : ["id", "name", "size", "sha256", "url"]
     _ = try fields(root["publisher"]!, ["login", "id"])
     for value in root["releases"]?.arrayValue ?? [] {
       let record = try fields(
@@ -296,7 +332,10 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
       _ = try fields(
         record["compatibility"]!, ["platforms", "architectures", "minimum_host", "maximum_host"])
       for asset in record["assets"]?.arrayValue ?? [] {
-        _ = try fields(asset, ["id", "name", "size", "sha256", "url"])
+        let record = try fields(asset, assetKeys)
+        if let target = record["compatibility"] {
+          _ = try fields(target, ["platforms", "architectures"])
+        }
       }
       for dependency in record["dependencies"]?.arrayValue ?? [] {
         _ = try fields(

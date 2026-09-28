@@ -36,7 +36,13 @@ package enum BundledPluginDistribution {
         ) { package, _ in
           guard
             architectures.allSatisfy({
-              package.manifest.compatibility?.permits(host: hostVersion, architecture: $0) ?? true
+              let compatibility = package.manifest.compatibility
+              let target =
+                compatibility?.artifactTarget(named: artifact.archive)
+                ?? (compatibility == nil ? .macOS : nil)
+              return (compatibility?.permits(host: hostVersion, architecture: $0) ?? true)
+                && target?.permits(
+                  platform: PluginPlatformCompatibility.currentPlatform, architecture: $0) == true
             })
           else { throw PluginArchiveError.incompatiblePackage }
           try adopt(package: package, name: artifact.id, destination: outputDescriptor)

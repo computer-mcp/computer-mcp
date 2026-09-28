@@ -227,9 +227,17 @@ struct MCPHostSessionTests {
       try JSONDecoder().decode(PluginMCPSettings.self, from: JSONEncoder().encode(settings))
         .hostServices)
     let environment = try MCPHostContext.launchEnvironment(
-      inherited: ["COMPUTER_MCP_HOST_FD": "8"], overrides: ["COMPUTER_MCP_HOST_FD": "9"],
-      context: nil)
+      inherited: [
+        "COMPUTER_MCP_HOST_FD": "8", "COMPUTER_MCP_HOST_READ_HANDLE": "144",
+        "COMPUTER_MCP_HOST_WRITE_HANDLE": "148",
+      ],
+      overrides: [
+        "COMPUTER_MCP_HOST_FD": "9", "COMPUTER_MCP_HOST_READ_HANDLE": "152",
+        "COMPUTER_MCP_HOST_WRITE_HANDLE": "156",
+      ], context: nil)
     #expect(environment["COMPUTER_MCP_HOST_FD"] == nil)
+    #expect(environment["COMPUTER_MCP_HOST_READ_HANDLE"] == nil)
+    #expect(environment["COMPUTER_MCP_HOST_WRITE_HANDLE"] == nil)
     let remote = GatewayConfiguration(
       mcp: .init(servers: [
         .init(

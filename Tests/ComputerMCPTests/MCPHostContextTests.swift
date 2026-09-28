@@ -43,14 +43,22 @@ struct MCPHostContextTests {
       workspaceID: "project", rootURL: URL(fileURLWithPath: "/tmp"), readOnly: false,
       processOwnershipRoot: URL(fileURLWithPath: "/private/host-ownership"))
     let environment = try MCPHostContext.launchEnvironment(
-      inherited: [MCPHostContext.environmentKey: "ancestor", "KEEP": "inherited"],
-      overrides: [MCPHostContext.environmentKey: "registration", "EMPTY": ""], context: context)
+      inherited: [
+        MCPHostContext.environmentKey: "ancestor", "KEEP": "inherited",
+        MCPHostContext.readHandleEnvironmentKey: "144",
+      ],
+      overrides: [
+        MCPHostContext.environmentKey: "registration", "EMPTY": "",
+        MCPHostContext.writeHandleEnvironmentKey: "148",
+      ], context: context)
     let value = try JSONDecoder().decode(
       JSONValue.self, from: Data(try #require(environment[MCPHostContext.environmentKey]).utf8))
     #expect(value.objectValue?["caller"] == .string("local-cli"))
     #expect(value.objectValue?["runtimeID"] == .string(context.runtimeID.uuidString))
     #expect(environment["KEEP"] == "inherited")
     #expect(environment["EMPTY"] == "")
+    #expect(environment[MCPHostContext.readHandleEnvironmentKey] == nil)
+    #expect(environment[MCPHostContext.writeHandleEnvironmentKey] == nil)
     #expect(value.objectValue?["processOwnershipRoot"] == nil)
   }
 

@@ -389,8 +389,7 @@ package actor AppGatewayService {
       throw GatewaySocketError.invalidConfiguration(
         "The gateway has reached its control session capacity.")
     }
-    let controlSession = GatewayControlSession(
-      principalID: key.principalID, profileID: key.profileID, caller: key.caller)
+    let controlSession = try admitted.gateway.makeControlSession()
     controlSessionRecords[controlSession.id] = (key, controlSession)
     let dispatcher = SessionDispatcher(
       service: self, key: key, epoch: epoch, trace: identity.transportTrace,
@@ -414,6 +413,19 @@ package actor AppGatewayService {
 
   package func controlSessions() -> [GatewayControlSessionSnapshot] {
     controlSessionRecords.values.map { $0.session.snapshot }.sorted { $0.id < $1.id }
+  }
+
+  package func approveControlSession(
+    id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0
+  ) async throws -> GatewayControlSessionSnapshot {
+    guard try await controlPlane.activeConfiguration().policy.shellEnabled else {
+      throw AppControlPlaneServiceError.fullShellManifestDisabled
+    }
+    guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
+    return try record.session.approveFullAccess(
+      lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision)
   }
 
   package func limitControlSession(
@@ -1034,7 +1046,9 @@ package actor AppGatewayService {
         }
         try resolution.merge(candidate.resolution)
       }
+      var publishedProfiles = inputs.persisted.profiles
       let committed = try publish(resolution) { persisted in
+        publishedProfiles = persisted.profiles
         let published = AppControlPlaneService.GatewayInputs(
           configuration: inputs.configuration, persisted: persisted)
         for (key, prepared) in candidates {
@@ -1045,8 +1059,16 @@ package actor AppGatewayService {
           candidate.runtime.publishPrepared()
           observe(candidate.runtime, key: key, epoch: prepared.epoch)
         }
-        for key in candidates.keys { changes(for: key).send() }
         reapRetiredRuntimes()
+      }
+      // Admission reads SQLite while holding a session lock. Refresh after commit
+      // to preserve that lock order, before this actor admits another invocation.
+      for (key, prepared) in candidates {
+        let profile = prepared.preparation.runtime.controlProfile(in: publishedProfiles)
+        for record in controlSessionRecords.values where record.key == key {
+          record.session.updateProfile(profile)
+        }
+        changes(for: key).send()
       }
       await validation?.runtime.shutdown()
       return committed

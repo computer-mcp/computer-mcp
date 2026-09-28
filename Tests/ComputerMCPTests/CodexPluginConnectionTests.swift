@@ -158,6 +158,10 @@ struct CodexPluginConnectionTests {
       let port = try #require(await runtime.boundPort())
       let session = try await GatewayClientSession.connectHTTP(
         endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp")), streaming: false)
+      let admitted = try #require(await runtime.controlSessions().first)
+      #expect(admitted.fullAccessConsent == nil)
+      _ = try await runtime.approveControlSession(
+        id: admitted.id, expectedRevision: admitted.revision)
       let workspace = fixture.workspaces[0]
       let started = try await session.call(
         toolName: "codex.app.thread.start",
@@ -187,6 +191,7 @@ struct CodexPluginConnectionTests {
       let nextScope = try #require(await runtime.controlSessions().first)
       #expect(nextScope.principalID == originalScope.principalID)
       #expect(nextScope.id != originalScope.id)
+      #expect(nextScope.fullAccessConsent == nil)
       let loaded = try await reconnected.call(
         toolName: "codex.app.thread.loaded.list",
         arguments: .object(["workspace_id": .string(workspace.id)]))
@@ -278,6 +283,7 @@ private final class ConnectionFixture: Sendable {
     workspaces = registered
     let callers: [GatewayCallerKind] = [.secureTunnel, .localMCP, .cloudflareTunnel]
     var configured = base.configuration(workspaces: registered)
+    configured.policy.shellEnabled = true
     configured.profiles[0].allowedCallers = callers
     configured.profiles[0].mode = .localFullAccess
     configured.profiles[0].fullShellEnabled = true

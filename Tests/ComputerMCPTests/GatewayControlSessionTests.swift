@@ -12,6 +12,8 @@ struct GatewayControlSessionTests {
       ExecutionContext.self, from: JSONEncoder().encode(context))
     #expect(decoded.controlSession == nil)
     #expect(decoded.trustedPrincipalID == context.trustedPrincipalID)
+    #expect(try session.apply(to: grant, context: context).mode == .workspaceOperations)
+    #expect(try session.apply(to: grant, context: context).fullShellEnabled == false)
     var foreign = context
     foreign.trustedPrincipalID = "another-client"
     #expect(throws: (any Error).self) {
@@ -89,9 +91,9 @@ struct GatewayControlSessionTests {
       #expect(try fixture.database.operationTicket(id: ticket.id)?.state == .approved)
       try first.limitAccess(to: .readOnly, expectedRevision: 0)
       #expect(throws: (any Error).self) {
-        try first.limitAccess(to: .localFullAccess, expectedRevision: 0)
+        try first.limitAccess(to: .workspaceOperations, expectedRevision: 0)
       }
-      try first.limitAccess(to: .localFullAccess, expectedRevision: 1)
+      try first.limitAccess(to: .workspaceOperations, expectedRevision: 1)
       #expect(throws: (any Error).self) {
         try fixture.commit(ticket.id, context: context(first))
       }

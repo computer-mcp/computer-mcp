@@ -268,6 +268,23 @@ package struct AppControlPlaneOperations: Sendable {
     await gatewayService.controlSessions()
   }
 
+  package func approveControlSession(
+    id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0
+  ) async throws -> GatewayControlSessionSnapshot {
+    try await gatewayService.approveControlSession(
+      id: id, lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision)
+  }
+
+  package func clientTrusts() throws -> [GatewayClientTrust] {
+    try controlPlane.database.clientTrusts()
+  }
+
+  package func revokeClientTrust(id: String, expectedRevision: Int64) throws {
+    try controlPlane.database.revokeClientTrust(id: id, expectedRevision: expectedRevision)
+  }
+
   package func limitControlSession(
     id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
   ) async throws -> GatewayControlSessionSnapshot {

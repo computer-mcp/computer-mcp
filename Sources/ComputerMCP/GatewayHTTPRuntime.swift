@@ -105,6 +105,15 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
     await app.controlSessions()
   }
 
+  func approveControlSession(
+    id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0
+  ) async throws -> GatewayControlSessionSnapshot {
+    try await app.approveControlSession(
+      id: id, lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision)
+  }
+
   func limitControlSession(
     id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
   ) async throws -> GatewayControlSessionSnapshot {
@@ -457,6 +466,18 @@ private actor GatewayHTTPApp {
 
   func controlSessions() -> [GatewayControlSessionSnapshot] {
     sessions.values.compactMap { $0.controlSession?.snapshot }.sorted { $0.id < $1.id }
+  }
+
+  func approveControlSession(
+    id: String, lifetime: GatewayFullAccessLifetime,
+    expectedRevision: Int64, expectedTrustRevision: Int64
+  ) throws -> GatewayControlSessionSnapshot {
+    guard configuration.policy.shellEnabled else {
+      throw AppControlPlaneServiceError.fullShellManifestDisabled
+    }
+    return try controlSession(id: id).approveFullAccess(
+      lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision)
   }
 
   func limitControlSession(

@@ -1,5 +1,42 @@
 import Foundation
 
+package enum GatewayFullAccessLifetime: String, Codable, CaseIterable, Sendable {
+  case thisSession = "this-session"
+  case alwaysAllowClient = "always-allow-client"
+}
+
+/// The authority source distinguishes a manifest grant from a database override.
+package struct GatewayControlProfile: Codable, Equatable, Sendable {
+  package let grant: ProfileGrant
+  package let persisted: Bool
+  // Configured Observe profiles derive their visible read tools and workspaces at runtime.
+  package var configuredGrant: ProfileGrant? = nil
+
+  func hasSameAuthorization(as other: Self) -> Bool {
+    persisted == other.persisted
+      && (configuredGrant ?? grant) == (other.configuredGrant ?? other.grant)
+  }
+}
+
+package struct GatewayFullAccessConsent: Codable, Equatable, Sendable {
+  package let lifetime: GatewayFullAccessLifetime
+  package let grantedAt: Date
+  package let profile: GatewayControlProfile
+  package let trustID: String?
+  package let trustRevision: Int64?
+}
+
+package struct GatewayClientTrust: Codable, Equatable, Sendable, Identifiable {
+  package let id: String
+  package let principalID: String
+  package let profileID: GatewayProfileID
+  package let caller: GatewayCallerKind
+  package var revision: Int64
+  package var profile: GatewayControlProfile
+  package var fullAccessAllowed: Bool
+  package var updatedAt: Date
+}
+
 /// Host-created authority retained by invocations, independently of runtime generations.
 final class GatewayControlSession: @unchecked Sendable, Equatable {
   @TaskLocal static var current: GatewayControlSession?
@@ -11,30 +48,126 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   let changes = GatewayToolChangeBroadcaster()
   private let lock = NSLock()
   private var revision: Int64 = 0
-  private var accessLimit = GatewayPermissionMode.localFullAccess
+  private var accessLimit = GatewayPermissionMode.workspaceOperations
+  private var fullAccessConsent: GatewayFullAccessConsent?
+  private let database: GatewayDatabase?
+  private var profile: GatewayControlProfile?
   private var ended = false
 
-  init(principalID: String, profileID: GatewayProfileID, caller: GatewayCallerKind) {
+  init(
+    principalID: String, profileID: GatewayProfileID, caller: GatewayCallerKind,
+    database: GatewayDatabase? = nil, profile: GatewayControlProfile? = nil
+  ) {
     self.principalID = principalID
     self.profileID = profileID
     self.caller = caller
+    self.database = database
+    self.profile = profile
+    accessLimit = profile?.grant.mode == .readOnly ? .readOnly : .workspaceOperations
+  }
+
+  func restoreTrustedAccess() throws {
+    try lock.withLock {
+      guard !ended, revision == 0, fullAccessConsent == nil, let database,
+        let trust = try database.clientTrust(
+          principalID: principalID, profileID: profileID, caller: caller),
+        trust.fullAccessAllowed,
+        let current = try currentProfile(), current.hasSameAuthorization(as: trust.profile),
+        current.grant.allowedCallers.contains(caller)
+      else { return }
+      fullAccessConsent = .init(
+        lifetime: .alwaysAllowClient, grantedAt: trust.updatedAt,
+        profile: current, trustID: trust.id, trustRevision: trust.revision)
+      accessLimit = .localFullAccess
+    }
+  }
+
+  /// Called only by the local owner control plane after explicit user consent.
+  func approveFullAccess(
+    lifetime: GatewayFullAccessLifetime = .thisSession,
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0
+  ) throws -> GatewayControlSessionSnapshot {
+    try lock.withLock {
+      refreshConsent()
+      guard !ended, revision == expectedRevision, revision < Int64.max,
+        let database, !principalID.isEmpty, let current = try currentProfile()
+      else { throw Self.denied("Reload the connected client before granting access.") }
+      // Persistence and audit must succeed before this session receives authority.
+      let consent = try database.recordFullAccessConsent(
+        sessionID: id, principalID: principalID, profile: current, caller: caller,
+        lifetime: lifetime, expectedTrustRevision: expectedTrustRevision)
+      fullAccessConsent = consent
+      accessLimit = .localFullAccess
+      revision += 1
+    }
+    changes.send()
+    return snapshot
+  }
+
+  /// Publication updates the baseline used by both current and retained invocations.
+  func updateProfile(_ current: GatewayControlProfile) {
+    lock.withLock {
+      guard current.grant.id == profileID else { return }
+      profile = current
+      if let consent = fullAccessConsent, !current.hasSameAuthorization(as: consent.profile) {
+        clearConsent(mode: current.grant.mode)
+      }
+    }
+  }
+
+  private func currentProfile() throws -> GatewayControlProfile? {
+    if let stored = try database?.profiles().first(where: { $0.id == profileID }) {
+      let current = GatewayControlProfile(grant: stored, persisted: true)
+      profile = current
+      return current
+    }
+    return profile?.persisted == true ? nil : profile
+  }
+
+  private func refreshConsent(profile current: GatewayControlProfile? = nil) {
+    guard let consent = fullAccessConsent else { return }
+    let current = current ?? (try? currentProfile())
+    let trust = consent.trustID.flatMap { id in try? database?.clientTrust(id: id) }
+    let trusted =
+      consent.lifetime == .thisSession
+      || (trust?.fullAccessAllowed == true && trust?.revision == consent.trustRevision)
+    guard
+      current?.hasSameAuthorization(as: consent.profile) != true
+        || current?.grant.allowedCallers.contains(caller) != true
+        || !trusted
+    else { return }
+    clearConsent(mode: current?.grant.mode)
+  }
+
+  private func clearConsent(mode: GatewayPermissionMode?) {
+    fullAccessConsent = nil
+    accessLimit = mode == .readOnly ? .readOnly : .workspaceOperations
+    if revision < Int64.max { revision += 1 } else { ended = true }
+    changes.send()
   }
 
   static func == (lhs: GatewayControlSession, rhs: GatewayControlSession) -> Bool { lhs === rhs }
 
   var snapshot: GatewayControlSessionSnapshot {
     lock.withLock {
-      GatewayControlSessionSnapshot(
+      refreshConsent()
+      return GatewayControlSessionSnapshot(
         id: id, principalID: principalID, profileID: profileID, caller: caller,
-        revision: revision, accessLimit: accessLimit, ended: ended)
+        revision: revision, accessLimit: accessLimit, ended: ended,
+        fullAccessConsent: fullAccessConsent)
     }
   }
 
   func limitAccess(to mode: GatewayPermissionMode, expectedRevision: Int64) throws {
     try lock.withLock {
+      refreshConsent()
       guard !ended, revision == expectedRevision, revision < Int64.max else {
         throw Self.denied("The control session changed. Reload before changing its access.")
       }
+      guard mode != .localFullAccess else {
+        throw Self.denied("Full Access requires explicit local consent.")
+      }
+      fullAccessConsent = nil
       accessLimit = mode
       revision += 1
     }
@@ -44,6 +177,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   func end() {
     lock.withLock {
       ended = true
+      fullAccessConsent = nil
     }
     changes.send()
   }
@@ -54,7 +188,19 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
         context.trustedPrincipalID == principalID,
         context.profileID == profileID, context.caller == caller, grant.id == profileID
       else { throw Self.denied("The control session is no longer authorized for this caller.") }
-      var effective = grant
+      let current = try currentProfile()
+      guard current != nil || profile == nil else {
+        throw Self.denied("The client profile is no longer available.")
+      }
+      refreshConsent(profile: current)
+      var effective = current?.grant ?? grant
+      if fullAccessConsent != nil, accessLimit == .localFullAccess {
+        effective.mode = .localFullAccess
+        effective.fullShellEnabled = true
+        effective.capabilityIDs = ["*"]
+        effective.workspaceIDs = ["*"]
+        effective.confirmationPolicy = .never
+      }
       switch accessLimit {
       case .readOnly:
         effective.mode = .readOnly
@@ -71,6 +217,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
 
   func requireRevision(_ expected: Int64?) throws {
     try lock.withLock {
+      refreshConsent()
       guard !ended, expected == revision else {
         throw Self.denied("The control session changed after this operation was prepared.")
       }
@@ -144,4 +291,5 @@ package struct GatewayControlSessionSnapshot: Codable, Equatable, Sendable, Iden
   package let revision: Int64
   package let accessLimit: GatewayPermissionMode
   package let ended: Bool
+  package let fullAccessConsent: GatewayFullAccessConsent?
 }

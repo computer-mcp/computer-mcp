@@ -1922,6 +1922,9 @@ struct GatewayGenerationDispatchTests {
     try await fixture.activate(version: 1, fullShell: true)
     try await fixture.service.start(profile: .chatGPTOperate)
     let client = try await fixture.connect()
+    let scope = try #require(await fixture.service.controlSessions().first)
+    _ = try await fixture.service.approveControlSession(
+      id: scope.id, expectedRevision: scope.revision)
     var children: [Int32] = []
     defer { for pid in children where alive(pid) { _ = kill(-pid, SIGKILL) } }
     func payload(_ report: GatewayCallReport) throws -> [String: JSONValue] {

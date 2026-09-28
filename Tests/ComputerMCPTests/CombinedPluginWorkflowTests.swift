@@ -47,6 +47,7 @@ struct CombinedPluginWorkflowTests {
     try Data(tree.utf8).write(to: manualTree)
     let starts = fixture.root.appendingPathComponent("plugin-pids")
     var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
+    configuration.policy.shellEnabled = true
     configuration.profiles = [
       .init(
         id: .chatGPTOperate, capabilities: ["*"],
@@ -72,7 +73,6 @@ struct CombinedPluginWorkflowTests {
     _ = try await fixture.host.activateManifest(configuration.exportedTOML())
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
-    // The operator-owned fixture exercises plugin lifecycle, not interactive approval.
     let grant = ProfileGrant(
       id: .chatGPTOperate, capabilityIDs: ["*"], workspaceIDs: ["fixture"],
       allowedCallers: [.localCLI], fullShellEnabled: true,
@@ -331,6 +331,9 @@ struct CombinedPluginWorkflowTests {
       transport: GatewaySocketTransport(
         configuration: .init(
           socketURL: fixture.directories.gatewaySocket, clientIdentity: .localCLI)))
+    let session = try #require(await fixture.gateway.controlSessions().first)
+    _ = try await fixture.gateway.approveControlSession(
+      id: session.id, expectedRevision: session.revision)
     return client
   }
 

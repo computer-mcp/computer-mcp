@@ -20,11 +20,11 @@ authority, not sandboxing an arbitrary remote shell.
   closed.
 - Remote callers cannot approve host tickets or expand their own grants.
 
-Full Shell is equivalent to the current user's effective terminal authority.
-It requires `local-full-access`, the separate Full Shell grant, and the static
-Shell policy. It remains off by default and is enabled through local
-administration. If enabled,
-workspace bookmarks are routing and audit context, not containment.
+Arbitrary shell execution is equivalent to the current user's effective terminal
+authority. The effective grant must permit `local-full-access` and Full Shell,
+and the static TOML Shell policy must explicitly enable the facility. Both the
+facility and client Full Access are off by default. Workspace bookmarks are
+routing and audit context, not containment for an approved arbitrary command.
 
 Downstream MCP annotations are presentation hints, not host authorization.
 Registration assigns each exposed tool its actual server/tool identity;
@@ -56,9 +56,11 @@ clients sharing a credential share principal-level grants. Client-supplied label
 cannot establish a separate principal. Profile, workspace and caller checks still apply.
 
 The App gateway and standalone HTTP gateway bind each admitted MCP session to a
-host-created authorization object. The local owner can limit or end that session without changing another
-connection's grant or stopping its runtime. Session limits constrain the current
-profile; they cannot grant missing capabilities. New calls, discovery, selected
+host-created authorization object. The local owner can limit or end that session
+without changing another connection's grant or stopping its runtime. A new
+session starts with its profile's Observe or Restricted Control authority; a
+configured Full Access profile alone does not approve the connected client.
+New calls, discovery, selected
 execution-owner calls and retained Host Services invocations reread the session's
 current authority. A disconnected session loses this authority while its existing
 execution resources remain owned until they drain. Serialized execution context,
@@ -67,6 +69,30 @@ An HTTP session retains its scope across requests and event-stream reconnections
 Session DELETE, idle expiry and listener shutdown end that scope. A newly initialized
 session receives a new scope while the same principal retains its execution runtime
 until the listener stops.
+
+The local control plane can explicitly approve Full Access for a selected
+session. The default lifetime is This Session. Its effective grant includes
+all enabled capabilities and workspaces and permits normal operations without
+repeated confirmation. Verified caller admission, local-only actions, the static
+Shell policy and macOS permissions remain enforced; the principal never becomes
+`local-admin`. This decision does not change the persisted profile.
+
+Always Allow this Client is a separate local choice. Client trust is bound to
+verified principal, profile and caller, with an expected trust revision. The
+consent audit and persistent trust update commit together before authority is
+published. Trust cannot be inferred from a client label or a configured profile.
+Only a new session with the same verified identity and unchanged profile can
+restore active trust. An already connected Restricted session does not acquire
+another session's approval. Selecting This Session replaces that client's
+persistent trust; revocation removes it from existing and future sessions.
+
+Consent binds the configured or persisted profile authorization and its source.
+Derived Observe catalog or workspace additions alone do not change that authorization. Database grants are reread for admission; atomic configuration
+publication updates the session baseline for current and retained invocations.
+A changed profile invalidates consent and advances the session revision. A
+TOML-only profile remains configuration-owned after approval. Disconnecting,
+limiting or ending a session removes its current Full Access; a separate persistent
+trust revocation controls whether future connections may restore it.
 
 Operation tickets issued in a control session also bind that session's identity
 and revision. Another session using the same credential cannot consume the ticket,

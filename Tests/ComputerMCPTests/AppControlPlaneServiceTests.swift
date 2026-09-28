@@ -11,6 +11,107 @@ import Testing
 
 final class AppControlPlaneServiceTests {
   @Test
+  func explicitFullAccessFollowsTheSelectedSocketSessionAndPersistentClientTrust() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    var configuration = GatewayConfiguration(
+      runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
+      profiles: [
+        .init(
+          id: .chatGPTOperate, capabilities: ["system.time"], workspaces: ["fixture"],
+          allowedCallers: [.localMCP], mode: .workspaceOperations)
+      ], workspaceDirectory: fixture.root)
+    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    try fixture.database.saveWorkspace(
+      .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+    let service = AppGatewayService(
+      controlPlane: fixture.controlPlane,
+      socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.controlPlane, gatewayService: service)
+    try await service.start(profile: .chatGPTOperate)
+    do {
+      let first = try await GatewayClientSession.connectSocket(
+        socketURL: service.socketConfiguration.socketURL)
+      let firstScope = try #require(await operations.controlSessions().first)
+      #expect(try await !first.listToolNames().contains("shell.run"))
+      await #expect(throws: AppControlPlaneServiceError.fullShellManifestDisabled) {
+        try await operations.approveControlSession(
+          id: firstScope.id, expectedRevision: firstScope.revision)
+      }
+      configuration.policy.shellEnabled = true
+      _ = try await operations.activateManifest(configuration.exportedTOML())
+      let approved = try await operations.approveControlSession(
+        id: firstScope.id, expectedRevision: firstScope.revision)
+      #expect(approved.fullAccessConsent?.lifetime == .thisSession)
+      #expect(try operations.clientTrusts().isEmpty)
+      #expect(try await first.listToolNames().contains("shell.run"))
+      let run = JSONValue.object([
+        "workspace_id": .string("fixture"), "mode": .string("argv"),
+        "executable": .string("/bin/sh"),
+        "argv": .array([.string("-c"), .string("printf approved >> consent.txt")]),
+        "cwd": .string(fixture.root.path),
+      ])
+      #expect(
+        try await first.call(toolName: "shell.run", arguments: run).result.objectValue?["isError"]
+          != .bool(true))
+      let sibling = try await GatewayClientSession.connectSocket(
+        socketURL: service.socketConfiguration.socketURL)
+      let siblingScope = try #require(
+        await operations.controlSessions().first { $0.id != firstScope.id })
+      #expect(try await !sibling.listToolNames().contains("shell.run"))
+      #expect(
+        try await sibling.call(toolName: "shell.run", arguments: run).result.objectValue?["isError"]
+          == .bool(true))
+      _ = try await operations.approveControlSession(
+        id: firstScope.id, lifetime: .alwaysAllowClient, expectedRevision: approved.revision)
+      let trust = try #require(operations.clientTrusts().first)
+      await first.disconnect()
+      let reconnected = try await GatewayClientSession.connectSocket(
+        socketURL: service.socketConfiguration.socketURL)
+      let reconnectedScope = try #require(
+        await operations.controlSessions().first {
+          $0.id != siblingScope.id && $0.id != firstScope.id
+        })
+      #expect(try await reconnected.listToolNames().contains("shell.run"))
+      #expect(try await !sibling.listToolNames().contains("shell.run"))
+      #expect(
+        try await reconnected.call(toolName: "shell.run", arguments: run).result.objectValue?[
+          "isError"]
+          != .bool(true))
+      try operations.revokeClientTrust(id: trust.id, expectedRevision: trust.revision)
+      #expect(try await !reconnected.listToolNames().contains("shell.run"))
+      #expect(
+        try await reconnected.call(toolName: "shell.run", arguments: run).result.objectValue?[
+          "isError"]
+          == .bool(true))
+      #expect(
+        try String(contentsOf: fixture.root.appendingPathComponent("consent.txt"), encoding: .utf8)
+          == "approvedapproved")
+      let limited = try #require(
+        await operations.controlSessions().first { $0.id == reconnectedScope.id })
+      let revokedTrust = try #require(operations.clientTrusts().first)
+      _ = try await operations.approveControlSession(
+        id: limited.id, lifetime: .alwaysAllowClient, expectedRevision: limited.revision,
+        expectedTrustRevision: revokedTrust.revision)
+      configuration.profiles[0].mode = .readOnly
+      _ = try await operations.activateManifest(configuration.exportedTOML())
+      let changed = try #require(
+        await operations.controlSessions().first { $0.id == limited.id })
+      #expect(changed.fullAccessConsent == nil)
+      #expect(changed.accessLimit == .readOnly)
+      #expect(try fixture.database.profiles().isEmpty)
+      await reconnected.disconnect()
+      await sibling.disconnect()
+      await service.stop()
+      #expect(await operations.controlSessions().isEmpty)
+    } catch {
+      await service.stop()
+      throw error
+    }
+  }
+
+  @Test
   func ownerLimitsOneVerifiedSessionWithoutChangingOtherConnectionsOrTheProfile() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }

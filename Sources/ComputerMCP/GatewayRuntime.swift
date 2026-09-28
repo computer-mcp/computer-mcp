@@ -550,7 +550,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
-  private func currentHostGrant(context: ExecutionContext) throws -> ProfileGrant {
+  private func currentProfileGrant() throws -> ProfileGrant {
     let current: ProfileGrant
     if let database {
       if let persisted = try database.profiles().first(where: { $0.id == grant.id }) {
@@ -566,6 +566,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     } else {
       current = grant
     }
+    return current
+  }
+
+  private func currentHostGrant(context: ExecutionContext) throws -> ProfileGrant {
+    let current = try currentProfileGrant()
     guard let session = context.controlSession else {
       guard !requiresControlSession else {
         throw Self.invalid(
@@ -574,6 +579,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       return current
     }
     return try session.apply(to: current, context: context)
+  }
+
+  func controlProfile(in persistedProfiles: [ProfileGrant]) -> GatewayControlProfile {
+    let persisted = persistedProfiles.first { $0.id == grant.id }
+    return GatewayControlProfile(
+      grant: persisted.map(grant.applyingPersistedRuntimeState) ?? grant,
+      persisted: persisted != nil || requiresPersistedGrant,
+      configuredGrant: persisted == nil ? configuration.profileGrant(for: grant.id) : nil)
   }
 
   private func validateHostTarget(
@@ -725,8 +738,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let principalID = context.trustedPrincipalID, !principalID.isEmpty else {
       throw ConfigurationError.invalid("Control sessions require a verified principal.")
     }
-    return GatewayControlSession(
-      principalID: principalID, profileID: context.profileID, caller: context.caller)
+    _ = try currentProfileGrant()
+    let session = GatewayControlSession(
+      principalID: principalID, profileID: context.profileID, caller: context.caller,
+      database: database, profile: controlProfile(in: try database?.profiles() ?? []))
+    try session.restoreTrustedAccess()
+    return session
   }
 
   package func listTools() throws -> [MCPTool] {

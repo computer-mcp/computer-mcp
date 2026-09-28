@@ -669,6 +669,115 @@ package final class GatewayDatabase: @unchecked Sendable {
     try ProfileRecord.order(Column("id")).fetchAll(database).map { try $0.value() }
   }
 
+  package func clientTrusts() throws -> [GatewayClientTrust] {
+    try writer.read { database in
+      try GatewayClientTrust.order(Column("updatedAt").desc).fetchAll(database)
+    }
+  }
+
+  func clientTrust(id: String) throws -> GatewayClientTrust? {
+    try writer.read { try GatewayClientTrust.fetchOne($0, key: id) }
+  }
+
+  func clientTrust(
+    principalID: String, profileID: GatewayProfileID, caller: GatewayCallerKind
+  ) throws -> GatewayClientTrust? {
+    try writer.read { database in
+      try GatewayClientTrust
+        .filter(Column("principalID") == principalID)
+        .filter(Column("profileID") == profileID.rawValue)
+        .filter(Column("caller") == caller.rawValue).fetchOne(database)
+    }
+  }
+
+  /// The local consent audit and optional persistent client trust commit together.
+  func recordFullAccessConsent(
+    sessionID: String, principalID: String, profile authority: GatewayControlProfile,
+    caller: GatewayCallerKind, lifetime: GatewayFullAccessLifetime,
+    expectedTrustRevision: Int64
+  ) throws -> GatewayFullAccessConsent {
+    let profileID = authority.grant.id
+    let (consent, trustChanged) = try writer.write { database in
+      let storedProfile = try ProfileRecord.fetchOne(database, key: profileID.rawValue)?.value()
+      let profile = authority.grant
+      guard !principalID.isEmpty, (storedProfile != nil) == authority.persisted,
+        storedProfile == nil || storedProfile == profile,
+        profile.allowedCallers.contains(caller), !(profileID == .localAdmin && caller.isRemote)
+      else {
+        throw GatewayDatabaseError.invalidStoredValue(
+          "The client is no longer admitted by this profile.")
+      }
+      let stored =
+        try GatewayClientTrust
+        .filter(Column("principalID") == principalID)
+        .filter(Column("profileID") == profileID.rawValue)
+        .filter(Column("caller") == caller.rawValue).fetchOne(database)
+      guard (stored?.revision ?? 0) == expectedTrustRevision,
+        expectedTrustRevision >= 0, expectedTrustRevision < Int64.max
+      else {
+        throw GatewayDatabaseError.invalidStoredValue(
+          "Client trust changed; reload before granting access.")
+      }
+      let now = Date()
+      let persistent = lifetime == .alwaysAllowClient
+      var trust =
+        stored
+        ?? GatewayClientTrust(
+          id: UUID().uuidString, principalID: principalID, profileID: profileID, caller: caller,
+          revision: 0, profile: authority,
+          fullAccessAllowed: false, updatedAt: now)
+      let trustChanged = persistent || stored?.fullAccessAllowed == true
+      if trustChanged {
+        trust.revision += 1
+        trust.profile = authority
+        trust.fullAccessAllowed = persistent
+        trust.updatedAt = now
+        try trust.save(database)
+      }
+      try AuditEventRecord(
+        AuditEvent(
+          requestID: UUID().uuidString, invocationID: sessionID, caller: .localApp,
+          principalDigest: AuditEvent.verifiedPrincipalDigest(principalID),
+          profileID: profileID,
+          capabilityID: persistent
+            ? "control.full-access.always-allow" : "control.full-access.this-session",
+          decision: .allowed)
+      ).insert(database)
+      let consent = GatewayFullAccessConsent(
+        lifetime: lifetime, grantedAt: now, profile: authority,
+        trustID: persistent ? trust.id : nil, trustRevision: persistent ? trust.revision : nil)
+      return (consent, trustChanged)
+    }
+    if trustChanged {
+      profileChangeLock.withLock { profileChangeBroadcasters[profileID] }?.send()
+    }
+    return consent
+  }
+
+  package func revokeClientTrust(id: String, expectedRevision: Int64) throws {
+    let profileID = try writer.write { database in
+      guard var trust = try GatewayClientTrust.fetchOne(database, key: id),
+        trust.revision == expectedRevision, trust.revision < Int64.max
+      else {
+        throw GatewayDatabaseError.invalidStoredValue(
+          "Client trust changed; reload before revoking access.")
+      }
+      trust.fullAccessAllowed = false
+      trust.revision += 1
+      trust.updatedAt = Date()
+      try trust.save(database)
+      try AuditEventRecord(
+        AuditEvent(
+          requestID: UUID().uuidString, caller: .localApp,
+          principalDigest: AuditEvent.verifiedPrincipalDigest(trust.principalID),
+          profileID: trust.profileID, capabilityID: "control.client-trust.revoke",
+          decision: .allowed)
+      ).insert(database)
+      return trust.profileID
+    }
+    profileChangeLock.withLock { profileChangeBroadcasters[profileID] }?.send()
+  }
+
   func reserveMCPExecution(_ proposed: MCPExecutionRecord) throws
     -> (record: MCPExecutionRecord, inserted: Bool)
   {
@@ -1448,6 +1557,19 @@ package final class GatewayDatabase: @unchecked Sendable {
         table.add(column: "controlSessionRevision", .integer)
       }
     }
+    migrator.registerMigration("explicit-client-control-trust") { database in
+      try database.create(table: "clientControlTrust") { table in
+        table.column("id", .text).primaryKey()
+        table.column("principalID", .text).notNull()
+        table.column("profileID", .text).notNull()
+        table.column("caller", .text).notNull()
+        table.column("revision", .integer).notNull()
+        table.column("profile", .text).notNull()
+        table.column("fullAccessAllowed", .boolean).notNull()
+        table.column("updatedAt", .datetime).notNull()
+        table.uniqueKey(["principalID", "profileID", "caller"])
+      }
+    }
     return migrator
   }()
 
@@ -2159,4 +2281,8 @@ extension GatewayDatabase {
     }
     return record
   }
+}
+
+extension GatewayClientTrust: FetchableRecord, PersistableRecord {
+  package static let databaseTableName = "clientControlTrust"
 }

@@ -99,6 +99,10 @@ Computer MCP 始终把两个决定分开：
 这些默认权限适用于共享该配置的客户端，每个会话仍可限制为更低的访问级别。
 保存新的选择会使该配置之前的完全访问授权失效。
 
+在 App 管理的连接中，已批准的完全访问还可使用类型明确的工具管理工作区，以及
+安装、配置和更新经过验证的官方插件。配置变化会保留已有任务，具体参数见
+[远程管理](Documentation/Reference/ControlPlaneCapabilities.md#remote-management)。
+
 单次操作审批不会扩大客户端的当前权限。受限访问只能使用所选工具和工作区，
 禁止任意执行。凭据保存在签名 App 的 macOS Data Protection Keychain；示例、
 诊断、日志和审计只保留占位符或脱敏摘要。

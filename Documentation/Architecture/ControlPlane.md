@@ -1,6 +1,6 @@
 # App Control Plane
 
-Computer MCP has one App-owned administration domain with two presentation
+Computer MCP has one App-owned local administration domain with two presentation
 adapters: SwiftUI and the embedded `computer-mcp` CLI. Neither adapter owns
 business rules or runtime coordination.
 
@@ -60,9 +60,31 @@ listener is stopped, with current authorization and operation approvals intact.
 
 The `computer-mcp` control CLI is not a registered remote `cli.exec` provider.
 Executing it from a Tunnel-originated gateway process would convert a remote
-profile into the owner-only `local-admin` identity. Remote MCP therefore lists
-and uses only workspaces already granted to its profile. Registering a new
-authorization root remains a deliberate local App or CLI operation.
+profile into the owner-only `local-admin` identity. Restricted MCP clients use
+only their granted projects and capabilities. An explicitly approved Full Access
+session can manage workspaces and verified official plugins through typed tools.
+It retains its remote identity and never acquires the local-admin control socket.
+
+`GatewayRuntime` owns discovery, capability classification, approval and audit for
+these tools. `AppGatewayService` injects management dispatch bound to the admitted
+runtime key and listener epoch; each request must also hold the actual registered
+control-session reference. Calls delegate to existing App state and prepared
+publication, retaining old execution generations. Read tools and monotonic session
+limits are selectable in the Restricted editor. Configuration and installation
+writes have a host-owned Full Access risk floor.
+
+An asynchronous management operation captures the session revision and input
+state. Its final non-suspending durable commit rechecks current consent under the
+session lock. Revocation during download or preparation prevents publication and
+joins candidate cleanup. Current-profile workspace grants also compare the full
+SQLite input snapshot; changing profile authority invalidates earlier consent.
+Persistent client trust is checked again inside the same SQLite transaction as
+the configuration write, including revocations from another owner connection.
+Official artifact installation reuses the existing source and byte verification.
+Plugin summaries omit credential bindings and launch argument values and page
+installations. Authentication, persistent client trust and TCC retain their local
+owners. Exact request contracts are in the
+[control-plane reference](../Reference/ControlPlaneCapabilities.md#remote-management).
 
 Computer Use is not an administration adapter. Accessibility actions targeting
 the Computer MCP host process fail with

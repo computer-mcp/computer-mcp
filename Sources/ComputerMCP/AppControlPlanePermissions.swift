@@ -23,6 +23,34 @@ package struct ProfilePermissionOptions: Sendable {
 }
 
 extension AppControlPlaneService {
+  func applyRemoteWorkspaceGrant(
+    id: String, enabled: Bool, profile: GatewayControlProfile, expectedRevision: Int64,
+    inputs: GatewayInputs, authorization: GatewayManagementAuthorization
+  ) throws -> ProfileGrant {
+    try requireCurrentGatewayInputs(inputs)
+    guard profile.grant.authorizationRevision == expectedRevision,
+      inputs.workspaces.contains(where: { $0.id == id })
+    else { throw GatewayDatabaseError.configurationChanged }
+    var grant = profile.grant
+    if enabled {
+      grant.workspaceIDs.insert(id)
+    } else {
+      if grant.workspaceIDs.remove("*") != nil {
+        grant.workspaceIDs.formUnion(inputs.workspaces.map(\.id))
+      }
+      grant.workspaceIDs.remove(id)
+    }
+    try grant.validate()
+    return try manifestStore.withCurrentConfiguration(inputs.configuration) {
+      try authorization.perform {
+        try database.saveProfile(
+          grant, expectedRevision: profile.persisted ? expectedRevision : 0,
+          expectedConfiguration: inputs.persisted, authorization: authorization)
+        return try database.profiles().first { $0.id == grant.id } ?? grant
+      }
+    }
+  }
+
   package func profilePermissionOptions(profileID: GatewayProfileID) async throws
     -> ProfilePermissionOptions
   {
@@ -45,8 +73,10 @@ extension AppControlPlaneService {
       inputs: inputs, caller: .localApp, profileID: .localAdmin, persistentState: false)
     let capabilities: [ProfilePermissionCapability]
     do {
-      capabilities = try gateway.listTools().compactMap { tool in
-        let descriptor = try gateway.capabilityDescriptor(named: tool.name)
+      capabilities = try (gateway.listTools() + GatewayRemoteManagement.tools).compactMap { tool in
+        let descriptor =
+          try GatewayRemoteManagement.byName[tool.name]?.descriptor
+          ?? gateway.capabilityDescriptor(named: tool.name)
         guard descriptor.risk != .fullShell,
           !ProfileGrant.mcpSurfaceCapabilities.contains(tool.name),
           !ProfilePermissionSelection.supportCapabilities.contains(tool.name)

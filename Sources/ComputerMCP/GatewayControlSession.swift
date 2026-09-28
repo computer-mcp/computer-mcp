@@ -171,12 +171,17 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
     }
   }
 
-  func limitAccess(to mode: GatewayPermissionMode, expectedRevision: Int64) throws {
+  func limitAccess(
+    to mode: GatewayPermissionMode, expectedRevision: Int64, allowIncrease: Bool = true
+  ) throws {
     try lock.withLock {
       _ = try currentProfile()
       refreshConsent()
       guard !ended, revision == expectedRevision, revision < Int64.max else {
         throw Self.denied("The control session changed. Reload before changing its access.")
+      }
+      guard allowIncrease || accessLimit != .readOnly || mode == .readOnly else {
+        throw Self.denied("Remote clients can only reduce their session access.")
       }
       guard mode != .localFullAccess else {
         throw Self.denied("Full Access requires explicit local consent.")
@@ -236,6 +241,24 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
       guard !ended, expected == revision else {
         throw Self.denied("The control session changed after this operation was prepared.")
       }
+    }
+  }
+
+  /// Serialize the final non-suspending management commit with consent revocation.
+  func withManagementAuthorization<Result>(
+    context: ExecutionContext, expectedRevision: Int64, requiresFullAccess: Bool,
+    operation: () throws -> Result
+  ) throws -> Result {
+    try lock.withLock {
+      let current = try currentProfile()
+      refreshConsent(profile: current)
+      guard !ended, revision == expectedRevision, context.controlSession === self,
+        context.trustedPrincipalID == principalID, context.profileID == profileID,
+        context.caller == caller, current?.grant.allowedCallers.contains(caller) == true
+      else { throw Self.denied("The management session changed before publication.") }
+      guard !requiresFullAccess || (accessLimit == .localFullAccess && fullAccessConsent != nil)
+      else { throw Self.denied("This management operation requires approved Full Access.") }
+      return try operation()
     }
   }
 

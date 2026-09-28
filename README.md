@@ -112,6 +112,11 @@ apply to new requests without cancelling work already started. The local
 [Client access](Documentation/Reference/CLI.md#client-access) for explicit
 consent and standalone HTTP usage.
 
+On an App-managed connection, approved Full Access also enables typed workspace
+management and verified official plugin installation, configuration and updates.
+Clients use these tools directly while existing work continues; see
+[Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management).
+
 Choose **restricted permissions** to select readable capabilities, projects and
 integrations, and the connection types allowed to use them. These defaults apply
 to clients sharing the profile; each session can impose a lower access level.

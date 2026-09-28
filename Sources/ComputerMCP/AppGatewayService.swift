@@ -606,7 +606,8 @@ package actor AppGatewayService {
         let admitted = try await controlPlane.makeGatewaySessionRuntime(
           caller: key.caller, profileID: key.profileID, transportTrace: trace,
           trustedPrincipalID: key.principalID, terminalSessions: terminalSessions,
-          requiresControlSession: key.owner != .administration)
+          requiresControlSession: key.owner != .administration,
+          remoteManagement: management(key: key, epoch: epoch))
         let profile: GatewayControlProfile
         do {
           try requireAdmission(key: key, epoch: epoch)
@@ -886,8 +887,202 @@ package actor AppGatewayService {
     )
   }
 
+  private func management(key: RuntimeKey, epoch: UUID) -> GatewayRemoteManagement? {
+    guard key.owner != .administration else { return nil }
+    return GatewayRemoteManagement { [weak self] name, arguments, context in
+      guard let self else { throw GatewaySocketError.notConnected }
+      return try await self.manage(
+        name: name, arguments: arguments, context: context, key: key, epoch: epoch)
+    }
+  }
+
+  private func manage(
+    name: String, arguments: [String: JSONValue], context: ExecutionContext,
+    key: RuntimeKey, epoch: UUID
+  ) async throws -> JSONValue {
+    try requireAdmission(key: key, epoch: epoch)
+    guard let contract = GatewayRemoteManagement.byName[name],
+      let session = context.controlSession, let record = controlSessionRecords[session.id],
+      record.key == key, record.session === session,
+      context.trustedPrincipalID == key.principalID,
+      context.profileID == key.profileID, context.caller == key.caller
+    else { throw GatewayRemoteManagement.denied("Use the verified connection's management scope.") }
+    let args = try contract.input.validate(.object(arguments))
+    let snapshot = session.snapshot
+    let authorization = GatewayManagementAuthorization(
+      session: session, context: context, revision: snapshot.revision,
+      requiresFullAccess: contract.risk == .fullShell)
+    try authorization.perform {}
+    func string(_ key: String) -> String { args[key]?.stringValue ?? "" }
+    func revision(_ key: String = "expected_revision") throws -> Int64 {
+      guard let value = args[key]?.intValue, value >= 0 else {
+        throw GatewayToolError.invalidArguments("\(key) must be a nonnegative exact integer.")
+      }
+      return Int64(value)
+    }
+    func page() throws -> Int {
+      let value = args["page"]?.intValue ?? 1
+      guard value > 0 else { throw GatewayToolError.invalidArguments("page must be positive.") }
+      return value
+    }
+    let result: JSONValue
+    switch name {
+    case "profile.show":
+      result = try ControlToolResponse.encodedPayload(snapshot)
+    case "profile.limit":
+      let mode: GatewayPermissionMode
+      switch string("mode") {
+      case "observe": mode = .readOnly
+      case "restricted": mode = .workspaceOperations
+      default: throw GatewayToolError.invalidArguments("mode must be observe or restricted.")
+      }
+      try session.limitAccess(to: mode, expectedRevision: revision(), allowIncrease: false)
+      return try ControlToolResponse.encodedPayload(session.snapshot)
+    case "workspace.add", "workspace.remove", "workspace.repair", "workspace.grant":
+      let inputs = try await controlPlane.gatewayInputs()
+      try requireAdmission(key: key, epoch: epoch)
+      try authorization.perform {}
+      let id = string("id")
+      if name != "workspace.add" {
+        guard let workspace = inputs.workspaces.first(where: { $0.id == id }) else {
+          throw GatewayRuntimeError.workspaceNotFound(id)
+        }
+        if name != "workspace.grant", workspace.rootPath != string("expected_root_path") {
+          throw GatewayDatabaseError.configurationChanged
+        }
+      }
+      if name == "workspace.grant" {
+        guard let profile = snapshot.profile else { throw GatewaySocketError.notConnected }
+        let grant = try await withConfigurationChange {
+          try await controlPlane.applyRemoteWorkspaceGrant(
+            id: id, enabled: args["enabled"]?.boolValue == true, profile: profile,
+            expectedRevision: revision("expected_profile_revision"), inputs: inputs,
+            authorization: authorization)
+        }
+        changes(for: key).send()
+        return try ControlToolResponse.encodedPayload(grant)
+      }
+      let change: WorkspaceHostChange
+      switch name {
+      case "workspace.add":
+        change = .register(
+          try GatewayRemoteManagement.path(string("path")),
+          displayName: args["display_name"]?.stringValue)
+      case "workspace.repair":
+        change = .repair(
+          id: id, root: try GatewayRemoteManagement.path(string("path")),
+          displayName: args["display_name"]?.stringValue)
+      default: change = .remove(id)
+      }
+      let changed = try await changeWorkspaces(
+        change, authorization: authorization, expectedInputs: inputs)
+      switch changed {
+      case .registered(let workspace, let created):
+        return .object([
+          "workspace": GatewayRemoteManagement.workspace(workspace), "created": .bool(created),
+        ])
+      case .repaired(let workspace):
+        return .object(["workspace": GatewayRemoteManagement.workspace(workspace)])
+      case .removed: return .object(["id": .string(id), "removed": .bool(true)])
+      case .deduplicated:
+        throw GatewayToolError.executionFailed("Unexpected workspace mutation result.")
+      }
+    case "plugin.search":
+      let kind: IntegrationKind?
+      if let raw = args["kind"]?.stringValue {
+        guard let parsed = IntegrationKind(rawValue: raw) else {
+          throw GatewayToolError.invalidArguments("Unknown plugin contribution kind.")
+        }
+        kind = parsed
+      } else {
+        kind = nil
+      }
+      result = try ControlToolResponse.encodedPayload(
+        await controlPlane.searchPlugins(
+          query: string("query"), kind: kind, page: page(),
+          refresh: args["refresh"]?.boolValue ?? false))
+    case "plugin.artifacts":
+      result = try ControlToolResponse.encodedPayload(
+        await controlPlane.pluginReleaseArtifacts(
+          repository: string("repository"), repositoryID: revision("repository_id"),
+          tag: args["tag"]?.stringValue, page: page()))
+    case "plugin.list", "plugin.describe":
+      let plugins = try await controlPlane.pluginSnapshot()
+      if name == "plugin.describe" {
+        result = try GatewayRemoteManagement.plugin(
+          string("id"), snapshot: plugins, afterID: string("after_id"),
+          limit: args["limit"]?.intValue ?? 50)
+      } else {
+        let limit = args["limit"]?.intValue ?? 50
+        guard (1...200).contains(limit) else {
+          throw GatewayToolError.invalidArguments("limit must be between 1 and 200.")
+        }
+        let ids = GatewayRemoteManagement.pluginIDs(plugins).filter { $0 > string("after_id") }
+        let selected = Array(ids.prefix(limit))
+        result = .object([
+          "revision": .integer(plugins.state.revision),
+          "plugins": .array(
+            try selected.map {
+              try GatewayRemoteManagement.plugin($0, snapshot: plugins, details: false)
+            }),
+          "next_after_id": ids.count > limit ? .string(selected.last!) : .null,
+        ])
+      }
+    default:
+      let expected = try revision()
+      let plugins = try await controlPlane.pluginSnapshot()
+      try requireAdmission(key: key, epoch: epoch)
+      try authorization.perform {}
+      guard plugins.state.revision == expected else {
+        throw PluginStoreError.staleRevision(expected: expected, actual: plugins.state.revision)
+      }
+      let id = string("id")
+      let change: PluginHostChange
+      switch name {
+      case "plugin.install", "plugin.update":
+        let artifact = try CanonicalJSONCoding.decoder().decode(
+          GitHubPluginArtifact.self, from: ControlToolResponse.encodedJSON(args["artifact"]!))
+        try artifact.validate()
+        if name == "plugin.update" {
+          guard artifact.declaration.pluginID == id,
+            GatewayRemoteManagement.pluginIDs(plugins).contains(id)
+          else {
+            throw GatewayToolError.invalidArguments("The update must match an existing plugin.")
+          }
+        }
+        change = .installRelease(artifact)
+      case "plugin.configure":
+        try GatewayRemoteManagement.requireTrustedPlugin(id, snapshot: plugins)
+        change = .settings(
+          pluginID: id,
+          try GatewayRemoteManagement.patchSettings(
+            args["settings"]!, current: plugins.settings(for: id)))
+      case "plugin.enable", "plugin.disable":
+        guard GatewayRemoteManagement.pluginIDs(plugins).contains(id) else {
+          throw PluginStoreError.unknownInstallation(id)
+        }
+        if name == "plugin.enable" {
+          try GatewayRemoteManagement.requireTrustedPlugin(id, snapshot: plugins)
+        }
+        change = .enabled(pluginID: id, name == "plugin.enable")
+      case "plugin.uninstall":
+        change = .uninstallArtifact(installationID: string("installation_id"))
+      default: throw GatewayToolError.unknownTool(name)
+      }
+      let changed = try await changePlugins(
+        change, expectedRevision: expected, authorization: authorization)
+      return .object(["revision": .integer(changed.state.revision), "changed": .bool(true)])
+    }
+    try requireAdmission(key: key, epoch: epoch)
+    try authorization.perform {}
+    return result
+  }
+
   /// Existing keys continue on their admitted generation while new keys await publication.
-  package func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+  package func changePlugins(
+    _ change: PluginHostChange, expectedRevision: Int64,
+    authorization: GatewayManagementAuthorization? = nil
+  ) async throws
     -> PluginHostSnapshot
   {
     try await withConfigurationChange {
@@ -897,17 +1092,28 @@ package actor AppGatewayService {
           workspaces: expected.workspaces, workspaceAliases: expected.persisted.workspaceAliases,
           profiles: expected.profiles, plugins: proposed)
         _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
-          try self.controlPlane.database.savePluginStoreSnapshot(
-            proposed, expectedRevision: expected.plugins.revision,
-            expectedConfiguration: expected.persisted, resolution: $0)
+          resolution in
+          let commit = {
+            try self.controlPlane.database.savePluginStoreSnapshot(
+              proposed, expectedRevision: expected.plugins.revision,
+              expectedConfiguration: expected.persisted, resolution: resolution,
+              authorization: authorization)
+          }
+          return try authorization.map { try $0.perform(commit) } ?? commit()
         }
       }
     }
   }
 
-  func changeWorkspaces(_ change: WorkspaceHostChange) async throws -> WorkspaceChangeResult {
+  func changeWorkspaces(
+    _ change: WorkspaceHostChange, authorization: GatewayManagementAuthorization? = nil,
+    expectedInputs: AppControlPlaneService.GatewayInputs? = nil
+  ) async throws -> WorkspaceChangeResult {
     try await withConfigurationChange {
       try await controlPlane.applyWorkspaceChange(change) { [self] expected, prepared in
+        guard expectedInputs == nil || expectedInputs == expected else {
+          throw GatewayDatabaseError.configurationChanged
+        }
         let selected: (id: String, root: WorkspaceRootIdentity)?
         if case .repair(let workspace, let root) = prepared.mutation {
           selected = (workspace.id, root)
@@ -917,7 +1123,12 @@ package actor AppGatewayService {
         return try await preparePublication(
           expected: expected, proposed: prepared.proposed, storage: nil, requiredWorkspace: selected
         ) {
-          try self.controlPlane.database.saveWorkspaceChange(prepared, resolution: $0)
+          resolution in
+          let commit = {
+            try self.controlPlane.database.saveWorkspaceChange(
+              prepared, resolution: resolution, authorization: authorization)
+          }
+          return try authorization.map { try $0.perform(commit) } ?? commit()
         }
       }
     }
@@ -1144,7 +1355,8 @@ package actor AppGatewayService {
           let preparation = try await controlPlane.prepareGateway(
             inputs: inputs, caller: key.caller, profileID: key.profileID,
             trustedPrincipalID: key.principalID, terminalSessions: try sessions(for: key.owner),
-            artifactStorage: storage, requiresControlSession: key.owner != .administration)
+            artifactStorage: storage, requiresControlSession: key.owner != .administration,
+            remoteManagement: management(key: key, epoch: ownerEpoch))
           candidates[key] = (preparation, ownerEpoch)
         }
       }

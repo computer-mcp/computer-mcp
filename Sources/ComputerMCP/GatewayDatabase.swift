@@ -74,9 +74,11 @@ package final class GatewayDatabase: @unchecked Sendable {
   }
 
   func saveWorkspaceChange(
-    _ prepared: PreparedWorkspaceChange, resolution: GatewayConfigurationResolution
+    _ prepared: PreparedWorkspaceChange, resolution: GatewayConfigurationResolution,
+    authorization: GatewayManagementAuthorization? = nil
   ) throws -> ConfigurationState {
     let committed = try writer.write { database in
+      try Self.requireManagementTrust(authorization, in: database)
       guard try Self.configurationState(in: database) == prepared.expected else {
         throw GatewayDatabaseError.configurationChanged
       }
@@ -188,7 +190,8 @@ package final class GatewayDatabase: @unchecked Sendable {
   func savePluginStoreSnapshot(
     _ state: PluginStoreSnapshot, expectedRevision: Int64,
     expectedConfiguration: ConfigurationState? = nil,
-    resolution: GatewayConfigurationResolution = .init()
+    resolution: GatewayConfigurationResolution = .init(),
+    authorization: GatewayManagementAuthorization? = nil
   ) throws -> ConfigurationState {
     try state.validate()
     guard
@@ -206,6 +209,7 @@ package final class GatewayDatabase: @unchecked Sendable {
       throw PluginStoreError.invalidState
     }
     let committed = try writer.write { database in
+      try Self.requireManagementTrust(authorization, in: database)
       let current =
         try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
       guard current == expectedRevision else {
@@ -623,6 +627,22 @@ package final class GatewayDatabase: @unchecked Sendable {
     profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
   }
 
+  func saveProfile(
+    _ profile: ProfileGrant, expectedRevision: Int64, expectedConfiguration: ConfigurationState,
+    authorization: GatewayManagementAuthorization? = nil
+  ) throws {
+    try profile.validate()
+    try writer.write { database in
+      try Self.requireManagementTrust(authorization, in: database)
+      guard try Self.configurationState(in: database) == expectedConfiguration else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      try Self.saveProfile(
+        profile, updatedAt: Date(), expectedRevision: expectedRevision, in: database)
+    }
+    profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
+  }
+
   private static func saveProfile(
     _ profile: ProfileGrant, updatedAt: Date, expectedRevision: Int64?, in database: Database
   ) throws {
@@ -755,6 +775,30 @@ package final class GatewayDatabase: @unchecked Sendable {
       profileChangeLock.withLock { profileChangeBroadcasters[profileID] }?.send()
     }
     return consent
+  }
+
+  /// Persistent trust can be revoked independently of the in-memory session lock.
+  /// Check its captured identity inside the same transaction as the configuration write.
+  private static func requireManagementTrust(
+    _ authorization: GatewayManagementAuthorization?, in database: Database
+  ) throws {
+    guard let authorization, authorization.requiresFullAccess else { return }
+    guard let consent = authorization.consent else {
+      throw GatewayToolError.invalidArguments(
+        "[policy.control_session_denied] Full Access consent is unavailable.")
+    }
+    guard consent.lifetime == .alwaysAllowClient else { return }
+    guard let id = consent.trustID, let revision = consent.trustRevision,
+      let trust = try GatewayClientTrust.fetchOne(database, key: id),
+      trust.fullAccessAllowed, trust.revision == revision,
+      trust.principalID == authorization.context.trustedPrincipalID,
+      trust.profileID == authorization.context.profileID,
+      trust.caller == authorization.context.caller,
+      trust.profile.hasSameAuthorization(as: consent.profile)
+    else {
+      throw GatewayToolError.invalidArguments(
+        "[policy.control_session_denied] Client trust changed before publication.")
+    }
   }
 
   package func revokeClientTrust(

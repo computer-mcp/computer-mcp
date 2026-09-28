@@ -28,6 +28,7 @@ extension GatewayToolProvider {
 internal struct GatewayCapabilityCatalog: Sendable {
   internal func descriptor(for tool: MCPTool) -> CapabilityDescriptor {
     let name = tool.name
+    if let management = GatewayRemoteManagement.byName[name] { return management.descriptor }
     let risk: CapabilityRisk
     if name == "runtime.owners.call" {
       // The routing operation authorizes no effect; its selected target performs risk and approval admission.

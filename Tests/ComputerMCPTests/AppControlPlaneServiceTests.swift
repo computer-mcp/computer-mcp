@@ -2544,7 +2544,11 @@ final class AppControlPlaneServiceTests {
     #expect((initialization.serverInfo.name) == ("computer-mcp-test"))
 
     let (tools, _) = try await client.listTools()
-    #expect((Set(tools.map(\.name))) == (["workspace.list", "workspace.describe"]))
+    #expect(
+      Set(tools.map(\.name)) == [
+        "workspace.list", "workspace.describe", "profile.show", "plugin.list", "plugin.describe",
+        "plugin.search", "plugin.artifacts",
+      ])
     let result = try await client.callTool(name: "workspace.list")
     #expect((result.isError) != (true))
     let text = try #require(

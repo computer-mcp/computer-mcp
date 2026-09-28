@@ -618,7 +618,9 @@ final class BoundServicesFixture: Sendable {
         with (root/'vendor.jsonl').open('a') as log: log.write(json.dumps(request)+'\n')
         method = request.get('method')
         if method == 'initialize': result = {'codexHome':str(root),'platformFamily':'unix','platformOs':'macos','userAgent':'isolated-fixture'}
-        elif method == 'initialized': continue
+        elif method == 'initialized':
+            print(json.dumps({'method':'remoteControl/status/changed','params':{'status':'disabled','installationId':'fixture-installation','serverName':'fixture'}}),flush=True)
+            continue
         elif method in ('thread/start', 'thread/resume'):
             loaded = True
             result = {'thread':thread,'cwd':cwd,'model':'fixture','modelProvider':'fixture','approvalPolicy':'on-request',

@@ -127,6 +127,11 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
   Legacy macOS declarations retain their stored fingerprints. Catalog schema 2
   materializes per-asset targets; schema 1 remains readable, and a schema upgrade
   cannot alter the implied target or any immutable package identity.
+- Keep Apple application-bundle discovery in the platform target. macOS observes
+  Launch Services without launching an application; Windows returns an explicit
+  unsupported result for this locator type. Explicit executable and PATH bindings
+  retain precedence. The gateway validates bundle identity and workspace path
+  containment before binding a located executable.
 - Keep explicit package checks in the App-owned control plane, shared by SwiftUI
   and the owner-only management CLI. `PluginDoctorReport` reuses activation's
   source selection, declaration identity, dependency binding and file inspection

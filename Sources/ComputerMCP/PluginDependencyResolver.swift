@@ -1,4 +1,4 @@
-import AppKit
+import ComputerMCPPlatform
 import Foundation
 
 /// Locates user-owned programs without launching applications or changing their installations.
@@ -9,7 +9,10 @@ package enum PluginDependencyResolver {
   }
 
   package static func applicationURL(bundleIdentifier: String) -> URL? {
-    NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+    switch ApplicationBundleLookup.locate(bundleIdentifier: bundleIdentifier) {
+    case .found(let url): url
+    case .notFound, .unsupported: nil
+    }
   }
 
   static func resolve(

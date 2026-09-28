@@ -47,7 +47,7 @@
             .map { "\($0.key)=\($0.value)" }.joined(separator: "\0").utf16) + [0, 0]
       var info = STARTUPINFOEXW()
       info.StartupInfo.cb = DWORD(MemoryLayout<STARTUPINFOEXW>.size)
-      info.StartupInfo.dwFlags = DWORD(STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW)
+      info.StartupInfo.dwFlags = DWORD(STARTF_USESTDHANDLES) | DWORD(STARTF_USESHOWWINDOW)
       info.StartupInfo.wShowWindow = WORD(SW_HIDE)
       info.StartupInfo.hStdInput = input.read
       info.StartupInfo.hStdOutput = output.write

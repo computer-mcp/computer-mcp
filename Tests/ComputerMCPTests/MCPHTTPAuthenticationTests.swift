@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPAuthenticationTests {
   @Test(arguments: ["source", "endpoint", "ambiguous"])
   func inactivePluginCredentialsRequireUnambiguousCurrentSourceAndEndpoint(change: String)

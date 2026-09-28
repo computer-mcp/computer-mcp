@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct StandaloneToolCommandTests {
   @Test(arguments: ["list", "inspect", "missing", "call", "error"])
   func commandsCloseTheirOwnedSessionBeforeExit(mode: String) async throws {

@@ -7,6 +7,7 @@ import Testing
 /// Actual gateway, actual independently built adapter, private SQLite and Git.
 /// Only the vendor protocol is a fixture; no model request or user thread is used.
 @Suite(
+  .nativeIntegration,
   .serialized, .timeLimit(.minutes(2)),
   .enabled(
     if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_CODEX_PLUGIN"] != nil))

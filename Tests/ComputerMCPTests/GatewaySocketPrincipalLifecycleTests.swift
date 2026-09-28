@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.serialized)
+@Suite(.nativeIntegration, .serialized)
 struct GatewaySocketPrincipalLifecycleTests {
   @Test
   func disconnectedCallerCanObserveAndCancelItsOriginalExecutionAfterReconnect() async throws {

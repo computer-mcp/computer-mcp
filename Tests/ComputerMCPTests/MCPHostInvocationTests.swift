@@ -3,7 +3,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.serialized, .timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPHostInvocationTests {
   @Test
   func backgroundWorkKeepsExactContextThroughDerivedWorkAndReleasesItAtCompletion() async throws {

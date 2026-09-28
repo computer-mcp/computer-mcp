@@ -5,7 +5,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginArchivePreparationTests {
   @Test(arguments: ["mac.zip", "windows.zip", "unknown.zip", ""])
   func archiveTargetMustPermitThisHostBeforeActivation(name: String) async throws {

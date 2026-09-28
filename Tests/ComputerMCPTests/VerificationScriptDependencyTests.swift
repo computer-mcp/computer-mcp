@@ -3,7 +3,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct VerificationScriptDependencyTests {
   @Test(
     arguments: ["verify-package-boundary.sh", "verify-cli-interface.sh"],

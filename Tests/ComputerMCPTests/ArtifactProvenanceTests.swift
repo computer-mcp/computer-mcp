@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.serialized)
+@Suite(.nativeIntegration, .serialized)
 final class ArtifactProvenanceTests {
   @Test
   func testDevelopmentArtifactCannotUseFinalReleaseIdentity() throws {

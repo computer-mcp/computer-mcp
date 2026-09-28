@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite
+@Suite(.nativeIntegration)
 struct MCPWorkspaceTests {
   @Test(arguments: [false, true])
   func connectionValidationUsesTheConfigurationDirectoryAndCleansUp(_ fail: Bool) async throws {

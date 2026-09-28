@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginArchiveExtractorTests {
   @Test(arguments: ["tar", "tar.gz", "zip", "zip-stored"])
   func extractsRealArchivesAndLoadsTheCombinedPackageWithoutExecutingIt(format: String) throws {

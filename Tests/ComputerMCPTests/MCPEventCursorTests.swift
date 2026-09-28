@@ -3,6 +3,7 @@ import Testing
 
 @testable import ComputerMCP
 
+@Suite(.nativeIntegration)
 struct MCPEventCursorTests {
   @Test
   func initialReadsAndUnavailableContinuationsDoNotStartAProvider() async throws {

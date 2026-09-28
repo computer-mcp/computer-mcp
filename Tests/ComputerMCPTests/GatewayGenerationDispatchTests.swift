@@ -6,7 +6,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.serialized, .timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
   @Test
   func localAdminStopJoinsPendingConstructionAndRestartsWithFreshAdmission() async throws {

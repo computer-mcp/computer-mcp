@@ -7,6 +7,7 @@ import Testing
 /// Runs a separately built adapter, not an in-process host-service test double.
 /// The vendor endpoint is a disposable protocol fixture and never calls a model.
 @Suite(
+  .nativeIntegration,
   .serialized, .timeLimit(.minutes(1)),
   .enabled(
     if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_CODEX_PLUGIN"] != nil))

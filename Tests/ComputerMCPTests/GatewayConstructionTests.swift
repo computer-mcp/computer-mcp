@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct GatewayConstructionTests {
   @Test(arguments: ["catalog", "cli-tree", "duplicate-workspace"])
   func failedConstructionJoinsProcessesBeforeRetry(stage: String) async throws {

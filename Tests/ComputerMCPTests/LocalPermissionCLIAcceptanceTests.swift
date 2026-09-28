@@ -4,6 +4,7 @@ import Testing
 @testable import ComputerMCP
 
 @Suite(
+  .nativeIntegration,
   .enabled(
     if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"] != nil,
     "Set COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE to the exact local CLI artifact for isolated acceptance."

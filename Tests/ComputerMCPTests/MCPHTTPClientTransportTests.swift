@@ -4,6 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
+@Suite(.nativeIntegration)
 struct MCPHTTPClientTransportTests {
   @Test
   func protocolCancellationClosesItsResponseStreamWithoutEndingTheSession() async throws {

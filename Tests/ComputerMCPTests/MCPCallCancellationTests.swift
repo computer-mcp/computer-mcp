@@ -4,7 +4,7 @@ import os
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPCallCancellationTests {
   @Test
   func successfulDeliveryPreservesTheConnectionWithinItsBudget() async {

@@ -16,6 +16,11 @@ Scripts/build-app.sh
 Use macOS 14 or newer with Swift 6.2 or newer. Standalone development modes run
 from SwiftPM; production lifecycle is owned by the App bundle.
 
+Apply `.nativeIntegration` to test suites that launch native subprocesses or
+exercise their ownership receipts. The trait admits four cases concurrently to
+bound machine-wide process and I/O pressure; concurrency within each case and
+existing suite serialization are preserved. Pure unit tests run independently.
+
 ## Contribution Expectations
 
 - Keep the two executable products and internal implementation targets

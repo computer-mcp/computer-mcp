@@ -6,6 +6,7 @@ import os
 
 @testable import ComputerMCP
 
+@Suite(.nativeIntegration)
 struct GatewayToolCatalogTests {
   @Test
   func asynchronousAdmissionKeepsAnOlderCallAndCurrentCatalogIndependent() async throws {

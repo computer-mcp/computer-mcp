@@ -3,7 +3,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIParameterMappingTests {
   @Test(arguments: [
     (CLIArgumentToken.Style.separate, ["--value", "", "你好 world", "a\"b'c", "$(never-execute)\n"]),

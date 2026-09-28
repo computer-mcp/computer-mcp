@@ -953,7 +953,7 @@ final class LiveAppControlPlane: AppControlPlane {
       }
     )
     for id in desired where statusByID[id] != .running && statusByID[id] != .starting {
-      _ = try await controlPlane.startCloudflareTunnel(profileID: id)
+      _ = try await operations.startCloudflareTunnel(id: id)
     }
   }
 

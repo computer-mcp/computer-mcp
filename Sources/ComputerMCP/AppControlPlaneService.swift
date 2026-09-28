@@ -692,7 +692,7 @@ package actor AppControlPlaneService {
     transportTrace: GatewayTransportTrace? = nil,
     trustedPrincipalID: String? = nil
   ) async throws -> GatewaySocketServerSession {
-    let (inputs, gateway) = try await makeGatewaySocketRuntime(
+    let (inputs, gateway) = try await makeGatewaySessionRuntime(
       caller: caller, profileID: profileID, transportTrace: transportTrace,
       trustedPrincipalID: trustedPrincipalID)
     let server = await MCPRuntimeAdapter.makeGatewayServer(
@@ -707,7 +707,7 @@ package actor AppControlPlaneService {
     return GatewaySocketServerSession(server: server) { await gateway.shutdown() }
   }
 
-  func makeGatewaySocketRuntime(
+  func makeGatewaySessionRuntime(
     caller: GatewayCallerKind,
     profileID: GatewayProfileID,
     transportTrace: GatewayTransportTrace? = nil,

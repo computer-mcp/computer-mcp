@@ -430,7 +430,7 @@ package struct AppControlPlaneOperations: Sendable {
   }
 
   package func startCloudflareTunnel(id: String) async throws -> CloudflareTunnelStatus {
-    try await controlPlane.startCloudflareTunnel(profileID: id)
+    try await controlPlane.startCloudflareTunnel(profileID: id, gatewayService: gatewayService)
   }
 
   package func stopCloudflareTunnel(id: String) async throws -> CloudflareTunnelStatus {

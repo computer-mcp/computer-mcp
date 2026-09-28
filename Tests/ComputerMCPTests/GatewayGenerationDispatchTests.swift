@@ -9,6 +9,193 @@ import Testing
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
   @Test
+  func managedHTTPPublicationPreservesOwnedWorkAndIndependentListenerConsent() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(
+      version: 1, fullShell: true, callers: [.localMCP, .cloudflareTunnel])
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.control, gatewayService: fixture.service)
+    let configuration = try await fixture.control.activeConfiguration()
+    func origin() async throws -> GatewayHTTPRuntime {
+      let source = try await fixture.service.makeHTTPSessions(
+        profileID: .chatGPTOperate,
+        trace: .init(transport: "http", tunnelInstanceID: UUID().uuidString))
+      let origin = GatewayHTTPRuntime(
+        configuration: configuration, source: .managed(source), host: "127.0.0.1", port: 0,
+        publicBaseURL: nil, accessToken: "shared-fixture-credential")
+      try await origin.startListening()
+      return origin
+    }
+    func connect(_ origin: GatewayHTTPRuntime) async throws -> GatewayClientSession {
+      let port = try #require(await origin.boundPort())
+      return try await GatewayClientSession.connectHTTP(
+        endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp")),
+        accessToken: "shared-fixture-credential")
+    }
+    let firstOrigin = try await origin()
+    var secondOrigin: GatewayHTTPRuntime?
+    do {
+      let second = try await origin()
+      secondOrigin = second
+      let firstClient = try await connect(firstOrigin)
+      let secondClient = try await connect(second)
+      let firstScope = try #require(await firstOrigin.controlSessions().first)
+      let secondScope = try #require(await second.controlSessions().first)
+      #expect(firstScope.principalID == secondScope.principalID)
+      #expect(await operations.controlSessions().count == 2)
+      _ = try await operations.approveControlSession(
+        id: firstScope.id, expectedRevision: firstScope.revision)
+      #expect(try await firstClient.listToolNames().contains("shell.run"))
+      #expect(try await !secondClient.listToolNames().contains("shell.run"))
+      let firstStarted = try await firstClient.call(
+        toolName: "fixture.start", arguments: .object(["handle": .string("first")]))
+      let firstPID = try pid(firstStarted)
+      let secondPID = try pid(
+        await secondClient.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("second")])))
+      #expect(firstPID != secondPID)
+      let firstOwner = try #require(try await owners(firstClient, kind: "mcpResource").first)
+      _ = try await operations.activateManifest(fixture.externalManifest(version: 2))
+      let firstCurrent = try await firstClient.call(toolName: "fixture.identity")
+      let secondCurrent = try await secondClient.call(toolName: "fixture.identity")
+      #expect(value(firstCurrent, "version") == .integer(2))
+      #expect(value(secondCurrent, "version") == .integer(2))
+      let firstCurrentPID = try pid(firstCurrent)
+      let secondCurrentPID = try pid(secondCurrent)
+      #expect(alive(firstPID) && alive(secondPID))
+      #expect(await firstOrigin.controlSessions().first?.fullAccessConsent != nil)
+      let retained = try await call(
+        firstClient, owner: firstOwner, tool: "fixture.inspect",
+        arguments: ["handle": .string("first")])
+      #expect(value(retained, "version") == .integer(1))
+      _ = try await call(
+        firstClient, owner: firstOwner, tool: "fixture.finish",
+        arguments: ["handle": .string("first")])
+      try await wait { !alive(firstPID) }
+      await firstOrigin.stop()
+      await firstClient.disconnect()
+      #expect(!alive(firstCurrentPID))
+      #expect(alive(secondPID) && alive(secondCurrentPID))
+      #expect(await operations.controlSessions().map(\.id) == [secondScope.id])
+      try await operations.endControlSession(
+        id: secondScope.id, expectedRevision: secondScope.revision)
+      #expect(
+        try await secondClient.call(toolName: "fixture.identity").result.objectValue?["isError"]
+          == .bool(true))
+      #expect(alive(secondPID))
+      await second.stop()
+      await secondClient.disconnect()
+      #expect(await operations.controlSessions().isEmpty)
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await firstOrigin.stop()
+      await secondOrigin?.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func managedHTTPStopInvalidatesPendingAdmissionBeforeJoiningItsConstruction() async throws {
+    let bookmarks = GatedBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmarks)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
+    let configuration = try await fixture.control.activeConfiguration()
+    let source = try await fixture.service.makeHTTPSessions(
+      profileID: .chatGPTOperate, trace: .init(transport: "http"))
+    let (stoppingEvents, stoppingSignal) = AsyncStream<Void>.makeStream(
+      bufferingPolicy: .bufferingNewest(1))
+    let instrumented = GatewayHTTPManagedSessions(
+      makeSession: source.makeSession, closeSession: source.closeSession,
+      shutdown: {
+        stoppingSignal.yield(())
+        await source.shutdown()
+      })
+    let origin = GatewayHTTPRuntime(
+      configuration: configuration, source: .managed(instrumented), host: "127.0.0.1", port: 0,
+      publicBaseURL: nil, accessToken: "fixture-credential")
+    try await origin.startListening()
+    let port = try #require(await origin.boundPort())
+    bookmarks.arm()
+    let pending = Task {
+      try await GatewayClientSession.connectHTTP(
+        endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp")),
+        accessToken: "fixture-credential")
+    }
+    do {
+      try await wait { bookmarks.entered }
+      let stopping = Task { await origin.stop() }
+      var events = stoppingEvents.makeAsyncIterator()
+      _ = await events.next()
+      #expect(!bookmarks.returned)
+      bookmarks.release()
+      await stopping.value
+      if case .success(let client) = await pending.result {
+        await client.disconnect()
+        Issue.record("A stopped listener admitted an HTTP session")
+      }
+      await #expect(throws: (any Error).self) { try await source.makeSession("late-principal") }
+      #expect(await fixture.service.controlSessions().isEmpty)
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      bookmarks.release()
+      pending.cancel()
+      await origin.stop()
+      if case .success(let client) = await pending.result { await client.disconnect() }
+      throw error
+    }
+  }
+
+  @Test
+  func managedHTTPStopJoinsPreparedPublicationAndRejectsObsoleteCandidates() async throws {
+    let bookmarks = GatedBookmarkService()
+    let fixture = try GenerationFixture(bookmarkService: bookmarks)
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
+    let configuration = try await fixture.control.activeConfiguration()
+    let source = try await fixture.service.makeHTTPSessions(
+      profileID: .chatGPTOperate, trace: .init(transport: "http"))
+    let origin = GatewayHTTPRuntime(
+      configuration: configuration, source: .managed(source), host: "127.0.0.1", port: 0,
+      publicBaseURL: nil, accessToken: "fixture-credential")
+    try await origin.startListening()
+    let port = try #require(await origin.boundPort())
+    let client = try await GatewayClientSession.connectHTTP(
+      endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp")),
+      accessToken: "fixture-credential")
+    let before = try fixture.database.configurationState()
+    bookmarks.arm()
+    let publication = Task {
+      try await fixture.service.changePlugins(
+        .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
+    }
+    do {
+      try await wait { bookmarks.entered }
+      let stopping = Task {
+        await origin.stop()
+        return bookmarks.returned
+      }
+      try await waitUntil { await fixture.service.controlSessions().isEmpty }
+      try await wait { try fixture.pids().allSatisfy { !alive($0) } }
+      #expect(try fixture.database.configurationState() == before)
+      bookmarks.release()
+      #expect(await stopping.value)
+      await #expect(throws: GatewaySocketError.notConnected) { _ = try await publication.value }
+      #expect(try fixture.database.configurationState() == before)
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+      await client.disconnect()
+    } catch {
+      bookmarks.release()
+      publication.cancel()
+      _ = await publication.result
+      await origin.stop()
+      await client.disconnect()
+      throw error
+    }
+  }
+
+  @Test
   func localAdminStopJoinsPendingConstructionAndRestartsWithFreshAdmission() async throws {
     let bookmarks = GatedBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmarks)
@@ -1164,6 +1351,10 @@ struct GatewayGenerationDispatchTests {
         try await fixture.service.changePlugins(
           .enabled(pluginID: "competing", true), expectedRevision: 0)
       }
+      await #expect(throws: PluginHostError.changeInProgress) {
+        _ = try await fixture.service.makeHTTPSessions(
+          profileID: .cloudflareObserve, trace: .init(transport: "http"))
+      }
       try await fixture.service.selectProfile(future)
       connecting = Task { try await fixture.connect() }
       let deadline = ContinuousClock.now + .seconds(5)
@@ -2086,8 +2277,10 @@ private struct GenerationFixture: Sendable {
     try Data(Self.provider.utf8).write(to: root.appendingPathComponent("provider.py"))
   }
 
-  func activate(version: Int, fullShell: Bool = false, destructiveFinish: Bool = false) async throws
-  {
+  func activate(
+    version: Int, fullShell: Bool = false, destructiveFinish: Bool = false,
+    callers: [GatewayCallerKind] = [.localMCP]
+  ) async throws {
     let names = [
       "start", "inspect", "finish", "identity", "change", "wait", "generation_\(version)",
     ]
@@ -2098,7 +2291,7 @@ private struct GenerationFixture: Sendable {
         "runtime.owners.list", "runtime.owners.call", "operations.prepare", "operations.commit",
       ]
         + (fullShell ? ["shell.spawn", "shell.read", "shell.write", "shell.cancel"] : []),
-      workspaces: ["fixture"], allowedCallers: [.localMCP], fullShellEnabled: fullShell,
+      workspaces: ["fixture"], allowedCallers: callers, fullShellEnabled: fullShell,
       mcpServers: ["fixture"],
       mode: fullShell ? .localFullAccess : .workspaceOperations, confirmationPolicy: .never)
     let configuration = GatewayConfiguration(

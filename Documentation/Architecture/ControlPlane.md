@@ -24,12 +24,17 @@ candidates leave the admitted configuration active.
 `AppControlPlaneService` owns durable state and direct domain mechanisms:
 manifest revisions, GRDB records, security-scoped bookmarks, Keychain secrets,
 provider discovery, Tunnel supervisors, and launch at login.
-`AppGatewayService` owns the current gateway runtime, private gateway socket and
-external manifest monitoring. Its bounded invalidation stream and one owned
+`AppGatewayService` owns the private gateway socket, App HTTP principal runtimes
+and external manifest monitoring. Each HTTP listener has its own admission epoch
+and current/retained runtime generations. Cloudflare origins use this shared
+owner, so App control operations can inspect and limit their sessions and publish
+configuration changes without replacing active HTTP connections. Stopping one
+origin joins its own generations without stopping another origin's work.
+Its bounded invalidation stream and one owned
 consumer coalesce file saves and prepare the latest candidate through the same
 publication boundary. Rejected edits remain on disk with a gateway diagnostic;
 the admitted configuration and existing work remain active. The monitor remains
-active while either the gateway listener or owner control service is running.
+active while a gateway socket, App HTTP listener or owner control service is running.
 Their lifecycle transitions join candidate cleanup and reconsider the latest file.
 SwiftUI maps shared results into view models; the CLI maps the same results into
 stable JSON over `ControlSocketService`.

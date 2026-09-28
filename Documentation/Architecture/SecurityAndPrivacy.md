@@ -69,6 +69,10 @@ An HTTP session retains its scope across requests and event-stream reconnections
 Session DELETE, idle expiry and listener shutdown end that scope. A newly initialized
 session receives a new scope while the same principal retains its execution runtime
 until the listener stops.
+App HTTP origins participate in the App's atomic configuration publication and
+retained execution-owner routing. Runtime ownership is separate for each listener;
+sharing a credential does not share session consent or shutdown ownership across
+listeners. The App's local owner operations manage both socket and HTTP scopes.
 
 The local control plane can explicitly approve Full Access for a selected
 session. The default lifetime is This Session. Its effective grant includes

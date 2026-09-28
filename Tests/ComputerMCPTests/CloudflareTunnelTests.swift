@@ -35,7 +35,8 @@ final class CloudflareTunnelTests {
     #expect(!doctor.passed)
     #expect(doctor.version == nil)
     await #expect(throws: CloudflareTunnelError.unsupportedCloudflaredVersion(nil)) {
-      _ = try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
+      _ = try await fixture.controlPlane.startCloudflareTunnel(
+        profileID: profile.id, gatewayService: fixture.gatewayService)
     }
     #expect(await fixture.controlPlane.cloudflareTunnelStatuses().first?.state == .stopped)
     #expect(try await fixture.controlPlane.desiredCloudflareProfileIDs().isEmpty)
@@ -52,6 +53,7 @@ final class CloudflareTunnelTests {
     let fixture = try CloudflareControlPlaneFixture()
     defer { fixture.cleanup() }
     let controlPlane = fixture.controlPlane
+    let gatewayService = fixture.gatewayService
     let root = fixture.temporaryDirectory.url
     let ports = try availableLoopbackPorts(count: 2)
     let profile = CloudflareTunnelConfiguration(
@@ -79,7 +81,10 @@ final class CloudflareTunnelTests {
     _ = try await controlPlane.activateManifest(configuration.exportedTOML())
     try fixture.database.saveWorkspace(
       RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path))
-    let pending = Task { try await controlPlane.startCloudflareTunnel(profileID: profile.id) }
+    let pending = Task {
+      try await controlPlane.startCloudflareTunnel(
+        profileID: profile.id, gatewayService: gatewayService)
+    }
     let release = root.appendingPathComponent("release")
     do {
       let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -92,7 +97,8 @@ final class CloudflareTunnelTests {
         FileManager.default.fileExists(atPath: root.appendingPathComponent("waiting").path))
       #expect(await controlPlane.cloudflareTunnelStatuses().first?.state == .starting)
       await #expect(throws: CloudflareTunnelError.alreadyRunning(profile.id)) {
-        _ = try await controlPlane.startCloudflareTunnel(profileID: profile.id)
+        _ = try await controlPlane.startCloudflareTunnel(
+          profileID: profile.id, gatewayService: fixture.gatewayService)
       }
       if stop {
         let first = Task { try await controlPlane.stopCloudflareTunnel(profileID: profile.id) }
@@ -199,8 +205,10 @@ final class CloudflareTunnelTests {
     expectThrows(try conflictingPorts.validate())
   }
 
-  @Test
-  func testNamedTunnelLifecycleUsesKeychainSecretsAndEphemeralTokenFile() async throws {
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func testNamedTunnelLifecycleUsesKeychainSecretsAndEphemeralTokenFile(stopGateway: Bool)
+    async throws
+  {
     let fixture = try CloudflareControlPlaneFixture()
     defer { fixture.cleanup() }
     let ports = try availableLoopbackPorts(count: 2)
@@ -244,12 +252,25 @@ final class CloudflareTunnelTests {
 
     var started = false
     do {
-      let status = try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
+      try await fixture.gatewayService.start()
+      let status = try await fixture.controlPlane.startCloudflareTunnel(
+        profileID: profile.id, gatewayService: fixture.gatewayService)
       started = true
       #expect(status.state == .running)
       #expect(status.originURL == "http://127.0.0.1:\(ports[0])/mcp")
       #expect(status.metricsURL == "http://127.0.0.1:\(ports[1])/metrics")
       #expect((try await fixture.controlPlane.desiredCloudflareProfileIDs()) == [profile.id])
+      let client = try await GatewayClientSession.connectHTTP(
+        endpoint: try #require(URL(string: "http://127.0.0.1:\(ports[0])/mcp")),
+        accessToken: generatedAccessToken)
+      let operations = AppControlPlaneOperations(
+        controlPlane: fixture.controlPlane, gatewayService: fixture.gatewayService)
+      let scope = try #require(await operations.controlSessions().first)
+      #expect(scope.caller == .cloudflareTunnel)
+      #expect(scope.profileID == .cloudflareObserve)
+      #expect(try await client.listToolNames().contains("workspace.list"))
+      try await operations.endControlSession(id: scope.id, expectedRevision: scope.revision)
+      #expect(try await client.listToolNames().isEmpty)
 
       let tokenFile = fixture.directories.runtime.appendingPathComponent(
         "cloudflare-primary-token"
@@ -270,9 +291,17 @@ final class CloudflareTunnelTests {
       #expect(!invocation.contains("trycloudflare"))
       #expect(!invocation.contains("named-tunnel-secret"))
 
-      let stopped = try await fixture.controlPlane.stopCloudflareTunnel(profileID: profile.id)
+      if stopGateway {
+        await fixture.gatewayService.stop()
+      } else {
+        _ = try await fixture.controlPlane.stopCloudflareTunnel(profileID: profile.id)
+      }
+      let stopped = try #require(await fixture.controlPlane.cloudflareTunnelStatuses().first)
       started = false
       #expect(stopped.state == .stopped)
+      #expect(await operations.controlSessions().isEmpty)
+      await client.disconnect()
+      await fixture.gatewayService.stop()
       #expect(!FileManager.default.fileExists(atPath: tokenFile.path))
       #expect((try await fixture.controlPlane.desiredCloudflareProfileIDs()).isEmpty)
       let lifecycleEvents = try fixture.database.auditEvents().filter {
@@ -287,6 +316,7 @@ final class CloudflareTunnelTests {
       if started {
         _ = try? await fixture.controlPlane.stopCloudflareTunnel(profileID: profile.id)
       }
+      await fixture.gatewayService.stop()
       throw error
     }
   }
@@ -335,7 +365,7 @@ final class CloudflareTunnelTests {
       )
       openAIStarted = true
       let cloudflareStatus = try await fixture.controlPlane.startCloudflareTunnel(
-        profileID: cloudflareProfile.id
+        profileID: cloudflareProfile.id, gatewayService: fixture.gatewayService
       )
       cloudflareStarted = true
       #expect(openAIStatus.state == .running)
@@ -412,7 +442,8 @@ final class CloudflareTunnelTests {
     )
 
     await expectThrowsAsync(
-      try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
+      try await fixture.controlPlane.startCloudflareTunnel(
+        profileID: profile.id, gatewayService: fixture.gatewayService)
     )
 
     #expect(!FileManager.default.fileExists(atPath: tokenFile.path))
@@ -449,7 +480,8 @@ final class CloudflareTunnelTests {
     )
 
     await expectThrowsAsync(
-      try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
+      try await fixture.controlPlane.startCloudflareTunnel(
+        profileID: profile.id, gatewayService: fixture.gatewayService)
     ) { error in
       #expect(error.localizedDescription.contains("exited during startup"))
     }
@@ -487,7 +519,8 @@ final class CloudflareTunnelTests {
       "cloudflare-unexpected-exit-token"
     )
 
-    let started = try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
+    let started = try await fixture.controlPlane.startCloudflareTunnel(
+      profileID: profile.id, gatewayService: fixture.gatewayService)
     #expect(started.state == .running)
     for _ in 0..<100 {
       if await fixture.controlPlane.cloudflareTunnelStatuses().first?.state == .failed {
@@ -545,7 +578,8 @@ final class CloudflareTunnelTests {
     #expect(doctor.tokenFileSupported == false)
     #expect(doctor.diagnostics.contains { $0.contains("2025.4.0") })
     await expectThrowsAsync(
-      try await fixture.controlPlane.startCloudflareTunnel(profileID: profile.id)
+      try await fixture.controlPlane.startCloudflareTunnel(
+        profileID: profile.id, gatewayService: fixture.gatewayService)
     ) { error in
       #expect(error.localizedDescription.contains("2025.4.0"))
     }
@@ -679,6 +713,7 @@ private final class CloudflareControlPlaneFixture {
   let directories: AppControlPlaneServiceDirectories
   let database: GatewayDatabase
   let controlPlane: AppControlPlaneService
+  let gatewayService: AppGatewayService
 
   init() throws {
     temporaryDirectory = try ScopedTemporaryDirectory()
@@ -710,6 +745,10 @@ private final class CloudflareControlPlaneFixture {
       manifestStore: manifestStore,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor
+    )
+    gatewayService = AppGatewayService(
+      controlPlane: controlPlane,
+      socketConfiguration: .init(socketURL: temporaryDirectory.url.appendingPathComponent("g.sock"))
     )
   }
 

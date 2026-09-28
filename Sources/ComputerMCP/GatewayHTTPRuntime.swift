@@ -41,6 +41,18 @@ internal struct GatewayHTTPLimits: Sendable {
   }
 }
 
+/// An App listener borrows host generations while retaining its own session lifecycle.
+struct GatewayHTTPManagedSessions: Sendable {
+  let makeSession: @Sendable (String) async throws -> GatewayControlSessionServing
+  let closeSession: @Sendable (String) async -> Void
+  let shutdown: @Sendable () async -> Void
+}
+
+enum GatewayHTTPSessionSource: Sendable {
+  case registry(any GatewayAsyncToolServing)
+  case managed(GatewayHTTPManagedSessions)
+}
+
 internal final class GatewayHTTPRuntime: @unchecked Sendable {
   private let configuration: GatewayConfiguration
   private let host: String
@@ -49,7 +61,7 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
   private let logger: Logger
   private let app: GatewayHTTPApp
 
-  internal init(
+  internal convenience init(
     configuration: GatewayConfiguration,
     registry: any GatewayAsyncToolServing,
     host: String,
@@ -59,6 +71,16 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
     logger: Logger? = nil,
     limits: GatewayHTTPLimits = .v1
   ) {
+    self.init(
+      configuration: configuration, source: .registry(registry), host: host, port: port,
+      publicBaseURL: publicBaseURL, accessToken: accessToken, logger: logger, limits: limits)
+  }
+
+  init(
+    configuration: GatewayConfiguration, source: GatewayHTTPSessionSource,
+    host: String, port: Int, publicBaseURL: String?, accessToken: String? = nil,
+    logger: Logger? = nil, limits: GatewayHTTPLimits = .v1
+  ) {
     self.configuration = configuration
     self.host = host
     self.port = port
@@ -67,7 +89,7 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
     self.logger = resolvedLogger
     self.app = GatewayHTTPApp(
       configuration: configuration,
-      registry: registry,
+      source: source,
       listeningPort: port,
       publicBaseURL: publicBaseURL,
       accessToken: accessToken,
@@ -141,7 +163,7 @@ private actor GatewayHTTPApp {
   }
 
   private let configuration: GatewayConfiguration
-  private let registry: any GatewayAsyncToolServing
+  private let source: GatewayHTTPSessionSource
   private let authenticator: HTTPBearerAuthenticator
   private var listeningPort: Int
   private let effectivePublicBaseURL: String?
@@ -164,7 +186,7 @@ private actor GatewayHTTPApp {
 
   init(
     configuration: GatewayConfiguration,
-    registry: any GatewayAsyncToolServing,
+    source: GatewayHTTPSessionSource,
     listeningPort: Int,
     publicBaseURL: String?,
     accessToken: String?,
@@ -172,7 +194,7 @@ private actor GatewayHTTPApp {
     limits: GatewayHTTPLimits
   ) {
     self.configuration = configuration
-    self.registry = registry
+    self.source = source
     self.listeningPort = listeningPort
     self.effectivePublicBaseURL = publicBaseURL ?? configuration.server.http.publicBaseURL
     self.authenticator = HTTPBearerAuthenticator(
@@ -281,6 +303,8 @@ private actor GatewayHTTPApp {
     if activeChannel?.isActive == true {
       try? await activeChannel?.close()
     }
+    // Stop managed admission before joining in-progress MCP initialization.
+    if case .managed(let owner) = source { await owner.shutdown() }
     await stopAllSessions()
     // A session being constructed still owns discovery work in the shared registry.
     if !pendingSessionIDs.isEmpty {
@@ -293,7 +317,7 @@ private actor GatewayHTTPApp {
     let admittedRegistries = principalRegistries.values
     principalRegistries.removeAll()
     for admitted in admittedRegistries { await admitted.shutdown() }
-    await registry.shutdown()
+    if case .registry(let registry) = source { await registry.shutdown() }
     stopCompleted = true
   }
 
@@ -399,33 +423,10 @@ private actor GatewayHTTPApp {
       retryInterval: 1_000,
       logger: logger
     )
-    let admittedRegistry: any GatewayAsyncToolServing
-    do {
-      if let existing = principalRegistries[principalID] {
-        admittedRegistry = existing
-      } else if let gateway = registry as? GatewayRuntime {
-        let admitted = try gateway.authenticatedSession(
-          principalID: principalID,
-          transportTrace: GatewayTransportTrace(transport: "http"), requiresControlSession: true)
-        principalRegistries[principalID] = admitted
-        admittedRegistry = admitted
-      } else {
-        admittedRegistry = registry
-      }
-    } catch {
-      return gatewayHTTPError(statusCode: 500, code: "principal_runtime_unavailable")
-    }
     let controlSession: GatewayControlSession?
     let sessionRegistry: any GatewayAsyncToolServing
     do {
-      if let gateway = admittedRegistry as? GatewayRuntime {
-        let scope = try gateway.makeControlSession()
-        controlSession = scope
-        sessionRegistry = GatewayControlSessionServing(base: gateway, session: scope)
-      } else {
-        controlSession = nil
-        sessionRegistry = admittedRegistry
-      }
+      (sessionRegistry, controlSession) = try await makeSessionRegistry(principalID: principalID)
     } catch {
       return gatewayHTTPError(statusCode: 500, code: "control_session_unavailable")
     }
@@ -439,13 +440,13 @@ private actor GatewayHTTPApp {
     do {
       try await server.start(transport: normalizationTransport)
     } catch {
-      controlSession?.end()
+      await closeControlSession(controlSession)
       await server.stop()
       return .error(statusCode: 500, .internalError(error.localizedDescription))
     }
 
     guard !isStopping, channel != nil else {
-      controlSession?.end()
+      await closeControlSession(controlSession)
       await server.stop()
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
@@ -458,6 +459,37 @@ private actor GatewayHTTPApp {
       lastAccessedAt: Date()
     )
     return await transport.handleRequest(request)
+  }
+
+  private func makeSessionRegistry(principalID: String) async throws
+    -> (any GatewayAsyncToolServing, GatewayControlSession?)
+  {
+    switch source {
+    case .managed(let owner):
+      let serving = try await owner.makeSession(principalID)
+      return (serving, serving.session)
+    case .registry(let registry):
+      let admitted: any GatewayAsyncToolServing
+      if let existing = principalRegistries[principalID] {
+        admitted = existing
+      } else if let gateway = registry as? GatewayRuntime {
+        let bound = try gateway.authenticatedSession(
+          principalID: principalID,
+          transportTrace: GatewayTransportTrace(transport: "http"), requiresControlSession: true)
+        principalRegistries[principalID] = bound
+        admitted = bound
+      } else {
+        admitted = registry
+      }
+      guard let gateway = admitted as? GatewayRuntime else { return (admitted, nil) }
+      let scope = try gateway.makeControlSession()
+      return (GatewayControlSessionServing(base: gateway, session: scope), scope)
+    }
+  }
+
+  private func closeControlSession(_ session: GatewayControlSession?) async {
+    session?.end()
+    if let session, case .managed(let owner) = source { await owner.closeSession(session.id) }
   }
 
   func activeSessionCount() -> Int {
@@ -509,7 +541,10 @@ private actor GatewayHTTPApp {
       return
     }
     session.controlSession?.end()
-    let retiring = Task { await session.server.stop() }
+    let retiring = Task {
+      await session.server.stop()
+      await closeControlSession(session.controlSession)
+    }
     retiringSessions[sessionID] = retiring
     await retiring.value
     retiringSessions.removeValue(forKey: sessionID)

@@ -198,7 +198,7 @@ struct StaticPluginCatalogTests {
   }
 
   @Test
-  func latestCompatibleVersionsAreChosenBeforeLocalPaging() async throws {
+  func currentReleasesAreFilteredBeforeLocalPagingWithoutHistoricalFallback() async throws {
     let data = try staticCatalogData { root in
       let template = root["releases"]!.arrayValue![0].objectValue!
       func release(_ index: Int, version: String = "1.0.0", sequence: Int = 0) -> JSONValue {
@@ -219,9 +219,8 @@ struct StaticPluginCatalogTests {
         value["assets"] = .array([.object(asset)])
         return .object(value)
       }
-      var releases = (1...12).map { release($0) }
-      releases.append(release(1, version: "1.1.0", sequence: 1))
-      var beta = release(1, version: "2.0.0-beta.1", sequence: 2).objectValue!
+      var releases = (2...12).map { release($0) }
+      var beta = release(1, version: "4.0.0-beta.1", sequence: 2).objectValue!
       beta["prerelease"] = .bool(true)
       releases.append(.object(beta))
       var incompatible = release(1, version: "3.0.0", sequence: 3).objectValue!
@@ -240,17 +239,18 @@ struct StaticPluginCatalogTests {
     let second = try await catalog.search(
       query: "", kind: .mcp, page: 2, refresh: false, filter: filter)
     #expect(first.entries.count == 10 && first.nextPage == 2)
-    #expect(first.entries.first?.version == (try PluginVersion("1.1.0")))
+    #expect(first.entries.first?.pluginID == "example-02")
     #expect(
-      second.entries.map(\.pluginID) == ["example-11", "example-12"] && second.nextPage == nil)
+      second.entries.map(\.pluginID) == ["example-12"] && second.nextPage == nil)
     let artifacts = try await catalog.artifacts(
       repository: "computer-mcp/plugin-example-01", repositoryID: 1, tag: nil, page: 1,
       filter: filter)
-    #expect(artifacts.tag == "v1.1.0")
-    #expect(artifacts.versions.map(\.tag) == ["v3.0.0", "v2.0.0-beta.1", "v1.1.0", "v1.0.0"])
-    #expect(artifacts.versions.first?.compatible == false)
+    #expect(artifacts.tag == "v3.0.0" && artifacts.artifacts.isEmpty)
+    #expect(artifacts.issues.last?.code == "plugin.catalog.incompatible")
+    #expect(artifacts.versions.map(\.tag) == ["v4.0.0-beta.1", "v3.0.0"])
+    #expect(artifacts.versions.last?.compatible == false)
     let beta = try await catalog.artifacts(
-      repository: "computer-mcp/plugin-example-01", repositoryID: 1, tag: "v2.0.0-beta.1", page: 1,
+      repository: "computer-mcp/plugin-example-01", repositoryID: 1, tag: "v4.0.0-beta.1", page: 1,
       filter: filter)
     #expect(beta.prerelease && beta.artifacts.count == 1)
     #expect(await http.validators.count == 1)
@@ -427,6 +427,70 @@ struct StaticPluginCatalogTests {
       try missing.validateSuccessor(of: original)
     }
   }
+
+  @Test
+  func currentReleasesCanSupersedeOlderRecordsAcrossSkippedGenerations() throws {
+    let original = try StaticPluginCatalogDocument.decode(staticCatalogFixture())
+    let next = try StaticPluginCatalogDocument.decode(
+      staticCatalogData { root in
+        root["generation"] = .integer(5)
+        root["releases"] = .array([.object(staticCatalogRelease(root, version: "2.0.0"))])
+      })
+    try next.validateSuccessor(of: original)
+    let withdrawn = try StaticPluginCatalogDocument.decode(
+      staticCatalogData { root in
+        var release = root["releases"]!.arrayValue![0].objectValue!
+        release["withdrawn"] = .bool(true)
+        release["withdrawal_reason"] = .string("Withdrawn")
+        root["releases"] = .array([.object(release)])
+      })
+    try next.validateSuccessor(of: withdrawn)
+  }
+
+  @Test(arguments: ["older", "same-version", "prerelease", "owner", "plugin"])
+  func currentReleaseReplacementCannotDowngradeOrChangeOwner(_ mutation: String) throws {
+    let original = try StaticPluginCatalogDocument.decode(staticCatalogFixture())
+    let next = try StaticPluginCatalogDocument.decode(
+      staticCatalogData { root in
+        root["generation"] = .integer(2)
+        var release = staticCatalogRelease(
+          root,
+          version: mutation == "older" ? "0.9.0" : mutation == "same-version" ? "1.0.0" : "2.0.0")
+        if mutation == "prerelease" { release["prerelease"] = .bool(true) }
+        if mutation == "owner" { release["repository_id"] = .integer(11) }
+        if mutation == "plugin" { release["plugin_id"] = .string("other") }
+        root["releases"] = .array([.object(release)])
+      })
+    #expect(throws: PluginCatalogError.invalidProvenance) {
+      try next.validateSuccessor(of: original)
+    }
+  }
+
+  @Test
+  func snapshotsCannotReintroduceSupersededVersions() throws {
+    let data = try staticCatalogData { root in
+      let newer = staticCatalogRelease(root, version: "2.0.0")
+      root["releases"] = .array(root["releases"]!.arrayValue! + [.object(newer)])
+    }
+    #expect(throws: PluginCatalogError.invalidProvenance) {
+      try StaticPluginCatalogDocument.decode(data)
+    }
+  }
+}
+
+private func staticCatalogRelease(_ root: [String: JSONValue], version: String) -> [String:
+  JSONValue]
+{
+  var release = root["releases"]!.arrayValue![0].objectValue!
+  release["version"] = .string(version)
+  release["tag"] = .string("v\(version)")
+  release["release_id"] = .integer(21)
+  var asset = release["assets"]!.arrayValue![0].objectValue!
+  asset["id"] = .integer(31)
+  asset["url"] = .string(
+    "https://github.com/computer-mcp/plugin-example/releases/download/v\(version)/example.zip")
+  release["assets"] = .array([.object(asset)])
+  return release
 }
 
 func staticCatalogFixture() throws -> Data {

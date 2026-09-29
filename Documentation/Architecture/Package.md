@@ -18,7 +18,7 @@ and its tests; it does not build the gateway, App or macOS providers.
 
 | Package | Role |
 | --- | --- |
-| official MCP Swift SDK 0.12.1 | MCP server/client protocol, stdio framing, and HTTP server session semantics |
+| `computer-mcp/swift-sdk` transport fork | MCP server/client protocol, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
 | ArgumentParser | CLI parsing |
 | swift-toml and Yams | TOML config and Skill YAML frontmatter |
 | SwiftNIO | HTTP and Unix-socket transport adapters |
@@ -147,7 +147,7 @@ Real external consumers and tunnels are Validation Runs, never automated tests.
   while including disabled contributions. Its dated, revision-bound report
   distinguishes observed file/configuration failures from runtime checks not
   performed. Reading a report does not activate or authorize a contribution.
-- Delegate MCP JSON-RPC semantics to the official SDK. The shared owned-process
+- Delegate MCP JSON-RPC semantics to the upstream-aligned SDK. The shared owned-process
   primitive handles bounded newline-delimited stdio, supervisor/group lifetime
   and byte flow for downstream MCP without a domain dependency.
   The host-owned HTTP client transport uses Foundation URLSession and a bounded

@@ -49,7 +49,8 @@ let platformTargets: [Target] =
       .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
       .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0"),
-      .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
+      .package(
+        url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.0-computer-mcp.1"),
     ],
     targets: platformTargets + [
       .systemLibrary(name: "CSystemArchive"),

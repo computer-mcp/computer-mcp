@@ -593,14 +593,16 @@ publisher-generated schema 2 snapshot. Schema 1 remains readable with its legacy
 macOS target semantics. The publisher pins the official GitHub
 organization `computer-mcp` by numeric ID `315005910`, admits repositories by
 numeric identity and verifies published tags, commits, declarations and release
-archives. The catalog includes versions, channels, compatibility, prerequisites,
+archives. Each repository supplies its current stable version and any newer
+prerelease. The catalog includes channels, compatibility, prerequisites,
 archive identities and explicit withdrawals. It is discovery metadata, not a
 signature, execution grant or replacement for installation-time GitHub checks.
 
 Query words match repository, plugin ID, name and description; `--kind` filters
-contributions. Search picks each plugin's latest stable, non-withdrawn release
-compatible with this host version, platform and architecture, with at least one
-matching archive. Each archive is filtered by its declared target. Filtering happens before
+contributions. Search includes the current stable, non-withdrawn release when it
+matches this host version, platform and architecture and has a matching archive.
+Host and plugin releases are paired; incompatible current versions do not cause
+historical compatibility fallback. Each archive is filtered by its declared target. Filtering happens before
 pagination. Each local page contains at most 10 matching plugins. Search, paging
 and release selection use the same complete snapshot and make no organization,
 default-branch or Contents API requests.
@@ -617,8 +619,11 @@ a successful 304 refreshes validation time without inventing a new generation.
 Malformed, truncated, oversized, unsupported-schema and regressing snapshots,
 HTTP errors, offline operation and timeouts preserve the last known-good snapshot.
 The result reports stale status and issues. With no valid snapshot, failure stays
-an error rather than a successful empty list. A later snapshot cannot silently
-remove prior releases, rewrite package identities or undo a withdrawal. Cache
+an error rather than a successful empty list. A later snapshot can supersede a
+record only with a strictly newer version of the same plugin and numeric repository;
+a stable version requires a stable successor. It cannot otherwise remove current
+releases, rewrite package identities or undo a withdrawal. Superseded releases
+are absent from discovery; published GitHub tags and files remain immutable. Cache
 writes serialize with other writers and cannot overwrite a newer generation.
 A cache storage failure is visible while valid in-memory results remain usable.
 
@@ -654,9 +659,9 @@ endpoint; it does not publish metadata or substitute a fixture for a real respon
 
 ### Release Artifacts
 
-Release selection reads the cached catalog locally. It defaults to the latest
-compatible stable version; an exact tag selects that recorded release. Results
-include all recorded versions, channel, withdrawal/compatibility state and runtime
+Release selection reads the cached catalog locally. It defaults to the current
+stable version; an exact tag selects that current stable or newer prerelease. Results
+include current versions, channel, withdrawal/compatibility state and runtime
 prerequisites. Withdrawn or incompatible versions have no selectable archives.
 Selection records retain publisher, repository, release and asset IDs, tag commit,
 declaration hashes, filename, size and archive SHA-256. Archive pages contain at

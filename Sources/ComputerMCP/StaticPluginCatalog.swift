@@ -116,9 +116,7 @@ actor StaticPluginCatalog: PluginCatalogBrowsing {
     }.sorted(by: Self.newer)
     let selected = releases.first {
       if let tag { return $0.tag == tag }
-      return !$0.withdrawn && !$0.prerelease
-        && $0.matches(
-          host: filter.host, architecture: filter.architecture, platform: filter.platform)
+      return !$0.prerelease
     }
     guard let selected else { throw PluginCatalogError.httpStatus(404) }
     let permitted =

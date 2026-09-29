@@ -7,7 +7,7 @@ package enum ComputerMCPCLI {
   package static let version = "1.3.0"
 
   /// Current package build number.
-  package static let build = "40"
+  package static let build = "41"
 
   /// Version string exposed by the command-line executable.
   package static let releaseVersion = "\(version) (\(build))"

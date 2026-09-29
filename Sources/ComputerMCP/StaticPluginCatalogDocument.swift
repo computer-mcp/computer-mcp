@@ -221,6 +221,14 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
       var repositoryNames: [String: Int64] = [:]
       for release in value.releases {
         try release.validate()
+        let siblings = value.releases.filter { $0.repositoryID == release.repositoryID }
+        guard siblings.allSatisfy({ $0.pluginID == release.pluginID }),
+          siblings.filter({ $0.prerelease == release.prerelease }).count == 1,
+          !release.prerelease
+            || siblings.filter({ !$0.prerelease }).allSatisfy({
+              $0.version.precedes(release.version)
+            })
+        else { throw PluginCatalogError.invalidProvenance }
         guard releases.insert("\(release.repositoryID)/\(release.releaseID)").inserted,
           versions.insert("\(release.repositoryID)/\(release.version)").inserted,
           pluginOwners[release.pluginID].map({ $0 == release.repositoryID }) ?? true,
@@ -258,7 +266,18 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
       guard
         let current = releases.first(where: {
           $0.repositoryID == old.repositoryID && $0.releaseID == old.releaseID
-        }), !old.withdrawn || current.withdrawn, current.declaration == old.declaration,
+        })
+      else {
+        guard
+          releases.contains(where: {
+            $0.repositoryID == old.repositoryID && $0.repository == old.repository
+              && $0.pluginID == old.pluginID && (old.prerelease || !$0.prerelease)
+              && old.version.precedes($0.version)
+          })
+        else { throw PluginCatalogError.invalidProvenance }
+        continue
+      }
+      guard !old.withdrawn || current.withdrawn, current.declaration == old.declaration,
         try current.assetsWithTargets() == old.assetsWithTargets(), current.tag == old.tag,
         current.compatibility == old.compatibility,
         current.dependencies == old.dependencies, current.publishedAt == old.publishedAt

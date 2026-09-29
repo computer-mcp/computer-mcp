@@ -76,21 +76,42 @@ private struct OperationApprovalsView: View {
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 16) {
           ForEach(tickets) { ticket in
+            let details = OperationApprovalDetails(ticket: ticket)
             VStack(alignment: .leading, spacing: 8) {
               HStack {
-                Text(verbatim: ticket.capabilityID).font(.headline)
+                Text(verbatim: details.title).font(.headline)
                 Spacer()
                 Text(verbatim: AppLocalization.string(ticket.state.approvalLabel))
                   .foregroundStyle(.secondary)
               }
-              LabeledContent("Profile", value: ticket.profileID.rawValue)
+              LabeledContent("Profile", value: AppLocalization.string(ticket.profileID.displayName))
               LabeledContent("Workspace", value: ticket.workspaceID ?? "—")
-              LabeledContent("Caller", value: ticket.caller.rawValue)
-              LabeledContent("Client", value: ticket.principalID)
-              LabeledContent("Request ID", value: ticket.id)
-              if let summary = ticket.reviewSummary {
-                Text(verbatim: summary).font(.system(.caption, design: .monospaced))
-                  .textSelection(.enabled)
+              LabeledContent(
+                "Caller", value: AppLocalization.string(ticket.caller.clientAccessLabel))
+              LabeledContent("Client", value: clientAccessIdentity(ticket.principalID))
+              if let fields = details.fields {
+                ForEach(fields) { field in
+                  VStack(alignment: .leading, spacing: 3) {
+                    if !field.label.isEmpty {
+                      Text(verbatim: field.label).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(verbatim: field.value).textSelection(.enabled)
+                  }
+                }
+              } else {
+                Text(
+                  "Request details are unavailable. Ask the client to send a new request.",
+                  bundle: AppLocalization.resourceBundle
+                ).foregroundStyle(.secondary)
+              }
+              DisclosureGroup {
+                LabeledContent("Capability", value: ticket.capabilityID)
+                LabeledContent("Request ID", value: ticket.id)
+                if let summary = ticket.reviewSummary {
+                  Text(verbatim: summary).font(.caption.monospaced()).textSelection(.enabled)
+                }
+              } label: {
+                Text("Technical details", bundle: AppLocalization.resourceBundle)
               }
               LabeledContent(
                 "Expires", value: ticket.expiresAt.formatted(date: .abbreviated, time: .shortened)
@@ -111,6 +132,7 @@ private struct OperationApprovalsView: View {
                   }
                   .buttonStyle(.borderedProminent)
                   .accessibilityIdentifier("approval.\(ticket.id).approve")
+                  .disabled(details.fields == nil)
                 }
                 .disabled(
                   ticket.expiresAt <= Date()

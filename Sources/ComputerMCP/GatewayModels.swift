@@ -204,6 +204,8 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
   package var controlSessionID: String?
   package var controlSessionRevision: Int64?
   package var reviewSummary: String?
+  /// Captured presentation metadata; target identity and authorization use the ticket bindings.
+  package var reviewTitle: String?
 
   package init(
     id: String = UUID().uuidString,
@@ -226,7 +228,8 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     authorizationRevision: Int64? = nil,
     controlSessionID: String? = nil,
     controlSessionRevision: Int64? = nil,
-    reviewSummary: String? = nil
+    reviewSummary: String? = nil,
+    reviewTitle: String? = nil
   ) {
     self.id = id
     self.capabilityID = capabilityID
@@ -251,5 +254,6 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     self.controlSessionID = controlSessionID
     self.controlSessionRevision = controlSessionRevision
     self.reviewSummary = reviewSummary
+    self.reviewTitle = reviewTitle
   }
 }

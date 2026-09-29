@@ -1553,7 +1553,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       reviewSummary: try Self.operationReviewSummary(
         GatewayOwnerRouting.selection.map {
           ["execution_owner": $0.json, "arguments": .object(routed.arguments)]
-        } ?? routed.arguments)
+        } ?? routed.arguments),
+      reviewTitle: try listTools(context: routed.context).first { $0.name == toolName }?.title
     )
     try context.controlSession?.requireRevision(session?.revision)
     try database.saveOperationTicket(ticket)

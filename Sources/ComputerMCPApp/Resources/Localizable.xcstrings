@@ -1,6 +1,13 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Operation request" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Operation request"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"操作请求"}}}},
+    "Empty text" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Empty text"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"空文本"}}}},
+    "Not set" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not set"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未设置"}}}},
+    "Empty list" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Empty list"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"空列表"}}}},
+    "No fields" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No fields"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无字段"}}}},
+    "Request details are unavailable. Ask the client to send a new request." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Request details are unavailable. Ask the client to send a new request."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请求详情不可用，请让客户端重新发送请求。"}}}},
+    "Technical details" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Technical details"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"技术详情"}}}},
     "A client's current session can impose a lower access level." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"A client's current session can impose a lower access level."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端当前会话仍可能限制为更低的访问级别。"}}}},
     "Close and reopen to review current permission choices." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Close and reopen to review current permission choices."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请关闭后重新打开，以查看当前权限选项。"}}}},
     "Permission choices are unavailable. Close and try again." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission choices are unavailable. Close and try again."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限选项暂不可用，请关闭后重试。"}}}},

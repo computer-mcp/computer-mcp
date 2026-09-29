@@ -501,6 +501,13 @@ Changing arguments, target, authority, or using an expired ticket requires a new
 request. These are host operation approvals; Codex native approvals remain in
 the Codex adapter's native workflow.
 
+The App presents the tool title captured when the request was prepared and its
+redacted arguments as individual fields. Technical details retain the capability
+and request identifiers and original review JSON. Display metadata does not
+authorize execution: the exact target, arguments, expiry and current permission
+checks still govern the single-use ticket. A request whose details cannot be
+read must be sent again before the App can approve it.
+
 ## App-owned operation
 
 `plugins list/show/register/configure/enable/disable/select/remove` manage local

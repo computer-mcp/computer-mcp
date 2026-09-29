@@ -1623,6 +1623,11 @@ package final class GatewayDatabase: @unchecked Sendable {
         table.uniqueKey(["principalID", "profileID", "caller"])
       }
     }
+    migrator.registerMigration("operation-review-title") { database in
+      try database.alter(table: "operationTickets") { table in
+        table.add(column: "reviewTitle", .text)
+      }
+    }
     return migrator
   }()
 
@@ -2022,6 +2027,7 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
   var controlSessionID: String?
   var controlSessionRevision: Int64?
   var reviewSummary: String?
+  var reviewTitle: String?
 
   init(_ value: OperationTicket) {
     self.id = value.id
@@ -2045,6 +2051,7 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
     self.controlSessionID = value.controlSessionID
     self.controlSessionRevision = value.controlSessionRevision
     self.reviewSummary = value.reviewSummary
+    self.reviewTitle = value.reviewTitle
   }
 
   func value() throws -> OperationTicket {
@@ -2076,7 +2083,7 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
       failureCode: failureCode,
       authorizationRevision: authorizationRevision,
       controlSessionID: controlSessionID, controlSessionRevision: controlSessionRevision,
-      reviewSummary: reviewSummary
+      reviewSummary: reviewSummary, reviewTitle: reviewTitle
     )
   }
 }

@@ -168,6 +168,21 @@ struct LocalPermissionCLIAcceptanceTests {
         try fixture.database.profiles().first { $0.id == .chatGPTOperate }?.authorizationRevision
           == Int64(revision))
 
+      let stillObserved = try await connected.call(
+        toolName: "file.write", arguments: approvedTarget)
+      #expect(stillObserved.result.objectValue?["isError"] == .bool(true))
+      #expect(!fixture.exists("approved.txt"))
+      let clients = try await fixture.json(["clients", "list"])
+      let selected = try #require(clients.objectValue?["sessions"]?.arrayValue?.first?.objectValue)
+      let clientID = try #require(selected["id"]?.stringValue)
+      let clientRevision = try #require(selected["revision"]?.intValue)
+      let restricted = try await fixture.json([
+        "clients", "limit", clientID, "--mode", "restricted", "--expected-revision",
+        String(clientRevision),
+      ])
+      #expect(restricted.objectValue?["full_access_consent"] == nil)
+      #expect(try fixture.database.clientTrusts().isEmpty)
+
       let approvedID = try await fixture.prepare(approvedTarget, session: connected)
       #expect(try fixture.database.operationTicket(id: approvedID)?.state == .pendingApproval)
       #expect(!fixture.exists("approved.txt"))

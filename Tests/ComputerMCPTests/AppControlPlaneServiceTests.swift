@@ -413,8 +413,8 @@ final class AppControlPlaneServiceTests {
     try connection.close()
   }
 
-  @Test
-  func startDuringStopWaitsForOwnedListenerCleanup() async throws {
+  @Test(arguments: [false, true])
+  func startJoinsOwnedListenerCleanup(stopBeforeObservation: Bool) async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(validManifest)
@@ -425,11 +425,14 @@ final class AppControlPlaneServiceTests {
     )
     try await service.start()
     let stopping = Task { await service.stop() }
+    if stopBeforeObservation { await stopping.value }
     let deadline = ContinuousClock.now + .seconds(3)
-    while await service.snapshot().state != .stopping, ContinuousClock.now < deadline {
+    while await service.snapshot().state == .running, ContinuousClock.now < deadline {
       await Task.yield()
     }
-    #expect(await service.snapshot().state == .stopping)
+    let stopState = await service.snapshot().state
+    // Cleanup can finish before observation; start must join it and own the next listener.
+    #expect(stopState == .stopping || stopState == .stopped)
     do {
       try await service.start()
       await stopping.value

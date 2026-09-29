@@ -1,0 +1,60 @@
+name: Upload candidate draft asset
+run-name: Upload candidate ${{ inputs.candidate_run }} to its existing draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Successful trusted candidate workflow run
+        required: true
+        type: string
+      source_commit:
+        description: Exact accepted candidate source commit
+        required: true
+        type: string
+      dmg_sha256:
+        description: Exact accepted DMG SHA-256
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-draft-upload
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: github.repository == 'computer-mcp/computer-mcp' && github.ref == 'refs/heads/master'
+    runs-on: macos-26
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout trusted publisher
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Authenticate candidate and fill missing draft asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          CANDIDATE_SOURCE: ${{ inputs.source_commit }}
+          CANDIDATE_DMG_SHA256: ${{ inputs.dmg_sha256 }}
+        run: |
+          python3 Scripts/upload-candidate-draft.py \
+            --candidate-run "$CANDIDATE_RUN" \
+            --source-commit "$CANDIDATE_SOURCE" \
+            --dmg-sha256 "$CANDIDATE_DMG_SHA256" \
+            --receipt "$RUNNER_TEMP/draft-upload.json"
+      - name: Preserve draft asset receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: draft-upload-${{ github.run_id }}
+          path: ${{ runner.temp }}/draft-upload.json
+          if-no-files-found: error
+          retention-days: 30

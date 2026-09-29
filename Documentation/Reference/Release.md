@@ -22,6 +22,22 @@ binds the exact packaged App and selected plugin bytes to fixed case results.
 creating the signed tag and publishing those same binaries. Source changes,
 rebuilding, re-signing or package changes invalidate the relevant evidence.
 
+If a local network cannot upload the DMG, `upload-candidate-draft.yml` can fill
+that one missing asset in an existing draft. It runs only on canonical `master`
+after `production` Environment approval, with a short-lived job token. It
+authenticates the successful candidate workflow/artifact, verifies the signed
+formal tag and operator-supplied DMG digest, and compares the downloaded draft
+bytes. It cannot create a release, replace an asset or publish the draft. Resume
+the local canonical publisher afterward; its installed-acceptance and public
+download checks remain required.
+
+```sh
+gh workflow run upload-candidate-draft.yml --ref master \
+  -f candidate_run=ACCEPTED_RUN_ID \
+  -f source_commit=ACCEPTED_SOURCE_COMMIT \
+  -f dmg_sha256=ACCEPTED_DMG_SHA256
+```
+
 ## One-time GitHub configuration
 
 Create a GitHub Environment named `production`. Restrict its deployment branch
@@ -75,7 +91,7 @@ shared password and must not be reused across boundaries.
 | App Store Connect Team API `.p8`, Key ID, and Issuer ID | Authenticate `notarytool` submissions | Preserve the one-time-download private key in secure backup and GitHub `production` Secrets; revoke and replace it if exposed |
 | GitHub Environment approval | Permit this trusted-master candidate run to read protected Apple credentials | A per-run reviewer decision, not a password |
 | Temporary runner Keychain password | Unlock only the ephemeral CI signing Keychain | Generated randomly inside the job and destroyed with the runner; nobody records or enters it |
-| GitHub `GITHUB_TOKEN` | Read repository content and candidate artifacts | Issued automatically to the job with scoped permissions; no personal access token is required |
+| GitHub `GITHUB_TOKEN` | Read repository content and candidate artifacts; the protected draft-upload job additionally has Contents write for missing draft assets | Issued automatically with job-scoped permissions; no personal access token is required |
 
 Apple App-Specific Passwords are not used by this repository and can be revoked
 without affecting the Team API key workflow. Cloudflare tunnel tokens and

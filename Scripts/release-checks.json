@@ -30,7 +30,7 @@
         ["xcrun", "swiftc", "-typecheck", "Scripts/verify-app-navigation.swift"],
         ["xcrun", "swiftc", "-typecheck", "Scripts/quit-installed-app.swift"],
         ["zsh", "-c", "for script in Scripts/*.sh; do zsh -n \"$script\" || exit; done"],
-        ["actionlint", ".github/workflows/ci.yml", ".github/workflows/release-gate.yml"],
+        ["actionlint", ".github/workflows/ci.yml", ".github/workflows/release-gate.yml", ".github/workflows/upload-candidate-draft.yml"],
         ["Scripts/verify-protected-release-boundary.sh"],
         ["Scripts/verify-protected-release-boundary-regression.sh"],
         ["Scripts/verify-dmg-signing-boundary-regression.sh"],

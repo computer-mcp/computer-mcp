@@ -4,6 +4,17 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+- Apply live workspace, MCP and plugin changes to connected clients while
+  preserving the runtime ownership of existing work.
+- Separate observation/control, access level and trust duration, with typed
+  remote management subject to local consent and current authorization.
+- Discover official plugins through a static publisher catalog and verify
+  provenance when installing a selected release.
+- Generalize scoped Host Services, add CLI Tree authoring and validation, and
+  preserve exact integers throughout JSON transport.
+- Add platform-specific plugin entrypoints and tested native Windows core
+  process, filesystem and transport boundaries.
+
 ## 1.2.2 — 2026-09-22
 
 - Complete repeated MCP initialization safely across reused request IDs and

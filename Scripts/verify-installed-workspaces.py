@@ -10,7 +10,8 @@ from release import atomic_json, digest
 
 def verify(cli, work):
     def call(*arguments):
-        response = json.loads(subprocess.check_output([str(cli), "workspace", *arguments], timeout=20))
+        # Live publication prepares every connected provider before its atomic commit.
+        response = json.loads(subprocess.check_output([str(cli), "workspace", *arguments], timeout=45))
         if "error" in response:
             raise ValueError("Workspace operation failed")
         return response.get("result", response)

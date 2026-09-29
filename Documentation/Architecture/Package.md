@@ -54,6 +54,14 @@ package product and does not install or bundle vendor binaries.
 | `Examples/` | Standalone development and dogfood manifests |
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
 
+`GatewayToolRegistry` retains configuration, runtime ownership and tool dispatch.
+Its domain extensions contain the CLI, MCP, process, shell, skills,
+workspace, file, structured-data, Git and platform implementations. The catalog
+extension owns tool schemas and annotations; argument/result helpers and workspace
+path checks remain shared. `MCPTool` and `DownstreamMCPClient` own their definitions
+and client contract. Domain providers route through this registry and share its
+runtime lifecycle.
+
 The release scripts assemble the SwiftPM App executable and embedded CLI into a
 standard `.app`, sign both code objects, and package the bundle in a DMG. The
 official candidate workflow builds an exact trusted-master commit through the

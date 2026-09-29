@@ -80,11 +80,11 @@ try:
         "enabled": True, "executable": wrapper.name, "app_server_enabled": True,
         "exec_enabled": True, "app_server_request_timeout_seconds": 30,
     }))
-    risks = {"thread.start": "workspace-write", "turn.start": "workspace-write",
-             "thread.release": "workspace-write", "status": "read-only",
-             "events.read": "read-only", "goal.set": "workspace-write", "goal.get": "read-only"}
+    risks = {"thread.start": "full-shell", "turn.start": "full-shell",
+             "thread.release": "full-shell", "status": "read-only",
+             "events.read": "read-only", "goal.set": "full-shell", "goal.get": "read-only"}
     names = ["codex.app." + n for n in risks]
-    extra_risks = {"codex.exec.start": "workspace-write", "codex.exec.result": "read-only",
+    extra_risks = {"codex.exec.start": "full-shell", "codex.exec.result": "read-only",
                    "codex.exec.list": "read-only"}
     names.extend(extra_risks)
     q = json.dumps
@@ -93,7 +93,7 @@ try:
     (root / "gateway.toml").write_text(f'''schema_version = 1
     [runtime]
     caller = "local-mcp"
-    profile = "chatgpt-operate"
+    profile = "installed-acceptance"
     [[workspaces]]
     id = "primary"
     display_name = "Installed acceptance"
@@ -103,9 +103,10 @@ try:
     display_name = "Unselected acceptance"
     path = {q(str(root / "other"))}
     [[profiles]]
-    id = "chatgpt-operate"
-    mode = "workspace-operations"
-    confirmation_policy = "risk-based"
+    id = "installed-acceptance"
+    mode = "local-full-access"
+    confirmation_policy = "never"
+    full_shell_enabled = true
     capabilities = ["mcp.tools.call", "workspace.list"]
     workspaces = ["primary"]
     allowed_callers = ["local-mcp"]
@@ -177,6 +178,7 @@ try:
         assert cursor not in seen_cursors, "Cyclic tool catalog"
         seen_cursors.add(cursor)
     assert catalog["mcp.tools.call"]["inputSchema"]["properties"]["workspace_id"]["type"] == "string"
+    assert set(names) <= set(catalog), {"missing_tools": sorted(set(names) - set(catalog))}
     def call(name, arguments=None):
         full = name if name.startswith("codex.") else "codex.app." + name
         arguments = arguments or {}

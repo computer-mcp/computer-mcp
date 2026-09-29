@@ -4,6 +4,8 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.3.0 — 2026-09-29
+
 - Apply live workspace, MCP and plugin changes to connected clients while
   preserving the runtime ownership of existing work.
 - Separate observation/control, access level and trust duration, with typed

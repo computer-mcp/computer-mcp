@@ -18,7 +18,7 @@ and its tests; it does not build the gateway, App or macOS providers.
 
 | Package | Role |
 | --- | --- |
-| `computer-mcp/swift-sdk` transport fork | MCP server/client protocol, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
+| `computer-mcp/swift-sdk` compatibility fork | MCP server/client protocol, exact integer wire values, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
 | ArgumentParser | CLI parsing |
 | swift-toml and Yams | TOML config and Skill YAML frontmatter |
 | SwiftNIO | HTTP and Unix-socket transport adapters |

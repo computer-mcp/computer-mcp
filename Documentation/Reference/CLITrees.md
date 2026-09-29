@@ -5,6 +5,61 @@ registrations and Plugin CLI contributions use the same loader, schema generator
 argument encoder, process ownership, and Gateway authorization path. A tree is
 publisher input; it cannot grant permissions or install its external executable.
 
+## Authoring and validation
+
+The standalone CLI uses the same parser as runtime admission. It does not connect
+to the App or change registrations:
+
+```sh
+computer-mcp cli-tree validate ./cli-tree.json --expected-version 6.3.1
+computer-mcp cli-tree check ./cli-tree.json --executable /absolute/path/swift-format --working-directory /disposable/directory
+```
+
+`validate` reads a regular file of at most 4 MiB within its source directory and never executes
+commands. `--expected-version` compares exact metadata; it does not probe a binary.
+`check` first validates, then explicitly runs only the tree's declared
+`executable_checks` against the selected executable. Review those arguments before
+running package code. It uses the same exact-output/hash assertions and executable
+identity checks as runtime calls, with closed stdin, four MiB per stream and one
+five-second budget for all assertions. Startup and cleanup may add latency. It
+never invokes a command node, help exporter or model on the author's behalf.
+No check result is cached or written back into the tree.
+
+Both commands always emit one JSON report for document/check results and return
+zero on `valid: true`, nonzero otherwise. Argument-usage errors use normal CLI
+help/error output. The report contains `format_version: 1`, `valid`, `diagnostics`,
+optional `tree` metadata, `checked_executable` and `executable_check_count` (the
+number of assertions that passed). Static validation reports zero executed checks.
+A missing compatibility declaration is a warning during validation and an error
+when checking. A successful check proves only the declared assertions, not
+complete coverage, native command semantics or publisher authenticity.
+
+Each diagnostic has a stable `code`, a `path` as an RFC 6901 JSON Pointer (empty
+for the document root), `severity` (`error` or `warning`) and a human `message`.
+Validation reports the first blocking document error in deterministic order;
+correct it and rerun. Consumers should branch on codes, not message text.
+
+| Code | Meaning |
+| --- | --- |
+| `clitree.document.unreadable` | Missing, escaping, non-regular, or oversized input file. |
+| `clitree.document.too_large` | In-memory document exceeds the same size limit. |
+| `clitree.document.unknown_field` / `missing_field` / `type` / `encoding` | Unexpected/missing field, wrong type, malformed JSON or unsupported encoded value. |
+| `clitree.document.invalid` | Root source, coverage, size or other document invariant fails. |
+| `clitree.format.unsupported` | Unsupported tree serialization version. |
+| `clitree.command.duplicate` / `missing_parent` / `invalid` | Command identity, hierarchy or invocation is invalid. |
+| `clitree.parameter.invalid` / `clitree.argv.invalid` | Parameter schema/default/relationships or argument mapping is invalid. |
+| `clitree.check.invalid` | Malformed declared compatibility assertion. |
+| `clitree.version.mismatch` | Expected version differs from declared metadata. |
+| `clitree.check.undeclared` / `missing` | No assertions declared (warning / blocking check error). |
+| `clitree.check.mismatch` / `timeout` | Output, completion or shared deadline assertion failed. |
+| `clitree.check.identity_changed` / `unavailable` / `cancelled` | Binary/interpreter changed, could not be verified, or check was cancelled. |
+
+The host-owned [CLI Tree authoring skill](../../skills/computer-mcp-cli-tree/SKILL.md)
+adds source research, coverage judgment and drift review. Canonical JSON remains
+the ABI. Verify real help/version or official machine introspection, keep concrete
+omissions, and rerun native mapping tests before updating compatibility assertions.
+The runtime never interprets human help through an LLM.
+
 ## Registration
 
 For a direct registration, add a tree source and explicitly disable arbitrary
@@ -108,6 +163,11 @@ later one. Arrays emit no tokens when empty. NUL is rejected in argv.
 deterministic `json`. String/binary stdin may contain NUL. Input is closed after
 delivery. Encoded invocations are bounded to 16384 arguments, 1 MiB argv bytes,
 and 4 MiB stdin.
+
+Integer values use signed 64-bit storage, including CLI argv, JSON stdin and
+stdout, and numeric schema bounds. Values outside this integer range fail
+validation; integer comparison and enum matching preserve adjacent values above
+2^53. Fractional numbers use binary floating-point precision.
 
 The schema subset supports string/integer/number/boolean/null/array/object types,
 `description`, `enum`, `const`, string `minLength`/`maxLength`, numeric

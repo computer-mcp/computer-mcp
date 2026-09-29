@@ -397,11 +397,15 @@ extension AppControlPlaneService {
     )
   }
 
-  package func startCloudflareTunnel(profileID: String) async throws -> CloudflareTunnelStatus {
+  package func startCloudflareTunnel(profileID: String, gatewayService: AppGatewayService)
+    async throws -> CloudflareTunnelStatus
+  {
     guard cloudflareStartTasks[profileID] == nil, cloudflareStopTasks[profileID] == nil else {
       throw CloudflareTunnelError.alreadyRunning(profileID)
     }
-    let task = Task { try await self.performCloudflareStart(profileID: profileID) }
+    let task = Task {
+      try await self.performCloudflareStart(profileID: profileID, gatewayService: gatewayService)
+    }
     cloudflareStartTasks[profileID] = task
     defer { cloudflareStartTasks.removeValue(forKey: profileID) }
     return try await withTaskCancellationHandler {
@@ -411,7 +415,9 @@ extension AppControlPlaneService {
     }
   }
 
-  private func performCloudflareStart(profileID: String) async throws -> CloudflareTunnelStatus {
+  private func performCloudflareStart(profileID: String, gatewayService: AppGatewayService)
+    async throws -> CloudflareTunnelStatus
+  {
     if let existingRuntime = cloudflareRuntimes[profileID] {
       if existingRuntime.process?.isRunning == true {
         throw CloudflareTunnelError.alreadyRunning(profileID)
@@ -482,26 +488,19 @@ extension AppControlPlaneService {
         profileID: profile.gatewayProfile
       )
       try httpConfiguration.validate()
-      let gateway = try await GatewayRuntime.make(
-        configuration: httpConfiguration,
-        context: httpConfiguration.executionContext(
-          caller: .cloudflareTunnel,
-          profileID: profile.gatewayProfile,
-          transportTrace: GatewayTransportTrace(
-            transport: "cloudflare_tunnel",
-            tunnelInstanceID: profile.id,
-            tunnelProfileID: profile.tunnelName
-          )
-        ),
-        database: database,
-        registeredWorkspaces: inputs.workspaces,
-        bookmarkService: bookmarkService,
-        mcpClient: MCPProxyClient(secretStore: secretStore),
-        bundledPlugins: bundledPlugins
-      )
+      let validation = try await prepareGateway(
+        inputs: inputs, caller: .cloudflareTunnel, profileID: profile.gatewayProfile,
+        trustedPrincipalID: nil, terminalSessions: GatewayTerminalSessions(), artifactStorage: nil)
+      await validation.runtime.shutdown()
+      try requireCurrentGatewayInputs(inputs)
+      let sessions = try await gatewayService.makeHTTPSessions(
+        profileID: profile.gatewayProfile,
+        trace: .init(
+          transport: "cloudflare_tunnel", tunnelInstanceID: profile.id,
+          tunnelProfileID: profile.tunnelName))
       let origin = GatewayHTTPRuntime(
         configuration: httpConfiguration,
-        registry: gateway,
+        source: .managed(sessions),
         host: "127.0.0.1",
         port: profile.localPort,
         publicBaseURL: profile.publicBaseURL?.absoluteString,

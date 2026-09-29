@@ -144,7 +144,7 @@ struct CodexPluginConnectionTests {
   }
 
   @Test
-  func httpOriginStopReleasesThePluginAndItsVendorWriter() async throws {
+  func httpReconnectRetainsThePluginWriterUntilTheOriginStops() async throws {
     let fixture = try ConnectionFixture()
     defer { fixture.remove() }
     let gateway = try await fixture.gateway(
@@ -158,6 +158,10 @@ struct CodexPluginConnectionTests {
       let port = try #require(await runtime.boundPort())
       let session = try await GatewayClientSession.connectHTTP(
         endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp")), streaming: false)
+      let admitted = try #require(await runtime.controlSessions().first)
+      #expect(admitted.fullAccessConsent == nil)
+      _ = try await runtime.approveControlSession(
+        id: admitted.id, expectedRevision: admitted.revision)
       let workspace = fixture.workspaces[0]
       let started = try await session.call(
         toolName: "codex.app.thread.start",
@@ -178,8 +182,33 @@ struct CodexPluginConnectionTests {
       #expect(evidence.owner["transport"] == .string("http"))
       #expect(evidence.owner["tunnel_instance_id"] == nil)
       #expect(evidence.owner["principal_id"]?.stringValue?.isEmpty == false)
-      await runtime.stop()
+      let originalScope = try #require(await runtime.controlSessions().first)
       await session.disconnect()
+      #expect(await runtime.controlSessions().isEmpty)
+      #expect(evidence.processes.allSatisfy(ConnectionFixture.exists))
+      let reconnected = try await GatewayClientSession.connectHTTP(
+        endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp")), streaming: false)
+      let nextScope = try #require(await runtime.controlSessions().first)
+      #expect(nextScope.principalID == originalScope.principalID)
+      #expect(nextScope.id != originalScope.id)
+      #expect(nextScope.fullAccessConsent == nil)
+      let loaded = try await reconnected.call(
+        toolName: "codex.app.thread.loaded.list",
+        arguments: .object(["workspace_id": .string(workspace.id)]))
+      #expect(
+        loaded.result.objectValue?["structuredContent"]?.objectValue?["result"]?
+          .objectValue?["data"]?.arrayValue == [.string(thread)])
+      let current = try await reconnected.call(
+        toolName: "codex.app.status",
+        arguments: .object(["workspace_id": .string(workspace.id)]))
+      let retained = try ConnectionEvidence(
+        try #require(current.result.objectValue?["structuredContent"]?.objectValue?["result"]))
+      #expect(retained.runtimeID == evidence.runtimeID)
+      #expect(retained.processes == evidence.processes)
+      #expect(retained.owner == evidence.owner)
+      await runtime.stop()
+      await reconnected.disconnect()
+      #expect(await runtime.controlSessions().isEmpty)
       try await fixture.requireStopped(evidence, thread: thread)
     } catch {
       await runtime.stop()
@@ -254,13 +283,17 @@ private final class ConnectionFixture: Sendable {
     workspaces = registered
     let callers: [GatewayCallerKind] = [.secureTunnel, .localMCP, .cloudflareTunnel]
     var configured = base.configuration(workspaces: registered)
+    configured.policy.shellEnabled = true
     configured.profiles[0].allowedCallers = callers
+    configured.profiles[0].mode = .localFullAccess
+    configured.profiles[0].fullShellEnabled = true
+    configured.profiles[0].confirmationPolicy = .never
     configuration = configured
     try base.database.saveProfile(
       .init(
         id: .chatGPTOperate, capabilityIDs: Set(configured.profiles[0].capabilities),
         workspaceIDs: Set(registered.map(\.id)), allowedCallers: Set(callers),
-        mode: .workspaceOperations))
+        fullShellEnabled: true, mode: .localFullAccess, confirmationPolicy: .never))
   }
   func gateway(
     caller: GatewayCallerKind = .secureTunnel, trace: GatewayTransportTrace,

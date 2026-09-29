@@ -104,6 +104,52 @@ class VersionTests(unittest.TestCase):
         self.assertIn("immutable", result.stderr)
         self.assertEqual(version.read(self.root), self.data)
 
+    def test_dependency_semver_ordering_preserves_prerelease_precedence(self):
+        versions = ["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+                    "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0", "1.0.1-0"]
+        keys = [version.dependency_version_key(value) for value in versions]
+        for earlier, later in zip(keys, keys[1:]):
+            self.assertLess(earlier, later)
+        self.assertEqual(version.dependency_version_key("1.0.0+build.01"),
+                         version.dependency_version_key("1.0.0+another"))
+        for invalid in (None, "01.0.0", "1.0.0-01", "1.0.0-alpha..1", "1.0.0+", "1.0.0-", "1.0.0-α"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                version.dependency_version_key(invalid)
+        with self.assertRaises(ValueError):
+            version.declaration({**self.data, "version": "2.3.4-preview.1"})
+
+    def test_prerelease_dependency_requires_its_exact_public_tag_commit(self):
+        url = "https://example.invalid/dependency.git"
+        revision = "a" * 40
+        release = "0.13.0-vendor.0"
+        pin = {"identity": "dependency", "location": url,
+               "state": {"version": release, "revision": revision}}
+        (self.root / "Package.resolved").write_text(json.dumps({"pins": [pin]}))
+        package = {"dependencies": [{"sourceControl": [{"identity": "dependency",
+                   "location": {"remote": [{"urlString": url}]}, "requirement": {"exact": [release]}}]}]}
+        for target, passes in ((revision, True), ("b" * 40, False)):
+            remote = "c" * 40 + f"\trefs/tags/{release}\n{target}\trefs/tags/{release}^{{}}"
+            with self.subTest(target=target), patch.object(version, "run", side_effect=[json.dumps(package), remote]) as calls:
+                if passes:
+                    self.assertEqual(version.check_dependencies(self.root)[0]["revision"], revision)
+                    self.assertEqual(calls.call_args.args[0][4:], [f"refs/tags/{prefix}{release}{peel}"
+                                     for prefix in ("", "v") for peel in ("", "^{}")])
+                else:
+                    with self.assertRaisesRegex(ValueError, "locked commit"):
+                        version.check_dependencies(self.root)
+
+    def test_dependency_range_keeps_prereleases_below_the_corresponding_stable_release(self):
+        url = "https://example.invalid/dependency.git"
+        pin = {"identity": "dependency", "location": url,
+               "state": {"version": "1.0.0-rc.1", "revision": "a" * 40}}
+        (self.root / "Package.resolved").write_text(json.dumps({"pins": [pin]}))
+        package = {"dependencies": [{"sourceControl": [{"identity": "dependency",
+                   "location": {"remote": [{"urlString": url}]},
+                   "requirement": {"range": [{"lowerBound": "1.0.0", "upperBound": "2.0.0"}]}}]}]}
+        with patch.object(version, "run", return_value=json.dumps(package)):
+            with self.assertRaisesRegex(ValueError, "outside compatible range"):
+                version.check_dependencies(self.root)
+
 
 if __name__ == "__main__":
     unittest.main()

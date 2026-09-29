@@ -102,12 +102,31 @@ Computer MCP makes two separate decisions:
 2. **Action consent:** If host policy requires confirmation, has the local user
    approved this exact operation?
 
-Approval never expands policy. A denied capability cannot become allowed just
-because someone clicks Approve. `shell.run`, generic CLI execution, process
-spawning, workspace writes, destructive operations, and Full Shell remain off
-unless the active configuration grants the exact path. Credentials stay in the
-signed App's macOS Data Protection Keychain; examples, diagnostics, logs, and
-audit rows keep only placeholders or redacted summaries.
+In the App's **Client access** page, review connected clients and explicitly
+grant Full Access, defaulting to **This Session**. Full Access permits arbitrary
+execution as your macOS user; workspaces provide project context, not a sandbox.
+**Always Allow this Client** is a separate choice. You can downgrade or end a
+connection's access and separately revoke saved client approvals. Access changes
+apply to new requests without cancelling work already started. The local
+`computer-mcp clients` commands provide the same access controls; see
+[Client access](Documentation/Reference/CLI.md#client-access) for explicit
+consent and standalone HTTP usage.
+
+On an App-managed connection, approved Full Access also enables typed workspace
+management and verified official plugin installation, configuration and updates.
+Clients use these tools directly while existing work continues; see
+[Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management).
+
+Choose **restricted permissions** to select readable capabilities, projects and
+integrations, and the connection types allowed to use them. These defaults apply
+to clients sharing the profile; each session can impose a lower access level.
+Saving a selection invalidates previous Full Access approvals for that profile.
+
+An individual action confirmation never expands the client's current access.
+Restricted Access uses its selected tools and workspaces and prohibits arbitrary
+execution. Credentials stay in the signed App's macOS Data Protection Keychain;
+examples, diagnostics, logs, and audit rows keep only placeholders or redacted
+summaries.
 
 The optional Codex plugin follows Codex's own configuration and approval
 model, including native Full Access defaults and explicit overrides. The host
@@ -322,9 +341,10 @@ tunnel credentials and must not run as a second owner of the App's state. See
 [Examples](Examples/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before
 opening a change.
 
-Official releases come only from the protected signed-tag workflow. The
-workflow builds, Developer ID signs, notarizes, staples, verifies, and creates
-a draft GitHub Release; publishing remains a separate operator acceptance
-step. See [Release Reference](Documentation/Reference/Release.md).
+Official releases start from an exact trusted-master candidate commit. The
+protected workflow builds, Developer ID signs, notarizes, staples, and preserves
+the candidate artifacts. After acceptance of those exact artifacts, publication
+creates the signed release tag and publishes the same bytes. See
+[Release Reference](Documentation/Reference/Release.md).
 
 Computer MCP is available under the terms in [LICENSE](LICENSE).

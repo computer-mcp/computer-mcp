@@ -4,8 +4,71 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPAuthenticationTests {
+  @Test(arguments: ["source", "endpoint", "ambiguous"])
+  func inactivePluginCredentialsRequireUnambiguousCurrentSourceAndEndpoint(change: String)
+    async throws
+  {
+    let fixture = try MCPRegistrationControlFixture()
+    defer { fixture.remove() }
+    let store = PluginStore(database: fixture.database)
+    let endpoint = "https://example.test/mcp"
+    func register(_ id: String) async throws -> URL {
+      let root = fixture.root.appendingPathComponent(id)
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+      try
+        "id='\(id)'\nname='HTTP fixture'\nversion='1.0.0'\n[[mcp]]\nid='remote'\ntransport='http'\nurl='\(endpoint)'\n"
+        .write(
+          to: root.appendingPathComponent(PluginManifest.filename), atomically: true,
+          encoding: .utf8)
+      let registered = try await store.registerDevelopment(
+        at: root, expectedRevision: fixture.database.pluginStoreSnapshot().revision)
+      _ = try await store.setSettings(
+        .init(
+          enabled: false,
+          mcp: [
+            "remote": .init(
+              registrationID: "remote",
+              authentication: .init(
+                endpoint: endpoint, keychainAccount: "mcp.inactive"))
+          ]), for: id, expectedRevision: registered.revision)
+      return root
+    }
+    let root = try await register("first")
+    let original = try await fixture.host.mcpCredentialStatus(id: "remote")
+    #expect(!original.present)
+    #expect(try await fixture.host.mcpRegistrations().registrations.isEmpty)
+    switch change {
+    case "source":
+      let manifest = root.appendingPathComponent(PluginManifest.filename)
+      try String(contentsOf: manifest, encoding: .utf8)
+        .replacingOccurrences(of: "1.0.0", with: "2.0.0")
+        .write(to: manifest, atomically: true, encoding: .utf8)
+    case "endpoint":
+      let state = try fixture.database.pluginStoreSnapshot()
+      var settings = try #require(state.settings["first"])
+      settings.mcp["remote"]?.authentication = .init(
+        endpoint: "https://other.test/mcp", keychainAccount: "mcp.inactive")
+      _ = try await store.setSettings(settings, for: "first", expectedRevision: state.revision)
+    default:
+      _ = try await register("second")
+    }
+    let before = try fixture.database.configurationState()
+    await #expect(throws: (any Error).self) {
+      try await fixture.host.mcpCredentialStatus(id: "remote")
+    }
+    await #expect(throws: (any Error).self) {
+      try await fixture.host.changeMCPCredential(
+        id: "remote", expectedBindingDigest: original.bindingDigest, token: "fixture-token")
+    }
+    #expect(try fixture.database.configurationState() == before)
+    let secrets = await fixture.host.secretStore
+    #expect(
+      try await !secrets.containsAsynchronously(
+        SecretReference(account: "mcp.inactive"), authenticationUI: .fail))
+  }
+
   @Test(arguments: [
     "http://example.com/mcp", "https://user:pass@example.com/mcp",
     "https://example.com/mcp#fragment", "file:///mcp",
@@ -128,7 +191,7 @@ struct MCPHTTPAuthenticationTests {
           .settings(
             pluginID: "http-fixture",
             .init(
-              enabled: true,
+              enabled: false,
               mcp: [
                 "remote": .init(
                   registrationID: "remote", exposure: .reexport, prefix: "remote",
@@ -137,14 +200,22 @@ struct MCPHTTPAuthenticationTests {
               ])), expectedRevision: registered.state.revision)
       }
       let manifestBefore = try Data(contentsOf: fixture.directories.manifest)
-      let pluginBefore = try fixture.database.pluginStoreSnapshot()
+      var pluginBefore = try fixture.database.pluginStoreSnapshot()
       try await fixture.socket.start()
       let client = Client(name: "credential-workflow", version: "1")
       do {
-        let missing = try await fixture.host.doctorMCPRegistration(
-          id: "remote", workspaceID: "fixture")
-        #expect(missing.status == .failed)
-        #expect(missing.stage == "authentication" && missing.errorCode == "mcp.authentication")
+        if plugin {
+          await #expect(throws: MCPHTTPAuthenticationError.missing) {
+            try await fixture.gateway.changePlugins(
+              .enabled(pluginID: "http-fixture", true), expectedRevision: pluginBefore.revision)
+          }
+          #expect(try fixture.database.pluginStoreSnapshot() == pluginBefore)
+        } else {
+          let missing = try await fixture.host.doctorMCPRegistration(
+            id: "remote", workspaceID: "fixture")
+          #expect(missing.status == .failed)
+          #expect(missing.stage == "authentication" && missing.errorCode == "mcp.authentication")
+        }
         #expect(try http.requests().isEmpty)
         let status = try await fixture.json(["credential", "status", "remote"])
         let digest = try #require(status.objectValue?["binding_digest"]?.stringValue)
@@ -168,6 +239,13 @@ struct MCPHTTPAuthenticationTests {
         await execution.shutdown()
         #expect(saved.exitCode == 0)
         #expect(!String(describing: saved).contains("fixture-token"))
+        #expect(try fixture.database.pluginStoreSnapshot() == pluginBefore)
+        if plugin {
+          _ = try await fixture.gateway.changePlugins(
+            .enabled(pluginID: "http-fixture", true), expectedRevision: pluginBefore.revision)
+          pluginBefore = try fixture.database.pluginStoreSnapshot()
+          #expect(try await fixture.host.mcpCredentialStatus(id: "remote").bindingDigest == digest)
+        }
         let ready = try await fixture.host.doctorMCPRegistration(
           id: "remote", workspaceID: "fixture")
         #expect(ready.status == .passed && ready.catalogReceived)

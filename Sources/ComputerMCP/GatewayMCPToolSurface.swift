@@ -13,11 +13,7 @@ package struct GatewayMCPToolSurface: Sendable {
   }
 
   package func listToolsAsync() async throws -> [MCPTool] {
-    try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        continuation.resume(with: Result(catching: gateway.listTools))
-      }
-    }
+    try await gateway.listToolsAsync()
   }
 
   package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {

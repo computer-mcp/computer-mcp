@@ -5,7 +5,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["COMPUTER_MCP_CODEX_PLUGIN_ARCHIVE"] != nil))
@@ -33,7 +33,8 @@ struct PluginControlPlaneTests {
     try fixture.database.saveProfile(
       .init(
         id: .localAdmin, capabilityIDs: ["mcp.tools.call"], workspaceIDs: ["workflow-fixture"],
-        allowedCallers: [.localCLI], mode: .workspaceOperations, confirmationPolicy: .never))
+        allowedCallers: [.localCLI], fullShellEnabled: true, mode: .localFullAccess,
+        confirmationPolicy: .never))
     try await fixture.socket.start()
     do {
       let installed = try await fixture.cli([
@@ -277,11 +278,51 @@ struct PluginControlPlaneTests {
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
     defer { server.stop() }
-    let http = ReleaseHTTPFake(manifest: manifest, artifactBytes: bytes)
+    let http = ReleaseHTTPFake(manifest: manifest, artifactBytes: bytes, tag: "v1.2.3")
     let fixture = try PluginControlFixture(
       worker: archive.preparation.workerExecutable.path, releases: GitHubPluginReleases(http: http),
       download: GitHubPluginDownload(origin: server.origin))
     defer { fixture.remove() }
+    let selected = pluginArtifactFixture(bytes: bytes, manifest: manifest)
+    let catalogData = try staticCatalogData { root in
+      let declaration = selected.declaration
+      var release = root["releases"]!.arrayValue![0].objectValue!
+      release["repository"] = .string(declaration.repository)
+      release["repository_id"] = .integer(declaration.repositoryID)
+      release["release_id"] = .integer(selected.releaseID)
+      release["tag"] = .string("v1.2.3")
+      release["commit"] = .string(declaration.revision)
+      release["manifest_blob_sha"] = .string(declaration.manifestBlobSHA)
+      release["manifest_sha256"] = .string(declaration.manifestSHA256)
+      release["plugin_id"] = .string(declaration.pluginID)
+      release["name"] = .string(declaration.name)
+      release["version"] = .string(declaration.version.description)
+      release["summary"] = declaration.summary.map(JSONValue.string) ?? .null
+      release["contributions"] = .object([
+        "mcp": .array(declaration.mcp.map(JSONValue.string)),
+        "cli": .array(declaration.cli.map(JSONValue.string)),
+        "skills": .array(declaration.skills.map(JSONValue.string)),
+      ])
+      release["compatibility"] = .object([
+        "platforms": .array([.string("macos")]),
+        "architectures": .array([.string("arm64"), .string("x86_64")]),
+        "minimum_host": .string("1.0.0"), "maximum_host": .null,
+      ])
+      release["dependencies"] = .array([])
+      release["assets"] = .array([
+        .object([
+          "id": .integer(selected.assetID), "name": .string(selected.name),
+          "size": .integer(selected.size), "sha256": .string(selected.sha256),
+          "url": .string(
+            "https://github.com/computer-mcp/combined/releases/download/v1.2.3/combined.zip"),
+        ])
+      ])
+      root["releases"] = .array([.object(release)])
+    }
+    try await StaticPluginCatalogCache(
+      url: fixture.directories.applicationSupport.appendingPathComponent(
+        "Cache/PluginCatalog/index.json")
+    ).write(.init(body: catalogData, validators: .init(), validatedAt: .now))
     try await fixture.socket.start()
     do {
       let listing = try await fixture.cli([
@@ -291,7 +332,8 @@ struct PluginControlPlaneTests {
       let catalog = try CanonicalJSONCoding.decoder().decode(
         GitHubPluginReleaseArtifacts.self, from: Data(listing.stdout.utf8))
       let artifact = try #require(catalog.artifacts.first)
-      #expect(catalog.tag == "release/1.2.3" && catalog.page == 1)
+      #expect(catalog.tag == "v1.2.3" && catalog.page == 1)
+      #expect(await http.paths.isEmpty)
       #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
       #expect(try fixture.database.pluginOwnedDirectories().isEmpty)
       let selection = fixture.root.appendingPathComponent("selection.json")
@@ -310,7 +352,7 @@ struct PluginControlPlaneTests {
       #expect(snapshot.state.settings["combined"]?.cli.count == 1)
       #expect(snapshot.state.settings["combined"]?.skills.count == 1)
       #expect(snapshot.issues.isEmpty)
-      #expect(await http.assetPages == ["1", "1", "1"])
+      #expect(await http.assetPages == ["1", "1"])
       #expect(
         !FileManager.default.fileExists(
           atPath: record.source.root.appendingPathComponent("executed").path))
@@ -567,7 +609,7 @@ struct PluginControlPlaneTests {
   }
 
   @Test
-  func connectedGatewayPreventsArtifactWritesWithoutInterruptingClient() async throws {
+  func connectedGatewayPreservesAdmissionAcrossRecoveryAndInvalidRemoval() async throws {
     let fixture = try PluginControlFixture()
     defer { fixture.remove() }
     try await fixture.gateway.start(profile: .chatGPTObserve)
@@ -576,11 +618,11 @@ struct PluginControlPlaneTests {
     let client = Client(name: "artifact-protection", version: "1")
     do {
       _ = try await client.connect(transport: transport)
-      for change: PluginHostChange in [.uninstallArtifact(installationID: "unselected"), .recover] {
-        await #expect(throws: PluginHostError.connectedClients) {
-          try await fixture.gateway.changePlugins(change, expectedRevision: 0)
-        }
+      await #expect(throws: PluginStoreError.unknownInstallation("unselected")) {
+        try await fixture.gateway.changePlugins(
+          .uninstallArtifact(installationID: "unselected"), expectedRevision: 0)
       }
+      _ = try await fixture.gateway.changePlugins(.recover, expectedRevision: 0)
       _ = try await client.listTools()
       #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
       await client.disconnect()

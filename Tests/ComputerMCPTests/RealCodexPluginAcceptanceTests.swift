@@ -7,6 +7,7 @@ import Testing
 
 /// Uses the installed vendor executable and packaged adapter with isolated homes and a loopback model.
 @Suite(
+  .nativeIntegration,
   .serialized, .timeLimit(.minutes(3)),
   .enabled(if: ProcessInfo.processInfo.environment["COMPUTER_MCP_REAL_CODEX_ACCEPTANCE"] == "1"))
 struct RealCodexPluginAcceptanceTests {

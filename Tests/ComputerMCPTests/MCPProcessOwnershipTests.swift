@@ -4,8 +4,62 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPProcessOwnershipTests {
+  @Test
+  func transientDatabasesHaveIndependentProcessOwnership() throws {
+    let first = try GatewayDatabase(inMemory: ())
+    let second = try GatewayDatabase(inMemory: ())
+    let root = try #require(first.mcpProcessOwnershipRoot)
+    #expect(root == first.mcpProcessOwnershipRoot)
+    #expect(root != second.mcpProcessOwnershipRoot)
+    #expect(root != MCPProcessOwnership.defaultRoot)
+  }
+
+  @Test
+  func legacyUncertainOwnershipCannotBeAssumedUnrelatedToAnArtifact() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = root.appendingPathComponent("ownership")
+    let owner = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    try owner.finish(confirmed: false, hostServicesConfirmed: true)
+    let file = try #require(try receipts(storage).first)
+    var receipt = try #require(
+      JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+    receipt.removeValue(forKey: "formatVersion")
+    try JSONSerialization.data(withJSONObject: receipt).write(to: file)
+    var status = stat()
+    try #require(lstat(root.path, &status) == 0)
+    #expect(throws: PluginStoreError.artifactInUse) {
+      try MCPProcessOwnership.requireArtifactUnused(
+        root: storage, artifact: PluginDirectoryIdentity(url: root, status: status))
+    }
+  }
+
+  @Test
+  func retiredEmptyScopesDoNotConsumeTheActiveReceiptLimit() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = root.appendingPathComponent("ownership")
+    try FileManager.default.createDirectory(
+      at: storage, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    for index in 0..<1_025 {
+      try FileManager.default.createDirectory(
+        at: storage.appendingPathComponent(String(format: "%064x", index)),
+        withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    }
+    var status = stat()
+    try #require(lstat(root.path, &status) == 0)
+    let artifact = PluginDirectoryIdentity(url: root, status: status)
+    try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
+    let owner = try MCPProcessOwnership.acquire(
+      root: storage, workspace: root, registration: "live", artifact: artifact)
+    defer { try? owner.finish(confirmed: true) }
+    #expect(throws: PluginStoreError.artifactInUse) {
+      try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
+    }
+  }
+
   @Test(arguments: [false, true])
   func recoveryRequiresHostCleanupConfirmationAndReviewedReceipt(hostConfirmed: Bool) throws {
     let root = try makeRoot()

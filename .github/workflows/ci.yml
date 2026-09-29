@@ -5,20 +5,125 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      validation_scope:
+        description: Validation to run
+        type: choice
+        options: [full, windows]
+        default: full
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ inputs.validation_scope || 'full' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
-
 jobs:
+  windows-core:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Swift
+        uses: compnerd/gha-setup-swift@bbae8ce86bac5a3449f3992b3d88bc4ca25f2057
+        with:
+          swift-version: swift-6.2.3-release
+          swift-build: 6.2.3-RELEASE
+      - name: Build and test platform core
+        shell: pwsh
+        run: |
+          $started = Get-Date
+          New-Item -ItemType Directory -Force .build/windows-validation | Out-Null
+          swift --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not $env:SDKROOT) { throw 'Swift SDKROOT is required for native test runtime discovery' }
+          $developer = Split-Path (Split-Path $env:SDKROOT.TrimEnd([char[]]'\/'))
+          $testRuntimes = @('Testing', 'XCTest') | ForEach-Object {
+            $directory = Join-Path $developer "Library/$_-6.2.3/usr/bin64"
+            if (-not (Test-Path (Join-Path $directory "$_.dll") -PathType Leaf)) {
+              throw "Missing SDK-owned x64 test runtime: $directory/$_.dll"
+            }
+            $directory
+          }
+          $env:PATH = ($testRuntimes -join ';') + ';' + $env:PATH
+          $testRuntimes | ConvertTo-Json | Set-Content .build/windows-validation/test-runtime-directories.json
+          $results = @()
+          foreach ($configuration in @('debug', 'release')) {
+            $fixtureLog = ".build/windows-validation/$configuration-fixture.log"
+            swift build --product PlatformProcessFixture --configuration $configuration *> $fixtureLog
+            $fixtureCode = $LASTEXITCODE
+            if ($fixtureCode -ne 0) {
+              Get-Content $fixtureLog -Tail 80
+              $results += [pscustomobject]@{ configuration = $configuration; fixtureExitCode = $fixtureCode; exitCode = $fixtureCode }
+              continue
+            }
+            $log = ".build/windows-validation/$configuration.log"
+            swift test --configuration $configuration --no-parallel --verbose *> $log
+            $code = $LASTEXITCODE
+            $results += [pscustomobject]@{ configuration = $configuration; fixtureExitCode = $fixtureCode; exitCode = $code }
+            Get-Content $log -Tail 80 | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 2000)) }
+            if ($code -ne 0) {
+              $binary = Join-Path (Get-Location) ".build/x86_64-unknown-windows-msvc/$configuration/computer-mcpPackageTests.xctest"
+              if (Test-Path $binary) {
+                $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+                $dumpbin = & $vswhere -latest -products '*' -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
+                if ($dumpbin) {
+                  $imports = & $dumpbin /dependents $binary
+                  $imports | Set-Content ".build/windows-validation/$configuration-imports.log"
+                  $search = @((Split-Path $binary), (Get-Location).Path, "$env:SystemRoot/System32", "$env:SystemRoot") + ($env:PATH -split ';')
+                  $resolved = foreach ($line in $imports) {
+                    if ($line -match '^\s+([^\s]+\.dll)\s*$') {
+                      $name = $Matches[1]
+                      $locations = @($search | Where-Object { $_ } | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path $_ })
+                      [pscustomobject]@{ name = $name; locations = $locations }
+                    }
+                  }
+                  $resolved | ConvertTo-Json -Depth 4 | Set-Content ".build/windows-validation/$configuration-dll-resolution.json"
+                }
+                $info = [System.Diagnostics.ProcessStartInfo]::new($binary)
+                $info.UseShellExecute = $false
+                $info.RedirectStandardOutput = $true
+                $info.RedirectStandardError = $true
+                $info.ArgumentList.Add('--testing-library')
+                $info.ArgumentList.Add('swift-testing')
+                $info.ArgumentList.Add('--no-parallel')
+                $runner = [System.Diagnostics.Process]::Start($info)
+                $stdout = $runner.StandardOutput.ReadToEndAsync()
+                $stderr = $runner.StandardError.ReadToEndAsync()
+                $exited = $runner.WaitForExit(60000)
+                if (-not $exited) { $runner.Kill($true); $runner.WaitForExit() }
+                $stdout.GetAwaiter().GetResult() | Set-Content ".build/windows-validation/$configuration-direct.stdout.log"
+                $stderr.GetAwaiter().GetResult() | Set-Content ".build/windows-validation/$configuration-direct.stderr.log"
+                @{ exitCode = $runner.ExitCode; timedOut = -not $exited } | ConvertTo-Json |
+                  Set-Content ".build/windows-validation/$configuration-direct.json"
+                $runner.Dispose()
+              }
+            }
+          }
+          $results | ConvertTo-Json | Set-Content .build/windows-validation/results.json
+          if ($results.Where({ $_.exitCode -ne 0 }).Count -gt 0) {
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $started } -ErrorAction SilentlyContinue |
+              Where-Object { $_.Level -le 2 } | Select-Object -First 20 TimeCreated, ProviderName, Id, Message |
+              Format-List | Out-File .build/windows-validation/application-errors.log
+            exit 1
+          }
+
+      - name: Preserve Windows validation results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/windows-validation/
+          include-hidden-files: true
+          if-no-files-found: error
+
   dependency-gate:
+    if: inputs.validation_scope != 'windows'
     runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -37,6 +142,8 @@ jobs:
     needs: dependency-gate
     runs-on: macos-26
     timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

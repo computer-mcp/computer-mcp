@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import MCP
 
@@ -52,6 +51,9 @@ package actor ControlSocketService {
   private var state: AppGatewayServiceState = .stopped
   private var startedAt: Date?
   private var lastError: String?
+  private var administrationEpoch: UUID?
+  private var lifecycleInProgress = false
+  private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
 
   package init(
     controlPlane: AppControlPlaneService,
@@ -67,10 +69,14 @@ package actor ControlSocketService {
   }
 
   package func start() async throws {
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
     guard state != .running && state != .starting else { return }
     state = .starting
     lastError = nil
     do {
+      let epoch = try await gatewayService.startLocalAdministration()
+      administrationEpoch = epoch
       let controlPlane = controlPlane
       let gatewayService = gatewayService
       let server = GatewaySocketServer(
@@ -91,7 +97,8 @@ package actor ControlSocketService {
               controlPlane: controlPlane,
               gatewayService: gatewayService
             ),
-            identity: identity
+            identity: identity,
+            administrationEpoch: epoch
           )
           return await MCPRuntimeAdapter.makeGatewayServer(
             configuration: GatewayConfiguration(
@@ -106,6 +113,10 @@ package actor ControlSocketService {
       startedAt = Date()
       state = .running
     } catch {
+      if let epoch = administrationEpoch {
+        administrationEpoch = nil
+        await gatewayService.stopLocalAdministration(epoch: epoch)
+      }
       server = nil
       startedAt = nil
       lastError = String(describing: error)
@@ -115,14 +126,37 @@ package actor ControlSocketService {
   }
 
   package func stop() async {
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
     guard state != .stopped && state != .stopping else { return }
     state = .stopping
     let activeServer = server
     server = nil
-    await activeServer?.stop()
+    async let connectionsStopped = activeServer?.stop()
+    if let epoch = administrationEpoch {
+      administrationEpoch = nil
+      await gatewayService.stopLocalAdministration(epoch: epoch)
+    }
+    _ = await connectionsStopped
     startedAt = nil
     lastError = nil
     state = .stopped
+  }
+
+  private func acquireLifecycle() async {
+    if lifecycleInProgress {
+      await withCheckedContinuation { lifecycleWaiters.append($0) }
+    } else {
+      lifecycleInProgress = true
+    }
+  }
+
+  private func releaseLifecycle() {
+    if lifecycleWaiters.isEmpty {
+      lifecycleInProgress = false
+    } else {
+      lifecycleWaiters.removeFirst().resume()
+    }
   }
 
   package func snapshot() async -> ControlSocketSnapshot {
@@ -232,137 +266,24 @@ private struct ControlWorkspaceSummary: Encodable {
 }
 
 private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable {
-  private enum ControlArgumentType {
-    case boolean
-    case integer
-    case object
-    case string
-    case strings
-
-    var schema: JSONValue {
-      switch self {
-      case .boolean:
-        return .object(["type": .string("boolean")])
-      case .integer:
-        return .object(["type": .string("integer")])
-      case .object:
-        return .object(["type": .string("object")])
-      case .string:
-        return .object(["type": .string("string")])
-      case .strings:
-        return .object(["type": .string("array"), "items": .object(["type": .string("string")])])
-      }
-    }
-
-    func accepts(_ value: JSONValue) -> Bool {
-      switch self {
-      case .boolean:
-        return value.boolValue != nil
-      case .integer:
-        return value.intValue != nil
-      case .object:
-        return value.objectValue != nil
-      case .string:
-        return value.stringValue != nil
-      case .strings:
-        return value.arrayValue?.allSatisfy { $0.stringValue != nil } == true
-      }
-    }
-
-    var description: String {
-      switch self {
-      case .boolean: "a Boolean"
-      case .integer: "an integer"
-      case .object: "an object"
-      case .string: "a string"
-      case .strings: "an array of strings"
-      }
-    }
-  }
-
-  private struct ControlToolContract {
-    let name: String
-    let arguments: [String: ControlArgumentType]
-    let requiredArguments: Set<String>
-    let readOnly: Bool
-
-    init(
-      _ name: String,
-      arguments: [String: ControlArgumentType] = [:],
-      required: Set<String> = [],
-      readOnly: Bool
-    ) {
-      self.name = name
-      self.arguments = arguments
-      self.requiredArguments = required
-      self.readOnly = readOnly
-    }
-
-    var inputSchema: JSONValue {
-      var schema: [String: JSONValue] = [
-        "type": .string("object"),
-        "properties": .object(arguments.mapValues(\.schema)),
-        "additionalProperties": .bool(false),
-      ]
-      if !requiredArguments.isEmpty {
-        schema["required"] = .array(requiredArguments.sorted().map(JSONValue.string))
-      }
-      return .object(schema)
-    }
-
-    func validate(_ value: JSONValue?) throws -> [String: JSONValue] {
-      let object: [String: JSONValue]
-      if let value {
-        guard let decoded = value.objectValue else {
-          throw GatewayToolError.invalidArguments("Control arguments must be a JSON object.")
-        }
-        object = decoded
-      } else {
-        object = [:]
-      }
-
-      let unknownArguments = Set(object.keys).subtracting(arguments.keys).sorted()
-      guard unknownArguments.isEmpty else {
-        throw GatewayToolError.invalidArguments(
-          "Unknown control argument\(unknownArguments.count == 1 ? "" : "s"): "
-            + unknownArguments.joined(separator: ", ")
-        )
-      }
-
-      let missingArguments = requiredArguments.subtracting(object.keys).sorted()
-      guard missingArguments.isEmpty else {
-        throw GatewayToolError.invalidArguments(
-          "Missing required control argument\(missingArguments.count == 1 ? "" : "s"): "
-            + missingArguments.joined(separator: ", ")
-        )
-      }
-
-      for (name, value) in object {
-        guard let type = arguments[name], type.accepts(value) else {
-          throw GatewayToolError.invalidArguments(
-            "Control argument '\(name)' must be \(arguments[name]?.description ?? "valid")."
-          )
-        }
-      }
-      return object
-    }
-  }
-
   private let controlPlane: AppControlPlaneService
   private let gatewayService: AppGatewayService
   private let operations: AppControlPlaneOperations
   private let identity: GatewaySocketConnectionIdentity
+  private let administrationEpoch: UUID
 
   init(
     controlPlane: AppControlPlaneService,
     gatewayService: AppGatewayService,
     operations: AppControlPlaneOperations,
-    identity: GatewaySocketConnectionIdentity
+    identity: GatewaySocketConnectionIdentity,
+    administrationEpoch: UUID
   ) {
     self.controlPlane = controlPlane
     self.gatewayService = gatewayService
     self.operations = operations
     self.identity = identity
+    self.administrationEpoch = administrationEpoch
   }
 
   func listTools() throws -> [MCPTool] {
@@ -373,28 +294,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         "The App control capability catalog and control-socket contracts have drifted."
       )
     }
-    return try Self.toolContracts.map { contract in
-      guard let capability = AppControlCapabilityCatalog.byID[contract.name],
-        capability.readOnly == contract.readOnly
-      else {
-        throw GatewayToolError.executionFailed(
-          "The App control capability metadata for '\(contract.name)' is inconsistent."
-        )
-      }
-      return MCPTool(
-        name: contract.name,
-        description:
-          capability.summary
-          + " Available only through the current-user owner-only control socket.",
-        inputSchema: contract.inputSchema,
-        annotations: .init(
-          readOnlyHint: contract.readOnly,
-          destructiveHint: capability.destructive,
-          idempotentHint: capability.idempotent,
-          openWorldHint: false
-        )
-      )
-    }
+    return try Self.toolContracts.map { try $0.tool() }
   }
 
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
@@ -410,7 +310,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       object["token"] = .string("<redacted>")
       digestArguments = .object(object)
     }
-    let inputDigest = try Self.digest(
+    let inputDigest = try ControlToolResponse.digest(
       .object(["tool": .string(name), "arguments": digestArguments])
     )
     do {
@@ -431,16 +331,16 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         payload = .object([
           "version": .string(ComputerMCPCLI.version),
           "build": .string(ComputerMCPCLI.build),
-          "pid": .number(Double(getpid())),
+          "pid": .integer(Int64(getpid())),
           "control_socket": .string(controlPlane.directories.controlSocket.path),
           "gateway_socket": .string(controlPlane.directories.gatewaySocket.path),
           "gateway_desired_running": .bool(try await controlPlane.gatewayDesiredRunning()),
           "active_profile": .string(activeProfile.rawValue),
-          "workspace_count": .number(Double(try await controlPlane.workspaces().count)),
-          "provider_count": .number(Double(try await controlPlane.providerCount())),
+          "workspace_count": .integer(Int64(try await controlPlane.workspaces().count)),
+          "provider_count": .integer(Int64(try await controlPlane.providerCount())),
           "launch_at_login": .string(snapshot.launchAtLogin.rawValue),
-          "openai_tunnel_count": .number(Double(snapshot.openAITunnelConfigurations.count)),
-          "cloudflare_tunnel_count": .number(Double(snapshot.cloudflareProfiles.count)),
+          "openai_tunnel_count": .integer(Int64(snapshot.openAITunnelConfigurations.count)),
+          "cloudflare_tunnel_count": .integer(Int64(snapshot.cloudflareProfiles.count)),
         ])
       case "app.start":
         payload = try encodedPayload(try await operations.startGateway())
@@ -519,6 +419,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         } else {
           payload = try encodedPayload(try await controlPlane.workspaceDeduplicationPlan())
         }
+      case "workspace.repair":
+        let workspace = try await operations.repairWorkspace(
+          id: requiredString("id", in: object),
+          at: URL(fileURLWithPath: requiredString("path", in: object)).standardizedFileURL,
+          displayName: object["display_name"]?.stringValue)
+        payload = try encodedPayload(ControlWorkspaceSummary(workspace))
       case "workspace.remove":
         let id = try requiredString("id", in: object)
         try await operations.removeWorkspace(id: id)
@@ -653,8 +559,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         if object["kind"] != nil && kind == nil {
           throw GatewayToolError.invalidArguments("kind must be mcp, cli, or skills.")
         }
-        let pageNumber = object["page"]?.numberValue ?? 1
-        guard let page = Int(exactly: pageNumber), (1...100_000).contains(page) else {
+        guard let page = (object["page"] ?? .integer(1)).intValue,
+          (1...100_000).contains(page)
+        else {
           throw PluginCatalogError.invalidQuery
         }
         payload = try encodedPayload(
@@ -662,9 +569,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
             query: object["query"]?.stringValue ?? "", kind: kind, page: page,
             refresh: object["refresh"]?.boolValue ?? false))
       case "plugin.artifacts":
-        guard let number = object["repository_id"]?.numberValue,
-          let repositoryID = Int64(exactly: number), GitHubPluginArtifact.validID(repositoryID),
-          let page = Int(exactly: object["page"]?.numberValue ?? 1), (1...1_000).contains(page)
+        guard let repositoryID = object["repository_id"]?.int64Value,
+          GitHubPluginArtifact.validID(repositoryID),
+          let page = (object["page"] ?? .integer(1)).intValue, (1...1_000).contains(page)
         else { throw PluginCatalogError.invalidQuery }
         payload = try encodedPayload(
           try await controlPlane.pluginReleaseArtifacts(
@@ -685,8 +592,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       case "plugin.register", "plugin.configure", "plugin.enable", "plugin.disable",
         "plugin.select", "plugin.remove", "plugin.install", "plugin.install_release",
         "plugin.uninstall", "plugin.recover":
-        guard let revision = object["expected_revision"]?.numberValue,
-          revision >= 0, revision <= 9_007_199_254_740_991, let expected = Int64(exactly: revision)
+        guard let expected = object["expected_revision"]?.int64Value, expected >= 0
         else {
           throw GatewayToolError.invalidArguments(
             "expected_revision must be a nonnegative exact JSON integer.")
@@ -749,24 +655,24 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           )
         )
       case "tools.list":
-        let tools = try await controlPlane.localAdminTools(
-          transportTrace: localAdminTransportTrace
+        let tools = try await gatewayService.localAdminTools(
+          identity: identity, epoch: administrationEpoch
         )
         payload = .object(["tools": .array(tools.map(\.json))])
       case "tools.inspect":
         let toolName = try requiredString("name", in: object)
-        let tools = try await controlPlane.localAdminTools(
-          transportTrace: localAdminTransportTrace
+        let tools = try await gatewayService.localAdminTools(
+          identity: identity, epoch: administrationEpoch
         )
         guard let tool = tools.first(where: { $0.name == toolName }) else {
           throw GatewayToolError.unknownTool(toolName)
         }
         payload = tool.json
       case "tools.call":
-        payload = try await controlPlane.callLocalAdminTool(
+        payload = try await gatewayService.callLocalAdminTool(
           name: requiredString("name", in: object),
           arguments: object["arguments"],
-          transportTrace: localAdminTransportTrace
+          identity: identity, epoch: administrationEpoch
         )
       case "tunnel.openai.list":
         let snapshot = try await controlPlane.snapshot()
@@ -865,15 +771,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         try await operations.deleteCloudflareTunnelConfiguration(id: id)
         payload = .object(["removed": .string(id)])
       default:
-        throw GatewayToolError.unknownTool(name)
+        payload = try await GatewayClientControl.app(operations).call(name: name, arguments: object)
       }
-      let result = Self.envelope(
+      let result = ControlToolResponse.envelope(
         payload,
         requestID: requestID,
         capabilityID: name,
         identity: identity
       )
-      let outputData = try Self.encodedJSON(result)
+      let outputData = try ControlToolResponse.encodedJSON(result)
       try await controlPlane.recordControlAudit(
         AuditEvent(
           requestID: requestID,
@@ -883,18 +789,18 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           profileID: .localAdmin,
           capabilityID: name,
           decision: .allowed,
-          durationMilliseconds: Self.milliseconds(startedAt.duration(to: .now)),
+          durationMilliseconds: ControlToolResponse.milliseconds(startedAt.duration(to: .now)),
           inputDigest: inputDigest,
-          outputDigest: Self.digest(outputData),
+          outputDigest: ControlToolResponse.digest(outputData),
           outputByteCount: outputData.count,
           outputTruncated: false
         )
       )
       return result
     } catch {
-      let disposition = Self.auditDisposition(for: error)
-      let message = Self.errorMessage(error)
-      let result = Self.envelope(
+      let disposition = ControlToolResponse.auditDisposition(for: error)
+      let message = ControlToolResponse.errorMessage(error)
+      let result = ControlToolResponse.envelope(
         .object([
           "error": .object([
             "code": .string(disposition.code),
@@ -906,7 +812,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         identity: identity,
         isError: true
       )
-      let outputData = try Self.encodedJSON(result)
+      let outputData = try ControlToolResponse.encodedJSON(result)
       try? await controlPlane.recordControlAudit(
         AuditEvent(
           requestID: requestID,
@@ -917,9 +823,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           capabilityID: name,
           decision: disposition.decision,
           errorCode: disposition.code,
-          durationMilliseconds: Self.milliseconds(startedAt.duration(to: .now)),
+          durationMilliseconds: ControlToolResponse.milliseconds(startedAt.duration(to: .now)),
           inputDigest: inputDigest,
-          outputDigest: Self.digest(outputData),
+          outputDigest: ControlToolResponse.digest(outputData),
           outputByteCount: outputData.count,
           outputTruncated: false
         )
@@ -944,18 +850,17 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     guard let currentManifest = String(data: currentData, encoding: .utf8) else {
       throw ConfigurationError.invalid("The active manifest is not valid UTF-8.")
     }
-    let currentDigest = Self.digest(currentData)
-    let proposedDigest = Self.digest(Data(canonical.utf8))
-    let gatewayWasRunning = await gatewayService.snapshot().state == .running
+    let currentDigest = ControlToolResponse.digest(currentData)
+    let proposedDigest = ControlToolResponse.digest(Data(canonical.utf8))
     var result: [String: JSONValue] = [
       "ok": .bool(true),
-      "schema_version": .number(Double(parsed.schemaVersion)),
+      "schema_version": .integer(Int64(parsed.schemaVersion)),
       "current_digest": .string(currentDigest),
       "proposed_digest": .string(proposedDigest),
       "changed": .bool(currentDigest != proposedDigest),
       "diff": Self.manifestDiff(current: currentManifest, proposed: canonical),
       "toml": .string(canonical),
-      "transport_will_restart": .bool(gatewayWasRunning),
+      "transport_will_restart": .bool(false),
     ]
     if name == "config.import", arguments["apply"]?.boolValue == true {
       guard
@@ -973,7 +878,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       }
       let revision = try await operations.activateManifest(canonical, expectedDigest: expected)
       result["applied_revision"] = .string(revision.id)
-      result["transport_restarted"] = .bool(gatewayWasRunning)
+      result["transport_restarted"] = .bool(false)
     }
     return .object(result)
   }
@@ -1007,13 +912,6 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     return profile
   }
 
-  private var localAdminTransportTrace: GatewayTransportTrace {
-    GatewayTransportTrace(
-      transport: "control_socket",
-      socketConnectionID: identity.connectionID
-    )
-  }
-
   private func requiredString(
     _ key: String,
     in object: [String: JSONValue]
@@ -1037,125 +935,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
   }
 
   private func encodedPayload<T: Encodable>(_ value: T) throws -> JSONValue {
-    let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
-    return try JSONDecoder().decode(JSONValue.self, from: encoder.encode(value))
-  }
-
-  private static func envelope(
-    _ payload: JSONValue,
-    requestID: String,
-    capabilityID: String,
-    identity: GatewaySocketConnectionIdentity,
-    isError: Bool = false
-  ) -> JSONValue {
-    let execution = JSONValue.object([
-      "request_id": .string(requestID),
-      "caller": .string(GatewayCallerKind.localCLI.rawValue),
-      "profile_id": .string(GatewayProfileID.localAdmin.rawValue),
-      "workspace_id": .null,
-      "capability_id": .string(capabilityID),
-      "transport": .string("control_socket"),
-      "socket_connection_id": .string(identity.connectionID),
-    ])
-    var structuredContent = payload.objectValue ?? ["result": payload]
-    structuredContent["gateway_execution"] = execution
-    return .object([
-      "content": .array([
-        .object(["type": .string("text"), "text": .string(payloadText(payload))])
-      ]),
-      "structuredContent": .object(structuredContent),
-      "isError": .bool(isError),
-      "_meta": .object(["computer_mcp": execution]),
-    ])
-  }
-
-  private static func payloadText(_ payload: JSONValue) -> String {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    return (try? String(decoding: encoder.encode(payload), as: UTF8.self)) ?? "{}"
-  }
-
-  private static func digest(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-  }
-
-  private static func digest(_ value: JSONValue) throws -> String {
-    digest(try encodedJSON(value))
-  }
-
-  private static func encodedJSON(_ value: JSONValue) throws -> Data {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    return try encoder.encode(value)
-  }
-
-  private static func milliseconds(_ duration: Duration) -> Int {
-    Int(duration.components.seconds * 1_000)
-      + Int(duration.components.attoseconds / 1_000_000_000_000_000)
-  }
-
-  private static func auditDisposition(
-    for error: Error
-  ) -> (decision: AuditDecision, code: String) {
-    if error is MCPHTTPAuthenticationError { return (.failed, "mcp.authentication") }
-    if let error = error as? PluginCatalogError {
-      return (.failed, error.code)
-    }
-    if let error = error as? PluginArchiveError {
-      return (.failed, "plugin.archive.\(error.rawValue)")
-    }
-    if let error = error as? PluginStoreError {
-      let code =
-        switch error {
-        case .staleRevision: "stale_revision"
-        case .unknownInstallation: "unknown_installation"
-        case .invalidState: "invalid_state"
-        case .manifestChanged: "manifest_changed"
-        case .installationBusy: "installation_busy"
-        }
-      return (.failed, "plugin.\(code)")
-    }
-    if let error = error as? PluginHostError {
-      let code =
-        switch error {
-        case .changeInProgress: "change_in_progress"
-        case .connectedClients: "connected_clients"
-        case .invalidComposition: "invalid_composition"
-        case .workerUnavailable: "worker_unavailable"
-        }
-      return (.failed, "plugin.\(code)")
-    }
-    if case .localAdminCannotBeSocketProfile = error as? AppControlPlaneServiceError {
-      return (.denied, "policy.local_admin_remote")
-    }
-    if case .invalid(let message) = error as? ConfigurationError,
-      message.contains("local-admin")
-    {
-      return (.denied, "policy.local_admin_remote")
-    }
-    if let gatewayError = error as? GatewayToolError {
-      switch gatewayError {
-      case .unknownTool:
-        return (.failed, "control.tool_unknown")
-      case .invalidArguments:
-        return (.failed, "control.invalid_arguments")
-      case .disabled:
-        return (.denied, "control.operation_disabled")
-      case .executionFailed, .unknownCLI, .unknownMCPServer:
-        return (.failed, "control.operation_failed")
-      }
-    }
-    if error is ConfigurationError {
-      return (.failed, "configuration.invalid")
-    }
-    return (.failed, "control.operation_failed")
-  }
-
-  private static func errorMessage(_ error: Error) -> String {
-    String(
-      ((error as? any LocalizedError)?.errorDescription ?? String(describing: error))
-        .prefix(2_048)
-    )
+    try ControlToolResponse.encodedPayload(value)
   }
 
   private static func manifestDiff(current: String, proposed: String) -> JSONValue {
@@ -1169,19 +949,19 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       let proposedLine = proposedLines.indices.contains(index) ? proposedLines[index] : nil
       guard currentLine != proposedLine else { return nil }
       return .object([
-        "line": .number(Double(index + 1)),
+        "line": .integer(Int64(index + 1)),
         "current": currentLine.map(JSONValue.string) ?? .null,
         "proposed": proposedLine.map(JSONValue.string) ?? .null,
       ])
     }
     return .object([
-      "current_line_count": .number(Double(currentLines.count)),
-      "proposed_line_count": .number(Double(proposedLines.count)),
+      "current_line_count": .integer(Int64(currentLines.count)),
+      "proposed_line_count": .integer(Int64(proposedLines.count)),
       "changes": .array(changes),
     ])
   }
 
-  private static let toolContracts: [ControlToolContract] = [
+  private static let appToolContracts: [ControlToolContract] = [
     ControlToolContract("mcp.list", readOnly: true),
     ControlToolContract(
       "mcp.credential.status", arguments: ["id": .string], required: ["id"], readOnly: true),
@@ -1209,11 +989,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     ControlToolContract("mcp.show", arguments: ["id": .string], required: ["id"], readOnly: true),
     ControlToolContract(
       "mcp.add",
-      arguments: ["registration": .object, "apply": .boolean, "expected_current_digest": .string],
+      arguments: [
+        "registration": .object, "apply": .boolean, "expected_current_digest": .string,
+      ],
       required: ["registration"], readOnly: false),
     ControlToolContract(
       "mcp.configure",
-      arguments: ["registration": .object, "apply": .boolean, "expected_current_digest": .string],
+      arguments: [
+        "registration": .object, "apply": .boolean, "expected_current_digest": .string,
+      ],
       required: ["registration"], readOnly: false),
     ControlToolContract(
       "mcp.enable",
@@ -1337,6 +1121,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         "expected_plan_digest": .string,
         "allow_metadata_conflicts": .boolean,
       ],
+      readOnly: false
+    ),
+    ControlToolContract(
+      "workspace.repair",
+      arguments: ["id": .string, "path": .string, "display_name": .string],
+      required: ["id", "path"],
       readOnly: false
     ),
     ControlToolContract(
@@ -1464,6 +1254,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     ),
     tunnelContract("tunnel.cloudflare.remove", readOnly: false),
   ]
+
+  private static let toolContracts = appToolContracts + GatewayClientControl.contracts
 
   private static let toolContractsByName = Dictionary(
     uniqueKeysWithValues: toolContracts.map { ($0.name, $0) }

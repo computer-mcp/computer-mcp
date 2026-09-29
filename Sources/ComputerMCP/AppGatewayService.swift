@@ -38,28 +38,109 @@ package struct AppGatewayServiceSnapshot: Codable, Equatable, Sendable {
 }
 
 package actor AppGatewayService {
+  private enum RuntimeOwner: Hashable, Sendable {
+    case listener
+    case administration
+    case http(UUID)
+  }
+
+  private struct ManifestAttempt: Equatable {
+    let fingerprint: ManifestFileMonitor.Fingerprint?
+  }
+
   private struct RuntimeKey: Hashable {
     let principalID: String
     let profileID: GatewayProfileID
     let caller: GatewayCallerKind
+
+    let owner: RuntimeOwner
   }
 
   private typealias AdmittedRuntime = (
     inputs: AppControlPlaneService.GatewayInputs, gateway: GatewayRuntime
   )
 
+  private struct PendingRuntime {
+    let id: UUID
+    let task: Task<AdmittedRuntime, any Error>
+  }
+
+  private struct RetiringRuntime {
+    let owner: RuntimeOwner
+    let task: Task<Void, Never>
+  }
+
+  private struct InvocationSelection {
+    let gateway: GatewayRuntime
+    let target: MCPContinuationTarget?
+    let ownership: GatewayOwnedWork.Lease
+  }
+
+  /// The connection fixes identity; each invocation resolves its generation at admission.
+  private struct SessionDispatcher: GatewayAsyncToolServing {
+    weak var service: AppGatewayService?
+    let key: RuntimeKey
+    let epoch: UUID
+    let trace: GatewayTransportTrace
+    let changes: GatewayToolChangeBroadcaster
+
+    func toolChanges() -> AsyncStream<Void> { changes.stream() }
+
+    func listToolsAsync() async throws -> [MCPTool] {
+      guard let service else { throw GatewaySocketError.notConnected }
+      return try await service.listTools(key: key, epoch: epoch, trace: trace)
+    }
+
+    func refreshTools() async throws {
+      guard let service else { throw GatewaySocketError.notConnected }
+      try await service.refreshTools(key: key, epoch: epoch, trace: trace)
+    }
+
+    func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+      guard let service else { throw GatewaySocketError.notConnected }
+      return try await service.callTool(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false)
+    }
+
+    func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+      guard let service else { throw GatewaySocketError.notConnected }
+      return try await service.callTool(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
+    }
+  }
+
   package nonisolated let socketConfiguration: GatewaySocketConfiguration
 
   private let controlPlane: AppControlPlaneService
+  private var controlSessionRecords: [String: (key: RuntimeKey, session: GatewayControlSession)] =
+    [:]
   private var server: GatewaySocketServer?
   private var state: AppGatewayServiceState = .stopped
   private var profileID: GatewayProfileID?
   private var startedAt: Date?
   private var lastError: String?
-  private var pluginChangeInProgress = false
+  private var configurationChangeInProgress = false
+  private var publicationDrainWaiters: [CheckedContinuation<Void, Never>] = []
+  private var publicationWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+  private var preparingRuntimeCount = 0
   private var runtimes: [RuntimeKey: AdmittedRuntime] = [:]
-  private var pendingRuntimes: [RuntimeKey: Task<AdmittedRuntime, any Error>] = [:]
-  private var retiredRuntimes: [GatewayRuntime] = []
+  private var pendingRuntimes: [RuntimeKey: PendingRuntime] = [:]
+  private var retiredRuntimes: [RuntimeKey: [UUID: GatewayRuntime]] = [:]
+  private var retiringRuntimes: [UUID: RetiringRuntime] = [:]
+  private var runtimeObservers: [UUID: [Task<Void, Never>]] = [:]
+  private var catalogChanges: [RuntimeKey: GatewayToolChangeBroadcaster] = [:]
+  private var manifestObserver: Task<Void, Never>?
+  private var manifestMonitor: ManifestFileMonitor?
+  private var manifestReloadObserver: Task<Void, Never>?
+  private var manifestReloadError: String?
+  private var lastManifestAttempt: ManifestAttempt?
+  private var manifestEpoch: UUID?
+  private var listenerEpoch = UUID()
+  private var administrationEpoch: UUID?
+  private var terminalSessions = GatewayTerminalSessions()
+  private var administrationTerminalSessions = GatewayTerminalSessions()
+  private var httpTerminalSessions: [UUID: GatewayTerminalSessions] = [:]
+  private var httpShutdownTasks: [UUID: Task<Void, Never>] = [:]
   private var lifecycleInProgress = false
   private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -91,13 +172,16 @@ package actor AppGatewayService {
   }
 
   private func startOwnedRuntime(profile requestedProfile: GatewayProfileID?) async throws {
-    guard !pluginChangeInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationChangeInProgress else { throw PluginHostError.changeInProgress }
     guard state != .running && state != .starting else {
       return
     }
 
     state = .starting
+    listenerEpoch = UUID()
     lastError = nil
+    manifestReloadError = nil
+    lastManifestAttempt = nil
     let selectedProfile: GatewayProfileID
     do {
       if let requestedProfile {
@@ -111,6 +195,7 @@ package actor AppGatewayService {
       self.profileID = selectedProfile
 
       try await controlPlane.start()
+      try await startManifestMonitoring()
       if let credentialFile = socketConfiguration.tunnelCredentialFile {
         try GatewaySocketCredentialStore.create(at: credentialFile)
       }
@@ -134,6 +219,9 @@ package actor AppGatewayService {
       self.startedAt = Date()
       state = .running
     } catch {
+      if administrationEpoch == nil && httpTerminalSessions.isEmpty {
+        await stopManifestMonitoring()
+      }
       if let credentialFile = socketConfiguration.tunnelCredentialFile {
         GatewaySocketCredentialStore.remove(at: credentialFile)
       }
@@ -155,6 +243,7 @@ package actor AppGatewayService {
   }
 
   package func restart(profile: GatewayProfileID? = nil) async throws {
+    manifestReloadObserver?.cancel()
     await acquireLifecycle()
     defer { releaseLifecycle() }
     await stopOwnedRuntime()
@@ -162,23 +251,188 @@ package actor AppGatewayService {
   }
 
   package func stop() async {
+    manifestReloadObserver?.cancel()
     await acquireLifecycle()
     defer { releaseLifecycle() }
     await stopOwnedRuntime()
   }
 
+  func startLocalAdministration() async throws -> UUID {
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
+    guard administrationEpoch == nil else {
+      throw GatewaySocketError.invalidConfiguration("Local administration is already running.")
+    }
+    try Task.checkCancellation()
+    try await controlPlane.start()
+    let epoch = UUID()
+    administrationEpoch = epoch
+    do {
+      try await startManifestMonitoring()
+      return epoch
+    } catch {
+      administrationEpoch = nil
+      throw error
+    }
+  }
+
+  func stopLocalAdministration(epoch: UUID) async {
+    guard administrationEpoch == epoch else { return }
+    manifestReloadObserver?.cancel()
+    await acquireLifecycle()
+    defer { releaseLifecycle() }
+    guard administrationEpoch == epoch else { return }
+    administrationEpoch = nil
+    await stopManifestMonitoring()
+    await stopRuntimes(owner: .administration)
+    administrationTerminalSessions = GatewayTerminalSessions()
+    await resumeManifestMonitoring()
+  }
+
+  private func localAdminKey(identity: GatewaySocketConnectionIdentity) throws -> RuntimeKey {
+    guard identity.origin == .localCLI else {
+      throw GatewaySocketError.authenticationFailed(
+        "local administration requires the embedded CLI")
+    }
+    return RuntimeKey(
+      principalID: identity.trustedPrincipalID, profileID: .localAdmin, caller: .localCLI,
+      owner: .administration)
+  }
+
+  func localAdminTools(identity: GatewaySocketConnectionIdentity, epoch: UUID) async throws
+    -> [MCPTool]
+  {
+    try await listTools(
+      key: localAdminKey(identity: identity), epoch: epoch,
+      trace: GatewayTransportTrace(
+        transport: "control_socket", socketConnectionID: identity.connectionID))
+  }
+
+  func callLocalAdminTool(
+    name: String, arguments: JSONValue?, identity: GatewaySocketConnectionIdentity, epoch: UUID
+  ) async throws -> JSONValue {
+    let key = try localAdminKey(identity: identity)
+    let trace = GatewayTransportTrace(
+      transport: "control_socket", socketConnectionID: identity.connectionID)
+    return try await MCPRuntimeAdapter.$requestTrace.withValue(trace) {
+      try await callTool(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
+    }
+  }
+
+  private func sessions(for owner: RuntimeOwner) throws -> GatewayTerminalSessions {
+    switch owner {
+    case .administration: return administrationTerminalSessions
+    case .listener: return terminalSessions
+    case .http(let id):
+      guard let sessions = httpTerminalSessions[id] else { throw GatewaySocketError.notConnected }
+      return sessions
+    }
+  }
+
+  func makeHTTPSessions(profileID: GatewayProfileID, trace: GatewayTransportTrace)
+    async throws -> GatewayHTTPManagedSessions
+  {
+    // A lifecycle owner can be waiting for the tunnel start task to finish.
+    guard !lifecycleInProgress else { throw PluginHostError.changeInProgress }
+    lifecycleInProgress = true
+    defer { releaseLifecycle() }
+    guard profileID != .localAdmin else {
+      throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
+    }
+    guard httpTerminalSessions.count + httpShutdownTasks.count < 128 else {
+      throw GatewaySocketError.invalidConfiguration(
+        "The gateway has reached its HTTP listener capacity.")
+    }
+    try Task.checkCancellation()
+    let id = UUID()
+    httpTerminalSessions[id] = GatewayTerminalSessions()
+    do {
+      try await startManifestMonitoring()
+      try Task.checkCancellation()
+    } catch {
+      await stopHTTPListener(id: id)
+      throw error
+    }
+    return GatewayHTTPManagedSessions(
+      makeSession: { [weak self] principalID in
+        guard let self else { throw GatewaySocketError.notConnected }
+        let admitted = try await self.makeServingSession(
+          key: RuntimeKey(
+            principalID: principalID, profileID: profileID, caller: .cloudflareTunnel,
+            owner: .http(id)), epoch: id, trace: trace)
+        return admitted.serving
+      },
+      closeSession: { [weak self] sessionID in await self?.closeControlSession(id: sessionID) },
+      shutdown: { [weak self] in await self?.stopHTTPListener(id: id) })
+  }
+
+  private func stopHTTPListener(id: UUID) async {
+    if let stopping = httpShutdownTasks[id] {
+      await stopping.value
+      return
+    }
+    guard httpTerminalSessions.removeValue(forKey: id) != nil else { return }
+    // App shutdown can already own the socket lifecycle lock while joining its tunnels.
+    let stopping = Task {
+      await stopRuntimes(owner: .http(id))
+      // Publication can still own candidates for this invalidated listener.
+      // These joins are bounded by the HTTP owner capacity and cannot be cancelled.
+      if configurationChangeInProgress {
+        await withCheckedContinuation { publicationDrainWaiters.append($0) }
+      }
+      if httpTerminalSessions.isEmpty, administrationEpoch == nil,
+        state != .running, state != .starting
+      {
+        await stopManifestMonitoring()
+      }
+    }
+    httpShutdownTasks[id] = stopping
+    await stopping.value
+    httpShutdownTasks.removeValue(forKey: id)
+  }
+
+  private func stopRuntimes(owner: RuntimeOwner) async {
+    for (id, record) in controlSessionRecords where record.key.owner == owner {
+      record.session.end()
+      controlSessionRecords.removeValue(forKey: id)
+    }
+    let keys = Set(runtimes.keys).union(pendingRuntimes.keys).union(retiredRuntimes.keys)
+      .union(catalogChanges.keys).filter { $0.owner == owner }
+    var pending: [Task<AdmittedRuntime, any Error>] = []
+    var owned: [GatewayRuntime] = []
+    for key in keys {
+      if let construction = pendingRuntimes.removeValue(forKey: key) {
+        construction.task.cancel()
+        pending.append(construction.task)
+      }
+      if let runtime = runtimes.removeValue(forKey: key) { owned.append(runtime.gateway) }
+      owned.append(contentsOf: retiredRuntimes.removeValue(forKey: key)?.values ?? [:].values)
+      catalogChanges.removeValue(forKey: key)?.finish()
+    }
+    let observers = owned.flatMap { runtimeObservers.removeValue(forKey: $0.generationID) ?? [] }
+    for observer in observers { observer.cancel() }
+    let retiring = retiringRuntimes.values.filter { $0.owner == owner }.map(\.task)
+    for task in pending { _ = try? await task.value }
+    for runtime in owned { await runtime.shutdown() }
+    for observer in observers { await observer.value }
+    for task in retiring { await task.value }
+  }
+
   private func stopOwnedRuntime() async {
     guard state != .stopped && state != .stopping else {
+      await stopManifestMonitoring()
+      await resumeManifestMonitoring()
       return
     }
     state = .stopping
+    listenerEpoch = UUID()
+    await stopManifestMonitoring()
     let activeServer = server
     server = nil
     await activeServer?.stop()
-    let ownedRuntimes = runtimes.values.map(\.gateway) + retiredRuntimes
-    runtimes.removeAll()
-    retiredRuntimes.removeAll()
-    for runtime in ownedRuntimes { await runtime.shutdown() }
+    await stopRuntimes(owner: .listener)
+    terminalSessions = GatewayTerminalSessions()
     if let credentialFile = socketConfiguration.tunnelCredentialFile {
       GatewaySocketCredentialStore.remove(at: credentialFile)
     }
@@ -192,58 +446,433 @@ package actor AppGatewayService {
       state = .failed
       lastError = Self.stableDescription(error)
     }
+    await resumeManifestMonitoring()
   }
 
   private func makeSession(identity: GatewaySocketConnectionIdentity) async throws
     -> GatewaySocketServerSession
   {
-    guard state == .running || state == .starting, let profileID,
-      !pluginChangeInProgress
-    else { throw GatewaySocketError.notConnected }
+    let epoch = listenerEpoch
+    guard let profileID else { throw GatewaySocketError.notConnected }
     let key = RuntimeKey(
-      principalID: identity.trustedPrincipalID, profileID: profileID, caller: identity.caller)
-    let admitted = try await admittedRuntime(key: key, trace: identity.transportTrace)
+      principalID: identity.trustedPrincipalID, profileID: profileID, caller: identity.caller,
+      owner: .listener)
+    let admitted = try await makeServingSession(
+      key: key, epoch: epoch, trace: identity.transportTrace)
+    let serving = admitted.serving
     let server = await MCPRuntimeAdapter.makeGatewayServer(
-      configuration: admitted.inputs.configuration, registry: admitted.gateway,
+      configuration: admitted.configuration, registry: serving,
       transportTrace: identity.transportTrace)
-    // The listener owns executions. A disconnected MCP session only releases its protocol server.
-    return GatewaySocketServerSession(server: server)
+    do {
+      try requireAdmission(key: key, epoch: epoch)
+    } catch {
+      closeControlSession(id: serving.session.id)
+      await server.stop()
+      throw error
+    }
+    return GatewaySocketServerSession(server: server) { [weak self] in
+      serving.session.end()
+      await self?.closeControlSession(id: serving.session.id)
+    }
   }
 
-  private func admittedRuntime(key: RuntimeKey, trace: GatewayTransportTrace) async throws
+  private func makeServingSession(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace)
+    async throws -> (configuration: GatewayConfiguration, serving: GatewayControlSessionServing)
+  {
+    let admitted = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    try requireAdmission(key: key, epoch: epoch)
+    guard controlSessionRecords.count < 128 else {
+      throw GatewaySocketError.invalidConfiguration(
+        "The gateway has reached its control session capacity.")
+    }
+    let controlSession = try admitted.gateway.makeControlSession()
+    controlSessionRecords[controlSession.id] = (key, controlSession)
+    let dispatcher = SessionDispatcher(
+      service: self, key: key, epoch: epoch, trace: trace,
+      changes: changes(for: key))
+    return (
+      admitted.inputs.configuration,
+      GatewayControlSessionServing(base: dispatcher, session: controlSession)
+    )
+  }
+
+  package func controlSessions() -> [GatewayControlSessionSnapshot] {
+    controlSessionRecords.values.map { $0.session.snapshot }.sorted { $0.id < $1.id }
+  }
+
+  package func approveControlSession(
+    id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
+    enableShellFacility: Bool = false, approver: GatewayCallerKind = .localApp
+  ) async throws -> GatewayControlSessionSnapshot {
+    guard approver == .localApp || approver == .localCLI else {
+      throw GatewayToolError.invalidArguments("Client consent requires a local owner.")
+    }
+    guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
+    try record.session.requireRevision(expectedRevision)
+    var configuration = try await controlPlane.activeConfiguration()
+    try record.session.requireRevision(expectedRevision)
+    if !configuration.policy.shellEnabled {
+      guard enableShellFacility else { throw AppControlPlaneServiceError.fullShellManifestDisabled }
+      guard
+        record.session.snapshot.profile?.grant.allowedCallers.contains(record.key.caller) == true
+      else {
+        throw GatewayToolError.invalidArguments(
+          "[policy.control_session_denied] The client is not admitted by its profile.")
+      }
+      let trust = try controlPlane.database.clientTrust(
+        principalID: record.key.principalID, profileID: record.key.profileID,
+        caller: record.key.caller)
+      guard (trust?.revision ?? 0) == expectedTrustRevision else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      let digest = try controlPlane.manifestStore.admittedDigest(for: configuration)
+      configuration.policy.shellEnabled = true
+      _ = try await changeManifest(configuration.exportedTOML(), expectedDigest: digest)
+    }
+    return try record.session.approveFullAccess(
+      lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision, approver: approver)
+  }
+
+  package func limitControlSession(
+    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+  ) throws -> GatewayControlSessionSnapshot {
+    guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
+    try record.session.limitAccess(to: mode, expectedRevision: expectedRevision)
+    return record.session.snapshot
+  }
+
+  package func endControlSession(id: String, expectedRevision: Int64) throws {
+    guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
+    try record.session.requireRevision(expectedRevision)
+    record.session.end()
+  }
+
+  private func closeControlSession(id: String) {
+    controlSessionRecords.removeValue(forKey: id)?.session.end()
+  }
+
+  private func currentEpoch(for owner: RuntimeOwner) -> UUID? {
+    switch owner {
+    case .administration: administrationEpoch
+    case .listener: state == .running || state == .starting ? listenerEpoch : nil
+    case .http(let id): httpTerminalSessions[id] == nil ? nil : id
+    }
+  }
+
+  private func requireAdmission(key: RuntimeKey, epoch: UUID) throws {
+    try Task.checkCancellation()
+    guard currentEpoch(for: key.owner) == epoch else { throw GatewaySocketError.notConnected }
+  }
+
+  private func admittedRuntime(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace)
+    async throws
     -> AdmittedRuntime
   {
-    if let pending = pendingRuntimes[key] {
-      return try await pending.value
+    try requireAdmission(key: key, epoch: epoch)
+    if configurationChangeInProgress {
+      if let existing = runtimes[key] { return existing }
+      try await waitForPublication()
+      return try await admittedRuntime(key: key, epoch: epoch, trace: trace)
     }
+    if let pending = pendingRuntimes[key] { return try await pending.task.value }
     let current = try await controlPlane.gatewayInputs()
-    if let pending = pendingRuntimes[key] { return try await pending.value }
+    try requireAdmission(key: key, epoch: epoch)
+    if configurationChangeInProgress {
+      if let existing = runtimes[key] { return existing }
+      try await waitForPublication()
+      return try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    }
+    if let pending = pendingRuntimes[key] { return try await pending.task.value }
     if let existing = runtimes[key], existing.inputs.configuration == current.configuration,
       existing.inputs.workspaces == current.workspaces, existing.inputs.plugins == current.plugins
     {
       return existing
     }
-    guard runtimes.count + retiredRuntimes.count + pendingRuntimes.count < 128 else {
+    reapRetiredRuntimes()
+    let retiredCount = retiredRuntimes.values.reduce(0) { $0 + $1.count }
+    guard
+      runtimes.count + retiredCount + retiringRuntimes.count + pendingRuntimes.count
+        + preparingRuntimeCount < 128
+    else {
       throw GatewaySocketError.invalidConfiguration(
         "The gateway has reached its owned runtime capacity.")
     }
+    let id = UUID()
+    let terminalSessions = try sessions(for: key.owner)
     let task = Task { [controlPlane] in
       do {
-        let admitted = try await controlPlane.makeGatewaySocketRuntime(
+        let admitted = try await controlPlane.makeGatewaySessionRuntime(
           caller: key.caller, profileID: key.profileID, transportTrace: trace,
-          trustedPrincipalID: key.principalID)
+          trustedPrincipalID: key.principalID, terminalSessions: terminalSessions,
+          requiresControlSession: key.owner != .administration,
+          remoteManagement: management(key: key, epoch: epoch))
+        let profile: GatewayControlProfile
+        do {
+          try requireAdmission(key: key, epoch: epoch)
+          guard pendingRuntimes[key]?.id == id else { throw GatewaySocketError.notConnected }
+          profile = admitted.gateway.controlProfile(in: try controlPlane.database.profiles())
+        } catch {
+          await admitted.gateway.shutdown()
+          throw error
+        }
         if let previous = runtimes.updateValue(admitted, forKey: key) {
-          retiredRuntimes.append(previous.gateway)
+          retiredRuntimes[key, default: [:]][previous.gateway.generationID] = previous.gateway
+        }
+        for record in controlSessionRecords.values where record.key == key {
+          record.session.updateProfile(profile)
         }
         pendingRuntimes.removeValue(forKey: key)
+        observe(admitted.gateway, key: key, epoch: epoch)
+        reapRetiredRuntimes()
+        changes(for: key).send()
         return admitted
       } catch {
-        pendingRuntimes.removeValue(forKey: key)
+        if pendingRuntimes[key]?.id == id { pendingRuntimes.removeValue(forKey: key) }
         throw error
       }
     }
-    pendingRuntimes[key] = task
+    pendingRuntimes[key] = PendingRuntime(id: id, task: task)
     return try await task.value
+  }
+
+  private func changes(for key: RuntimeKey) -> GatewayToolChangeBroadcaster {
+    if let existing = catalogChanges[key] { return existing }
+    let changes = GatewayToolChangeBroadcaster()
+    catalogChanges[key] = changes
+    return changes
+  }
+
+  private func configurationChanged(epoch: UUID) {
+    guard epoch == manifestEpoch else { return }
+    for changes in catalogChanges.values { changes.send() }
+  }
+
+  private func observe(_ runtime: GatewayRuntime, key: RuntimeKey, epoch: UUID) {
+    let id = runtime.generationID
+    let work = runtime.ownedWork.updates()
+    let tools = runtime.toolChanges()
+    runtimeObservers[id] = [
+      Task { [weak self] in
+        for await _ in work {
+          guard !Task.isCancelled else { break }
+          await self?.workChanged(key: key, epoch: epoch)
+        }
+      },
+      Task { [weak self] in
+        for await _ in tools {
+          guard !Task.isCancelled else { break }
+          await self?.toolsChanged(key: key, generation: id, epoch: epoch)
+        }
+      },
+    ]
+  }
+
+  private func toolsChanged(key: RuntimeKey, generation: UUID, epoch: UUID) {
+    guard epoch == currentEpoch(for: key.owner), runtimes[key]?.gateway.generationID == generation
+    else { return }
+    changes(for: key).send()
+  }
+
+  private func workChanged(key: RuntimeKey, epoch: UUID) {
+    guard epoch == currentEpoch(for: key.owner) else { return }
+    reapRetiredRuntimes()
+  }
+
+  /// Invocation reservations and the retirement claim run without suspending the listener actor.
+  private func reapRetiredRuntimes() {
+    for (key, generations) in retiredRuntimes {
+      for (id, runtime) in generations {
+        guard let cleanup = runtime.beginRetirementIfDrained() else { continue }
+        retiredRuntimes[key]?.removeValue(forKey: id)
+        if retiredRuntimes[key]?.isEmpty == true { retiredRuntimes.removeValue(forKey: key) }
+        let observers = runtimeObservers.removeValue(forKey: id) ?? []
+        for observer in observers { observer.cancel() }
+        retiringRuntimes[id] = RetiringRuntime(
+          owner: key.owner,
+          task: Task {
+            await cleanup.value
+            for observer in observers { await observer.value }
+            retiringRuntimes.removeValue(forKey: id)
+          })
+      }
+    }
+  }
+
+  private func listTools(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace) async throws
+    -> [MCPTool]
+  {
+    _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    try requireAdmission(key: key, epoch: epoch)
+    guard let runtime = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
+    let reservation = try runtime.ownedWork.admitInvocation(
+      workspaceID: nil, resourceID: "tools/list")
+    defer { reservation.finish() }
+    return try await runtime.listToolsAsync()
+  }
+
+  private func refreshTools(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace) async throws
+  {
+    _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    try requireAdmission(key: key, epoch: epoch)
+    guard let runtime = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
+    let reservation = try runtime.ownedWork.admitInvocation(
+      workspaceID: nil, resourceID: "tools/list")
+    defer { reservation.finish() }
+    try await runtime.refreshTools()
+  }
+
+  private func selectInvocation(
+    name: String, arguments: JSONValue?, key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace
+  ) async throws -> InvocationSelection {
+    try requireAdmission(key: key, epoch: epoch)
+    if name.hasPrefix("runtime.owners."), let current = runtimes[key]?.gateway {
+      return InvocationSelection(
+        gateway: current, target: nil,
+        ownership: try current.ownedWork.admitInvocation(
+          workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue, resourceID: name))
+    }
+    if let owned = try retainedInvocation(name: name, arguments: arguments, key: key) {
+      return owned
+    }
+    _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
+    try requireAdmission(key: key, epoch: epoch)
+    guard let current = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
+    // Construction suspends; a prior invocation may have published its owner while we waited.
+    if let owned = try retainedInvocation(name: name, arguments: arguments, key: key) {
+      return owned
+    }
+    return InvocationSelection(
+      gateway: current, target: nil,
+      ownership: try current.ownedWork.admitInvocation(
+        workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue,
+        resourceID: name))
+  }
+
+  private func retainedInvocation(name: String, arguments: JSONValue?, key: RuntimeKey) throws
+    -> InvocationSelection?
+  {
+    let generations =
+      (runtimes[key].map { [$0.gateway] } ?? [])
+      + Array(retiredRuntimes[key]?.values ?? [:].values)
+    let workspaceID =
+      arguments?.objectValue?["workspace_id"]?.stringValue
+      ?? runtimes[key]?.gateway.unambiguousWorkspaceID
+    var lookups: [(GatewayRuntime, GatewayRuntime.ContinuationLookup)] = []
+    for runtime in generations {
+      for lookup in try runtime.continuationLookups(
+        name: name, arguments: arguments, workspaceID: workspaceID)
+      {
+        lookups.append((runtime, lookup))
+      }
+    }
+    if let matches = try MCPContinuationDirectory.uniqueOwner(in: lookups.map { $0.1.observation }),
+      let match = matches.first,
+      let (runtime, lookup) = lookups.first(where: { $0.1.observation.matches.contains(match) })
+    {
+      let target = MCPContinuationTarget(
+        workspaceID: lookup.workspaceID, reference: lookup.reference,
+        connectionID: match.connectionID, instanceID: match.instanceID,
+        resources: Dictionary(uniqueKeysWithValues: matches.map { ($0.resource, $0.acquiredBy) }))
+      return InvocationSelection(
+        gateway: runtime, target: target,
+        ownership: try runtime.ownedWork.admitInvocation(
+          workspaceID: lookup.workspaceID, resourceID: name))
+    }
+    var tool = name
+    var object = arguments?.objectValue ?? [:]
+    if tool == "operations.prepare" || tool == "operations.commit" {
+      tool = object["tool"]?.stringValue ?? ""
+      object = object["arguments"]?.objectValue ?? [:]
+    }
+    let kind: GatewayOwnedWork.Kind
+    let id: String
+    switch tool {
+    case "shell.read", "shell.write", "shell.cancel":
+      kind = .shell
+      guard let value = object["session_id"]?.stringValue else { return nil }
+      id = value
+    case "process.read", "process.cancel":
+      kind = .shell
+      guard let value = object["process_id"]?.stringValue else { return nil }
+      id = value
+    case "mcp.requests.read", "mcp.requests.cancel":
+      kind = .mcpRequest
+      guard let value = object["request_id"]?.stringValue else { return nil }
+      id = value
+    default: return nil
+    }
+    let owners = generations.filter { runtime in
+      runtime.ownedWork.snapshot.contains {
+        $0.kind == kind && $0.workspaceID == workspaceID && $0.resourceID == id
+          && (kind != .mcpRequest || $0.registrationID == object["server"]?.stringValue)
+      }
+    }
+    guard owners.count <= 1 else {
+      throw GatewayToolError.invalidArguments(
+        "[runtime.owner_ambiguous] Select the exact work owner.")
+    }
+    guard let owner = owners.first else { return nil }
+    return InvocationSelection(
+      gateway: owner, target: nil,
+      ownership: try owner.ownedWork.admitInvocation(workspaceID: workspaceID, resourceID: name))
+  }
+
+  private func callTool(
+    name: String, arguments: JSONValue?, key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace,
+    envelope: Bool
+  ) async throws -> JSONValue {
+    do {
+      let selection = try await selectInvocation(
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace)
+      defer { selection.ownership.finish() }
+      var scopedArguments = arguments
+      if let workspaceID = selection.target?.workspaceID {
+        var object = arguments?.objectValue ?? [:]
+        // The verified continuation owner supplies the scope for an unscoped request.
+        if object["workspace_id"] == nil { object["workspace_id"] = .string(workspaceID) }
+        scopedArguments = .object(object)
+      }
+      let owners =
+        (runtimes[key].map { [$0.gateway] } ?? [])
+        + Array(retiredRuntimes[key]?.values ?? [:].values)
+      return try await GatewayOwnerRouting.$runtimes.withValue(owners) {
+        try await GatewayOwnerRouting.$call.withValue({ [weak self] owner, tool, arguments in
+          guard let self else { throw GatewayOwnerSelection.unavailable() }
+          return try await self.callOwnedTool(
+            owner: owner, name: tool, arguments: arguments, key: key, epoch: epoch)
+        }) {
+          try await MCPContinuationTarget.$current.withValue(selection.target) {
+            if envelope {
+              return try await selection.gateway.callToolForMCPAsync(
+                name: name, arguments: scopedArguments)
+            }
+            return try await selection.gateway.callToolAsync(name: name, arguments: scopedArguments)
+          }
+        }
+      }
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      guard envelope, let runtime = runtimes[key]?.gateway else { throw error }
+      return runtime.routingErrorForMCP(
+        error, name: name, arguments: arguments, recordFailure: true)
+    }
+  }
+
+  private func callOwnedTool(
+    owner: GatewayOwnerSelection, name: String, arguments: JSONValue, key: RuntimeKey, epoch: UUID
+  ) async throws -> JSONValue {
+    try requireAdmission(key: key, epoch: epoch)
+    let runtime: GatewayRuntime?
+    if runtimes[key]?.gateway.generationID == owner.runtimeID {
+      runtime = runtimes[key]?.gateway
+    } else {
+      runtime = retiredRuntimes[key]?[owner.runtimeID]
+    }
+    guard let runtime else { throw GatewayOwnerSelection.unavailable() }
+    return try await runtime.callOwnedTool(owner: owner, name: name, arguments: arguments)
   }
 
   package func snapshot() async -> AppGatewayServiceSnapshot {
@@ -254,34 +883,528 @@ package actor AppGatewayService {
       processIdentifier: getpid(),
       startedAt: startedAt,
       connectionCount: await server?.connectionCount() ?? 0,
-      lastError: lastError
+      lastError: lastError ?? manifestReloadError
     )
   }
 
-  /// The listener remains bound, but admission is paused while an idle gateway adopts new registrations.
-  package func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+  private func management(key: RuntimeKey, epoch: UUID) -> GatewayRemoteManagement? {
+    guard key.owner != .administration else { return nil }
+    return GatewayRemoteManagement { [weak self] name, arguments, context in
+      guard let self else { throw GatewaySocketError.notConnected }
+      return try await self.manage(
+        name: name, arguments: arguments, context: context, key: key, epoch: epoch)
+    }
+  }
+
+  private func manage(
+    name: String, arguments: [String: JSONValue], context: ExecutionContext,
+    key: RuntimeKey, epoch: UUID
+  ) async throws -> JSONValue {
+    try requireAdmission(key: key, epoch: epoch)
+    guard let contract = GatewayRemoteManagement.byName[name],
+      let session = context.controlSession, let record = controlSessionRecords[session.id],
+      record.key == key, record.session === session,
+      context.trustedPrincipalID == key.principalID,
+      context.profileID == key.profileID, context.caller == key.caller
+    else { throw GatewayRemoteManagement.denied("Use the verified connection's management scope.") }
+    let args = try contract.input.validate(.object(arguments))
+    let snapshot = session.snapshot
+    let authorization = GatewayManagementAuthorization(
+      session: session, context: context, revision: snapshot.revision,
+      requiresFullAccess: contract.risk == .fullShell)
+    try authorization.perform {}
+    func string(_ key: String) -> String { args[key]?.stringValue ?? "" }
+    func revision(_ key: String = "expected_revision") throws -> Int64 {
+      guard let value = args[key]?.intValue, value >= 0 else {
+        throw GatewayToolError.invalidArguments("\(key) must be a nonnegative exact integer.")
+      }
+      return Int64(value)
+    }
+    func page() throws -> Int {
+      let value = args["page"]?.intValue ?? 1
+      guard value > 0 else { throw GatewayToolError.invalidArguments("page must be positive.") }
+      return value
+    }
+    let result: JSONValue
+    switch name {
+    case "profile.show":
+      result = try ControlToolResponse.encodedPayload(snapshot)
+    case "profile.limit":
+      let mode: GatewayPermissionMode
+      switch string("mode") {
+      case "observe": mode = .readOnly
+      case "restricted": mode = .workspaceOperations
+      default: throw GatewayToolError.invalidArguments("mode must be observe or restricted.")
+      }
+      try session.limitAccess(to: mode, expectedRevision: revision(), allowIncrease: false)
+      return try ControlToolResponse.encodedPayload(session.snapshot)
+    case "workspace.add", "workspace.remove", "workspace.repair", "workspace.grant":
+      let inputs = try await controlPlane.gatewayInputs()
+      try requireAdmission(key: key, epoch: epoch)
+      try authorization.perform {}
+      let id = string("id")
+      if name != "workspace.add" {
+        guard let workspace = inputs.workspaces.first(where: { $0.id == id }) else {
+          throw GatewayRuntimeError.workspaceNotFound(id)
+        }
+        if name != "workspace.grant", workspace.rootPath != string("expected_root_path") {
+          throw GatewayDatabaseError.configurationChanged
+        }
+      }
+      if name == "workspace.grant" {
+        guard let profile = snapshot.profile else { throw GatewaySocketError.notConnected }
+        let grant = try await withConfigurationChange {
+          try await controlPlane.applyRemoteWorkspaceGrant(
+            id: id, enabled: args["enabled"]?.boolValue == true, profile: profile,
+            expectedRevision: revision("expected_profile_revision"), inputs: inputs,
+            authorization: authorization)
+        }
+        changes(for: key).send()
+        return try ControlToolResponse.encodedPayload(grant)
+      }
+      let change: WorkspaceHostChange
+      switch name {
+      case "workspace.add":
+        change = .register(
+          try GatewayRemoteManagement.path(string("path")),
+          displayName: args["display_name"]?.stringValue)
+      case "workspace.repair":
+        change = .repair(
+          id: id, root: try GatewayRemoteManagement.path(string("path")),
+          displayName: args["display_name"]?.stringValue)
+      default: change = .remove(id)
+      }
+      let changed = try await changeWorkspaces(
+        change, authorization: authorization, expectedInputs: inputs)
+      switch changed {
+      case .registered(let workspace, let created):
+        return .object([
+          "workspace": GatewayRemoteManagement.workspace(workspace), "created": .bool(created),
+        ])
+      case .repaired(let workspace):
+        return .object(["workspace": GatewayRemoteManagement.workspace(workspace)])
+      case .removed: return .object(["id": .string(id), "removed": .bool(true)])
+      case .deduplicated:
+        throw GatewayToolError.executionFailed("Unexpected workspace mutation result.")
+      }
+    case "plugin.search":
+      let kind: IntegrationKind?
+      if let raw = args["kind"]?.stringValue {
+        guard let parsed = IntegrationKind(rawValue: raw) else {
+          throw GatewayToolError.invalidArguments("Unknown plugin contribution kind.")
+        }
+        kind = parsed
+      } else {
+        kind = nil
+      }
+      result = try ControlToolResponse.encodedPayload(
+        await controlPlane.searchPlugins(
+          query: string("query"), kind: kind, page: page(),
+          refresh: args["refresh"]?.boolValue ?? false))
+    case "plugin.artifacts":
+      result = try ControlToolResponse.encodedPayload(
+        await controlPlane.pluginReleaseArtifacts(
+          repository: string("repository"), repositoryID: revision("repository_id"),
+          tag: args["tag"]?.stringValue, page: page()))
+    case "plugin.list", "plugin.describe":
+      let plugins = try await controlPlane.pluginSnapshot()
+      if name == "plugin.describe" {
+        result = try GatewayRemoteManagement.plugin(
+          string("id"), snapshot: plugins, afterID: string("after_id"),
+          limit: args["limit"]?.intValue ?? 50)
+      } else {
+        let limit = args["limit"]?.intValue ?? 50
+        guard (1...200).contains(limit) else {
+          throw GatewayToolError.invalidArguments("limit must be between 1 and 200.")
+        }
+        let ids = GatewayRemoteManagement.pluginIDs(plugins).filter { $0 > string("after_id") }
+        let selected = Array(ids.prefix(limit))
+        result = .object([
+          "revision": .integer(plugins.state.revision),
+          "plugins": .array(
+            try selected.map {
+              try GatewayRemoteManagement.plugin($0, snapshot: plugins, details: false)
+            }),
+          "next_after_id": ids.count > limit ? .string(selected.last!) : .null,
+        ])
+      }
+    default:
+      let expected = try revision()
+      let plugins = try await controlPlane.pluginSnapshot()
+      try requireAdmission(key: key, epoch: epoch)
+      try authorization.perform {}
+      guard plugins.state.revision == expected else {
+        throw PluginStoreError.staleRevision(expected: expected, actual: plugins.state.revision)
+      }
+      let id = string("id")
+      let change: PluginHostChange
+      switch name {
+      case "plugin.install", "plugin.update":
+        let artifact = try CanonicalJSONCoding.decoder().decode(
+          GitHubPluginArtifact.self, from: ControlToolResponse.encodedJSON(args["artifact"]!))
+        try artifact.validate()
+        if name == "plugin.update" {
+          guard artifact.declaration.pluginID == id,
+            GatewayRemoteManagement.pluginIDs(plugins).contains(id)
+          else {
+            throw GatewayToolError.invalidArguments("The update must match an existing plugin.")
+          }
+        }
+        change = .installRelease(artifact)
+      case "plugin.configure":
+        try GatewayRemoteManagement.requireTrustedPlugin(id, snapshot: plugins)
+        change = .settings(
+          pluginID: id,
+          try GatewayRemoteManagement.patchSettings(
+            args["settings"]!, current: plugins.settings(for: id)))
+      case "plugin.enable", "plugin.disable":
+        guard GatewayRemoteManagement.pluginIDs(plugins).contains(id) else {
+          throw PluginStoreError.unknownInstallation(id)
+        }
+        if name == "plugin.enable" {
+          try GatewayRemoteManagement.requireTrustedPlugin(id, snapshot: plugins)
+        }
+        change = .enabled(pluginID: id, name == "plugin.enable")
+      case "plugin.uninstall":
+        change = .uninstallArtifact(installationID: string("installation_id"))
+      default: throw GatewayToolError.unknownTool(name)
+      }
+      let changed = try await changePlugins(
+        change, expectedRevision: expected, authorization: authorization)
+      return .object(["revision": .integer(changed.state.revision), "changed": .bool(true)])
+    }
+    try requireAdmission(key: key, epoch: epoch)
+    try authorization.perform {}
+    return result
+  }
+
+  /// Existing keys continue on their admitted generation while new keys await publication.
+  package func changePlugins(
+    _ change: PluginHostChange, expectedRevision: Int64,
+    authorization: GatewayManagementAuthorization? = nil
+  ) async throws
     -> PluginHostSnapshot
   {
-    guard !pluginChangeInProgress, !lifecycleInProgress else {
+    try await withConfigurationChange {
+      try await controlPlane.applyPluginChange(change, expectedRevision: expectedRevision) {
+        [self] expected, proposed, storage in
+        let state = GatewayDatabase.ConfigurationState(
+          workspaces: expected.workspaces, workspaceAliases: expected.persisted.workspaceAliases,
+          profiles: expected.profiles, plugins: proposed)
+        _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
+          resolution in
+          let commit = {
+            try self.controlPlane.database.savePluginStoreSnapshot(
+              proposed, expectedRevision: expected.plugins.revision,
+              expectedConfiguration: expected.persisted, resolution: resolution,
+              authorization: authorization)
+          }
+          return try authorization.map { try $0.perform(commit) } ?? commit()
+        }
+      }
+    }
+  }
+
+  func changeWorkspaces(
+    _ change: WorkspaceHostChange, authorization: GatewayManagementAuthorization? = nil,
+    expectedInputs: AppControlPlaneService.GatewayInputs? = nil
+  ) async throws -> WorkspaceChangeResult {
+    try await withConfigurationChange {
+      try await controlPlane.applyWorkspaceChange(change) { [self] expected, prepared in
+        guard expectedInputs == nil || expectedInputs == expected else {
+          throw GatewayDatabaseError.configurationChanged
+        }
+        let selected: (id: String, root: WorkspaceRootIdentity)?
+        if case .repair(let workspace, let root) = prepared.mutation {
+          selected = (workspace.id, root)
+        } else {
+          selected = nil
+        }
+        return try await preparePublication(
+          expected: expected, proposed: prepared.proposed, storage: nil, requiredWorkspace: selected
+        ) {
+          resolution in
+          let commit = {
+            try self.controlPlane.database.saveWorkspaceChange(
+              prepared, resolution: resolution, authorization: authorization)
+          }
+          return try authorization.map { try $0.perform(commit) } ?? commit()
+        }
+      }
+    }
+  }
+
+  func changeManifest(
+    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String? = nil
+  ) async throws -> ConfigurationRevision {
+    let revision = try await withConfigurationChange {
+      try await publishManifest(manifest, reason: reason, expectedDigest: expectedDigest)
+    }
+    manifestReloadError = nil
+    lastManifestAttempt = nil
+    return revision
+  }
+
+  private func publishManifest(
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String?
+  ) async throws -> ConfigurationRevision {
+    try await controlPlane.applyManifestChange(
+      manifest, reason: reason, expectedDigest: expectedDigest
+    ) { [self] _, prepared in
+      try await preparePublication(
+        inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
+        storage: nil
+      ) { resolution, install in
+        try self.controlPlane.manifestStore.commit(
+          prepared, resolution: resolution, install: install)
+      }
+    }
+  }
+
+  /// True retries a transient conflict within the one owned, cancellable consumer.
+  private func reloadExternalManifest(epoch: UUID) async -> Bool {
+    guard !Task.isCancelled, epoch == manifestEpoch else { return false }
+    guard !lifecycleInProgress else { return true }
+    let attempt = ManifestAttempt(
+      fingerprint: ManifestFileMonitor.fingerprint(controlPlane.directories.manifest))
+    guard attempt != lastManifestAttempt else { return false }
+    do {
+      guard let input = try controlPlane.manifestStore.externalInput() else {
+        lastManifestAttempt = attempt
+        manifestReloadError = nil
+        return false
+      }
+      guard
+        attempt.fingerprint == ManifestFileMonitor.fingerprint(controlPlane.directories.manifest)
+      else { return true }
+      try await withConfigurationChange {
+        _ = try await publishManifest(
+          input.manifest, reason: .externalReload, expectedDigest: input.digest)
+      }
+      manifestReloadError = nil
+      lastManifestAttempt = attempt
+    } catch PluginHostError.changeInProgress {
+      return true
+    } catch AtomicManifestStoreError.changeInProgress {
+      return true
+    } catch AtomicManifestStoreError.staleDigest {
+      return true
+    } catch GatewayDatabaseError.configurationChanged {
+      return true
+    } catch is CancellationError {
+      return false
+    } catch {
+      lastManifestAttempt = attempt
+      manifestReloadError = "Configuration reload failed: \(Self.stableDescription(error))"
+    }
+    return false
+  }
+
+  private func startManifestMonitoring() async throws {
+    guard manifestMonitor == nil else { return }
+    let monitor = try ManifestFileMonitor(manifestURL: controlPlane.directories.manifest)
+    manifestMonitor = monitor
+    let epoch = UUID()
+    manifestEpoch = epoch
+    lastManifestAttempt = nil
+    manifestReloadError = nil
+    let manifestChanges = await controlPlane.manifestChanges()
+    manifestObserver = Task { [weak self] in
+      for await _ in manifestChanges {
+        guard !Task.isCancelled else { break }
+        await self?.configurationChanged(epoch: epoch)
+      }
+    }
+    manifestReloadObserver = Task { [weak self, changes = monitor.changes] in
+      for await _ in changes {
+        guard !Task.isCancelled else { break }
+        do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        while await self?.reloadExternalManifest(epoch: epoch) == true {
+          do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+        }
+      }
+    }
+  }
+
+  private func resumeManifestMonitoring() async {
+    guard administrationEpoch != nil || state == .running || !httpTerminalSessions.isEmpty else {
+      return
+    }
+    do { try await startManifestMonitoring() } catch {
+      manifestReloadError = "Configuration monitoring failed: \(Self.stableDescription(error))"
+    }
+  }
+
+  private func stopManifestMonitoring() async {
+    manifestEpoch = nil
+    let admittedObserver = manifestObserver
+    manifestObserver = nil
+    admittedObserver?.cancel()
+    let observer = manifestReloadObserver
+    manifestReloadObserver = nil
+    observer?.cancel()
+    let monitor = manifestMonitor
+    manifestMonitor = nil
+    await monitor?.close()
+    await observer?.value
+    await admittedObserver?.value
+    manifestReloadError = nil
+  }
+
+  private func withConfigurationChange<Result: Sendable>(
+    _ operation: () async throws -> Result
+  ) async throws -> Result {
+    guard !configurationChangeInProgress, !lifecycleInProgress else {
       throw PluginHostError.changeInProgress
     }
-    pluginChangeInProgress = true
+    configurationChangeInProgress = true
     lifecycleInProgress = true
-    defer { releaseLifecycle() }
-    let activeServer = server
-    if let activeServer, !(await activeServer.reserveIdleConfigurationChange()) {
-      pluginChangeInProgress = false
-      throw PluginHostError.connectedClients
+    defer {
+      configurationChangeInProgress = false
+      let waiters = Array(publicationWaiters.values)
+      publicationWaiters.removeAll()
+      for waiter in waiters { waiter.resume() }
+      let drainWaiters = publicationDrainWaiters
+      publicationDrainWaiters.removeAll()
+      for waiter in drainWaiters { waiter.resume() }
+      releaseLifecycle()
     }
+    // Finish admissions that already own construction; later new keys wait above.
+    let pending = pendingRuntimes.values.map(\.task)
+    for task in pending { _ = try? await task.value }
+    try Task.checkCancellation()
+    return try await operation()
+  }
+
+  private func waitForPublication() async throws {
+    let id = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, any Error>) in
+        if Task.isCancelled {
+          continuation.resume(throwing: CancellationError())
+        } else if !configurationChangeInProgress {
+          continuation.resume()
+        } else if publicationWaiters.count >= 128 {
+          continuation.resume(
+            throwing: GatewaySocketError.invalidConfiguration(
+              "The gateway has reached its configuration admission capacity."))
+        } else {
+          publicationWaiters[id] = continuation
+        }
+      }
+    } onCancel: {
+      Task { await self.cancelPublicationWaiter(id) }
+    }
+  }
+
+  private func cancelPublicationWaiter(_ id: UUID) {
+    publicationWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+  }
+
+  private func preparePublication(
+    expected: AppControlPlaneService.GatewayInputs, proposed: GatewayDatabase.ConfigurationState,
+    storage: PluginInstallationStorage?,
+    requiredWorkspace: (id: String, root: WorkspaceRootIdentity)? = nil,
+    commit: @Sendable (GatewayConfigurationResolution) throws -> GatewayDatabase.ConfigurationState
+  ) async throws -> GatewayDatabase.ConfigurationState {
+    try await preparePublication(
+      inputs: .init(configuration: expected.configuration, persisted: proposed), storage: storage,
+      requiredWorkspace: requiredWorkspace
+    ) { resolution, install in
+      try self.controlPlane.manifestStore.withCurrentConfiguration(expected.configuration) {
+        let persisted = try commit(resolution)
+        install(persisted)
+        return persisted
+      }
+    }
+  }
+
+  private func preparePublication<Result: Sendable>(
+    inputs: AppControlPlaneService.GatewayInputs, storage: PluginInstallationStorage?,
+    requiredWorkspace: (id: String, root: WorkspaceRootIdentity)? = nil,
+    publish: (GatewayConfigurationResolution, (GatewayDatabase.ConfigurationState) -> Void) throws
+      -> Result
+  ) async throws -> Result {
+    let epoch = listenerEpoch
+    let keys = Array(runtimes.keys)
+    reapRetiredRuntimes()
+    let retiredCount = retiredRuntimes.values.reduce(0) { $0 + $1.count }
+    let required = max(1, keys.count)
+    guard
+      runtimes.count + retiredCount + retiringRuntimes.count + pendingRuntimes.count + required
+        <= 128
+    else {
+      throw GatewaySocketError.invalidConfiguration(
+        "The gateway has reached its owned runtime capacity.")
+    }
+    preparingRuntimeCount = required
+    defer { preparingRuntimeCount = 0 }
+    var candidates: [RuntimeKey: (preparation: GatewayRuntimePreparation, epoch: UUID)] = [:]
+    var validation: GatewayRuntimePreparation?
     do {
-      let result = try await controlPlane.applyPluginChange(
-        change, expectedRevision: expectedRevision)
-      await activeServer?.finishConfigurationChange()
-      pluginChangeInProgress = false
-      return result
+      if keys.isEmpty {
+        validation = try await controlPlane.prepareGateway(
+          inputs: inputs, caller: .localCLI, profileID: .localAdmin, trustedPrincipalID: nil,
+          terminalSessions: terminalSessions, artifactStorage: storage)
+      } else {
+        for key in keys {
+          guard let ownerEpoch = currentEpoch(for: key.owner) else {
+            throw GatewaySocketError.notConnected
+          }
+          let preparation = try await controlPlane.prepareGateway(
+            inputs: inputs, caller: key.caller, profileID: key.profileID,
+            trustedPrincipalID: key.principalID, terminalSessions: try sessions(for: key.owner),
+            artifactStorage: storage, requiresControlSession: key.owner != .administration,
+            remoteManagement: management(key: key, epoch: ownerEpoch))
+          candidates[key] = (preparation, ownerEpoch)
+        }
+      }
+      try Task.checkCancellation()
+      guard listenerEpoch == epoch, configurationChangeInProgress else {
+        throw GatewaySocketError.notConnected
+      }
+      var resolution = GatewayConfigurationResolution()
+      for (key, candidate) in candidates {
+        try requireAdmission(key: key, epoch: candidate.epoch)
+      }
+      for candidate in candidates.values.map(\.preparation) + [validation].compactMap({ $0 }) {
+        try candidate.runtime.requirePreparedPublication()
+        if let requiredWorkspace {
+          try candidate.runtime.requirePreparedWorkspace(
+            id: requiredWorkspace.id, root: requiredWorkspace.root)
+        }
+        try resolution.merge(candidate.resolution)
+      }
+      var publishedProfiles = inputs.persisted.profiles
+      let committed = try publish(resolution) { persisted in
+        publishedProfiles = persisted.profiles
+        let published = AppControlPlaneService.GatewayInputs(
+          configuration: inputs.configuration, persisted: persisted)
+        for (key, prepared) in candidates {
+          let candidate = prepared.preparation
+          if let previous = runtimes.updateValue((published, candidate.runtime), forKey: key) {
+            retiredRuntimes[key, default: [:]][previous.gateway.generationID] = previous.gateway
+          }
+          candidate.runtime.publishPrepared()
+          observe(candidate.runtime, key: key, epoch: prepared.epoch)
+        }
+        reapRetiredRuntimes()
+      }
+      // Admission reads SQLite while holding a session lock. Refresh after commit
+      // to preserve that lock order, before this actor admits another invocation.
+      for (key, prepared) in candidates {
+        let profile = prepared.preparation.runtime.controlProfile(in: publishedProfiles)
+        for record in controlSessionRecords.values where record.key == key {
+          record.session.updateProfile(profile)
+        }
+        changes(for: key).send()
+      }
+      await validation?.runtime.shutdown()
+      return committed
     } catch {
-      await activeServer?.finishConfigurationChange()
-      pluginChangeInProgress = false
+      for candidate in candidates.values { await candidate.preparation.runtime.shutdown() }
+      await validation?.runtime.shutdown()
       throw error
     }
   }

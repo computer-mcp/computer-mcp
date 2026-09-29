@@ -304,7 +304,31 @@ internal enum ComputerUseAccessibilityValue: Codable, Equatable, Sendable {
   case string(String)
   case bool(Bool)
   case number(Double)
+  case integer(Int64)
   case null
+
+  init(foundationNumber: NSNumber) throws {
+    switch try JSONValue(foundationNumber: foundationNumber) {
+    case .bool(let value): self = .bool(value)
+    case .number(let value): self = .number(value)
+    case .integer(let value): self = .integer(value)
+    default:
+      throw ComputerUseError.invalidArgument(field: "AXValue", reason: "Unsupported numeric value")
+    }
+  }
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    switch (lhs, rhs) {
+    case (.integer(let lhs), .integer(let rhs)): lhs == rhs
+    case (.number(let lhs), .number(let rhs)): lhs == rhs
+    case (.integer(let lhs), .number(let rhs)): Int64(exactly: rhs) == lhs
+    case (.number(let lhs), .integer(let rhs)): Int64(exactly: lhs) == rhs
+    case (.string(let lhs), .string(let rhs)): lhs == rhs
+    case (.bool(let lhs), .bool(let rhs)): lhs == rhs
+    case (.null, .null): true
+    default: false
+    }
+  }
 }
 
 internal struct ComputerUseAccessibilityReference: Codable, Equatable, Hashable, Sendable {
@@ -1589,7 +1613,7 @@ internal struct MacOSComputerUseAdapter: ComputerUseAdapter, Sendable {
         processID: query.processID,
         childPath: current.path
       )
-      let observation = accessibilityObservation(
+      let observation = try accessibilityObservation(
         for: current.element,
         reference: reference
       )
@@ -1620,7 +1644,7 @@ internal struct MacOSComputerUseAdapter: ComputerUseAdapter, Sendable {
   ) throws -> ComputerUseAccessibilityValue {
     try requirePermission(.accessibility)
     let element = try resolveAccessibilityElement(reference)
-    return accessibilityValue(
+    return try accessibilityValue(
       copyAccessibilityValue(element, attribute: attribute.rawValue as CFString)
     )
   }
@@ -1778,7 +1802,7 @@ internal struct MacOSComputerUseAdapter: ComputerUseAdapter, Sendable {
   private func accessibilityObservation(
     for element: AXUIElement,
     reference: ComputerUseAccessibilityReference
-  ) -> ComputerUseAccessibilityObservation {
+  ) throws -> ComputerUseAccessibilityObservation {
     var actions: CFArray?
     let actionError = AXUIElementCopyActionNames(element, &actions)
     let actionNames =
@@ -1789,7 +1813,7 @@ internal struct MacOSComputerUseAdapter: ComputerUseAdapter, Sendable {
       role: stringAccessibilityValue(element, attribute: kAXRoleAttribute),
       subrole: stringAccessibilityValue(element, attribute: kAXSubroleAttribute),
       title: stringAccessibilityValue(element, attribute: kAXTitleAttribute),
-      value: optionalAccessibilityValue(
+      value: try optionalAccessibilityValue(
         copyAccessibilityValue(element, attribute: kAXValueAttribute as CFString)
       ),
       elementDescription: stringAccessibilityValue(
@@ -1828,14 +1852,16 @@ internal struct MacOSComputerUseAdapter: ComputerUseAdapter, Sendable {
       .boolValue
   }
 
-  private func optionalAccessibilityValue(_ value: CFTypeRef?) -> ComputerUseAccessibilityValue? {
+  private func optionalAccessibilityValue(_ value: CFTypeRef?) throws
+    -> ComputerUseAccessibilityValue?
+  {
     guard let value else {
       return nil
     }
-    return accessibilityValue(value)
+    return try accessibilityValue(value)
   }
 
-  private func accessibilityValue(_ value: CFTypeRef?) -> ComputerUseAccessibilityValue {
+  private func accessibilityValue(_ value: CFTypeRef?) throws -> ComputerUseAccessibilityValue {
     guard let value else {
       return .null
     }
@@ -1843,10 +1869,7 @@ internal struct MacOSComputerUseAdapter: ComputerUseAdapter, Sendable {
       return .string(string)
     }
     if let number = value as? NSNumber {
-      if CFGetTypeID(number) == CFBooleanGetTypeID() {
-        return .bool(number.boolValue)
-      }
-      return .number(number.doubleValue)
+      return try ComputerUseAccessibilityValue(foundationNumber: number)
     }
     return .string(String(describing: value))
   }
@@ -1913,6 +1936,8 @@ internal struct MacOSComputerUseAdapter: ComputerUseAdapter, Sendable {
         text = String(bool)
       case .number(let number):
         text = String(number)
+      case .integer(let integer):
+        text = String(integer)
       case .null, .none:
         text = nil
       }

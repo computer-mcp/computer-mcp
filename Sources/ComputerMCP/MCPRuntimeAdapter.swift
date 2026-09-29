@@ -7,7 +7,7 @@ package enum MCPRuntimeAdapter: Sendable {
 
   package static func makeGatewayServer(
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing,
+    registry: any GatewayAsyncToolServing,
     transportTrace: GatewayTransportTrace? = nil
   ) async -> MCP.Server {
     let instructions = serverInstructions(for: configuration)
@@ -30,7 +30,7 @@ package enum MCPRuntimeAdapter: Sendable {
 
   package static func runStdioGateway(
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing
+    registry: any GatewayAsyncToolServing
   ) async throws {
     let server = await makeGatewayServer(configuration: configuration, registry: registry)
     let transport = MCPInitializeNormalizationTransport(wrapping: StdioTransport())
@@ -46,10 +46,11 @@ package enum MCPRuntimeAdapter: Sendable {
 
   package static func runHTTPGateway(
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing,
+    registry: any GatewayAsyncToolServing,
     host: String?,
     port: Int?,
-    publicBaseURL: String?
+    publicBaseURL: String?,
+    control: GatewayHTTPControlConfiguration? = nil
   ) async throws {
     let http = configuration.server.http
     let runtime = GatewayHTTPRuntime(
@@ -57,28 +58,34 @@ package enum MCPRuntimeAdapter: Sendable {
       registry: registry,
       host: host ?? http.host,
       port: port ?? http.port,
-      publicBaseURL: publicBaseURL ?? http.publicBaseURL
+      publicBaseURL: publicBaseURL ?? http.publicBaseURL,
+      control: control
     )
-    try await runtime.start()
+    do {
+      try await runtime.start()
+      await runtime.stop()
+    } catch {
+      await runtime.stop()
+      throw error
+    }
   }
 
   private static func registerGatewayHandlers(
     server: MCP.Server,
     configuration: GatewayConfiguration,
-    registry: any GatewayToolServing,
+    registry: any GatewayAsyncToolServing,
     transportTrace: GatewayTransportTrace?
   ) async {
-    let surface = GatewayMCPToolSurface(registry: registry)
     let changes = registry.toolChanges()
     let notifier = MCPToolCatalogNotifier(
-      registry: registry, changes: changes, initialCatalog: try? await surface.listToolsAsync())
+      registry: registry, changes: changes, initialCatalog: try? await registry.listToolsAsync())
     await server.onNotification(InitializedNotification.self) { [weak server] _ in
       if let server { await notifier.start(server: server) }
     }
 
     await server.withMethodHandler(MCP.ListTools.self) { _ in
       try await registry.refreshTools()
-      return MCP.ListTools.Result(tools: try await surface.listToolsAsync().map(\.sdkTool))
+      return MCP.ListTools.Result(tools: try await registry.listToolsAsync().map(\.sdkTool))
     }
 
     await server.withMethodHandler(MCP.CallTool.self) { params in

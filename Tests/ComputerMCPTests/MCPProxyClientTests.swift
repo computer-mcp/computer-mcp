@@ -3,9 +3,36 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.serialized)
+@Suite(.nativeIntegration, .serialized)
 
 final class MCPProxyClientTests {
+  @Test
+  func retiringConnectionReturnsAnErrorToAnUncancelledCaller() async throws {
+    let fixture = try fakePersistentMCPServer()
+    defer { try? FileManager.default.removeItem(at: fixture.script.deletingLastPathComponent()) }
+    let server = MCPServerConfig(
+      id: "retiring-call", transport: .stdio, command: fixture.script.path,
+      args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
+    let client = MCPProxyClient()
+    let inspection = BlockingOperationExecutor(label: "retiring-call-test")
+    _ = try await inspection.perform { try client.listTools(server: server) }
+    let call = Task {
+      try await client.callToolAsync(
+        server: server, name: "hang", arguments: .object([:]), requestID: "awaited")
+    }
+    let deadline = ContinuousClock.now + .seconds(3)
+    var observed = false
+    repeat {
+      observed = try await inspection.perform {
+        try client.activeRequests(server: server).objectValue?["requests"]?.arrayValue?.count == 1
+      }
+      if !observed { try await Task.sleep(for: .milliseconds(10)) }
+    } while !observed && ContinuousClock.now < deadline
+    await client.shutdown()
+    try #require(observed)
+    await #expect(throws: GatewayToolError.self) { _ = try await call.value }
+  }
+
   @Test
   func testPaginatedCatalogReexportsOnlyAllowedToolsFromLaterPages() async throws {
     try await runBlockingTest {
@@ -307,6 +334,59 @@ final class MCPProxyClientTests {
     await client.shutdown()
   }
 
+  @Test(arguments: [false, true])
+  func requestOwnershipSurvivesCancellationUntilResponseOrConfirmedExit(
+    completeBeforeShutdown: Bool
+  ) async throws {
+    let fixture = try fakePersistentMCPServer()
+    let root = fixture.script.deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let ownedWork = GatewayOwnedWork()
+    var hostContext = MCPHostContext(
+      runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
+      workspaceID: "fixture", rootURL: root, readOnly: false)
+    hostContext.ownedWork = ownedWork
+    let client = MCPProxyClient(hostContext: hostContext)
+    let server = MCPServerConfig(
+      id: "owned", transport: .stdio, command: fixture.script.path,
+      args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
+    do {
+      try await runBlockingTest {
+        _ = try client.startToolCall(
+          server: server, name: "hang", arguments: .object([:]), requestID: "owned-call")
+        let record = try #require(ownedWork.snapshot.first { $0.kind == .mcpRequest })
+        #expect(record.kind == .mcpRequest)
+        #expect(record.workspaceID == "fixture")
+        #expect(record.registrationID == "owned")
+        #expect(record.resourceID == "owned-call")
+        _ = try client.cancelRequest(server: server, requestID: "owned-call", reason: "stop")
+        #expect(ownedWork.snapshot.filter { $0.kind == .mcpRequest } == [record])
+        if completeBeforeShutdown {
+          _ = try client.callTool(
+            server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]))
+          let deadline = ContinuousClock.now + .seconds(2)
+          while ownedWork.snapshot.contains(where: { $0.kind == .mcpRequest })
+            && ContinuousClock.now < deadline
+          {
+            Thread.sleep(forTimeInterval: 0.01)
+          }
+          #expect(!ownedWork.snapshot.contains { $0.kind == .mcpRequest })
+          let unknown = try #require(ownedWork.snapshot.first { $0.kind == .mcpUnreportedWork })
+          #expect(unknown.uncertain)
+          #expect(!ownedWork.closeAdmissionIfDrained())
+          #expect(
+            try client.connectionStatus(server: server).objectValue?["state"]
+              == .string("connected"))
+        }
+      }
+    } catch {
+      await client.shutdown()
+      throw error
+    }
+    await client.shutdown()
+    #expect(ownedWork.snapshot.isEmpty)
+  }
+
   @Test
   func testStartupDeadlineIsIndependentOfLongRequestBudget() async throws {
     try await runBlockingTest {
@@ -389,12 +469,54 @@ final class MCPProxyClientTests {
   }
 
   @Test
+  func closingSelectedHTTPConnectionCannotClaimRemoteWorkStopped() async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakeHTTPMCPServer()
+      let root = fixture.sessionMarker.deletingLastPathComponent()
+      defer {
+        if fixture.process.isRunning { fixture.process.terminate() }
+        #expect(fixture.termination.wait(timeout: .now() + .seconds(5)) == .success)
+        try? FileManager.default.removeItem(at: root)
+      }
+      let work = GatewayOwnedWork()
+      var context = MCPHostContext(
+        runtimeID: UUID(),
+        context: .init(caller: .localCLI, profileID: .localAdmin),
+        workspaceID: "fixture", rootURL: root, readOnly: false)
+      context.ownedWork = work
+      let client = MCPProxyClient(hostContext: context)
+      let server = MCPServerConfig(
+        id: "http", transport: .http,
+        url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
+      _ = try client.callTool(server: server, name: "http-sample", arguments: .object([:]))
+      let record = try #require(work.snapshot.first { $0.kind == .mcpUnreportedWork })
+      let target = MCPContinuationTarget(
+        workspaceID: "fixture",
+        reference: .init(serverID: "http", toolName: "mcp.connections.close"),
+        connectionID: try #require(record.connectionID), instanceID: nil, resources: [:],
+        selectedOwnershipID: record.id)
+      #expect(throws: GatewayToolError.self) { try client.closeConnection(server: server) }
+      try MCPContinuationTarget.$current.withValue(target) {
+        let result = try client.closeConnection(server: server)
+        #expect(result.objectValue?["transport_closed"] == .bool(true))
+        #expect(result.objectValue?["managed_process_exit_confirmed"] == .null)
+        #expect(result.objectValue?["work_cleanup"] == .string("unknown"))
+        #expect(work.snapshot.contains { $0.id == record.id && $0.uncertain })
+        #expect(fixture.process.isRunning)
+        let before = try String(contentsOf: fixture.sessionMarker, encoding: .utf8)
+        #expect(throws: GatewayToolError.self) { try client.closeConnection(server: server) }
+        #expect(try String(contentsOf: fixture.sessionMarker, encoding: .utf8) == before)
+      }
+    }
+  }
+
+  @Test
   func testHTTPProxyPreservesNegotiatedSessionAcrossRequests() async throws {
     try await runBlockingTest {
       let fixture = try self.fakeHTTPMCPServer()
       defer {
         fixture.process.terminate()
-        fixture.process.waitUntilExit()
+        #expect(fixture.termination.wait(timeout: .now() + .seconds(5)) == .success)
       }
       let server = MCPServerConfig(
         id: "http",
@@ -702,56 +824,74 @@ final class MCPProxyClientTests {
   func failedCancellationDeliveryRetainsUnknownReceiptAndCannotReplayTheWrite() async throws {
     let fixture = try fakeHTTPMCPServer(failCancellation: true)
     let directory = fixture.sessionMarker.deletingLastPathComponent()
-    defer {
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cleanup = {
       if fixture.process.isRunning { fixture.process.terminate() }
-      fixture.process.waitUntilExit()
-      try? FileManager.default.removeItem(at: directory)
-    }
-    let database = try GatewayDatabase(inMemory: ())
-    let client = MCPProxyClient(executionDatabase: database, executionScope: "cancel-failure")
-    let server = MCPServerConfig(
-      id: "cancel-failure", transport: .http,
-      url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
-    let waiting = Task {
-      try await client.callToolAsync(
-        server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+      #expect(fixture.termination.wait(timeout: .now() + .seconds(5)) == .success)
     }
     do {
-      let marker = directory.appendingPathComponent("call-started.txt")
-      let deadline = ContinuousClock.now + .seconds(5)
-      while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
-      }
-      #expect(FileManager.default.fileExists(atPath: marker.path))
-      waiting.cancel()
-      await #expect(throws: (any Error).self) { _ = try await waiting.value }
-      let receipt = try client.readRequest(
-        server: server, requestID: "write-once", offset: 0, maxBytes: 4096)
-      #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
-      #expect(receipt.objectValue?["cancellation"] == .string("failed"))
-      #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
-      #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
-      #expect(throws: (any Error).self) {
-        try client.callTool(
+      let database = try GatewayDatabase(inMemory: ())
+      let ownedWork = GatewayOwnedWork()
+      var hostContext = MCPHostContext(
+        runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
+        workspaceID: "fixture", rootURL: directory, readOnly: false)
+      hostContext.ownedWork = ownedWork
+      let client = MCPProxyClient(
+        hostContext: hostContext, executionDatabase: database, executionScope: "cancel-failure")
+      let server = MCPServerConfig(
+        id: "cancel-failure", transport: .http,
+        url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
+      let waiting = Task {
+        try await client.callToolAsync(
           server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
       }
-      let repeated = try client.startToolCall(
-        server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
-      #expect(repeated.objectValue?["state"] == .string("outcome_unknown"))
-      #expect(try String(contentsOf: marker, encoding: .utf8) == "called\n")
-      try Data().write(to: directory.appendingPathComponent("release.txt"))
-      await client.shutdown()
+      do {
+        let marker = directory.appendingPathComponent("call-started.txt")
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        waiting.cancel()
+        await #expect(throws: (any Error).self) { _ = try await waiting.value }
+        let receipt = try client.readRequest(
+          server: server, requestID: "write-once", offset: 0, maxBytes: 4096)
+        #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(receipt.objectValue?["cancellation"] == .string("failed"))
+        #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
+        #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
+        #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
+        #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
+        #expect(throws: (any Error).self) {
+          try client.callTool(
+            server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+        }
+        let repeated = try client.startToolCall(
+          server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+        #expect(repeated.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(try String(contentsOf: marker, encoding: .utf8) == "called\n")
+        try Data().write(to: directory.appendingPathComponent("release.txt"))
+        await client.shutdown()
+        // Remote completion was not observed even though the transport has closed.
+        #expect(Set(ownedWork.snapshot.map(\.kind)) == [.mcpRequest, .mcpUnreportedWork])
+        #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
+      } catch {
+        waiting.cancel()
+        try? Data().write(to: directory.appendingPathComponent("release.txt"))
+        await client.shutdown()
+        _ = await waiting.result
+        throw error
+      }
     } catch {
-      waiting.cancel()
-      try? Data().write(to: directory.appendingPathComponent("release.txt"))
-      await client.shutdown()
-      _ = await waiting.result
+      try await runBlockingTest(cleanup)
       throw error
     }
+    try await runBlockingTest(cleanup)
   }
 
   private func fakeHTTPMCPServer(failCancellation: Bool = false) throws -> (
     process: Process,
+    termination: DispatchSemaphore,
     port: Int,
     sessionMarker: URL
   ) {
@@ -859,6 +999,10 @@ final class MCPProxyClientTests {
     ]
     process.standardOutput = FileHandle.nullDevice
     process.standardError = errorPipe
+    // Async callers can resume on another thread. Observe termination before
+    // launch rather than waiting on a thread-local run loop during cleanup.
+    let termination = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in termination.signal() }
     try process.run()
 
     for _ in 0..<200 where !FileManager.default.fileExists(atPath: portFile.path) {
@@ -870,7 +1014,11 @@ final class MCPProxyClientTests {
     else {
       let wasRunning = process.isRunning
       process.terminate()
-      process.waitUntilExit()
+      guard termination.wait(timeout: .now() + .seconds(5)) == .success else {
+        throw GatewayToolError.executionFailed(
+          "Fake HTTP MCP server did not report termination after startup failure: \(directory.path)"
+        )
+      }
       let stderr =
         String(
           data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
@@ -880,7 +1028,7 @@ final class MCPProxyClientTests {
         "Fake HTTP MCP server failed to start (running: \(wasRunning), status: \(process.terminationStatus), directory: \(directory.path)): \(stderr)"
       )
     }
-    return (process, port, sessionMarker)
+    return (process, termination, port, sessionMarker)
   }
 
   private func fakeExitingMCPServer() throws -> (

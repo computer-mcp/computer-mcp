@@ -15,6 +15,11 @@ package struct MCPProcessReceiptStatus: Codable, Equatable, Sendable, Identifiab
 /// A launch receipt and inherited lock outlive a crashed host. Live owners may
 /// create independent sessions; failed or orphaned sessions block new launches.
 final class MCPProcessOwnership: @unchecked Sendable {
+  static var defaultRoot: URL {
+    FileManager.default.temporaryDirectory.appendingPathComponent(
+      "computer-mcp-mcp-processes", isDirectory: true)
+  }
+
   private struct Owner: Codable, Equatable {
     let pid: Int32
     let seconds: UInt64
@@ -34,9 +39,11 @@ final class MCPProcessOwnership: @unchecked Sendable {
   }
 
   private struct Receipt: Codable {
+    var formatVersion: Int?
     let owner: Owner
     var cleanupFailed: Bool
     var hostServicesConfirmed: Bool?
+    var artifact: PluginDirectoryIdentity?
   }
 
   private let root: URL
@@ -53,8 +60,9 @@ final class MCPProcessOwnership: @unchecked Sendable {
     }
   }
 
-  static func acquire(root: URL, workspace: URL, registration: String) throws -> MCPProcessOwnership
-  {
+  static func acquire(
+    root: URL, workspace: URL, registration: String, artifact: PluginDirectoryIdentity? = nil
+  ) throws -> MCPProcessOwnership {
     let scope = try scope(workspace: workspace, registration: registration)
     return try withDirectory(root: root, scope: scope) { directory in
       let names = try entries(directory)
@@ -88,7 +96,8 @@ final class MCPProcessOwnership: @unchecked Sendable {
       guard let owner = try Owner.read(getpid()) else {
         throw failure("Cannot identify the MCP host.")
       }
-      let receipt = Receipt(owner: owner, cleanupFailed: false)
+      let receipt = Receipt(
+        formatVersion: 2, owner: owner, cleanupFailed: false, artifact: artifact)
       let name = UUID().uuidString
       let descriptor = try openFile(directory, name: name, flags: O_RDWR | O_CREAT | O_EXCL)
       do {
@@ -102,6 +111,51 @@ final class MCPProcessOwnership: @unchecked Sendable {
       } catch {
         Darwin.close(descriptor)
         throw error
+      }
+    }
+  }
+
+  /// Called under an exclusive artifact lease. No new runtime can acquire the
+  /// artifact while this checks locks inherited by supervisors and watchdogs.
+  /// Legacy receipts have no file provenance, so live/uncertain ones retain files.
+  static func requireArtifactUnused(root: URL, artifact: PluginDirectoryIdentity) throws {
+    let storage = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard storage >= 0 else {
+      if errno == ENOENT { return }
+      throw failure("Cannot inspect MCP artifact ownership storage.")
+    }
+    defer { Darwin.close(storage) }
+    var original = stat()
+    guard fstat(storage, &original) == 0, original.st_uid == geteuid(),
+      original.st_mode & 0o077 == 0
+    else { throw failure("MCP ownership directory must be private.") }
+    let deadline = ContinuousClock.now + .seconds(5)
+    try visitEntries(storage) { scope in
+      guard ContinuousClock.now < deadline else {
+        throw failure("MCP artifact ownership inspection is incomplete; retry cleanup.")
+      }
+      guard scope.utf8.count == 64,
+        scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+      else { throw failure("Unexpected file in MCP artifact ownership storage.") }
+      try withDirectory(root: root, scope: scope) { directory in
+        var current = stat()
+        guard lstat(root.path, &current) == 0,
+          current.st_dev == original.st_dev, current.st_ino == original.st_ino
+        else { throw failure("MCP artifact ownership storage changed.") }
+        for name in try entries(directory) where name != "scope.lock" {
+          guard UUID(uuidString: name)?.uuidString == name else {
+            throw failure("Unexpected MCP ownership receipt.")
+          }
+          let descriptor = try openFile(directory, name: name, flags: O_RDWR)
+          defer { Darwin.close(descriptor) }
+          let receipt = try readReceipt(descriptor)
+          guard receipt.artifact == artifact || receipt.formatVersion == nil else { continue }
+          let available = flock(descriptor, LOCK_EX | LOCK_NB) == 0
+          guard available || errno == EWOULDBLOCK else {
+            throw failure("Cannot inspect MCP artifact ownership lock.")
+          }
+          guard available && !receipt.cleanupFailed else { throw PluginStoreError.artifactInUse }
+        }
       }
     }
   }
@@ -242,11 +296,18 @@ final class MCPProcessOwnership: @unchecked Sendable {
     var data = Data(count: Int(status.st_size))
     let count = data.withUnsafeMutableBytes { pread(descriptor, $0.baseAddress, $0.count, 0) }
     guard count == data.count else { throw failure("Cannot read MCP ownership receipt.") }
-    return try JSONDecoder().decode(Receipt.self, from: data)
+    let receipt = try JSONDecoder().decode(Receipt.self, from: data)
+    guard receipt.formatVersion == nil || receipt.formatVersion == 2 else {
+      throw failure("Unsupported MCP ownership receipt version.")
+    }
+    return receipt
   }
 
   private static func writeReceipt(_ receipt: Receipt, descriptor: Int32) throws {
     let data = try JSONEncoder().encode(receipt)
+    guard data.count <= 4_096 else {
+      throw failure("MCP ownership receipt exceeds its byte limit.")
+    }
     let count = data.withUnsafeBytes { pwrite(descriptor, $0.baseAddress, $0.count, 0) }
     guard count == data.count, ftruncate(descriptor, off_t(data.count)) == 0, fsync(descriptor) == 0
     else {
@@ -327,6 +388,19 @@ final class MCPProcessOwnership: @unchecked Sendable {
   }
 
   private static func entries(_ descriptor: Int32) throws -> [String] {
+    var names: [String] = []
+    try visitEntries(descriptor) { name in
+      names.append(name)
+      guard names.count < 1_024 else { throw failure("MCP ownership receipt limit reached.") }
+    }
+    return names
+  }
+
+  /// Scope directories can survive completed launches. Stream the root rather
+  /// than treating historical empty scopes as active process receipts.
+  private static func visitEntries(
+    _ descriptor: Int32, _ visit: (String) throws -> Void
+  ) throws {
     let copy = fcntl(descriptor, F_DUPFD_CLOEXEC, 10)
     guard copy >= 0 else { throw failure("Cannot inspect MCP ownership directory.") }
     guard let directory = fdopendir(copy) else {
@@ -334,7 +408,6 @@ final class MCPProcessOwnership: @unchecked Sendable {
       throw failure("Cannot inspect MCP ownership directory.")
     }
     defer { closedir(directory) }
-    var names: [String] = []
     while true {
       errno = 0
       guard let entry = readdir(directory) else {
@@ -344,10 +417,8 @@ final class MCPProcessOwnership: @unchecked Sendable {
       let name = withUnsafePointer(to: &entry.pointee.d_name) {
         $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
       }
-      if name != ".", name != ".." { names.append(name) }
-      guard names.count < 1_024 else { throw failure("MCP ownership receipt limit reached.") }
+      if name != ".", name != ".." { try visit(name) }
     }
-    return names
   }
 
   private static func failure(_ message: String) -> GatewayToolError { .executionFailed(message) }

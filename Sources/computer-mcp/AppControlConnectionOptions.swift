@@ -6,7 +6,7 @@ struct AppControlConnectionOptions: ParsableArguments {
   @Option(
     name: .long,
     help:
-      "Explicit owner-only control socket for an isolated App instance; defaults to the production App."
+      "Owner-only control socket for an App or standalone HTTP host; defaults to the production App."
   )
   var controlSocket: String?
 

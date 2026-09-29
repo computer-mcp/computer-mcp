@@ -69,15 +69,19 @@ struct Plugins: AsyncParsableCommand {
   struct Search: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
       commandName: "search",
-      abstract: "Search official GitHub plugin declarations as JSON; does not install or execute.",
+      abstract: "Search the cached official plugin catalog as JSON; does not install or execute.",
       discussion:
-        "Each page checks up to 10 official repositories and filters their manifests by query and contribution kind. Follow next_page even when a filtered page has no entries. Source provenance is not an artifact signature. Results may be cached for 60 seconds; --refresh requests fresh metadata."
+        "Search and pages filter one official static catalog locally for this host and architecture. The cache refreshes after 10 minutes; --refresh requests conditional validation with a 30-second minimum and respects failure backoff. Stale results retain catalog status and issues. Installation revalidates the exact selected GitHub Release."
     )
     @Argument(help: "Words matched against repository, plugin ID, name and description.")
     var query = ""
     @Option(name: .long, help: "Contribution filter: mcp, cli, or skills.") var kind: String?
-    @Option(name: .long, help: "Repository page, starting at 1.") var page = 1
-    @Flag(name: .long, help: "Bypass the host's short-lived metadata cache.") var refresh = false
+    @Option(name: .long, help: "Local result page, starting at 1; up to 10 plugins per page.")
+    var page = 1
+    @Flag(
+      name: .long,
+      help: "Request conditional catalog validation, subject to refresh and retry limits.")
+    var refresh = false
     @OptionGroup var connection: AppControlConnectionOptions
 
     func validate() throws {
@@ -128,15 +132,18 @@ struct Plugins: AsyncParsableCommand {
   struct Artifacts: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
       commandName: "artifacts",
-      abstract: "List installable archives from an official GitHub release as JSON.",
+      abstract: "List release versions and installable archives from the cached official catalog.",
       discussion:
-        "Use repository and repository_id from plugins search. Defaults to the latest published stable release; --tag selects a published tag, including prereleases. Follow next_page even when artifacts is empty. Save one complete artifacts entry as JSON for install-release. Listing does not download or install archives."
+        "Use repository and repository_id from plugins search. Defaults to the latest compatible stable release; --tag selects a catalog version, including prereleases. Withdrawn or incompatible releases have no installable archives. Versions, prerequisites and asset pages use the local catalog. Save one complete artifacts entry as JSON for install-release; installation independently revalidates GitHub."
     )
     @Argument(help: "Official owner/repository from search.") var repository: String
     @Option(name: .long, help: "Stable repository_id from search.") var repositoryID: Int64
-    @Option(name: .long, help: "Exact published release tag; omitted means latest stable release.")
+    @Option(
+      name: .long,
+      help: "Exact catalog release tag; omitted means latest compatible stable release.")
     var tag: String?
-    @Option(name: .long, help: "Asset page, starting at 1; up to 100 assets per page.") var page = 1
+    @Option(name: .long, help: "Local asset page, starting at 1; up to 10 assets per page.")
+    var page = 1
     @OptionGroup var connection: AppControlConnectionOptions
 
     func validate() throws {

@@ -26,7 +26,7 @@ extension AppControlPlaneService {
   package func doctorMCPRegistration(id: String, workspaceID: String) async throws
     -> MCPRegistrationDoctorReport
   {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     let snapshot = try mcpRegistrations()
     guard let entry = snapshot.registrations.first(where: { $0.id == id }) else {
       throw GatewayToolError.unknownMCPServer(id)
@@ -154,7 +154,7 @@ extension AppControlPlaneService {
     id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
     expectedCurrentDigest: String
   ) throws {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     let snapshot = try mcpRegistrations()
     guard snapshot.currentDigest == expectedCurrentDigest else {
       throw GatewayToolError.invalidArguments(

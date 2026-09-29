@@ -4,8 +4,313 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginStoreInstallationTests {
+  @Test
+  func installedArchiveRetainsTargetForReopenedActivation() async throws {
+    let fixture = try await PreparationFixture.make(
+      manifest: PreparationFixture.platformManifest, format: "zip")
+    defer { fixture.files.remove() }
+    let archive = fixture.files.root.appendingPathComponent("mac.zip")
+    try FileManager.default.copyItem(at: fixture.archive, to: archive)
+    let path = fixture.files.root.appendingPathComponent("target.sqlite").path
+    let store = PluginStore(database: try GatewayDatabase(path: path))
+    let installed = try await store.installArchive(
+      at: archive, expectedSHA256: fixture.digest, pluginID: "combined",
+      version: PluginVersion("1.2.3"),
+      hostVersion: PluginVersion("1.0.0"), architecture: "arm64",
+      storageRoot: fixture.files.root.appendingPathComponent("Plugins"),
+      workerExecutable: fixture.preparation.workerExecutable, expectedRevision: 0)
+    let reopened = PluginStore(database: try GatewayDatabase(path: path))
+    let snapshot = try await reopened.snapshot()
+    #expect(snapshot == installed.snapshot)
+    let record = try #require(snapshot.installations.first)
+    #expect(record.source.artifactName == "mac.zip")
+    let package = try PluginPackage.load(at: record.source.root)
+    let selected = try #require(snapshot.settings["combined"])
+    var settings = selected
+    settings.enabled = true
+    let compatible = try PluginResolver.resolve(
+      package: package, source: record.source, settings: settings,
+      hostVersion: PluginVersion("1.0.0"), architecture: "arm64")
+    #expect(!compatible.mcpServers.isEmpty)
+    let incompatible = try PluginResolver.resolve(
+      package: package, source: record.source, settings: settings,
+      hostVersion: PluginVersion("1.0.0"), architecture: "x86_64")
+    #expect(
+      incompatible.mcpServers.isEmpty && incompatible.cliCommands.isEmpty
+        && incompatible.skillRoots.isEmpty)
+    #expect(incompatible.diagnostics.map(\.code) == [.hostIncompatible])
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: record.source.root.appendingPathComponent("executed").path))
+  }
+
+  @Test
+  func candidatesAcquireIndependentArtifactLeasesInsideTheInstallationTransaction() async throws {
+    let fixture = try await PreparationFixture.make(manifest: Self.skillsManifest)
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    let original = try database.configurationState()
+    var proposed = original.plugins
+    proposed.settings[record.pluginID]?.enabled = true
+    let state = GatewayDatabase.ConfigurationState(
+      workspaces: original.workspaces, workspaceAliases: original.workspaceAliases,
+      profiles: original.profiles, plugins: proposed)
+    let storage = try PluginInstallationStorage(at: fixture.installationRoot)
+    defer { storage.finishTransaction() }
+    #expect(throws: PluginStoreError.installationBusy) {
+      try GatewayRuntime.retainPluginArtifacts(state: proposed, plugins: nil, database: database)
+    }
+    var candidates: [GatewayRuntimePreparation] = []
+    do {
+      for principal in ["first", "second"] {
+        var context = ExecutionContext(caller: .localCLI, profileID: .localAdmin)
+        context.trustedPrincipalID = principal
+        candidates.append(
+          try await GatewayRuntime.prepare(
+            configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+            context: context, database: database, state: state,
+            bundledPlugins: BundledPlugins(packages: [], issues: []), artifactStorage: storage))
+      }
+      #expect(candidates.allSatisfy { $0.runtime.pluginOrigins.count == 1 })
+      #expect(try database.configurationState() == original)
+      storage.finishTransaction()
+      let removed = try await store.uninstallArtifact(
+        installationID: record.id, storageRoot: fixture.installationRoot, expectedRevision: 1)
+      #expect(removed.issues.count == 1)
+      await candidates[0].runtime.shutdown()
+      #expect(
+        try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+      await candidates[1].runtime.shutdown()
+      #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+    } catch {
+      for candidate in candidates { await candidate.runtime.shutdown() }
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func unpublishedPluginStateRetainsArtifactsThroughAuthenticatedSessions(resolved: Bool)
+    async throws
+  {
+    let fixture = try await PreparationFixture.make(manifest: Self.skillsManifest)
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    var proposed = installed.snapshot
+    proposed.settings[record.pluginID]?.enabled = true
+    var active = PluginStoreSnapshot()
+    active.revision = 2
+    try database.savePluginStoreSnapshot(active, expectedRevision: 1)
+    let bundled = BundledPlugins(packages: [], issues: [])
+    let plugins = try resolved ? PluginHost.resolve(proposed, bundled: bundled).plugins : nil
+    let runtime = try await GatewayRuntime.make(
+      configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+      database: database, plugins: plugins, pluginState: proposed, bundledPlugins: bundled)
+    var authenticated: GatewayRuntime?
+    do {
+      #expect(runtime.pluginOrigins.count == 1)
+      #expect(try database.pluginStoreSnapshot() == active)
+      #expect(
+        try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+      authenticated = try runtime.authenticatedSession(principalID: "fixture", transportTrace: nil)
+      #expect(authenticated?.pluginOrigins == runtime.pluginOrigins)
+      await runtime.shutdown()
+      #expect(
+        try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+      await authenticated?.shutdown()
+      #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+      #expect(try database.pluginStoreSnapshot() == active)
+    } catch {
+      await authenticated?.shutdown()
+      await runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test
+  func failedUnpublishedRuntimeJoinsArtifactLeaseCleanup() async throws {
+    let fixture = try await PreparationFixture.make(manifest: Self.skillsManifest)
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    var proposed = installed.snapshot
+    proposed.settings[record.pluginID]?.enabled = true
+    var active = PluginStoreSnapshot()
+    active.revision = 2
+    try database.savePluginStoreSnapshot(active, expectedRevision: 1)
+    let workspace = RegisteredWorkspace(
+      id: "duplicate", displayName: "Fixture", rootPath: fixture.files.root.path)
+    await #expect(throws: GatewayRuntimeError.duplicateWorkspaceID("duplicate")) {
+      try await GatewayRuntime.make(
+        configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+        database: database, registeredWorkspaces: [workspace, workspace], pluginState: proposed,
+        bundledPlugins: BundledPlugins(packages: [], issues: []))
+    }
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+    #expect(try database.pluginStoreSnapshot() == active)
+  }
+
+  private static let skillsManifest = """
+    id = 'combined'
+    name = 'Combined'
+    version = '1.2.3'
+    [compatibility]
+    minimum_host = '1.0.0'
+    architectures = ['arm64']
+    [[skills]]
+    id = 'guide'
+    path = 'skills'
+    """
+
+  @Test(arguments: [false, true])
+  func processReceiptRetainsArtifactAfterRuntimeReleasesIt(uncertain: Bool) async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(path: fixture.files.root.appendingPathComponent("db").path)
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    let artifact = try #require(database.pluginOwnedDirectories().first).identity
+    let root = try #require(database.mcpProcessOwnershipRoot)
+    let owner = try MCPProcessOwnership.acquire(
+      root: root, workspace: fixture.files.root, registration: "native", artifact: artifact)
+    let inherited = try fcntl(owner.supervisorHandle().fileDescriptor, F_DUPFD_CLOEXEC, 10)
+    try #require(inherited >= 0)
+    let handle = FileHandle(fileDescriptor: inherited, closeOnDealloc: true)
+    if uncertain { try owner.finish(confirmed: false, hostServicesConfirmed: true) }
+    let removed = try await store.uninstallArtifact(
+      installationID: record.id, storageRoot: fixture.installationRoot, expectedRevision: 1)
+    #expect(removed.snapshot.installations.isEmpty)
+    #expect(removed.issues.count == 1)
+    #expect(try PluginPackage.load(at: record.source.root).manifest.id == record.pluginID)
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+    try handle.close()
+    if uncertain {
+      // An available process lock does not erase a failed-cleanup receipt.
+      #expect(
+        try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+      let receipt = try #require(
+        MCPProcessOwnership.inspect(
+          root: root, workspace: fixture.files.root, registration: "native"
+        )
+        .first)
+      try MCPProcessOwnership.recover(
+        root: root, workspace: fixture.files.root, registration: "native", id: receipt.id,
+        expectedDigest: receipt.digest)
+    } else {
+      try owner.finish(confirmed: true)
+    }
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+  }
+
+  @Test
+  func uninstallRetainsFilesUntilEveryRuntimeOwnerReleasesThem() async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    _ = try await store.setEnabled(true, for: record.pluginID, expectedRevision: 1)
+    let state = try await store.snapshot()
+    let first = try GatewayRuntime.retainPluginArtifacts(
+      state: state, plugins: nil, database: database)
+    let second = try GatewayRuntime.retainPluginArtifacts(
+      state: state, plugins: nil, database: database)
+    defer { for lease in first + second { lease.close() } }
+    #expect(first.count == 1 && second.count == 1)
+    let removed = try await store.uninstallArtifact(
+      installationID: record.id, storageRoot: fixture.installationRoot, expectedRevision: 2)
+    #expect(removed.snapshot.installations.isEmpty)
+    #expect(removed.snapshot.selectedInstallations.isEmpty)
+    #expect(removed.issues.count == 1)
+    #expect(try PluginPackage.load(at: record.source.root).manifest.id == record.pluginID)
+    for lease in first { lease.close() }
+    let reopened = PluginStore(database: database)
+    #expect(
+      try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
+    #expect(try database.pluginOwnedDirectories().count == 1)
+    for lease in second { lease.close() }
+    #expect(try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(try database.pluginOwnedDirectories().isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+  }
+
+  @Test
+  func finishedRuntimeLeaseDoesNotRemainHeldByIncidentalDescriptorCopies() async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    let artifact = try #require(database.pluginOwnedDirectories().first).identity
+    let storage = try PluginInstallationStorage(at: fixture.installationRoot)
+    let lease = try storage.retainArtifact(artifact)
+    storage.finishTransaction()
+    defer { lease.close() }
+
+    // An unrelated child between fork and exec can momentarily hold a CLOEXEC copy.
+    var named = stat()
+    try #require(lstat(artifact.url.appendingPathComponent("artifact.lock").path, &named) == 0)
+    let descriptors = try FileManager.default.contentsOfDirectory(atPath: "/dev/fd")
+      .compactMap(Int32.init)
+    let descriptor = try #require(
+      descriptors.first { descriptor in
+        var opened = stat()
+        return fstat(descriptor, &opened) == 0
+          && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino
+      })
+    let copy = fcntl(descriptor, F_DUPFD_CLOEXEC, 10)
+    try #require(copy >= 0)
+    defer { Darwin.close(copy) }
+    let removed = try await store.uninstallArtifact(
+      installationID: record.id, storageRoot: fixture.installationRoot, expectedRevision: 1)
+    #expect(removed.issues.count == 1)
+    lease.close()
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: record.source.root.path))
+  }
+
+  @Test
+  func artifactLeaseRejectsASymlinkWithoutTouchingItsTarget() async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let record = try #require(installed.snapshot.installations.first)
+    let directory = try #require(database.pluginOwnedDirectories().first)
+    let target = fixture.files.root.appendingPathComponent("user-owned-lock")
+    try Data("preserved".utf8).write(to: target)
+    try FileManager.default.createSymbolicLink(
+      at: directory.identity.url.appendingPathComponent("artifact.lock"),
+      withDestinationURL: target)
+    let storage = try PluginInstallationStorage(at: fixture.installationRoot)
+    #expect(throws: PluginArchiveError.fileSystemFailure) {
+      try storage.retainArtifact(directory.identity)
+    }
+    storage.finishTransaction()
+    let removed = try await store.uninstallArtifact(
+      installationID: record.id, storageRoot: fixture.installationRoot, expectedRevision: 1)
+    #expect(removed.issues.count == 1)
+    #expect(try String(contentsOf: target, encoding: .utf8) == "preserved")
+    #expect(FileManager.default.fileExists(atPath: record.source.root.path))
+  }
+
   @Test
   func installUpdateRollbackAndUninstallPreserveHostChoicesAndExternalFiles() async throws {
     let fixture = try await PreparationFixture.make()
@@ -103,13 +408,18 @@ struct PluginStoreInstallationTests {
       try FileManager.default.contentsOfDirectory(atPath: fixture.installationRoot.path).count == 2)
   }
 
-  @Test
-  func suspendedInstallationRechecksRevisionAndHoldsTheCrossStoreLock() async throws {
+  @Test(arguments: ["plugin", "workspace", "profile"])
+  func suspendedInstallationRechecksConfigurationAndHoldsTheCrossStoreLock(change: String)
+    async throws
+  {
     let fixture = try await PreparationFixture.make()
     defer { fixture.files.remove() }
-    let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database)
-    let other = PluginStore(database: database)
+    let path = fixture.files.root.appendingPathComponent("gateway.sqlite").path
+    let database = try GatewayDatabase(path: path)
+    let concurrent = try GatewayDatabase(path: path)
+    let store = PluginStore(
+      database: database, expectedConfiguration: try database.configurationState())
+    let other = PluginStore(database: concurrent)
     let ready = fixture.files.root.appendingPathComponent("ready")
     let release = fixture.files.root.appendingPathComponent("release")
     let worker = try await fixture.stub(
@@ -127,12 +437,30 @@ struct PluginStoreInstallationTests {
       await #expect(throws: PluginStoreError.installationBusy) {
         try await other.recoverInstallations(storageRoot: fixture.installationRoot)
       }
-      let changed = try await other.setEnabled(false, for: "another", expectedRevision: 0)
-      try Data().write(to: release)
-      await #expect(throws: PluginStoreError.staleRevision(expected: 0, actual: 1)) {
-        try await installing.value
+      switch change {
+      case "plugin":
+        _ = try await other.setEnabled(false, for: "another", expectedRevision: 0)
+      case "workspace":
+        try concurrent.saveWorkspace(
+          RegisteredWorkspace(id: "added", displayName: "Added", rootPath: fixture.files.root.path))
+      default:
+        try concurrent.saveProfile(
+          ProfileGrant(
+            id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: [],
+            allowedCallers: [.localCLI]))
       }
-      #expect(try await store.snapshot() == changed)
+      let changed = try database.configurationState()
+      try Data().write(to: release)
+      if change == "plugin" {
+        await #expect(throws: PluginStoreError.staleRevision(expected: 0, actual: 1)) {
+          try await installing.value
+        }
+      } else {
+        await #expect(throws: GatewayDatabaseError.configurationChanged) {
+          try await installing.value
+        }
+      }
+      #expect(try database.configurationState() == changed)
       #expect(try database.pluginOwnedDirectories().isEmpty)
       #expect(
         try FileManager.default.contentsOfDirectory(atPath: fixture.installationRoot.path) == [

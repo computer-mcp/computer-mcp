@@ -4,8 +4,20 @@ import os
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPCallCancellationTests {
+  @Test
+  func successfulDeliveryPreservesTheConnectionWithinItsBudget() async {
+    let cancellation = MCPCallCancellation()
+    let failures = OSAllocatedUnfairLock(initialState: 0)
+    cancellation.install(
+      onDeliveryFailure: { failures.withLock { $0 += 1 } },
+      { try await Task.sleep(for: .milliseconds(400)) })
+    cancellation.cancel()
+    await cancellation.finish()
+    #expect(failures.withLock { $0 } == 0)
+  }
+
   @Test(arguments: [false, true])
   func cancellationBeforeOrAfterRegistrationDeliversOnce(before: Bool) async throws {
     let cancellation = MCPCallCancellation()
@@ -38,7 +50,7 @@ struct MCPCallCancellationTests {
 
   @Test(arguments: [false, true])
   func failedOrStuckDeliveryRetiresAndJoinsTheWriter(stuck: Bool) async {
-    let cancellation = MCPCallCancellation()
+    let cancellation = MCPCallCancellation(deliveryTimeout: .milliseconds(250))
     let failures = OSAllocatedUnfairLock(initialState: 0)
     let completed = OSAllocatedUnfairLock(initialState: false)
     let writer = CancellationWriterGate()

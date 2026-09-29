@@ -187,25 +187,43 @@ package struct AppControlPlaneOperations: Sendable {
     at url: URL,
     displayName: String? = nil
   ) async throws -> RegisteredWorkspace {
-    let workspace = try await controlPlane.registerWorkspace(at: url, displayName: displayName)
-    _ = try await restartGatewayIfRunning()
+    guard
+      case .registered(let workspace, _) =
+        try await gatewayService.changeWorkspaces(.register(url, displayName: displayName))
+    else {
+      throw GatewayDatabaseError.invalidStoredValue("Workspace registration result is unavailable.")
+    }
+    return workspace
+  }
+
+  package func repairWorkspace(
+    id: String, at url: URL, displayName: String? = nil
+  ) async throws -> RegisteredWorkspace {
+    guard
+      case .repaired(let workspace) = try await gatewayService.changeWorkspaces(
+        .repair(id: id, root: url, displayName: displayName))
+    else {
+      throw GatewayDatabaseError.invalidStoredValue("Workspace repair result is unavailable.")
+    }
     return workspace
   }
 
   package func removeWorkspace(id: String) async throws {
-    try await controlPlane.removeWorkspace(id: id)
-    _ = try await restartGatewayIfRunning()
+    _ = try await gatewayService.changeWorkspaces(.remove(id))
   }
 
   package func applyWorkspaceDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool
   ) async throws -> WorkspaceDeduplicationResult {
-    let result = try await controlPlane.applyWorkspaceDeduplication(
-      expectedPlanDigest: expectedPlanDigest,
-      allowMetadataConflicts: allowMetadataConflicts
-    )
-    _ = try await restartGatewayIfRunning()
+    guard
+      case .deduplicated(let result) = try await gatewayService.changeWorkspaces(
+        .deduplicate(
+          expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts))
+    else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Workspace deduplication result is unavailable.")
+    }
     return result
   }
 
@@ -246,52 +264,70 @@ package struct AppControlPlaneOperations: Sendable {
     return grant
   }
 
+  package func controlSessions() async -> [GatewayControlSessionSnapshot] {
+    await gatewayService.controlSessions()
+  }
+
+  package func approveControlSession(
+    id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
+    expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
+    enableShellFacility: Bool = false, approver: GatewayCallerKind = .localApp
+  ) async throws -> GatewayControlSessionSnapshot {
+    try await gatewayService.approveControlSession(
+      id: id, lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision, enableShellFacility: enableShellFacility,
+      approver: approver)
+  }
+
+  package func clientTrusts() throws -> [GatewayClientTrust] {
+    try controlPlane.database.clientTrusts()
+  }
+
+  package func revokeClientTrust(
+    id: String, expectedRevision: Int64, approver: GatewayCallerKind = .localApp
+  ) throws {
+    try controlPlane.database.revokeClientTrust(
+      id: id, expectedRevision: expectedRevision, approver: approver)
+  }
+
+  package func limitControlSession(
+    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+  ) async throws -> GatewayControlSessionSnapshot {
+    try await gatewayService.limitControlSession(
+      id: id, to: mode, expectedRevision: expectedRevision)
+  }
+
+  package func endControlSession(id: String, expectedRevision: Int64) async throws {
+    try await gatewayService.endControlSession(id: id, expectedRevision: expectedRevision)
+  }
+
   package func updateProfilePermissions(
     profileID: GatewayProfileID, mode: GatewayPermissionMode? = nil,
     confirmationPolicy: GatewayConfirmationPolicy? = nil, fullShellEnabled: Bool? = nil,
     capabilityIDs: Set<String>? = nil, workspaceIDs: Set<String>? = nil,
     mcpServerIDs: Set<String>? = nil, allowedCallers: Set<GatewayCallerKind>? = nil,
-    expectedRevision: Int64? = nil
+    expectedRevision: Int64? = nil,
+    reviewedOptions: ProfilePermissionOptions? = nil
   ) async throws -> ProfileGrant {
     try await controlPlane.updateProfilePermissions(
       profileID: profileID, mode: mode, confirmationPolicy: confirmationPolicy,
       fullShellEnabled: fullShellEnabled, capabilityIDs: capabilityIDs,
       workspaceIDs: workspaceIDs, mcpServerIDs: mcpServerIDs,
-      allowedCallers: allowedCallers, expectedRevision: expectedRevision)
+      allowedCallers: allowedCallers, expectedRevision: expectedRevision,
+      reviewedOptions: reviewedOptions)
   }
 
   package func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws
     -> ConfigurationRevision
   {
-    let previous = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
-    let revision = try await controlPlane.activateManifest(manifest, expectedDigest: expectedDigest)
-    do {
-      _ = try await restartGatewayIfRunning()
-      return revision
-    } catch {
-      _ = try? await controlPlane.activateManifest(previous, expectedDigest: revision.digest)
-      _ = try? await restartGatewayIfRunning()
-      throw error
-    }
+    try await gatewayService.changeManifest(manifest, expectedDigest: expectedDigest)
   }
 
   package func rollbackManifest(to revisionID: String) async throws -> ConfigurationRevision {
-    let previous = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
-    let revision = try await controlPlane.rollbackManifest(to: revisionID)
-    do {
-      _ = try await restartGatewayIfRunning()
-      return revision
-    } catch {
-      _ = try? await controlPlane.activateManifest(previous)
-      _ = try? await restartGatewayIfRunning()
-      throw error
+    guard let revision = try controlPlane.database.configurationRevision(id: revisionID) else {
+      throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
+    return try await gatewayService.changeManifest(revision.manifest, reason: .rolledBack)
   }
 
   package func refreshProvider(id: String? = nil) async throws -> [ProviderState] {
@@ -401,7 +437,7 @@ package struct AppControlPlaneOperations: Sendable {
   }
 
   package func startCloudflareTunnel(id: String) async throws -> CloudflareTunnelStatus {
-    try await controlPlane.startCloudflareTunnel(profileID: id)
+    try await controlPlane.startCloudflareTunnel(profileID: id, gatewayService: gatewayService)
   }
 
   package func stopCloudflareTunnel(id: String) async throws -> CloudflareTunnelStatus {

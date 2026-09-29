@@ -6,6 +6,7 @@ struct PluginCatalogView: View {
   @ObservedObject var model: PluginCatalogModel
   @State private var release: PluginReleaseSelection?
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
 
   init(management: PluginManagementModel) {
     self.management = management
@@ -15,46 +16,75 @@ struct PluginCatalogView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       HStack {
-        Text("Official plugin search").font(.title2.bold())
+        Text("Official plugin search", bundle: AppLocalization.resourceBundle).font(.title2.bold())
         Spacer()
-        Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+        Button {
+          dismiss()
+        } label: {
+          Text("Done", bundle: AppLocalization.resourceBundle)
+        }
+        .keyboardShortcut(.cancelAction)
       }
-      Text("Search public repositories published by computer-mcp on GitHub.")
-        .foregroundStyle(.secondary)
+      Text(
+        "Search published official plugins. Results are filtered for this Mac.",
+        bundle: AppLocalization.resourceBundle
+      )
+      .foregroundStyle(.secondary)
       HStack {
-        TextField("Search names, descriptions, or repositories", text: $model.query)
-          .textFieldStyle(.roundedBorder).onSubmit { Task { await model.search() } }
-        Picker("Contribution", selection: $model.kind) {
-          Text("All contributions").tag(IntegrationKind?.none)
+        TextField(text: $model.query) {
+          Text(
+            "Search names, descriptions, or repositories", bundle: AppLocalization.resourceBundle)
+        }
+        .textFieldStyle(.roundedBorder).onSubmit { Task { await model.search() } }
+        Picker(selection: $model.kind) {
+          Text("All contributions", bundle: AppLocalization.resourceBundle).tag(
+            IntegrationKind?.none)
           Text(verbatim: "MCP").tag(IntegrationKind?.some(.mcp))
           Text(verbatim: "CLI").tag(IntegrationKind?.some(.cli))
-          Text("Skills").tag(IntegrationKind?.some(.skills))
-        }.labelsHidden().fixedSize()
-        Button("Search") { Task { await model.search() } }.disabled(model.isLoading)
+          Text("Skills", bundle: AppLocalization.resourceBundle).tag(IntegrationKind?.some(.skills))
+        } label: {
+          Text("Contribution", bundle: AppLocalization.resourceBundle)
+        }
+        .labelsHidden().fixedSize()
+        Button {
+          Task { await model.search() }
+        } label: {
+          Text("Search", bundle: AppLocalization.resourceBundle)
+        }.disabled(model.isLoading)
       }
       if let error = model.errorMessage {
         VStack(alignment: .leading, spacing: 4) {
           Text(verbatim: error).foregroundStyle(.red)
           if model.result != nil {
-            Text("Previous results are shown below; the latest request failed.")
-              .foregroundStyle(.secondary)
+            Text(
+              "Previous results are shown below; the latest request failed.",
+              bundle: AppLocalization.resourceBundle
+            )
+            .foregroundStyle(.secondary)
           }
         }.textSelection(.enabled)
       }
       if model.isLoading {
         HStack {
           ProgressView().controlSize(.small)
-          Text("Searching GitHub")
+          Text("Searching official catalog", bundle: AppLocalization.resourceBundle)
           Spacer()
-          Button("Cancel search") { model.cancel() }
+          Button {
+            model.cancel()
+          } label: {
+            Text("Cancel search", bundle: AppLocalization.resourceBundle)
+          }
         }
       }
       if let result = model.result {
         results(result)
       } else {
         Spacer()
-        Text("Discovery does not install packages or grant access.")
-          .foregroundStyle(.secondary)
+        Text(
+          "Discovery does not install packages or grant access.",
+          bundle: AppLocalization.resourceBundle
+        )
+        .foregroundStyle(.secondary)
         Spacer()
       }
     }
@@ -70,29 +100,74 @@ struct PluginCatalogView: View {
   }
 
   private func results(_ result: PluginCatalogSearchResult) -> some View {
-    let pageLabel = AppLocalization.formatted("Repository page %@", String(result.page))
-    let fetchedTime = result.fetchedAt.formatted(date: .omitted, time: .shortened)
+    let pageLabel = AppLocalization.formatted(
+      "Catalog page %@", locale: locale, String(result.page))
+    let fetchedTime = result.fetchedAt.formatted(
+      Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
     return VStack(alignment: .leading, spacing: 12) {
       HStack {
         Text(verbatim: pageLabel)
         Spacer()
-        Text(result.cached ? "Cached" : "Fetched from GitHub").foregroundStyle(.secondary)
+        Group {
+          if result.cached {
+            Text("Cached", bundle: AppLocalization.resourceBundle)
+          } else {
+            Text("Loaded from official catalog", bundle: AppLocalization.resourceBundle)
+          }
+        }.foregroundStyle(.secondary)
         Text(verbatim: fetchedTime)
           .foregroundStyle(.secondary)
       }
-      if !result.query.isEmpty { LabeledContent("Results for", value: result.query) }
-      if let kind = result.kind { LabeledContent("Contribution", value: kind.rawValue) }
+      if let status = result.catalog {
+        let generationLabel = AppLocalization.formatted(
+          "Catalog generation %@", locale: locale, String(status.generation))
+        let publicationLabel = AppLocalization.formatted(
+          "Published %@", locale: locale,
+          status.generatedAt.formatted(
+            Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)))
+        if status.stale {
+          Label {
+            Text(
+              "Catalog could not be refreshed. Showing saved results.",
+              bundle: AppLocalization.resourceBundle)
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
+          .foregroundStyle(.orange)
+        }
+        Text(verbatim: generationLabel)
+          .font(.caption).foregroundStyle(.secondary)
+        Text(verbatim: publicationLabel)
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      if !result.query.isEmpty {
+        LabeledContent {
+          Text(verbatim: result.query)
+        } label: {
+          Text("Results for", bundle: AppLocalization.resourceBundle)
+        }
+      }
+      if let kind = result.kind {
+        LabeledContent {
+          Text(verbatim: kind.rawValue)
+        } label: {
+          Text("Contribution", bundle: AppLocalization.resourceBundle)
+        }
+      }
       if !result.issues.isEmpty {
-        Label(
-          "Some repositories could not be checked. Results may be incomplete.",
-          systemImage: "exclamationmark.triangle"
-        )
+        Label {
+          Text(
+            "Some catalog data is unavailable. Review the details below.",
+            bundle: AppLocalization.resourceBundle)
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+        }
         .foregroundStyle(.secondary)
       }
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           if result.entries.isEmpty {
-            Text("No matching plugins on this repository page.")
+            Text("No matching plugins.", bundle: AppLocalization.resourceBundle)
               .font(.headline).padding(.vertical, 24)
           }
           ForEach(result.entries) { entry in
@@ -100,7 +175,7 @@ struct PluginCatalogView: View {
             Divider()
           }
           if !result.issues.isEmpty {
-            DisclosureGroup("Repositories with discovery issues") {
+            DisclosureGroup {
               ForEach(Array(result.issues.enumerated()), id: \.offset) { _, issue in
                 VStack(alignment: .leading, spacing: 4) {
                   Text(verbatim: issue.repository).font(.headline)
@@ -108,25 +183,39 @@ struct PluginCatalogView: View {
                   Text(verbatim: issue.code).font(.caption).foregroundStyle(.secondary)
                 }.padding(.vertical, 6)
               }
+            } label: {
+              Text("Catalog issues", bundle: AppLocalization.resourceBundle)
             }
           }
         }.frame(maxWidth: .infinity, alignment: .leading)
       }
       HStack {
-        Button("Previous page") { Task { await model.page(result.page - 1) } }
-          .disabled(result.page <= 1 || model.isLoading)
-        Button("Next page") {
+        Button {
+          Task { await model.page(result.page - 1) }
+        } label: {
+          Text("Previous page", bundle: AppLocalization.resourceBundle)
+        }
+        .disabled(result.page <= 1 || model.isLoading)
+        Button {
           if let next = result.nextPage { Task { await model.page(next) } }
-        }.disabled(result.nextPage == nil || model.isLoading)
+        } label: {
+          Text("Next page", bundle: AppLocalization.resourceBundle)
+        }
+        .disabled(result.nextPage == nil || model.isLoading)
         Spacer()
-        Button("Refresh page") { Task { await model.refresh() } }.disabled(model.isLoading)
+        Button {
+          Task { await model.refresh() }
+        } label: {
+          Text("Refresh catalog", bundle: AppLocalization.resourceBundle)
+        }.disabled(model.isLoading)
       }
       Text(
-        "Each page checks up to 10 repositories. Continue to the next page even if this page has no matches."
+        "Search, filters and pages use the cached catalog.", bundle: AppLocalization.resourceBundle
       )
       .font(.caption).foregroundStyle(.secondary)
       Text(
-        "Official source identifies the publisher, not a verified artifact or signature. Discovery does not install packages or grant access."
+        "Official source identifies the publisher, not a verified artifact or signature. Discovery does not install packages or grant access.",
+        bundle: AppLocalization.resourceBundle
       )
       .font(.caption).foregroundStyle(.secondary)
     }
@@ -164,23 +253,56 @@ struct PluginCatalogView: View {
             Image(systemName: "terminal")
           }
         }
-        if !entry.skills.isEmpty { Label("Skills", systemImage: "book") }
+        if !entry.skills.isEmpty {
+          Label {
+            Text("Skills", bundle: AppLocalization.resourceBundle)
+          } icon: {
+            Image(systemName: "book")
+          }
+        }
       }.font(.caption)
-      DisclosureGroup("Source details") {
-        LabeledContent("Plugin", value: entry.pluginID)
-        LabeledContent("Repository ID", value: String(entry.repositoryID))
-        LabeledContent("Publisher ID", value: String(entry.publisherID))
-        LabeledContent("Commit", value: entry.revision)
-        LabeledContent("Manifest SHA-256", value: entry.manifestSHA256)
-        Link("Open pinned declaration", destination: entry.manifestURL)
-      }.font(.caption).textSelection(.enabled)
+      DisclosureGroup {
+        LabeledContent {
+          Text(verbatim: entry.pluginID)
+        } label: {
+          Text("Plugin", bundle: AppLocalization.resourceBundle)
+        }
+        LabeledContent {
+          Text(verbatim: String(entry.repositoryID))
+        } label: {
+          Text("Repository ID", bundle: AppLocalization.resourceBundle)
+        }
+        LabeledContent {
+          Text(verbatim: String(entry.publisherID))
+        } label: {
+          Text("Publisher ID", bundle: AppLocalization.resourceBundle)
+        }
+        LabeledContent {
+          Text(verbatim: entry.revision)
+        } label: {
+          Text("Commit", bundle: AppLocalization.resourceBundle)
+        }
+        LabeledContent {
+          Text(verbatim: entry.manifestSHA256)
+        } label: {
+          Text("Manifest SHA-256", bundle: AppLocalization.resourceBundle)
+        }
+        Link(destination: entry.manifestURL) {
+          Text("Open pinned declaration", bundle: AppLocalization.resourceBundle)
+        }
+      } label: {
+        Text("Source details", bundle: AppLocalization.resourceBundle)
+      }
+      .font(.caption).textSelection(.enabled)
     }
   }
 
   private func issueMessage(_ issue: PluginCatalogIssue) -> String {
     if let status = issue.httpStatus {
-      return AppLocalization.formatted("GitHub request failed with HTTP %@.", String(status))
+      return AppLocalization.formatted(
+        "Plugin request failed with HTTP %@.", locale: locale, String(status))
     }
-    return AppLocalization.errorDescription(issue.message)
+    return AppLocalization.errorDescription(
+      issue.message, preferredLocalizations: [locale.identifier])
   }
 }

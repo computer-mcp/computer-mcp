@@ -4,6 +4,57 @@ import Testing
 @testable import ComputerMCP
 
 struct PluginStoreTests {
+  @Test(arguments: ["workspace", "profile"])
+  func configurationChangesDuringPreflightRejectPluginCommit(change: String) async throws {
+    let fixture = try PluginStoreFixture()
+    defer { fixture.cleanup() }
+    let database = try GatewayDatabase(path: fixture.databaseURL.path)
+    let concurrent = try GatewayDatabase(path: fixture.databaseURL.path)
+    let workspace = RegisteredWorkspace(
+      id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
+    try database.saveWorkspace(workspace)
+    let store = PluginStore(database: database) { _ in
+      if change == "workspace" {
+        try concurrent.deleteWorkspace(id: workspace.id)
+      } else {
+        try concurrent.saveProfile(
+          ProfileGrant(
+            id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: [workspace.id],
+            allowedCallers: [.localCLI]))
+      }
+    }
+    var rejected = false
+    do {
+      _ = try await store.setEnabled(true, for: "candidate", expectedRevision: 0)
+    } catch {
+      #expect(error as? GatewayDatabaseError == .configurationChanged)
+      rejected = true
+    }
+    #expect(rejected)
+    #expect(try database.pluginStoreSnapshot() == PluginStoreSnapshot())
+    if change == "workspace" {
+      #expect(try database.workspace(id: workspace.id) == nil)
+    } else {
+      #expect(try database.profiles().count == 1)
+    }
+  }
+
+  @Test
+  func preparationSnapshotRejectsChangesBeforePreflightBegins() async throws {
+    let fixture = try PluginStoreFixture()
+    defer { fixture.cleanup() }
+    let database = try GatewayDatabase(path: fixture.databaseURL.path)
+    let expected = try database.configurationState()
+    let store = PluginStore(database: database, expectedConfiguration: expected)
+    try GatewayDatabase(path: fixture.databaseURL.path).saveWorkspace(
+      RegisteredWorkspace(id: "added", displayName: "Added", rootPath: fixture.root.path))
+    await #expect(throws: GatewayDatabaseError.configurationChanged) {
+      try await store.setEnabled(true, for: "candidate", expectedRevision: 0)
+    }
+    #expect(try database.pluginStoreSnapshot() == expected.plugins)
+    #expect(try database.workspaces().map(\.id) == ["added"])
+  }
+
   @Test
   func developmentRegistrationIsDisabledUntilTheHostEnablesIt() async throws {
     let fixture = try PluginStoreFixture()

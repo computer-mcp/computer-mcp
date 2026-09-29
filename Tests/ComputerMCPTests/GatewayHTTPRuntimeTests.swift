@@ -7,7 +7,7 @@ import Testing
 @Suite(.serialized)
 struct GatewayHTTPRuntimeTests {
   @Test
-  func testCredentialPrincipalOwnsOperationAcrossReconnectButNotAnotherCredential() async throws {
+  func testOperationConsentRequiresItsSessionAndFreshApprovalAfterReconnect() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -51,8 +51,11 @@ struct GatewayHTTPRuntimeTests {
       let ticketID = try #require(
         prepared.result.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["ticket_id"]?.stringValue)
+      let firstScope = try #require(await first.controlSessions().first)
+      #expect(try database.operationTicket(id: ticketID)?.controlSessionID == firstScope.id)
       try database.resolveOperationApproval(id: ticketID, approved: true, resolver: .localCLI)
       await firstSession.disconnect()
+      #expect(await first.controlSessions().isEmpty)
 
       let otherSession = try await GatewayClientSession.connectHTTP(
         endpoint: try #require(URL(string: "http://127.0.0.1:\(otherPort)/mcp")),
@@ -69,7 +72,29 @@ struct GatewayHTTPRuntimeTests {
 
       let reconnected = try await GatewayClientSession.connectHTTP(
         endpoint: endpoint, accessToken: "first-fixture-credential")
-      let completed = try await reconnected.call(toolName: "operations.commit", arguments: commit)
+      let nextScope = try #require(await first.controlSessions().first)
+      #expect(nextScope.principalID == firstScope.principalID)
+      #expect(nextScope.id != firstScope.id)
+      let stale = try await reconnected.call(toolName: "operations.commit", arguments: commit)
+      #expect(stale.result.objectValue?["isError"] == .bool(true))
+      #expect(try database.operationTicket(id: ticketID)?.state == .approved)
+      #expect(
+        !FileManager.default.fileExists(atPath: root.appendingPathComponent("owned.txt").path))
+      let fresh = try await reconnected.call(
+        toolName: "operations.prepare",
+        arguments: .object([
+          "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
+        ]))
+      let freshID = try #require(
+        fresh.result.objectValue?["structuredContent"]?.objectValue?["result"]?
+          .objectValue?["ticket_id"]?.stringValue)
+      try database.resolveOperationApproval(id: freshID, approved: true, resolver: .localCLI)
+      let completed = try await reconnected.call(
+        toolName: "operations.commit",
+        arguments: .object([
+          "workspace_id": .string("fixture"), "ticket_id": .string(freshID),
+          "tool": .string("file.write"), "arguments": target,
+        ]))
       #expect(completed.result.objectValue?["isError"] != .bool(true))
       #expect(
         try String(contentsOf: root.appendingPathComponent("owned.txt"), encoding: .utf8)
@@ -80,6 +105,82 @@ struct GatewayHTTPRuntimeTests {
     } catch {
       await other.stop()
       await first.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func sameCredentialSessionsObserveIndependentCurrentConsent() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let value = root.appendingPathComponent("value.txt")
+    try Data("original".utf8).write(to: value)
+    let database = try GatewayDatabase(inMemory: ())
+    let profile = ProfileGrantConfig(
+      id: .chatGPTOperate, capabilities: ["file.read", "file.write"], workspaces: ["fixture"],
+      allowedCallers: [.secureTunnel], mode: .workspaceOperations, confirmationPolicy: .never)
+    try database.saveProfile(profile.grant)
+    let configuration = GatewayConfiguration(
+      runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
+      builtin: .init(enabled: ["file.read", "file.write"]))
+    let gateway = try GatewayRuntime(
+      configuration: configuration, database: database,
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+    let runtime = GatewayHTTPRuntime(
+      configuration: configuration, registry: gateway, host: "127.0.0.1", port: 0,
+      publicBaseURL: nil, accessToken: "shared-fixture-credential")
+    try await runtime.startListening()
+    do {
+      let port = try #require(await runtime.boundPort())
+      let endpoint = try #require(URL(string: "http://127.0.0.1:\(port)/mcp"))
+      let first = try await GatewayClientSession.connectHTTP(
+        endpoint: endpoint, accessToken: "shared-fixture-credential")
+      let firstScope = try #require(await runtime.controlSessions().first)
+      let second = try await GatewayClientSession.connectHTTP(
+        endpoint: endpoint, accessToken: "shared-fixture-credential")
+      let secondScope = try #require(
+        await runtime.controlSessions().first { $0.id != firstScope.id })
+      #expect(firstScope.principalID == secondScope.principalID)
+      let restricted = try await runtime.limitControlSession(
+        id: firstScope.id, to: .readOnly, expectedRevision: firstScope.revision)
+      #expect(restricted.revision == firstScope.revision + 1)
+      await #expect(throws: (any Error).self) {
+        try await runtime.limitControlSession(
+          id: firstScope.id, to: .localFullAccess, expectedRevision: firstScope.revision)
+      }
+      #expect(try await first.listToolNames().contains("file.read"))
+      #expect(try await !first.listToolNames().contains("file.write"))
+      #expect(try await second.listToolNames().contains("file.write"))
+      let write: JSONValue = .object([
+        "workspace_id": .string("fixture"), "path": .string("value.txt"),
+        "content": .string("authorized"), "confirm": .bool(true),
+      ])
+      let denied = try await first.call(toolName: "file.write", arguments: write)
+      #expect(denied.result.objectValue?["isError"] == .bool(true))
+      #expect(try String(contentsOf: value, encoding: .utf8) == "original")
+      let allowed = try await second.call(toolName: "file.write", arguments: write)
+      #expect(allowed.result.objectValue?["isError"] == .bool(false))
+      #expect(try String(contentsOf: value, encoding: .utf8) == "authorized")
+      try await runtime.endControlSession(id: firstScope.id, expectedRevision: restricted.revision)
+      #expect(try await first.listToolNames().isEmpty)
+      let read: JSONValue = .object([
+        "workspace_id": .string("fixture"), "path": .string("value.txt"),
+      ])
+      #expect(
+        try await first.call(toolName: "file.read", arguments: read).result.objectValue?["isError"]
+          == .bool(true))
+      #expect(
+        try await second.call(toolName: "file.read", arguments: read).result.objectValue?["isError"]
+          == .bool(false))
+      #expect(try database.profiles().first?.mode == .workspaceOperations)
+      await first.disconnect()
+      #expect(await runtime.controlSessions().map(\.id) == [secondScope.id])
+      await second.disconnect()
+      #expect(await runtime.controlSessions().isEmpty)
+      await runtime.stop()
+    } catch {
+      await runtime.stop()
       throw error
     }
   }
@@ -361,6 +462,7 @@ struct GatewayHTTPRuntimeTests {
     }
 
     #expect((await runtime.activeSessionCount()) == 0)
+    #expect(await runtime.controlSessions().isEmpty)
     await session.disconnect()
     await runtime.stop()
   }
@@ -388,6 +490,7 @@ struct GatewayHTTPRuntimeTests {
     }
 
     #expect((await runtime.activeSessionCount()) == 0)
+    #expect(await runtime.controlSessions().isEmpty)
     await runtime.stop()
   }
 

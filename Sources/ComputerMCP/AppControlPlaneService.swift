@@ -60,11 +60,11 @@ package actor AppControlPlaneService {
   private var cachedLaunchAtLoginState: LaunchAtLoginState = .unavailable
   private var launchAtLoginRefreshInProgress = false
   private var launchAtLoginGeneration: UInt64 = 0
-  var pluginMutationInProgress = false
+  var configurationMutationInProgress = false
   var pluginRecoveryAttempted = false
   var pluginRecoveryIssues: [PluginStoreIssue] = []
   var pluginRecoveryError: String?
-  let pluginCatalog: any PluginCatalogSearching
+  let pluginCatalog: any PluginCatalogBrowsing
   let pluginReleases: GitHubPluginReleases
   let pluginDownload: GitHubPluginDownload
   let bundledPlugins: BundledPlugins
@@ -81,7 +81,7 @@ package actor AppControlPlaneService {
     launchAtLoginController: any LaunchAtLoginControlling =
       SMAppServiceLaunchAtLoginController(),
     bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
-    pluginCatalog: any PluginCatalogSearching = GitHubPluginCatalog(),
+    pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
     pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
     bundledPlugins: BundledPlugins = .current
@@ -95,7 +95,11 @@ package actor AppControlPlaneService {
     self.providerDiscovery = providerDiscovery
     self.launchAtLoginController = launchAtLoginController
     self.bookmarkService = bookmarkService
-    self.pluginCatalog = pluginCatalog
+    self.pluginCatalog =
+      pluginCatalog
+      ?? StaticPluginCatalog(
+        cacheURL: directories.applicationSupport.appendingPathComponent(
+          "Cache/PluginCatalog/index.json"))
     self.pluginReleases = pluginReleases
     self.pluginDownload = pluginDownload
     self.bundledPlugins = bundledPlugins
@@ -142,12 +146,10 @@ package actor AppControlPlaneService {
     try directories.prepare()
     try directories.secureDatabaseFiles()
     try await recoverPluginsAtStartup()
-    try manifestStore.startHotReloadMonitoring()
 
   }
 
   package func stop() async throws {
-    manifestStore.stopHotReloadMonitoring()
     let cloudflareIDs = Set(cloudflareRuntimes.keys)
       .union(cloudflareStartTasks.keys).union(cloudflareStopTasks.keys)
     for profileID in cloudflareIDs.sorted() {
@@ -178,20 +180,40 @@ package actor AppControlPlaneService {
   }
 
   @discardableResult
-  package func activateManifest(_ manifest: String, expectedDigest: String? = nil) throws
+  func activateManifest(_ manifest: String, expectedDigest: String? = nil) throws
     -> ConfigurationRevision
   {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     return try manifestStore.activate(manifest: manifest, expectedDigest: expectedDigest)
   }
 
+  func applyManifestChange(
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String?,
+    publish: @Sendable (GatewayInputs, PreparedManifestChange) async throws -> ConfigurationRevision
+  ) async throws -> ConfigurationRevision {
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
+    configurationMutationInProgress = true
+    defer { configurationMutationInProgress = false }
+    let inputs = try gatewayInputs()
+    let prepared = try manifestStore.prepare(
+      manifest: manifest, reason: reason, expectedDigest: expectedDigest,
+      expectedConfiguration: inputs.configuration)
+    guard prepared.persisted == inputs.persisted else {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    return try await publish(inputs, prepared)
+  }
+
   package func activeConfiguration() throws -> GatewayConfiguration {
-    try manifestStore.activeConfiguration()
+    var configuration = try manifestStore.activeConfiguration()
+    configuration.knownPluginMCPServerIDs = try database.pluginStoreSnapshot()
+      .includingBundledDefaults(bundledPlugins.packages.map(\.manifest)).knownMCPRegistrationIDs
+    return configuration
   }
 
   package func effectiveConfigurationForExport() async throws -> GatewayConfiguration {
     let grants = try await profileGrants()
-    var configuration = try manifestStore.activeConfiguration()
+    var configuration = try activeConfiguration()
     configuration.workspaces = try workspaces().map { workspace in
       WorkspaceManifestConfig(
         id: workspace.id,
@@ -250,28 +272,154 @@ package actor AppControlPlaneService {
   package func applyWorkspaceDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool
-  ) throws -> WorkspaceDeduplicationResult {
-    try database.applyWorkspaceDeduplication(
-      expectedPlanDigest: expectedPlanDigest,
-      allowMetadataConflicts: allowMetadataConflicts
-    )
+  ) async throws -> WorkspaceDeduplicationResult {
+    let expected = try database.configurationState()
+    let plan = try database.workspaceDeduplicationPlan()
+    let resolved = try await resolveLegacyWorkspaceProfiles(
+      expected, workspaceIDs: Set(plan.groups.flatMap(\.duplicateWorkspaceIDs)))
+    try Task.checkCancellation()
+    let commit = {
+      try self.database.applyWorkspaceDeduplication(
+        expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
+        expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
+    }
+    if let configuration = resolved.configuration {
+      return try manifestStore.withCurrentConfiguration(configuration, publication: commit)
+    }
+    return try commit()
   }
 
   package func removeWorkspace(id: String) async throws {
-    guard let workspace = try database.workspace(id: id) else {
+    let expected = try database.configurationState()
+    let canonicalID = expected.workspaceAliases[id] ?? id
+    guard expected.workspaces.contains(where: { $0.id == canonicalID }) else {
       throw AppControlPlaneServiceError.unknownWorkspace(id)
     }
-    let canonicalID = workspace.id
-    let persistedProfiles = try database.profiles()
-    let hasLegacyReferences = persistedProfiles.contains {
-      $0.authorizationRevision == 0 && $0.workspaceIDs.contains(canonicalID)
+    let removedIDs = Set(
+      expected.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [canonicalID])
+    let resolved = try await resolveLegacyWorkspaceProfiles(expected, workspaceIDs: removedIDs)
+    try Task.checkCancellation()
+    let commit = {
+      try self.database.removeWorkspace(
+        id: canonicalID, expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
     }
-    let effectiveProfiles = hasLegacyReferences ? try await profileGrants() : persistedProfiles
-    for var profile in effectiveProfiles where profile.workspaceIDs.contains(canonicalID) {
-      profile.workspaceIDs.remove(canonicalID)
-      try database.saveProfile(profile, expectedRevision: profile.authorizationRevision)
+    if let configuration = resolved.configuration {
+      try manifestStore.withCurrentConfiguration(configuration, publication: commit)
+    } else {
+      try commit()
     }
-    try database.deleteWorkspace(id: canonicalID)
+  }
+
+  private func resolveLegacyWorkspaceProfiles(
+    _ expected: GatewayDatabase.ConfigurationState, workspaceIDs: Set<String>,
+    includeWildcard: Bool = false
+  ) async throws -> (profiles: [ProfileGrant], configuration: GatewayConfiguration?) {
+    guard
+      expected.profiles.contains(where: {
+        $0.authorizationRevision == 0
+          && (!$0.workspaceIDs.isDisjoint(with: workspaceIDs)
+            || (includeWildcard && $0.workspaceIDs.contains("*")))
+      })
+    else { return ([], nil) }
+    let inputs = try gatewayInputs()
+    guard inputs.persisted == expected else { throw GatewayDatabaseError.configurationChanged }
+    let profiles = try await profileGrants()
+    try requireCurrentGatewayInputs(inputs)
+    return (profiles, inputs.configuration)
+  }
+
+  func applyWorkspaceChange(
+    _ change: WorkspaceHostChange,
+    publish:
+      @Sendable (GatewayInputs, PreparedWorkspaceChange) async throws ->
+      GatewayDatabase.ConfigurationState
+  ) async throws -> WorkspaceChangeResult {
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
+    configurationMutationInProgress = true
+    defer { configurationMutationInProgress = false }
+    let inputs = try gatewayInputs()
+    let mutation: WorkspaceConfigurationMutation
+    let affectedWorkspaceIDs: Set<String>
+    var requestedDisplayName: String?
+    var includeWildcard = false
+    switch change {
+    case .register(let url, let displayName):
+      let workspace = try bookmarkService.registerFolder(at: url, displayName: displayName)
+      mutation = .register(workspace)
+      affectedWorkspaceIDs = []
+      if displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+        requestedDisplayName = workspace.displayName
+      }
+    case .repair(let id, let root, let displayName):
+      let canonicalID = inputs.persisted.workspaceAliases[id] ?? id
+      guard let original = inputs.workspaces.first(where: { $0.id == canonicalID }) else {
+        throw AppControlPlaneServiceError.unknownWorkspace(id)
+      }
+      let bookmarks = bookmarkService
+      let (selected, identity) = try await gatewayOperations.perform {
+        let selected = try bookmarks.registerFolder(
+          at: root, displayName: displayName ?? original.displayName)
+        let identity = try WorkspaceRootIdentity(URL(fileURLWithPath: selected.rootPath))
+        let access = try bookmarks.resolve(selected)
+        defer { access.close() }
+        guard access.rootIdentity == identity else {
+          throw WorkspaceBookmarkError.rootChanged(workspaceID: original.id)
+        }
+        return (access.workspace, identity)
+      }
+      var repaired = selected
+      repaired.id = original.id
+      repaired.createdAt = original.createdAt
+      if displayName == nil { repaired.displayName = original.displayName }
+      mutation = .repair(repaired, root: identity)
+      affectedWorkspaceIDs = Set(
+        inputs.persisted.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [
+          canonicalID
+        ])
+      includeWildcard = true
+    case .remove(let id):
+      let canonicalID = inputs.persisted.workspaceAliases[id] ?? id
+      guard inputs.workspaces.contains(where: { $0.id == canonicalID }) else {
+        throw AppControlPlaneServiceError.unknownWorkspace(id)
+      }
+      mutation = .remove(canonicalID)
+      affectedWorkspaceIDs = Set(
+        inputs.persisted.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [
+          canonicalID
+        ])
+    case .deduplicate(let digest, let allowMetadataConflicts):
+      mutation = .deduplicate(
+        expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts)
+      let plan = try database.workspaceDeduplicationPlan()
+      guard plan.planDigest == digest else {
+        throw WorkspaceDeduplicationError.planChanged(expected: digest, actual: plan.planDigest)
+      }
+      affectedWorkspaceIDs = Set(plan.groups.flatMap(\.duplicateWorkspaceIDs))
+    }
+    let resolved = try await resolveLegacyWorkspaceProfiles(
+      inputs.persisted, workspaceIDs: affectedWorkspaceIDs, includeWildcard: includeWildcard)
+    try requireCurrentGatewayInputs(inputs)
+    let prepared = try database.prepareWorkspaceChange(
+      mutation, expected: inputs.persisted, resolvedProfiles: resolved.profiles)
+    if case .registered(let workspace, false) = prepared.result,
+      let requestedDisplayName, workspace.displayName != requestedDisplayName
+    {
+      throw AppControlPlaneServiceError.workspaceMetadataConflict(
+        workspaceID: workspace.id, existingDisplayName: workspace.displayName,
+        requestedDisplayName: requestedDisplayName)
+    }
+    let committed = try await publish(inputs, prepared)
+    if case .registered(let workspace, let created) = prepared.result,
+      let published = committed.workspaces.first(where: { $0.id == workspace.id })
+    {
+      return .registered(published, created: created)
+    }
+    if case .repaired(let workspace) = prepared.result,
+      let published = committed.workspaces.first(where: { $0.id == workspace.id })
+    {
+      return .repaired(published)
+    }
+    return prepared.result
   }
 
   package func profileGrants() async throws -> [ProfileGrant] {
@@ -448,10 +596,17 @@ package actor AppControlPlaneService {
     workspaceIDs: Set<String>? = nil,
     mcpServerIDs: Set<String>? = nil,
     allowedCallers: Set<GatewayCallerKind>? = nil,
-    expectedRevision: Int64? = nil
+    expectedRevision: Int64? = nil,
+    reviewedOptions: ProfilePermissionOptions? = nil
   ) async throws -> ProfileGrant {
     guard var grant = try await profileGrants().first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
+    }
+    if let reviewedOptions {
+      try requireCurrentGatewayInputs(reviewedOptions.inputs)
+      guard reviewedOptions.grant == grant else {
+        throw AppControlPlaneServiceError.gatewayInputsChanged
+      }
     }
     let revision = expectedRevision ?? grant.authorizationRevision
     if let mode {
@@ -487,7 +642,16 @@ package actor AppControlPlaneService {
     ).validate(
       knownWorkspaceIDs: knownWorkspaceIDs,
       knownMCPServerIDs: Set(composition.runtimeConfiguration.mcp.servers.map(\.id)))
-    try database.saveProfile(grant, expectedRevision: revision)
+    if let reviewedOptions {
+      try manifestStore.withCurrentConfiguration(configuration) {
+        guard try database.configurationState() == reviewedOptions.inputs.persisted else {
+          throw AppControlPlaneServiceError.gatewayInputsChanged
+        }
+        try database.saveProfile(grant, expectedRevision: revision)
+      }
+    } else {
+      try database.saveProfile(grant, expectedRevision: revision)
+    }
     return try database.profiles().first { $0.id == profileID } ?? grant
   }
 
@@ -544,7 +708,7 @@ package actor AppControlPlaneService {
     transportTrace: GatewayTransportTrace? = nil,
     trustedPrincipalID: String? = nil
   ) async throws -> GatewaySocketServerSession {
-    let (inputs, gateway) = try await makeGatewaySocketRuntime(
+    let (inputs, gateway) = try await makeGatewaySessionRuntime(
       caller: caller, profileID: profileID, transportTrace: transportTrace,
       trustedPrincipalID: trustedPrincipalID)
     let server = await MCPRuntimeAdapter.makeGatewayServer(
@@ -559,11 +723,14 @@ package actor AppControlPlaneService {
     return GatewaySocketServerSession(server: server) { await gateway.shutdown() }
   }
 
-  func makeGatewaySocketRuntime(
+  func makeGatewaySessionRuntime(
     caller: GatewayCallerKind,
     profileID: GatewayProfileID,
     transportTrace: GatewayTransportTrace? = nil,
-    trustedPrincipalID: String? = nil
+    trustedPrincipalID: String? = nil,
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
+    requiresControlSession: Bool = false,
+    remoteManagement: GatewayRemoteManagement? = nil
   ) async throws -> (inputs: GatewayInputs, gateway: GatewayRuntime) {
     if caller.isRemote && profileID == .localAdmin {
       throw AppControlPlaneServiceError.localAdminCannotBeSocketProfile
@@ -571,57 +738,40 @@ package actor AppControlPlaneService {
     let inputs = try gatewayInputs()
     let gateway = try await makeGateway(
       inputs: inputs, caller: caller, profileID: profileID, transportTrace: transportTrace,
-      trustedPrincipalID: trustedPrincipalID)
+      trustedPrincipalID: trustedPrincipalID, terminalSessions: terminalSessions,
+      requiresControlSession: requiresControlSession, remoteManagement: remoteManagement)
     return (inputs, gateway)
   }
 
-  func localAdminTools(
-    transportTrace: GatewayTransportTrace
-  ) async throws -> [MCPTool] {
-    let inputs = try gatewayInputs()
-    let gateway = try await makeGateway(
-      inputs: inputs, caller: .localCLI, profileID: .localAdmin, transportTrace: transportTrace)
-    do {
-      let tools = try gateway.listTools()
-      await gateway.shutdown()
-      try requireCurrentGatewayInputs(inputs)
-      return tools
-    } catch {
-      await gateway.shutdown()
-      throw error
-    }
-  }
-
-  func callLocalAdminTool(
-    name: String,
-    arguments: JSONValue?,
-    transportTrace: GatewayTransportTrace
-  ) async throws -> JSONValue {
-    let gateway = try await makeGateway(
-      inputs: gatewayInputs(), caller: .localCLI, profileID: .localAdmin,
-      transportTrace: transportTrace)
-    do {
-      let result = try await gateway.callToolForMCPAsync(name: name, arguments: arguments)
-      await gateway.shutdown()
-      return result
-    } catch {
-      await gateway.shutdown()
-      throw error
-    }
+  func prepareGateway(
+    inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
+    trustedPrincipalID: String?, terminalSessions: GatewayTerminalSessions,
+    artifactStorage: PluginInstallationStorage?, requiresControlSession: Bool = false,
+    remoteManagement: GatewayRemoteManagement? = nil
+  ) async throws -> GatewayRuntimePreparation {
+    var context = inputs.configuration.executionContext(caller: caller, profileID: profileID)
+    context.trustedPrincipalID = trustedPrincipalID
+    return try await GatewayRuntime.prepare(
+      configuration: inputs.configuration, context: context, database: database,
+      state: inputs.persisted,
+      bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
+      bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
+      artifactStorage: artifactStorage, requiresControlSession: requiresControlSession,
+      remoteManagement: remoteManagement)
   }
 
   /// Values whose changes invalidate a pending catalog or session construction.
   struct GatewayInputs: Equatable, Sendable {
     let configuration: GatewayConfiguration
-    let workspaces: [RegisteredWorkspace]
-    let profiles: [ProfileGrant]
-    let plugins: PluginStoreSnapshot
+    let persisted: GatewayDatabase.ConfigurationState
+    var workspaces: [RegisteredWorkspace] { persisted.workspaces }
+    var profiles: [ProfileGrant] { persisted.profiles }
+    var plugins: PluginStoreSnapshot { persisted.plugins }
   }
 
   func gatewayInputs() throws -> GatewayInputs {
     try GatewayInputs(
-      configuration: manifestStore.activeConfiguration(), workspaces: database.workspaces(),
-      profiles: database.profiles(), plugins: database.pluginStoreSnapshot())
+      configuration: manifestStore.activeConfiguration(), persisted: database.configurationState())
   }
 
   func requireCurrentGatewayInputs(_ inputs: GatewayInputs) throws {
@@ -631,10 +781,13 @@ package actor AppControlPlaneService {
     }
   }
 
-  private func makeGateway(
+  func makeGateway(
     inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
     transportTrace: GatewayTransportTrace? = nil, persistentState: Bool = true,
-    trustedPrincipalID: String? = nil
+    trustedPrincipalID: String? = nil,
+    terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
+    requiresControlSession: Bool = false,
+    remoteManagement: GatewayRemoteManagement? = nil
   ) async throws -> GatewayRuntime {
     try requireCurrentGatewayInputs(inputs)
     let database = persistentState ? database : nil
@@ -653,7 +806,9 @@ package actor AppControlPlaneService {
       context: context,
       database: database, registeredWorkspaces: inputs.workspaces,
       bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
-      plugins: plugins, bundledPlugins: bundledPlugins)
+      plugins: plugins, pluginState: inputs.plugins, bundledPlugins: bundledPlugins,
+      terminalSessions: terminalSessions, requiresControlSession: requiresControlSession,
+      remoteManagement: remoteManagement)
     do {
       try requireCurrentGatewayInputs(inputs)
       return gateway
@@ -665,12 +820,6 @@ package actor AppControlPlaneService {
 
   package func configurationHistory(limit: Int = 50) throws -> [ConfigurationRevision] {
     try manifestStore.history(limit: limit)
-  }
-
-  @discardableResult
-  package func rollbackManifest(to revisionID: String) throws -> ConfigurationRevision {
-    guard !pluginMutationInProgress else { throw PluginHostError.changeInProgress }
-    return try manifestStore.rollback(to: revisionID)
   }
 
   @discardableResult

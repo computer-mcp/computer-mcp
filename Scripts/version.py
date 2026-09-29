@@ -13,6 +13,10 @@ DECLARATION = "Version.json"
 PLIST = "Resources/ComputerMCPApp/Info.plist"
 SWIFT = "Sources/ComputerMCP/ComputerMCPCLI.swift"
 SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
+DEPENDENCY_SEMVER = re.compile(
+    r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\Z")
 
 
 def require(condition, message):
@@ -23,6 +27,18 @@ def require(condition, message):
 def version_tuple(version):
     require(isinstance(version, str) and SEMVER.fullmatch(version), "Expected MAJOR.MINOR.PATCH without leading zeroes")
     return tuple(map(int, version.split(".")))
+
+
+def dependency_version_key(version):
+    match = DEPENDENCY_SEMVER.fullmatch(version) if isinstance(version, str) else None
+    require(match is not None, "Expected a semantic dependency version")
+    prerelease = match[4]
+    identifiers = prerelease.split(".") if prerelease is not None else []
+    require(all(not item.isdigit() or item == "0" or not item.startswith("0") for item in identifiers),
+            "Numeric prerelease identifiers must not have leading zeroes")
+    # Stable releases sort after their prereleases; build metadata has no precedence.
+    return (*map(int, match.group(1, 2, 3)), prerelease is None,
+            tuple((0, int(item)) if item.isdigit() else (1, item) for item in identifiers))
 
 
 def declaration(data):
@@ -118,18 +134,18 @@ def check_dependencies(root):
             require(requirement["exact"] == [resolved], f"Exact dependency version mismatch: {source['identity']}")
         elif "range" in requirement:
             limits = requirement["range"][0]
-            require(version_tuple(limits["lowerBound"]) <= version_tuple(resolved) < version_tuple(limits["upperBound"]), f"Dependency outside compatible range: {source['identity']}")
+            require(dependency_version_key(limits["lowerBound"]) <= dependency_version_key(resolved) < dependency_version_key(limits["upperBound"]), f"Dependency outside compatible range: {source['identity']}")
         else:
             raise ValueError(f"Non-release dependency requirement: {source['identity']}")
     receipts = []
     for pin in pins:
         state = pin["state"]
-        version_tuple(state.get("version"))
+        dependency_version_key(state.get("version"))
         require(re.fullmatch(r"[0-9a-f]{40}", state.get("revision", "")), f"Invalid locked commit: {pin['identity']}")
         require(pin["location"].startswith("https://") and "@" not in pin["location"], "Dependency URL must be public HTTPS")
         # SwiftPM normalizes a two-component tag such as 0.4 to version 0.4.0.
         versions = [state["version"]]
-        if state["version"].endswith(".0"):
+        if SEMVER.fullmatch(state["version"]) and state["version"].endswith(".0"):
             versions.append(state["version"].rsplit(".", 1)[0])
         refs = [f"refs/tags/{prefix}{version}{peel}" for version in versions for prefix in ("", "v") for peel in ("", "^{}")]
         try:

@@ -123,6 +123,38 @@ final class ShellSessionRuntimeTests {
     #expect((incremental.stdout.nextCursor) == (result.stdout.nextCursor))
   }
 
+  @Test
+  func processOwnershipOutlivesSpawnAndEndsAfterProcessCleanup() async throws {
+    let ownedWork = GatewayOwnedWork()
+    let runtime = SubprocessShellRuntime(ownedWork: ownedWork, workspaceID: "fixture")
+    let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
+      [workspace] in
+      try runtime.spawn(
+        request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
+        defaultShell: "/bin/zsh", defaultWorkingDirectory: workspace,
+        timeoutMilliseconds: nil, maxOutputBytes: 1_024, maxSessions: 4,
+        terminationGraceMilliseconds: 100)
+    }
+    defer { _ = try? runtime.cancel(sessionID: sessionID) }
+    let record = try #require(ownedWork.snapshot.first)
+    #expect(record.kind == .shell)
+    #expect(record.workspaceID == "fixture")
+    #expect(record.resourceID == sessionID)
+    #expect(!record.uncertain)
+
+    _ = try await BlockingOperationExecutor(label: "test.shell-call").perform {
+      try runtime.write(sessionID: sessionID, data: Data("owned\n".utf8), close: true)
+    }
+    let result = try await waitForExit(runtime: runtime, sessionID: sessionID)
+    #expect(result.exitCode == 0)
+    #expect(result.stdout.text == "owned\n")
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !ownedWork.snapshot.isEmpty && ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(ownedWork.snapshot.isEmpty)
+  }
+
   @Test(arguments: [false, true])
   func testSpawnExposesShortOutputBeforeProcessExit(standardError: Bool) async throws {
     let runtime = SubprocessShellRuntime()

@@ -24,7 +24,7 @@ final class PluginReleaseModel: ObservableObject {
     self.controlPlane = controlPlane
   }
 
-  var canInstall: Bool { result != nil && !isLoading && errorMessage == nil }
+  var canInstall: Bool { result?.artifacts.isEmpty == false && !isLoading && errorMessage == nil }
 
   func search() async {
     await load(tag: tag.isEmpty ? nil : tag, page: 1)
@@ -79,7 +79,7 @@ final class PluginReleaseModel: ObservableObject {
       else { return }
       if case PluginCatalogError.httpStatus(let status) = error {
         errorMessage = AppLocalization.formatted(
-          "GitHub request failed with HTTP %@.", String(status))
+          "Plugin request failed with HTTP %@.", String(status))
       } else {
         errorMessage = AppLocalization.errorDescription(error)
       }

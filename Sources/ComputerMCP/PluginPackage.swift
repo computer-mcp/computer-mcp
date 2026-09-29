@@ -16,7 +16,7 @@ package struct PluginPackage: Equatable, Sendable {
     for executable in manifest.mcp.compactMap(\.executable) + manifest.cli.map(\.executable)
       + manifest.cli.compactMap({ $0.tree?.helper })
     {
-      if let path = executable.path { try files.validate(path, kind: .executable) }
+      if let path = try executable.packagePath() { try files.validate(path, kind: .executable) }
     }
     for cwd in manifest.mcp.compactMap(\.cwd) + manifest.cli.compactMap(\.cwd) {
       try files.validate(cwd, kind: .directory)

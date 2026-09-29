@@ -44,7 +44,8 @@ fi
 
 while IFS= read -r -d '' graph; do
   /bin/cp "$graph" "$MODULE_SYMBOLS/"
-done < <(/usr/bin/find "$ALL_SYMBOLS" -type f -name 'ComputerMCP*.symbols.json' -print0)
+done < <(/usr/bin/find "$ALL_SYMBOLS" -type f \
+  \( -name 'ComputerMCP.symbols.json' -o -name 'ComputerMCP@*.symbols.json' \) -print0)
 
 [[ -f "$MODULE_SYMBOLS/ComputerMCP.symbols.json" ]] \
   || fail "ComputerMCP.symbols.json was not emitted."

@@ -10,9 +10,11 @@ struct ComputerMCPCommand: AsyncParsableCommand {
     version: ComputerMCPCLI.releaseVersion,
     subcommands: [
       App.self,
+      Clients.self,
       Doctor.self,
       BuildInfo.self,
       Config.self,
+      CLITreeCommands.self,
       Workspace.self,
       Profile.self,
       Permissions.self,
@@ -107,6 +109,14 @@ struct ServeHTTP: AsyncParsableCommand {
   @Option(name: .long, help: "HTTP host override.") var host: String?
   @Option(name: .long, help: "HTTP port override.") var port: Int?
   @Option(name: .long, help: "Public base URL override.") var publicBaseURL: String?
+  @Option(name: .long, help: "Absolute private Unix socket for local owner client-access commands.")
+  var controlSocket: String?
+
+  func validate() throws {
+    if let controlSocket, !controlSocket.hasPrefix("/") {
+      throw ValidationError("--control-socket must be an absolute path.")
+    }
+  }
 
   func run() async throws {
     let database = try runtime.makeDatabase()
@@ -128,7 +138,10 @@ struct ServeHTTP: AsyncParsableCommand {
       registry: registry,
       host: host,
       port: port,
-      publicBaseURL: publicBaseURL
+      publicBaseURL: publicBaseURL,
+      control: controlSocket.map {
+        GatewayHTTPControlConfiguration(socketURL: URL(fileURLWithPath: $0), database: database)
+      }
     )
   }
 }

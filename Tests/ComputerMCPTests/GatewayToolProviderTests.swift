@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import os
 
 @testable import ComputerMCP
 
@@ -56,6 +57,55 @@ final class GatewayToolProviderTests {
     #expect((descriptor.risk) == (.externalWrite))
     #expect((descriptor.workspaceRequirement) == (.required))
     #expect(descriptor.localOnly)
+  }
+
+  @Test
+  func retainedContinuationRequiresPrivateSelectionAndExpiresWithItsOwner() async throws {
+    let visibility = OSAllocatedUnfairLock(initialState: (visible: true, owned: true))
+    let reference = MCPToolReference(serverID: "fixture", toolName: "inspect")
+    let provider = TestGatewayToolProvider(
+      id: "fixture",
+      tool: MCPTool(name: "fixture.inspect", description: "", inputSchema: .object([:])),
+      result: .string("original owner"),
+      descriptor: CapabilityDescriptor(
+        id: "fixture.inspect", risk: .readOnly, workspaceRequirement: .required,
+        mcpReference: reference))
+    let router = try GatewayProviderRouter(
+      source: { visibility.withLock { $0.visible } ? [provider] : [] },
+      retainsContinuation: { candidate in
+        candidate == reference && visibility.withLock { $0.owned }
+      })
+    visibility.withLock { $0.visible = false }
+    try await router.refreshTools()
+    #expect(try router.listTools().isEmpty)
+    #expect(router.continuationReference(named: "fixture.inspect") == reference)
+    #expect(throws: GatewayToolError.self) {
+      try router.callTool(name: "fixture.inspect", arguments: nil)
+    }
+    func target(_ reference: MCPToolReference) -> MCPContinuationTarget {
+      .init(
+        workspaceID: "ws", reference: reference, connectionID: UUID(), instanceID: UUID(),
+        resources: [:])
+    }
+    try MCPContinuationTarget.$current.withValue(target(reference)) {
+      let result = try router.callTool(name: "fixture.inspect", arguments: nil)
+      #expect(result == .string("original owner"))
+    }
+    MCPContinuationTarget.$current.withValue(target(.init(serverID: "other", toolName: "inspect")))
+    {
+      #expect(throws: GatewayToolError.self) {
+        try router.callTool(name: "fixture.inspect", arguments: nil)
+      }
+    }
+    visibility.withLock { $0.owned = false }
+    try await router.refreshTools()
+    #expect(router.continuationReference(named: "fixture.inspect") == nil)
+    MCPContinuationTarget.$current.withValue(target(reference)) {
+      #expect(throws: GatewayToolError.self) {
+        try router.callTool(name: "fixture.inspect", arguments: nil)
+      }
+    }
+    await router.shutdown()
   }
 
   @Test

@@ -139,6 +139,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var tccServices: [String]
   package var mcpReference: MCPToolReference?
   package var equivalentCapabilityIDs: [String]?
+  package var hostServiceAction: MCPHostServiceAction?
 
   package init(
     id: String,
@@ -148,7 +149,8 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     usesNetwork: Bool = false,
     tccServices: [String] = [],
     mcpReference: MCPToolReference? = nil,
-    equivalentCapabilityIDs: [String]? = nil
+    equivalentCapabilityIDs: [String]? = nil,
+    hostServiceAction: MCPHostServiceAction? = nil
   ) {
     self.id = id
     self.risk = risk
@@ -158,6 +160,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     self.tccServices = tccServices
     self.mcpReference = mcpReference
     self.equivalentCapabilityIDs = equivalentCapabilityIDs
+    self.hostServiceAction = hostServiceAction
   }
 }
 
@@ -169,6 +172,12 @@ package struct ExecutionContext: Codable, Equatable, Sendable {
   package var transportTrace: GatewayTransportTrace?
   /// Established by the host's authenticated admission path, never by tool arguments.
   package var trustedPrincipalID: String?
+  /// In-process admission evidence. Encoding a context never conveys session authority.
+  var controlSession: GatewayControlSession? = nil
+
+  private enum CodingKeys: String, CodingKey {
+    case requestID, caller, profileID, workspaceID, transportTrace, trustedPrincipalID
+  }
 
   package var principalID: String {
     if let trustedPrincipalID, !trustedPrincipalID.isEmpty { return trustedPrincipalID }
@@ -355,7 +364,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
     "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
     "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
-    "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel",
+    "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel", "mcp.connections.close",
   ]
 }
 

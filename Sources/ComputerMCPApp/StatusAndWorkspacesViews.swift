@@ -467,7 +467,7 @@ struct WorkspacesView: View {
         ScrollView {
           LazyVStack(spacing: 0) {
             ForEach(workspaces) { workspace in
-              WorkspaceRow(workspace: workspace)
+              WorkspaceRow(workspace: workspace) { presentWorkspacePicker(repairing: workspace) }
               Divider()
             }
           }
@@ -491,15 +491,19 @@ struct WorkspacesView: View {
     }
   }
 
-  private func presentWorkspacePicker() {
-    let panel = WorkspaceOpenPanelFactory.make()
+  private func presentWorkspacePicker(repairing workspace: WorkspaceSummary? = nil) {
+    let panel = WorkspaceOpenPanelFactory.make(repairing: workspace)
 
     let completion: (NSApplication.ModalResponse) -> Void = { response in
       guard response == .OK, let url = panel.url else {
         return
       }
       Task { @MainActor in
-        model.addWorkspace(at: url)
+        if let workspace {
+          model.repairWorkspace(id: workspace.id, at: url)
+        } else {
+          model.addWorkspace(at: url)
+        }
       }
     }
 
@@ -513,14 +517,22 @@ struct WorkspacesView: View {
 
 @MainActor
 enum WorkspaceOpenPanelFactory {
-  static func make() -> NSOpenPanel {
+  static func make(repairing workspace: WorkspaceSummary? = nil) -> NSOpenPanel {
     let panel = NSOpenPanel()
-    panel.title = AppLocalization.string("Add Workspace")
-    panel.message = AppLocalization.string(
-      "Add a folder to create a persistent local workspace grant."
-    )
-    panel.prompt = AppLocalization.string("Add")
-    panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+    if let workspace {
+      panel.title = AppLocalization.string("Repair Workspace")
+      panel.message = AppLocalization.formatted(
+        "Choose the folder for %@. Existing workspace permissions will apply to this folder.",
+        workspace.displayName)
+      panel.prompt = AppLocalization.string("Use Folder")
+      panel.directoryURL = URL(fileURLWithPath: workspace.path).deletingLastPathComponent()
+    } else {
+      panel.title = AppLocalization.string("Add Workspace")
+      panel.message = AppLocalization.string(
+        "Add a folder to create a persistent local workspace grant.")
+      panel.prompt = AppLocalization.string("Add")
+      panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+    }
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
     panel.canCreateDirectories = true
@@ -534,6 +546,7 @@ private struct WorkspaceRow: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
 
   let workspace: WorkspaceSummary
+  let repair: () -> Void
 
   var body: some View {
     HStack(spacing: 12) {
@@ -597,6 +610,11 @@ private struct WorkspaceRow: View {
       .accessibilityIdentifier("workspace.\(workspace.id).enabled")
       .toggleStyle(.switch)
       .help("Grant this workspace to the active profile")
+
+      Button("Repair…", action: repair)
+        .disabled(model.isActionRunning("workspace.repair.\(workspace.id)"))
+        .accessibilityIdentifier("workspace.\(workspace.id).repair")
+        .accessibilityLabel("Repair \(workspace.displayName)")
 
       Button {
         model.revealWorkspace(workspace)

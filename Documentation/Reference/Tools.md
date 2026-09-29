@@ -6,6 +6,57 @@ annotations. Successful calls return the same bounded JSON value as readable
 JSON text and as `structuredContent.result`. Downstream MCP tools keep their
 provider-declared schemas and result shape when the Swift SDK exposes them.
 
+## Execution owners
+
+`runtime.owners.list` lists retained work in one granted `workspace_id`. It
+requires its own capability grant. An optional `server` filters MCP registration
+IDs. `limit` defaults to 50 and accepts 1–100; pass the returned `next_cursor` as
+`after` to continue. Pages contain at most 128 KiB of encoded rows, so a byte
+budget can end a page before its requested count. This is a live directory;
+owners may appear or expire between pages. Listing does not start providers.
+
+Each row contains an `owner` locator, work `kind`, `uncertain` and `current`
+flags, and optional registration, connection and resource identifiers. Resource
+descriptions larger than 4 KiB are omitted. The locator identifies the originating
+runtime, workspace and one host-owned lifetime. It conveys no permission and
+expires when that lifetime ends. Confirmed completed Shell/process output remains
+available through ordinary result reads for its retention period, independently
+of execution ownership.
+
+`runtime.owners.call` selects an exact owner when duplicate native handles are
+ambiguous or a call needs a retained provider instance. It requires its own
+capability and the target's current permissions. Supply the `owner` unchanged,
+the same `workspace_id`, the gateway `tool` name and its original `arguments`:
+
+```json
+{
+  "workspace_id": "project",
+  "owner": {
+    "runtime_id": "D26F63CA-B15C-423D-AB83-C1A7CABD1721",
+    "workspace_id": "project",
+    "ownership_id": "EA1521A4-3195-4E5B-9CE1-84682609E97A"
+  },
+  "tool": "provider.session.inspect",
+  "arguments": {"session_id": "native-session"}
+}
+```
+
+The selected owner must belong to the caller's authenticated principal, profile
+and workspace. MCP calls use its original connection and registration; resource
+continuations also require the matching native resource acquisition. Shell and
+registered-process calls require the exact owned session or process ID. Selecting
+a stale, foreign or disconnected owner fails without launching a replacement.
+Owner tools cannot recursively target themselves. Native tool arguments do not
+receive the locator.
+
+For writes requiring approval, select the same owner around both
+`operations.prepare` and `operations.commit`. The review and ticket bind that
+exact owner along with the tool, arguments, workspace and provider identity.
+Changing the owner does not transfer approval. `target_execution` in a successful
+wrapped result identifies the selected invocation; ordinary `gateway_execution`
+identifies the routing call. Permission checks still run immediately before the
+target executes.
+
 ## `cli.list`
 
 Lists directly registered and Plugin-contributed CLI providers. Entries include
@@ -245,6 +296,31 @@ Start-only arguments:
   "arguments": {}
 }
 ```
+
+## `mcp.connections.close`
+
+Closes one exact retained downstream connection and joins its managed-process
+teardown. This destructive operation affects **all work on that connection**.
+Select a live owner with `runtime.owners.call` and pass `server` as the target's
+only argument. Unbound or stale selections fail without starting a replacement.
+Current target permissions apply. When approval is required, wrap both
+`operations.prepare` and `operations.commit` with the same owner.
+
+The result separates the observed outcomes:
+
+| Field | Meaning |
+| --- | --- |
+| `transport_closed` | The selected local client transport has closed. |
+| `managed_process_exit_confirmed` | Verified local managed-process exit; `null` for remote transport. |
+| `remaining_owners` | Work leases still retained for the original connection. |
+| `work_cleanup` | `confirmed` only when the managed process exited and no retained work remains; otherwise `unknown`. |
+
+Remote transport closure does not prove remote work stopped. Provider-reported
+native resources can remain uncertain after the provider exits, including
+detached work. Use provider-native cleanup before closing when it can establish
+completion. Unknown ownership is retained. Other connections keep running;
+ordinary configuration changes do not implicitly request this stop operation.
+A later new invocation may start a fresh connection under current configuration.
 
 ## `mcp.events.read`
 
@@ -5126,6 +5202,28 @@ The plane supports explicit argv or shell-script mode, selected environment,
 workspace/cwd binding, stdin, separate stdout/stderr cursors, timeout,
 cancellation, exit status, signals, truncation metadata, and process-group
 cleanup.
+
+The App gateway listener and owner control service retain Shell and
+registered-process sessions across runtime
+configuration changes within the same authenticated principal, profile, caller,
+workspace registration, and resolved folder identity. Reads, writes, cancellation,
+and listing still require current permission. A task continues using its original
+launch settings and output limit; the executing runtime owns it until the process
+and its output streams finish.
+
+Completed results remain in memory for up to 24 hours. Each serving scope has a
+budget of 64 completed sessions and 8 MiB of stdout/stderr, shared by its runtime
+generations. The newest results that
+fit these budgets are retained; running sessions are not evicted. Expired or
+evicted results are omitted from lists and report an unknown session or process
+id on lookup. Output already returned by `shell.run` is unaffected by retention.
+Stopping a serving scope closes its launch admission, cancels its Shell and registered
+process executions, waits for their process and output cleanup, and clears its
+result store. Shutting down one runtime owns only the executions it started;
+shared result storage does not transfer cancellation ownership. Save needed output
+before the retention limits or the owning service stops. Stopping the gateway
+listener preserves local-admin work; stopping the owner control service preserves
+gateway work. App shutdown stops both scopes.
 
 Full Shell gives the caller the current macOS user's effective terminal
 authority. Prefer typed tools or registered CLI argv execution when that

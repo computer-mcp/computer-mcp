@@ -27,6 +27,10 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
+- [1.3.0 Release Notes](ReleaseNotes-1.3.0.md) and
+  [Production Readiness Report](ProductionReadinessReport-1.3.0.md):
+  live configuration, scoped control, official discovery and exact candidate
+  acceptance requirements.
 - [1.1.4 Release Notes](ReleaseNotes-1.1.4.md) and
   [Production Readiness Report](ProductionReadinessReport-1.1.4.md):
   portable plugin settings and management round trips.
@@ -93,8 +97,8 @@ This directory contains detailed operational reference material.
   historical pre-release fail-closed status and blockers.
 - [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
 - [Tools](Tools.md): MCP gateway tools and result contracts.
-- [Release](Release.md): signed-tag GitHub Actions release, protected Apple
-  credentials, notarization, artifact provenance, atomic publication, and local
+- [Release](Release.md): protected candidate builds, Apple credentials,
+  notarization, exact artifact acceptance, signed-tag publication, and local
   rehearsal scope.
 - [Troubleshooting](Troubleshooting.md): common failures and checks.
 - [简体中文](zh-CN/README.md): mirrored onboarding and recovery guides.

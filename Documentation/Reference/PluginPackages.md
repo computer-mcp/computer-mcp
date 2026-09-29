@@ -21,7 +21,9 @@ does not establish publisher trust, artifact integrity, or user authorization.
 | `repository` | Optional HTTPS repository URL; a claim, not verified provenance |
 | `compatibility.minimum_host` | Inclusive minimum host release |
 | `compatibility.maximum_host` | Exclusive maximum host release |
-| `compatibility.architectures` | Optional unique subset of `arm64` and `x86_64`; omitted means unrestricted |
+| `compatibility.platforms` | Nonempty unique subset of `macos` and `windows`; omitted means `macos` |
+| `compatibility.architectures` | Optional unique subset of `arm64` and `x86_64`; omitted or empty permits both |
+| `compatibility.artifacts` | Optional named archive targets; required when declaring Windows |
 
 Package, dependency, and contribution IDs contain lowercase ASCII letters,
 digits, hyphens, or underscores, start with a letter or digit, and are at most
@@ -29,12 +31,48 @@ digits, hyphens, or underscores, start with a letter or digit, and are at most
 dependency IDs have their own namespace. There are at most 1024 contributions.
 Compatibility compares semantic precedence; build metadata does not change it.
 
+A release can declare separate archive targets in the same tagged manifest; see
+the [combined declaration example](#combined-declaration-example).
+
+Each target must fit within the release-wide platform and architecture constraints.
+Names identify one ZIP/TAR archive, are unique ignoring case, and match the selected
+release asset exactly. At most 100 declarations are permitted. Every declared
+archive must be published, and every published installable archive must be declared
+when the list is present. All archives contain the exact same root manifest bytes
+as the tag. Targets are declarations; they do not establish binary validity or
+execution permission. Set `minimum_host` to a released host that supports the fields
+used by the package; older hosts reject unknown fields.
+
+Legacy manifests retain their macOS default, architecture constraints and stored
+declaration fingerprints. Without an artifact list, every archive inherits the
+release target. Local installation retains a declared archive's filename; renaming
+it does not choose another target. The installation record preserves the selected
+name, and activation and diagnostics recheck its target. Bundled distribution
+checks the selected archive against every requested App architecture.
+
+The platform model accepts Windows metadata. The shipped App, gateway and package
+installation runtime remain macOS-only; platform metadata does not make a provider
+or external application available on Windows.
+
 ## Executables and External Dependencies
 
-An `executable` has exactly one of two fields:
+An `executable` has exactly one of three fields:
 
 - `path`: a normalized package-relative path to a package-owned executable.
+- `platform_paths`: a map from each declared platform to its package-relative
+  executable, such as `{ macos = "bin/adapter", windows = "bin/adapter.exe" }`.
 - `dependency`: the ID of a declared, user/vendor-owned external dependency.
+
+A `platform_paths` map covers exactly `compatibility.platforms` (default
+`macos`). Every value must be a normalized relative path; Windows values also
+reject drive/device names, alternate streams and ambiguous Win32 components.
+Package loading and executable inspection select the current host platform's
+path. A platform archive needs that selected executable, while the same manifest
+can name the other platforms' files without including them in this archive.
+A missing selected file is an error; the host never tries another platform or
+adds an executable suffix. CLI Tree helpers follow the same selection rule.
+Set `minimum_host` to a released host supporting this field before publishing
+a package that uses it.
 
 Each `[[dependencies]]` entry has `id`, ordered executable base names in
 `commands`, optional ordered `applications` locators, human-readable
@@ -166,6 +204,19 @@ directory in its own repository:
 id = "example-integration"
 name = "Example Integration"
 version = "1.2.3"
+
+[compatibility]
+platforms = ["macos", "windows"]
+
+[[compatibility.artifacts]]
+name = "example-macos.zip"
+platforms = ["macos"]
+architectures = ["arm64", "x86_64"]
+
+[[compatibility.artifacts]]
+name = "example-windows.zip"
+platforms = ["windows"]
+architectures = ["x86_64"]
 
 [[dependencies]]
 id = "vendor"
@@ -301,6 +352,22 @@ points into the directory, uninstall refuses the change. A cleanup failure after
 a successful database commit returns the committed state with a recovery issue;
 it must not delete a successfully installed version as an apparent rollback.
 
+Before resolving an enabled managed artifact, a runtime acquires a shared file
+lease under the installation transaction lock. Cleanup requires the exclusive
+lease, so uninstall can revoke selection while retaining files and their
+ownership receipt for later recovery. Multiple runtimes may hold the same
+artifact; releasing one does not release another's protection. Lease files are
+host-owned, outside the package payload, and validated against symlinks, file
+ownership and the receipted directory identity.
+
+Downstream MCP launch receipts also bind the managed artifact identity. Cleanup
+checks these persisted receipts and locks held by supervisors and watchdogs,
+including after the runtime or host exits. An uncertain cleanup receipt retains
+the artifact until the existing reviewed process-recovery procedure succeeds.
+Legacy receipts lack artifact provenance, so live or uncertain legacy owners
+conservatively retain files. Neither a supervisor exit nor a released host
+reference proves that all inherited owners have finished.
+
 Recovery holds the same lock. A receipted committed installation retains its
 package and loses only reserved staging files. A missing package directory,
 symlink, non-directory or non-private payload produces an issue without
@@ -312,12 +379,11 @@ preserved, including a directory created immediately before a crash prevented
 its ownership receipt from being committed. Recovery does not infer ownership
 from a UUID-looking name, process ID or age.
 
-These store APIs require the host to quiesce affected runtime tasks before
-changing selected files. App and owner-only CLI mutations use the same idle
-gateway admission reservation. They never interrupt connected clients.
-Connections remain busy while session creation or downstream cleanup is in
-progress, including after the client has disconnected. Stopping the socket
-server waits for those owners to finish before reporting completion.
+App and owner-only CLI mutations use the same prepared runtime publication.
+Existing work retains its runtime and artifact leases across plugin changes;
+new calls use the published configuration. Connection ownership includes session
+creation and downstream cleanup, including after a client disconnects. Stopping
+the socket server waits for those owners to finish before reporting completion.
 The host chooses its embedded archive worker and stores installations under
 its Application Support `Plugins` directory; neither path is a plugin or
 control-socket argument. An unavailable embedded worker fails without a PATH
@@ -386,6 +452,17 @@ settings in the gateway's existing database. Each mutation supplies the revision
 it read. The database atomically compares that revision and saves the next
 snapshot; a stale update must reload before retrying. Invalid or oversized state
 leaves the previous snapshot intact. Serialized state is limited to 4 MiB.
+
+App-managed changes also capture the registered workspaces, workspace aliases,
+profile authorization and plugin settings before preparation. The commit compares
+these inputs in the same database transaction as the plugin revision check.
+A concurrent workspace or authorization edit rejects the plugin change and
+preserves that edit; reload before retrying. Provider health and execution
+receipts do not invalidate this configuration snapshot.
+
+Runtime construction uses its captured plugin snapshot for contribution resolution
+and managed artifact leases. Authenticated sessions derived from that runtime
+retain the same plugin sources while checking current profile authorization.
 
 A development registration records the canonical source directory, declared
 identity and version, registration time, and a SHA-256 fingerprint of the parsed
@@ -508,47 +585,55 @@ contributions unavailable.
 
 Use **Search official plugins** in the App's Plugins page or
 `computer-mcp plugins search [query] [--kind mcp|cli|skills]`. Both call the same
-App-owned public GitHub discovery service. A search never installs a package,
-runs its code, changes registrations, or grants access. Search is owner-only
-management, not a remotely exposed Gateway tool.
+App-owned static catalog service. A search never installs a package, runs code,
+changes registrations or grants access. Installed plugin inventory stays local.
 
-The official publisher is GitHub organization `computer-mcp`, pinned by numeric
-account ID `315005910`. Repository ownership must match that identity; manifest
-claims do not confer official status. The service scans public repositories
-in name order, skips archived or disabled repositories, resolves the default
-branch to an immutable commit, and reads `computer-mcp-plugin.toml` at that
-commit. Git blob hashes and a SHA-256 digest bind the returned declaration to
-the metadata. This identifies declaration provenance, not a downloaded
-artifact's contents or signature. In particular, GitHub Contents can return a
-symlink target as file content; discovery does not validate an installable
-archive or execute the declaration.
+The service reads `https://computer-mcp.github.io/plugins/index.json`, a complete
+publisher-generated schema 2 snapshot. Schema 1 remains readable with its legacy
+macOS target semantics. The publisher pins the official GitHub
+organization `computer-mcp` by numeric ID `315005910`, admits repositories by
+numeric identity and verifies published tags, commits, declarations and release
+archives. The catalog includes versions, channels, compatibility, prerequisites,
+archive identities and explicit withdrawals. It is discovery metadata, not a
+signature, execution grant or replacement for installation-time GitHub checks.
 
-Each repository page checks at most 10 repositories. Query words match the
-repository, plugin ID, name and description; `--kind` filters by contribution.
-An empty filtered page is not the end when `next_page` is present. Use `--page`
-to continue. Results include the submitted criteria, checked repository count,
-fetch time, cache status, source IDs and commits, component IDs, and individual
-repository issues. Invalid declarations do not hide valid neighboring entries.
+Query words match repository, plugin ID, name and description; `--kind` filters
+contributions. Search picks each plugin's latest stable, non-withdrawn release
+compatible with this host version, platform and architecture, with at least one
+matching archive. Each archive is filtered by its declared target. Filtering happens before
+pagination. Each local page contains at most 10 matching plugins. Search, paging
+and release selection use the same complete snapshot and make no organization,
+default-branch or Contents API requests.
 
-The host caches up to eight pages in memory for 60 seconds. `--refresh` or
-**Refresh page** bypasses that cache. Only complete successful page reads are
-cached. Concurrent uncached searches receive an explicit busy error. GitHub
-unavailability, HTTP permission failures, rate limits, malformed responses and
-timeouts are errors, not successful empty results. The App retains previous
-results with an error label; it does not present them as freshly fetched.
-Search can be cancelled. Paging and refresh retain the submitted search criteria
-even while a new query is being edited.
+A refresh makes one credential-free conditional request using ETag, or
+Last-Modified when ETag is unavailable. The ordinary refresh interval is 10 minutes;
+manual refresh has a 30-second minimum and respects exponential failure backoff
+and bounded server retry delays. Concurrent readers share one fetch. Successful
+200/304 validation persists the body, validators and validation time together in
+`Application Support/Computer MCP/Cache/PluginCatalog/index.json` (the candidate
+App uses its own support directory). Generation time describes content publication;
+a successful 304 refreshes validation time without inventing a new generation.
 
-The network client uses a separate ephemeral session, with no host cookies,
-credentials, authentication prompts, or inherited authorization headers. It
-does not read GitHub CLI credentials. Requests stay on `https://api.github.com`;
-redirects are refused and pagination URLs are validated, never followed as
-arbitrary destinations. Each request is bounded to 8 seconds idle/10 seconds
-total, a page to 25 seconds, metadata to 2 MiB, and the decoded declaration to
-1 MiB. Both declared and actual decompressed response sizes are bounded.
+Malformed, truncated, oversized, unsupported-schema and regressing snapshots,
+HTTP errors, offline operation and timeouts preserve the last known-good snapshot.
+The result reports stale status and issues. With no valid snapshot, failure stays
+an error rather than a successful empty list. A later snapshot cannot silently
+remove prior releases, rewrite package identities or undo a withdrawal. Cache
+writes serialize with other writers and cannot overwrite a newer generation.
+A cache storage failure is visible while valid in-memory results remain usable.
+
+The isolated HTTP session inherits no cookies, credentials or authorization
+headers and never reads GitHub CLI credentials. Redirects and authentication
+challenges are refused. The fixed endpoint response is bounded to 4 MiB, including
+actual decompressed bytes, with 8-second idle and 10-second resource timeouts.
+The decoded document contains at most 1,024 releases. Disk cache reads are bounded
+and reject symbolic links. Cancellation prevents stale UI publication; a shared
+bounded refresh can finish for other readers.
 
 CLI success is a snake-case `PluginCatalogSearchResult` JSON object, including
-`publisher_id`, `checked_repositories`, `fetched_at`, and optional `next_page`.
+`publisher_id`, `checked_repositories` (snapshot repository count), `fetched_at`,
+optional `next_page`, and `catalog` generation, revision, publication/validation
+times, stale status and next refresh time.
 `fetched_at` follows the control plane's numeric Foundation reference-date
 encoding (seconds since 2001-01-01 UTC). Runtime failure is
 `{"error":{"code":"plugin.catalog.rate_limited","message":"..."}}` with
@@ -559,25 +644,23 @@ not proof of a published official package. Live read-only verification can be
 run separately without touching the production App:
 
 ```sh
-COMPUTER_MCP_LIVE_CATALOG_TEST=1 /usr/bin/swift test --filter testOfficialPluginSearchAgainstPublicGitHubFromIsolatedCLI
+COMPUTER_MCP_LIVE_CATALOG_TEST=1 /usr/bin/swift test --filter testOfficialPluginSearchAgainstPublicCatalogFromIsolatedCLI
 ```
 
 That test creates a temporary control socket and database, invokes the built
 CLI from its temporary working directory, and removes only its own fixture.
-It requires GitHub connectivity and available public API quota; it does not
-publish a repository or substitute fixture data for a real response.
+It requires a deployed complete official catalog and connectivity to its static
+endpoint; it does not publish metadata or substitute a fixture for a real response.
 
 ### Release Artifacts
 
-The host release service resolves the selected repository's published release,
-using GitHub's latest release or an explicit tag, and reads the declaration at
-the fully qualified `refs/tags/` commit. This declaration can differ from the
-default-branch declaration shown by search. Selection records include publisher,
-repository, release and asset IDs, the commit and declaration hashes, filename,
-size and artifact SHA-256. ZIP, TAR and gzip-compressed TAR assets must be
-uploaded and have a valid GitHub SHA-256 digest within the archive size limit.
-Unsupported asset types are omitted; invalid archive candidates produce issues.
-Asset pages contain at most 100 entries and retain explicit continuation.
+Release selection reads the cached catalog locally. It defaults to the latest
+compatible stable version; an exact tag selects that recorded release. Results
+include all recorded versions, channel, withdrawal/compatibility state and runtime
+prerequisites. Withdrawn or incompatible versions have no selectable archives.
+Selection records retain publisher, repository, release and asset IDs, tag commit,
+declaration hashes, filename, size and archive SHA-256. Archive pages contain at
+most 10 entries with explicit continuation. Discovery does not download packages.
 
 Installation revalidates repository ownership and release membership before
 download and again before commit. It checks membership through the release's
@@ -604,12 +687,13 @@ No download or package inspection executes plugin code or installs external
 dependencies.
 
 In the App, open **Plugins → Search official plugins → Choose release archive**.
-Leave the tag blank for the latest stable release, or enter an exact published
-tag (including a prerelease). Choose a ZIP/TAR/gzip archive appropriate for the
-Mac; the host validates the package's architecture and version compatibility.
-The displayed release may differ from the repository's default-branch version.
-Asset pages stay on the displayed tag. Failed refreshes keep prior results
-visible but disable installation until a successful request.
+Choose the latest compatible stable release or a recorded tag, including a
+prerelease. Withdrawn and incompatible versions remain visible with their status. Choose a ZIP/TAR/gzip archive appropriate for the
+Mac; the host validates the selected archive's platform, architecture and host
+version compatibility against the freshly fetched tagged declaration.
+Asset pages stay on the displayed tag. A failed catalog refresh keeps saved
+results visible with stale status; installation still requires fresh selected-release
+GitHub verification and exact archive/manifest checks.
 
 **Download and install** uses the same transaction as local archive installation.
 New identities start disabled; updates preserve host settings and earlier
@@ -625,7 +709,8 @@ The CLI workflow is `plugins search` → `plugins artifacts <owner/repo>
 from the `artifacts` array (at most 256 KiB), with the returned snake-case keys.
 The listing itself neither downloads bytes nor changes plugin state. Use `--tag`
 for an exact published release and follow `next_page`, including empty pages.
-Both metadata and installation revalidate the official repository identity.
+The publisher verifies discovery metadata; installation revalidates the exact
+official repository and release identity.
 Neither command retries a failed write. The owner socket call waits for the
 bounded host operation: losing that connection does not prove cancellation or
 rollback. Read `list`/`show` before retrying an operation with an unknown outcome.
@@ -643,7 +728,7 @@ mutation; it is global to plugin state, including when `show` filters one ID.
 | `plugins list` | Read recorded source selections, settings, origins and resolution diagnostics |
 | `plugins show <id>` | Read one recorded plugin identity |
 | `plugins doctor <id>` | Check source, declared host compatibility, dependencies and files, including disabled contributions; report unverified runtime checks explicitly |
-| `plugins search [query] [--kind mcp\|cli\|skills] [--page <number>] [--refresh]` | Read official GitHub declarations with source identity, pagination and explicit failure states |
+| `plugins search [query] [--kind mcp\|cli\|skills] [--page <number>] [--refresh]` | Read compatible published plugins from the static catalog with local pagination and explicit cache status |
 | `plugins artifacts <repository> --repository-id <id> [--tag <tag>] [--page <number>]` | Read a published release's exact installable archive selections and pagination |
 | `plugins install-release <selection.json> --expected-revision <revision>` | Revalidate, download and install one selected official release archive |
 | `plugins register <path> --expected-revision <revision>` | Register or explicitly refresh a local development directory; new identities start disabled |
@@ -667,7 +752,7 @@ target.
 Nonempty `issues` can accompany exit status zero: inspect them before retrying
 cleanup, rather than repeating a successful installation. Runtime failures return
 a JSON `error` with `code` and `message` and a nonzero exit status. Codes distinguish
-`plugin.stale_revision`, `plugin.installation_busy`, `plugin.connected_clients`,
+`plugin.stale_revision`, `plugin.installation_busy`, `plugin.change_in_progress`,
 `plugin.worker_unavailable`, and `plugin.archive.<reason>` failures. Parser errors
 use standard CLI usage diagnostics. If the control connection is lost, inspect
 list/show before retrying a change whose outcome is unknown.
@@ -709,12 +794,20 @@ or unavailable; such references do not create a runtime or authorize another
 registration. Expanded registrations and this host reference context are not
 serialized into the main TOML.
 
-Registration changes require the gateway to have no connected, connecting or
-cleaning-up clients. The listener temporarily pauses admission during a change and resumes
-on success or failure. A busy gateway rejects the mutation without disconnecting
-clients or interrupting their tasks. This control-plane check is separate from
-downstream MCP catalog-change notifications. A successful settings commit is
-configuration validation, not a claim that a downstream executable is healthy.
+Plugin registration changes prepare runtime candidates for each admitted client
+identity and profile before committing the plugin revision. Existing clients keep
+using their current runtime during preparation. New identities wait for publication.
+The commit compares the captured manifest and database inputs, then switches routing
+before notifying clients of catalog changes. Subsequent calls on the same connection
+use the published configuration; continuations of existing work retain their original
+runtime and files until that work finishes. Current authorization applies to both.
+
+Failed preparation, cancellation or a concurrent configuration change leaves the
+previous plugin revision and routing intact. Runtime capacity includes current,
+retained, preparing and closing generations; a change that exceeds it is rejected.
+Listener shutdown joins an in-progress publication and its resource cleanup.
+Preparation validates enabled contributions, including downstream discovery where
+required by their exposure. It does not prove a vendor account or model is usable.
 
 For an HTTP contribution, host `mcp.<component>.authentication` settings may
 contain `endpoint` and `keychain_account`. The endpoint must exactly match the
@@ -722,4 +815,8 @@ package's URL; a package update cannot retarget a saved credential. The manifest
 cannot declare this binding or contain the token. The App's MCP list and
 `mcp credential` commands manage its Keychain value independently of package
 versions. Disabling or uninstalling a package retains the user's credential.
+For an inactive registered plugin, `mcp credential` can resolve the selected
+declaration and host binding before activation. Configure the endpoint binding,
+set the credential, then enable the plugin. Ambiguous registration IDs, changed
+source declarations and mismatched endpoints cannot select a credential target.
 See [HTTP credentials](Config.md#http-credentials).

@@ -14,10 +14,11 @@ fail() {
 [[ -f "$CATALOG" ]] || fail "Missing App String Catalog."
 /usr/bin/jq empty "$CATALOG"
 
+# JSON keys use exact identity, regardless of the caller's collation rules.
 duplicate_keys=$(
   /usr/bin/sed -n 's/^    "\(.*\)" : .*/\1/p' "$CATALOG" \
-    | /usr/bin/sort \
-    | /usr/bin/uniq -d
+    | /usr/bin/env LC_ALL=C /usr/bin/sort \
+    | /usr/bin/env LC_ALL=C /usr/bin/uniq -d
 )
 [[ -z "$duplicate_keys" ]] \
   || fail "Duplicate String Catalog keys:\n$duplicate_keys"
@@ -184,14 +185,14 @@ EXTRACTED_DIR="$TEMP_DIR/extracted"
 [[ ! -s "$TEMP_DIR/extract-errors" ]] \
   || fail "Apple localization extraction reported errors:\n$(<"$TEMP_DIR/extract-errors")"
 
-/usr/bin/jq -r '.strings | keys[]' "$CATALOG" | /usr/bin/sort -u >"$TEMP_DIR/catalog-keys"
+/usr/bin/jq -r '.strings | keys[]' "$CATALOG" | /usr/bin/env LC_ALL=C /usr/bin/sort -u >"$TEMP_DIR/catalog-keys"
 : >"$TEMP_DIR/extracted-keys"
 for strings_file in "$EXTRACTED_DIR"/*.strings(N); do
   /usr/bin/plutil -convert json -o - "$strings_file" \
     | /usr/bin/jq -r 'keys[]' >>"$TEMP_DIR/extracted-keys"
 done
-/usr/bin/sort -u -o "$TEMP_DIR/extracted-keys" "$TEMP_DIR/extracted-keys"
-missing_extracted=$(/usr/bin/comm -23 "$TEMP_DIR/extracted-keys" "$TEMP_DIR/catalog-keys")
+/usr/bin/env LC_ALL=C /usr/bin/sort -u -o "$TEMP_DIR/extracted-keys" "$TEMP_DIR/extracted-keys"
+missing_extracted=$(/usr/bin/env LC_ALL=C /usr/bin/comm -23 "$TEMP_DIR/extracted-keys" "$TEMP_DIR/catalog-keys")
 [[ -z "$missing_extracted" ]] \
   || fail "SwiftUI-extracted strings are missing from the String Catalog:\n$missing_extracted"
 

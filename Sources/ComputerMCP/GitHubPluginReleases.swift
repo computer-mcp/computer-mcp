@@ -11,17 +11,18 @@ package struct GitHubPluginArtifact: Codable, Equatable, Identifiable, Sendable 
   package let name: String
   package let size: Int64
   package let sha256: String
+  package var compatibility: PluginPlatformCompatibility? = nil
   package var id: String { "\(declaration.repositoryID)/\(releaseID)/\(assetID)" }
 
   var apiPath: String { "/repos/\(declaration.repository)/releases/assets/\(assetID)" }
 
   func validate() throws {
-    try GitHubPluginCatalog.Repository.validateName(declaration.repository)
+    try GitHubPluginSource.Repository.validateName(declaration.repository)
     try validatePluginID(declaration.pluginID)
-    guard declaration.publisherID == GitHubPluginCatalog.publisherID,
+    guard declaration.publisherID == GitHubPluginSource.publisherID,
       Self.validID(declaration.repositoryID), Self.validID(releaseID), Self.validID(assetID),
-      GitHubPluginCatalog.isGitSHA(declaration.revision),
-      GitHubPluginCatalog.isGitSHA(declaration.manifestBlobSHA),
+      GitHubPluginSource.isGitSHA(declaration.revision),
+      GitHubPluginSource.isGitSHA(declaration.manifestBlobSHA),
       !tag.isEmpty, tag.utf8.count <= 256,
       !tag.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
       !name.isEmpty, name.utf8.count <= 255, !name.contains("/"), !name.contains("\\"),
@@ -49,9 +50,21 @@ package struct GitHubPluginReleaseArtifacts: Codable, Sendable {
   package let nextPage: Int?
   package let artifacts: [GitHubPluginArtifact]
   package let issues: [PluginCatalogIssue]
+  package var catalog: PluginCatalogStatus? = nil
+  package var versions: [PluginCatalogReleaseVersion] = []
 }
 
-/// Reads public release metadata using the same publisher and declaration checks as search.
+package struct PluginCatalogReleaseVersion: Codable, Equatable, Sendable {
+  package let tag: String
+  package let version: PluginVersion
+  package let prerelease: Bool
+  package let withdrawn: Bool
+  package let withdrawalReason: String?
+  package let compatible: Bool
+  package let dependencies: [PluginDependency]
+}
+
+/// Revalidates one selected public release against current GitHub source and membership.
 struct GitHubPluginReleases: Sendable {
   private let http: any PluginCatalogHTTPFetching
 
@@ -65,15 +78,6 @@ struct GitHubPluginReleases: Sendable {
     self.timeout = min(max(timeout, .milliseconds(1)), .seconds(30))
   }
 
-  func artifacts(
-    repository: String, repositoryID: Int64, tag: String? = nil, page: Int = 1
-  ) async throws -> GitHubPluginReleaseArtifacts {
-    try await withDeadline {
-      try await load(
-        repository: repository, repositoryID: repositoryID, tag: tag, releaseID: nil, page: page)
-    }
-  }
-
   /// Re-fetch by immutable release/asset IDs; renamed, replaced or moved selections fail closed.
   func revalidate(_ artifact: GitHubPluginArtifact) async throws {
     try artifact.validate()
@@ -83,7 +87,7 @@ struct GitHubPluginReleases: Sendable {
   private func checkRelease(_ artifact: GitHubPluginArtifact) async throws {
     let release = try await metadata(
       repository: artifact.declaration.repository, repositoryID: artifact.declaration.repositoryID,
-      tag: nil, releaseID: artifact.releaseID)
+      releaseID: artifact.releaseID)
     guard release.entry == artifact.declaration, release.release.tagName == artifact.tag,
       release.release.prerelease == artifact.prerelease
     else { throw PluginCatalogError.invalidProvenance }
@@ -93,39 +97,21 @@ struct GitHubPluginReleases: Sendable {
       let result = try await assets(
         repository: release.entry.repository, releaseID: release.release.id, page: page)
       if let asset = result.values.first(where: { $0.id == artifact.assetID }) {
-        let current = try makeArtifact(asset, declaration: release.entry, release: release.release)
+        let target =
+          release.manifest.compatibility?.artifactTarget(named: asset.name)
+          ?? (release.manifest.compatibility == nil ? .macOS : nil)
+        guard let target,
+          artifact.compatibility.map({ $0 == target })
+            ?? (release.manifest.compatibility?.artifacts.isEmpty ?? true)
+        else { throw PluginCatalogError.invalidProvenance }
+        var current = try makeArtifact(asset, declaration: release.entry, release: release.release)
+        current.compatibility = artifact.compatibility == nil ? nil : target
         guard current == artifact else { throw PluginCatalogError.invalidProvenance }
         return
       }
       guard let next = result.next else { throw PluginCatalogError.invalidProvenance }
       page = next
     }
-  }
-
-  private func load(
-    repository: String, repositoryID: Int64, tag: String?, releaseID: Int64?, page: Int
-  ) async throws -> GitHubPluginReleaseArtifacts {
-    guard (1...1_000).contains(page) else { throw PluginCatalogError.invalidQuery }
-    let (entry, release) = try await metadata(
-      repository: repository, repositoryID: repositoryID, tag: tag, releaseID: releaseID)
-    let result = try await assets(repository: entry.repository, releaseID: release.id, page: page)
-    var artifacts: [GitHubPluginArtifact] = []
-    var issues: [PluginCatalogIssue] = []
-    for asset in result.values {
-      guard GitHubPluginArtifact.isArchive(asset.name) else { continue }
-      do { artifacts.append(try makeArtifact(asset, declaration: entry, release: release)) } catch {
-        issues.append(
-          .init(
-            repository: entry.repository, code: "plugin.artifact.unavailable",
-            message:
-              "A release archive lacks valid uploaded content, a bounded size or a SHA-256 digest.")
-        )
-      }
-    }
-    return GitHubPluginReleaseArtifacts(
-      declaration: entry, releaseID: release.id, tag: release.tagName,
-      prerelease: release.prerelease, page: page, nextPage: result.next, artifacts: artifacts,
-      issues: issues)
   }
 
   private func assets(repository: String, releaseID: Int64, page: Int) async throws -> (
@@ -166,39 +152,33 @@ struct GitHubPluginReleases: Sendable {
   }
 
   private func metadata(
-    repository: String, repositoryID: Int64, tag: String?, releaseID: Int64?
-  ) async throws -> (entry: PluginCatalogEntry, release: Release) {
-    try GitHubPluginCatalog.Repository.validateName(repository)
-    guard GitHubPluginArtifact.validID(repositoryID),
-      releaseID.map(GitHubPluginArtifact.validID) ?? true,
-      tag.map({
-        !$0.isEmpty && $0.utf8.count <= 256
-          && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
-      }) ?? true
+    repository: String, repositoryID: Int64, releaseID: Int64
+  ) async throws -> (entry: PluginCatalogEntry, manifest: PluginManifest, release: Release) {
+    try GitHubPluginSource.Repository.validateName(repository)
+    guard GitHubPluginArtifact.validID(repositoryID), GitHubPluginArtifact.validID(releaseID)
     else { throw PluginCatalogError.invalidQuery }
     try Task.checkCancellation()
     let prefix = "/repos/\(repository)"
     let response = try await http.fetch(
       path: prefix, query: [:], accept: "application/vnd.github+json", maxBytes: 262_144)
     try response.requireSuccess()
-    let repo = try response.decode(GitHubPluginCatalog.Repository.self)
+    let repo = try response.decode(GitHubPluginSource.Repository.self)
     try repo.validate()
     guard repo.id == repositoryID, repo.fullName.lowercased() == repository.lowercased(),
       !repo.archived, !repo.disabled
     else { throw PluginCatalogError.invalidProvenance }
-    let selector = releaseID.map(String.init) ?? tag.map { "tags/" + $0 } ?? "latest"
     let releaseResponse = try await http.fetch(
-      path: prefix + "/releases/" + selector, query: [:], accept: "application/vnd.github+json",
+      path: prefix + "/releases/" + String(releaseID), query: [:],
+      accept: "application/vnd.github+json",
       maxBytes: 2_097_152)
     try releaseResponse.requireSuccess()
     let release = try releaseResponse.decode(Release.self)
-    guard GitHubPluginArtifact.validID(release.id), releaseID.map({ $0 == release.id }) ?? true,
+    guard GitHubPluginArtifact.validID(release.id), releaseID == release.id,
       !release.draft, release.publishedAt != nil, !release.tagName.isEmpty,
       release.tagName.utf8.count <= 256,
       !release.tagName.unicodeScalars.contains(where: {
         CharacterSet.controlCharacters.contains($0)
-      }),
-      tag.map({ $0 == release.tagName }) ?? true
+      })
     else { throw PluginCatalogError.invalidResponse }
     let commit = try await http.fetch(
       path: prefix + "/commits/refs/tags/" + release.tagName, query: [:],
@@ -206,11 +186,11 @@ struct GitHubPluginReleases: Sendable {
     try commit.requireSuccess()
     guard
       let revision = String(data: commit.body, encoding: .utf8)?.trimmingCharacters(
-        in: .whitespacesAndNewlines), GitHubPluginCatalog.isGitSHA(revision),
-      let entry = try await GitHubPluginCatalog.entry(
+        in: .whitespacesAndNewlines), GitHubPluginSource.isGitSHA(revision),
+      let declaration = try await GitHubPluginSource.declaration(
         repository: repo, revision: revision, http: http)
     else { throw PluginCatalogError.invalidManifest }
-    return (entry, release)
+    return (declaration.entry, declaration.manifest, release)
   }
 
   private func makeArtifact(_ asset: Asset, declaration: PluginCatalogEntry, release: Release)

@@ -11,6 +11,11 @@ final class MCPCallCancellation: Sendable {
     var delivery: Task<Void, Never>?
   }
   private let state = OSAllocatedUnfairLock(initialState: State())
+  private let deliveryTimeout: Duration
+
+  init(deliveryTimeout: Duration = .seconds(30)) {
+    self.deliveryTimeout = deliveryTimeout
+  }
 
   func checkCancellation() throws {
     if state.withLock({ $0.cancelled }) { throw CancellationError() }
@@ -20,7 +25,7 @@ final class MCPCallCancellation: Sendable {
     onDeliveryFailure: @escaping @Sendable () -> Void,
     _ send: @escaping @Sendable () async throws -> Void
   ) {
-    let action: @Sendable () async -> Void = {
+    let action: @Sendable () async -> Void = { [deliveryTimeout] in
       await withTaskGroup(of: Bool.self) { group in
         group.addTask {
           do {
@@ -29,7 +34,7 @@ final class MCPCallCancellation: Sendable {
           } catch { return false }
         }
         group.addTask {
-          do { try await Task.sleep(for: .milliseconds(250)) } catch { return true }
+          do { try await Task.sleep(for: deliveryTimeout) } catch { return true }
           return false
         }
         if await group.next() == false { onDeliveryFailure() }

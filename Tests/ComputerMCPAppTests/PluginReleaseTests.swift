@@ -34,6 +34,10 @@ struct PluginReleaseTests {
       AppLocalization.formatted(
         "Asset page %@", locale: Locale(identifier: "en"), bundle: bundle, "2")
         == "Asset page 2")
+    #expect(
+      AppLocalization.formatted(
+        "Catalog generation %@", locale: Locale(identifier: "zh-Hans"), bundle: bundle, "8")
+        == "目录版本 8")
   }
 
   @Test(arguments: [false, true])
@@ -83,6 +87,32 @@ struct PluginReleaseTests {
     #expect(model.result?.page == 2)
     #expect(model.errorMessage?.contains("503") == true)
     #expect(!model.canInstall && !model.isLoading)
+  }
+
+  @Test
+  func unavailableArchivesKeepMetadataVisibleAndPreventInstallation() async throws {
+    let service = try ReleaseAppFake()
+    service.installable = false
+    let reason = "Publisher note: %@ and 100% remain literal."
+    service.issues = [
+      .init(repository: "computer-mcp/combined", code: "plugin.catalog.withdrawn", message: reason)
+    ]
+    let model = PluginReleaseModel(entry: service.artifact.declaration, controlPlane: service)
+    await model.search()
+    #expect(model.result?.versions.count == 1)
+    #expect(model.result?.artifacts.isEmpty == true)
+    #expect(!model.canInstall && model.errorMessage == nil)
+    #expect(model.result?.issues.first?.message == reason)
+    let management = PluginManagementModel(controlPlane: service)
+    await management.reload()
+    try render(
+      PluginReleaseView(
+        management: management,
+        selection: PluginReleaseSelection(entry: service.artifact.declaration, revision: 0),
+        model: model
+      ).environment(\.locale, Locale(identifier: "zh-Hans")),
+      size: NSSize(width: 720, height: 720), appearance: try #require(NSAppearance(named: .aqua)),
+      name: "release-withdrawn-zh")
   }
 
   @Test
@@ -225,13 +255,21 @@ private final class ReleaseAppFake: PluginManaging {
   var beforeRead: (() async throws -> GitHubPluginReleaseArtifacts)?
   var beforeInstall: (() async -> Void)?
   var commitAfterCancellation = false
+  var installable = true
+  var issues: [PluginCatalogIssue] = []
   var state = PluginStoreSnapshot()
 
   init() throws { artifact = try releaseAppArtifact() }
   func result(page: Int) -> GitHubPluginReleaseArtifacts {
     GitHubPluginReleaseArtifacts(
       declaration: artifact.declaration, releaseID: artifact.releaseID, tag: artifact.tag,
-      prerelease: true, page: page, nextPage: page + 1, artifacts: [artifact], issues: [])
+      prerelease: true, page: page, nextPage: page + 1,
+      artifacts: installable ? [artifact] : [], issues: issues,
+      versions: [
+        PluginCatalogReleaseVersion(
+          tag: artifact.tag, version: artifact.declaration.version, prerelease: true,
+          withdrawn: false, withdrawalReason: nil, compatible: installable, dependencies: [])
+      ])
   }
   func pluginReleaseArtifacts(repository: String, repositoryID: Int64, tag: String?, page: Int)
     async throws -> GitHubPluginReleaseArtifacts

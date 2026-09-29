@@ -4,6 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 
+@Suite(.nativeIntegration)
 struct ExecutableInspectionTests {
   @Test
   func unreadableHeadersAndUnsupportedEncodingsDoNotAssertLaunchFailure() throws {

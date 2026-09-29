@@ -5,8 +5,9 @@ commands connect to the owner-only control socket under Application Support and
 operate the same manifest, database, bookmarks, Keychain records, providers,
 transports, and audit stream as the App. Each App-owned command accepts
 `--control-socket <path>` to select a specific running App instance. An explicit
-socket never falls back to another App. Standalone `--config` and App-owned
-`--control-socket` modes are mutually exclusive.
+socket never falls back to another App. App management commands reject combining
+`--config` and `--control-socket`. Standalone `serve http` can expose its own
+client-access control socket explicitly, as described below.
 
 Install it from the App or from the bundled executable:
 
@@ -28,11 +29,19 @@ computer-mcp app start [--control-socket <control-socket>]
 computer-mcp app stop [--control-socket <control-socket>]
 computer-mcp app restart [--control-socket <control-socket>]
 computer-mcp app launch-at-login [--control-socket <control-socket>] [--enabled] [--no-enabled]
+computer-mcp clients list [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
+computer-mcp clients allow [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>] [--full-access] [--always-allow-client] [--expected-trust-revision <expected-trust-revision>]
+computer-mcp clients limit [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>] --mode <mode>
+computer-mcp clients end [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
+computer-mcp clients trusts [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
+computer-mcp clients revoke [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
 computer-mcp doctor [--journey <journey>] [--json] [--control-socket <control-socket>]
 computer-mcp build-info
 computer-mcp config path [--control-socket <control-socket>]
 computer-mcp config show [--control-socket <control-socket>]
 computer-mcp config defaults
+computer-mcp cli-tree validate <file> [--expected-version <expected-version>]
+computer-mcp cli-tree check <file> [--expected-version <expected-version>] --executable <executable> [--working-directory <working-directory>]
 computer-mcp config validate [--control-socket <control-socket>] [--config <config>] [--connect]
 computer-mcp config export [--control-socket <control-socket>] [--output <output>]
 computer-mcp config migrate-codex --config <config> --adapter-config <adapter-config> --state-directory <state-directory> [--known-plugin-mcp-server <known-plugin-mcp-server> ...]
@@ -41,6 +50,7 @@ computer-mcp config history [--control-socket <control-socket>] [--limit <limit>
 computer-mcp config rollback [--control-socket <control-socket>] <revision-id>
 computer-mcp workspace list [--control-socket <control-socket>]
 computer-mcp workspace add [--control-socket <control-socket>] <path> [--display-name <display-name>]
+computer-mcp workspace repair [--control-socket <control-socket>] <id> <path> [--display-name <display-name>]
 computer-mcp workspace remove [--control-socket <control-socket>] <id>
 computer-mcp workspace enable [--control-socket <control-socket>] <id> --profile <profile> [--enabled] [--no-enabled]
 computer-mcp workspace deduplicate [--control-socket <control-socket>] [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
@@ -115,11 +125,67 @@ computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
 computer-mcp install codex [--config <config>] [--app] [--socket <socket>] [--name <name>] [--codex-cli <codex-cli>] [--server-executable <server-executable>] [--dry-run]
 computer-mcp serve stdio --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>]
-computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>]
+computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>] [--control-socket <control-socket>]
 computer-mcp bridge [--socket <socket>] [--tunnel-credential-file <tunnel-credential-file>] [--tunnel-profile-id <tunnel-profile-id>] [--client-identity <client-identity>]
 ```
 
 Use `--help` on any command for the authoritative options and exit behavior.
+
+## Client access
+
+`clients list` returns `sessions` sorted by ID and a `next_after_id` cursor.
+Each row includes the connection's exact `revision` and matching
+`trust_revision`. `clients trusts` returns saved `trusts` with their revisions,
+including revoked entries. Both accept `--id`, `--after-id` and `--limit`
+(default 100, maximum 200). These are live pages, not a retained snapshot.
+
+```sh
+computer-mcp clients list
+computer-mcp clients allow <connection-id> --full-access
+computer-mcp clients limit <connection-id> --mode observe
+computer-mcp clients end <connection-id>
+computer-mcp clients trusts
+computer-mcp clients revoke <trust-id>
+```
+
+`allow --full-access` is explicit consent to arbitrary execution as the current
+macOS user, including access to that user's files, processes, network and
+credentials. A workspace provides context, not a sandbox; macOS privacy
+permissions still apply. The default is **This Session**. Add
+`--always-allow-client` deliberately to save approval for future connections
+with the same authenticated principal, caller and unchanged profile. Changing
+the profile or revoking its saved trust invalidates that approval.
+
+`limit --mode observe|restricted` sets the selected connection's access ceiling;
+its profile remains an upper bound for Restricted Access. `end` stops new
+requests on that connection. These commands do not cancel already started work.
+`revoke` changes saved approval and affects connections relying on that approval.
+
+Mutations read the selected record once, capture its revisions and submit one
+write. Automation can supply `--expected-revision` and, for `allow`,
+`--expected-trust-revision` to use previously reviewed values. Stale values fail
+without retry or silently adopting new authority. Successful operations return
+JSON; control failures return an `error` object with `code` and `message` and
+exit nonzero. Argument parsing failures use standard CLI diagnostics. After an
+unknown transport outcome, inspect access before deciding whether to try again.
+
+For an independently started HTTP gateway, select a private absolute Unix socket:
+
+```sh
+computer-mcp serve http --config /absolute/computer-mcp.toml --database /absolute/state.sqlite --control-socket /absolute/private/control.sock
+computer-mcp clients list --control-socket /absolute/private/control.sock
+computer-mcp clients allow <connection-id> --full-access --control-socket /absolute/private/control.sock
+```
+
+The standalone manifest must already set `policy.shell_enabled = true` before
+Full Access can be approved. Approval does not rewrite that manifest. Persistent
+approval also requires `--database` and an authenticated HTTP principal; anonymous
+or memory-only hosts can use This Session. The existing HTTP authentication,
+loopback, origin and request-size guards apply. The socket uses current-user peer
+validation and accepts only local-CLI identity. Its commands are absent from the
+remote MCP catalog. Its listener and accepted connections close with the owning
+HTTP runtime, and a control request from an old startup generation cannot affect
+a later one. It has no authority over the production App.
 Structured inspection and mutation results are JSON; configuration display and
 export are TOML.
 
@@ -222,18 +288,20 @@ edit that object. Unknown fields are rejected. For example:
 }
 ```
 
-All five mutation commands preview by default. Review the proposed settings
-and reconnect warning, then repeat the same command with `--apply` and
+All five mutation commands preview by default. Review the proposed settings,
+then repeat the same command with `--apply` and
 `--expected-current-digest <current_digest>` from that preview. A stale digest
-rejects the change; obtain and review a fresh preview. Applying reconnects an
-already running gateway and closes its clients' existing sessions. Clients
-must reconnect and complete or cancel their pending request waits. A lost
-response does not prove an operation failed: inspect its outcome before
-retrying, especially for writes. Adding or enabling a registration does not grant
-profile permissions, install dependencies, or prove connection health.
+rejects the change; obtain and review a fresh preview. Applying prepares the new
+runtime configuration before publication and keeps existing client connections.
+The same connection can list and invoke the new tools; existing work retains its
+original owner. A failed candidate leaves the prior configuration active. A lost
+response does not prove failure: inspect the current configuration before retrying.
+Adding or enabling a registration does not grant profile permissions or install
+dependencies. Candidate discovery does not prove authenticated tool execution.
 
 Disabling retains launch settings, selection and profile references while
-excluding the registration from discovery and execution. Removal rejects
+excluding the registration from new discovery and invocation. Existing work can
+continue on its original owner while its current permissions remain valid. Removal rejects
 registrations still referenced by tool mappings or profile grants; disable
 them or explicitly review those references first. External executables and
 registration input files are retained.
@@ -355,7 +423,20 @@ opens Codex persistence read-only and never loads the full history by default.
 ## Workspace registration repair
 
 `workspace add` resolves symlinks and is idempotent for an existing canonical
-root. To repair older duplicates, first preview:
+root. `workspace repair <id> <path>` renews folder access or binds an existing
+workspace to a selected folder. It preserves the canonical ID, creation time,
+aliases and profile grants; the display name stays unchanged unless supplied.
+The selected folder receives those existing permissions. A folder registered to
+another canonical workspace is rejected. The App exposes the same operation
+through each workspace's Repair action and native folder chooser.
+
+Repair invalidates unused approvals for the affected workspace and advances
+affected profile authorization, including wildcard grants. Executing operations
+retain their state. New calls use the selected folder after candidate validation;
+old-owner calls still require their original folder identity and current access.
+Failure or concurrent configuration changes preserve the previous registration.
+
+To repair older duplicates, first preview:
 
 ```sh
 computer-mcp workspace deduplicate [--control-socket <control-socket>]
@@ -366,6 +447,18 @@ apply the unchanged plan with its digest. `--allow-metadata-conflicts` is an
 explicit choice to keep the oldest registration metadata. The operation never
 deletes the workspace directory; retired ids remain aliases for historical
 references.
+
+Removal and deduplication commit workspace records, affected profile grants, and
+approval invalidation together. A failed commit leaves them unchanged. Each
+affected profile receives one new authorization revision; already executing
+operations and historical audit records retain their original state. Concurrent
+configuration changes invalidate prepared workspace changes and require a retry.
+
+The owner commands for adding, repairing, removing and deduplicating workspaces prepare the
+new runtime configuration before committing. Connected clients stay connected;
+new calls use the published configuration while existing work keeps its original
+runtime. A failed candidate leaves prior registration and routing intact. Removing
+a workspace denies new calls in its old scope without stopping existing work.
 
 ## Host permission commands
 
@@ -408,6 +501,13 @@ Changing arguments, target, authority, or using an expired ticket requires a new
 request. These are host operation approvals; Codex native approvals remain in
 the Codex adapter's native workflow.
 
+The App presents the tool title captured when the request was prepared and its
+redacted arguments as individual fields. Technical details retain the capability
+and request identifiers and original review JSON. Display metadata does not
+authorize execution: the exact target, arguments, expiry and current permission
+checks still govern the single-use ticket. A request whose details cannot be
+read must be sent again before the App can approve it.
+
 ## App-owned operation
 
 `plugins list/show/register/configure/enable/disable/select/remove` manage local
@@ -436,18 +536,22 @@ remain selectable for rollback. Neither archive installation nor digest checking
 establishes official publisher provenance or installs external dependencies.
 
 `plugins search [query] --kind mcp|cli|skills --page <number> --refresh`
-reads public official GitHub plugin declarations through the same service as
+reads the official static plugin catalog through the same persistent cache as
 the App. It returns JSON metadata, not an installation or a permission grant.
-Follow `next_page` even when a filtered repository page has no matches. Runtime
-failures return a JSON `error` object and a nonzero exit status; argument parsing
+Filtering precedes local pagination; follow `next_page` when present. The `catalog`
+object reports generation, validation time and stale status. A failed refresh
+returns a saved valid snapshot with issues; without one, runtime failures return a
+JSON `error` object and a nonzero exit status. Argument parsing
 errors use the standard CLI usage diagnostics. See
 [Official Search](PluginPackages.md#official-search) for provenance, caching,
 network limits, and failure behavior.
 
 `plugins artifacts <owner/repository> --repository-id <id> [--tag <tag>]`
-lists installable release archives, defaulting to the latest stable release.
+selects catalog release archives locally, defaulting to the latest compatible stable
+release. It also returns recorded versions, withdrawal status and prerequisites.
 Use the repository name and numeric identity from search, and follow `next_page`
-even on empty asset pages. Save one complete `artifacts` entry as a JSON file;
+for additional local asset pages. Withdrawn/incompatible releases expose no
+installable archives. Save one complete `artifacts` entry as a JSON file;
 `plugins install-release <selection.json> --expected-revision <revision>`
 revalidates that selection, downloads its bytes and installs it through the
 same App-owned transaction. The selection file is bounded to 256 KiB. New
@@ -463,14 +567,15 @@ does not silently create another database or gateway.
 `config import` is two phase. The first invocation validates the candidate,
 shows a secret-free diff, and returns the current digest. `--apply` requires
 that digest so a concurrent App edit cannot be overwritten. Apply never starts
-a stopped transport; when the gateway is already running it uses the same
-restart-and-rollback operation as the App so the active runtime cannot drift
-from the accepted manifest.
+a stopped transport. It prepares candidate runtimes, commits the manifest and
+resolved state, then publishes routing while keeping current connections and
+old work. Failed candidates or conflicting edits leave the prior admitted state
+active. Manifest rollback uses the same candidate and publication checks.
 
 Workspace, profile, manifest, gateway, and Tunnel lifecycle writes all use the
 same lifecycle-aware operations as the App. A local CLI call therefore performs
-the same validation, restart, desired-Tunnel reconnection, and failure rollback
-as the corresponding UI action.
+the same validation, publication, and lifecycle behavior as the corresponding
+UI action. Explicit gateway restart remains a separate operation.
 
 The owner-only control CLI is deliberately not registered as a remotely
 executable `cli.exec` provider. Doing so would let a remote caller inherit the
@@ -498,6 +603,14 @@ computer-mcp bridge
 The App supplies private credential/profile options to its owned Secure MCP
 Tunnel process. Local clients use the local-MCP identity. The command does not
 load TOML or start a second control plane.
+
+App-owned `tools call` requests retain their execution owner across CLI process
+exits and subsequent calls. Background handles continue through the same owner
+after configuration changes. The owner control service works while the gateway
+listener is stopped; stopping or restarting that listener does not cancel local
+administration work. Stopping the owner control service or exiting the App joins
+its owned processes and clears its retained results. Each continuation still
+requires current workspace access, permissions and any operation approval.
 
 ## Explicit standalone mode
 

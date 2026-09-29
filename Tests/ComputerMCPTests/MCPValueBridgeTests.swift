@@ -5,6 +5,22 @@ import Testing
 @testable import ComputerMCP
 
 struct MCPValueBridgeTests {
+  @Test func structuredContentMetadataAndSchemaKeepExactIntegers() throws {
+    let exact = MCP.Value.int(Int.max)
+    let value = try JSONValue.sdkToolResult(
+      content: [], structuredContent: .object(["id": exact]), isError: false,
+      meta: .init(additionalFields: ["sequence": exact]))
+    let wire = try JSONEncoder().encode(value)
+    let result = try JSONDecoder().decode(JSONValue.self, from: wire).sdkCallToolResult()
+    #expect(result.structuredContent == .object(["id": exact]))
+    #expect(result._meta?["sequence"] == exact)
+    let schema = try JSONDecoder().decode(
+      JSONValue.self,
+      from: Data(
+        "{\"type\":\"integer\",\"maximum\":9223372036854775807}".utf8))
+    #expect(schema.sdkValue == .object(["type": .string("integer"), "maximum": exact]))
+  }
+
   @Test(arguments: [false, true])
   func imageOnlyAndEmptyProtocolResultsKeepTheirShape(empty: Bool) throws {
     let content: [MCP.Tool.Content] =

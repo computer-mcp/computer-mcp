@@ -80,7 +80,7 @@ struct ComputerMCPApp: App {
       MenuBarStatusView()
         .environmentObject(model)
     } label: {
-      Label("Computer MCP", systemImage: model.menuBarSystemImage)
+      ClientAccessMenuLabel(model: model.clientAccess, serviceSystemImage: model.menuBarSystemImage)
         .labelStyle(.titleAndIcon)
     }
     .menuBarExtraStyle(.menu)
@@ -100,6 +100,13 @@ private struct MenuBarStatusView: View {
     )
 
     Divider()
+
+    ClientAccessMenuStatus(model: model.clientAccess) {
+      model.selectedWorkspace = .profiles
+      model.refresh(.profiles)
+      openWindow(id: "control-center")
+      NSApplication.shared.activate(ignoringOtherApps: true)
+    }
 
     Button {
       openWindow(id: "control-center")

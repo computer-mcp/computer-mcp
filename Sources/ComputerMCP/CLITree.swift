@@ -2,10 +2,12 @@ import Foundation
 
 enum CLITreeError: Error, Equatable, LocalizedError {
   case invalid(String)
+  case document(CLITreeDiagnostic)
 
   var errorDescription: String? {
     switch self {
     case .invalid(let reason): "Invalid CLI tree or input: \(reason)"
+    case .document(let issue): issue.message
     }
   }
 }
@@ -58,7 +60,10 @@ struct CLITree: Codable, Equatable, Sendable {
   }
 
   static func parse(_ data: Data) throws -> Self {
-    guard data.count <= 4_194_304 else { throw CLITreeError.invalid("Tree exceeds 4 MiB.") }
+    guard data.count <= 4_194_304 else {
+      throw CLITreeError.document(
+        .init(code: "clitree.document.too_large", path: "", message: "Tree exceeds 4 MiB."))
+    }
     let json = try JSONDecoder().decode(JSONValue.self, from: data)
     try cliTreeKeys(
       json,
@@ -66,29 +71,34 @@ struct CLITree: Codable, Equatable, Sendable {
         "format_version", "source", "executable_version", "coverage", "omissions", "commands",
         "executable_checks",
       ])
-    for check in json.objectValue?["executable_checks"]?.arrayValue ?? [] {
-      try cliTreeKeys(check, allowed: ["args", "stdout", "stdout_sha256"])
-    }
-    for command in json.objectValue?["commands"]?.arrayValue ?? [] {
+    for (index, check) in (json.objectValue?["executable_checks"]?.arrayValue ?? []).enumerated() {
       try cliTreeKeys(
-        command,
+        check, path: "/executable_checks/\(index)", allowed: ["args", "stdout", "stdout_sha256"])
+    }
+    for (index, command) in (json.objectValue?["commands"]?.arrayValue ?? []).enumerated() {
+      let path = "/commands/\(index)"
+      try cliTreeKeys(
+        command, path: path,
         allowed: [
           "id", "path", "description", "executable", "parameters", "argv", "stdin", "stdout",
           "output_schema", "help_argv", "dry_run_parameter", "risk_hint",
         ])
-      for parameter in command.objectValue?["parameters"]?.arrayValue ?? [] {
+      for (index, parameter) in (command.objectValue?["parameters"]?.arrayValue ?? []).enumerated()
+      {
         try cliTreeKeys(
-          parameter,
+          parameter, path: path + "/parameters/\(index)",
           allowed: [
             "name", "description", "schema", "required", "default", "secret", "conflicts",
             "requires",
           ])
       }
-      for token in command.objectValue?["argv"]?.arrayValue ?? [] {
-        try cliTreeKeys(token, allowed: ["kind", "value", "parameter", "flag", "inverse", "style"])
+      for (index, token) in (command.objectValue?["argv"]?.arrayValue ?? []).enumerated() {
+        try cliTreeKeys(
+          token, path: path + "/argv/\(index)",
+          allowed: ["kind", "value", "parameter", "flag", "inverse", "style"])
       }
       if let stdin = command.objectValue?["stdin"], stdin != .null {
-        try cliTreeKeys(stdin, allowed: ["parameter", "encoding"])
+        try cliTreeKeys(stdin, path: path + "/stdin", allowed: ["parameter", "encoding"])
       }
     }
     let tree = try JSONDecoder().decode(Self.self, from: data)
@@ -97,26 +107,54 @@ struct CLITree: Codable, Equatable, Sendable {
   }
 
   func validate() throws {
-    guard formatVersion == 1 else { throw CLITreeError.invalid("Unsupported format_version.") }
-    guard executableChecks.count <= 4 else {
-      throw CLITreeError.invalid("Too many executable checks.")
+    guard formatVersion == 1 else {
+      throw CLITreeError.document(
+        .init(
+          code: "clitree.format.unsupported", path: "/format_version",
+          message: "Unsupported format_version."))
     }
-    for check in executableChecks { try check.validate() }
-    guard !source.isEmpty, !executableVersion.isEmpty,
-      commands.count > 0, commands.count <= 4_096,
-      coverage == .partial ? !omissions.isEmpty : omissions.isEmpty
-    else { throw CLITreeError.invalid("Source, version, command count, or coverage is invalid.") }
+    guard executableChecks.count <= 4 else {
+      throw CLITreeError.document(
+        .init(
+          code: "clitree.check.invalid", path: "/executable_checks",
+          message: "Too many executable checks."))
+    }
+    for (index, check) in executableChecks.enumerated() {
+      try cliTreeAt("/executable_checks/\(index)", code: "clitree.check.invalid") {
+        try check.validate()
+      }
+    }
+    for (path, valid, message) in [
+      ("/source", !source.isEmpty, "Source must not be empty."),
+      ("/executable_version", !executableVersion.isEmpty, "Executable version must not be empty."),
+      ("/commands", (1...4_096).contains(commands.count), "Tree must contain 1...4096 commands."),
+      (
+        "/omissions", coverage == .partial ? !omissions.isEmpty : omissions.isEmpty,
+        "Omissions must match declared coverage."
+      ),
+    ] where !valid {
+      throw CLITreeError.document(
+        .init(code: "clitree.document.invalid", path: path, message: message))
+    }
     var ids = Set<String>()
     var paths = Set<[String]>()
-    for command in commands {
+    for (index, command) in commands.enumerated() {
       guard ids.insert(command.id).inserted, paths.insert(command.path).inserted else {
-        throw CLITreeError.invalid("Duplicate command identity or path.")
+        throw CLITreeError.document(
+          .init(
+            code: "clitree.command.duplicate", path: "/commands/\(index)",
+            message: "Duplicate command identity or path."))
       }
-      try command.validate()
+      try cliTreeAt("/commands/\(index)", code: "clitree.command.invalid") {
+        try command.validate()
+      }
     }
-    for command in commands where command.path.count > 1 {
+    for (index, command) in commands.enumerated() where command.path.count > 1 {
       guard paths.contains(Array(command.path.dropLast())) else {
-        throw CLITreeError.invalid("A command is missing its parent node.")
+        throw CLITreeError.document(
+          .init(
+            code: "clitree.command.missing_parent", path: "/commands/\(index)/path",
+            message: "A command is missing its parent node."))
       }
     }
   }
@@ -235,74 +273,80 @@ struct CLICommandDescriptor: Codable, Equatable, Sendable {
     guard names.count == parameters.count, names.allSatisfy(cliTreeIdentifier) else {
       throw CLITreeError.invalid("Parameter names must be unique identifiers.")
     }
-    for parameter in parameters {
-      try CLIValueValidation.validateSchema(parameter.schema)
-      guard !parameter.required || parameter.defaultValue == nil else {
-        throw CLITreeError.invalid("A required parameter cannot have an omitted-input default.")
-      }
-      if let value = parameter.defaultValue {
-        try CLIValueValidation.validate(value, schema: parameter.schema, path: parameter.name)
-        guard !parameter.secret else {
-          throw CLITreeError.invalid("Secret defaults are not publishable.")
+    for (index, parameter) in parameters.enumerated() {
+      try cliTreeAt("/parameters/\(index)", code: "clitree.parameter.invalid") {
+        try CLIValueValidation.validateSchema(parameter.schema)
+        guard !parameter.required || parameter.defaultValue == nil else {
+          throw CLITreeError.invalid("A required parameter cannot have an omitted-input default.")
         }
+        if let value = parameter.defaultValue {
+          try CLIValueValidation.validate(value, schema: parameter.schema, path: parameter.name)
+          guard !parameter.secret else {
+            throw CLITreeError.invalid("Secret defaults are not publishable.")
+          }
+        }
+        let relations = parameter.requires + parameter.conflicts
+        guard relations.allSatisfy({ names.contains($0) && $0 != parameter.name }),
+          Set(parameter.requires).isDisjoint(with: parameter.conflicts)
+        else { throw CLITreeError.invalid("Invalid parameter relationship.") }
       }
-      let relations = parameter.requires + parameter.conflicts
-      guard relations.allSatisfy({ names.contains($0) && $0 != parameter.name }),
-        Set(parameter.requires).isDisjoint(with: parameter.conflicts)
-      else { throw CLITreeError.invalid("Invalid parameter relationship.") }
     }
     var mapped = Set<String>()
     var optionsTerminated = false
     for (index, token) in argv.enumerated() {
-      switch token.kind {
-      case .literal:
-        guard let value = token.value, !value.contains("\0"), token.parameter == nil,
-          token.flag == nil, token.inverse == nil, token.style == nil
-        else { throw CLITreeError.invalid("Invalid literal argv token.") }
-        if value == "--" { optionsTerminated = true }
-      case .positional, .option, .flag:
-        guard let name = token.parameter,
-          let parameter = parameters.first(where: { $0.name == name }),
-          mapped.insert(name).inserted, token.value == nil
-        else { throw CLITreeError.invalid("Unknown or multiply mapped argv parameter.") }
-        let type = parameter.schema.objectValue?["type"]?.stringValue
-        if token.kind != .positional, optionsTerminated {
-          throw CLITreeError.invalid("An option or flag mapping follows --.")
-        }
-        if token.kind == .flag {
-          guard type == "boolean", validFlag(token.flag), token.style == nil,
-            token.inverse == nil || validFlag(token.inverse), token.inverse != token.flag
-          else { throw CLITreeError.invalid("Invalid Boolean flag mapping.") }
-          if token.inverse == nil {
-            try CLIValueValidation.validate(
-              .bool(true), schema: parameter.schema, path: parameter.name)
+      try cliTreeAt("/argv/\(index)", code: "clitree.argv.invalid") {
+        switch token.kind {
+        case .literal:
+          guard let value = token.value, !value.contains("\0"), token.parameter == nil,
+            token.flag == nil, token.inverse == nil, token.style == nil
+          else { throw CLITreeError.invalid("Invalid literal argv token.") }
+          if value == "--" { optionsTerminated = true }
+        case .positional, .option, .flag:
+          guard let name = token.parameter,
+            let parameter = parameters.first(where: { $0.name == name }),
+            mapped.insert(name).inserted, token.value == nil
+          else { throw CLITreeError.invalid("Unknown or multiply mapped argv parameter.") }
+          let type = parameter.schema.objectValue?["type"]?.stringValue
+          if token.kind != .positional, optionsTerminated {
+            throw CLITreeError.invalid("An option or flag mapping follows --.")
           }
-        } else {
-          let elementType =
-            type == "array"
-            ? parameter.schema.objectValue?["items"]?.objectValue?["type"]?.stringValue : type
-          guard let elementType, ["string", "integer", "number", "boolean"].contains(elementType),
-            token.inverse == nil
-          else {
-            throw CLITreeError.invalid("Argv requires scalar values or arrays of scalars.")
-          }
-          if token.kind == .positional {
-            guard token.flag == nil, token.style == nil else {
-              throw CLITreeError.invalid("A positional mapping cannot define a flag or style.")
-            }
-            if type == "array",
-              argv.dropFirst(index + 1).contains(where: { $0.kind == .positional })
-            {
-              let schema = parameter.schema.objectValue!
-              guard let count = schema["minItems"]?.intValue, schema["maxItems"]?.intValue == count
-              else {
-                throw CLITreeError.invalid("A variadic positional must be the last positional.")
-              }
+          if token.kind == .flag {
+            guard type == "boolean", validFlag(token.flag), token.style == nil,
+              token.inverse == nil || validFlag(token.inverse), token.inverse != token.flag
+            else { throw CLITreeError.invalid("Invalid Boolean flag mapping.") }
+            if token.inverse == nil {
+              try CLIValueValidation.validate(
+                .bool(true), schema: parameter.schema, path: parameter.name)
             }
           } else {
-            guard validFlag(token.flag), token.style != nil,
-              token.style != .equals || token.flag?.hasPrefix("--") == true
-            else { throw CLITreeError.invalid("Invalid option flag or value style.") }
+            let elementType =
+              type == "array"
+              ? parameter.schema.objectValue?["items"]?.objectValue?["type"]?.stringValue : type
+            guard let elementType,
+              ["string", "integer", "number", "boolean"].contains(elementType),
+              token.inverse == nil
+            else {
+              throw CLITreeError.invalid("Argv requires scalar values or arrays of scalars.")
+            }
+            if token.kind == .positional {
+              guard token.flag == nil, token.style == nil else {
+                throw CLITreeError.invalid("A positional mapping cannot define a flag or style.")
+              }
+              if type == "array",
+                argv.dropFirst(index + 1).contains(where: { $0.kind == .positional })
+              {
+                let schema = parameter.schema.objectValue!
+                guard let count = schema["minItems"]?.intValue,
+                  schema["maxItems"]?.intValue == count
+                else {
+                  throw CLITreeError.invalid("A variadic positional must be the last positional.")
+                }
+              }
+            } else {
+              guard validFlag(token.flag), token.style != nil,
+                token.style != .equals || token.flag?.hasPrefix("--") == true
+              else { throw CLITreeError.invalid("Invalid option flag or value style.") }
+            }
           }
         }
       }
@@ -393,8 +437,24 @@ private func cliTreeIdentifier(_ value: String) -> Bool {
     }
 }
 
-private func cliTreeKeys(_ value: JSONValue, allowed: Set<String>) throws {
-  guard let object = value.objectValue, Set(object.keys).isSubset(of: allowed) else {
-    throw CLITreeError.invalid("Unexpected field or non-object in tree document.")
+private func cliTreeKeys(_ value: JSONValue, path: String = "", allowed: Set<String>) throws {
+  guard let object = value.objectValue else {
+    throw CLITreeError.document(
+      .init(code: "clitree.document.type", path: path, message: "Expected an object."))
+  }
+  if let key = Set(object.keys).subtracting(allowed).sorted().first {
+    throw CLITreeError.document(
+      .init(
+        code: "clitree.document.unknown_field", path: path + CLITreeDiagnostic.pointer([key]),
+        message: "Unexpected field in tree document."))
+  }
+}
+
+private func cliTreeAt(_ path: String, code: String, operation: () throws -> Void) throws {
+  do { try operation() } catch CLITreeError.document(let issue) {
+    throw CLITreeError.document(
+      .init(code: issue.code, path: path + issue.path, message: issue.message))
+  } catch {
+    throw CLITreeError.document(.init(code: code, path: path, message: error.localizedDescription))
   }
 }

@@ -26,7 +26,7 @@ struct CLITreeToolProvider: GatewayToolProvider {
             "source": .string(tree.source), "executable_version": .string(tree.executableVersion),
             "coverage": .string(tree.coverage.rawValue),
             "omissions": .array(tree.omissions.map(JSONValue.string)),
-            "executable_check_count": .number(Double(tree.executableChecks.count)),
+            "executable_check_count": .integer(Int64(tree.executableChecks.count)),
             "compatibility": .string(
               tree.executableChecks.isEmpty ? "not_declared" : "required_before_call"),
           ])
@@ -96,8 +96,8 @@ struct CLITreeToolProvider: GatewayToolProvider {
       result.exitCode != 0 || result.timedOut || result.cancelled
       || result.launchError != nil || !result.streamErrors.isEmpty
     var output: [String: JSONValue] = [
-      "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
-      "signal": result.signal.map { .number(Double($0)) } ?? .null,
+      "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
+      "signal": result.signal.map { .integer(Int64($0)) } ?? .null,
       "timed_out": .bool(result.timedOut), "cancelled": .bool(result.cancelled),
       "stdout": stream(result.stdout, preferBinary: command.stdout == .binary),
       "stderr": stream(result.stderr, preferBinary: false),

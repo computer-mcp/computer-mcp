@@ -26,6 +26,10 @@ extension PluginStore {
     download: GitHubPluginDownload = GitHubPluginDownload()
   ) async throws -> PluginStoreMutation {
     try artifact.validate()
+    guard
+      artifact.compatibility?.permits(
+        platform: PluginHost.platform, architecture: architecture) ?? true
+    else { throw PluginArchiveError.incompatiblePackage }
     return try await installArchive(
       expectedSHA256: artifact.sha256, pluginID: artifact.declaration.pluginID,
       version: artifact.declaration.version, hostVersion: hostVersion, architecture: architecture,
@@ -77,7 +81,9 @@ extension PluginStore {
     do {
       try database.recordPluginDirectory(owned)
     } catch {
-      try storage.clean(identity, keepingPackage: false)
+      try storage.clean(
+        identity, keepingPackage: false,
+        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
       throw error
     }
     let preparation = PluginArchivePreparation(
@@ -88,12 +94,14 @@ extension PluginStore {
       let archive = try await prepareArchive(identity)
       let state = try await preparation.withPreparedPackage(
         archive: archive, expectedSHA256: expectedSHA256, pluginID: pluginID, version: version,
-        hostVersion: hostVersion, architecture: architecture
+        hostVersion: hostVersion, architecture: architecture,
+        artifactName: githubRelease?.name ?? archive.lastPathComponent
       ) { package, receipt in
         try await verifyPackage(package)
         return try await self.commitInstallation(
           package, receipt: receipt, owned: owned, storage: storage,
-          expectedRevision: expectedRevision, githubRelease: githubRelease)
+          expectedRevision: expectedRevision, githubRelease: githubRelease,
+          artifactName: githubRelease?.name ?? archive.lastPathComponent)
       }
       try storage.clean(identity, keepingPackage: true)
       return PluginStoreMutation(snapshot: state, issues: [])
@@ -105,7 +113,9 @@ extension PluginStore {
         return PluginStoreMutation(snapshot: current, issues: [cleanupIssue(pluginID)])
       }
       guard !Self.isReferenced(identity, in: current) else { throw PluginStoreError.invalidState }
-      try storage.clean(identity, keepingPackage: false)
+      try storage.clean(
+        identity, keepingPackage: false,
+        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
       try database.forgetPluginDirectory(owned)
       throw error
     }
@@ -114,8 +124,8 @@ extension PluginStore {
   private func commitInstallation(
     _ package: PluginPackage, receipt: PluginArchiveReceipt, owned: PluginOwnedDirectory,
     storage: PluginInstallationStorage, expectedRevision: Int64,
-    githubRelease: GitHubPluginArtifact?
-  ) throws -> PluginStoreSnapshot {
+    githubRelease: GitHubPluginArtifact?, artifactName: String
+  ) async throws -> PluginStoreSnapshot {
     try Task.checkCancellation()
     // Archive preparation suspends the actor; never reuse its preflight snapshot.
     var state = try checkedSnapshot(expectedRevision)
@@ -126,19 +136,21 @@ extension PluginStore {
         kind: .artifact, root: root,
         repository: githubRelease?.declaration.repositoryURL.absoluteString,
         revision: githubRelease?.declaration.revision, artifactSHA256: receipt.sha256,
-        githubRelease: githubRelease),
+        githubRelease: githubRelease,
+        artifactName: package.manifest.compatibility?.artifacts.isEmpty == false
+          ? artifactName : nil),
       manifestDigest: try Self.manifestDigest(package.manifest), registeredAt: .now)
     state.installations.append(record)
     state.selectedInstallations[record.pluginID] = record.id
     Self.addMissingSettings(for: package.manifest, to: &state)
-    return try commit(state, expectedRevision: expectedRevision)
+    return try await commit(state, expectedRevision: expectedRevision, storage: storage)
   }
 
   /// Revokes only this artifact's registration. Host overrides and other versions survive.
-  /// Callers must finish affected tasks and release their processes before this operation.
+  /// In-use files remain receipted for recovery after their runtime owners drain.
   package func uninstallArtifact(
     installationID: String, storageRoot: URL, expectedRevision: Int64
-  ) throws -> PluginStoreMutation {
+  ) async throws -> PluginStoreMutation {
     let storage = try PluginInstallationStorage(at: storageRoot)
     defer { storage.finishTransaction() }
     var state = try checkedSnapshot(expectedRevision)
@@ -157,9 +169,11 @@ extension PluginStore {
     }
     // Preserve files if another registration explicitly references the managed directory.
     guard !Self.isReferenced(owned.identity, in: state) else { throw PluginStoreError.invalidState }
-    let committed = try commit(state, expectedRevision: expectedRevision)
+    let committed = try await commit(state, expectedRevision: expectedRevision, storage: storage)
     do {
-      try storage.clean(owned.identity, keepingPackage: false)
+      try storage.clean(
+        owned.identity, keepingPackage: false,
+        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
       try database.forgetPluginDirectory(owned)
       return PluginStoreMutation(snapshot: committed, issues: [])
     } catch {
@@ -189,7 +203,10 @@ extension PluginStore {
           guard !Self.isReferenced(owned.identity, in: state) else {
             throw PluginStoreError.invalidState
           }
-          try storage.clean(owned.identity, keepingPackage: false)
+          try storage.clean(
+            owned.identity, keepingPackage: false,
+            processOwnershipRoot: database.mcpProcessOwnershipRoot
+              ?? MCPProcessOwnership.defaultRoot)
           try database.forgetPluginDirectory(owned)
         }
       } catch {

@@ -32,9 +32,22 @@ CLI and App health checks resolve access explicitly and close their temporary
 scope. No provider is created for an inaccessible workspace; if all are
 inaccessible, core diagnostics remain available. Explicit workspace selection
 never falls back to another directory, and grants are checked before revealing
-access errors. Reconnect after restoring the directory or renewing its access.
+access errors. A runtime created without access needs fresh construction after
+the directory or authorization is restored.
 Duplicate registration IDs and invalid provider configuration still reject
 construction.
+
+Every new workspace execution revalidates its current registration and bookmark
+access, then compares the resolved folder with the runtime's admitted physical
+identity (canonical path, device, inode and available creation time). Replacing a
+folder at the same path, redirecting a symlink, or losing bookmark access denies
+new calls, including continuations selected through an old owner. Existing work
+retains its owner and is not terminated by this check. Terminal result retention
+uses the same physical identity. Temporary validation scopes are balanced;
+bookmark resolution does not display system UI or persist a refreshed bookmark
+during a call. Workspace diagnostics report current access failures without
+executing providers. These checks do not grant macOS privacy permissions or
+provide an operating-system filesystem sandbox.
 
 The control socket and gateway socket are distinct and mode `0600`. CLI
 administration binds `local-cli`; MCP bridge clients bind `local-mcp` or an
@@ -73,8 +86,9 @@ over a pending refresh. A successful refresh that changes discovery inputs can
 require the caller to reconnect with the refreshed registration.
 
 Temporary catalogs and tunnel audits await runtime shutdown on success and
-failure. A socket session takes ownership after construction and closes its
-runtime when the connection ends. Cancellation during synchronous initialization
+failure. The App listener owns admitted runtimes; a disconnected socket session
+releases its protocol server without cancelling listener-owned work.
+Cancellation during synchronous initialization
 is checked when the bounded discovery returns, then shutdown is awaited; it
 does not immediately interrupt startup. Once a tool has been dispatched, its
 result and audit remain governed by the tool-call lifecycle rather than being
@@ -209,10 +223,28 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   and post-action verification.
 - Codex: an independent standard MCP adapter package owns App Server, Exec,
   domain persistence and `swift-codex`. Gateway registration and
-  routing use the same downstream MCP plane as other providers.
+routing use the same downstream MCP plane as other providers.
+
+Each runtime keeps an in-process work ledger distinct from authorization and
+durable execution receipts. An invocation owns its lifetime through its return,
+a shell session through process and stream cleanup, and an MCP request through
+its observed response or confirmed local transport teardown. Cancelling a
+request does not release that ownership. Lost observation marks it uncertain;
+closing an HTTP connection cannot establish that remote execution stopped.
+Providers that advertise the versioned MCP work resource also retain ownership
+for jobs and handles that outlive their tool response. The host binds each
+acquisition to a host-generated invocation reference on that exact scoped
+connection. Complete, bounded reports can release these owners; stale,
+malformed, foreign-instance or unavailable reports retain uncertainty. A local
+supervisor's exit alone cannot prove its detached jobs stopped. Providers without
+this declaration retain ordinary MCP behavior; their replies do not establish
+the lifetime of opaque background work. See the
+[provider work contract](../Reference/MCPProtocol.md#downstream-provider-work).
 
 Downstream MCP initialization and ready-session requests have independent
 budgets. Expiry invalidates the connection and identifies the failed stage.
+Automatic provider work observations use a separate single-flight read: expiry
+marks observation uncertain without closing the provider or cancelling its work.
 Cancellation is checked before queued work begins and after initialization;
 an already issued action can still have an uncertain outcome. Tool calls are
 not replayed automatically. Configuration values are described
@@ -321,6 +353,18 @@ Callback-enabled owned stdio adapters receive a private standard MCP endpoint.
 The host retains caller grants, workspace registrations, approval authority and
 audit; the adapter owns domain state and vendor protocol execution.
 `MCPHostInvocation` records the live outer call without exporting a credential.
+The host sends only its correlation UUID in downstream request metadata.
+`host.invocations.describe` resolves that identity within the private channel
+and checks current authorization. Independently started MCP requests retain the
+record until their response or confirmed local cleanup, including after their
+outer Gateway call has returned a started receipt.
+Validated provider work retains the creating call's context through its immutable
+acquisition reference, including derived work after the response. Complete work
+observations release the context only after its final owner disappears; failed
+observations retain it. Background contexts do not consume active-call slots.
+Exact-ID context inspection rechecks the current grant. Services that require
+an executing operation ticket continue to require an active forwarded request;
+background retention does not extend that mutation window.
 Private services match that reference, current grants and, for destructive
 removal, the executing operation ticket. Binding is lazy so plugin catalog
 startup does not depend on a partially constructed Gateway runtime.
@@ -334,7 +378,7 @@ row to remain present. Current persisted restrictions are reapplied to callbacks
 
 `MCPBoundHostServices` owns the atomic derived-workspace registration ledger
 and projects bounded diagnostics. Its private namespace permits only
-workspace registration, verified removal, and diagnostic reads for matching
+invocation inspection, workspace registration, verified removal, and diagnostic reads for matching
 live invocations. The independent Codex adapter
 implements its host interfaces through this endpoint while retaining separate
 App Server and Exec lifecycles. Imported embedded Codex configuration

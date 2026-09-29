@@ -128,6 +128,8 @@ package actor GatewaySocketTransport: Transport {
   typealias OutboundObserver = @Sendable (Data) async -> Void
 
   package nonisolated let logger: Logger
+  private nonisolated let terminationStream = AsyncStream<Void>.makeStream()
+  nonisolated var termination: AsyncStream<Void> { terminationStream.stream }
 
   private let configuration: GatewaySocketConfiguration
   private var channel: Channel?
@@ -172,6 +174,7 @@ package actor GatewaySocketTransport: Transport {
       guard channel.isActive else {
         throw GatewaySocketError.notConnected
       }
+      observeTermination(of: channel)
       isConnected = true
       return
     }
@@ -212,6 +215,7 @@ package actor GatewaySocketTransport: Transport {
         )
       }.get()
       channel = connected
+      observeTermination(of: connected)
       frameHandler = handler
       isConnected = true
       let handshake = try GatewaySocketAuthenticator.clientHandshake(
@@ -231,6 +235,11 @@ package actor GatewaySocketTransport: Transport {
       try? await group.shutdownGracefully()
       throw error
     }
+  }
+
+  private func observeTermination(of channel: Channel) {
+    let continuation = terminationStream.continuation
+    channel.closeFuture.whenComplete { _ in continuation.finish() }
   }
 
   package func disconnect() async {

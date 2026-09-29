@@ -3,7 +3,7 @@ import Testing
 
 @testable import ComputerMCP
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIParameterMappingTests {
   @Test(arguments: [
     (CLIArgumentToken.Style.separate, ["--value", "", "你好 world", "a\"b'c", "$(never-execute)\n"]),
@@ -38,8 +38,31 @@ struct CLIParameterMappingTests {
     await provider.execution.shutdown()
   }
 
+  @Test func nativeCLIArgumentsAndJSONOutputPreserveLargeIntegers() async throws {
+    let integer: Int64 = 9_007_199_254_740_993
+    let schema = JSONValue.object(["type": .string("integer")])
+    let command = CLICommandDescriptor(
+      id: "exact", path: [], description: "Echo an exact integer",
+      parameters: [.init(name: "value", schema: schema, required: true)],
+      argv: [
+        .init(kind: .literal, value: "-c"),
+        .init(kind: .literal, value: "import json,sys; print(json.dumps(int(sys.argv[1])))"),
+        .init(kind: .positional, parameter: "value"),
+      ], stdout: .json, outputSchema: schema)
+    let provider = CLITreeTests.provider(command, executable: "/usr/bin/python3")
+    let tool = try #require(provider.listTools().first?.name)
+    let result = try await provider.callToolAsync(
+      name: tool, arguments: .object(["value": .integer(integer)]))
+    await provider.execution.shutdown()
+    #expect(result.objectValue?["isError"] == .bool(false))
+    #expect(CLITreeTests.output(result)?["data"]?.int64Value == integer)
+  }
+
   @Test(arguments: [
     (JSONValue.number(-42), "integer", "--value=-42"),
+    (.integer(.max), "integer", "--value=9223372036854775807"),
+    (.integer(.min), "integer", "--value=-9223372036854775808"),
+    (.integer(9_007_199_254_740_993), "integer", "--value=9007199254740993"),
     (.number(-1.25), "number", "--value=-1.25"),
     (.bool(false), "boolean", "--value=false"),
     (.string("--"), "string", "--value=--"),
@@ -92,6 +115,33 @@ struct CLIParameterMappingTests {
       ])
     try command.validate()
     #expect(throws: CLITreeError.self) { try CLIArgumentEncoder.encode(input, command: command) }
+  }
+
+  @Test(arguments: ["integer", "number"])
+  func numericSchemaBoundsEnumsAndConstantsKeepAdjacentIntegersDistinct(type: String) throws {
+    let low = JSONValue.integer(9_007_199_254_740_992)
+    let high = JSONValue.integer(9_007_199_254_740_993)
+    for (keyword, bound, rejected) in [
+      ("minimum", high, low), ("maximum", low, high), ("const", high, low),
+    ] {
+      let schema = JSONValue.object(["type": .string(type), keyword: bound])
+      try CLIValueValidation.validateSchema(schema)
+      try CLIValueValidation.validate(bound, schema: schema, path: "id")
+      #expect(throws: CLITreeError.self) {
+        try CLIValueValidation.validate(rejected, schema: schema, path: "id")
+      }
+    }
+    let reversed = JSONValue.object(["type": .string(type), "minimum": high, "maximum": low])
+    #expect(throws: CLITreeError.self) { try CLIValueValidation.validateSchema(reversed) }
+    let enumeration = JSONValue.object(["type": .string(type), "enum": .array([high])])
+    #expect(throws: CLITreeError.self) {
+      try CLIValueValidation.validate(low, schema: enumeration, path: "id")
+    }
+    let all = JSONValue.object([
+      "type": .string(type), "minimum": .integer(.min), "maximum": .integer(.max),
+    ])
+    try CLIValueValidation.validateSchema(all)
+    try CLIValueValidation.validate(.integer(.max), schema: all, path: "id")
   }
 
   @Test

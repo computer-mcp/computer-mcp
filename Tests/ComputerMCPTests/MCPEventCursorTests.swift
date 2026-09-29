@@ -3,6 +3,7 @@ import Testing
 
 @testable import ComputerMCP
 
+@Suite(.nativeIntegration)
 struct MCPEventCursorTests {
   @Test
   func initialReadsAndUnavailableContinuationsDoNotStartAProvider() async throws {
@@ -35,10 +36,13 @@ struct MCPEventCursorTests {
     let fixture = try EventFixture()
     defer { fixture.remove() }
     let client = MCPProxyClient(workingDirectory: fixture.root)
+    let calls = BlockingOperationExecutor(label: "event-cursor-test")
     do {
       // Responses drain each burst below the transport queue bound before sending more events.
       for _ in 0..<100 {
-        _ = try client.callTool(server: fixture.server, name: "stream", arguments: .object([:]))
+        _ = try await calls.perform {
+          try client.callTool(server: fixture.server, name: "stream", arguments: .object([:]))
+        }
       }
       let clock = ContinuousClock()
       let deadline = clock.now.advanced(by: .seconds(5))

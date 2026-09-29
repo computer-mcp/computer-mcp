@@ -22,11 +22,15 @@ struct PluginReleaseView: View {
       Text("Choose release archive", bundle: AppLocalization.resourceBundle).font(.title2.bold())
       Text(verbatim: selection.entry.repository).foregroundStyle(.secondary)
       HStack {
-        TextField(text: $model.tag) {
-          Text("Release tag (blank for latest stable)", bundle: AppLocalization.resourceBundle)
+        Picker(selection: $model.tag) {
+          Text("Latest compatible stable release", bundle: AppLocalization.resourceBundle).tag("")
+          ForEach(model.result?.versions ?? [], id: \.tag) { version in
+            Text(verbatim: version.tag).tag(version.tag)
+          }
+        } label: {
+          Text("Release", bundle: AppLocalization.resourceBundle)
         }
-        .textFieldStyle(.roundedBorder)
-        .onSubmit { load() }
+        .onChange(of: model.tag) { _, _ in load() }
         Button {
           load()
         } label: {
@@ -60,11 +64,32 @@ struct PluginReleaseView: View {
           }
         }
         if !result.issues.isEmpty {
+          ForEach(Array(result.issues.enumerated()), id: \.offset) { _, issue in
+            let message =
+              issue.code == "plugin.catalog.withdrawn"
+              ? issue.message
+              : AppLocalization.errorDescription(
+                issue.message, preferredLocalizations: [locale.identifier])
+            Text(verbatim: message)
+              .foregroundStyle(.orange)
+          }
+        }
+        if let status = result.catalog, status.stale {
           Text(
-            "Some release archives lack a valid size or SHA-256 and cannot be installed.",
+            "Catalog could not be refreshed. Showing saved results.",
             bundle: AppLocalization.resourceBundle
-          )
-          .foregroundStyle(.orange)
+          ).foregroundStyle(.orange)
+        }
+        if let version = result.versions.first(where: { $0.tag == result.tag }),
+          !version.dependencies.isEmpty
+        {
+          DisclosureGroup {
+            ForEach(version.dependencies, id: \.id) { dependency in
+              Text(verbatim: dependency.instructions).textSelection(.enabled)
+            }
+          } label: {
+            Text("Prerequisites", bundle: AppLocalization.resourceBundle)
+          }
         }
         List(result.artifacts, selection: $selectedID) { artifact in
           let sizeLabel = ByteCountFormatter.string(fromByteCount: artifact.size, countStyle: .file)

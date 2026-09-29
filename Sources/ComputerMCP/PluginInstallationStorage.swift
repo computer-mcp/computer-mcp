@@ -195,7 +195,18 @@ final class PluginInstallationStorage: Sendable {
     }
   }
 
-  func clean(_ owned: PluginDirectoryIdentity, keepingPackage: Bool) throws {
+  func retainArtifact(_ owned: PluginDirectoryIdentity) throws -> PluginArtifactLease {
+    try withOpenStorage {
+      try validateLocation(owned)
+      let directory = try PluginArchiveDirectory(recovering: owned)
+      return try PluginArtifactLease(directory: directory, exclusive: false)
+    }
+  }
+
+  func clean(
+    _ owned: PluginDirectoryIdentity, keepingPackage: Bool,
+    processOwnershipRoot: URL? = nil
+  ) throws {
     try withOpenStorage {
       try validateLocation(owned)
       var status = stat()
@@ -204,7 +215,16 @@ final class PluginInstallationStorage: Sendable {
         throw PluginArchiveError.fileSystemFailure
       }
       let directory = try PluginArchiveDirectory(recovering: owned)
-      if keepingPackage { try directory.removeStaging() } else { try directory.discard() }
+      if keepingPackage {
+        try directory.removeStaging()
+      } else {
+        let lease = try PluginArtifactLease(directory: directory, exclusive: true)
+        defer { lease.close() }
+        if let processOwnershipRoot {
+          try MCPProcessOwnership.requireArtifactUnused(root: processOwnershipRoot, artifact: owned)
+        }
+        try directory.discard()
+      }
     }
   }
 }

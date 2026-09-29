@@ -7,6 +7,7 @@ import Testing
 /// Actual gateway, actual independently built adapter, private SQLite and Git.
 /// Only the vendor protocol is a fixture; no model request or user thread is used.
 @Suite(
+  .nativeIntegration,
   .serialized, .timeLimit(.minutes(2)),
   .enabled(
     if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_CODEX_PLUGIN"] != nil))
@@ -617,7 +618,9 @@ final class BoundServicesFixture: Sendable {
         with (root/'vendor.jsonl').open('a') as log: log.write(json.dumps(request)+'\n')
         method = request.get('method')
         if method == 'initialize': result = {'codexHome':str(root),'platformFamily':'unix','platformOs':'macos','userAgent':'isolated-fixture'}
-        elif method == 'initialized': continue
+        elif method == 'initialized':
+            print(json.dumps({'method':'remoteControl/status/changed','params':{'status':'disabled','installationId':'fixture-installation','serverName':'fixture'}}),flush=True)
+            continue
         elif method in ('thread/start', 'thread/resume'):
             loaded = True
             result = {'thread':thread,'cwd':cwd,'model':'fixture','modelProvider':'fixture','approvalPolicy':'on-request',

@@ -5,6 +5,8 @@ import Foundation
 package struct MCPHostContext: Encodable, Sendable {
   package static let environmentKey = "COMPUTER_MCP_HOST_CONTEXT"
   static let descriptorEnvironmentKey = "COMPUTER_MCP_HOST_FD"
+  static let readHandleEnvironmentKey = "COMPUTER_MCP_HOST_READ_HANDLE"
+  static let writeHandleEnvironmentKey = "COMPUTER_MCP_HOST_WRITE_HANDLE"
 
   package struct Workspace: Encodable, Sendable {
     let id: String
@@ -22,6 +24,10 @@ package struct MCPHostContext: Encodable, Sendable {
   let managedWorkspaceRoot: String?
   /// Host-local recovery storage; never serialized into downstream launch metadata.
   var processOwnershipRoot: URL?
+  /// Host-owned file identities by registration; never supplied in plugin arguments.
+  var pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
+  /// In-process work ownership is never serialized or asserted by a plugin.
+  var ownedWork: GatewayOwnedWork?
   /// Host-local execution receipts and identity are never environment credentials.
   let executionDatabase: GatewayDatabase?
   let principalID: String
@@ -58,7 +64,9 @@ package struct MCPHostContext: Encodable, Sendable {
   ) throws -> [String: String] {
     var result = inherited.merging(overrides) { _, value in value }
     result.removeValue(forKey: environmentKey)
-    result.removeValue(forKey: descriptorEnvironmentKey)
+    for key in [descriptorEnvironmentKey, readHandleEnvironmentKey, writeHandleEnvironmentKey] {
+      result.removeValue(forKey: key)
+    }
     if let context {
       let data = try JSONEncoder().encode(context)
       guard data.count <= 16_384 else {

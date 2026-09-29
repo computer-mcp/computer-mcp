@@ -68,9 +68,7 @@ package enum PluginResolver {
         origins: origins, diagnostics: diagnostics)
     }
     guard settings.enabled else { return result() }
-    if let compatibility = manifest.compatibility,
-      !compatibility.permits(host: hostVersion, architecture: architecture)
-    {
+    if !source.permits(manifest: manifest, host: hostVersion, architecture: architecture) {
       diagnostics.append(
         .init(
           pluginID: manifest.id, componentID: nil,
@@ -213,7 +211,7 @@ package enum PluginResolver {
     dependencyExecutables: [String: URL], workingDirectory: URL, environment: [String: String]
   ) throws -> ExecutableInspection? {
     let command: String?
-    if let relative = reference.path {
+    if let relative = try reference.packagePath() {
       try PluginPackageFiles(root: plugin.root).validate(relative, kind: .executable)
       command = try WorkspacePathResolver.resolve(relative, relativeTo: plugin.root).path
     } else if let id = reference.dependency {

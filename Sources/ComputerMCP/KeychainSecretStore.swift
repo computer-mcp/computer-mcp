@@ -1,6 +1,10 @@
+import ComputerMCPPlatform
 import Foundation
-import LocalAuthentication
-import Security
+
+package typealias KeychainAdapter = ComputerMCPPlatform.KeychainAdapter
+package typealias KeychainAuthenticationUI = ComputerMCPPlatform.KeychainAuthenticationUI
+package typealias KeychainSecretStoreError = ComputerMCPPlatform.KeychainSecretStoreError
+package typealias SecurityKeychainAdapter = ComputerMCPPlatform.SecurityKeychainAdapter
 
 package struct SecretReference: Codable, Equatable, Hashable, Sendable {
   package var account: String
@@ -11,50 +15,6 @@ package struct SecretReference: Codable, Equatable, Hashable, Sendable {
       throw KeychainSecretStoreError.invalidReference
     }
     self.account = normalized
-  }
-}
-
-package enum KeychainAuthenticationUI: Equatable, Sendable {
-  case allow
-  case fail
-}
-
-package protocol KeychainAdapter: Sendable {
-  func set(service: String, account: String, data: Data) throws
-  func get(service: String, account: String) throws -> Data?
-  func get(
-    service: String,
-    account: String,
-    authenticationUI: KeychainAuthenticationUI
-  ) throws -> Data?
-  func contains(service: String, account: String) throws -> Bool
-  func contains(
-    service: String,
-    account: String,
-    authenticationUI: KeychainAuthenticationUI
-  ) throws -> Bool
-  func delete(service: String, account: String) throws
-}
-
-extension KeychainAdapter {
-  package func get(
-    service: String,
-    account: String,
-    authenticationUI: KeychainAuthenticationUI
-  ) throws -> Data? {
-    try get(service: service, account: account)
-  }
-
-  package func contains(service: String, account: String) throws -> Bool {
-    try get(service: service, account: account) != nil
-  }
-
-  package func contains(
-    service: String,
-    account: String,
-    authenticationUI: KeychainAuthenticationUI
-  ) throws -> Bool {
-    try contains(service: service, account: account)
   }
 }
 
@@ -172,138 +132,6 @@ package struct KeychainSecretStore: Sendable {
   func deleteAsynchronously(_ reference: SecretReference) async throws {
     try await operationQueue.perform {
       try delete(reference)
-    }
-  }
-}
-
-package final class SecurityKeychainAdapter: KeychainAdapter, @unchecked Sendable {
-  private let accessGroup: String
-
-  package init(accessGroup: String) {
-    self.accessGroup = accessGroup
-  }
-
-  package func set(service: String, account: String, data: Data) throws {
-    let query = baseQuery(service: service, account: account)
-    let update = [kSecValueData: data] as CFDictionary
-    let updateStatus = SecItemUpdate(query as CFDictionary, update)
-    if updateStatus == errSecSuccess {
-      return
-    }
-    guard updateStatus == errSecItemNotFound else {
-      throw KeychainSecretStoreError.securityStatus(updateStatus)
-    }
-
-    var insertion = query
-    insertion[kSecValueData] = data
-    insertion[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    let addStatus = SecItemAdd(insertion as CFDictionary, nil)
-    guard addStatus == errSecSuccess else {
-      throw KeychainSecretStoreError.securityStatus(addStatus)
-    }
-  }
-
-  package func get(service: String, account: String) throws -> Data? {
-    try get(service: service, account: account, authenticationUI: .allow)
-  }
-
-  package func get(
-    service: String,
-    account: String,
-    authenticationUI: KeychainAuthenticationUI
-  ) throws -> Data? {
-    var query = baseQuery(service: service, account: account)
-    apply(authenticationUI, to: &query)
-    query[kSecReturnData] = true
-    query[kSecMatchLimit] = kSecMatchLimitOne
-    var result: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-    if status == errSecItemNotFound {
-      return nil
-    }
-    guard status == errSecSuccess, let data = result as? Data else {
-      throw KeychainSecretStoreError.securityStatus(status)
-    }
-    return data
-  }
-
-  package func contains(service: String, account: String) throws -> Bool {
-    try contains(service: service, account: account, authenticationUI: .allow)
-  }
-
-  package func contains(
-    service: String,
-    account: String,
-    authenticationUI: KeychainAuthenticationUI
-  ) throws -> Bool {
-    var query = baseQuery(service: service, account: account)
-    apply(authenticationUI, to: &query)
-    query[kSecMatchLimit] = kSecMatchLimitOne
-    let status = SecItemCopyMatching(query as CFDictionary, nil)
-    if status == errSecItemNotFound {
-      return false
-    }
-    if authenticationUI == .fail, status == errSecInteractionNotAllowed {
-      return true
-    }
-    guard status == errSecSuccess else {
-      throw KeychainSecretStoreError.securityStatus(status)
-    }
-    return true
-  }
-
-  package func delete(service: String, account: String) throws {
-    let status = SecItemDelete(baseQuery(service: service, account: account) as CFDictionary)
-    guard status == errSecSuccess || status == errSecItemNotFound else {
-      throw KeychainSecretStoreError.securityStatus(status)
-    }
-  }
-
-  package func baseQuery(service: String, account: String) -> [CFString: Any] {
-    [
-      kSecClass: kSecClassGenericPassword,
-      kSecAttrService: service,
-      kSecAttrAccount: account,
-      kSecAttrAccessGroup: accessGroup,
-      kSecUseDataProtectionKeychain: true,
-    ]
-  }
-
-  private func apply(
-    _ authenticationUI: KeychainAuthenticationUI,
-    to query: inout [CFString: Any]
-  ) {
-    if authenticationUI == .fail {
-      let context = LAContext()
-      context.interactionNotAllowed = true
-      query[kSecUseAuthenticationContext] = context
-    }
-  }
-}
-
-package enum KeychainSecretStoreError: Error, LocalizedError, Equatable {
-  case invalidService
-  case invalidAccessGroup
-  case invalidReference
-  case invalidSecret
-  case invalidStoredSecret
-  case securityStatus(OSStatus)
-
-  package var errorDescription: String? {
-    switch self {
-    case .invalidService:
-      return "The Keychain service identifier is invalid."
-    case .invalidAccessGroup:
-      return "The Keychain access group identifier is invalid."
-    case .invalidReference:
-      return "The Keychain secret reference is invalid."
-    case .invalidSecret:
-      return "The secret must be non-empty and must not contain NUL."
-    case .invalidStoredSecret:
-      return "The stored Keychain secret is not valid UTF-8."
-    case .securityStatus(let status):
-      let detail = SecCopyErrorMessageString(status, nil) as String?
-      return "Keychain operation failed with status \(status)\(detail.map { ": \($0)" } ?? ".")"
     }
   }
 }

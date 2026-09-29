@@ -4,7 +4,7 @@ import os
 internal protocol GatewayToolProvider: Sendable {
   var id: String { get }
   func listTools() throws -> [MCPTool]
-  func capability(for tool: MCPTool) -> CapabilityDescriptor
+  func capability(for tool: MCPTool) throws -> CapabilityDescriptor
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue
   func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue
   func shutdown() async
@@ -28,13 +28,17 @@ extension GatewayToolProvider {
 internal struct GatewayCapabilityCatalog: Sendable {
   internal func descriptor(for tool: MCPTool) -> CapabilityDescriptor {
     let name = tool.name
+    if let management = GatewayRemoteManagement.byName[name] { return management.descriptor }
     let risk: CapabilityRisk
-    if name.hasPrefix("shell.") || name == "cli.exec" || name == "process.spawn" {
+    if name == "runtime.owners.call" {
+      // The routing operation authorizes no effect; its selected target performs risk and approval admission.
+      risk = .readOnly
+    } else if name.hasPrefix("shell.") || name == "cli.exec" || name == "process.spawn" {
       risk = .fullShell
     } else if name == "operations.commit" {
       risk = .externalWrite
     } else if name.hasPrefix("mcp.") && name != "mcp.tools.call"
-      && name != "mcp.requests.cancel"
+      && name != "mcp.requests.cancel" && name != "mcp.connections.close"
     {
       risk = .readOnly
     } else if tool.annotations?.destructiveHint == true {
@@ -59,7 +63,7 @@ internal struct GatewayCapabilityCatalog: Sendable {
       workspaceRequirement = .none
     } else if name.hasPrefix("operations.") {
       workspaceRequirement = .optional
-    } else if name.hasPrefix("shell.") {
+    } else if name.hasPrefix("shell.") || name.hasPrefix("runtime.owners.") {
       workspaceRequirement = .required
     } else if name.hasPrefix("file.") || name.hasPrefix("git.")
       || name.hasPrefix("workspace.") || name.hasPrefix("cli.")
@@ -99,8 +103,8 @@ internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
     tools
   }
 
-  internal func capability(for tool: MCPTool) -> CapabilityDescriptor {
-    registry.capability(for: tool)
+  internal func capability(for tool: MCPTool) throws -> CapabilityDescriptor {
+    try registry.capability(for: tool)
   }
 
   internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
@@ -164,6 +168,7 @@ internal enum GatewayToolDomain: String, CaseIterable, Sendable {
 internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private struct State {
     var snapshot: GatewayToolCatalogSnapshot
+    var retainedContinuations: [String: GatewayToolCatalogSnapshot.Route] = [:]
     var monitors: [Task<Void, Never>] = []
     var stopped = false
     var shutdownTask: Task<Void, Never>?
@@ -174,6 +179,8 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private let source: @Sendable () throws -> [any GatewayToolProvider]
   private let reservedToolNames: Set<String>
   private let shutdownSource: @Sendable () async -> Void
+  private let mcpPolicyResolver: (@Sendable (MCPToolReference) throws -> MCPToolAdmissionPolicy)?
+  private let retainsContinuation: @Sendable (MCPToolReference) -> Bool
   private let refreshCoordinator = GatewayCatalogRefreshCoordinator()
   private let changes = GatewayToolChangeBroadcaster()
 
@@ -186,11 +193,15 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     invalidations: AsyncStream<Void>? = nil,
     refreshInterval: Duration? = nil,
     reservedToolNames: Set<String> = [],
+    mcpPolicyResolver: (@Sendable (MCPToolReference) throws -> MCPToolAdmissionPolicy)? = nil,
+    retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false },
     shutdownSource: @escaping @Sendable () async -> Void = {}
   ) throws {
     self.source = source
     self.reservedToolNames = reservedToolNames
     self.shutdownSource = shutdownSource
+    self.mcpPolicyResolver = mcpPolicyResolver
+    self.retainsContinuation = retainsContinuation
     self.state = OSAllocatedUnfairLock(
       initialState: State(
         snapshot: try .init(providers: source(), reservedToolNames: reservedToolNames)))
@@ -228,7 +239,8 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   internal convenience init(
     registry: GatewayToolRegistry,
     additionalProviders: [any GatewayToolProvider],
-    reservedToolNames: Set<String> = []
+    reservedToolNames: Set<String> = [],
+    retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false }
   ) throws {
     try self.init(
       source: {
@@ -243,6 +255,8 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
       refreshInterval: registry.hasReexportedMCPServers || registry.hasCLITrees
         ? .seconds(30) : nil,
       reservedToolNames: reservedToolNames,
+      mcpPolicyResolver: { try registry.downstreamPolicy(for: $0) },
+      retainsContinuation: retainsContinuation,
       shutdownSource: { await registry.shutdown() }
     )
   }
@@ -256,6 +270,20 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
 
   internal func capability(named name: String) throws -> CapabilityDescriptor {
     try route(named: name).capability
+  }
+
+  /// A private locator survives catalog hiding while native work still owns its binding.
+  internal func continuationReference(named name: String) -> MCPToolReference? {
+    state.withLock { state in
+      guard !state.stopped else { return nil }
+      return state.snapshot.routes[name]?.capability.mcpReference
+        ?? state.retainedContinuations[name]?.capability.mcpReference
+    }
+  }
+
+  internal func downstreamPolicy(for reference: MCPToolReference) throws -> MCPToolAdmissionPolicy {
+    guard let mcpPolicyResolver else { throw GatewayToolError.unknownTool(reference.toolName) }
+    return try mcpPolicyResolver(reference)
   }
 
   internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
@@ -285,9 +313,18 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   {
     try state.withLock { state in
       guard !state.stopped else { throw GatewayProviderRouterError.stopped }
-      guard let route = state.snapshot.routes[name] else {
-        throw GatewayToolError.unknownTool(name)
+      let route: GatewayToolCatalogSnapshot.Route?
+      if let target = MCPContinuationTarget.current,
+        let retained = state.retainedContinuations[name],
+        retained.capability.mcpReference == target.reference
+      {
+        route =
+          state.snapshot.routes[name]?.capability.mcpReference == target.reference
+          ? state.snapshot.routes[name] : retained
+      } else {
+        route = state.snapshot.routes[name]
       }
+      guard let route else { throw GatewayToolError.unknownTool(name) }
       if let expectedCapability, route.capability != expectedCapability {
         throw GatewayProviderRouterError.capabilityChanged(name)
       }
@@ -318,6 +355,14 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
         let changed = try state.withLock { state in
           guard !state.stopped else { throw GatewayProviderRouterError.stopped }
           let changed = !state.snapshot.hasSameSurface(as: snapshot)
+          let previous = state.retainedContinuations.merging(state.snapshot.routes) { _, new in new
+          }
+          state.retainedContinuations = previous.filter { name, route in
+            guard snapshot.routes[name] == nil, let reference = route.capability.mcpReference else {
+              return false
+            }
+            return retainsContinuation(reference)
+          }
           state.snapshot = snapshot
           state.lastRefreshError = nil
           return changed

@@ -112,29 +112,25 @@ internal actor MCPInitializeNormalizationTransport: Transport {
 enum MCPInitializeNormalization {
   static func normalize(_ data: Data) -> Data {
     guard
-      var message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      message["method"] as? String == "initialize",
-      var parameters = message["params"] as? [String: Any],
-      var capabilities = parameters["capabilities"] as? [String: Any],
-      let experimental = capabilities["experimental"] as? [String: Any]
+      var message = (try? JSONDecoder().decode(JSONValue.self, from: data))?.objectValue,
+      message["method"]?.stringValue == "initialize",
+      var parameters = message["params"]?.objectValue,
+      var capabilities = parameters["capabilities"]?.objectValue,
+      let experimental = capabilities["experimental"]?.objectValue
     else {
       return data
     }
 
-    let supported = experimental.compactMapValues { $0 as? String }
-    if supported.count == experimental.count {
-      return data
-    }
-
+    let supported = experimental.filter { $0.value.stringValue != nil }
+    if supported.count == experimental.count { return data }
     if supported.isEmpty {
       capabilities.removeValue(forKey: "experimental")
     } else {
-      capabilities["experimental"] = supported
+      capabilities["experimental"] = .object(supported)
     }
-    parameters["capabilities"] = capabilities
-    message["params"] = parameters
-
-    return (try? JSONSerialization.data(withJSONObject: message)) ?? data
+    parameters["capabilities"] = .object(capabilities)
+    message["params"] = .object(parameters)
+    return (try? JSONEncoder().encode(JSONValue.object(message))) ?? data
   }
 
   static func initializeRequestID(in data: Data) -> JSONValue? {

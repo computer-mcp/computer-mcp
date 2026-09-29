@@ -7,12 +7,15 @@ package final class GatewayDatabase: @unchecked Sendable {
   private let profileChangeLock = NSLock()
   private var profileChangeBroadcasters: [GatewayProfileID: GatewayToolChangeBroadcaster] = [:]
   let fileURL: URL?
+  private let transientOwnershipID = UUID()
 
   var mcpProcessOwnershipRoot: URL? {
     fileURL.map {
       $0.deletingLastPathComponent().appendingPathComponent(
         $0.lastPathComponent + ".mcp-processes", isDirectory: true)
     }
+      ?? FileManager.default.temporaryDirectory.appendingPathComponent(
+        "computer-mcp-mcp-processes-" + transientOwnershipID.uuidString, isDirectory: true)
   }
 
   package init(path: String) throws {
@@ -30,26 +33,170 @@ package final class GatewayDatabase: @unchecked Sendable {
     try Self.migrator.migrate(writer)
   }
 
-  package func pluginStoreSnapshot() throws -> PluginStoreSnapshot {
-    try writer.read { database in
-      guard
-        let row = try Row.fetchOne(
-          database, sql: "SELECT revision, payloadJSON FROM pluginState WHERE id = 1")
-      else {
-        return PluginStoreSnapshot()
+  /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
+  /// comparison even though only canonical workspaces appear in the public directory.
+  struct ConfigurationState: Equatable, Sendable {
+    let workspaces: [RegisteredWorkspace]
+    let workspaceAliases: [String: String]
+    let profiles: [ProfileGrant]
+    let plugins: PluginStoreSnapshot
+  }
+
+  func configurationState() throws -> ConfigurationState {
+    try writer.read { try Self.configurationState(in: $0) }
+  }
+
+  func prepareWorkspaceChange(
+    _ mutation: WorkspaceConfigurationMutation, expected: ConfigurationState,
+    resolvedProfiles: [ProfileGrant] = []
+  ) throws -> PreparedWorkspaceChange {
+    let timestamp = Date()
+    let receiptID = UUID().uuidString
+    return try writer.write { database in
+      guard try Self.configurationState(in: database) == expected else {
+        throw GatewayDatabaseError.configurationChanged
       }
-      let payload: String = row["payloadJSON"]
-      guard payload.utf8.count <= 4_194_304 else { throw PluginStoreError.invalidState }
-      let state = try JSONDecoder().decode(PluginStoreSnapshot.self, from: Data(payload.utf8))
-      let revision: Int64 = row["revision"]
-      guard state.revision == revision else { throw PluginStoreError.invalidState }
-      try state.validate()
-      return state
+      var prepared: PreparedWorkspaceChange?
+      try database.inSavepoint {
+        let result = try Self.applyWorkspaceChange(
+          mutation, expected: expected, resolvedProfiles: resolvedProfiles,
+          timestamp: timestamp, receiptID: receiptID, in: database)
+        prepared = PreparedWorkspaceChange(
+          mutation: mutation, expected: expected,
+          proposed: try Self.configurationState(in: database),
+          resolvedProfiles: resolvedProfiles, result: result, timestamp: timestamp,
+          receiptID: receiptID)
+        return .rollback
+      }
+      guard let prepared else { throw GatewayDatabaseError.configurationChanged }
+      return prepared
     }
   }
 
-  func savePluginStoreSnapshot(_ state: PluginStoreSnapshot, expectedRevision: Int64) throws {
+  func saveWorkspaceChange(
+    _ prepared: PreparedWorkspaceChange, resolution: GatewayConfigurationResolution,
+    authorization: GatewayManagementAuthorization? = nil
+  ) throws -> ConfigurationState {
+    let committed = try writer.write { database in
+      try Self.requireManagementTrust(authorization, in: database)
+      guard try Self.configurationState(in: database) == prepared.expected else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      let result = try Self.applyWorkspaceChange(
+        prepared.mutation, expected: prepared.expected, resolvedProfiles: prepared.resolvedProfiles,
+        timestamp: prepared.timestamp, receiptID: prepared.receiptID, in: database)
+      guard result == prepared.result,
+        try Self.configurationState(in: database) == prepared.proposed
+      else { throw GatewayDatabaseError.configurationChanged }
+      try Self.applyRuntimeResolution(resolution, in: database)
+      return try Self.configurationState(in: database)
+    }
+    for profile in committed.profiles where !prepared.expected.profiles.contains(profile) {
+      profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
+    }
+    return committed
+  }
+
+  private static func applyWorkspaceChange(
+    _ mutation: WorkspaceConfigurationMutation, expected: ConfigurationState,
+    resolvedProfiles: [ProfileGrant], timestamp: Date, receiptID: String, in database: Database
+  ) throws -> WorkspaceChangeResult {
+    switch mutation {
+    case .register(let workspace):
+      let result = try registerWorkspaceIdempotently(workspace, in: database)
+      return .registered(result.workspace, created: result.created)
+    case .repair(let workspace, _):
+      guard let original = expected.workspaces.first(where: { $0.id == workspace.id }),
+        original.createdAt == workspace.createdAt,
+        expected.workspaceAliases[workspace.id] == nil
+      else { throw GatewayDatabaseError.configurationChanged }
+      if let existing = try registeredWorkspace(
+        canonicalRoot: canonicalWorkspaceRoot(workspace.rootPath), in: database),
+        existing.id != workspace.id
+      {
+        throw WorkspaceRepairError.rootAlreadyRegistered(workspaceID: existing.id)
+      }
+      try saveWorkspace(workspace, in: database)
+      let affectedIDs = Set(
+        expected.workspaceAliases.filter { $0.value == workspace.id }.map(\.key) + [workspace.id])
+      for stored in expected.profiles
+      where stored.workspaceIDs.contains("*") || !stored.workspaceIDs.isDisjoint(with: affectedIDs)
+      {
+        let profile = try resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
+        try profile.validate()
+        try saveProfile(
+          profile, updatedAt: timestamp, expectedRevision: stored.authorizationRevision,
+          in: database)
+      }
+      // Scope-bound tickets can outlive a stored profile. Repair must not reinterpret them.
+      for id in affectedIDs {
+        try database.execute(
+          sql: """
+            UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
+            WHERE workspaceID = ? AND state IN (?, ?, ?)
+            """,
+          arguments: [
+            OperationTicketState.denied.rawValue, timestamp, "operations.workspace_changed", id,
+            OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
+            OperationTicketState.approved.rawValue,
+          ])
+      }
+      return .repaired(workspace)
+    case .remove(let id):
+      _ = try removeWorkspace(
+        id: id, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
+        now: timestamp, in: database)
+      return .removed
+    case .deduplicate(let digest, let allowMetadataConflicts):
+      return .deduplicated(
+        try applyWorkspaceDeduplication(
+          expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts,
+          now: timestamp, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
+          receiptID: receiptID, in: database))
+    }
+  }
+
+  private static func configurationState(in database: Database) throws -> ConfigurationState {
+    try ConfigurationState(
+      workspaces: workspaces(in: database),
+      workspaceAliases: Dictionary(
+        uniqueKeysWithValues: WorkspaceAliasRecord.fetchAll(database).map {
+          ($0.aliasWorkspaceID, $0.canonicalWorkspaceID)
+        }),
+      profiles: profiles(in: database), plugins: pluginStoreSnapshot(in: database))
+  }
+
+  package func pluginStoreSnapshot() throws -> PluginStoreSnapshot {
+    try writer.read { try Self.pluginStoreSnapshot(in: $0) }
+  }
+
+  private static func pluginStoreSnapshot(in database: Database) throws -> PluginStoreSnapshot {
+    guard
+      let row = try Row.fetchOne(
+        database, sql: "SELECT revision, payloadJSON FROM pluginState WHERE id = 1")
+    else {
+      return PluginStoreSnapshot()
+    }
+    let payload: String = row["payloadJSON"]
+    guard payload.utf8.count <= 4_194_304 else { throw PluginStoreError.invalidState }
+    let state = try JSONDecoder().decode(PluginStoreSnapshot.self, from: Data(payload.utf8))
+    let revision: Int64 = row["revision"]
+    guard state.revision == revision else { throw PluginStoreError.invalidState }
     try state.validate()
+    return state
+  }
+
+  @discardableResult
+  func savePluginStoreSnapshot(
+    _ state: PluginStoreSnapshot, expectedRevision: Int64,
+    expectedConfiguration: ConfigurationState? = nil,
+    resolution: GatewayConfigurationResolution = .init(),
+    authorization: GatewayManagementAuthorization? = nil
+  ) throws -> ConfigurationState {
+    try state.validate()
+    guard
+      expectedConfiguration != nil || (resolution.workspaces.isEmpty && resolution.profiles.isEmpty)
+    else { throw PluginStoreError.invalidState }
     guard expectedRevision >= 0, expectedRevision < Int64.max,
       state.revision == expectedRevision + 1
     else {
@@ -61,17 +208,51 @@ package final class GatewayDatabase: @unchecked Sendable {
     guard data.count <= 4_194_304, let payload = String(data: data, encoding: .utf8) else {
       throw PluginStoreError.invalidState
     }
-    try writer.write { database in
+    let committed = try writer.write { database in
+      try Self.requireManagementTrust(authorization, in: database)
       let current =
         try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
       guard current == expectedRevision else {
         throw PluginStoreError.staleRevision(expected: expectedRevision, actual: current)
+      }
+      if let expectedConfiguration,
+        try Self.configurationState(in: database) != expectedConfiguration
+      {
+        throw GatewayDatabaseError.configurationChanged
       }
       try database.execute(
         sql: """
           INSERT INTO pluginState (id, revision, payloadJSON) VALUES (1, ?, ?)
           ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, payloadJSON = excluded.payloadJSON
           """, arguments: [state.revision, payload])
+      try Self.applyRuntimeResolution(resolution, in: database)
+      return try Self.configurationState(in: database)
+    }
+    notifyResolvedProfiles(resolution)
+    return committed
+  }
+
+  private static func applyRuntimeResolution(
+    _ resolution: GatewayConfigurationResolution, in database: Database
+  ) throws {
+    for change in resolution.workspaces {
+      guard change.original.id == change.resolved.id,
+        try WorkspaceRecord.fetchOne(database, key: change.original.id)?.value == change.original
+      else { throw GatewayDatabaseError.configurationChanged }
+      try saveWorkspace(change.resolved, in: database)
+    }
+    for profile in resolution.profiles {
+      guard profile.authorizationRevision == 0,
+        try ProfileRecord.fetchOne(database, key: profile.id.rawValue)?.authorizationRevision == 0
+      else { throw GatewayDatabaseError.configurationChanged }
+      try profile.validate()
+      try saveProfile(profile, updatedAt: Date(), expectedRevision: 0, in: database)
+    }
+  }
+
+  private func notifyResolvedProfiles(_ resolution: GatewayConfigurationResolution) {
+    for profile in resolution.profiles {
+      profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
     }
   }
 
@@ -160,49 +341,74 @@ package final class GatewayDatabase: @unchecked Sendable {
   package func registerWorkspaceIdempotently(
     _ proposed: RegisteredWorkspace
   ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
-    let canonicalRoot = Self.canonicalWorkspaceRoot(proposed.rootPath)
-    return try writer.write { database in
-      if let binding = try WorkspaceCanonicalRootRecord.fetchOne(
-        database,
-        key: canonicalRoot
-      ) {
-        if let existing = try WorkspaceRecord.fetchOne(database, key: binding.workspaceID) {
-          return (existing.value, false)
+    try writer.write { try Self.registerWorkspaceIdempotently(proposed, in: $0) }
+  }
+
+  private static func registerWorkspaceIdempotently(
+    _ proposed: RegisteredWorkspace, in database: Database
+  ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
+    let canonicalRoot = canonicalWorkspaceRoot(proposed.rootPath)
+    if let existing = try registeredWorkspace(canonicalRoot: canonicalRoot, in: database) {
+      return (existing, false)
+    }
+    try WorkspaceRecord(proposed).insert(database)
+    try WorkspaceCanonicalRootRecord(
+      canonicalRootPath: canonicalRoot,
+      workspaceID: proposed.id,
+      createdAt: proposed.createdAt
+    ).insert(database)
+    return (proposed, true)
+  }
+
+  private static func registeredWorkspace(canonicalRoot: String, in database: Database) throws
+    -> RegisteredWorkspace?
+  {
+    if let binding = try WorkspaceCanonicalRootRecord.fetchOne(
+      database,
+      key: canonicalRoot
+    ) {
+      let canonicalID =
+        try WorkspaceAliasRecord.fetchOne(database, key: binding.workspaceID)?
+        .canonicalWorkspaceID
+        ?? binding.workspaceID
+      if let existing = try WorkspaceRecord.fetchOne(database, key: canonicalID),
+        Self.canonicalWorkspaceRoot(existing.rootPath) == canonicalRoot
+      {
+        if binding.workspaceID != canonicalID {
+          try WorkspaceCanonicalRootRecord(
+            canonicalRootPath: canonicalRoot, workspaceID: canonicalID,
+            createdAt: existing.createdAt
+          ).save(database)
         }
-        _ = try WorkspaceCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
+        return existing.value
       }
-      if let existing = try WorkspaceRecord.fetchAll(database).first(where: {
-        Self.canonicalWorkspaceRoot($0.rootPath) == canonicalRoot
-      }) {
-        try WorkspaceCanonicalRootRecord(
-          canonicalRootPath: canonicalRoot,
-          workspaceID: existing.id,
-          createdAt: existing.createdAt
-        ).insert(database, onConflict: .ignore)
-        return (existing.value, false)
-      }
-      try WorkspaceRecord(proposed).insert(database)
+      _ = try WorkspaceCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
+    }
+    if let existing = try Self.workspaces(in: database).first(where: {
+      Self.canonicalWorkspaceRoot($0.rootPath) == canonicalRoot
+    }) {
       try WorkspaceCanonicalRootRecord(
         canonicalRootPath: canonicalRoot,
-        workspaceID: proposed.id,
-        createdAt: proposed.createdAt
-      ).insert(database)
-      return (proposed, true)
+        workspaceID: existing.id,
+        createdAt: existing.createdAt
+      ).insert(database, onConflict: .ignore)
+      return existing
     }
+    return nil
   }
 
   package func workspaces() throws -> [RegisteredWorkspace] {
-    try writer.read { database in
-      let aliasIDs = Set(
-        try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID)
-      )
-      return
-        try WorkspaceRecord
-        .order(Column("displayName").collating(.nocase), Column("id"))
-        .fetchAll(database)
-        .filter { !aliasIDs.contains($0.id) }
-        .map(\.value)
-    }
+    try writer.read { try Self.workspaces(in: $0) }
+  }
+
+  private static func workspaces(in database: Database) throws -> [RegisteredWorkspace] {
+    let aliasIDs = Set(try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID))
+    return
+      try WorkspaceRecord
+      .order(Column("displayName").collating(.nocase), Column("id"))
+      .fetchAll(database)
+      .filter { !aliasIDs.contains($0.id) }
+      .map(\.value)
   }
 
   package func workspace(id: String) throws -> RegisteredWorkspace? {
@@ -214,25 +420,81 @@ package final class GatewayDatabase: @unchecked Sendable {
   }
 
   package func deleteWorkspace(id: String) throws {
-    _ = try writer.write { database in
-      let canonicalID =
-        try WorkspaceAliasRecord.fetchOne(database, key: id)?.canonicalWorkspaceID ?? id
-      let aliasIDs =
-        try WorkspaceAliasRecord
-        .filter(Column("canonicalWorkspaceID") == canonicalID)
-        .fetchAll(database)
-        .map(\.aliasWorkspaceID)
-      try WorkspaceAliasRecord
-        .filter(Column("canonicalWorkspaceID") == canonicalID)
-        .deleteAll(database)
-      try WorkspaceCanonicalRootRecord
-        .filter(Column("workspaceID") == canonicalID)
-        .deleteAll(database)
-      for aliasID in aliasIDs {
-        _ = try WorkspaceRecord.deleteOne(database, key: aliasID)
-      }
-      return try WorkspaceRecord.deleteOne(database, key: canonicalID)
+    try writer.write { database in
+      try Self.deleteWorkspace(id: id, in: database)
     }
+  }
+
+  private static func deleteWorkspace(id: String, in database: Database) throws {
+    let canonicalID =
+      try WorkspaceAliasRecord.fetchOne(database, key: id)?.canonicalWorkspaceID ?? id
+    let aliasIDs =
+      try WorkspaceAliasRecord
+      .filter(Column("canonicalWorkspaceID") == canonicalID)
+      .fetchAll(database)
+      .map(\.aliasWorkspaceID)
+    try WorkspaceAliasRecord
+      .filter(Column("canonicalWorkspaceID") == canonicalID)
+      .deleteAll(database)
+    for removedID in aliasIDs + [canonicalID] {
+      try WorkspaceCanonicalRootRecord.filter(Column("workspaceID") == removedID).deleteAll(
+        database)
+      _ = try WorkspaceRecord.deleteOne(database, key: removedID)
+    }
+  }
+
+  /// Registration, aliases, affected grants and unused approvals share one commit.
+  /// Legacy profiles must be resolved against the admitted manifest before entering SQLite.
+  func removeWorkspace(
+    id: String, expectedConfiguration: ConfigurationState,
+    resolvedProfiles: [ProfileGrant] = [], now: Date = Date()
+  ) throws {
+    let changed = try writer.write { database in
+      try Self.removeWorkspace(
+        id: id, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
+        now: now, in: database)
+    }
+    for id in changed { profileChangeLock.withLock { profileChangeBroadcasters[id] }?.send() }
+  }
+
+  private static func removeWorkspace(
+    id: String, expectedConfiguration: ConfigurationState,
+    resolvedProfiles: [ProfileGrant], now: Date, in database: Database
+  ) throws -> [GatewayProfileID] {
+    guard try Self.configurationState(in: database) == expectedConfiguration else {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    let canonicalID = expectedConfiguration.workspaceAliases[id] ?? id
+    guard expectedConfiguration.workspaces.contains(where: { $0.id == canonicalID }) else {
+      throw GatewayDatabaseError.invalidStoredValue("Unknown workspace '\(id)'.")
+    }
+    let removedIDs = Set(
+      expectedConfiguration.workspaceAliases.filter { $0.value == canonicalID }.map(\.key)
+        + [canonicalID])
+    var changed: [GatewayProfileID] = []
+    for stored in expectedConfiguration.profiles {
+      guard !stored.workspaceIDs.isDisjoint(with: removedIDs) else { continue }
+      var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
+      profile.workspaceIDs.subtract(removedIDs)
+      try profile.validate()
+      try Self.saveProfile(
+        profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
+      changed.append(profile.id)
+    }
+    try Self.deleteWorkspace(id: canonicalID, in: database)
+    return changed
+  }
+
+  private static func resolvedWorkspaceProfile(
+    _ stored: ProfileGrant, resolvedProfiles: [ProfileGrant]
+  ) throws -> ProfileGrant {
+    guard stored.authorizationRevision == 0 else { return stored }
+    let matches = resolvedProfiles.filter { $0.id == stored.id && $0.authorizationRevision == 0 }
+    guard matches.count == 1, let profile = matches.first else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Resolve legacy profile '\(stored.id.rawValue)' before changing its workspace grants.")
+    }
+    return profile
   }
 
   package func workspaceDeduplicationPlan() throws -> WorkspaceDeduplicationPlan {
@@ -241,66 +503,97 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
-  package func applyWorkspaceDeduplication(
+  func applyWorkspaceDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool,
-    now: Date = Date()
+    now: Date = Date(),
+    expectedConfiguration: ConfigurationState? = nil,
+    resolvedProfiles: [ProfileGrant] = []
   ) throws -> WorkspaceDeduplicationResult {
-    try writer.write { database in
-      let plan = try Self.workspaceDeduplicationPlan(database)
-      guard plan.planDigest == expectedPlanDigest else {
-        throw WorkspaceDeduplicationError.planChanged(
-          expected: expectedPlanDigest,
-          actual: plan.planDigest
-        )
-      }
-      let conflictIDs = plan.groups.filter(\.hasMetadataConflict)
-        .flatMap(\.duplicateWorkspaceIDs)
-        .sorted()
-      if !allowMetadataConflicts, !conflictIDs.isEmpty {
-        throw WorkspaceDeduplicationError.metadataConflict(workspaceIDs: conflictIDs)
-      }
-
-      var updatedProfileIDs: Set<String> = []
-      for group in plan.groups {
-        for duplicateID in group.duplicateWorkspaceIDs {
-          try WorkspaceAliasRecord(
-            aliasWorkspaceID: duplicateID,
-            canonicalWorkspaceID: group.canonicalWorkspaceID,
-            canonicalRootPath: group.canonicalRootPath,
-            migratedAt: now
-          ).save(database)
-        }
-        for row in try ProfileRecord.fetchAll(database) {
-          var profile = try row.value()
-          let duplicateReferences = profile.workspaceIDs.intersection(
-            group.duplicateWorkspaceIDs
-          )
-          guard !duplicateReferences.isEmpty else { continue }
-          profile.workspaceIDs.subtract(duplicateReferences)
-          profile.workspaceIDs.insert(group.canonicalWorkspaceID)
-          try ProfileRecord(profile, updatedAt: now).save(database)
-          updatedProfileIDs.insert(profile.id.rawValue)
-        }
-      }
-
-      let result = WorkspaceDeduplicationResult(
-        receiptID: UUID().uuidString,
-        planDigest: plan.planDigest,
-        canonicalWorkspaceIDs: plan.groups.map(\.canonicalWorkspaceID).sorted(),
-        aliasedWorkspaceIDs: plan.groups.flatMap(\.duplicateWorkspaceIDs).sorted(),
-        updatedProfileIDs: updatedProfileIDs.sorted(),
-        appliedAt: now
-      )
-      let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
-      try WorkspaceDeduplicationReceiptRecord(
-        id: result.receiptID,
-        planDigest: result.planDigest,
-        appliedAt: now,
-        payloadJSON: String(decoding: try encoder.encode(result), as: UTF8.self)
-      ).insert(database)
-      return result
+    let result = try writer.write { database in
+      try Self.applyWorkspaceDeduplication(
+        expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
+        now: now, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
+        receiptID: UUID().uuidString, in: database)
     }
+    for rawID in result.updatedProfileIDs {
+      if let id = GatewayProfileID(rawValue: rawID) {
+        profileChangeLock.withLock { profileChangeBroadcasters[id] }?.send()
+      }
+    }
+    return result
+  }
+
+  private static func applyWorkspaceDeduplication(
+    expectedPlanDigest: String, allowMetadataConflicts: Bool, now: Date,
+    expectedConfiguration: ConfigurationState?, resolvedProfiles: [ProfileGrant],
+    receiptID: String, in database: Database
+  ) throws -> WorkspaceDeduplicationResult {
+    if let expectedConfiguration,
+      try Self.configurationState(in: database) != expectedConfiguration
+    {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    let plan = try Self.workspaceDeduplicationPlan(database)
+    guard plan.planDigest == expectedPlanDigest else {
+      throw WorkspaceDeduplicationError.planChanged(
+        expected: expectedPlanDigest,
+        actual: plan.planDigest
+      )
+    }
+    let conflictIDs = plan.groups.filter(\.hasMetadataConflict)
+      .flatMap(\.duplicateWorkspaceIDs)
+      .sorted()
+    if !allowMetadataConflicts, !conflictIDs.isEmpty {
+      throw WorkspaceDeduplicationError.metadataConflict(workspaceIDs: conflictIDs)
+    }
+
+    var replacements: [String: String] = [:]
+    for group in plan.groups {
+      guard
+        let canonical = try WorkspaceRecord.fetchOne(database, key: group.canonicalWorkspaceID)
+      else { throw GatewayDatabaseError.configurationChanged }
+      try WorkspaceCanonicalRootRecord(
+        canonicalRootPath: group.canonicalRootPath, workspaceID: canonical.id,
+        createdAt: canonical.createdAt
+      ).save(database)
+      for duplicateID in group.duplicateWorkspaceIDs {
+        try WorkspaceAliasRecord(
+          aliasWorkspaceID: duplicateID,
+          canonicalWorkspaceID: group.canonicalWorkspaceID,
+          canonicalRootPath: group.canonicalRootPath,
+          migratedAt: now
+        ).save(database)
+        replacements[duplicateID] = group.canonicalWorkspaceID
+      }
+    }
+    var updatedProfileIDs: [String] = []
+    for stored in try Self.profiles(in: database) {
+      guard stored.workspaceIDs.contains(where: { replacements[$0] != nil }) else { continue }
+      var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
+      profile.workspaceIDs = Set(profile.workspaceIDs.map { replacements[$0] ?? $0 })
+      try profile.validate()
+      try Self.saveProfile(
+        profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
+      updatedProfileIDs.append(profile.id.rawValue)
+    }
+
+    let result = WorkspaceDeduplicationResult(
+      receiptID: receiptID,
+      planDigest: plan.planDigest,
+      canonicalWorkspaceIDs: plan.groups.map(\.canonicalWorkspaceID).sorted(),
+      aliasedWorkspaceIDs: plan.groups.flatMap(\.duplicateWorkspaceIDs).sorted(),
+      updatedProfileIDs: updatedProfileIDs.sorted(),
+      appliedAt: now
+    )
+    let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
+    try WorkspaceDeduplicationReceiptRecord(
+      id: result.receiptID,
+      planDigest: result.planDigest,
+      appliedAt: now,
+      payloadJSON: String(decoding: try encoder.encode(result), as: UTF8.self)
+    ).insert(database)
+    return result
   }
 
   package func saveRuntimeSetting(
@@ -328,31 +621,54 @@ package final class GatewayDatabase: @unchecked Sendable {
   ) throws {
     try profile.validate()
     try writer.write { database in
-      let current = try ProfileRecord.fetchOne(database, key: profile.id.rawValue)
-      let revision = current?.authorizationRevision ?? 0
-      guard expectedRevision == nil || expectedRevision == revision else {
-        throw GatewayDatabaseError.invalidStoredValue(
-          "Profile authorization changed; reload before saving.")
-      }
-      guard revision < Int64.max else {
-        throw GatewayDatabaseError.invalidStoredValue("Profile authorization revision exhausted.")
-      }
-      var saved = profile
-      saved.authorizationRevision = revision + 1
-      try ProfileRecord(saved, updatedAt: updatedAt).save(database)
-      try database.execute(
-        sql: """
-          UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
-          WHERE profileID = ? AND state IN (?, ?, ?)
-          """,
-        arguments: [
-          OperationTicketState.denied.rawValue, updatedAt,
-          "operations.authorization_changed", profile.id.rawValue,
-          OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
-          OperationTicketState.approved.rawValue,
-        ])
+      try Self.saveProfile(
+        profile, updatedAt: updatedAt, expectedRevision: expectedRevision, in: database)
     }
     profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
+  }
+
+  func saveProfile(
+    _ profile: ProfileGrant, expectedRevision: Int64, expectedConfiguration: ConfigurationState,
+    authorization: GatewayManagementAuthorization? = nil
+  ) throws {
+    try profile.validate()
+    try writer.write { database in
+      try Self.requireManagementTrust(authorization, in: database)
+      guard try Self.configurationState(in: database) == expectedConfiguration else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      try Self.saveProfile(
+        profile, updatedAt: Date(), expectedRevision: expectedRevision, in: database)
+    }
+    profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
+  }
+
+  private static func saveProfile(
+    _ profile: ProfileGrant, updatedAt: Date, expectedRevision: Int64?, in database: Database
+  ) throws {
+    let current = try ProfileRecord.fetchOne(database, key: profile.id.rawValue)
+    let revision = current?.authorizationRevision ?? 0
+    guard expectedRevision == nil || expectedRevision == revision else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Profile authorization changed; reload before saving.")
+    }
+    guard revision < Int64.max else {
+      throw GatewayDatabaseError.invalidStoredValue("Profile authorization revision exhausted.")
+    }
+    var saved = profile
+    saved.authorizationRevision = revision + 1
+    try ProfileRecord(saved, updatedAt: updatedAt).save(database)
+    try database.execute(
+      sql: """
+        UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
+        WHERE profileID = ? AND state IN (?, ?, ?)
+        """,
+      arguments: [
+        OperationTicketState.denied.rawValue, updatedAt,
+        "operations.authorization_changed", profile.id.rawValue,
+        OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
+        OperationTicketState.approved.rawValue,
+      ])
   }
 
   func profileChanges(for profileID: GatewayProfileID) -> AsyncStream<Void> {
@@ -366,9 +682,153 @@ package final class GatewayDatabase: @unchecked Sendable {
   }
 
   package func profiles() throws -> [ProfileGrant] {
+    try writer.read { try Self.profiles(in: $0) }
+  }
+
+  private static func profiles(in database: Database) throws -> [ProfileGrant] {
+    try ProfileRecord.order(Column("id")).fetchAll(database).map { try $0.value() }
+  }
+
+  package func clientTrusts() throws -> [GatewayClientTrust] {
     try writer.read { database in
-      try ProfileRecord.order(Column("id")).fetchAll(database).map { try $0.value() }
+      try GatewayClientTrust.order(Column("updatedAt").desc).fetchAll(database)
     }
+  }
+
+  func clientTrust(id: String) throws -> GatewayClientTrust? {
+    try writer.read { try GatewayClientTrust.fetchOne($0, key: id) }
+  }
+
+  func clientTrust(
+    principalID: String, profileID: GatewayProfileID, caller: GatewayCallerKind
+  ) throws -> GatewayClientTrust? {
+    try writer.read { database in
+      try GatewayClientTrust
+        .filter(Column("principalID") == principalID)
+        .filter(Column("profileID") == profileID.rawValue)
+        .filter(Column("caller") == caller.rawValue).fetchOne(database)
+    }
+  }
+
+  /// The local consent audit and optional persistent client trust commit together.
+  func recordFullAccessConsent(
+    sessionID: String, principalID: String, profile authority: GatewayControlProfile,
+    caller: GatewayCallerKind, lifetime: GatewayFullAccessLifetime,
+    expectedTrustRevision: Int64, approver: GatewayCallerKind = .localApp
+  ) throws -> GatewayFullAccessConsent {
+    guard approver == .localApp || approver == .localCLI else {
+      throw GatewayDatabaseError.invalidStoredValue("Client consent requires a local owner.")
+    }
+    let profileID = authority.grant.id
+    let (consent, trustChanged) = try writer.write { database in
+      let storedProfile = try ProfileRecord.fetchOne(database, key: profileID.rawValue)?.value()
+      let profile = authority.grant
+      guard !principalID.isEmpty, (storedProfile != nil) == authority.persisted,
+        storedProfile == nil || storedProfile == profile,
+        profile.allowedCallers.contains(caller), !(profileID == .localAdmin && caller.isRemote)
+      else {
+        throw GatewayDatabaseError.invalidStoredValue(
+          "The client is no longer admitted by this profile.")
+      }
+      let stored =
+        try GatewayClientTrust
+        .filter(Column("principalID") == principalID)
+        .filter(Column("profileID") == profileID.rawValue)
+        .filter(Column("caller") == caller.rawValue).fetchOne(database)
+      guard (stored?.revision ?? 0) == expectedTrustRevision,
+        expectedTrustRevision >= 0, expectedTrustRevision < Int64.max
+      else {
+        throw GatewayDatabaseError.invalidStoredValue(
+          "Client trust changed; reload before granting access.")
+      }
+      let now = Date()
+      let persistent = lifetime == .alwaysAllowClient
+      var trust =
+        stored
+        ?? GatewayClientTrust(
+          id: UUID().uuidString, principalID: principalID, profileID: profileID, caller: caller,
+          revision: 0, profile: authority,
+          fullAccessAllowed: false, updatedAt: now)
+      let trustChanged = persistent || stored?.fullAccessAllowed == true
+      if trustChanged {
+        trust.revision += 1
+        trust.profile = authority
+        trust.fullAccessAllowed = persistent
+        trust.updatedAt = now
+        try trust.save(database)
+      }
+      try AuditEventRecord(
+        AuditEvent(
+          requestID: UUID().uuidString, invocationID: sessionID, caller: approver,
+          principalDigest: AuditEvent.verifiedPrincipalDigest(principalID),
+          profileID: profileID,
+          capabilityID: persistent
+            ? "control.full-access.always-allow" : "control.full-access.this-session",
+          decision: .allowed)
+      ).insert(database)
+      let consent = GatewayFullAccessConsent(
+        lifetime: lifetime, grantedAt: now, profile: authority,
+        trustID: persistent ? trust.id : nil, trustRevision: persistent ? trust.revision : nil)
+      return (consent, trustChanged)
+    }
+    if trustChanged {
+      profileChangeLock.withLock { profileChangeBroadcasters[profileID] }?.send()
+    }
+    return consent
+  }
+
+  /// Persistent trust can be revoked independently of the in-memory session lock.
+  /// Check its captured identity inside the same transaction as the configuration write.
+  private static func requireManagementTrust(
+    _ authorization: GatewayManagementAuthorization?, in database: Database
+  ) throws {
+    guard let authorization, authorization.requiresFullAccess else { return }
+    guard let consent = authorization.consent else {
+      throw GatewayToolError.invalidArguments(
+        "[policy.control_session_denied] Full Access consent is unavailable.")
+    }
+    guard consent.lifetime == .alwaysAllowClient else { return }
+    guard let id = consent.trustID, let revision = consent.trustRevision,
+      let trust = try GatewayClientTrust.fetchOne(database, key: id),
+      trust.fullAccessAllowed, trust.revision == revision,
+      trust.principalID == authorization.context.trustedPrincipalID,
+      trust.profileID == authorization.context.profileID,
+      trust.caller == authorization.context.caller,
+      trust.profile.hasSameAuthorization(as: consent.profile)
+    else {
+      throw GatewayToolError.invalidArguments(
+        "[policy.control_session_denied] Client trust changed before publication.")
+    }
+  }
+
+  package func revokeClientTrust(
+    id: String, expectedRevision: Int64, approver: GatewayCallerKind = .localApp
+  ) throws {
+    guard approver == .localApp || approver == .localCLI else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Client trust revocation requires a local owner.")
+    }
+    let profileID = try writer.write { database in
+      guard var trust = try GatewayClientTrust.fetchOne(database, key: id),
+        trust.revision == expectedRevision, trust.revision < Int64.max
+      else {
+        throw GatewayDatabaseError.invalidStoredValue(
+          "Client trust changed; reload before revoking access.")
+      }
+      trust.fullAccessAllowed = false
+      trust.revision += 1
+      trust.updatedAt = Date()
+      try trust.save(database)
+      try AuditEventRecord(
+        AuditEvent(
+          requestID: UUID().uuidString, caller: approver,
+          principalDigest: AuditEvent.verifiedPrincipalDigest(trust.principalID),
+          profileID: trust.profileID, capabilityID: "control.client-trust.revoke",
+          decision: .allowed)
+      ).insert(database)
+      return trust.profileID
+    }
+    profileChangeLock.withLock { profileChangeBroadcasters[profileID] }?.send()
   }
 
   func reserveMCPExecution(_ proposed: MCPExecutionRecord) throws
@@ -497,6 +957,31 @@ package final class GatewayDatabase: @unchecked Sendable {
     try writer.write { database in
       try ConfigurationRevisionRecord(revision).save(database)
     }
+  }
+
+  /// The manifest replacement and activated revision share a single commit decision.
+  /// A recovery journal restores file state if SQLite rolls this transaction back.
+  func activateConfigurationRevision(
+    _ revision: ConfigurationRevision, expected: ConfigurationState,
+    resolution: GatewayConfigurationResolution,
+    replaceManifest: (ConfigurationState) throws -> Void
+  ) throws -> ConfigurationState {
+    let committed = try writer.write { database in
+      guard try Self.configurationState(in: database) == expected else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      try Self.applyRuntimeResolution(resolution, in: database)
+      try ConfigurationRevisionRecord(revision).insert(database)
+      let state = try Self.configurationState(in: database)
+      try replaceManifest(state)
+      return state
+    }
+    notifyResolvedProfiles(resolution)
+    return committed
+  }
+
+  func configurationRevision(id: String) throws -> ConfigurationRevision? {
+    try writer.read { try ConfigurationRevisionRecord.fetchOne($0, key: id)?.value }
   }
 
   package func configurationRevisions(limit: Int = 50) throws -> [ConfigurationRevision] {
@@ -1119,6 +1604,30 @@ package final class GatewayDatabase: @unchecked Sendable {
         index: "auditEvents_on_verified_scope", on: "auditEvents",
         columns: ["principalDigest", "profileID", "workspaceID", "occurredAt"])
     }
+    migrator.registerMigration("operation-control-session") { database in
+      try database.alter(table: "operationTickets") { table in
+        table.add(column: "controlSessionID", .text)
+        table.add(column: "controlSessionRevision", .integer)
+      }
+    }
+    migrator.registerMigration("explicit-client-control-trust") { database in
+      try database.create(table: "clientControlTrust") { table in
+        table.column("id", .text).primaryKey()
+        table.column("principalID", .text).notNull()
+        table.column("profileID", .text).notNull()
+        table.column("caller", .text).notNull()
+        table.column("revision", .integer).notNull()
+        table.column("profile", .text).notNull()
+        table.column("fullAccessAllowed", .boolean).notNull()
+        table.column("updatedAt", .datetime).notNull()
+        table.uniqueKey(["principalID", "profileID", "caller"])
+      }
+    }
+    migrator.registerMigration("operation-review-title") { database in
+      try database.alter(table: "operationTickets") { table in
+        table.add(column: "reviewTitle", .text)
+      }
+    }
     return migrator
   }()
 
@@ -1515,7 +2024,10 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
   var completedAt: Date?
   var failureCode: String?
   var authorizationRevision: Int64?
+  var controlSessionID: String?
+  var controlSessionRevision: Int64?
   var reviewSummary: String?
+  var reviewTitle: String?
 
   init(_ value: OperationTicket) {
     self.id = value.id
@@ -1536,7 +2048,10 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
     self.completedAt = value.completedAt
     self.failureCode = value.failureCode
     self.authorizationRevision = value.authorizationRevision
+    self.controlSessionID = value.controlSessionID
+    self.controlSessionRevision = value.controlSessionRevision
     self.reviewSummary = value.reviewSummary
+    self.reviewTitle = value.reviewTitle
   }
 
   func value() throws -> OperationTicket {
@@ -1567,12 +2082,14 @@ private struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
       completedAt: completedAt,
       failureCode: failureCode,
       authorizationRevision: authorizationRevision,
-      reviewSummary: reviewSummary
+      controlSessionID: controlSessionID, controlSessionRevision: controlSessionRevision,
+      reviewSummary: reviewSummary, reviewTitle: reviewTitle
     )
   }
 }
 
 package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
+  case configurationChanged
   case invalidStoredValue(String)
   case invalidOperationTicketTransition(String)
   case operationTicketUnknown(String)
@@ -1582,6 +2099,9 @@ package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
 
   package var errorDescription: String? {
     switch self {
+    case .configurationChanged:
+      return
+        "The gateway configuration changed during preparation. Reload before applying this change."
     case .invalidStoredValue(let message):
       return message
     case .invalidOperationTicketTransition(let message):
@@ -1821,4 +2341,8 @@ extension GatewayDatabase {
     }
     return record
   }
+}
+
+extension GatewayClientTrust: FetchableRecord, PersistableRecord {
+  package static let databaseTableName = "clientControlTrust"
 }

@@ -17,7 +17,7 @@ struct PluginArchivePreparation: Sendable {
   /// On return or failure only the newly created job root is reclaimed.
   func withPreparedPackage<Result: Sendable>(
     archive: URL, expectedSHA256: String, pluginID: String, version: PluginVersion,
-    hostVersion: PluginVersion, architecture: String,
+    hostVersion: PluginVersion, architecture: String, artifactName: String? = nil,
     operation: @Sendable (PluginPackage, PluginArchiveReceipt) async throws -> Result
   ) async throws -> Result {
     try Task.checkCancellation()
@@ -57,6 +57,14 @@ struct PluginArchivePreparation: Sendable {
       guard
         package.manifest.compatibility?.permits(host: hostVersion, architecture: architecture)
           ?? true
+      else { throw PluginArchiveError.incompatiblePackage }
+      let target =
+        package.manifest.compatibility?.artifactTarget(
+          named: artifactName ?? archive.lastPathComponent)
+        ?? (package.manifest.compatibility == nil ? .macOS : nil)
+      guard
+        target?.permits(
+          platform: PluginPlatformCompatibility.currentPlatform, architecture: architecture) == true
       else { throw PluginArchiveError.incompatiblePackage }
       try job.finish()
       try Task.checkCancellation()

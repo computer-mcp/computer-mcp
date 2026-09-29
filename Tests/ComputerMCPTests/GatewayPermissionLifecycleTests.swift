@@ -22,6 +22,10 @@ struct GatewayPermissionLifecycleTests {
       }
       let ticket = try #require(fixture.database.operationApprovals().first)
       #expect(ticket.state == .pendingApproval)
+      #expect(
+        ticket.reviewTitle
+          == (try fixture.gateway.listTools().first { $0.name == "file.remove_xattr" }?.title))
+      #expect(ticket.reviewTitle != nil && ticket.reviewTitle != ticket.capabilityID)
       #expect(fixture.hasAttribute())
       #expect(throws: (any Error).self) { try fixture.commit(ticket.id) }
       #expect(fixture.hasAttribute())

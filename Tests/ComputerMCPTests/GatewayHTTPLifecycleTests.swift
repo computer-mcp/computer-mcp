@@ -8,10 +8,15 @@ import os
 struct GatewayHTTPLifecycleTests {
   @Test
   func stopJoinsSessionDiscoveryBeforeShuttingDownTheRegistry() async throws {
+    let root = URL(fileURLWithPath: "/tmp/cm-http-life-" + UUID().uuidString.prefix(8))
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let socket = root.appendingPathComponent("control.sock")
     let registry = HTTPLifecycleRegistry(pauseDiscovery: true)
     let runtime = GatewayHTTPRuntime(
       configuration: .init(), registry: registry, host: "127.0.0.1", port: 0,
-      publicBaseURL: nil)
+      publicBaseURL: nil,
+      control: .init(socketURL: socket, database: try GatewayDatabase(inMemory: ())))
     try await runtime.startListening()
     let port = try #require(await runtime.boundPort())
     let discovery = registry.discoveryEntered.stream()
@@ -39,6 +44,7 @@ struct GatewayHTTPLifecycleTests {
       #expect(registry.shutdownCount == 1)
       #expect(!registry.shutdownDuringDiscovery)
       #expect(await runtime.activeSessionCount() == 0)
+      #expect(!FileManager.default.fileExists(atPath: socket.path))
     } catch {
       registry.releaseDiscovery()
       request.cancel()

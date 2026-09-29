@@ -182,7 +182,7 @@ struct PluginManagementModelTests {
     let model = PluginManagementModel(controlPlane: service)
     await model.reload()
     let before = model.snapshot?.state
-    service.onFetch = { throw PluginHostError.connectedClients }
+    service.onFetch = { throw PluginHostError.changeInProgress }
     await model.reload()
     #expect(model.snapshot?.state == before)
     #expect(model.pluginIDs == ["sample"])
@@ -338,10 +338,12 @@ struct PluginManagementModelTests {
 
 @MainActor
 func render<V: View>(
-  _ view: V, size: NSSize, appearance: NSAppearance, name: String
+  _ view: V, size: NSSize, appearance: NSAppearance, name: String, scrollToBottom: Bool = false
 ) throws {
   _ = NSApplication.shared
   let host = NSHostingView(rootView: view.background(Color(nsColor: .controlBackgroundColor)))
+  // The fixture owns the viewport; content sizing must not resize its window.
+  host.sizingOptions = []
   host.frame = NSRect(origin: .zero, size: size)
   host.appearance = appearance
   let window = NSWindow(
@@ -350,9 +352,27 @@ func render<V: View>(
   window.contentView = host
   defer { window.close() }
   host.layoutSubtreeIfNeeded()
+  if scrollToBottom {
+    func scrollViews(in view: NSView) -> [NSScrollView] {
+      (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+    }
+    let scroll = scrollViews(in: host).max {
+      ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0)
+    }
+    let scrollView = try #require(scroll)
+    let document = try #require(scrollView.documentView)
+    scrollView.contentView.scroll(
+      to: NSPoint(
+        x: 0,
+        y: document.isFlipped
+          ? max(0, document.frame.height - scrollView.contentView.bounds.height) : 0))
+    scrollView.reflectScrolledClipView(scrollView.contentView)
+    host.layoutSubtreeIfNeeded()
+  }
   window.display()
   host.displayIfNeeded()
   CATransaction.flush()
+  try #require(host.bounds.size == size)
   let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
   host.cacheDisplay(in: host.bounds, to: bitmap)
   let png = try #require(bitmap.representation(using: .png, properties: [:]))

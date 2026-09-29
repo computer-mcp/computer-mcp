@@ -153,12 +153,6 @@ package final class GatewaySocketServer: @unchecked Sendable {
     await state.connectionCount()
   }
 
-  package func reserveIdleConfigurationChange() async -> Bool {
-    await state.reserveIdleConfigurationChange()
-  }
-
-  package func finishConfigurationChange() async { await state.finishConfigurationChange() }
-
   private func runConnection(
     channel: Channel,
     handler: GatewaySocketFrameHandler
@@ -292,10 +286,8 @@ private actor GatewaySocketServerState {
   private var connections: [UUID: Channel] = [:]
   private var connectionWaiters: [CheckedContinuation<Void, Never>] = []
   private var stopWaiters: [CheckedContinuation<Void, Never>] = []
-  private var configurationChangeReserved = false
-
   func beginConnection(identifier: UUID, channel: Channel) -> Bool {
-    guard lifecycle == .starting || lifecycle == .running, !configurationChangeReserved else {
+    guard lifecycle == .starting || lifecycle == .running else {
       return false
     }
     connections[identifier] = channel
@@ -321,16 +313,6 @@ private actor GatewaySocketServerState {
     guard lifecycle == .stopping else { return }
     await withCheckedContinuation { stopWaiters.append($0) }
   }
-
-  func reserveIdleConfigurationChange() -> Bool {
-    guard lifecycle == .running, !configurationChangeReserved,
-      connections.isEmpty
-    else { return false }
-    configurationChangeReserved = true
-    return true
-  }
-
-  func finishConfigurationChange() { configurationChangeReserved = false }
 
   func beginStarting() throws {
     guard lifecycle == .idle || lifecycle == .stopped else {

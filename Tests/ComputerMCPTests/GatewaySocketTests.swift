@@ -8,6 +8,14 @@ import Testing
 @Suite(.serialized)
 
 final class GatewaySocketTests {
+  @Test(arguments: ["9007199254740993", "9223372036854775807", "-9223372036854775808"])
+  func responseCorrelationRetainsExactNumericIdentifiers(_ literal: String) throws {
+    let response = Data(
+      "{\"jsonrpc\":\"2.0\",\"id\":\(literal),\"result\":{\"structuredContent\":{\"gateway_execution\":{\"request_id\":\"host:exact\"}}}}"
+        .utf8)
+    #expect(GatewaySocketMCPResponseCorrelation.parse(response)?.mcpRequestID == literal)
+  }
+
   @Test
   func testParsesStringAndNumericMCPResponseCorrelations() throws {
     let stringResponse = try jsonData([
@@ -145,14 +153,12 @@ final class GatewaySocketTests {
         try await waitUntil { await cleanup.entered }
       }
       #expect(await server.connectionCount() == 1)
-      #expect(await server.reserveIdleConfigurationChange() == false)
       let stopping = Task { await server.stop() }
       await server.waitUntilClosed()
       let secondStop = Task { await server.stop() }
       await creation.release()
       try await waitUntil { await cleanup.entered }
       #expect(await server.connectionCount() == 1)
-      #expect(await server.reserveIdleConfigurationChange() == false)
       await cleanup.release()
       await stopping.value
       await secondStop.value

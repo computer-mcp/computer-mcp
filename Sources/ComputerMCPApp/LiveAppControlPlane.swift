@@ -48,6 +48,7 @@ final class LiveAppControlPlane: AppControlPlane {
     controlPlane: AppControlPlaneService,
     gatewayService: AppGatewayService,
     fileLogger: AppFileLogger,
+    controlSocketService: ControlSocketService? = nil,
     permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester()
   ) {
     self.controlPlane = controlPlane
@@ -56,7 +57,7 @@ final class LiveAppControlPlane: AppControlPlane {
       controlPlane: controlPlane,
       gatewayService: gatewayService
     )
-    self.controlSocketService = nil
+    self.controlSocketService = controlSocketService
     self.fileLogger = fileLogger
     self.permissionRequester = permissionRequester
     fileLogger.append(.info, event: "app.control_plane.initialized")
@@ -110,6 +111,7 @@ final class LiveAppControlPlane: AppControlPlane {
     fileLogger.append(.info, event: "app.stop.requested")
     reconnectAttempts.removeAll()
     nextReconnectAt.removeAll()
+    await controlSocketService?.stop()
     await gatewayService.stop()
     fileLogger.append(.info, event: "app.stop.completed")
   }
@@ -194,11 +196,38 @@ final class LiveAppControlPlane: AppControlPlane {
         isEnabled: grant.id != .localAdmin,
         riskLevel: grant.mode.riskLevel,
         permitsRemoteAccess: grant.allowedCallers.contains(where: \.isRemote),
-        supportsFullShell: grant.supportsFullShell,
-        fullShellEnabled: grant.fullShellEnabled,
         permissions: grant
       )
     }
+  }
+
+  func fetchClientAccess() async throws -> ClientAccessSnapshot {
+    let sessions = await operations.controlSessions()
+    return try ClientAccessSnapshot(sessions: sessions, trusts: operations.clientTrusts())
+  }
+
+  func grantClientFullAccess(
+    id: String, lifetime: GatewayFullAccessLifetime,
+    expectedRevision: Int64, expectedTrustRevision: Int64
+  ) async throws {
+    _ = try await operations.approveControlSession(
+      id: id, lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision, enableShellFacility: true)
+  }
+
+  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+    async throws
+  {
+    _ = try await operations.limitControlSession(
+      id: id, to: mode, expectedRevision: expectedRevision)
+  }
+
+  func endClientAccess(id: String, expectedRevision: Int64) async throws {
+    try await operations.endControlSession(id: id, expectedRevision: expectedRevision)
+  }
+
+  func revokeClientTrust(id: String, expectedRevision: Int64) async throws {
+    try operations.revokeClientTrust(id: id, expectedRevision: expectedRevision)
   }
 
   func fetchProviders() async throws -> [ProviderSummary] {
@@ -509,6 +538,11 @@ final class LiveAppControlPlane: AppControlPlane {
     )
   }
 
+  func repairWorkspace(id: String, at url: URL) async throws {
+    let workspace = try await operations.repairWorkspace(id: id, at: url)
+    fileLogger.append(.info, event: "workspace.repaired", fields: ["workspace_id": workspace.id])
+  }
+
   func removeWorkspace(id: String) async throws {
     try await operations.removeWorkspace(id: id)
     fileLogger.append(.info, event: "workspace.removed", fields: ["workspace_id": id])
@@ -553,26 +587,20 @@ final class LiveAppControlPlane: AppControlPlane {
     )
   }
 
-  func setFullShellEnabled(_ enabled: Bool, profileID: String) async throws {
-    guard let profile = GatewayProfileID(rawValue: profileID) else {
-      throw AppControlPlaneError.unavailable(
-        AppLocalization.formatted("Unknown gateway profile: %@", profileID)
-      )
-    }
-    _ = try await operations.setFullShellEnabled(enabled, profileID: profile)
-    fileLogger.append(
-      .warning,
-      event: enabled ? "profile.full_shell.enabled" : "profile.full_shell.disabled",
-      fields: ["profile_id": profile.rawValue]
-    )
+  func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
+  {
+    try await controlPlane.profilePermissionOptions(profileID: id)
   }
 
-  func updateProfilePermissions(_ grant: ProfileGrant) async throws {
+  func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
+    async throws
+  {
     _ = try await operations.updateProfilePermissions(
       profileID: grant.id, mode: grant.mode, confirmationPolicy: grant.confirmationPolicy,
       fullShellEnabled: grant.fullShellEnabled, capabilityIDs: grant.capabilityIDs,
       workspaceIDs: grant.workspaceIDs, mcpServerIDs: grant.mcpServerIDs,
-      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision)
+      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision,
+      reviewedOptions: reviewed)
     fileLogger.append(
       .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
   }
@@ -946,7 +974,7 @@ final class LiveAppControlPlane: AppControlPlane {
       }
     )
     for id in desired where statusByID[id] != .running && statusByID[id] != .starting {
-      _ = try await controlPlane.startCloudflareTunnel(profileID: id)
+      _ = try await operations.startCloudflareTunnel(id: id)
     }
   }
 
@@ -1224,11 +1252,11 @@ extension LaunchAtLoginState {
 }
 
 extension GatewayProfileID {
-  fileprivate var displayName: String {
+  var displayName: String {
     if self == .chatGPTObserve { return "ChatGPT Observe" }
-    if self == .chatGPTOperate { return "ChatGPT Operate" }
+    if self == .chatGPTOperate { return "ChatGPT Control" }
     if self == .cloudflareObserve { return "Cloudflare Observe" }
-    if self == .cloudflareOperate { return "Cloudflare Operate" }
+    if self == .cloudflareOperate { return "Cloudflare Control" }
     if self == .localAdmin { return "Local Admin" }
     return rawValue
   }
@@ -1240,9 +1268,9 @@ extension GatewayPermissionMode {
     switch self {
     case .readOnly: "Read selected tools and workspaces without changing them."
     case .workspaceOperations:
-      "Use selected tools and workspaces under the configured confirmation policy."
+      "Control selected capabilities, projects, and integrations."
     case .localFullAccess:
-      "Use selected capabilities with this macOS user's access. Arbitrary execution needs separate permission."
+      "Control selected capabilities. Full Access requires approval for a connected client."
     }
   }
   fileprivate var riskLevel: RiskLevel {

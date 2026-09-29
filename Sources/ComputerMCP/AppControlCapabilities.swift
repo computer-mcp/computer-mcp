@@ -30,6 +30,24 @@ package struct AppControlCapability: Codable, Equatable, Sendable, Identifiable 
 package enum AppControlCapabilityCatalog {
   package static let all: [AppControlCapability] = [
     item(
+      "clients.list", "computer-mcp clients list",
+      "List connected client access and exact approval revisions.", readOnly: true),
+    item(
+      "clients.allow", "computer-mcp clients allow",
+      "Explicitly approve Full Access for one client connection.", idempotent: false),
+    item(
+      "clients.limit", "computer-mcp clients limit",
+      "Limit one connection to Observe or Restricted Access.", idempotent: false),
+    item(
+      "clients.end", "computer-mcp clients end",
+      "End access for one client connection without cancelling started work.", idempotent: false),
+    item(
+      "clients.trusts", "computer-mcp clients trusts",
+      "List saved client approvals and their revisions.", readOnly: true),
+    item(
+      "clients.revoke", "computer-mcp clients revoke", "Revoke one saved client approval.",
+      destructive: true, idempotent: false),
+    item(
       "mcp.process.recover", "computer-mcp mcp recover-process",
       "Retire one reviewed MCP process receipt after confirmed process and host cleanup.",
       destructive: true, idempotent: false),
@@ -157,10 +175,10 @@ package enum AppControlCapabilityCatalog {
       readOnly: true),
     item(
       "plugin.search", "computer-mcp plugins search",
-      "Search public plugin declarations from the official GitHub organization.", readOnly: true),
+      "Search compatible published plugins in the cached official static catalog.", readOnly: true),
     item(
       "plugin.artifacts", "computer-mcp plugins artifacts",
-      "List verified archive selections from an official repository's published release.",
+      "Select released archives and versions locally; installation revalidates GitHub provenance.",
       readOnly: true),
     item(
       "plugin.install_release", "computer-mcp plugins install-release",

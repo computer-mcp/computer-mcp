@@ -297,6 +297,17 @@ class CandidateReuse(unittest.TestCase):
                     self.make_runner().bind_candidate()
                 self.git("revert", "--no-edit", "HEAD")
 
+    def test_release_history_reuses_candidate_and_invalidates_acceptance(self):
+        (self.root / "CHANGELOG.md").write_text("## 1.3.0 — 2026-09-29\n\nAccepted release.\n")
+        self.commit()
+        runner = self.make_runner()
+        runner.bind_candidate()
+        self.assertEqual(runner.candidate_source, self.original)
+        self.assertEqual(self.receipt.read_bytes(), self.original_receipt)
+        self.assertEqual([s["status"] for s in runner.status("acceptance")], ["passed", "invalidated"])
+        self.assertEqual(runner.run("acceptance"), 0)
+        self.assertEqual(len(list((self.root / ".agent/run/history").glob("candidate-*.json"))), 1)
+
     def test_changed_toolchain_definition_dirty_source_and_forged_receipt_refuse_reuse(self):
         (self.root / "Scripts/verify-app-navigation.swift").write_text("uncommitted")
         with self.assertRaisesRegex(ValueError, "clean checks"):

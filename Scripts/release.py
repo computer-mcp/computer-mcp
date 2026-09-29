@@ -24,8 +24,9 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 WAITING = 75
 
-# These files operate on an existing signed artifact; none supplies its build.
+# These checks and release records describe existing signed artifacts, not their build inputs.
 CANDIDATE_CHECK_FILES = frozenset({
+    "CHANGELOG.md",
     "Scripts/release.py", "Scripts/candidate.py", "Scripts/publish-release.py",
     "Scripts/accept-release.py", "Scripts/verify-app-navigation.swift",
     "Scripts/verify-installed-runtime.py", "Scripts/verify-installed-workspaces.py",

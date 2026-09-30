@@ -46,5 +46,6 @@
 *.key
 
 # Tool caches
+node_modules/
 __pycache__/
 *.pyc

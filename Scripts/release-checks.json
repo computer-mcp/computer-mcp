@@ -13,6 +13,7 @@
       "id": "dependencies",
       "timeout_seconds": 900,
       "commands": [
+        ["python3", "Scripts/brand.py", "check"],
         ["python3", "Scripts/version.py", "check", "--dependencies"],
         ["Scripts/verify-package-boundary.sh"],
         ["Scripts/verify-public-repository.sh"]

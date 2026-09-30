@@ -1,11 +1,12 @@
-![Computer MCP — 你的工具，一个对话。](Assets/Brand/social.png)
+![Computer MCP — 让 ChatGPT，用上你的本机工具。](Assets/Brand/Exports/social-zh-CN.png)
 
 # Computer MCP
 
 **让 ChatGPT，用上你的本机工具。**
 
-连接 CLI、Codex、MCP 和 Skills，在对话里推进实际工作。读本地项目、改代码、
-处理文件、运行 Mac 上的工具，再把结果带回任务——权限由你配置。
+让 ChatGPT 或其他兼容 MCP 的客户端直接使用本机能力。组合类型明确的工具、CLI、
+MCP、Skills 与 Computer Use，跨多台电脑推进工作，每台宿主独立管理访问权限。
+Codex 是可选集成。
 
 [快速开始](#快速开始) · [产品官网](https://computer-mcp.github.io/) ·
 [文档](Documentation/README.md) ·
@@ -16,6 +17,7 @@
   读取执行结果。
 - **在对话里调用 Codex 写代码。** 使用独立 Codex 插件启动任务、跟进进度、查看结果。
 - **用 MCP 和 Skills 扩展工作方式。** 直接接入 MCP 服务与可复用说明，或通过插件组合。
+- **跨多台电脑工作。** 连接各台宿主，选择对应工作区，在那台电脑的环境里使用工具。
 - **开放什么，由你决定。** 配置工具、工作区与确认策略，在本机批准需要确认的宿主操作。
 
 Computer MCP 支持 macOS 14 或更新系统，可供 ChatGPT 和其他兼容 MCP 的客户端使用。
@@ -43,6 +45,10 @@ ChatGPT · Codex · 其他 MCP 客户端
 每次调用都绑定到调用方、Profile、能力和相关的已注册工作区。未知工具、未授权
 工作区、不安全路径和无法验证的所有权声明都会 fail closed。
 
+每台宿主独立保有凭据、注册、审批和审计。工作区 ID 只属于对应宿主；连接多台
+电脑不会共享文件或迁移运行中的进程。完整模型见
+[产品定位](Documentation/Architecture/ProductIdentity.md)。
+
 ## 插件与直接集成
 
 Plugin 是可以组合 MCP、CLI 和 Skills 的分发包。原生 MCP、本地 CLI 与 Skill
@@ -56,8 +62,11 @@ computer-mcp plugins list
 ```
 
 官方包包括 [Codex](https://github.com/computer-mcp/plugin-codex)、
-[Computer Use](https://github.com/computer-mcp/plugin-computer-use) 和
-[Swift Format](https://github.com/computer-mcp/plugin-swift-format)。选择发布附件安装，
+[Computer Use](https://github.com/computer-mcp/plugin-computer-use)、
+[Claude Code](https://github.com/computer-mcp/plugin-claude)、
+[Cursor](https://github.com/computer-mcp/plugin-cursor)、
+[Swift Format](https://github.com/computer-mcp/plugin-swift-format) 和
+[TRAE](https://github.com/computer-mcp/plugin-trae)（需要仓库访问权限）。选择发布附件安装，
 检查依赖和工具暴露范围后再启用。新安装默认停用，不自动授予权限。Bundled 包
 走相同生命周期，外部工具仍由用户或厂商管理。
 
@@ -143,14 +152,19 @@ Computer MCP 始终把两个决定分开：
 
 这是一种可选编排能力，不是在声称 Computer MCP 就是 Codex Remote。
 
-## Computer MCP 与 Codex Remote
+## Computer MCP、Dots 与 Codex Remote
 
-普通的远程 Codex 工作，优先使用 **官方 Codex Remote**。它是 Codex 第一方的远程
-控制体验；当完整流程就是 Codex 本身时，它是更合适的选择。
+| 选择 | 适合的工作 |
+| --- | --- |
+| **Computer MCP** | 跨电脑、跨兼容 MCP 客户端，直接组合使用受治理的通用本机能力 |
+| **OpenAI Dots** | 带记忆、应用和主动跟进的常驻云端 Agent；同时连接一台个人电脑 |
+| **Codex Remote** | 跨已连接电脑启动、跟进、审批和审查 Codex 编程任务 |
 
-当流程需要通用且兼容 MCP 的本地执行平面时，使用 **Computer MCP**：多个 AI
-客户端、已注册工具与应用、工作区/Profile 策略、自定义审批规则、关联审计，或与
-其他本地能力组合的可选 Codex 编排。
+Computer MCP 调用普通已注册工具不要求启动 Codex 任务，每台宿主执行自己的能力。
+Dots 还有独立的云端电脑；Codex Remote 在选定的已连接宿主上执行编程任务。
+账号和服务用量条款仍然适用。
+[完整对比](Documentation/Reference/ProductComparison.md)说明接口、执行和权限边界，
+OpenAI 官方来源于 2026-10-01 核实。
 
 以下所有权模式彼此独立：快速 Codex Thread/Turn、Computer MCP-owned Codex
 Runtime、官方持久化 Codex Goal、单独的 Computer MCP 验收 Run、官方 Codex

@@ -8,6 +8,11 @@ This directory contains detailed operational reference material.
 
 ## Documents
 
+- [Product Comparison](ProductComparison.md): execution, multi-computer and
+  authority differences between Computer MCP, OpenAI Dots and Codex Remote.
+- [1.3.1 Release Notes](ReleaseNotes-1.3.1.md) and
+  [Production Readiness Report](ProductionReadinessReport-1.3.1.md): canonical
+  App identity and exact candidate acceptance requirements.
 - [Quick Start](QuickStart.md): release installation, first launch, and local MCP.
 - [CLI](CLI.md): command-line modes and exit behavior.
 - [Control Plane Capabilities](ControlPlaneCapabilities.md): shared App/CLI

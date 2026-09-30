@@ -24,7 +24,7 @@ struct AppShellView: View {
           Button {
             model.showWelcome()
           } label: {
-            Label("Show Welcome", systemImage: "sparkles")
+            Label("Show Welcome", systemImage: "macwindow")
           }
           .buttonStyle(.plain)
         }

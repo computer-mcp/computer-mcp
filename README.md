@@ -1,12 +1,13 @@
-![Computer MCP — Your tools. One conversation.](Assets/Brand/social.png)
+![Computer MCP — Let ChatGPT use your local tools.](Assets/Brand/Exports/social-en.png)
 
 # Computer MCP
 
 **Let ChatGPT use your local tools.**
 
-Connect CLI tools, Codex, MCP servers and Skills to your conversations. Work
-with local projects and files, run the tools on your Mac, and bring the results
-back into the task—with permissions you choose.
+Connect local tools directly to ChatGPT or another compatible MCP client.
+Compose typed capabilities, CLI tools, MCP servers, Skills and Computer Use
+across your computers, with access governed on each host. Codex is an optional
+integration.
 
 [Get started](#quick-start) · [Product site](https://computer-mcp.github.io/) ·
 [Documentation](Documentation/README.md) ·
@@ -19,6 +20,8 @@ back into the task—with permissions you choose.
   to start coding tasks, follow progress and inspect results.
 - **Connect more with MCP and Skills.** Add MCP services and reusable instructions
   directly or together in a plugin package.
+- **Work across computers.** Connect each host, select its workspace, and use
+  tools in that computer's environment.
 - **Choose the access.** Configure tools, workspaces and confirmation policy;
   review host actions requiring approval locally.
 
@@ -49,6 +52,11 @@ Every call is tied to a caller, profile, capability, and—when relevant—a
 registered workspace. Unknown tools, ungranted workspaces, unsafe paths, and
 unsupported ownership claims fail closed.
 
+Each host keeps its own credentials, registrations, approvals and audit.
+Workspace IDs belong to that host; connecting several computers does not share
+their files or move running processes. See
+[Product Identity](Documentation/Architecture/ProductIdentity.md).
+
 ## Plugins and direct integrations
 
 A plugin is a package combining MCP, CLI and Skills contributions. Native MCP
@@ -63,8 +71,11 @@ computer-mcp plugins list
 ```
 
 Official packages include [Codex](https://github.com/computer-mcp/plugin-codex),
-[Computer Use](https://github.com/computer-mcp/plugin-computer-use) and
-[Swift Format](https://github.com/computer-mcp/plugin-swift-format). Select a
+[Computer Use](https://github.com/computer-mcp/plugin-computer-use),
+[Claude Code](https://github.com/computer-mcp/plugin-claude),
+[Cursor](https://github.com/computer-mcp/plugin-cursor),
+[Swift Format](https://github.com/computer-mcp/plugin-swift-format) and
+[TRAE](https://github.com/computer-mcp/plugin-trae) (repository access required). Select a
 release artifact to install, review its dependencies and tool exposure, then
 enable it. Installation starts disabled and grants no permissions. Bundled
 packages use the same lifecycle; external tools remain user/vendor-owned.
@@ -176,16 +187,21 @@ A representative workflow looks like this:
 
 This is optional orchestration, not a claim that Computer MCP is Codex Remote.
 
-## Computer MCP and Codex Remote
+## Computer MCP, Dots and Codex Remote
 
-Use **official Codex Remote** for the first-party experience of remotely
-controlling ordinary Codex work. It owns that product surface and is the
-preferred choice when Codex itself is the whole workflow.
+| Choose | When the job is |
+| --- | --- |
+| **Computer MCP** | Direct, composable, governed access to general local capabilities across computers and compatible MCP clients |
+| **OpenAI Dots** | Always-on cloud-agent work with memory, apps and proactive follow-through; one connected personal computer at a time |
+| **Codex Remote** | First-party remote coding: start, steer, approve and review Codex tasks across connected computers |
 
-Use **Computer MCP** when the workflow needs a general MCP-accessible local
-execution plane: multiple AI clients, registered tools and applications,
-workspace/profile policy, custom approval rules, correlated audit, or optional
-Codex orchestration alongside other local capabilities.
+Computer MCP does not require a Codex task for ordinary registered tools. Each
+host executes its own capabilities. Dots also has a separate cloud computer;
+Codex Remote runs coding tasks on the selected connected host. Account and
+service usage terms still apply. The
+[full comparison](Documentation/Reference/ProductComparison.md) covers
+interfaces, execution and authority, with official OpenAI sources checked on
+2026-10-01.
 
 The ownership modes remain explicit:
 

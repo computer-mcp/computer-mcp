@@ -94,6 +94,11 @@ BUILD_IDENTITY="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
 [[ -x "$APP_PATH/Contents/MacOS/Computer MCP" ]] || fail "Missing App executable."
 [[ -x "$CLI_PATH" ]] || fail "Missing embedded CLI."
 [[ -f "$BUILD_IDENTITY" ]] || fail "Missing signed build identity."
+[[ "$(/usr/bin/plutil -extract CFBundleIconFile raw -o - "$APP_PATH/Contents/Info.plist")" == "AppIcon.icns" ]] \
+  || fail "The App does not declare the canonical icon."
+/usr/bin/cmp -s "$ROOT_DIR/Assets/Brand/Exports/AppIcon.icns" \
+  "$APP_PATH/Contents/Resources/AppIcon.icns" \
+  || fail "The App does not contain the canonical icon bytes."
 BUILD_IDENTITY_PATH="$BUILD_IDENTITY" \
   "$ROOT_DIR/Scripts/verify-artifact-provenance.sh" \
     "$PROVENANCE_PATH" "$DMG_PATH" "$ARTIFACT_CLASS"
@@ -273,6 +278,7 @@ for relative_path in \
   "Contents/Info.plist" \
   "Contents/MacOS/Computer MCP" \
   "Contents/Resources/computer-mcp" \
+  "Contents/Resources/AppIcon.icns" \
   "Contents/Resources/ComputerMCPBuildIdentity.plist" \
   "Contents/Resources/ThirdPartyNotices.txt" \
   "Contents/_CodeSignature/CodeResources"

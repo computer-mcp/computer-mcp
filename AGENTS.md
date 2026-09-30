@@ -7,6 +7,9 @@ Use this guide for agent work in this repository.
 - For package work, inspect `Package.swift` before editing targets or products.
 - For build, run, and test tasks, use SwiftPM commands from the repository root.
 - For documentation work, keep the role boundaries in `Documentation/README.md`.
+- For product positioning, read `Documentation/Architecture/ProductIdentity.md`.
+- For brand work, read `Assets/Brand/BRAND.md` and `Assets/Brand/brand.json`;
+  use `Scripts/brand.py` to generate, synchronize and check shared assets.
 - For version, dependency, packaging or release work, read
   `Documentation/Architecture/VersioningAndRelease.md` and
   `Documentation/Reference/Release.md`. Use `Scripts/version.py` for version
@@ -32,6 +35,9 @@ Use this guide for agent work in this repository.
   it.
 - Do not check in `.doccarchive` output. Generated DocC archives are build
   artifacts.
+- `.agent/` is ignored local execution state only. Keep current product truth
+  in committed documents; no build or maintenance step may require pre-existing
+  `.agent/` content. Release tools may create local run evidence there.
 - Keep root `README.md` as the public manual. Put exhaustive CLI, protocol, tool,
   and troubleshooting details under `Documentation/Reference/`.
 

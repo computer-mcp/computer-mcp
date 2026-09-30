@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Computer MCP</title>
+  <defs>
+    <linearGradient id="graphite" x2="0" y2="1">
+      <stop stop-color="#34363a"/>
+      <stop offset="1" stop-color="{{graphite}}"/>
+    </linearGradient>
+    <linearGradient id="edge" x2="0" y2="1">
+      <stop stop-color="#717379"/>
+      <stop offset="1" stop-color="#292b2e"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="68" width="896" height="896" rx="200" fill="#000000" opacity=".16"/>
+  <rect x="64" y="60" width="896" height="896" rx="200" fill="url(#graphite)"/>
+  <rect x="67" y="63" width="890" height="890" rx="197" fill="none" stroke="url(#edge)" stroke-width="6"/>
+  <g transform="translate(128 104) scale(3)">{{symbol}}</g>
+</svg>

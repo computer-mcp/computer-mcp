@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Computer MCP</title>
+  <rect width="1024" height="1024" fill="#171819"/>
+  <g transform="translate(128 104) scale(3)"><rect x="51" y="53" width="154" height="114" rx="20" fill="none" stroke="#f5f5f7" stroke-width="14"/>
+  <circle cx="128" cy="197" r="9" fill="#f5f5f7"/></g>
+</svg>

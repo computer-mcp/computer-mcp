@@ -7,9 +7,9 @@
     "Assets/Brand/Sources/app-icon.svg.in": "21ab24523fc924990cd3f72a9a70c4b6251918b8682a523a7121206b0889ecfe",
     "Assets/Brand/Sources/social.svg.in": "c9073c829d9bc4a81a85c35cca4cde6402c41f364861eeda0a531df0fc954530",
     "Assets/Brand/Sources/family.svg.in": "e52c899cb8e8958a9f18ae53b15c2b4e0038260d77275bd60279056d99c69312",
-    "Scripts/brand.py": "3174c1b0df41e5294c741cfb0d3e1c94983e0e53cf99717a313890af11aae502",
+    "Scripts/brand.py": "ad7747cfff1927de7cb604becb8e7966ab34b4bef4ca859e0b8d6295903ef857",
     "Tools/Brand/check-consumer.py": "2ec3c64469774b48fbfa6fbfa7f6a35c6a172fe4de347beb1881766632fbfdde",
-    "Tools/Brand/render.mjs": "94fff40f2a9cc32e4d01f9d35498c76fee9f9f53ac235339d960c1163a6409b6",
+    "Tools/Brand/render.mjs": "a494b017901e9ca9fc2d55b66b82bd39c94564f64f2278c5e27634f4a1f0eccf",
     "Tools/Brand/package.json": "8957a8e5b7669f35c369e04874fa1bd25fd6b7d83f53f8fe7ace7bba31bdfec1",
     "Tools/Brand/package-lock.json": "9602546d2c1e34e161cf30df3490831beca02286fc3ab20868240afa4b797141"
   },
@@ -42,7 +42,12 @@
     "webp": "1.6.0",
     "xml2": "2.15.3",
     "zlib-ng": "2.3.3",
-    "sharp": "0.35.4"
+    "sharp": "0.35.4",
+    "node": "v25.8.1",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "os_release": "27.0.0",
+    "locale": "en_US.UTF-8"
   },
   "exports": {
     "AppIcon.icns": "9215432a63f932e4093bfc78d9f1ac9bcf363d19edbc669a2da39c038b371041",

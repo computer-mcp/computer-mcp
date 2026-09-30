@@ -61,8 +61,10 @@ checks the committed delivery, product copy and App packaging inputs without a
 graphics dependency. Regeneration uses the pinned maintainer renderer in
 `Tools/Brand/`; it is not a product runtime dependency. Run `npm ci` in that
 directory, then run `python3 Scripts/brand.py generate` from the repository root.
-The manifest records renderer versions. Verify repeated generation produces
-identical output digests before accepting a renderer or artwork change.
+Regenerate on macOS with its system fonts. The renderer fixes the font locale;
+the manifest records library, Node and operating-system versions. Verify repeated
+generation produces identical output digests before accepting a renderer or
+artwork change.
 
 The website imports a locked copy of the delivery and stable facts. Its
 `DESIGN.md` owns website-specific composition, spacing and responsive behavior.

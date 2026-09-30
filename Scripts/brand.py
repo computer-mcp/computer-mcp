@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import os
 import plistlib
 import struct
 import subprocess
@@ -119,7 +120,8 @@ def generate():
                 for name, (source, width, height) in raster_specs(brand).items()]
         (directory / "jobs.json").write_text(json.dumps(jobs))
         subprocess.run(["node", str(ROOT / "Tools/Brand/render.mjs"),
-                        str(directory / "jobs.json"), str(directory / "renderer.json")], check=True)
+                        str(directory / "jobs.json"), str(directory / "renderer.json")], check=True,
+                       env={**os.environ, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"})
         renderer = json.loads((directory / "renderer.json").read_text())
     (EXPORTS / "AppIcon.icns").write_bytes(icns_bytes(EXPORTS))
     (EXPORTS / "check-consumer.py").write_bytes((ROOT / "Tools/Brand/check-consumer.py").read_bytes())

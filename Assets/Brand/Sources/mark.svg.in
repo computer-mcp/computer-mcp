@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Computer MCP</title>
+  <rect width="1024" height="1024" fill="{{graphite}}"/>
+  <g transform="translate(128 104) scale(3)">{{symbol}}</g>
+</svg>

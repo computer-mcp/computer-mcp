@@ -4,6 +4,12 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.3.1 — 2026-10-01
+
+- Give the macOS App a canonical Computer MCP icon in Finder, Dock and packaging.
+- Align bilingual product copy, public artwork and first-party plugin presentation
+  around direct, composable, governed local tools across computers.
+
 ## 1.3.0 — 2026-09-29
 
 - Apply live workspace, MCP and plugin changes to connected clients while

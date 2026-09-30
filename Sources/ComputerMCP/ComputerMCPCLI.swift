@@ -4,10 +4,10 @@
 /// CLI metadata shared by the executable and library documentation.
 package enum ComputerMCPCLI {
   /// Current package CLI version.
-  package static let version = "1.3.0"
+  package static let version = "1.3.1"
 
   /// Current package build number.
-  package static let build = "41"
+  package static let build = "42"
 
   /// Version string exposed by the command-line executable.
   package static let releaseVersion = "\(version) (\(build))"

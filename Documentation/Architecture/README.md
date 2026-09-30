@@ -4,6 +4,8 @@ These documents state the current architecture truth for `computer-mcp`.
 
 ## Documents
 
+- [Product Identity](ProductIdentity.md): product positioning, multi-computer
+  boundaries, optional Codex integration and public representation.
 - [Package](Package.md): SwiftPM products, targets, dependencies, and command
   ownership.
 - [Runtime](Runtime.md): App socket, execution planes, and tool dispatch.

@@ -302,6 +302,7 @@ fi
   "$X86_64_BIN_DIR/computer-mcp" \
   -output "$RESOURCES_DIR/computer-mcp"
 /bin/cp "$INFO_PLIST" "$CONTENTS/Info.plist"
+/bin/cp "$ROOT_DIR/Assets/Brand/Exports/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $APP_BUNDLE_ID" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$CONTENTS/Info.plist"

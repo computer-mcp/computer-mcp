@@ -9,6 +9,7 @@ RG=(rg -n --hidden \
   --glob '!.git/**' \
   --glob '!.build/**' \
   --glob '!**/.build/**' \
+  --glob '!**/node_modules/**' \
   --glob '!dist/**' \
   --glob '!.agent/**' \
   --glob '!.codex/**' \
@@ -49,6 +50,7 @@ fi
 credential_files=(${(f)$(find . \
   -path './.git' -prune -o \
   -path '*/.build' -prune -o \
+  -name node_modules -prune -o \
   -path './dist' -prune -o \
   -path './.agent' -prune -o \
   -path './.codex' -prune -o \
@@ -67,6 +69,7 @@ fi
 large_files=(${(f)$(find . \
   -path './.git' -prune -o \
   -path '*/.build' -prune -o \
+  -name node_modules -prune -o \
   -path './dist' -prune -o \
   -path './.agent' -prune -o \
   -path './.codex' -prune -o \

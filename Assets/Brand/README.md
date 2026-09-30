@@ -1,22 +1,34 @@
 # Computer MCP brand assets
 
-The shared identity connects conversations with the tools on a Mac. Public-facing
-product attribution uses the Computer MCP organization name.
+[BRAND.md](BRAND.md) owns the verbal and visual system.
+[brand.json](brand.json) contains stable machine-readable facts.
+[Product Identity](../../Documentation/Architecture/ProductIdentity.md) owns
+product meaning and boundaries.
 
-- `mark.png`: 1254 × 1254 PNG, a white computer-window symbol on graphite.
-  Use for navigation, website icons and project avatars. It has an opaque
-  background; preserve its square aspect ratio and allow space around the symbol.
-- `social.png`: 1729 × 910 PNG, the “Your tools. One conversation.” share card.
-  Used in both public READMEs and as the source for the website's Open Graph image.
+- [Sources](Sources/): editable symbol and composition templates.
+- [Exports](Exports/): generated delivery, including the master mark,
+  bilingual social cards, six plugin cards, App icon and size-specific PNGs.
+- [Export manifest](Exports/manifest.json): source, renderer and output digests.
+- [App icon](Exports/AppIcon.icns): the icon copied into the macOS App bundle.
 
-Both images were created with the built-in image generation tool. They are
-brand artwork, not product screenshots or execution evidence. The mark also
-appears in the card. The website owns its delivery metadata and build pipeline.
+Regenerate with the pinned maintainer renderer:
 
-Use graphite #171819, silver-white #f5f5f7, neutral grays and system sans-serif
-fonts in surrounding layouts. CLI, Codex, MCP and Skills share the positioning;
-capability and permission claims remain owned by the main product documentation.
+```sh
+npm ci --prefix Tools/Brand
+python3 Scripts/brand.py generate
+python3 Scripts/brand.py check
+```
 
-The website's [DESIGN.md](https://github.com/computer-mcp/computer-mcp.github.io/blob/main/DESIGN.md)
-owns its approved composition, typography and visual references. Keep these
-shared image files synchronized with the website's `public/brand/` sources.
+Import an exact delivery into a website, first-party plugin or organization
+profile checkout, then verify it:
+
+```sh
+python3 Scripts/brand.py sync ../computer-mcp.github.io
+python3 Scripts/brand.py check --consumer ../computer-mcp.github.io
+```
+
+Each consumer receives a lock and a standalone check script for its own CI.
+The website's `DESIGN.md` owns composition and responsive application. Identity
+changes originate here and require regeneration and consumer synchronization.
+App-bundled changes follow the existing
+[release contract](../../Documentation/Architecture/VersioningAndRelease.md).

@@ -50,6 +50,7 @@ package product and does not install or bundle vendor binaries.
 | `Resources/ComputerMCPApp/` | Bundle metadata and entitlements |
 | `Tests/` | Swift Testing component, policy, transport, App, and provider tests |
 | `Tools/Validation/` | Independent Test Case catalog, probes, fixtures, evidence correlation, and reports |
+| `Tools/Brand/` | Pinned maintainer artwork renderer and standalone consumer verification source |
 | `Sources/ComputerMCP/ComputerMCP.docc/` | Internal target documentation |
 | `Examples/` | Standalone development and dogfood manifests |
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
@@ -79,6 +80,12 @@ before the protected job can start.
 
 `Tools/Validation` is not a root target and is not included in the App or DMG.
 Real external consumers and tunnels are Validation Runs, never automated tests.
+
+`Tools/Brand` uses the pinned Node.js `sharp` renderer to regenerate delivery
+artwork from `Assets/Brand/Sources`. It is a maintainer dependency, outside the
+SwiftPM/runtime graph. Only the generated icon is copied into the App.
+`Scripts/brand.py check` verifies committed source/output fingerprints and
+packaging declarations using Python's standard library.
 
 ## Principles
 

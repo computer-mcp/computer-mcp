@@ -17,9 +17,10 @@ extension GatewayToolRegistry {
       throw GatewayToolError.invalidArguments("Missing required 'argv'.")
     }
     let args = try optionalStringArray("argv", in: object)
+    let invocation = try resolveCLIInvocation(command)
     let processID = try processManager.spawn(
-      executable: command.executable,
-      arguments: args,
+      executable: invocation.executable,
+      arguments: invocation.arguments + args,
       workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
       environment: command.env,
       maxOutputBytes: configuration.policy.maxOutputBytes

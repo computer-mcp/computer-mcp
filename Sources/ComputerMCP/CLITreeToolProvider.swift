@@ -47,7 +47,8 @@ struct CLITreeToolProvider: GatewayToolProvider {
       executable: registration.executable, invocation: invocation,
       cwd: registration.resolvedWorkingDirectory(base: workspace) ?? workspace,
       environment: registration.env, timeoutMilliseconds: timeoutMilliseconds,
-      maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks)
+      maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks,
+      interpreterBindings: registration.interpreterBindings)
     return try response(result, command: command)
   }
 
@@ -58,7 +59,8 @@ struct CLITreeToolProvider: GatewayToolProvider {
       executable: registration.executable, invocation: invocation,
       cwd: registration.resolvedWorkingDirectory(base: workspace) ?? workspace,
       environment: registration.env, timeoutMilliseconds: timeoutMilliseconds,
-      maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks)
+      maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks,
+      interpreterBindings: registration.interpreterBindings)
     return try response(result, command: command)
   }
 

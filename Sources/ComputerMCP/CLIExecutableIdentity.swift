@@ -5,6 +5,7 @@ import Foundation
 /// This is not a kernel-pinned executable or a snapshot of its dynamic dependencies.
 struct CLIExecutableIdentity: Equatable, Sendable {
   let executable: String
+  let arguments: [String]
   private let files: [File]
 
   private struct File: Equatable, Sendable {
@@ -22,9 +23,14 @@ struct CLIExecutableIdentity: Equatable, Sendable {
     let changedNanoseconds: Int
   }
 
-  static func capture(executable: String, cwd: URL, environment: [String: String]) throws -> Self {
-    let inspection = ExecutableInspection.inspect(
-      executable, workingDirectory: cwd, environment: environment)
+  static func capture(
+    executable: String, cwd: URL, environment: [String: String],
+    interpreterBindings: [String: String] = [:]
+  ) throws -> Self {
+    let invocation = ExecutableInspection.invocation(
+      executable, workingDirectory: cwd, environment: environment,
+      interpreterBindings: interpreterBindings)
+    let inspection = invocation.inspection
     var files: [File] = []
     func append(_ item: ExecutableInspection) throws {
       guard item.status == .passed, let path = item.path else {
@@ -45,6 +51,8 @@ struct CLIExecutableIdentity: Equatable, Sendable {
       for interpreter in item.interpreters { try append(interpreter) }
     }
     try append(inspection)
-    return Self(executable: files[0].lookupPath, files: files)
+    return Self(
+      executable: invocation.executable ?? files[0].lookupPath, arguments: invocation.arguments,
+      files: files)
   }
 }

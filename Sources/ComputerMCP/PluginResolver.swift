@@ -75,6 +75,8 @@ package enum PluginResolver {
           code: .hostIncompatible, dependencyID: nil, instructions: nil))
       return result()
     }
+    let interpreterBindings = try Self.interpreterBindings(
+      package: plugin, dependencyExecutables: dependencyExecutables)
 
     func registrationID(_ component: String, override: String?) throws -> String {
       // Length-prefixing keeps identities injective even when IDs contain separators.
@@ -101,12 +103,13 @@ package enum PluginResolver {
     }
 
     func executable(_ reference: PluginExecutable, componentID: String, cwd: String?) throws
-      -> String?
+      -> ExecutableInvocation?
     {
-      let inspection = try Self.inspectExecutable(
+      let invocation = try Self.executableInvocation(
         reference, package: plugin, dependencyExecutables: dependencyExecutables,
         workingDirectory: URL(fileURLWithPath: cwd ?? FileManager.default.currentDirectoryPath),
         environment: environment)
+      let inspection = invocation?.inspection
       if inspection?.status != .passed {
         let unavailable = inspection?.hasKnownFailure ?? true
         diagnostics.append(
@@ -120,7 +123,7 @@ package enum PluginResolver {
               .instructions,
             executable: inspection))
       }
-      return inspection?.hasKnownFailure == false ? inspection?.path : nil
+      return inspection?.hasKnownFailure == false ? invocation : nil
     }
 
     for contribution in manifest.mcp {
@@ -134,6 +137,7 @@ package enum PluginResolver {
       }
       let id = try registrationID(contribution.id, override: choice.registrationID)
       let command: String?
+      var launchArguments: [String] = []
       if let reference = contribution.executable {
         guard
           let resolved = try executable(
@@ -141,13 +145,15 @@ package enum PluginResolver {
         else {
           continue
         }
-        command = resolved
+        command = resolved.executable
+        launchArguments = resolved.arguments
       } else {
         command = nil
       }
       let server = MCPServerConfig(
         id: id, transport: contribution.transport,
-        url: contribution.url, command: command, args: choice.args ?? contribution.args,
+        url: contribution.url, command: command,
+        args: launchArguments + (choice.args ?? contribution.args),
         cwd: try path(contribution.cwd), exposure: choice.exposure,
         prefix: choice.prefix ?? contribution.prefix ?? id,
         capabilities: contribution.capabilities, allowedTools: choice.allowedTools,
@@ -179,7 +185,7 @@ package enum PluginResolver {
           else {
             continue
           }
-          helper = resolved
+          helper = resolved.inspection.path
         } else {
           helper = nil
         }
@@ -188,10 +194,12 @@ package enum PluginResolver {
           path: try path(source.path), helper: helper, args: source.args)
         tree?.packageRoot = plugin.root
       }
-      cli.append(
-        CLICommandConfig(
-          id: id, executable: command, description: contribution.description,
-          cwd: try path(contribution.cwd), allowAnyArgs: choice.allowAnyArgs, tree: tree))
+      guard let scriptPath = command.inspection.path else { continue }
+      var registration = CLICommandConfig(
+        id: id, executable: scriptPath, description: contribution.description,
+        cwd: try path(contribution.cwd), allowAnyArgs: choice.allowAnyArgs, tree: tree)
+      registration.interpreterBindings = interpreterBindings
+      cli.append(registration)
       try record(contribution.id, kind: .cli, id: id)
     }
     for contribution in manifest.skills {
@@ -210,6 +218,34 @@ package enum PluginResolver {
     _ reference: PluginExecutable, package plugin: PluginPackage,
     dependencyExecutables: [String: URL], workingDirectory: URL, environment: [String: String]
   ) throws -> ExecutableInspection? {
+    try executableInvocation(
+      reference, package: plugin, dependencyExecutables: dependencyExecutables,
+      workingDirectory: workingDirectory, environment: environment)?.inspection
+  }
+
+  static func interpreterBindings(
+    package plugin: PluginPackage, dependencyExecutables: [String: URL]
+  ) throws -> [String: String] {
+    var bindings: [String: String] = [:]
+    for dependency in plugin.manifest.dependencies {
+      guard let executable = dependencyExecutables[dependency.id], executable.isFileURL else {
+        continue
+      }
+      for command in dependency.commands {
+        guard bindings[command].map({ $0 == executable.path }) ?? true else {
+          throw ConfigurationError.invalid(
+            "Plugin interpreter '\(command)' has conflicting dependency bindings.")
+        }
+        bindings[command] = executable.path
+      }
+    }
+    return bindings
+  }
+
+  private static func executableInvocation(
+    _ reference: PluginExecutable, package plugin: PluginPackage,
+    dependencyExecutables: [String: URL], workingDirectory: URL, environment: [String: String]
+  ) throws -> ExecutableInvocation? {
     let command: String?
     if let relative = try reference.packagePath() {
       try PluginPackageFiles(root: plugin.root).validate(relative, kind: .executable)
@@ -219,8 +255,12 @@ package enum PluginResolver {
     } else {
       throw PluginManifestError.invalid("Executable has no ownership reference.")
     }
+    let bindings = try interpreterBindings(
+      package: plugin, dependencyExecutables: dependencyExecutables)
     return command.map {
-      ExecutableInspection.inspect($0, workingDirectory: workingDirectory, environment: environment)
+      ExecutableInspection.invocation(
+        $0, workingDirectory: workingDirectory, environment: environment,
+        interpreterBindings: bindings)
     }
   }
 }

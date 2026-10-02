@@ -5,23 +5,59 @@ import os
 /// Local ownership evidence, not plugin metadata or an importable authorization.
 struct PluginDirectoryIdentity: Codable, Equatable, Sendable {
   let url: URL
-  let device: Int32
+  let volumeUUID: UUID?
+  // Kept current during verified recovery so a previous host can read the receipt on rollback.
+  private let device: Int32
   let inode: UInt64
   let birthSeconds: Int
   let birthNanoseconds: Int
 
-  init(url: URL, status: stat) {
+  private enum CodingKeys: String, CodingKey {
+    case url, volumeUUID, device, inode, birthSeconds, birthNanoseconds
+  }
+
+  init(url: URL, status: stat, descriptor: Int32) throws {
     self.url = url
+    volumeUUID = try Self.volumeUUID(descriptor: descriptor)
     device = status.st_dev
     inode = status.st_ino
     birthSeconds = status.st_birthtimespec.tv_sec
     birthNanoseconds = status.st_birthtimespec.tv_nsec
   }
 
-  func matches(_ status: stat) -> Bool {
-    device == status.st_dev && inode == status.st_ino
-      && birthSeconds == status.st_birthtimespec.tv_sec
-      && birthNanoseconds == status.st_birthtimespec.tv_nsec
+  func matches(_ status: stat, descriptor: Int32) throws -> Bool {
+    guard
+      inode == status.st_ino
+        && birthSeconds == status.st_birthtimespec.tv_sec
+        && birthNanoseconds == status.st_birthtimespec.tv_nsec
+    else { return false }
+    if let volumeUUID { return try volumeUUID == Self.volumeUUID(descriptor: descriptor) }
+    return device == status.st_dev
+  }
+
+  /// Legacy provenance may conservatively retain files, but cannot authorize their adoption.
+  func mayReferToSameDirectory(as other: Self) -> Bool {
+    url == other.url && inode == other.inode && birthSeconds == other.birthSeconds
+      && birthNanoseconds == other.birthNanoseconds
+      && (volumeUUID == nil || other.volumeUUID == nil || volumeUUID == other.volumeUUID)
+  }
+
+  private static func volumeUUID(descriptor: Int32) throws -> UUID {
+    var attributes = attrlist()
+    attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
+    attributes.volattr = UInt32(ATTR_VOL_INFO) | UInt32(ATTR_VOL_UUID)
+    // getattrlist packs the length and uuid without the padding of a Swift struct.
+    var bytes = [UInt8](repeating: 0, count: 4 + MemoryLayout<uuid_t>.size)
+    let result = bytes.withUnsafeMutableBytes {
+      fgetattrlist(descriptor, &attributes, $0.baseAddress, $0.count, 0)
+    }
+    guard result == 0,
+      bytes.withUnsafeBytes({ $0.loadUnaligned(as: UInt32.self) }) == bytes.count,
+      bytes.dropFirst(4).contains(where: { $0 != 0 })
+    else { throw PluginArchiveError.fileSystemFailure }
+    return bytes.withUnsafeBytes {
+      UUID(uuid: $0.loadUnaligned(fromByteOffset: 4, as: uuid_t.self))
+    }
   }
 }
 
@@ -33,7 +69,8 @@ final class PluginInstallationStorage: Sendable {
   let lockDescriptor: Int32
   private let descriptor: Int32
   private let parent: Int32
-  private let identity: PluginDirectoryIdentity
+  private let device: Int32
+  private let inode: UInt64
   private let closed = OSAllocatedUnfairLock(initialState: false)
 
   init(at requestedURL: URL) throws {
@@ -68,7 +105,8 @@ final class PluginInstallationStorage: Sendable {
         status.st_mode & 0o077 == 0
       else { throw PluginArchiveError.invalidInput }
       let root = parentURL.appendingPathComponent(name, isDirectory: true)
-      let identity = PluginDirectoryIdentity(url: root, status: status)
+      let device = status.st_dev
+      let inode = status.st_ino
       let lock = openat(
         descriptor, "store.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
       guard lock >= 0 else { throw PluginArchiveError.fileSystemFailure }
@@ -83,7 +121,8 @@ final class PluginInstallationStorage: Sendable {
         var named = stat()
         guard fstatat(descriptor, "store.lock", &named, AT_SYMLINK_NOFOLLOW) == 0,
           named.st_dev == status.st_dev, named.st_ino == status.st_ino,
-          fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0, identity.matches(named),
+          fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+          named.st_dev == device, named.st_ino == inode,
           fsync(descriptor) == 0, fsync(parent) == 0
         else { throw PluginArchiveError.fileSystemFailure }
       } catch {
@@ -94,7 +133,8 @@ final class PluginInstallationStorage: Sendable {
       self.parent = parent
       self.descriptor = descriptor
       self.lockDescriptor = lock
-      self.identity = identity
+      self.device = device
+      self.inode = inode
     } catch {
       Darwin.close(descriptor)
       Darwin.close(parent)
@@ -146,7 +186,7 @@ final class PluginInstallationStorage: Sendable {
   private func validateLocation(_ owned: PluginDirectoryIdentity) throws {
     var named = stat()
     guard fstatat(parent, root.lastPathComponent, &named, AT_SYMLINK_NOFOLLOW) == 0,
-      named.st_mode & S_IFMT == S_IFDIR, identity.matches(named),
+      named.st_mode & S_IFMT == S_IFDIR, named.st_dev == device, named.st_ino == inode,
       owned.url.deletingLastPathComponent().path == root.path,
       UUID(uuidString: owned.url.lastPathComponent)?.uuidString == owned.url.lastPathComponent
     else { throw PluginStoreError.invalidState }
@@ -200,6 +240,14 @@ final class PluginInstallationStorage: Sendable {
       try validateLocation(owned)
       let directory = try PluginArchiveDirectory(recovering: owned)
       return try PluginArtifactLease(directory: directory, exclusive: false)
+    }
+  }
+
+  /// Reopens using the recorded provenance before capturing a durable identity.
+  func currentIdentity(_ owned: PluginDirectoryIdentity) throws -> PluginDirectoryIdentity {
+    try withOpenStorage {
+      try validateLocation(owned)
+      return try PluginArchiveDirectory(recovering: owned).identity()
     }
   }
 

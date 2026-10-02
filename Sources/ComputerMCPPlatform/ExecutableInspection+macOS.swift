@@ -12,8 +12,33 @@
       inspect(executable, workingDirectory: workingDirectory, environment: environment, depth: 0)
     }
 
+    /// Only declared env interpreter names receive bindings; fixed shebang paths keep their meaning.
+    package static func invocation(
+      _ executable: String, workingDirectory: URL, environment: [String: String],
+      interpreterBindings: [String: String]
+    ) -> ExecutableInvocation {
+      var invocation: (executable: String, arguments: [String])?
+      let inspection = inspect(
+        executable, workingDirectory: workingDirectory, environment: environment, depth: 0,
+        interpreterBindings: interpreterBindings, invocation: &invocation)
+      return ExecutableInvocation(
+        inspection: inspection, executable: invocation?.executable ?? inspection.path,
+        arguments: invocation?.arguments ?? [])
+    }
+
     private static func inspect(
       _ executable: String, workingDirectory: URL, environment: [String: String], depth: Int
+    ) -> Self {
+      var invocation: (executable: String, arguments: [String])?
+      return inspect(
+        executable, workingDirectory: workingDirectory, environment: environment, depth: depth,
+        interpreterBindings: [:], invocation: &invocation)
+    }
+
+    private static func inspect(
+      _ executable: String, workingDirectory: URL, environment: [String: String], depth: Int,
+      interpreterBindings: [String: String],
+      invocation: inout (executable: String, arguments: [String])?
     ) -> Self {
       var result = Self(
         executable: executable.utf8.count < Int(PATH_MAX) ? executable : "",
@@ -143,10 +168,16 @@
         result.status = .unverified
         return result
       }
-      let runtime = inspect(
-        command, workingDirectory: workingDirectory, environment: environment, depth: depth + 1)
+      let bound = interpreterBindings[command]
+      var runtime = inspect(
+        bound ?? command, workingDirectory: workingDirectory, environment: environment,
+        depth: depth + 1)
+      if bound != nil { runtime.source = "host_binding" }
       result.interpreters.append(runtime)
       result.status = runtime.hasKnownFailure ? .interpreterUnavailable : runtime.status
+      if bound != nil, !runtime.hasKnownFailure, let path = runtime.path {
+        invocation = (path, Array(arguments.dropFirst()) + [url.path])
+      }
       return result
     }
 

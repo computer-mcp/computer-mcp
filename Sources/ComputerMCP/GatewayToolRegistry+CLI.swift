@@ -127,9 +127,10 @@ extension GatewayToolRegistry {
         "CLI command '\(command.id)' does not allow arbitrary args.")
     }
 
+    let invocation = try resolveCLIInvocation(command)
     return try commandRunner.run(
-      executable: command.executable,
-      arguments: args,
+      executable: invocation.executable,
+      arguments: invocation.arguments + args,
       workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
       environment: command.env,
       timeoutMilliseconds: timeout ?? command.defaultTimeoutMs
@@ -192,12 +193,29 @@ extension GatewayToolRegistry {
   internal func resolveExecutable(_ executable: String, command: CLICommandConfig)
     -> ExecutableInspection
   {
-    resolveExecutable(
+    ExecutableInspection.invocation(
       executable,
-      base: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
-      defaultBase: configuration.workspaceDirectory,
-      overrides: command.env
-    )
+      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory)
+        ?? configuration.workspaceDirectory,
+      environment: environment.merging(command.env) { _, value in value },
+      interpreterBindings: command.interpreterBindings
+    ).inspection
+  }
+
+  internal func resolveCLIInvocation(_ command: CLICommandConfig) throws
+    -> (executable: String, arguments: [String])
+  {
+    guard !command.interpreterBindings.isEmpty else { return (command.executable, []) }
+    let invocation = ExecutableInspection.invocation(
+      command.executable,
+      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory)
+        ?? configuration.workspaceDirectory,
+      environment: environment.merging(command.env) { _, value in value },
+      interpreterBindings: command.interpreterBindings)
+    guard !invocation.inspection.hasKnownFailure, let executable = invocation.executable else {
+      throw GatewayToolError.invalidArguments(invocation.inspection.message)
+    }
+    return (executable, invocation.arguments)
   }
 
   internal func resolveExecutable(

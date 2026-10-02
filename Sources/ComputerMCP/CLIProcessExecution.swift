@@ -20,19 +20,21 @@ final class CLIProcessExecution: Sendable {
 
   func run(
     executable: String, invocation: CLIInvocation, cwd: URL, environment: [String: String],
-    timeoutMilliseconds: Int, maxOutputBytes: Int, executableChecks: [CLIExecutableCheck] = []
+    timeoutMilliseconds: Int, maxOutputBytes: Int, executableChecks: [CLIExecutableCheck] = [],
+    interpreterBindings: [String: String] = [:]
   ) throws -> ShellSessionSnapshot {
     let (id, call) = try begin()
     defer { _ = state.withLock { $0.calls.removeValue(forKey: id) } }
     return try call.run(
       executable: executable, invocation: invocation, cwd: cwd, environment: environment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
-      executableChecks: executableChecks)
+      executableChecks: executableChecks, interpreterBindings: interpreterBindings)
   }
 
   func runAsync(
     executable: String, invocation: CLIInvocation, cwd: URL, environment: [String: String],
-    timeoutMilliseconds: Int, maxOutputBytes: Int, executableChecks: [CLIExecutableCheck] = []
+    timeoutMilliseconds: Int, maxOutputBytes: Int, executableChecks: [CLIExecutableCheck] = [],
+    interpreterBindings: [String: String] = [:]
   ) async throws -> ShellSessionSnapshot {
     try Task.checkCancellation()
     let (id, call) = try begin()
@@ -42,7 +44,7 @@ final class CLIProcessExecution: Sendable {
         try call.run(
           executable: executable, invocation: invocation, cwd: cwd, environment: environment,
           timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
-          executableChecks: executableChecks)
+          executableChecks: executableChecks, interpreterBindings: interpreterBindings)
       }
       try Task.checkCancellation()
       return result
@@ -98,7 +100,8 @@ private final class CLIProcessCall: Sendable {
 
   func run(
     executable: String, invocation: CLIInvocation, cwd: URL, environment: [String: String],
-    timeoutMilliseconds: Int, maxOutputBytes: Int, executableChecks: [CLIExecutableCheck]
+    timeoutMilliseconds: Int, maxOutputBytes: Int, executableChecks: [CLIExecutableCheck],
+    interpreterBindings: [String: String]
   ) throws -> ShellSessionSnapshot {
     guard (1...3_600_000).contains(timeoutMilliseconds), (1...32_000_000).contains(maxOutputBytes)
     else {
@@ -109,9 +112,11 @@ private final class CLIProcessCall: Sendable {
       inheritsEnvironment
       ? ProcessInfo.processInfo.environment.merging(environment) { _, value in value }
       : environment
-    let inspection = ExecutableInspection.inspect(
-      executable, workingDirectory: cwd, environment: childEnvironment)
-    guard !inspection.hasKnownFailure, var resolvedExecutable = inspection.path else {
+    let launch = ExecutableInspection.invocation(
+      executable, workingDirectory: cwd, environment: childEnvironment,
+      interpreterBindings: interpreterBindings)
+    let inspection = launch.inspection
+    guard !inspection.hasKnownFailure, var resolvedExecutable = launch.executable else {
       throw CLITreeError.invalid(inspection.message)
     }
     guard executableChecks.count <= 4 else {
@@ -122,7 +127,8 @@ private final class CLIProcessCall: Sendable {
       let deadline = ContinuousClock.now.advanced(
         by: .milliseconds(min(timeoutMilliseconds, 5_000)))
       let identity = try CLIExecutableIdentity.capture(
-        executable: executable, cwd: cwd, environment: childEnvironment)
+        executable: executable, cwd: cwd, environment: childEnvironment,
+        interpreterBindings: interpreterBindings)
       resolvedExecutable = identity.executable
       for check in executableChecks {
         guard !state.withLock({ $0.cancelled }) else { throw CancellationError() }
@@ -137,7 +143,7 @@ private final class CLIProcessCall: Sendable {
         do {
           result = try execute(
             executable: identity.executable,
-            invocation: .init(arguments: check.args, standardInput: Data()),
+            invocation: .init(arguments: identity.arguments + check.args, standardInput: Data()),
             cwd: cwd, environment: childEnvironment, timeoutMilliseconds: milliseconds,
             maxOutputBytes: 4_194_304)
         } catch {
@@ -152,7 +158,8 @@ private final class CLIProcessCall: Sendable {
         }
         guard
           try CLIExecutableIdentity.capture(
-            executable: executable, cwd: cwd, environment: childEnvironment) == identity
+            executable: executable, cwd: cwd, environment: childEnvironment,
+            interpreterBindings: interpreterBindings) == identity
         else {
           throw CLITreeError.invalid(
             "CLI executable or interpreter changed during compatibility checks; retry after the update completes."
@@ -162,7 +169,10 @@ private final class CLIProcessCall: Sendable {
     }
     guard !state.withLock({ $0.cancelled }) else { throw CancellationError() }
     return try execute(
-      executable: resolvedExecutable, invocation: invocation, cwd: cwd,
+      executable: resolvedExecutable,
+      invocation: .init(
+        arguments: launch.arguments + invocation.arguments, standardInput: invocation.standardInput),
+      cwd: cwd,
       environment: childEnvironment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
   }

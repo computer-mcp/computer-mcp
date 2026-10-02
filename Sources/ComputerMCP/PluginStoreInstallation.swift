@@ -198,7 +198,11 @@ extension PluginStore {
           guard record.pluginID == owned.pluginID, record.source.kind == .artifact,
             record.source.root.path == owned.identity.url.appendingPathComponent("package").path
           else { throw PluginStoreError.invalidState }
-          try storage.clean(owned.identity, keepingPackage: true)
+          let identity = try storage.currentIdentity(owned.identity)
+          if identity != owned.identity {
+            _ = try database.updatePluginDirectoryIdentity(identity, replacing: owned)
+          }
+          try storage.clean(identity, keepingPackage: true)
         } else {
           guard !Self.isReferenced(owned.identity, in: state) else {
             throw PluginStoreError.invalidState

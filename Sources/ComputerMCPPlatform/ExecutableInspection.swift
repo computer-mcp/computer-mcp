@@ -1,5 +1,12 @@
 import Foundation
 
+/// Derived launch argv stays out of diagnostic serialization because headers may contain secrets.
+package struct ExecutableInvocation: Sendable {
+  package let inspection: ExecutableInspection
+  package let executable: String?
+  package let arguments: [String]
+}
+
 /// A bounded, non-executing observation of a launch path and its script interpreters.
 /// Passing these checks does not establish binary compatibility, trust, permissions or protocol health.
 package struct ExecutableInspection: Codable, Equatable, Sendable {

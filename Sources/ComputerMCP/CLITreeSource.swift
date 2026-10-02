@@ -67,7 +67,8 @@ package struct CLITreeSource: Codable, Equatable, Sendable {
       let result = try execution.run(
         executable: kind == .helper ? helper! : command.executable,
         invocation: .init(arguments: args, standardInput: Data()),
-        cwd: cwd, environment: command.env, timeoutMilliseconds: 5_000, maxOutputBytes: 4_194_304)
+        cwd: cwd, environment: command.env, timeoutMilliseconds: 5_000, maxOutputBytes: 4_194_304,
+        interpreterBindings: command.interpreterBindings)
       guard result.exitCode == 0, !result.timedOut, !result.cancelled,
         !result.stdout.truncated, !result.stdout.missedBytes, result.streamErrors.isEmpty,
         let encoded = result.stdout.base64, let output = Data(base64Encoded: encoded)

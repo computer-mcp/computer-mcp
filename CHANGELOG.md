@@ -4,6 +4,13 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+## 1.3.2 — 2026-10-02
+
+- Preserve managed plugin directory ownership across reboot-time mount device
+  renumbering, with verified migration that retains host settings and grants.
+- Use configured dependency interpreters for plugin scripts during MCP and CLI
+  startup, diagnostics and compatibility checks, preserving exact launch arguments.
+
 ## 1.3.1 — 2026-10-01
 
 - Give the macOS App a canonical Computer MCP icon in Finder, Dock and packaging.

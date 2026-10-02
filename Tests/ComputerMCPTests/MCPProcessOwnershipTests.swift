@@ -17,6 +17,28 @@ struct MCPProcessOwnershipTests {
   }
 
   @Test
+  func uncertainLegacyArtifactProvenanceStillRetainsMigratedFiles() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = root.appendingPathComponent("ownership")
+    let artifact = try directoryIdentity(root)
+    let owner = try MCPProcessOwnership.acquire(
+      root: storage, workspace: root, registration: "mcp", artifact: artifact)
+    try owner.finish(confirmed: false, hostServicesConfirmed: true)
+    let file = try #require(try receipts(storage).first)
+    var receipt = try #require(
+      JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+    var provenance = try #require(receipt["artifact"] as? [String: Any])
+    provenance.removeValue(forKey: "volumeUUID")
+    provenance["device"] = Int32.max
+    receipt["artifact"] = provenance
+    try JSONSerialization.data(withJSONObject: receipt).write(to: file)
+    #expect(throws: PluginStoreError.artifactInUse) {
+      try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
+    }
+  }
+
+  @Test
   func legacyUncertainOwnershipCannotBeAssumedUnrelatedToAnArtifact() throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -28,11 +50,9 @@ struct MCPProcessOwnershipTests {
       JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
     receipt.removeValue(forKey: "formatVersion")
     try JSONSerialization.data(withJSONObject: receipt).write(to: file)
-    var status = stat()
-    try #require(lstat(root.path, &status) == 0)
     #expect(throws: PluginStoreError.artifactInUse) {
       try MCPProcessOwnership.requireArtifactUnused(
-        root: storage, artifact: PluginDirectoryIdentity(url: root, status: status))
+        root: storage, artifact: directoryIdentity(root))
     }
   }
 
@@ -48,9 +68,7 @@ struct MCPProcessOwnershipTests {
         at: storage.appendingPathComponent(String(format: "%064x", index)),
         withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     }
-    var status = stat()
-    try #require(lstat(root.path, &status) == 0)
-    let artifact = PluginDirectoryIdentity(url: root, status: status)
+    let artifact = try directoryIdentity(root)
     try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
     let owner = try MCPProcessOwnership.acquire(
       root: storage, workspace: root, registration: "live", artifact: artifact)
@@ -310,6 +328,15 @@ struct MCPProcessOwnershipTests {
     try FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     return root
+  }
+
+  private func directoryIdentity(_ root: URL) throws -> PluginDirectoryIdentity {
+    let descriptor = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    try #require(descriptor >= 0)
+    defer { close(descriptor) }
+    var status = stat()
+    try #require(fstat(descriptor, &status) == 0)
+    return try PluginDirectoryIdentity(url: root, status: status, descriptor: descriptor)
   }
 
   private func receipts(_ root: URL) throws -> [URL] {

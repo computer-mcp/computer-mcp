@@ -149,7 +149,10 @@ final class MCPProcessOwnership: @unchecked Sendable {
           let descriptor = try openFile(directory, name: name, flags: O_RDWR)
           defer { Darwin.close(descriptor) }
           let receipt = try readReceipt(descriptor)
-          guard receipt.artifact == artifact || receipt.formatVersion == nil else { continue }
+          guard
+            receipt.artifact?.mayReferToSameDirectory(as: artifact) == true
+              || receipt.formatVersion == nil
+          else { continue }
           let available = flock(descriptor, LOCK_EX | LOCK_NB) == 0
           guard available || errno == EWOULDBLOCK else {
             throw failure("Cannot inspect MCP artifact ownership lock.")

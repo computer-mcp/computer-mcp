@@ -106,7 +106,14 @@ the affected contribution and reports `dependencyUnavailable` or
 `executableUnavailable`. Independent Skills remain available.
 
 Plain `/usr/bin/env command` and unquoted, unescaped `env -S command` forms can
-be inspected. Environment assignments, other env options and complex split
+be inspected. When `command` is declared in a dependency's `commands`, its
+resolved host binding is also the launch interpreter: the host invokes that
+absolute executable with the interpreter options, script path and contribution
+arguments. This applies to stdio MCP, registered CLI calls and CLI Tree helpers,
+discovery and compatibility checks. The child PATH is unchanged. Invalid bindings
+stay selected and do not fall back to another interpreter; conflicting bindings
+for one command name are configuration errors. Fixed shebang paths retain their
+declared interpreter. Environment assignments, other env options and complex split
 strings, unreadable headers and unsupported header encodings report
 `executableUnverified`; uncertainty alone does not suppress a registration.
 The App's registration diagnostics and management CLI's list/show
@@ -325,7 +332,12 @@ completed installation; the store commits source selection separately.
 
 `PluginStore.installArchive` prepares a local archive under a host-owned storage
 root. Before starting the worker, it records the new installation directory's
-device, inode and birth time in the local database. These ownership receipts
+persistent volume UUID, inode and birth time in the local database. The volume UUID
+is read from the open directory descriptor. Device numbers remain as compatibility
+data for previous hosts; the current host uses the volume UUID for durable
+validation and device numbers for live descriptor/name comparisons. Reboot-time device renumbering therefore
+does not invalidate a durable receipt. A filesystem without a readable persistent
+volume UUID cannot supply a new ownership receipt. These ownership receipts
 are separate from portable settings and must not be accepted from an imported
 manifest or plugin. Each root admits one filesystem transaction at a time using
 a nonblocking file lock. The worker inherits that lock reference, so losing the
@@ -378,6 +390,17 @@ still-referenced directories are preserved and reported. Unrecorded files are
 preserved, including a directory created immediately before a crash prevented
 its ownership receipt from being committed. Recovery does not infer ownership
 from a UUID-looking name, process ID or age.
+
+Committed receipts containing a legacy device number are upgraded under the
+installation lock only after their recorded device, inode, birth time, private
+ownership and selected package location match. The database compares the original
+receipt before replacing only its identity; settings, grants, selections and their
+revision are unchanged. Verified recovery also refreshes the compatible device
+field in durable receipts so immediate executable rollback remains readable by
+the previous host. A changed legacy device number cannot establish the
+original volume and remains a recovery issue; reinstall the affected package.
+Live or uncertain MCP receipts with legacy directory provenance conservatively
+retain matching files after this migration.
 
 App and owner-only CLI mutations use the same prepared runtime publication.
 Existing work retains its runtime and artifact leases across plugin changes;

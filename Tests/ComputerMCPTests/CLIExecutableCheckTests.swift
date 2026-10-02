@@ -8,6 +8,33 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIExecutableCheckTests {
   @Test
+  func boundScriptInterpreterIsUsedForBothCompatibilityAndAction() async throws {
+    let fixture = try ExecutableCheckFixture()
+    defer { fixture.cleanup() }
+    try fixture.script(
+      """
+      if [ "$1" = --version ]; then printf 'compatible\\n'; exit 0; fi
+      printf '%s\\n' "$1" > action
+      """, shebang: "#!/usr/bin/env -S fixture-runtime -e")
+    let execution = CLIProcessExecution(inheritsEnvironment: false)
+    do {
+      let result = try await execution.runAsync(
+        executable: fixture.file("tool").path,
+        invocation: .init(arguments: ["action argument"], standardInput: Data()), cwd: fixture.root,
+        environment: ["PATH": "/usr/bin:/bin"], timeoutMilliseconds: 5_000, maxOutputBytes: 4_096,
+        executableChecks: [.init(args: ["--version"], stdout: "compatible\n")],
+        interpreterBindings: ["fixture-runtime": "/bin/sh"])
+      #expect(result.exitCode == 0)
+      #expect(
+        try String(contentsOf: fixture.file("action"), encoding: .utf8) == "action argument\n")
+      await execution.shutdown()
+    } catch {
+      await execution.shutdown()
+      throw error
+    }
+  }
+
+  @Test
   func optionalChecksRoundTripAndStrictFields() throws {
     let tree = Self.tree([.init(args: ["--version"], stdout: "fixture\n")])
     #expect(try CLITree.parse(JSONEncoder().encode(tree)) == tree)

@@ -3,6 +3,16 @@
   import WinSDK
 
   extension ExecutableInspection {
+    package static func invocation(
+      _ executable: String, workingDirectory: URL, environment: [String: String],
+      interpreterBindings: [String: String]
+    ) -> ExecutableInvocation {
+      let inspection = inspect(
+        executable, workingDirectory: workingDirectory, environment: environment)
+      return ExecutableInvocation(
+        inspection: inspection, executable: inspection.path, arguments: [])
+    }
+
     /// Resolves against the complete child PATH and cwd, then inspects without launching.
     /// The process owner must use the returned absolute path; no shell/PATHEXT expansion occurs.
     package static func inspect(

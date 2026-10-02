@@ -4,6 +4,103 @@ import Testing
 @testable import ComputerMCP
 
 struct PluginResolverTests {
+  @Test(
+    .nativeIntegration, arguments: ["#!/usr/bin/env python3\n", "#!/usr/bin/env -S python3 -e\n"])
+  func declaredInterpreterBindingsDriveMCPAndCLIWithoutChangingPath(header: String) async throws {
+    let fixture = try CompositionFixture(
+      text: Self.scriptManifest, script: header + "printf '%s\\n' \"$@\"\n")
+    defer { fixture.cleanup() }
+    let interpreter = fixture.root.appendingPathComponent("Runtime with spaces")
+    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sh"), to: interpreter)
+    var settings = fixture.settings
+    settings.cli["commands"]?.allowAnyArgs = true
+    settings.mcp["native"]?.args = ["", "a b", "参数", "--"]
+    settings.dependencyExecutables["vendor"] = interpreter.path
+    let state = PluginStoreSnapshot(settings: [fixture.package.manifest.id: settings])
+    let environment = ["PATH": "/usr/bin:/bin"]
+    let resolution = try PluginStore.resolve(
+      snapshot: state, bundled: [fixture.package], hostVersion: PluginVersion("1.0.29"),
+      architecture: "arm64", environment: environment)
+    let plugin = try #require(resolution.plugins.first)
+    #expect(plugin.diagnostics.isEmpty)
+    let server = try #require(plugin.mcpServers.first)
+    let script = fixture.root.appendingPathComponent("adapter").path
+    let flags = header.contains("-S") ? ["-e"] : []
+    #expect(server.command == interpreter.path)
+    #expect(server.args == flags + [script, "", "a b", "参数", "--"])
+    let result = try ProcessCommandRunner(environment: environment).run(
+      executable: try #require(server.command), arguments: server.args,
+      workingDirectory: fixture.root, environment: server.env, timeoutMilliseconds: 2_000,
+      maxOutputBytes: 1_024)
+    #expect(result.exitCode == 0 && result.stdout == "\na b\n参数\n--\n")
+
+    let report = try PluginDoctorReport.inspect(
+      pluginID: fixture.package.manifest.id, state: state,
+      bundled: .init(packages: [fixture.package], issues: []),
+      hostVersion: PluginVersion("1.0.29"), architecture: "arm64", environment: environment)
+    #expect(report.status == .passed)
+    let inspection = try #require(
+      report.checks.first { $0.id == "mcp:native:executable" }?.inspection)
+    #expect(inspection.path == script)
+    #expect(inspection.interpreters.last?.path == server.command)
+    #expect(inspection.interpreters.last?.source == "host_binding")
+    let registration = try #require(plugin.cliCommands.first)
+    #expect(registration.executable == script)
+    let registry = GatewayToolRegistry(
+      configuration: .init(cli: .init(commands: [registration]), workspaceDirectory: fixture.root),
+      environment: environment)
+    do {
+      let result = try registry.runRegisteredCLI(
+        command: registration, args: ["cli argument", ""], timeout: 2_000,
+        requireArbitraryArgs: true)
+      #expect(result.exitCode == 0 && result.stdout == "cli argument\n\n")
+      await registry.shutdown()
+    } catch {
+      await registry.shutdown()
+      throw error
+    }
+    #expect(state.settings[fixture.package.manifest.id] == settings)
+    #expect(fixture.package.manifest.mcp[0].args == ["mcp"])
+  }
+
+  @Test
+  func brokenScriptBindingCannotUseAnAmbientInterpreter() throws {
+    let fixture = try CompositionFixture(
+      text: Self.scriptManifest, script: "#!/usr/bin/env python3\n")
+    defer { fixture.cleanup() }
+    let missing = fixture.root.appendingPathComponent("missing-python")
+    let plugin = try fixture.resolve(bindings: ["vendor": missing])
+    #expect(plugin.mcpServers.isEmpty && plugin.cliCommands.isEmpty)
+    #expect(plugin.skillRoots.count == 1)
+    #expect(plugin.diagnostics.count == 2)
+    #expect(
+      plugin.diagnostics.allSatisfy {
+        $0.executable?.status == .interpreterUnavailable
+          && $0.executable?.interpreters.last?.path == missing.path
+          && $0.executable?.interpreters.last?.status == .missing
+      })
+  }
+
+  @Test
+  func fixedShebangPathsDoNotReceiveCommandNameBindings() throws {
+    let fixture = try CompositionFixture(
+      text: Self.scriptManifest, script: "#!/bin/sh\n")
+    defer { fixture.cleanup() }
+    let plugin = try fixture.resolve(bindings: ["vendor": URL(fileURLWithPath: "/bin/echo")])
+    #expect(
+      plugin.mcpServers.first?.command
+        == fixture.root.appendingPathComponent("adapter").path)
+    #expect(plugin.mcpServers.first?.args == ["mcp"])
+  }
+
+  private static let scriptManifest = PluginManifestTests.combined
+    .replacingOccurrences(of: "commands = ['vendor-cli']", with: "commands = ['python3']")
+    .replacingOccurrences(
+      of: "executable = { dependency = 'vendor' }", with: "executable = { path = 'adapter' }"
+    )
+    .replacingOccurrences(
+      of: "tree = { kind = 'introspection', args = ['schema', '--json'] }\n", with: "")
+
   @Test
   func hostSettingsKeepTheirPortableFormatInsideCanonicalReports() throws {
     let settings = PluginSettings(
@@ -428,7 +525,7 @@ private struct CompositionFixture {
     cli: ["commands": .init(registrationID: "commands")],
     skills: ["guidance": .init(registrationID: "guidance")])
 
-  init(text: String? = nil) throws {
+  init(text: String? = nil, script: String? = nil) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "plugin-composition-\(UUID().uuidString)")
     try FileManager.default.createDirectory(
@@ -439,6 +536,12 @@ private struct CompositionFixture {
         of: "tree = { kind = 'introspection', args = ['schema', '--json'] }\n", with: "")
     try content.write(
       to: root.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8)
+    if let script {
+      let executable = root.appendingPathComponent("adapter")
+      try script.write(to: executable, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    }
     try "---\nname: example\ndescription: Example guidance.\n---\nRead without executing scripts.\n"
       .write(
         to: root.appendingPathComponent("skills/example/SKILL.md"), atomically: true,

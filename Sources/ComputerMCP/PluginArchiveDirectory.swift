@@ -48,13 +48,15 @@ final class PluginArchiveDirectory {
       Darwin.close(parent)
       throw PluginArchiveError.fileSystemFailure
     }
-    guard fstat(descriptor, &status) == 0, status.st_uid == geteuid(),
-      status.st_mode & 0o077 == 0,
-      identity.map({ $0.matches(status) }) ?? true
-    else {
+    do {
+      guard fstat(descriptor, &status) == 0, status.st_uid == geteuid(),
+        status.st_mode & 0o077 == 0,
+        try identity.map({ try $0.matches(status, descriptor: descriptor) }) ?? true
+      else { throw PluginArchiveError.fileSystemFailure }
+    } catch {
       Darwin.close(descriptor)
       Darwin.close(parent)
-      throw PluginArchiveError.fileSystemFailure
+      throw error
     }
     self.parent = parent
     self.name = name
@@ -102,7 +104,7 @@ final class PluginArchiveDirectory {
     guard stillOwnsName(), fstat(descriptor, &status) == 0 else {
       throw PluginArchiveError.fileSystemFailure
     }
-    return PluginDirectoryIdentity(url: url, status: status)
+    return try PluginDirectoryIdentity(url: url, status: status, descriptor: descriptor)
   }
 
   /// Only the reserved staging child is disposable in a committed installation.

@@ -1748,6 +1748,8 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
   package var defaultTimeoutMs: Int?
   package var interface: CLIInterfaceConfig?
   package var tree: CLITreeSource?
+  /// Derived from plugin dependencies; not part of portable CLI registration settings.
+  var interpreterBindings: [String: String] = [:]
 
   package init(
     id: String,

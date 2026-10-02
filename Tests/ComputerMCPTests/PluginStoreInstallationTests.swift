@@ -7,6 +7,65 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginStoreInstallationTests {
   @Test
+  func recoveryRefreshesDurableRollbackMetadataWithoutChangingHostChoices() async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let modern = try #require(database.pluginOwnedDirectories().first)
+    var document = try #require(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(modern.identity)) as? [String: Any])
+    document["device"] = try #require(document["device"] as? NSNumber).int32Value ^ 1
+    let identity = try JSONDecoder().decode(
+      PluginDirectoryIdentity.self, from: JSONSerialization.data(withJSONObject: document))
+    _ = try database.updatePluginDirectoryIdentity(identity, replacing: modern)
+    #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+    #expect(try database.pluginOwnedDirectories() == [modern])
+    #expect(try await store.snapshot() == installed.snapshot)
+  }
+
+  @Test(arguments: [false, true])
+  func recoveryMigratesOnlyVerifiedLegacyReceiptsWithoutChangingHostChoices(
+    changedDevice: Bool
+  ) async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(
+      path: fixture.files.root.appendingPathComponent("legacy.sqlite").path)
+    let store = PluginStore(database: database)
+    let installed = try await fixture.install(into: store, revision: 0)
+    let modern = try #require(database.pluginOwnedDirectories().first)
+    var status = stat()
+    try #require(lstat(modern.identity.url.path, &status) == 0)
+    var document = try #require(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(modern.identity)) as? [String: Any])
+    document.removeValue(forKey: "volumeUUID")
+    document["device"] = changedDevice ? status.st_dev ^ 1 : status.st_dev
+    let identity = try JSONDecoder().decode(
+      PluginDirectoryIdentity.self, from: JSONSerialization.data(withJSONObject: document))
+    let legacy = PluginOwnedDirectory(
+      installationID: modern.installationID, pluginID: modern.pluginID, identity: identity)
+    try database.forgetPluginDirectory(modern)
+    try database.recordPluginDirectory(legacy)
+    let issues = try await store.recoverInstallations(storageRoot: fixture.installationRoot)
+    #expect(issues.count == (changedDevice ? 1 : 0))
+    #expect(try database.pluginOwnedDirectories() == [changedDevice ? legacy : modern])
+    #expect(try await store.snapshot() == installed.snapshot)
+    #expect(FileManager.default.fileExists(atPath: modern.identity.url.path))
+    if !changedDevice {
+      #expect(throws: PluginStoreError.invalidState) {
+        try database.updatePluginDirectoryIdentity(modern.identity, replacing: legacy)
+      }
+      let reopened = PluginStore(
+        database: try GatewayDatabase(path: try #require(database.fileURL).path))
+      #expect(
+        try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
+      #expect(try await reopened.snapshot() == installed.snapshot)
+    }
+  }
+
+  @Test
   func installedArchiveRetainsTargetForReopenedActivation() async throws {
     let fixture = try await PreparationFixture.make(
       manifest: PreparationFixture.platformManifest, format: "zip")

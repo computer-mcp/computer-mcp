@@ -338,6 +338,33 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
+  /// Ownership migrations do not change selected installations or authorization revisions.
+  func updatePluginDirectoryIdentity(
+    _ identity: PluginDirectoryIdentity, replacing expected: PluginOwnedDirectory
+  ) throws -> PluginOwnedDirectory {
+    guard identity.volumeUUID != nil,
+      identity.mayReferToSameDirectory(as: expected.identity)
+    else { throw PluginStoreError.invalidState }
+    let updated = PluginOwnedDirectory(
+      installationID: expected.installationID, pluginID: expected.pluginID, identity: identity)
+    try updated.validate()
+    let encoded = try JSONEncoder().encode(updated)
+    guard encoded.count <= 16_384 else { throw PluginStoreError.invalidState }
+    try writer.write { database in
+      guard
+        let payload = try String.fetchOne(
+          database, sql: "SELECT payloadJSON FROM pluginOwnedDirectories WHERE id = ?",
+          arguments: [expected.installationID]),
+        payload.utf8.count <= 16_384,
+        try JSONDecoder().decode(PluginOwnedDirectory.self, from: Data(payload.utf8)) == expected
+      else { throw PluginStoreError.invalidState }
+      try database.execute(
+        sql: "UPDATE pluginOwnedDirectories SET payloadJSON = ? WHERE id = ?",
+        arguments: [String(decoding: encoded, as: UTF8.self), expected.installationID])
+    }
+    return updated
+  }
+
   package func registerWorkspaceIdempotently(
     _ proposed: RegisteredWorkspace
   ) throws -> (workspace: RegisteredWorkspace, created: Bool) {

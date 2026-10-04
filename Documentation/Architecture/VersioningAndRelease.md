@@ -70,7 +70,9 @@ requires its appropriate new version.
 5. Only then create the signed formal tag on the same commit. Assemble records
    around the existing accepted binaries, upload them, verify remote bytes,
    publish and verify unauthenticated public downloads. Publication never rebuilds
-   or re-signs the accepted App or DMG.
+   or re-signs the accepted App or DMG. Release notes take their changes from
+   the version's changelog section; both records render shared templates with
+   the candidate identity, so no per-version record is committed.
 6. Import the official delivery record into the website and verify its deployed
    record and download links. Deliver changed dependencies/plugins in dependency
    order after the complete candidate combination has passed integration.

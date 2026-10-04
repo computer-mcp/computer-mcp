@@ -4,6 +4,15 @@ Computer MCP executes local capabilities as the current logged-in macOS user.
 Its primary security boundary is explicit local configuration and least
 authority, not sandboxing an arbitrary remote shell.
 
+Authorization has two levels: the host first decides whether a capability is
+permitted at all; the user or caller then decides whether a permitted
+higher-risk action is approved now. Changes preserve or strengthen registered
+workspace boundaries, profile capability and caller binding, path and symlink
+validation, explicit approval for mutation, registered tool dispatch, local-only
+sensitive execution, request audit, credential and sensitive-text redaction,
+fail-closed defaults, verified control of external processes, and bounded
+input, output, persistence and lifecycle resources.
+
 ## Authority Boundaries
 
 - Each profile explicitly defines permission mode, capabilities, workspaces,

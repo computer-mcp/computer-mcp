@@ -158,7 +158,7 @@ All notable user-visible changes to Computer MCP are documented here.
   validation, candidate, and exact-published artifact provenance.
 - Pass 920 automated tests, disposable official-client Git/network/handoff and
   30,000-record supervision acceptance, independent review, cold-start audit,
-  and the authorized real vehicleOS Full Access/reclaim/release workflow.
+  and an authorized real-project Full Access/reclaim/release workflow.
 
 ## 1.0.27 — 2026-09-02
 

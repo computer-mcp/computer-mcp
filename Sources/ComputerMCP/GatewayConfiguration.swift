@@ -337,7 +337,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "workspace.source_files",
       "workspace.outline",
       "workspace.commands",
-      "workspace.governance_files",
       "system.info",
       "system.kernel",
       "system.software",
@@ -562,7 +561,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "workspace.source_files",
       "workspace.outline",
       "workspace.commands",
-      "workspace.governance_files",
       "system.info",
       "system.kernel",
       "system.software",
@@ -870,6 +868,17 @@ extension GatewayConfiguration: Codable {
       try container.decodeIfPresent(CodexConfigurationImport.self, forKey: .codex)
     self.workspaceDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     migrateImplicitMCPApprovals(from: try ConfigurationNode(from: decoder))
+    dropRetiredBuiltins()
+  }
+
+  /// Manifests written by earlier releases still list these builtins.
+  private static let retiredBuiltins: Set<String> = ["workspace.governance_files"]
+
+  private mutating func dropRetiredBuiltins() {
+    builtin.enabled.removeAll { Self.retiredBuiltins.contains($0) }
+    for index in profiles.indices {
+      profiles[index].capabilities.removeAll { Self.retiredBuiltins.contains($0) }
+    }
   }
 
   private mutating func migrateImplicitMCPApprovals(from shape: ConfigurationNode) {

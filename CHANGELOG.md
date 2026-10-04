@@ -4,6 +4,9 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+- Retire the `workspace.governance_files` builtin; existing manifests that still
+  list it load without it.
+
 ## 1.3.2 — 2026-10-02
 
 - Preserve managed plugin directory ownership across reboot-time mount device

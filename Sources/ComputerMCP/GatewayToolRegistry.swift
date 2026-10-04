@@ -443,10 +443,6 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
       try requireBuiltinEnabled(name)
       return try textResult(workspaceCommands(arguments: object))
 
-    case "workspace.governance_files":
-      try requireBuiltinEnabled(name)
-      return try textResult(workspaceGovernanceFiles(arguments: object))
-
     case "system.info":
       try requireBuiltinEnabled(name)
       return try textResult(systemInfo())

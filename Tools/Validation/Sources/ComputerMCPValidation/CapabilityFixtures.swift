@@ -260,10 +260,6 @@ public struct CapabilityFixtureGenerator {
       to: root.appendingPathComponent(".github/workflows/ci.yml")
     )
     try write(
-      "* @computer-mcp-fixture\n",
-      to: root.appendingPathComponent(".github/CODEOWNERS")
-    )
-    try write(
       "fixture.enabled=true\n",
       to: root.appendingPathComponent("Config/fixture.conf")
     )

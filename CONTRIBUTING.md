@@ -53,3 +53,8 @@ summary in the pull request.
 
 If your change affects a stable CLI, MCP, configuration, evidence, or release
 contract, update the corresponding reference and DocC material.
+
+## License
+
+Contributions are licensed under this repository's [LICENSE](LICENSE),
+FSL-1.1-ALv2.

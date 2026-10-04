@@ -7,16 +7,15 @@ channel. By installing or running the Software, you agree to this agreement.
 ## License grant
 
 You may install and run the Authorized Release on devices you own or control
-for personal, non-commercial use. The Software is licensed, not sold, and all
-rights not expressly granted remain with Xudong Xu.
+for any purpose other than a Competing Use as defined in `LICENSE`, including
+commercial and internal use. The Software is licensed, not sold, and all rights
+not expressly granted remain with Xudong Xu.
 
 ## Restrictions
 
-You may not copy except as technically necessary for installation and backup,
-modify, create derivative works, redistribute, sublicense, sell, rent, host as
-a service, use commercially, bypass technical restrictions, or remove legal
-notices, unless Xudong Xu gives you prior written permission. Rights that
-cannot lawfully be restricted are unaffected.
+You may copy, modify, create derivative works of, and redistribute the Software
+only as `LICENSE` permits. You may not remove legal notices. Rights that cannot
+lawfully be restricted are unaffected.
 
 ## Local authority and third-party services
 
@@ -58,5 +57,7 @@ WITHOUT WARRANTIES OF ANY KIND. XUDONG XU WILL NOT BE LIABLE FOR INDIRECT,
 INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR LOSS OF DATA,
 PROFITS, REVENUE, OR BUSINESS, ARISING FROM OR RELATED TO THE SOFTWARE.
 
-The source-visible terms in `LICENSE` apply to the source repository. A
-separate written agreement signed by Xudong Xu may grant additional rights.
+`LICENSE` is the Functional Source License, Version 1.1, ALv2 Future License
+(FSL-1.1-ALv2). It applies to the source code of each release, including its
+future grant of the Apache License, Version 2.0. A separate written agreement
+signed by Xudong Xu may grant additional rights.

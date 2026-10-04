@@ -273,7 +273,7 @@ Thread。
 - [工具 Reference](Documentation/Reference/Tools.md)
 - [常见故障](Documentation/Reference/Troubleshooting.md)
 - [架构](Documentation/Architecture/README.md)
-- [生产级验收合同](Documentation/Reference/ProductizationAcceptance.md)
+- [安全与隐私](Documentation/Architecture/SecurityAndPrivacy.md)
 - [发布流程](Documentation/Reference/Release.md)
 
 ## 开发与贡献

@@ -336,7 +336,7 @@ remain visible in the adapter's configuration and runtime diagnostics.
 - [Tool reference](Documentation/Reference/Tools.md)
 - [Troubleshooting](Documentation/Reference/Troubleshooting.md)
 - [Architecture](Documentation/Architecture/README.md)
-- [Production acceptance contract](Documentation/Reference/ProductizationAcceptance.md)
+- [Security and privacy](Documentation/Architecture/SecurityAndPrivacy.md)
 - [Release process](Documentation/Reference/Release.md)
 
 ## Development and contributing

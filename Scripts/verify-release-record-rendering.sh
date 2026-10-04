@@ -43,5 +43,12 @@ for output in "$RELEASE_NOTES" "$READINESS_REPORT"; do
   /usr/bin/grep -Fq \
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$output"
 done
+first_change=$(/usr/bin/awk -v heading="## $VERSION — " '
+  index($0, heading) == 1 { found = 1; next }
+  found && /^## / { exit }
+  found && NF { print; exit }
+' "$ROOT_DIR/CHANGELOG.md")
+[[ -n "$first_change" ]]
+/usr/bin/grep -Fxq -- "$first_change" "$RELEASE_NOTES"
 
 echo "Synthetic release record rendering passed for v$VERSION."

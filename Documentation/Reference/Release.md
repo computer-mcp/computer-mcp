@@ -119,8 +119,10 @@ in Computer MCP's separate Data Protection Keychain namespace.
    for a compatible fix, or the corresponding `feature`, `breaking` or
    `candidate` kind. `Version.json` is authoritative; do not edit generated
    App/CLI values independently. The build increases for revised App candidates.
-2. Finalize the dated changelog and versioned release-note/readiness templates.
-   Preserve the exact render tokens checked by `verify-release-readiness.sh`.
+2. Finalize the dated changelog section; it becomes the release notes' changes.
+   `Scripts/ReleaseTemplates/` holds the version-independent release-note and
+   readiness templates with the render tokens checked by
+   `verify-release-readiness.sh`.
    Existing publisher approval records for legal documents remain in force;
    changed legal text requires its owning approval and updated digests.
 3. Validate and merge the source into official `master`. Resolve component

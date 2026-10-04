@@ -18,7 +18,9 @@ lives with the Swift target in `Sources/ComputerMCP/ComputerMCP.docc/`.
 - Exhaustive user or operator reference belongs in `Documentation/Reference/`.
 - Adopted rationale belongs in `Documentation/Decisions/`.
 - Active alternatives belong in `Documentation/Proposals/`.
-- GitHub templates and CODEOWNERS belong in `.github/`.
+- Repository collaboration configuration and CODEOWNERS belong in `.github/`;
+  issue and pull request templates come from the organization `.github`
+  repository.
 
 Normative documents describe the current product contract. The changelog,
 GitHub Releases, accepted decision records and migrations own history when that

@@ -5,6 +5,11 @@ deterministic fixtures, auxiliary probes, Validation Evidence Bundle correlation
 Capability Coverage, and Production Readiness Report generation. It is not part
 of the root package, `Computer MCP.app`, embedded CLI, or DMG.
 
+Its MCP client is the upstream `modelcontextprotocol/swift-sdk` at an exact
+version, not the product's compatibility fork, so gateway probes run through an
+unmodified upstream client. Change that pin deliberately:
+`Scripts/version.py check --dependencies` covers only the root package.
+
 ```sh
 swift build
 swift test

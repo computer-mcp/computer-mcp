@@ -120,7 +120,7 @@ package struct GatewaySocketConfiguration: Equatable, Sendable {
   }
 }
 
-/// An official MCP SDK transport carried over a local Unix-domain socket.
+/// An MCP SDK transport carried over a local Unix-domain socket.
 ///
 /// The socket protocol adds only a four-byte big-endian length prefix around each
 /// complete MCP message. The payload is the exact JSON data supplied by the MCP SDK.

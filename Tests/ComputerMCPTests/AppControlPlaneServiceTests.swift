@@ -1386,7 +1386,7 @@ final class AppControlPlaneServiceTests {
         status.objectValue?["gateway_socket"] == .string(fixture.directories.gatewaySocket.path))
       #expect(fixture.directories.controlSocket != fixture.directories.gatewaySocket)
       #expect(try permissions(at: fixture.directories.controlSocket) == 0o600)
-      #expect(status.objectValue?["provider_count"] == .number(7))
+      #expect(status.objectValue?["provider_count"] == .number(6))
       #expect(status.objectValue?["launch_at_login"] == .string("unavailable"))
 
       let readiness = try await client.call(

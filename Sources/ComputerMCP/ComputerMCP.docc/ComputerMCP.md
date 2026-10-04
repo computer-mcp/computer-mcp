@@ -8,7 +8,7 @@ Build a deterministic, profile-bound MCP gateway for macOS.
 MCP.app` and the embedded `computer-mcp` CLI. It is not a supported external
 Swift SDK. The module provides:
 
-- official MCP SDK server and client integration;
+- MCP Swift SDK server and client integration;
 - a private current-user Unix socket and stdio bridge;
 - schema 1 TOML configuration;
 - registered workspaces and static capability profiles;

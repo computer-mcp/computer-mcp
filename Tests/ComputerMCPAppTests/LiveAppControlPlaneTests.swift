@@ -523,6 +523,7 @@ private final class AppControlPlaneFixture {
     _ = try manifestStore.activate(manifest: DefaultGatewayConfiguration.manifest)
     let secretStore = try KeychainSecretStore(
       service: "com.showxu.computer-mcp.tests.\(UUID().uuidString)",
+      accessGroup: "TESTTEAMID.com.showxu.computer-mcp.tests",
       adapter: keychainAdapter
     )
     controlPlane = AppControlPlaneService(

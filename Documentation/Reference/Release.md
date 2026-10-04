@@ -69,7 +69,7 @@ shared password and must not be reused across boundaries.
 | --- | --- | --- |
 | Mac login password / Touch ID | Local administrator and Keychain authorization only | Remains on the Mac; never add it to GitHub or a release command |
 | Apple Account password and two-factor authentication | Sign in to Apple Developer and App Store Connect | Human portal access only; never store it in GitHub Actions |
-| SSH signing private key | Sign the release commit and annotated `v*` tag | Keep in the local SSH agent/Keychain and retain a secure recovery copy |
+| SSH signing private key | Sign the release commit and annotated `v*` tag | Keep in the local SSH agent/Keychain and retain a secure recovery copy. Its public key in `.github/signing-allowed-signers` is the trust anchor `verify-release-ref.sh` uses to verify tags; rotating the key updates that file in a reviewed change first |
 | Developer ID `.p12` and its export password | Import the certificate and private key used by `codesign` | Keep a recoverable encrypted backup; GitHub stores the encoded file and password as separate `production` Secrets |
 | Developer ID provisioning profile | Authorize the production App ID, entitlements, and Keychain group | GitHub `production` Secret; no per-release input |
 | App Store Connect Team API `.p8`, Key ID, and Issuer ID | Authenticate `notarytool` submissions | Preserve the one-time-download private key in secure backup and GitHub `production` Secrets; revoke and replace it if exposed |

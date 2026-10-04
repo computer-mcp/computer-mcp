@@ -19,6 +19,7 @@ final class DefaultGatewayConfigurationTests {
         == ([
           "codex-user", "codex-system", "agents-user",
         ]))
+    #expect(configuration.cli.commands.map(\.id) == ["git", "swift", "codex"])
 
     let observe = try #require(
       configuration.profiles.first { $0.id == .chatGPTObserve }

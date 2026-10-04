@@ -411,6 +411,8 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
 }
 
 extension ComputerUseGatewayProvider {
+  internal static let toolCount = makeTools().count
+
   fileprivate static let readOnlyTools: Set<String> = [
     "computer.permissions",
     "computer.displays",

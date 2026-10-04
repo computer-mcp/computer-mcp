@@ -11,7 +11,6 @@ lives with the Swift target in `Sources/ComputerMCP/ComputerMCP.docc/`.
   permissions, and troubleshooting.
 - [Decisions](Decisions/README.md): accepted decision records.
 - [Proposals](Proposals/README.md): active design-in-progress, when present.
-- [Archive](Archive/README.md): retired documentation retained for history.
 
 ## Placement Rules
 
@@ -19,11 +18,11 @@ lives with the Swift target in `Sources/ComputerMCP/ComputerMCP.docc/`.
 - Exhaustive user or operator reference belongs in `Documentation/Reference/`.
 - Adopted rationale belongs in `Documentation/Decisions/`.
 - Active alternatives belong in `Documentation/Proposals/`.
-- Retired non-current material belongs in `Documentation/Archive/`.
 - Repository collaboration configuration and CODEOWNERS belong in `.github/`;
   issue and pull request templates come from the organization `.github`
   repository.
 
-Normative documents describe the current product contract. Versioned release
-records, accepted decision records, migrations, and archived documents own
-history when that history remains relevant to their role.
+Normative documents describe the current product contract. The changelog,
+GitHub Releases, accepted decision records and migrations own history when that
+history remains relevant to their role. Retired material is removed after its
+current facts move to their owners; Git history retains it.

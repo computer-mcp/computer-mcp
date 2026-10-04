@@ -47,10 +47,9 @@ package product and does not install or bundle vendor binaries.
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
-| `Resources/ComputerMCPApp/` | Bundle metadata and entitlements |
+| `Resources/ComputerMCPApp/` | Bundle metadata, entitlements and the imported App icon document |
 | `Tests/` | Swift Testing component, policy, transport, App, and provider tests |
 | `Tools/Validation/` | Independent Test Case catalog, probes, fixtures, evidence correlation, and reports |
-| `Tools/Brand/` | Pinned maintainer artwork renderer and standalone consumer verification source |
 | `Sources/ComputerMCP/ComputerMCP.docc/` | Internal target documentation |
 | `Examples/` | Standalone development and dogfood manifests |
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
@@ -81,11 +80,10 @@ before the protected job can start.
 `Tools/Validation` is not a root target and is not included in the App or DMG.
 Real external consumers and tunnels are Validation Runs, never automated tests.
 
-`Tools/Brand` uses the pinned Node.js `sharp` renderer to regenerate delivery
-artwork from `Assets/Brand/Sources`. It is a maintainer dependency, outside the
-SwiftPM/runtime graph. Only the generated icon is copied into the App.
-`Scripts/brand.py check` verifies committed source/output fingerprints and
-packaging declarations using Python's standard library.
+`Scripts/build-app.sh` compiles `Resources/ComputerMCPApp/AppIcon.icon` with
+`actool` into the bundle's `Assets.car` and a legacy `AppIcon.icns` for macOS 14
+and 15. The organization `.github` repository renders that Icon Composer
+document; see [Product Identity](ProductIdentity.md) for brand ownership.
 
 ## Principles
 

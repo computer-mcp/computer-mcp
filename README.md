@@ -1,8 +1,11 @@
-![Computer MCP — Let ChatGPT use your local tools.](Assets/Brand/Exports/social-en.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Documentation/Brand/header-dark.png">
+  <img alt="Computer MCP — Wherever you chat, your computer is there." src="Documentation/Brand/header-light.png">
+</picture>
 
 # Computer MCP
 
-**Let ChatGPT use your local tools.**
+**Wherever you chat, your computer is there.**
 
 Connect local tools directly to ChatGPT or another compatible MCP client.
 Compose typed capabilities, CLI tools, MCP servers, Skills and Computer Use
@@ -199,7 +202,7 @@ Computer MCP does not require a Codex task for ordinary registered tools. Each
 host executes its own capabilities. Dots also has a separate cloud computer;
 Codex Remote runs coding tasks on the selected connected host. Account and
 service usage terms still apply. The
-[full comparison](Documentation/Reference/ProductComparison.md) covers
+[full comparison](https://computer-mcp.github.io/#comparison) covers
 interfaces, execution and authority, with official OpenAI sources checked on
 2026-10-01.
 

@@ -7,6 +7,8 @@ All notable user-visible changes to Computer MCP are documented here.
 - New installations register only the `git`, `swift` and `codex` CLI commands
   by default; the `lark` example remains in `Examples/computer-mcp.toml`.
 - Provider summaries show the actual number of Skills and Computer Use tools.
+- The App icon uses the Computer MCP three-plane mark, built from an Icon
+  Composer document with a legacy icon for macOS 14 and 15.
 
 ## 1.3.2 — 2026-10-02
 

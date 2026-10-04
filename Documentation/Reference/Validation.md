@@ -194,8 +194,8 @@ owner CLI, provide the archive's manifest version and the matching plugin
 repository's workflow driver:
 
 ```sh
-COMPUTER_MCP_CODEX_PLUGIN_ARCHIVE=/absolute/codex-plugin.zip \
-COMPUTER_MCP_CODEX_PLUGIN_VERSION=0.2.0 \
+COMPUTER_MCP_CODEX_PLUGIN_ARCHIVE=/absolute/codex-plugin-macos-arm64.zip \
+COMPUTER_MCP_CODEX_PLUGIN_VERSION=0.3.0 \
 COMPUTER_MCP_CODEX_WORKFLOW_DRIVER=/absolute/plugin-codex/Scripts/check-workflow.py \
 COMPUTER_MCP_CODEX_EXECUTABLE=/absolute/vendor/codex \
 COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE=/absolute/computer-mcp \

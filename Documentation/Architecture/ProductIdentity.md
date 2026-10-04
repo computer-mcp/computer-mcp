@@ -1,8 +1,10 @@
 # Product identity
 
-Computer MCP lets ChatGPT use your local tools. It is a direct capability and
-execution plane between ChatGPT or another compatible MCP client and your
-computers. The signed desktop App runs on macOS 14 or later.
+**Wherever you chat, your computer is there.** (「聊天在哪，你的电脑就在哪。」)
+
+Computer MCP is a direct capability and execution plane between ChatGPT or
+another compatible MCP client and your computers. The signed desktop App runs
+on macOS 14 or later.
 
 ## Product model
 
@@ -52,8 +54,18 @@ Codex-owned. The host owns caller admission, its own approvals and audit.
 
 Computer MCP provides capabilities for an orchestrating client. Agent memory,
 proactive scheduling and a hosted cloud computer are separate product concerns.
-The [product comparison](../Reference/ProductComparison.md) explains the fit
-alongside OpenAI Dots and Codex Remote, with dated official sources.
+The website's [product comparison](https://computer-mcp.github.io/#comparison)
+explains the fit alongside OpenAI Dots and Codex Remote, with dated official
+sources.
+
+## Voice
+
+Lead with the user's task and direct access to local capabilities. Explain
+permissions and prerequisites where they affect a decision. Direct, Local,
+Composable, Multi-computer and Governed are the five pillars. Treat Codex as an
+optional integration. Describe fit alongside other products; do not promise
+universal superiority or unmetered usage. Name vendor products in text; brand
+artwork carries no vendor marks.
 
 ## Family and public identity
 
@@ -62,6 +74,13 @@ under that family while retaining their own manifests, technical contracts and
 release sequences. An integration is not a claim of vendor endorsement.
 The MCP Swift SDK fork is a dependency with its own upstream identity.
 
-[BRAND.md](../../Assets/Brand/BRAND.md) owns visual and verbal application.
-[brand.json](../../Assets/Brand/brand.json) holds machine-readable stable facts.
-The website owns its layout, not a separate product or brand definition.
+This document owns product meaning, the tagline and voice; text rendered into
+brand images follows it. The organization
+[DESIGN.md](https://github.com/computer-mcp/.github/blob/master/DESIGN.md) owns
+the visual system for the App icon, README headers, social cards and the
+website. `Resources/ComputerMCPApp/AppIcon.icon`, `Documentation/Brand/` and
+`.github/brand/` are imports locked by `.github/brand/brand.lock.json`; update
+them with the organization repository's `python3 Brand/brand.py sync`, and CI
+verifies the lock. An App icon change alters candidate bytes; follow
+[Versioning and Release](VersioningAndRelease.md) for the compatible patch
+candidate and exact installed acceptance.

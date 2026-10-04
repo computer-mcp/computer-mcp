@@ -19,6 +19,7 @@ RESOURCES_DIR="$CONTENTS/Resources"
 INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
 LOCALIZED_INFO_ROOT="$ROOT_DIR/Resources/ComputerMCPApp"
 ENTITLEMENTS="$ROOT_DIR/Resources/ComputerMCPApp/ComputerMCP.entitlements"
+APP_ICON="$ROOT_DIR/Resources/ComputerMCPApp/AppIcon.icon"
 RELEASE_MODE=${RELEASE_MODE:-0}
 ADHOC_SIGNING=${ADHOC_SIGNING:-0}
 REUSE_EXISTING_SLICES=${REUSE_EXISTING_SLICES:-0}
@@ -302,7 +303,16 @@ fi
   "$X86_64_BIN_DIR/computer-mcp" \
   -output "$RESOURCES_DIR/computer-mcp"
 /bin/cp "$INFO_PLIST" "$CONTENTS/Info.plist"
-/bin/cp "$ROOT_DIR/Assets/Brand/Exports/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+ICON_PARTIAL_PLIST=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-icon.XXXXXX")
+if ! xcrun actool "$APP_ICON" --compile "$RESOURCES_DIR" --platform macosx \
+  --minimum-deployment-target "$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - "$INFO_PLIST")" \
+  --app-icon AppIcon --output-partial-info-plist "$ICON_PARTIAL_PLIST" >/dev/null; then
+  /bin/rm -f -- "$ICON_PARTIAL_PLIST"
+  fail "Could not compile the App icon."
+fi
+/bin/rm -f -- "$ICON_PARTIAL_PLIST"
+[[ -f "$RESOURCES_DIR/Assets.car" && -f "$RESOURCES_DIR/AppIcon.icns" ]] \
+  || fail "The App icon compilation did not produce Assets.car and AppIcon.icns."
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $APP_BUNDLE_ID" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$CONTENTS/Info.plist"

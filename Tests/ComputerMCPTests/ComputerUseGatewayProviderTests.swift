@@ -37,6 +37,22 @@ final class ComputerUseGatewayProviderTests {
           && $0.outputSchema?.objectValue?["properties"]?.objectValue?["result"] != nil
           && $0.annotations != nil
       })
+    #expect(GatewayToolCounts.computerUse == tools.count)
+  }
+
+  @Test
+  func testSkillsToolCountMatchesTheFullCatalog() {
+    let tools = GatewayToolRegistry.gatewayTools(
+      shellEnabled: true,
+      builtins: Set(DefaultGatewayConfiguration.enabledBuiltinCapabilities),
+      skillsEnabled: true,
+      hasCLIProviders: true,
+      hasMCPProviders: true,
+      toolMeta: nil
+    )
+    let skills = tools.filter { $0.name.hasPrefix("skills.") }
+    #expect(!skills.isEmpty)
+    #expect(GatewayToolCounts.skills == skills.count)
   }
 
   @Test

@@ -36,8 +36,8 @@ package struct KeychainSecretStore: Sendable {
   }
 
   package init(
-    service: String = "com.showxu.computer-mcp.tests",
-    accessGroup: String = "TESTTEAMID.com.showxu.computer-mcp.tests",
+    service: String,
+    accessGroup: String,
     adapter: any KeychainAdapter
   ) throws {
     let normalized = service.trimmingCharacters(in: .whitespacesAndNewlines)

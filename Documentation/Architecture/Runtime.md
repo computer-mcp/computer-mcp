@@ -11,10 +11,10 @@ and that socket.
 | --- | --- |
 | `AppControlPlaneOperations` | Shared lifecycle-aware App/CLI use cases, validation, restart/reconnect coordination, and rollback |
 | `AppControlPlaneService` | Directories, database, manifest revisions, bookmarks, profiles, providers, Tunnel, Keychain, and launch at login |
-| `AppGatewayService` | Own the private socket and one official SDK server per client connection |
+| `AppGatewayService` | Own the private socket and one MCP SDK server per client connection |
 | `GatewayRuntime` | Compose providers, apply policy, route calls, and audit outcomes |
 | `GatewayProviderRouter` | Publish validated tool definitions, capabilities, and exact provider routes as one immutable snapshot |
-| `MCPRuntimeAdapter` | Construct official SDK MCP servers for App and standalone modes |
+| `MCPRuntimeAdapter` | Construct MCP SDK servers for App and standalone modes |
 | `GatewayStdioSocketBridge` | Bridge MCP stdio to the Gateway Socket |
 | `ControlSocketService` | Adapt owner-only CLI calls to shared App control operations without creating another control plane |
 | `CloudflareTunnelManager` | Own loopback HTTP, named-tunnel token file, cloudflared, metrics, and cleanup |
@@ -210,7 +210,7 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   nonblocking pipe reader delivers available bytes without waiting for a full
   buffer and applies consumer backpressure between bounded reads. Session
   completion joins both output readers, including inherited pipe writers.
-- Downstream MCP: persistent official SDK clients over stdio or Streamable
+- Downstream MCP: persistent MCP SDK clients over stdio or Streamable
   HTTP, including tools, resources, prompts, list-changed events, and
   cancellation. Each workspace registry owns an independently scoped client,
   connection pool, and tool-change stream. Authorization wrappers preserve the

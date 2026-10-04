@@ -1,7 +1,7 @@
 import Foundation
 import MCP
 
-/// Runs the gateway through the official MCP Swift SDK.
+/// Runs the gateway through the MCP Swift SDK.
 package enum MCPRuntimeAdapter: Sendable {
   @TaskLocal static var requestTrace: GatewayTransportTrace?
 

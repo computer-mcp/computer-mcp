@@ -1,6 +1,18 @@
 import Foundation
 import Testing
 
+@testable import ComputerMCP
+
+extension KeychainSecretStore {
+  init(service: String = "com.showxu.computer-mcp.tests", adapter: any KeychainAdapter) throws {
+    try self.init(
+      service: service,
+      accessGroup: "TESTTEAMID.com.showxu.computer-mcp.tests",
+      adapter: adapter
+    )
+  }
+}
+
 func expectThrows<T>(
   _ expression: @autoclosure () throws -> T,
   _ message: String? = nil,

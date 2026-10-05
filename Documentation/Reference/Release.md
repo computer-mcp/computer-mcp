@@ -284,6 +284,8 @@ and absence of running references before removing a stage's temporary work.
 Candidate, acceptance, publication and previous-App recovery records are retained.
 Modified or unique files cause retention. Inspect retained failed attempts before
 any separate archival or deletion; never delete active process directories.
+Completed local release copies need no archive once the official release is
+verified; see [Retention and handoff](../Architecture/VersioningAndRelease.md#retention-and-handoff).
 
 Notarization rejection, invalid signatures, incomplete checksums, failed
 source/installed checks and unknown results stop publication. Inspect the saved

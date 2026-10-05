@@ -143,6 +143,12 @@ deletion. Old Git worktrees require unique-content and behavior reconciliation,
 then normal Git worktree removal. Credentials, live data, unrelated work and
 the necessary rollback version are preserved.
 
+Once a release is complete and its signed tag, required public assets and
+digests, notarization and release record are verified, the official publication
+is the durable release record. Completed local release copies, logs and
+duplicate binaries then need no separate archive; failed attempts, unique
+evidence and the rollback version stay until resolved.
+
 Committed documents and scripts carry these rules to subsequent work. Private
 machine paths, thread identifiers, recovery copies and per-run progress belong
 in local execution records, not in this specification. A closeout is complete

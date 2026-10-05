@@ -1,7 +1,7 @@
 # Third-Party Notices
 
-Computer MCP original source is governed by the proprietary source-visible
-terms in `LICENSE`. Third-party components keep their own licenses.
+Computer MCP original source is licensed under FSL-1.1-ALv2; see `LICENSE`.
+Third-party components keep their own licenses.
 
 The App and embedded CLI statically link the following resolved packages:
 

@@ -1880,34 +1880,6 @@ Returned command rows include `source_workspace_relative_path`,
 `cwd_workspace_relative_path`; `cli.exec` itself still uses the registered
 provider working directory.
 
-## `workspace.governance_files`
-
-Available only when `[builtin].enabled` includes `workspace.governance_files`.
-Finds workspace governance and collaboration entrypoints such as
-`_ops/bin/workspace`, `refs.yaml`, `refs.lock.yaml`, `references/upstreams`,
-`references/forks`, workspace skill instructions, `AGENTS.md`, and `CODEOWNERS`
-using path and filename metadata only. It does not execute the workspace CLI,
-mutate refs, parse governance files, inspect Git internals, or infer policy.
-
-Arguments:
-
-```json
-{
-  "path": ".",
-  "include_hidden": true,
-  "max_depth": 8,
-  "max_results": 200,
-  "max_scan_entries": 20000
-}
-```
-
-Returned rows include `workspace_relative_path`, `category`, `provider`,
-`kind`, `format`, `match_source`, `type`, `yaml_readable`, `xml_readable`, `size_bytes`,
-`modified_at`, file-only `is_executable`, `is_symlink`, `stat_context`,
-`metadata_context`, and for file entries `read_lines_context`. JSON, TOML, and
-YAML governance manifests also include `json_context`, `toml_context`, or
-`yaml_context`; XML governance manifests include `xml_context`.
-
 ## `system.info`
 
 Available only when `[builtin].enabled` includes `system.info`. Returns a

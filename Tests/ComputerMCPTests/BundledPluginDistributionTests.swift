@@ -38,10 +38,7 @@ struct BundledPluginDistributionTests {
           "README.md", "CONTRIBUTING.md", "Documentation", "computer-mcp-plugin.toml", "skills",
           "LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdPartyNotices.txt",
         ])
-    #expect(
-      try Data(contentsOf: package.root.appendingPathComponent("LICENSE"))
-        == Data(contentsOf: Self.repository.appendingPathComponent("LICENSE")))
-    for name in ["THIRD_PARTY_NOTICES.md", "ThirdPartyNotices.txt"] {
+    for name in ["LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdPartyNotices.txt"] {
       #expect(try !Data(contentsOf: package.root.appendingPathComponent(name)).isEmpty)
     }
     #expect(

@@ -1492,29 +1492,6 @@ extension GatewayToolRegistry {
             meta: toolMeta
           ))
 
-      case "workspace.governance_files":
-        tools.append(
-          MCPTool(
-            name: "workspace.governance_files",
-            description:
-              "Find workspace governance and collaboration entrypoints such as _ops/bin/workspace, refs manifests, references/upstreams or references/forks roots, workspace skill instructions, AGENTS.md, and CODEOWNERS using path and filename metadata only. This does not execute the workspace CLI, mutate refs, parse governance files, inspect Git internals, or infer policy; use returned context objects for explicit follow-up inspection through the gateway.",
-            inputSchema: objectSchema(
-              properties: [
-                "path": stringSchema(
-                  "Optional workspace-relative file or directory path. Defaults to workspace root."),
-                "include_hidden": boolSchema(
-                  "Whether to include hidden files and directories. Defaults to true because workspace governance markers commonly live under hidden agent directories."
-                ),
-                "max_depth": integerSchema("Optional recursive depth. Defaults to 8."),
-                "max_results": integerSchema(
-                  "Maximum matching entries to return after sorting. Defaults to 200."),
-                "max_scan_entries": integerSchema(
-                  "Maximum filesystem entries to scan before truncating. Defaults to 20000."),
-              ]
-            ),
-            meta: toolMeta
-          ))
-
       case "system.info":
         tools.append(
           MCPTool(

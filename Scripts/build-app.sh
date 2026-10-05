@@ -382,7 +382,7 @@ xcrun swift "$ROOT_DIR/Scripts/generate-release-metadata.swift" \
   --product-build "$APP_BUILD"
 
 /bin/cp "$METADATA_DIR/ThirdPartyNotices.txt" "$RESOURCES_DIR/ThirdPartyNotices.txt"
-/bin/cp "$ROOT_DIR/LICENSE" "$RESOURCES_DIR/ComputerMCPSourceVisibleLicense.txt"
+/bin/cp "$ROOT_DIR/LICENSE" "$RESOURCES_DIR/ComputerMCPLicense.txt"
 /bin/cp "$ROOT_DIR/EULA.md" "$RESOURCES_DIR/EULA.md"
 /bin/cp "$ROOT_DIR/PRIVACY.md" "$RESOURCES_DIR/PRIVACY.md"
 /usr/bin/plutil -lint "$CONTENTS/Info.plist" >/dev/null

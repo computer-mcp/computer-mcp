@@ -306,4 +306,6 @@ Standalone 不使用 App-owned Bookmark、数据库状态或 Keychain Tunnel 凭
 Staple、验证并创建 Draft GitHub Release；发布仍是独立的人工验收步骤。完整流程见
 [Release Reference](Documentation/Reference/Release.md)。
 
-Computer MCP 按 [LICENSE](LICENSE) 中的条款提供。
+Computer MCP 采用 [Functional Source License 1.1，Apache 2.0 Future License](LICENSE)
+（FSL-1.1-ALv2）：除做竞争产品或服务外，任何用途都可以；每个版本发布两年后转为
+Apache-2.0。官方可执行版本另附[最终用户许可协议](EULA.md)。

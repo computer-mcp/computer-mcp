@@ -26,7 +26,6 @@ final class CapabilityFixtureTests {
     #expect(report.entries.contains { $0.path == "Artifacts/sample.zip" })
     #expect(report.entries.contains { $0.path == "build/fixture-output.txt" })
     #expect(report.entries.contains { $0.path == ".swift-format" })
-    #expect(report.entries.contains { $0.path == ".github/CODEOWNERS" })
     #expect(
       (report.entries.first { $0.path == "Xattrs/tagged.txt" }?.fixtureMetadata?[
         "com.showxu.computer-mcp.fixture"

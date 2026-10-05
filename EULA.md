@@ -4,19 +4,14 @@ This End-User License Agreement applies to an unmodified Computer MCP
 executable release distributed by Xudong Xu through an official Computer MCP
 channel. By installing or running the Software, you agree to this agreement.
 
-## License grant
+## License
 
-You may install and run the Authorized Release on devices you own or control
-for personal, non-commercial use. The Software is licensed, not sold, and all
-rights not expressly granted remain with Xudong Xu.
-
-## Restrictions
-
-You may not copy except as technically necessary for installation and backup,
-modify, create derivative works, redistribute, sublicense, sell, rent, host as
-a service, use commercially, bypass technical restrictions, or remove legal
-notices, unless Xudong Xu gives you prior written permission. Rights that
-cannot lawfully be restricted are unaffected.
+Each release of the Software, including its executable, is licensed under the
+`LICENSE` included with it: the Functional Source License, Version 1.1, ALv2
+Future License (FSL-1.1-ALv2), including its future grant of the Apache
+License, Version 2.0. This agreement adds the operating terms below and does
+not narrow the rights `LICENSE` grants. A separate written agreement signed by
+Xudong Xu may grant additional rights.
 
 ## Local authority and third-party services
 
@@ -31,9 +26,8 @@ you enable, and for complying with the terms of those third parties.
 Updates must be installed by the user unless a later release states otherwise.
 Support and security-reporting channels are described in `SUPPORT.md` and
 `SECURITY.md`.
-The publisher may change or discontinue the Software, but an updated agreement
-will not retroactively remove rights already granted for a release unless
-required by law or needed to address abuse.
+The publisher may change or discontinue the Software. An updated agreement
+does not remove rights already granted for an earlier release.
 
 ## Privacy
 
@@ -46,17 +40,9 @@ Third-party components remain governed by their own licenses, reproduced in
 the `ThirdPartyNotices.txt` included with the release. This agreement does not
 reduce rights granted by those licenses.
 
-## Termination
-
-This agreement terminates automatically if you breach it. You must then stop
-using and delete the Software, except where retention is required by law.
-
 ## Disclaimer and limitation
 
 TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SOFTWARE IS PROVIDED "AS IS",
 WITHOUT WARRANTIES OF ANY KIND. XUDONG XU WILL NOT BE LIABLE FOR INDIRECT,
 INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR LOSS OF DATA,
 PROFITS, REVENUE, OR BUSINESS, ARISING FROM OR RELATED TO THE SOFTWARE.
-
-The source-visible terms in `LICENSE` apply to the source repository. A
-separate written agreement signed by Xudong Xu may grant additional rights.

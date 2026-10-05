@@ -274,7 +274,7 @@ for file in \
   ThirdPartyNotices.txt \
   "Computer-MCP-$APP_VERSION-DependencyManifest.json" \
   "Computer-MCP-$APP_VERSION-SBOM.cdx.json" \
-  ComputerMCPSourceVisibleLicense.txt \
+  ComputerMCPLicense.txt \
   EULA.md \
   PRIVACY.md
 do

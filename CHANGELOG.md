@@ -15,6 +15,8 @@ All notable user-visible changes to Computer MCP are documented here.
   Published releases keep their original license.
 - Retire the `workspace.governance_files` builtin; existing manifests that still
   list it load without it.
+- The App icon uses the Computer MCP three-plane mark, built from an Icon
+  Composer document with a legacy icon for macOS 14 and 15.
 
 ## 1.3.2 — 2026-10-02
 

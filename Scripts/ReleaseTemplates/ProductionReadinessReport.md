@@ -23,9 +23,10 @@
 The shared release pipeline owns source, package and installed acceptance.
 Its existing checks cover dependency identity, formatting, Swift and Validation
 fixtures, interfaces, documentation, release boundaries and distribution.
-The brand check binds editable sources to generated exports and the App icon
-declaration. Distribution verification compares the bundled icon bytes with
-the canonical export and checks the packaged App against the producing App.
+The shared brand check verifies imported brand files against their lock.
+Distribution verification recompiles the imported App icon, compares the
+bundled legacy icon bytes, checks the asset catalog and checks the packaged App
+against the producing App.
 Each change's regression evidence is part of its reviewed pull request.
 
 The candidate comes from the official repository's canonical `master` and

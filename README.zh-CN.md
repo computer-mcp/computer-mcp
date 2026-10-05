@@ -1,8 +1,11 @@
-![Computer MCP — 让 ChatGPT，用上你的本机工具。](Assets/Brand/Exports/social-zh-CN.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Documentation/Brand/header-zh-CN-dark.png">
+  <img alt="Computer MCP — 聊天在哪，你的电脑就在哪。" src="Documentation/Brand/header-zh-CN-light.png">
+</picture>
 
 # Computer MCP
 
-**让 ChatGPT，用上你的本机工具。**
+**聊天在哪，你的电脑就在哪。**
 
 让 ChatGPT 或其他兼容 MCP 的客户端直接使用本机能力。组合类型明确的工具、CLI、
 MCP、Skills 与 Computer Use，跨多台电脑推进工作，每台宿主独立管理访问权限。
@@ -163,7 +166,7 @@ Computer MCP 始终把两个决定分开：
 Computer MCP 调用普通已注册工具不要求启动 Codex 任务，每台宿主执行自己的能力。
 Dots 还有独立的云端电脑；Codex Remote 在选定的已连接宿主上执行编程任务。
 账号和服务用量条款仍然适用。
-[完整对比](Documentation/Reference/ProductComparison.md)说明接口、执行和权限边界，
+[完整对比](https://computer-mcp.github.io/#comparison)说明接口、执行和权限边界，
 OpenAI 官方来源于 2026-10-01 核实。
 
 以下所有权模式彼此独立：快速 Codex Thread/Turn、Computer MCP-owned Codex

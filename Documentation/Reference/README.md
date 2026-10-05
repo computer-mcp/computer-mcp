@@ -29,8 +29,6 @@ This directory contains detailed operational reference material.
 - [Release](Release.md): protected candidate builds, Apple credentials,
   notarization, exact artifact acceptance, signed-tag publication, and local
   rehearsal scope.
-- [Product Comparison](ProductComparison.md): execution, multi-computer and
-  authority differences between Computer MCP, OpenAI Dots and Codex Remote.
 - [Troubleshooting](Troubleshooting.md): common failures and checks.
 - [简体中文](zh-CN/README.md): mirrored onboarding and recovery guides.
 

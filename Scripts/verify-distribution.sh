@@ -13,6 +13,7 @@ MOUNT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-mount.XXXXXX")
 BUILD_INFO_FILE=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-build-info.XXXXXX")
 SIGNED_ENTITLEMENTS=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-entitlements.XXXXXX")
 DECODED_PROFILE=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-profile.XXXXXX")
+ICON_DIR=$(mktemp -d "${TMPDIR:-/tmp}/computer-mcp-icon.XXXXXX")
 MOUNT_DEVICE=""
 
 cleanup() {
@@ -21,6 +22,7 @@ cleanup() {
   fi
   /bin/rmdir "$MOUNT_DIR" 2>/dev/null || true
   /bin/rm -f -- "$BUILD_INFO_FILE" "$SIGNED_ENTITLEMENTS" "$DECODED_PROFILE"
+  /bin/rm -rf -- "$ICON_DIR"
 }
 trap cleanup EXIT
 
@@ -94,11 +96,20 @@ BUILD_IDENTITY="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
 [[ -x "$APP_PATH/Contents/MacOS/Computer MCP" ]] || fail "Missing App executable."
 [[ -x "$CLI_PATH" ]] || fail "Missing embedded CLI."
 [[ -f "$BUILD_IDENTITY" ]] || fail "Missing signed build identity."
-[[ "$(/usr/bin/plutil -extract CFBundleIconFile raw -o - "$APP_PATH/Contents/Info.plist")" == "AppIcon.icns" ]] \
-  || fail "The App does not declare the canonical icon."
-/usr/bin/cmp -s "$ROOT_DIR/Assets/Brand/Exports/AppIcon.icns" \
-  "$APP_PATH/Contents/Resources/AppIcon.icns" \
-  || fail "The App does not contain the canonical icon bytes."
+for key in CFBundleIconFile CFBundleIconName; do
+  [[ "$(/usr/bin/plutil -extract "$key" raw -o - "$APP_PATH/Contents/Info.plist")" == "AppIcon" ]] \
+    || fail "The App does not declare the canonical icon in $key."
+done
+xcrun actool "$ROOT_DIR/Resources/ComputerMCPApp/AppIcon.icon" --compile "$ICON_DIR" \
+  --platform macosx \
+  --minimum-deployment-target "$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - "$APP_PATH/Contents/Info.plist")" \
+  --app-icon AppIcon --output-partial-info-plist "$ICON_DIR/partial.plist" >/dev/null \
+  || fail "Could not compile the canonical App icon."
+/usr/bin/cmp -s "$ICON_DIR/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns" \
+  || fail "The App does not contain the canonical legacy icon bytes."
+/usr/bin/assetutil --info "$APP_PATH/Contents/Resources/Assets.car" \
+  | /usr/bin/grep '"Name" : "AppIcon' >/dev/null \
+  || fail "The App asset catalog does not contain the canonical icon."
 BUILD_IDENTITY_PATH="$BUILD_IDENTITY" \
   "$ROOT_DIR/Scripts/verify-artifact-provenance.sh" \
     "$PROVENANCE_PATH" "$DMG_PATH" "$ARTIFACT_CLASS"
@@ -279,6 +290,7 @@ for relative_path in \
   "Contents/MacOS/Computer MCP" \
   "Contents/Resources/computer-mcp" \
   "Contents/Resources/AppIcon.icns" \
+  "Contents/Resources/Assets.car" \
   "Contents/Resources/ComputerMCPBuildIdentity.plist" \
   "Contents/Resources/ThirdPartyNotices.txt" \
   "Contents/_CodeSignature/CodeResources"

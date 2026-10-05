@@ -163,3 +163,7 @@ jobs:
             .agent/releases/ci/logs/
           include-hidden-files: true
           if-no-files-found: warn
+
+  brand:
+    if: inputs.validation_scope != 'windows'
+    uses: computer-mcp/.github/.github/workflows/brand-check.yml@43abe15c93db0a0731f81bf806edd89a7a5b2136 # master

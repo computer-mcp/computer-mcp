@@ -8,8 +8,9 @@ Use this guide for agent work in this repository.
 - For build, run, and test tasks, use SwiftPM commands from the repository root.
 - For documentation work, keep the role boundaries in `Documentation/README.md`.
 - For product positioning, read `Documentation/Architecture/ProductIdentity.md`.
-- For brand work, read `Assets/Brand/BRAND.md` and `Assets/Brand/brand.json`;
-  use `Scripts/brand.py` to generate, synchronize and check shared assets.
+- For brand work, read the organization `DESIGN.md` in `computer-mcp/.github`
+  and the brand section of `Documentation/Architecture/ProductIdentity.md`;
+  update imported brand files only with the organization's `Brand/brand.py sync`.
 - For version, dependency, packaging or release work, read
   `Documentation/Architecture/VersioningAndRelease.md` and
   `Documentation/Reference/Release.md`. Use `Scripts/version.py` for version

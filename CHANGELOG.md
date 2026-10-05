@@ -10,7 +10,8 @@ All notable user-visible changes to Computer MCP are documented here.
 - Computer MCP is licensed under FSL-1.1-ALv2 (Functional Source License 1.1,
   Apache 2.0 future license): any use other than a competing product or service
   is permitted, and each release becomes available under Apache-2.0 two years
-  after publication. The End-User License Agreement follows the same scope.
+  after publication. The End-User License Agreement defers to that license and
+  adds only operating terms.
   Published releases keep their original license.
 
 ## 1.3.2 — 2026-10-02

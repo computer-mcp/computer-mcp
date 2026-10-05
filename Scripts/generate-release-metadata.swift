@@ -454,7 +454,7 @@ private func makeNotices(
     Package.resolved SHA-256: \(resolvedHash)
 
     This deterministic file is generated from the locked SwiftPM checkouts.
-    Original Computer MCP code is governed by the separate proprietary LICENSE.
+    Original Computer MCP code is licensed under FSL-1.1-ALv2; see LICENSE.
 
     LINKED AND DISTRIBUTED COMPONENTS
 
@@ -573,7 +573,7 @@ do {
         version: options.productVersion,
         supplier: CycloneDX.Supplier(name: "Xudong Xu (@showxu)"),
         licenses: [
-          CycloneDX.LicenseChoice(expression: "LicenseRef-Computer-MCP-Source-Visible-1.0")
+          CycloneDX.LicenseChoice(expression: "FSL-1.1-ALv2")
         ],
         properties: [
           CycloneDX.Property(name: "computer-mcp:build", value: options.productBuild),

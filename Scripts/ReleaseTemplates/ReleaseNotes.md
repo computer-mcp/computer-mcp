@@ -26,5 +26,6 @@ copying their contents does not preserve the identity bound to their receipts.
 - GitHub Actions run: __GITHUB_RUN_URL__
 
 The distribution includes the notarized DMG, checksums, SBOM, dependency
-manifest, third-party notices and notarization receipts. The Computer MCP
-Source-Visible License is not an open-source license.
+manifest, third-party notices and notarization receipts. Computer MCP is
+licensed under FSL-1.1-ALv2, and each release becomes available under the
+Apache License 2.0 two years after publication.

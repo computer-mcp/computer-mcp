@@ -4,6 +4,21 @@ Computer MCP Validation Suite is the independent release-validation package at
 `Tools/Validation`. Its executable is `computer-mcp-validate`; it is not a root
 package target and is never embedded in the App, embedded CLI, or DMG.
 
+## Scope and release authority
+
+[Versioning and Release](../Architecture/VersioningAndRelease.md) owns formal
+candidate, installed acceptance, and publication requirements.
+`Scripts/release-checks.json` owns their executable checks; the
+[Release Reference](Release.md) owns operator commands.
+
+The Validation Suite supplies test cases, fixtures, correlated evidence, and
+specialized readiness reports. Its `report release-manifest` workflow is an
+optional additional evidence package, selected with `INCLUDE_EVIDENCE_MANIFEST=1`
+when assembling release assets. The default formal publication does not include
+that manifest. Selecting it requires its complete catalog and verification
+records; a partial manifest cannot pass. A fixture or manifest does not replace
+the formal candidate's installed acceptance.
+
 The vocabulary is fixed:
 
 - a **Validation Test Case** defines prerequisites, steps, expected results,
@@ -274,13 +289,13 @@ development-only Cloudflare HTTP calls can use `probe http call --observations
 `streamable_http` audit. `evidence correlate` then queries exactly one audit row
 for every Gateway request and seals the canonical Evidence Bundle.
 
-The mandatory release catalog contains 22 publisher-verifiable Test Cases. It
-includes the isolated Quick Tunnel boundary plus automated named-tunnel
-lifecycle, authentication, cleanup, and profile-separation coverage. A live
-Cloudflare named deployment is deliberately outside the mandatory release
-catalog because its account, domain, public hostname, and runtime token are
-owned by the deploying user. The Cloudflare runbook remains the deployment
-acceptance procedure when a user chooses that transport.
+The specialized release-manifest catalog contains 22 publisher-verifiable Test
+Cases, all required when generating that manifest. It includes the isolated
+Quick Tunnel boundary plus automated named-tunnel lifecycle, authentication,
+cleanup, and profile-separation coverage. A live Cloudflare named deployment is
+outside this catalog because its account, domain, public hostname, and runtime
+token are owned by the deploying user. The Cloudflare runbook remains the
+deployment acceptance procedure when a user chooses that transport.
 
 Mutation probes inspect every prepared ticket's state before committing it.
 The default runner never approves a pending ticket: it reports that local
@@ -332,17 +347,18 @@ Generate both report formats:
 
 The command exits unsuccessfully when the report is not ready.
 
-After the same final App, embedded CLI, notarized DMG, private evidence archive,
-and all five redacted journey/platform verification records pass, generate the
-public summary-only manifest with `report release-manifest`. The command accepts
-every Evidence Bundle used by the ready report, verifies that each bundle is
+To produce the optional public summary-only manifest, first verify the same
+final App, embedded CLI, notarized DMG, private evidence archive, and all five
+redacted journey/platform verification records. Then run
+`report release-manifest`. The command accepts every Evidence Bundle used by
+the ready report, verifies that each bundle is
 bound to the final App and CLI digests, requires all 22 canonical Test Cases,
 and emits
 `Computer-MCP-<version>-EvidenceManifest.json`. It publishes hashes, Test Case IDs,
 transports, and profiles only; request IDs, audit IDs, consumer result IDs,
 credentials, raw inputs/outputs, and local paths remain in the private archive.
 
-The five required `--verification-record id=path` IDs are:
+The five `--verification-record id=path` IDs required for this manifest are:
 
 - `journey.local`
 - `journey.chatgpt`

@@ -369,4 +369,9 @@ the candidate artifacts. After acceptance of those exact artifacts, publication
 creates the signed release tag and publishes the same bytes. See
 [Release Reference](Documentation/Reference/Release.md).
 
-Computer MCP is available under the terms in [LICENSE](LICENSE).
+Computer MCP is licensed under the
+[Functional Source License 1.1, Apache 2.0 Future License](LICENSE)
+(FSL-1.1-ALv2): any use other than a competing product or service is
+permitted, and each release becomes available under Apache-2.0 two years after
+publication. Official executable releases also come with the
+[End-User License Agreement](EULA.md).

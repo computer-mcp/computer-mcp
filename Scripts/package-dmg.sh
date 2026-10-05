@@ -166,7 +166,7 @@ fi
 /bin/cp \
   "$METADATA_DIR/Computer-MCP-$APP_VERSION-SBOM.cdx.json" \
   "$STAGING_DIR/Computer-MCP-$APP_VERSION-SBOM.cdx.json"
-/bin/cp "$ROOT_DIR/LICENSE" "$STAGING_DIR/ComputerMCPSourceVisibleLicense.txt"
+/bin/cp "$ROOT_DIR/LICENSE" "$STAGING_DIR/ComputerMCPLicense.txt"
 /bin/cp "$ROOT_DIR/EULA.md" "$STAGING_DIR/EULA.md"
 /bin/cp "$ROOT_DIR/PRIVACY.md" "$STAGING_DIR/PRIVACY.md"
 

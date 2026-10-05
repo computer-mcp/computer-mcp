@@ -1,43 +1,29 @@
 # Support
 
-Version 1.0 receives best-effort fixes for reproducible defects and security
-issues. Only the most recent patch release in the 1.0 line is supported. There
-is no guaranteed response time or paid support commitment.
+Support is best effort for reproducible defects and security issues in the
+latest Computer MCP release. There is no guaranteed response time or paid
+support.
 
-Use the `computer-mcp/computer-mcp` issue tracker for reproducible bugs,
-documentation gaps, and focused feature requests. Use GitHub private
-vulnerability reporting, not a public issue, for security reports.
-
-## Before Opening an Issue
-
-Run:
-
-```sh
-/usr/bin/swift build
-/usr/bin/swift test
-swift run computer-mcp config validate --config Examples/computer-mcp.toml
-swift run computer-mcp tools list --config Examples/computer-mcp.toml
-swift run computer-mcp serve http --help
-Scripts/build-app.sh
-```
-
-For MCP client integration problems, also verify that the client launches the
-same executable path you tested in the terminal.
+Use the [issue tracker](https://github.com/computer-mcp/computer-mcp/issues)
+for reproducible bugs, documentation gaps, and focused feature requests about
+the App, the CLI, connections, and configuration. Plugins, Apple CLI, Homebrew
+installation, and the website have their own repositories, listed in the
+organization [support guide](https://github.com/computer-mcp/.github/blob/master/SUPPORT.md).
+Report security issues privately as described in [SECURITY.md](SECURITY.md),
+not in a public issue.
 
 ## Useful Details
 
 Include:
 
-- macOS version
-- Swift version from `swift --version`
-- Computer MCP App/CLI version
-- active profile and workspace count
-- command that failed
-- MCP client name and configuration, if relevant
-- ChatGPT app, Secure MCP Tunnel profile, or HTTP endpoint, if relevant
-- TOML source configuration with secrets removed
-- whether Codex or downstream provider executables are available locally
-- App Diagnostics and redacted audit/error codes
-- minimal JSON-RPC payload or tool call, if relevant
+- Computer MCP and macOS versions
+- MCP client, and the ChatGPT connection, Secure MCP Tunnel profile, or HTTP
+  endpoint when relevant
+- active profile and the failing command or tool call
+- configuration with secrets removed
+- App Diagnostics and redacted audit or error codes
+
+For MCP client problems, confirm that the client launches the same executable
+you tested in Terminal.
 
 Do not include secrets, private tokens, or private tool output.

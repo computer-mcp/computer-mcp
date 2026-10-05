@@ -173,7 +173,6 @@ package enum DefaultGatewayConfiguration {
     workspace.executable_files
     workspace.file_types
     workspace.git_changes
-    workspace.governance_files
     workspace.ignore_files
     workspace.info
     workspace.infra_files

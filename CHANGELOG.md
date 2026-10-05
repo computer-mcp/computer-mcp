@@ -13,6 +13,8 @@ All notable user-visible changes to Computer MCP are documented here.
   after publication. The End-User License Agreement defers to that license and
   adds only operating terms.
   Published releases keep their original license.
+- Retire the `workspace.governance_files` builtin; existing manifests that still
+  list it load without it.
 
 ## 1.3.2 — 2026-10-02
 

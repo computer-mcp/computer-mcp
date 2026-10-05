@@ -48,8 +48,18 @@ swift-format lint --strict --recursive --configuration .swift-format Package.swi
 swift run computer-mcp config validate --config Examples/computer-mcp.toml
 ```
 
+CI runs `python3 Scripts/release.py run --run ci --profile ci`, which needs
+`actionlint`, `jq`, and `ripgrep`; run it locally to reproduce a CI failure.
+
 If your change affects a CLI command, include the command output or a concise
 summary in the pull request.
 
 If your change affects a stable CLI, MCP, configuration, evidence, or release
-contract, update the corresponding reference and DocC material.
+contract, update the corresponding reference and DocC material. If it affects
+packaging or the release workflow, also run `Scripts/build-app.sh` and confirm
+that release credentials stay limited to CI.
+
+Changes to command execution, Shell enablement, downstream MCP proxying, HTTP
+transport or bearer authentication, token handling, coding-provider execution,
+and Secure MCP Tunnel launch receive the closest review; state their security
+impact in the pull request.

@@ -28,7 +28,6 @@ material, decision history, and API documentation.
 | `Documentation/Reference/` | CLI, protocol, tools, permissions, troubleshooting |
 | `Documentation/Decisions/` | Accepted decisions |
 | `Documentation/Proposals/` | Active design-in-progress |
-| `Documentation/Archive/` | Retired non-current material |
 | `.github/` | GitHub collaboration configuration |
 
 ## Key Principles

@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR=${0:A:h:h}
 python3 "$ROOT_DIR/Scripts/version.py" check
 VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
-RELEASE_NOTES="$ROOT_DIR/Documentation/Reference/ReleaseNotes-$VERSION.md"
-READINESS_REPORT="$ROOT_DIR/Documentation/Reference/ProductionReadinessReport-$VERSION.md"
+RELEASE_NOTES="$ROOT_DIR/Scripts/ReleaseTemplates/ReleaseNotes.md"
+READINESS_REPORT="$ROOT_DIR/Scripts/ReleaseTemplates/ProductionReadinessReport.md"
 
 fail() {
   echo "Release readiness verification failed: $1" >&2
@@ -41,13 +41,22 @@ then
   fail "Root README files still describe the release as pending."
 fi
 
-/usr/bin/grep -Eq "^# Computer MCP $VERSION Release Notes$" "$RELEASE_NOTES" \
-  || fail "Release notes title does not match $VERSION."
-/usr/bin/grep -Eq \
-  "^# Computer MCP $VERSION Production Readiness Report$" "$READINESS_REPORT" \
-  || fail "Production readiness title does not match $VERSION."
+CHANGES=$(/usr/bin/awk -v heading="## $VERSION — " '
+  index($0, heading) == 1 { found = 1; next }
+  found && /^## / { exit }
+  found && NF { print }
+' "$ROOT_DIR/CHANGELOG.md")
+[[ -n "$CHANGES" ]] || fail "CHANGELOG.md has no entries for $VERSION."
 
-expected_tokens=(
+/usr/bin/grep -Eq '^# Computer MCP __VERSION__ Release Notes$' "$RELEASE_NOTES" \
+  || fail "Release notes title does not use the version token."
+/usr/bin/grep -Eq \
+  '^# Computer MCP __VERSION__ Production Readiness Report$' "$READINESS_REPORT" \
+  || fail "Production readiness title does not use the version token."
+/usr/bin/grep -Eq '^__CHANGES__$' "$RELEASE_NOTES" \
+  || fail "Release notes template has no changelog line."
+
+record_tokens=(
   __APPLE_TEAM_ID__
   __APP_ARCHITECTURES__
   __APP_NOTARY_SUBMISSION_ID__
@@ -59,17 +68,16 @@ expected_tokens=(
   __RELEASE_DATE__
   __RELEASE_TAG__
   __RELEASE_TAG_OBJECT__
+  __VERSION__
 )
-expected_token_set=$(printf '%s\n' $expected_tokens | LC_ALL=C /usr/bin/sort)
-for input_path in "$RELEASE_NOTES" "$READINESS_REPORT"; do
-  for token in $expected_tokens; do
-    /usr/bin/grep -Fq "$token" "$input_path" \
-      || fail "${input_path:t} is missing required render token $token."
-  done
+for spec in "$RELEASE_NOTES:__CHANGES__" "$READINESS_REPORT:__BUILD__"; do
+  input_path=${spec%%:*}
+  expected_tokens=($record_tokens ${spec##*:})
+  expected_token_set=$(printf '%s\n' $expected_tokens | LC_ALL=C /usr/bin/sort)
   discovered_token_set=$(/usr/bin/grep -Eo '__[A-Z0-9_]+__' "$input_path" \
     | LC_ALL=C /usr/bin/sort -u)
   [[ "$discovered_token_set" == "$expected_token_set" ]] \
-    || fail "${input_path:t} contains an unexpected release render token."
+    || fail "${input_path:t} must contain exactly its release render tokens."
 done
 
 echo "Release prerequisite templates passed for $VERSION."

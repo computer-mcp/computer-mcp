@@ -4,6 +4,10 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
+- New installations register only the `git`, `swift` and `codex` CLI commands
+  by default; the `lark` example remains in `Examples/computer-mcp.toml`.
+- Provider summaries show the actual number of Skills and Computer Use tools.
+
 ## 1.3.2 — 2026-10-02
 
 - Preserve managed plugin directory ownership across reboot-time mount device
@@ -158,7 +162,7 @@ All notable user-visible changes to Computer MCP are documented here.
   validation, candidate, and exact-published artifact provenance.
 - Pass 920 automated tests, disposable official-client Git/network/handoff and
   30,000-record supervision acceptance, independent review, cold-start audit,
-  and the authorized real vehicleOS Full Access/reclaim/release workflow.
+  and an authorized real-project Full Access/reclaim/release workflow.
 
 ## 1.0.27 — 2026-09-02
 

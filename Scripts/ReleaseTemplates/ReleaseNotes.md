@@ -1,21 +1,12 @@
-# Computer MCP 1.3.1 Release Notes
-
-Status: release record template. Publication requires acceptance of the exact
-signed candidate before the formal tag is created.
+# Computer MCP __VERSION__ Release Notes
 
 ## Changes
 
-- Apply the canonical Computer MCP icon to the macOS App, Finder, Dock and
-  distribution bundle.
-- Align bilingual product copy and public artwork around direct, composable,
-  governed access to local tools across computers. Codex remains optional.
-
-This compatible patch updates product identity and bundled artwork. Capability,
-permission and integration contracts retain their existing owners.
+__CHANGES__
 
 ## Installation
 
-Verify the published checksums for `Computer-MCP-1.3.1-universal.dmg` before
+Verify the published checksums for `Computer-MCP-__VERSION__-universal.dmg` before
 installing. Preserve the previous App for rollback and finish active work before
 replacing the running host. Preserve plugin directories when restoring state:
 copying their contents does not preserve the identity bound to their receipts.

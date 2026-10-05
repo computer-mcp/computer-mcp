@@ -1109,7 +1109,7 @@ final class LiveAppControlPlane: AppControlPlane {
           state: inProcessState,
           version: nil,
           executablePath: nil,
-          toolCount: 6,
+          toolCount: GatewayToolCounts.skills,
           lastDoctorMessage: AppLocalization.formatted(
             "%@ registered root(s)",
             String(configuration.skills.roots.count)
@@ -1161,7 +1161,7 @@ final class LiveAppControlPlane: AppControlPlane {
         state: inProcessState,
         version: nil,
         executablePath: nil,
-        toolCount: 12,
+        toolCount: GatewayToolCounts.computerUse,
         lastDoctorMessage: "TCC permissions are checked without prompting.",
         lastError: nil,
         lifecycleManaged: false

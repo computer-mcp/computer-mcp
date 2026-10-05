@@ -18,9 +18,10 @@ transport. Each message is one UTF-8 JSON-RPC object followed by a newline:
 For interactive debugging, do not use LSP-style `Content-Length` framing. This
 gateway's stdio adapter expects one complete JSON-RPC object per line.
 
-MCP protocol handling is provided by the official Swift MCP SDK. The examples
-below document the wire shape for debugging; they are not a separate protocol
-implementation in this repository.
+MCP protocol handling is provided by the MCP Swift SDK through the
+`computer-mcp/swift-sdk` compatibility fork. The examples below document the
+wire shape for debugging; they are not a separate protocol implementation in
+this repository.
 
 ## Downstream tool risk
 
@@ -446,7 +447,7 @@ A disconnected request has an unknown outcome unless independently verified;
 neither the gateway nor the client should replay a write merely because its
 response was lost.
 
-Computer MCP's managed HTTP connections use the official SDK for JSON-RPC and
+Computer MCP's managed HTTP connections use the MCP SDK for JSON-RPC and
 a host-owned HTTP transport for streaming. Each POST response and the standalone
 GET event channel retain independent cursors. A truncated response with a cursor
 is resumed through GET, never by repeating its POST. A truncated response with
@@ -508,11 +509,11 @@ Local gateway and Codex tool results contain:
 - `isError`: the standard MCP tool error flag.
 
 Downstream MCP calls and reexports preserve provider content,
-`structuredContent`, `_meta`, and error state through the official SDK.
+`structuredContent`, `_meta`, and error state through the MCP SDK.
 
 In the App-owned runtime, the bridge forwards these messages to the private
-current-user Unix socket. Each socket connection owns an official SDK MCP
-server session; the bridge does not parse or reinterpret tool payloads.
+current-user Unix socket. Each socket connection owns an MCP SDK server
+session; the bridge does not parse or reinterpret tool payloads.
 
 ## HTTP Transport
 

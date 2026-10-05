@@ -179,7 +179,12 @@ Computer MCP 只能释放或停止能够验证为自己所有的 Runtime。它�
 Computer MCP 要求 macOS 14 或更高版本。
 
 1. 从[最新版本](https://github.com/computer-mcp/computer-mcp/releases/latest)下载已
-   公证的 Universal 2 DMG 和 `SHA256SUMS`。
+   公证的 Universal 2 DMG 和 `SHA256SUMS`；也可以用 Homebrew 安装，然后直接打开 App：
+
+   ```sh
+   brew install --cask computer-mcp/tap/computer-mcp
+   ```
+
 2. 校验摘要，将 **Computer MCP** 拖入“应用程序”，并从 Finder 打开安装后的 App。
    macOS 隐私授权绑定的是这个签名 App 身份。
 3. 在欢迎页选择 **连接本地 MCP 客户端**，然后启动 Gateway。
@@ -268,7 +273,7 @@ Thread。
 - [工具 Reference](Documentation/Reference/Tools.md)
 - [常见故障](Documentation/Reference/Troubleshooting.md)
 - [架构](Documentation/Architecture/README.md)
-- [生产级验收合同](Documentation/Reference/ProductizationAcceptance.md)
+- [安全与隐私](Documentation/Architecture/SecurityAndPrivacy.md)
 - [发布流程](Documentation/Reference/Release.md)
 
 ## 开发与贡献

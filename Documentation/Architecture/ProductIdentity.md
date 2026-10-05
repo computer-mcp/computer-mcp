@@ -36,6 +36,11 @@ ChatGPT / compatible MCP client
 permits execution as the local user; a workspace is context, not an OS sandbox.
 Unknown write outcomes do not authorize automatic replay.
 
+Computer MCP is not an unrestricted remote shell, a tool collection without
+policy, a replacement for Codex Remote, a wrapper that silently grants
+full-machine access, or a Codex-only product. Public claims must be backed by
+implementation and tests; experimental behavior is labeled as experimental.
+
 ## Codex relationship
 
 Codex is optional. Its independent plugin supplies App Server and Exec

@@ -4,7 +4,7 @@ All notable user-visible changes to Computer MCP are documented here.
 
 ## Unreleased
 
-## 2.0.0 — 2026-10-06
+## 1.3.3 — 2026-10-06
 
 - New installations register only the `git`, `swift` and `codex` CLI commands
   by default; the `lark` example remains in `Examples/computer-mcp.toml`.

@@ -1,114 +1,39 @@
 # Reference
 
-- [Production Productization Acceptance Contract](ProductizationAcceptance.md):
-  normative scope and evidence requirements for the focused production
-  reliability release.
-
 This directory contains detailed operational reference material.
 
 ## Documents
 
-- [Product Comparison](ProductComparison.md): execution, multi-computer and
-  authority differences between Computer MCP, OpenAI Dots and Codex Remote.
-- [1.3.1 Release Notes](ReleaseNotes-1.3.1.md) and
-  [Production Readiness Report](ProductionReadinessReport-1.3.1.md): canonical
-  App identity and exact candidate acceptance requirements.
 - [Quick Start](QuickStart.md): release installation, first launch, and local MCP.
 - [CLI](CLI.md): command-line modes and exit behavior.
+- [Config](Config.md): TOML source and policy configuration.
 - [Control Plane Capabilities](ControlPlaneCapabilities.md): shared App/CLI
   management inventory, ownership, and secret-input rules.
-- [Config](Config.md): TOML source and policy configuration.
-- [Codex Migration](CodexMigration.md): offline configuration export and controlled
-  transfer of domain state to the independent plugin.
+- [Tools](Tools.md): complete gateway tool families and result contracts,
+  including deterministic Codex handoff, native execution permissions, bounded
+  recent-thread reads, and ownership reconciliation.
+- [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
+- [Scoped Host Services](HostServices.md): inherited MCP callbacks, approval
+  ownership, derived registrations, diagnostics and recovery.
 - [CLI Trees](CLITrees.md): machine-readable command descriptors, argv/stdin
   encoding, projected tools, output validation, and coverage.
 - [Plugin Packages](PluginPackages.md): immutable manifests, contribution
   sources, and package-directory validation boundaries.
-- [Tools](Tools.md): complete gateway tool families, including deterministic
-  Codex handoff, native execution permissions, bounded recent-thread reads, and
-  ownership reconciliation.
+- [Codex Migration](CodexMigration.md): offline configuration export and controlled
+  transfer of domain state to the independent plugin.
 - [ChatGPT Web Runbook](ChatGPTWebRunbook.md): App-managed Secure MCP Tunnel setup.
 - [Cloudflare Runbook](CloudflareRunbook.md): named-tunnel onboarding,
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
-- [1.3.0 Release Notes](ReleaseNotes-1.3.0.md) and
-  [Production Readiness Report](ProductionReadinessReport-1.3.0.md):
-  live configuration, scoped control, official discovery and exact candidate
-  acceptance requirements.
-- [1.1.4 Release Notes](ReleaseNotes-1.1.4.md) and
-  [Production Readiness Report](ProductionReadinessReport-1.1.4.md):
-  portable plugin settings and management round trips.
-- [1.1.3 Release Notes](ReleaseNotes-1.1.3.md) and
-  [Production Readiness Report](ProductionReadinessReport-1.1.3.md):
-  generic MCP workspace discovery and complete invocation acceptance.
-- [1.1.2 Release Notes](ReleaseNotes-1.1.2.md) and
-  [Production Readiness Report](ProductionReadinessReport-1.1.2.md):
-  scoped host callback authority and workspace selection.
-- [1.1.1 Release Notes](ReleaseNotes-1.1.1.md) and
-  [Production Readiness Report](ProductionReadinessReport-1.1.1.md):
-  packaged management-page resources and local installation acceptance before publication.
-- [1.1.0 Release Notes](ReleaseNotes-1.1.0.md) and
-  [Production Readiness Report](ProductionReadinessReport-1.1.0.md):
-  plugin distribution, Gateway integration, Codex migration, and exact-artifact
-  release gates with explicit external acceptance boundaries.
-- [1.0.29 Production Readiness Report](ProductionReadinessReport-1.0.29.md):
-  version-bound protected-CI template for the unified local control-plane
-  release, exact artifact identity, and publication acceptance.
-- [1.0.28 Production Readiness Report](ProductionReadinessReport-1.0.28.md):
-  immutable production predecessor and historical release record.
-- [1.0.27 Production Readiness Report](ProductionReadinessReport-1.0.27.md):
-  historical release record.
-- [1.0.26 Production Readiness Report](ProductionReadinessReport-1.0.26.md):
-  historical unpublished candidate record.
-- [1.0.25 Production Readiness Report](ProductionReadinessReport-1.0.25.md):
-  historical unpublished candidate record.
-- [1.0.24 Production Readiness Report](ProductionReadinessReport-1.0.24.md):
-  historical unpublished candidate record.
-- [1.0.23 Production Readiness Report](ProductionReadinessReport-1.0.23.md):
-  historical unpublished candidate record.
-- [1.0.22 Production Readiness Report](ProductionReadinessReport-1.0.22.md):
-  historical release record; source placeholders are not current runtime
-  status.
-- [1.0.21 Production Readiness Report](ProductionReadinessReport-1.0.21.md):
-  historical unpublished candidate record.
-- [1.0.20 Production Readiness Report](ProductionReadinessReport-1.0.20.md):
-  historical unpublished candidate record.
-- [1.0.19 Production Readiness Report](ProductionReadinessReport-1.0.19.md):
-  historical unpublished candidate record.
-- [1.0.18 Production Readiness Report](ProductionReadinessReport-1.0.18.md):
-  historical release record.
-- [1.0.17 Production Readiness Report](ProductionReadinessReport-1.0.17.md):
-  historical release record.
-- [1.0.16 Production Readiness Report](ProductionReadinessReport-1.0.16.md):
-  historical unpublished candidate record.
-- [1.0.15 Production Readiness Report](ProductionReadinessReport-1.0.15.md):
-  historical unpublished candidate record.
-- [1.0.14 Production Readiness Report](ProductionReadinessReport-1.0.14.md):
-  historical unpublished candidate record.
-- [1.0.13 Production Readiness Report](ProductionReadinessReport-1.0.13.md):
-  historical unpublished candidate record.
-- [1.0.12 Production Readiness Report](ProductionReadinessReport-1.0.12.md):
-  historical unpublished candidate record.
-- [1.0.11 Production Readiness Report](ProductionReadinessReport-1.0.11.md):
-  historical unpublished candidate record.
-- [1.0.10 Production Readiness Report](ProductionReadinessReport-1.0.10.md):
-  historical unpublished candidate record.
-- [1.0.9 Production Readiness Report](ProductionReadinessReport-1.0.9.md):
-  historical unpublished candidate record.
-- [1.0.8 Production Readiness Report](ProductionReadinessReport-1.0.8.md):
-  historical unpublished candidate record.
-- [Production Readiness Report (2026-08-05)](ProductionReadinessReport-2026-08-05.md):
-  historical pre-release fail-closed status and blockers.
-- [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
-- [Tools](Tools.md): MCP gateway tools and result contracts.
 - [Release](Release.md): protected candidate builds, Apple credentials,
   notarization, exact artifact acceptance, signed-tag publication, and local
   rehearsal scope.
+- [Product Comparison](ProductComparison.md): execution, multi-computer and
+  authority differences between Computer MCP, OpenAI Dots and Codex Remote.
 - [Troubleshooting](Troubleshooting.md): common failures and checks.
 - [简体中文](zh-CN/README.md): mirrored onboarding and recovery guides.
 
 Keep current architecture truth in `Documentation/Architecture/`. Keep
-accepted rationale in `Documentation/Decisions/`.
-
-- [Scoped host services](HostServices.md): inherited MCP callbacks, approval ownership, derived registrations, diagnostics and recovery.
+accepted rationale in `Documentation/Decisions/`. Release history lives in
+[CHANGELOG.md](../../CHANGELOG.md) and the GitHub Releases.

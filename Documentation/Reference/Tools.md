@@ -670,7 +670,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "max_results": 100
 }
 ```
@@ -744,7 +744,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": "SKILL.md",
   "format": "auto",
@@ -771,7 +771,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "coding-plan",
   "max_bytes": 1048576
 }
@@ -792,7 +792,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": ".",
   "max_depth": 6,
@@ -818,7 +818,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": "references/source-role-map.md",
   "encoding": "utf8",
@@ -870,7 +870,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": ".",
   "encoding": "auto",
@@ -900,7 +900,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": "SKILL.md",
   "include_imports": false,
@@ -928,7 +928,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": "SKILL.md",
   "heading": "Baseline",
@@ -961,7 +961,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": "references/schemas.md",
   "include_code_blocks": false,
@@ -994,7 +994,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": "SKILL.md",
   "include_images": true,
@@ -1028,7 +1028,7 @@ Arguments:
 
 ```json
 {
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "name": "skill-creator",
   "path": "SKILL.md",
   "include_images": true,
@@ -1064,7 +1064,7 @@ Arguments:
 ```json
 {
   "query": "swift",
-  "root_id": "showxu",
+  "root_id": "agents-user",
   "search_content": true,
   "max_results": 20,
   "max_bytes_per_skill": 65536

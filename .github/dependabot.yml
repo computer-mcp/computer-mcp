@@ -1,15 +1,6 @@
 version: 2
 updates:
   - package-ecosystem: swift
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      compatible-updates:
-        patterns: ["*"]
-        update-types: [minor, patch]
-  - package-ecosystem: swift
     directory: /Tools/Validation
     schedule:
       interval: weekly

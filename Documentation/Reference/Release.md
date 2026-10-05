@@ -69,7 +69,7 @@ shared password and must not be reused across boundaries.
 | --- | --- | --- |
 | Mac login password / Touch ID | Local administrator and Keychain authorization only | Remains on the Mac; never add it to GitHub or a release command |
 | Apple Account password and two-factor authentication | Sign in to Apple Developer and App Store Connect | Human portal access only; never store it in GitHub Actions |
-| SSH signing private key | Sign the release commit and annotated `v*` tag | Keep in the local SSH agent/Keychain and retain a secure recovery copy |
+| SSH signing private key | Sign the release commit and annotated `v*` tag | Keep in the local SSH agent/Keychain and retain a secure recovery copy. Its public key in `.github/signing-allowed-signers` is the trust anchor `verify-release-ref.sh` uses to verify tags; rotating the key updates that file in a reviewed change first |
 | Developer ID `.p12` and its export password | Import the certificate and private key used by `codesign` | Keep a recoverable encrypted backup; GitHub stores the encoded file and password as separate `production` Secrets |
 | Developer ID provisioning profile | Authorize the production App ID, entitlements, and Keychain group | GitHub `production` Secret; no per-release input |
 | App Store Connect Team API `.p8`, Key ID, and Issuer ID | Authenticate `notarytool` submissions | Preserve the one-time-download private key in secure backup and GitHub `production` Secrets; revoke and replace it if exposed |
@@ -119,8 +119,10 @@ in Computer MCP's separate Data Protection Keychain namespace.
    for a compatible fix, or the corresponding `feature`, `breaking` or
    `candidate` kind. `Version.json` is authoritative; do not edit generated
    App/CLI values independently. The build increases for revised App candidates.
-2. Finalize the dated changelog and versioned release-note/readiness templates.
-   Preserve the exact render tokens checked by `verify-release-readiness.sh`.
+2. Finalize the dated changelog section; it becomes the release notes' changes.
+   `Scripts/ReleaseTemplates/` holds the version-independent release-note and
+   readiness templates with the render tokens checked by
+   `verify-release-readiness.sh`.
    Existing publisher approval records for legal documents remain in force;
    changed legal text requires its owning approval and updated digests.
 3. Validate and merge the source into official `master`. Resolve component

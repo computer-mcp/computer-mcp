@@ -5,8 +5,10 @@ ROOT_DIR=${0:A:h:h}
 OUTPUT_DIR=${OUTPUT_DIR:-"$ROOT_DIR/dist"}
 python3 "$ROOT_DIR/Scripts/version.py" check
 VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
-RELEASE_NOTES_TEMPLATE="$ROOT_DIR/Documentation/Reference/ReleaseNotes-$VERSION.md"
-READINESS_TEMPLATE="$ROOT_DIR/Documentation/Reference/ProductionReadinessReport-$VERSION.md"
+BUILD=$(python3 "$ROOT_DIR/Scripts/version.py" show --field build)
+TEMPLATE_DIR="$ROOT_DIR/Scripts/ReleaseTemplates"
+RELEASE_NOTES_TEMPLATE="$TEMPLATE_DIR/ReleaseNotes.md"
+READINESS_TEMPLATE="$TEMPLATE_DIR/ProductionReadinessReport.md"
 RELEASE_NOTES="$OUTPUT_DIR/Computer-MCP-$VERSION-ReleaseNotes.md"
 READINESS_REPORT="$OUTPUT_DIR/Computer-MCP-$VERSION-ProductionReadiness.md"
 
@@ -62,7 +64,20 @@ for template in "$RELEASE_NOTES_TEMPLATE" "$READINESS_TEMPLATE"; do
   [[ -s "$template" ]] || fail "Missing release record template: $template"
 done
 /bin/mkdir -p "$OUTPUT_DIR"
-/bin/cp "$RELEASE_NOTES_TEMPLATE" "$RELEASE_NOTES"
+CHANGES=$(mktemp "$OUTPUT_DIR/.release-changes.XXXXXX")
+trap '/bin/rm -f "$CHANGES"' EXIT
+/usr/bin/awk -v heading="## $VERSION — " '
+  index($0, heading) == 1 { found = 1; next }
+  found && /^## / { exit }
+  found && NF { while (blank > 0) { print ""; blank-- } print; started = 1; next }
+  found && started { blank++ }
+' "$ROOT_DIR/CHANGELOG.md" >"$CHANGES"
+[[ -s "$CHANGES" ]] || fail "CHANGELOG.md has no entries for $VERSION."
+
+/usr/bin/awk -v changes="$CHANGES" '
+  $0 == "__CHANGES__" { while ((getline line < changes) > 0) print line; next }
+  { print }
+' "$RELEASE_NOTES_TEMPLATE" >"$RELEASE_NOTES"
 /bin/cp "$READINESS_TEMPLATE" "$READINESS_REPORT"
 
 replace_token() {
@@ -77,6 +92,8 @@ replace_token() {
 }
 
 tokens=(
+  __VERSION__
+  __BUILD__
   __RELEASE_DATE__
   __RELEASE_COMMIT__
   __RELEASE_TAG__
@@ -90,6 +107,8 @@ tokens=(
   __GITHUB_RUN_URL__
 )
 values=(
+  "$VERSION"
+  "$BUILD"
   "$RELEASE_DATE"
   "$RELEASE_COMMIT"
   "$RELEASE_TAG"
@@ -107,9 +126,9 @@ for record_path in "$RELEASE_NOTES" "$READINESS_REPORT"; do
   for index in {1..${#tokens}}; do
     token=${tokens[$index]}
     value=${values[$index]}
-    /usr/bin/grep -Fq "$token" "$record_path" \
-      || fail "Template ${record_path:t} is missing $token."
-    replace_token "$record_path" "$token" "$value"
+    if /usr/bin/grep -Fq "$token" "$record_path"; then
+      replace_token "$record_path" "$token" "$value"
+    fi
   done
   if /usr/bin/grep -Eq \
     '__[A-Z0-9_]+__|(^|[^[:alnum:]_])Pending([^[:alnum:]_]|$)|intentionally blank|NOT READY' \

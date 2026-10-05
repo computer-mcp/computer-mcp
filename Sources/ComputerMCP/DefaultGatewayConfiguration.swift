@@ -382,23 +382,6 @@ package enum DefaultGatewayConfiguration {
       risk = "workspace-write-capable"
       discovery = ["help"]
 
-      [[cli.commands]]
-      id = "lark"
-      executable = "lark-cli"
-      cwd = "workspace"
-      allow_any_args = true
-      risk = "external-write-capable"
-      discovery = ["help", "schema", "dry-run"]
-
-      [cli.commands.interface]
-      path_style = "argv"
-      flag_style = "long_flags"
-      flag_case = "kebab"
-      value_style = "separate"
-      format_flag = "--format"
-      default_format = "json"
-      dry_run_flag = "--dry-run"
-
       [builtin]
       enabled = \(tomlArray(enabledBuiltinCapabilities))
       """

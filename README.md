@@ -222,7 +222,13 @@ application's process or subscription.
 Computer MCP requires macOS 14 or later.
 
 1. Download the notarized Universal 2 DMG and `SHA256SUMS` from the
-   [latest release](https://github.com/computer-mcp/computer-mcp/releases/latest).
+   [latest release](https://github.com/computer-mcp/computer-mcp/releases/latest),
+   or install with Homebrew and skip to opening the App:
+
+   ```sh
+   brew install --cask computer-mcp/tap/computer-mcp
+   ```
+
 2. Verify the checksum, drag **Computer MCP** to Applications, and open the
    installed App from Finder. macOS privacy grants belong to this signed App
    identity.
@@ -330,7 +336,7 @@ remain visible in the adapter's configuration and runtime diagnostics.
 - [Tool reference](Documentation/Reference/Tools.md)
 - [Troubleshooting](Documentation/Reference/Troubleshooting.md)
 - [Architecture](Documentation/Architecture/README.md)
-- [Production acceptance contract](Documentation/Reference/ProductizationAcceptance.md)
+- [Security and privacy](Documentation/Architecture/SecurityAndPrivacy.md)
 - [Release process](Documentation/Reference/Release.md)
 
 ## Development and contributing

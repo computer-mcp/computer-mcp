@@ -27,7 +27,7 @@ Both -> Computer MCP.app -> AppGatewayService
 ```
 
 The App is the only service owner. OpenAI bridge connections and
-Cloudflare HTTP requests create official MCP SDK sessions bound to distinct
+Cloudflare HTTP requests create MCP SDK sessions bound to distinct
 remote callers and allowed profiles. The private sockets check peer
 credentials and are accessible only to the current user; Cloudflare's origin
 is loopback-only and requires the gateway bearer.

@@ -63,3 +63,8 @@ Changes to command execution, Shell enablement, downstream MCP proxying, HTTP
 transport or bearer authentication, token handling, coding-provider execution,
 and Secure MCP Tunnel launch receive the closest review; state their security
 impact in the pull request.
+
+## License
+
+Contributions are licensed under this repository's [LICENSE](LICENSE),
+FSL-1.1-ALv2.

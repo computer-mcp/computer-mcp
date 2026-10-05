@@ -7,6 +7,14 @@ All notable user-visible changes to Computer MCP are documented here.
 - New installations register only the `git`, `swift` and `codex` CLI commands
   by default; the `lark` example remains in `Examples/computer-mcp.toml`.
 - Provider summaries show the actual number of Skills and Computer Use tools.
+- Computer MCP is licensed under FSL-1.1-ALv2 (Functional Source License 1.1,
+  Apache 2.0 future license): any use other than a competing product or service
+  is permitted, and each release becomes available under Apache-2.0 two years
+  after publication. The End-User License Agreement defers to that license and
+  adds only operating terms.
+  Published releases keep their original license.
+- Retire the `workspace.governance_files` builtin; existing manifests that still
+  list it load without it.
 
 ## 1.3.2 — 2026-10-02
 

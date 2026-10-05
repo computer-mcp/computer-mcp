@@ -350,8 +350,6 @@ public struct CapabilityFixturePlan: Sendable {
       return workspaceScan(tool, path: path("."), marker: "Empty")
     case "workspace.env_files":
       return workspaceScan(tool, path: path("."), marker: ".env.example")
-    case "workspace.governance_files":
-      return workspaceScan(tool, path: path("."), marker: "CODEOWNERS")
     case "workspace.ignore_files":
       return workspaceScan(tool, path: path("."), marker: ".gitignore")
     case "workspace.infra_files":

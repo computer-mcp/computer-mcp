@@ -53,13 +53,21 @@ fi
   || fail "the oversized public file did not produce the expected diagnosis."
 /bin/rm -- "$WORKTREE/public-fixture.bin"
 
-/usr/bin/printf '/Users/%s/credential\n' 'xudongxu' >"$WORKTREE/leak.txt"
-if "$WORKTREE/Scripts/verify-public-repository.sh" \
-  >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"
-then
-  fail "a real personal absolute path outside the Git control file was accepted."
-fi
-/usr/bin/grep -Fq 'personal absolute macOS paths' "$TEMP_DIR/stderr" \
-  || fail "the real path leak did not produce the expected diagnosis."
+/usr/bin/printf '/Users/%s/fixture\n' example Shared >"$WORKTREE/placeholder.txt"
+"$WORKTREE/Scripts/verify-public-repository.sh" >/dev/null \
+  || fail "documented placeholder paths were rejected."
+/bin/rm -- "$WORKTREE/placeholder.txt"
+
+for account in jane j.doe; do
+  /usr/bin/printf '/Users/%s/credential\n' "$account" >"$WORKTREE/leak.txt"
+  if "$WORKTREE/Scripts/verify-public-repository.sh" \
+    >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"
+  then
+    fail "the personal absolute path for $account was accepted."
+  fi
+  /usr/bin/grep -Fq 'personal absolute macOS paths' "$TEMP_DIR/stderr" \
+    || fail "the path leak for $account did not produce the expected diagnosis."
+done
+/bin/rm -- "$WORKTREE/leak.txt"
 
 echo "Public repository Git-worktree regression passed."

@@ -38,7 +38,13 @@ fail_if_match() {
   fi
 }
 
-fail_if_match "personal absolute macOS paths" '/Users/xudongxu/'
+personal_paths=$("${RG[@]}" -o '/Users/[[:alnum:]._-]+/' $PUBLIC_PATHS \
+  | /usr/bin/grep -Ev ':/Users/(example|Shared)/$' || true)
+if [[ -n "$personal_paths" ]]; then
+  print -l -- ${(f)personal_paths} >&2
+  echo "Public repository verification failed: personal absolute macOS paths" >&2
+  exit 1
+fi
 fail_if_match "known secret formats" \
   '(sk-(proj-|svcacct-)?[[:alnum:]_-]{20,}|gh[pousr]_[[:alnum:]]{30,}|github_pat_[[:alnum:]_]{40,}|AKIA[0-9A-Z]{16}|xox[baprs]-[[:alnum:]-]{20,}|eyJ[[:alnum:]_-]{100,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)'
 

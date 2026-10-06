@@ -25,7 +25,7 @@ class CandidateTrust(unittest.TestCase):
             commit = "a" * 40
             record = {"source_commit": commit, "request_id": "original", "requested_at": time.time()}
             release.atomic_json(previous / "request.json", record)
-            run = {"id": 42, "display_title": "Computer MCP candidate original", "head_sha": commit,
+            run = {"id": 42, "display_title": "Computer MCP release original", "head_sha": commit,
                    "head_branch": "master", "event": "workflow_dispatch", "path": candidate.WORKFLOW,
                    "head_repository": {"full_name": candidate.REPOSITORY}, "status": "waiting", "html_url": "fixture"}
             with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_INTERRUPTED_WORK_DIR": str(previous)}, clear=True), \

@@ -53,91 +53,69 @@ An unsuccessful candidate does not consume a new formal patch version. After a
 formal tag or artifact is published it is immutable: any subsequent product fix
 requires its appropriate new version.
 
-## Candidate and publication contract
+## Cloud release contract
 
-1. Commit and merge the candidate's source and version declarations to trusted
-   `master`. Complete source, dependency, lifecycle and cross-component checks.
-2. Dispatch the canonical candidate workflow from that exact master commit.
-   The no-secret job validates inputs before the protected `production` job
-   receives signing/notarization credentials. PR and arbitrary branch outputs
-   cannot enter this protected job.
-3. Download its immutable Actions artifact, verifying the run source, workflow,
-   GitHub archive digest, candidate manifest and every extracted output.
-4. Install and accept that exact signed/notarized App. Check native permissions,
-   navigation, workspace operations, isolated cold/concurrent MCP requests,
-   source-unavailable operation and packaged plugin integration. Source tests
-   and development builds do not substitute for these artifact-bound checks.
-5. Only then create the signed formal tag on the same commit. Assemble records
-   around the existing accepted binaries, upload them, verify remote bytes,
-   publish and verify unauthenticated public downloads. Publication never rebuilds
-   or re-signs the accepted App or DMG. Release notes take their changes from
-   the version's changelog section; both records render shared templates with
-   the candidate identity, so no per-version record is committed.
-6. Import the official delivery record into the website and verify its deployed
-   record and download links. Deliver changed dependencies/plugins in dependency
-   order after the complete candidate combination has passed integration.
+1. Commit and merge the product source, version authority and dated changelog to
+   canonical `master`. Complete the shared source, dependency and distribution
+   checks in GitHub CI.
+2. Dispatch `.github/workflows/release-gate.yml` once. The no-secret verification
+   job authenticates the source and reuses only matching successful master CI.
+   The protected `production` authorization covers construction and publication.
+3. The protected job builds Universal 2 binaries, imports ephemeral Developer ID
+   assets, signs and notarizes the App and DMG, verifies the exact distribution
+   and preserves an immutable candidate artifact with its inventory and digest.
+4. It creates the signed formal tag on that candidate commit using the dedicated
+   cloud release identity. Publication assembles release records around the
+   unchanged notarized DMG, preserves the complete assembly before uploads,
+   compares existing draft assets, uploads missing assets and verifies both
+   authenticated and unauthenticated public downloads.
+5. The website's Pages workflow automatically imports the latest official public
+   `release.json`, submits a signed automation proposal, waits for its required
+   CI checks and deploys the merged generation. The existing hourly schedule,
+   source pushes and manual dispatches run reconciliation.
+6. A user's Mac downloads and installs the public distribution. Production
+   replacement remains separately authorized and preserves a rollback App.
+   Native TCC decisions and optional installed diagnostics belong to that Mac;
+   they are not prerequisites for cloud publication and the cloud readiness
+   record does not claim results for them.
 
-Human authorization for signing, publication and production replacement remains
-required by its owning boundary. TCC is a native human action. Scripts report
-these as `waiting_for_human` with the concrete action; they do not infer approval
-from elapsed time. Normal stages, deadlines, result evaluation and bounded
-network retries are scripted. A model does not judge whether a release passed.
-The fixed Codex fixture exercises the real executable against a loopback model
-and explicitly does not claim real-model/authentication coverage.
+Formal tags and public release assets are immutable. Product fixes require their
+appropriate next version; CI or documentation changes alone do not consume an
+App version. `verify-public` checks the already published declared version and
+cloud tag signing without building another App or changing public assets.
 
-## Checkpoints, invalidation and failure
+## Checkpoints and recovery
 
-A stage receipt binds source commit and tree contents, toolchain/environment,
-check definition, target configuration, dependency checkpoints, output inventory,
-log digest and elapsed time. Local receipts are authenticated by an owner-only
-key outside the run directory. Imported CI evidence must come from a successful
-canonical master push, match GitHub's immutable artifact digest and every input.
-Missing, edited, unsigned or mismatched local receipts cannot authorize reuse.
+Local shared-check receipts bind source, configuration, check definitions,
+outputs and logs and remain authenticated by their owner-only key. Imported
+source CI receipts require exact canonical source and immutable artifact digests.
+Only matching successful results are reused; a failed independent check does
+not erase another check's valid evidence.
 
-Only matching successful results are reused. A changed stage or dependency
-invalidates that stage and its downstream evidence; a failed independent stage
-does not erase other successes. Source or toolchain changes invalidate all
-checks bound to those inputs. Installed App and plugin bytes are checked again
-before publication. A digest is evidence identity, not proof of test quality or
-permission to execute untrusted code.
+Cloud release recovery uses GitHub's immutable candidate and publication
+artifacts. Both must come from the official master dispatch workflow at the
+same source commit. A candidate is recoverable only after its protected build
+and preservation steps succeeded. Archive digests, manifest identity and every
+extracted output are checked before reuse. Publication recovery also binds the
+candidate identity, signed tag object and complete asset inventory.
 
-Artifact identity and checker identity are separate inputs. A correction to an
-acceptance script, assertion or report invalidates its results and dependent
-publication decisions, not an unchanged signed artifact. `resume --reuse-candidate`
-binds committed check changes to an authenticated successful candidate already
-built from trusted master. The runner permits only explicitly enumerated
-validation/publication files, verifies the Git difference, and records both
-commits. It never dispatches another candidate through this binding. Formal tags
-still identify the original candidate commit; acceptance records identify the
-revised checks. Check changes may be validated and delivered independently.
+Rerunning a failed release job restores its earlier candidate instead of
+rebuilding. `resume_run_id` selects a prior dispatch at the same commit. Missing
+or mismatched recovery evidence stops the operation for investigation. Product,
+packaging or signing changes require a new candidate; a publication transport
+failure does not justify replacing accepted binaries or incrementing a version.
+Partial draft uploads resume missing assets and compare all existing bytes.
+Public assets are never overwritten.
 
-Product source, dependencies, build configuration, packaging inputs, signing or
-entitlements can affect artifact bytes and require a new candidate plus affected
-validation. Being a script does not make a file exempt. An unclassified change
-blocks reuse with its exact paths so its effect can be investigated; this is not
-an instruction to rebuild or increment the formal version automatically. Add a
-reuse exception only after confirming it cannot supply the artifact build.
-
-States are `running`, `passed`, `failed`, `waiting_for_human` and `invalidated`.
-An active attempt and its stage process hold the same exclusive ownership lock. An
-in-progress receipt authenticates attempt identity and inputs; its log and
-outputs are sealed only when the attempt finishes. An interrupted attempt cannot
-count as passed, and a still-running stage prevents concurrent recovery.
-
-Failures and interrupted attempts retain their logs and outputs. `resume`
-separates completed, authenticated outputs from unfinished recovery input.
-Candidate recovery locates and authenticates the original remote request;
-publication independently authenticates its assembled output inventory before
-resuming uploads. Missing or forged receipts for retained candidate or delivery
-outputs require investigation before retrying. A partial draft upload resumes
-only missing assets and compares all existing bytes; it never overwrites a
-release asset. Product checks are not automatically rerun until they happen to
-pass.
+Installed diagnostics use their separate candidate-bound receipts. A committed
+checker correction may be rebound to an existing candidate through the
+explicitly enumerated checker-only boundary. That operation neither dispatches
+another build nor changes the candidate or formal tag identity.
 
 ## Retention and handoff
 
 `cleanup` previews deletion by default. It removes only the run's unchanged,
-authenticated, inactive temporary outputs; candidate, installation and delivery
+authenticated, inactive temporary outputs; candidate and installation
 evidence is retained. Unrecognized files and active process references block
 deletion. Old Git worktrees require unique-content and behavior reconciliation,
 then normal Git worktree removal. Credentials, live data, unrelated work and

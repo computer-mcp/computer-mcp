@@ -1,78 +1,29 @@
 #!/usr/bin/env python3
-"""Tag and publish the accepted candidate without rebuilding its binaries."""
-import hashlib
-import hmac
+"""Assemble, publish and verify releases in the protected GitHub Actions job."""
+import argparse
 import json
 import os
-from pathlib import Path
 import plistlib
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 from urllib.parse import quote
 
-from candidate import REPOSITORY, extract_bundle
-from release import ROOT, Runner, atomic_json, canonical, file_digest, inventory, output
+from candidate import REPOSITORY
+from release import ROOT, atomic_json, file_digest, inventory, output
 
-
-def assembly_identity(candidate):
-    return {name: candidate[name] for name in ("candidate", "source_commit", "archive_sha256")}
-
-
-def checkpoint_assembly(work, candidate, key):
-    """Seal assembled bytes before the first upload can have a remote effect."""
-    payload = {"identity": assembly_identity(candidate),
-               "record": json.loads((work / "publication-assets.json").read_text()),
-               "dist": inventory(work / "dist")}
-    atomic_json(work / "assembly-checkpoint.json", {
-        "payload": payload, "mac": hmac.new(key, canonical(payload), hashlib.sha256).hexdigest()})
-
-
-def restore_assembly(previous, work, candidate, key):
-    checkpoint = previous / "assembly-checkpoint.json"
-    if not checkpoint.exists():
-        # No upload starts before this checkpoint; reconstruct from the accepted
-        # archive instead of trusting partially assembled recovery files.
-        return False
-    envelope = json.loads(checkpoint.read_text())
-    payload = envelope["payload"]
-    expected = hmac.new(key, canonical(payload), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, envelope["mac"]):
-        raise ValueError("Unauthenticated publication recovery checkpoint")
-    if payload["identity"] != assembly_identity(candidate):
-        raise ValueError("Prior publication belongs to a different candidate")
-    if (payload["record"] != json.loads((previous / "publication-assets.json").read_text())
-            or payload["dist"] != inventory(previous / "dist")):
-        raise ValueError("Prior assembled assets changed")
-    shutil.copytree(previous / "dist", work / "dist", symlinks=True)
-    atomic_json(work / "publication-assets.json", payload["record"])
-    return True
+WORK = ROOT / ".agent/publication"
+TAG_SIGNING_KEY = os.environ.pop("RELEASE_TAG_SIGNING_KEY", None)
 
 
 def run(arguments, **kwargs):
     return subprocess.run(arguments, cwd=ROOT, check=True, timeout=300, **kwargs)
 
 
-def verify_acceptance(candidate, acceptance, directory):
-    files = {"installed_runtime": "installed-runtime.json", "navigation": "navigation.json",
-             "workspace_operations": "workspace-operations.json", "plugin_integration": "plugin-integration.json"}
-    assertions = {"artifact_identity", "signature_and_notarization", "native_permissions"}
-    if (acceptance["status"] != "passed" or set(acceptance["checks"]) != assertions | set(files)
-            or any(acceptance[key] != candidate[key] for key in
-                   ("candidate", "source_commit", "archive_sha256", "version"))):
-        raise ValueError("Missing or mismatched required installed acceptance evidence")
-    for name in assertions:
-        if acceptance["checks"][name] != "passed":
-            raise ValueError("A required acceptance check did not pass: " + name)
-    for name, filename in files.items():
-        if acceptance["checks"][name] != file_digest(directory / filename):
-            raise ValueError("A required acceptance result differs from its evidence: " + name)
-    if inventory(Path(acceptance["installed_path"])) != candidate["outputs"]["Computer MCP.app"]:
-        raise ValueError("The accepted installed App changed before publication")
-    plugin = json.loads((directory / files["plugin_integration"]).read_text())
-    if inventory(Path(plugin["installed_path"])) != plugin["files"]:
-        raise ValueError("The accepted installed plugin changed before publication")
+def require_cloud():
+    run(["Scripts/verify-publisher-ref.sh"])
 
 
 def release_view(tag):
@@ -127,83 +78,208 @@ def synchronize_assets(tag, assets, work):
             raise ValueError("Public unauthenticated download differs from the accepted delivery")
 
 
-def publish(run_dir, work):
-    definition = json.loads((ROOT / "Scripts/release-checks.json").read_text())
-    git_dir = Path(output(["git", "rev-parse", "--git-common-dir"], ROOT))
-    if not git_dir.is_absolute():
-        git_dir = ROOT / git_dir
-    checker = Runner(ROOT, run_dir, definition, git_dir / "computer-mcp-release.key")
-    if any(stage["status"] != "passed" for stage in checker.status("acceptance")):
-        raise ValueError("Publication requires authenticated, matching candidate and acceptance checkpoints")
-    if output(["git", "status", "--porcelain"], ROOT):
-        raise ValueError("Publication requires committed source")
-    candidate_dir = run_dir / "work/candidate"
-    candidate = json.loads((candidate_dir / "candidate.json").read_text())
-    acceptance = json.loads((run_dir / "work/acceptance/acceptance.json").read_text())
-    verify_acceptance(candidate, acceptance, run_dir / "work/acceptance")
-    version = candidate["version"]["version"]
-    tag = "v" + version
-    commit = (checker.candidate_source or checker.source)["commit"]
-    if candidate["source_commit"] != commit:
-        raise ValueError("Candidate commit differs from the source being tagged")
-    if file_digest(candidate_dir / "candidate.tar.gz") != candidate["archive_sha256"]:
-        raise ValueError("Candidate archive changed after acceptance")
-    previous = os.environ.get("RELEASE_PREVIOUS_WORK_DIR") or os.environ.get("RELEASE_INTERRUPTED_WORK_DIR")
-    if previous:
-        restore_assembly(Path(previous), work, candidate, checker.key())
-    if not (work / "dist").exists():
-        extract_bundle(candidate_dir / "candidate.tar.gz", work)
-    dist = work / "dist"
-    dmg = dist / f"Computer-MCP-{version}-universal.dmg"
-    expected_dmg = candidate["outputs"][dmg.name]["."]["sha256"]
-    if file_digest(dmg) != expected_dmg:
-        raise ValueError("Distribution bytes differ from the accepted artifact")
-    run(["Scripts/verify-release-readiness.sh"])
-    run(["Scripts/verify-release-record-rendering.sh"])
-    remote_tag = output(["git", "ls-remote", "--tags", "origin", "refs/tags/" + tag], ROOT)
-    if remote_tag:
-        run(["git", "fetch", "origin", "refs/tags/" + tag + ":refs/tags/" + tag])
-    existing = output(["git", "tag", "--list", tag], ROOT)
-    if not existing:
-        message = work / "tag-message.txt"
-        message.write_text(f"Computer MCP {version}\n\nAccepted candidate {candidate['candidate']}\nDMG SHA-256 {expected_dmg}\n")
-        run(["git", "tag", "-s", tag, commit, "--file", str(message)])
-    run(["git", "fetch", "origin", "master"])
-    run(["Scripts/verify-release-ref.sh"],
-        env=dict(os.environ, RELEASE_TAG=tag, RELEASE_COMMIT=commit, REQUIRE_REMOTE_BRANCH="1"))
-    run(["git", "push", "origin", "refs/tags/" + tag])
-    identity = plistlib.loads((dist / "Computer MCP.app/Contents/Resources/ComputerMCPBuildIdentity.plist").read_bytes())
-    environment = dict(os.environ, OUTPUT_DIR=str(dist), EXPECTED_TEAM_ID=identity["team_identifier"],
-                       GITHUB_SERVER_URL="https://github.com", GITHUB_REPOSITORY=REPOSITORY,
-                       GITHUB_RUN_ID=str(candidate["run_id"]), RELEASE_COMMIT=commit)
-    if not (work / "publication-assets.json").exists():
-        run(["Scripts/assemble-release-assets.sh"], env=environment)
-    if file_digest(dmg) != expected_dmg:
-        raise ValueError("Release assembly changed the accepted DMG")
+
+def candidate_identity():
+    directory = ROOT / ".agent/candidate"
+    record = json.loads((directory / "candidate.json").read_text())
+    if (record["source_commit"] != os.environ["GITHUB_SHA"]
+            or record["repository"] != REPOSITORY
+            or record["workflow"] != ".github/workflows/release-gate.yml"
+            or record["version"] != json.loads((ROOT / "Version.json").read_text())
+            or record["archive_sha256"] != file_digest(directory / "candidate.tar.gz")):
+        raise ValueError("Candidate does not match the protected source and immutable archive")
+    for name, expected in record["outputs"].items():
+        if Path(name).name != name or inventory(ROOT / "dist" / name) != expected:
+            raise ValueError("Candidate output changed: " + name)
+    return record
+
+
+def verify_assembly(work):
+    record = json.loads((work / "publication-assets.json").read_text())
+    if record["source_commit"] != os.environ["GITHUB_SHA"]:
+        raise ValueError("Publication assembly belongs to another source commit")
     assets = []
-    for line in (dist / "SHA256SUMS").read_text().splitlines():
-        checksum, name = line.split()
-        if not re.fullmatch(r"[0-9a-f]{64}", checksum) or Path(name).name != name or file_digest(dist / name) != checksum:
-            raise ValueError("Invalid final asset checksum")
-        assets.append(dist / name)
-    website_record = dist / "release.json"
-    atomic_json(website_record, {"schema_version": 1, "product": "Computer MCP", "version": version,
-                                "main_repository": "https://github.com/" + REPOSITORY, "source_commit": commit,
-                                "release_tag": tag, "release_url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}"})
-    assets.extend([dist / "SHA256SUMS", website_record])
-    atomic_json(work / "publication-assets.json", {"candidate": candidate["candidate"],
-                "assets": {asset.name: file_digest(asset) for asset in assets}})
-    checkpoint_assembly(work, candidate, checker.key())
-    synchronize_assets(tag, assets, work)
-    atomic_json(work / "delivery.json", {"status": "published", "version": version, "source_commit": commit,
-                                        "candidate": candidate["candidate"], "dmg_sha256": expected_dmg,
-                                        "release_url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}"})
-    print(json.dumps({"status": "published", "version": version, "dmg_sha256": expected_dmg}))
+    for name, digest in record["assets"].items():
+        path = work / "dist" / name
+        if (Path(name).name != name or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or path.is_symlink() or not path.is_file() or file_digest(path) != digest):
+            raise ValueError("Publication asset changed: " + name)
+        assets.append(path)
+    if {path.name for path in (work / "dist").iterdir()} != set(record["assets"]):
+        raise ValueError("Publication has unexpected assets")
+    if output(["git", "rev-parse", record["tag"]], ROOT) != record["tag_object"]:
+        raise ValueError("Publication tag identity changed")
+    return record, assets
+
+
+def sign_tag(tag, commit, message):
+    key = WORK / "tag-signing-key"
+    identity = os.environ["RELEASE_TAG_SIGNING_IDENTITY"]
+    if not re.fullmatch(r"[^\s<>]+@[^\s<>]+", identity):
+        raise ValueError("Invalid release signing identity")
+    try:
+        if TAG_SIGNING_KEY is None:
+            raise ValueError("Protected tag signing key is required")
+        key.write_text(TAG_SIGNING_KEY)
+        key.chmod(0o600)
+        run(["git", "-c", "user.name=Computer MCP Release", "-c", "user.email=" + identity,
+             "-c", "gpg.format=ssh", "-c", "user.signingkey=" + str(key),
+             "tag", "-s", tag, commit, "--file", str(message)])
+    finally:
+        key.unlink(missing_ok=True)
+
+
+def assemble():
+    require_cloud()
+    WORK.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if (WORK / "publication-assets.json").exists():
+        verify_assembly(WORK)
+        return
+    candidate = candidate_identity()
+    version, commit = candidate["version"]["version"], candidate["source_commit"]
+    tag = "v" + version
+    dmg_name = f"Computer-MCP-{version}-universal.dmg"
+    dmg_hash = candidate["outputs"][dmg_name]["."]["sha256"]
+    if output(["git", "ls-remote", "--tags", "origin", "refs/tags/" + tag], ROOT):
+        run(["git", "fetch", "origin", "refs/tags/" + tag + ":refs/tags/" + tag])
+    if not output(["git", "tag", "--list", tag], ROOT):
+        message = WORK / "tag-message.txt"
+        message.write_text(f"Computer MCP {version}\n\nProtected candidate {candidate['candidate']}\nDMG SHA-256 {dmg_hash}\n")
+        sign_tag(tag, commit, message)
+    run(["Scripts/verify-release-ref.sh"], env=dict(os.environ, RELEASE_TAG=tag,
+        RELEASE_COMMIT=commit, REQUIRE_REMOTE_BRANCH="1"))
+    run(["gh", "auth", "setup-git"])
+    run(["git", "push", "origin", "refs/tags/" + tag])
+    environment = dict(os.environ, OUTPUT_DIR=str(ROOT / "dist"), RELEASE_COMMIT=commit,
+                       GITHUB_RUN_ID=str(candidate["run_id"]), GITHUB_RUN_ATTEMPT=str(candidate["run_attempt"]))
+    run(["Scripts/assemble-release-assets.sh"], env=environment)
+    source = ROOT / "dist"
+    website = source / "release.json"
+    atomic_json(website, {"schema_version":1, "product":"Computer MCP", "version":version,
+        "main_repository":"https://github.com/" + REPOSITORY, "source_commit":commit,
+        "release_tag":tag, "release_url":f"https://github.com/{REPOSITORY}/releases/tag/{tag}"})
+    assets = []
+    for line in (source / "SHA256SUMS").read_text().splitlines():
+        digest, name = line.split()
+        if Path(name).name != name or file_digest(source / name) != digest:
+            raise ValueError("Invalid assembled checksum")
+        assets.append(source / name)
+    assets.append(website)
+    run(["Scripts/write-release-checksums.sh", str(source), str(source / "SHA256SUMS"),
+         *[str(path) for path in assets]])
+    assets.append(source / "SHA256SUMS")
+    if file_digest(source / dmg_name) != dmg_hash:
+        raise ValueError("Release assembly changed the notarized DMG")
+    destination = WORK / "dist"
+    destination.mkdir()
+    for path in assets:
+        shutil.copy2(path, destination / path.name)
+    atomic_json(WORK / "publication-assets.json", {"candidate":candidate["candidate"],
+        "source_commit":commit, "archive_sha256":candidate["archive_sha256"], "tag":tag,
+        "tag_object":output(["git", "rev-parse", tag], ROOT), "dmg_sha256":dmg_hash,
+        "assets":{path.name:file_digest(path) for path in assets}})
+    verify_assembly(WORK)
+
+
+def publish():
+    require_cloud()
+    record, assets = verify_assembly(WORK)
+    synchronize_assets(record["tag"], assets, WORK)
+    atomic_json(WORK / "delivery.json", {"status":"published", "source_commit":record["source_commit"],
+        "tag":record["tag"], "dmg_sha256":record["dmg_sha256"],
+        "release_url":f"https://github.com/{REPOSITORY}/releases/tag/{record['tag']}"})
+    print(json.dumps({"status":"published", "tag":record["tag"]}))
+
+
+def verify_public(tag):
+    require_cloud()
+    if not re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag):
+        raise ValueError("A stable release tag is required")
+    remote = release_view(tag)
+    if remote is None or remote["draft"] or remote["prerelease"]:
+        raise ValueError("A public stable release is required")
+    work = ROOT / ".agent/public-release-verification"
+    work.mkdir(parents=True, exist_ok=True)
+    run(["gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", str(work)])
+    checksums = {}
+    for line in (work / "SHA256SUMS").read_text().splitlines():
+        digest, name = line.split()
+        if (Path(name).name != name or name in checksums or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or file_digest(work / name) != digest):
+            raise ValueError("Public release checksum mismatch")
+        checksums[name] = digest
+    checksums["SHA256SUMS"] = file_digest(work / "SHA256SUMS")
+    record = json.loads((work / "release.json").read_text())
+    if record["release_tag"] != tag or record["main_repository"] != "https://github.com/" + REPOSITORY:
+        raise ValueError("Public delivery record identity differs")
+    run(["git", "fetch", "origin", "refs/tags/" + tag + ":refs/tags/" + tag])
+    run(["Scripts/verify-release-ref.sh"], env=dict(os.environ, RELEASE_TAG=tag,
+        RELEASE_COMMIT=record["source_commit"], REQUIRE_REMOTE_BRANCH="1"))
+    if {asset["name"] for asset in remote["assets"]} != set(checksums):
+        raise ValueError("Public release asset inventory differs")
+    public = work / "public"
+    public.mkdir()
+    for asset in remote["assets"]:
+        if asset["digest"] != "sha256:" + checksums[asset["name"]]:
+            raise ValueError("GitHub public asset digest differs")
+        target = public / asset["name"]
+        run(["/usr/bin/curl", "--fail", "--location", "--silent", "--show-error", "--max-time", "120",
+             "--output", str(target), asset["browser_download_url"]])
+        if file_digest(target) != checksums[asset["name"]]:
+            raise ValueError("Unauthenticated public download differs")
+    version = record["version"]
+    for kind in ("App", "DMG"):
+        if json.loads((work / f"Computer-MCP-{version}-{kind}Notary.json").read_text())["status"] != "Accepted":
+            raise ValueError("Published notarization was not accepted")
+    dmg = work / f"Computer-MCP-{version}-universal.dmg"
+    run(["/usr/bin/codesign", "--verify", "--strict", str(dmg)])
+    run(["xcrun", "stapler", "validate", str(dmg)])
+    mount = work / "mount"
+    mount.mkdir()
+    run(["/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(dmg)])
+    try:
+        app = mount / "Computer MCP.app"
+        run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)])
+        run(["/usr/sbin/spctl", "--assess", "--type", "execute", str(app)])
+        run(["xcrun", "stapler", "validate", str(app)])
+        identity = plistlib.loads((app / "Contents/Resources/ComputerMCPBuildIdentity.plist").read_bytes())
+        authority = json.loads(output(["git", "show", record["source_commit"] + ":Version.json"], ROOT))
+        if (identity["source_commit"] != record["source_commit"] or identity["version"] != authority["version"]
+                or str(identity["build"]) != str(authority["build"])
+                or identity["team_identifier"] != os.environ["EXPECTED_TEAM_ID"]
+                or identity["embedded_cli_sha256"] != file_digest(app / "Contents/Resources/computer-mcp")):
+            raise ValueError("Published App build identity differs from the signed release source")
+    finally:
+        run(["/usr/bin/hdiutil", "detach", str(mount)])
+    message = work / "signing-check.txt"
+    message.write_text("Release automation signing check\n")
+    WORK.mkdir(parents=True, exist_ok=True)
+    scratch_tag = "release-signing-check-" + os.environ["GITHUB_RUN_ID"]
+    sign_tag(scratch_tag, os.environ["GITHUB_SHA"], message)
+    try:
+        run(["git", "-c", "gpg.format=ssh", "-c",
+             "gpg.ssh.allowedSignersFile=" + str(ROOT / ".github/signing-allowed-signers"), "verify-tag", scratch_tag])
+    finally:
+        run(["git", "tag", "-d", scratch_tag])
+    print(json.dumps({"status":"verified", "tag":tag, "tag_signing":"passed"}))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("assemble", "publish", "verify-public"))
+    parser.add_argument("--tag")
+    args = parser.parse_args()
+    if args.operation == "assemble":
+        assemble()
+    elif args.operation == "publish":
+        publish()
+    else:
+        verify_public(args.tag or "v" + json.loads((ROOT / "Version.json").read_text())["version"])
 
 
 if __name__ == "__main__":
     try:
-        publish(Path(os.environ["RELEASE_RUN_DIR"]), Path(os.environ["RELEASE_WORK_DIR"]))
+        main()
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
-        print("Publication failed: " + str(error), file=sys.stderr)
+        print("Cloud publication failed: " + str(error), file=sys.stderr)
         sys.exit(1)

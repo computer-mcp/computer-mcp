@@ -26,6 +26,9 @@ fail() {
 
 protected_scripts=(
   Scripts/verify-candidate-ref.sh
+  Scripts/verify-publisher-ref.sh
+  Scripts/publish-release.py
+  Scripts/restore-cloud-release.py
   Scripts/version.py
   Scripts/candidate.py
   Scripts/release.py

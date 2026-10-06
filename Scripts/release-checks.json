@@ -3,7 +3,7 @@
   "profiles": {
     "candidate": ["candidate"],
     "acceptance": ["acceptance"],
-    "publish": ["publish"],
+    "publish": ["candidate"],
     "ci": ["distribution", "documentation", "interfaces", "validation", "swift-tests", "syntax", "dependencies"],
     "source": ["documentation", "interfaces", "validation", "swift-tests", "syntax", "dependencies"],
     "boundaries": ["dependencies", "syntax"]
@@ -26,7 +26,7 @@
         ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--configuration", ".swift-format", "Package.swift", "Sources", "Tests"],
         ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--configuration", ".swift-format", "Tools/Validation/Package.swift", "Tools/Validation/Sources", "Tools/Validation/Tests"],
         ["python3", "-m", "unittest", "discover", "-s", "Scripts/tests", "-p", "test_*.py"],
-        ["python3", "-m", "py_compile", "Scripts/accept-release.py", "Scripts/install-candidate.py", "Scripts/verify-installed-workspaces.py", "Scripts/verify-installed-runtime.py", "Scripts/verify-codex-gateway-flow.py"],
+        ["python3", "-m", "py_compile", "Scripts/accept-release.py", "Scripts/install-candidate.py", "Scripts/verify-installed-workspaces.py", "Scripts/verify-installed-runtime.py", "Scripts/verify-codex-gateway-flow.py", "Scripts/publish-release.py", "Scripts/restore-cloud-release.py"],
         ["xcrun", "swiftc", "-typecheck", "Scripts/verify-app-navigation.swift"],
         ["xcrun", "swiftc", "-typecheck", "Scripts/quit-installed-app.swift"],
         ["zsh", "-c", "for script in Scripts/*.sh; do zsh -n \"$script\" || exit; done"],
@@ -92,7 +92,7 @@
       "timeout_seconds": 7500,
       "retain_outputs": true,
       "commands": [["python3", "Scripts/candidate.py", "request"]],
-      "access": "Trusted master, GitHub Actions dispatch and protected production environment approval"
+      "access": "Trusted master and protected cloud construction, signing, notarization and GitHub Release publication"
     },
     {
       "id": "acceptance",
@@ -101,14 +101,6 @@
       "retain_outputs": true,
       "commands": [["python3", "Scripts/accept-release.py"]],
       "access": "Exact installed candidate; production cutover and native TCC permissions"
-    },
-    {
-      "id": "publish",
-      "needs": ["acceptance"],
-      "timeout_seconds": 1200,
-      "retain_outputs": true,
-      "commands": [["python3", "Scripts/publish-release.py"]],
-      "access": "Authorized tag signing and GitHub release publication; promotes accepted bytes"
     }
   ]
 }

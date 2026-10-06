@@ -48,8 +48,12 @@ UNRELEASED_CONTENT=$(/usr/bin/awk '
 [[ -z "$UNRELEASED_CONTENT" ]] || fail "CHANGELOG.md Unreleased must be empty."
 
 if [[ ${GITHUB_ACTIONS:-false} == "true" ]]; then
-  [[ ${GITHUB_REF_TYPE:-} == "tag" ]] || fail "GitHub release must run from a tag ref."
-  [[ ${GITHUB_REF_NAME:-} == "$TAG" ]] || fail "GitHub ref name does not match $TAG."
+  if [[ ${GITHUB_REF_TYPE:-} == "branch" ]]; then
+    "$ROOT_DIR/Scripts/verify-publisher-ref.sh"
+  else
+    [[ ${GITHUB_REF_TYPE:-} == "tag" ]] || fail "Unsupported GitHub release ref."
+    [[ ${GITHUB_REF_NAME:-} == "$TAG" ]] || fail "GitHub ref name does not match $TAG."
+  fi
   [[ ${GITHUB_SHA:-} == $(git -C "$ROOT_DIR" rev-parse HEAD) ]] \
     || fail "GITHUB_SHA does not match HEAD."
 fi

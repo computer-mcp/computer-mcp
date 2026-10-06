@@ -302,8 +302,9 @@ Standalone 不使用 App-owned Bookmark、数据库状态或 Keychain Tunnel 凭
 作为第二个 App 状态所有者同时运行。提交修改前请阅读
 [Examples](Examples/README.md)和 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-正式版本只来自受保护的签名 Tag Workflow。它负责构建、Developer ID 签名、公证、
-Staple、验证并创建 Draft GitHub Release；发布仍是独立的人工验收步骤。完整流程见
+正式版本来自 canonical master 的受保护发布 Workflow。源码检查、构建、Developer ID
+签名、公证、Staple、签名 Tag、附件上传和正式发布均在 GitHub Actions 完成，官网自动
+同步公开发布记录。完整流程见
 [Release Reference](Documentation/Reference/Release.md)。
 
 Computer MCP 采用 [Functional Source License 1.1，Apache 2.0 Future License](LICENSE)

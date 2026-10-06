@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -114,7 +115,7 @@ def request():
     deadline = time.monotonic() + 7200
     while time.monotonic() < deadline:
         runs = api("actions/workflows/release-gate.yml/runs?branch=master&event=workflow_dispatch&per_page=100")["workflow_runs"]
-        matches = [run for run in runs if run["display_title"] == "Computer MCP candidate " + record["request_id"]]
+        matches = [run for run in runs if run["display_title"] == "Computer MCP release " + record["request_id"]]
         if not matches:
             if time.time() - record["requested_at"] > 180:
                 raise ValueError("Dispatch has no identifiable run; inspect Actions before creating another candidate")
@@ -131,7 +132,7 @@ def request():
             return 75
         if run["status"] == "completed":
             if run["conclusion"] != "success":
-                raise ValueError(f"Candidate failed ({run['conclusion']}): {run['html_url']}; preserve this run and use a new candidate after the fix")
+                raise ValueError(f"Candidate failed ({run['conclusion']}): {run['html_url']}; inspect and retry the same Actions run for publication recovery")
             download(run, work, commit)
             return 0
         time.sleep(10)
@@ -141,11 +142,14 @@ def request():
 def download(run, work, commit):
     verify_run(run, commit)
     artifacts = api(f"actions/runs/{run['id']}/artifacts")["artifacts"]
-    name = f"computer-mcp-candidate-{run['id']}-{run['run_attempt']}"
-    matches = [item for item in artifacts if item["name"] == name and not item["expired"]]
-    if len(matches) != 1:
-        raise ValueError("Missing or ambiguous immutable candidate artifact")
-    artifact = matches[0]
+    matches = []
+    for item in artifacts:
+        match = re.fullmatch(f"computer-mcp-candidate-{run['id']}-([0-9]+)", item["name"])
+        if match and not item["expired"] and int(match[1]) <= run["run_attempt"]:
+            matches.append((int(match[1]), item))
+    if not matches:
+        raise ValueError("Missing immutable candidate artifact")
+    attempt, artifact = max(matches, key=lambda item: item[0])
     checksum = artifact.get("digest", "")
     if not checksum.startswith("sha256:") or len(checksum) != 71:
         raise ValueError("GitHub did not provide a trusted artifact digest")
@@ -162,7 +166,7 @@ def download(run, work, commit):
     candidate = json.loads((work / "candidate.json").read_text())
     if (candidate["source_commit"] != commit or candidate["repository"] != REPOSITORY
             or candidate["workflow"] != WORKFLOW or candidate["run_id"] != run["id"]
-            or candidate["run_attempt"] != run["run_attempt"]
+            or candidate["run_attempt"] != attempt
             or candidate["version"] != json.loads((ROOT / "Version.json").read_text())):
         raise ValueError("Candidate manifest is bound to different inputs")
     if file_digest(work / "candidate.tar.gz") != candidate["archive_sha256"]:

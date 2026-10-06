@@ -120,7 +120,7 @@ def sign_tag(tag, commit, message):
     try:
         if TAG_SIGNING_KEY is None:
             raise ValueError("Protected tag signing key is required")
-        key.write_text(TAG_SIGNING_KEY)
+        key.write_text(TAG_SIGNING_KEY.rstrip("\r\n") + "\n")
         key.chmod(0o600)
         run(["git", "-c", "user.name=Computer MCP Release", "-c", "user.email=" + identity,
              "-c", "gpg.format=ssh", "-c", "user.signingkey=" + str(key),

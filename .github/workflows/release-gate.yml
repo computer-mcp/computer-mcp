@@ -44,8 +44,10 @@ jobs:
       - name: Verify candidate source
         run: Scripts/verify-publisher-ref.sh
       - name: Install gate tooling
+        if: inputs.operation == 'publish'
         run: brew install actionlint jq ripgrep
       - name: Shared candidate checks
+        if: inputs.operation == 'publish'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 Scripts/release.py run --run candidate-checks --profile source --reuse-ci

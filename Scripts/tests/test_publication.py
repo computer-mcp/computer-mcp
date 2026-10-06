@@ -51,6 +51,32 @@ class PublicationEvidence(unittest.TestCase):
                     publisher.sign_tag("v1.2.3", "a" * 40, work / "message")
                 self.assertFalse((work / "tag-signing-key").exists())
 
+    def test_secret_without_final_newline_can_sign_and_verify_a_git_tag(self):
+        fixtures = Path(__file__).parents[2] / ".agent/test-signing"
+        fixtures.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=fixtures) as temporary:
+            root = Path(temporary)
+            signing = root / "fixture-key"
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(signing)], check=True)
+            secret = signing.read_text().rstrip("\r\n")
+            trust = root / "allowed-signers"
+            trust.write_text("release@example.test " + signing.with_suffix(".pub").read_text())
+            signing.unlink()
+            signing.with_suffix(".pub").unlink()
+            subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                            "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Fixture"],
+                           check=True, capture_output=True)
+            message = root / "message"
+            message.write_text("Fixture release\n")
+            with patch.object(publisher, "ROOT", root), patch.object(publisher, "WORK", root), \
+                    patch.object(publisher, "TAG_SIGNING_KEY", secret), \
+                    patch.dict(os.environ, {"RELEASE_TAG_SIGNING_IDENTITY":"release@example.test"}):
+                publisher.sign_tag("v1.2.3", "HEAD", message)
+            subprocess.run(["git", "-C", str(root), "-c", "gpg.format=ssh", "-c",
+                            "gpg.ssh.allowedSignersFile=" + str(trust), "verify-tag", "v1.2.3"], check=True)
+            self.assertFalse((root / "tag-signing-key").exists())
+
     def test_partial_upload_resumes_without_replacing_bytes_and_publication_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

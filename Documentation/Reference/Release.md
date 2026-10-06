@@ -12,7 +12,9 @@ construction, Developer ID signing, notarization, signed-tag creation, asset
 upload and public-release verification in GitHub Actions. The no-secret job is
 read-only. The `production` job has repository content-write and Actions-read
 permissions, and runs only an explicitly requested canonical `master` commit.
-Its Environment authorization permits the complete release operation.
+Its Environment authorization permits the complete release operation. Publication
+requires matching successful canonical source checks. Public-release verification
+uses protected master to check the existing distribution and signing key.
 
 `Scripts/candidate.py` preserves the built artifact and authenticates GitHub
 artifact retrieval. `Scripts/publish-release.py` assembles and publishes the

@@ -6,6 +6,52 @@ import Testing
 @Suite
 
 final class DefaultGatewayConfigurationTests {
+  @Test(arguments: [false, true])
+  func testDefaultManifestPreservesCodexEntryAcrossUpgrade(linkDirectory: Bool) throws {
+    let fixture = try DefaultManifestFixture()
+    defer { fixture.cleanup() }
+    let manager = FileManager.default
+    let bin = fixture.root.appendingPathComponent("bin")
+    let firstVersion = fixture.root.appendingPathComponent("Caskroom/codex/1.0/bin")
+    let nextVersion = fixture.root.appendingPathComponent("Caskroom/codex/2.0/bin")
+    for directory in [firstVersion, nextVersion] {
+      try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+      let executable = directory.appendingPathComponent("codex")
+      try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+      try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    }
+    let entry = bin.appendingPathComponent("codex")
+    let link = linkDirectory ? bin : entry
+    if !linkDirectory {
+      try manager.createDirectory(at: bin, withIntermediateDirectories: true)
+    }
+    try manager.createSymbolicLink(
+      at: link,
+      withDestinationURL: linkDirectory
+        ? firstVersion : firstVersion.appendingPathComponent("codex"))
+
+    let manifest = DefaultGatewayConfiguration.makeManifest(
+      environment: ["PATH": bin.path], homeDirectory: fixture.root)
+    try manifest.write(to: fixture.manifest, atomically: true, encoding: .utf8)
+    let configuration = try GatewayConfiguration.load(path: fixture.manifest.path)
+    let command = try #require(configuration.cli.commands.first { $0.id == "codex" })
+    #expect(command.executable == entry.standardizedFileURL.path)
+
+    try manager.removeItem(at: link)
+    try manager.createSymbolicLink(
+      at: link,
+      withDestinationURL: linkDirectory ? nextVersion : nextVersion.appendingPathComponent("codex"))
+    try manager.removeItem(at: firstVersion)
+
+    let reloaded = try GatewayConfiguration.load(path: fixture.manifest.path)
+    let savedCommand = try #require(reloaded.cli.commands.first { $0.id == "codex" })
+    #expect(savedCommand.executable == command.executable)
+    #expect(manager.isExecutableFile(atPath: savedCommand.executable))
+    #expect(
+      URL(fileURLWithPath: savedCommand.executable).resolvingSymlinksInPath()
+        == nextVersion.appendingPathComponent("codex").resolvingSymlinksInPath())
+  }
+
   @Test
   func testDefaultManifestDefinesCompleteExplicitProfileBoundaries() throws {
     let fixture = try DefaultManifestFixture()

@@ -24,6 +24,10 @@ candidates leave the admitted configuration active.
 `AppControlPlaneService` owns durable state and direct domain mechanisms:
 manifest revisions, GRDB records, security-scoped bookmarks, Keychain secrets,
 provider discovery, Tunnel supervisors, and launch at login.
+On first launch it activates `DefaultGatewayConfiguration.manifest` when the
+manifest is absent. Codex discovery preserves the selected absolute executable
+entry path, including symbolic links, so package-manager upgrades can replace
+the target. Existing manifests remain user-owned configuration.
 `AppGatewayService` owns the private gateway socket, App HTTP principal runtimes
 and external manifest monitoring. Each HTTP listener has its own admission epoch
 and current/retained runtime generations. Cloudflare origins use this shared

@@ -191,7 +191,7 @@ jobs:
 
       - name: Preserve immutable signed candidate
         if: inputs.operation == 'publish' && steps.recovery.outputs.candidate != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: computer-mcp-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: .agent/candidate/candidate.*
@@ -210,7 +210,7 @@ jobs:
 
       - name: Preserve publication recovery
         if: inputs.operation == 'publish'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: computer-mcp-publication-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

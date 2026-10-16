@@ -85,6 +85,9 @@ independent result evidence. Local component tests and probes are auxiliary.
 
 The independent Codex plugin adapts App Server and Exec through `swift-codex`.
 Codex retains its native configuration, execution permissions and approvals.
+The default manifest's generic Codex CLI registration stores the absolute entry
+path discovered from `PATH` or a known installation location, preserving symbolic
+links across installer upgrades. Existing configured paths remain unchanged.
 Skills are gateway capabilities independent of Codex. Generic CLI execution,
 process spawning and Full Shell require explicit host capability authorization
 and the corresponding permission mode; profile names do not grant access.

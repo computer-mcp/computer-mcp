@@ -185,6 +185,13 @@ registrations and grants.
 
 ## Provider examples
 
+The generated default manifest discovers Codex from the process's `PATH`, then
+known installation locations, and stores the selected absolute entry path.
+Symbolic links are preserved so an installer can update their targets without
+changing the manifest; for Homebrew this is `/opt/homebrew/bin/codex`. If Codex
+is unavailable, the default is the command name `codex`. Existing manifests
+retain their configured executable until explicitly edited.
+
 CLI providers support a mechanical argv contract:
 
 ```toml

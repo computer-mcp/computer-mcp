@@ -277,9 +277,13 @@ package enum DefaultGatewayConfiguration {
     ].contains(domain)
   }
 
-  package static let manifest: String = {
-    let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
-    let codexExecutable = resolvedCodexExecutable()
+  package static let manifest = makeManifest(
+    environment: ProcessInfo.processInfo.environment,
+    homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
+
+  internal static func makeManifest(environment: [String: String], homeDirectory: URL) -> String {
+    let home = homeDirectory.standardizedFileURL.path
+    let codexExecutable = resolvedCodexExecutable(environment: environment, home: homeDirectory)
     return """
       schema_version = 1
 
@@ -385,7 +389,7 @@ package enum DefaultGatewayConfiguration {
       [builtin]
       enabled = \(tomlArray(enabledBuiltinCapabilities))
       """
-  }()
+  }
 
   package static func configuration(
     for profileID: GatewayProfileID
@@ -425,9 +429,7 @@ package enum DefaultGatewayConfiguration {
     return "\"\(escaped)\""
   }
 
-  private static func resolvedCodexExecutable() -> String {
-    let environment = ProcessInfo.processInfo.environment
-    let home = FileManager.default.homeDirectoryForCurrentUser
+  private static func resolvedCodexExecutable(environment: [String: String], home: URL) -> String {
     var candidates = [
       URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
       URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex"),
@@ -444,6 +446,6 @@ package enum DefaultGatewayConfiguration {
     )
     return candidates.first {
       FileManager.default.isExecutableFile(atPath: $0.standardizedFileURL.path)
-    }?.standardizedFileURL.resolvingSymlinksInPath().path ?? "codex"
+    }?.standardizedFileURL.path ?? "codex"
   }
 }

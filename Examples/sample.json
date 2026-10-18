@@ -1,0 +1,8 @@
+{
+  "name": "computer-mcp sample",
+  "enabled": true,
+  "tags": ["gateway", "json"],
+  "limits": {
+    "maxTools": 128
+  }
+}

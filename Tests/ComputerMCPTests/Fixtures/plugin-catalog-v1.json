@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-09-28T01:00:00Z",
+  "generation": 1,
+  "publisher": {
+    "id": 315005910,
+    "login": "computer-mcp"
+  },
+  "releases": [
+    {
+      "assets": [
+        {
+          "id": 30,
+          "name": "example.zip",
+          "sha256": "c27fccbd79b21735f54896b847d155c7c044995c56c2202303ad4a99fa5f0b44",
+          "size": 744,
+          "url": "https://github.com/computer-mcp/plugin-example/releases/download/v1.0.0/example.zip"
+        }
+      ],
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "compatibility": {
+        "architectures": [
+          "arm64"
+        ],
+        "maximum_host": "3.0.0",
+        "minimum_host": "1.0.0",
+        "platforms": [
+          "macos"
+        ]
+      },
+      "contributions": {
+        "cli": [],
+        "mcp": [
+          "server"
+        ],
+        "skills": []
+      },
+      "dependencies": [
+        {
+          "applications": [],
+          "commands": [
+            "python3"
+          ],
+          "documentation": "https://www.python.org/",
+          "id": "runtime",
+          "instructions": "Install Python separately."
+        }
+      ],
+      "manifest_blob_sha": "de79f7e8ba61eeb5de7900729d49d6889b6f788b",
+      "manifest_sha256": "6e7ea7360a9539ac9b34fcf318f7b094a8392f06761c575b9ebb18de02772e72",
+      "name": "工具 Plugin",
+      "plugin_id": "example",
+      "prerelease": false,
+      "published_at": "2026-09-28T01:00:00Z",
+      "release_id": 20,
+      "repository": "computer-mcp/plugin-example",
+      "repository_id": 10,
+      "summary": null,
+      "tag": "v1.0.0",
+      "version": "1.0.0",
+      "withdrawal_reason": null,
+      "withdrawn": false
+    }
+  ],
+  "revision": "5c751086b1b61120cc2addc21d5a2e3f6d7baa22299774277bddfe762d6f4651",
+  "schema_version": 1
+}

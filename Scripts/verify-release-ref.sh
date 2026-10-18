@@ -1,0 +1,65 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT_DIR=${0:A:h:h}
+python3 "$ROOT_DIR/Scripts/version.py" check
+VERSION=$(python3 "$ROOT_DIR/Scripts/version.py" show --field version)
+TAG=${RELEASE_TAG:-${GITHUB_REF_NAME:-"v$VERSION"}}
+RELEASE_BRANCH=${RELEASE_BRANCH:-master}
+REQUIRE_REMOTE_BRANCH=${REQUIRE_REMOTE_BRANCH:-0}
+RELEASE_COMMIT=${RELEASE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
+
+fail() {
+  echo "Release ref verification failed: $1" >&2
+  exit 1
+}
+
+[[ "$REQUIRE_REMOTE_BRANCH" == "0" || "$REQUIRE_REMOTE_BRANCH" == "1" ]] \
+  || fail "REQUIRE_REMOTE_BRANCH must be 0 or 1."
+[[ "$TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' ]] \
+  || fail "Tag must use the exact vMAJOR.MINOR.PATCH form."
+[[ "$TAG" == "v$VERSION" ]] || fail "$TAG does not match product version $VERSION."
+[[ $(git -C "$ROOT_DIR" cat-file -t "$TAG" 2>/dev/null) == "tag" ]] \
+  || fail "$TAG is not an annotated tag."
+[[ "$RELEASE_COMMIT" =~ '^[0-9a-f]{40}$' ]] || fail "RELEASE_COMMIT must be a full commit."
+[[ $(git -C "$ROOT_DIR" rev-parse "$TAG^{}") == "$RELEASE_COMMIT" ]] \
+  || fail "$TAG does not point to the accepted source commit."
+git -C "$ROOT_DIR" \
+  -c gpg.format=ssh \
+  -c gpg.ssh.allowedSignersFile="$ROOT_DIR/.github/signing-allowed-signers" \
+  verify-tag "$TAG"
+
+if [[ "$REQUIRE_REMOTE_BRANCH" == "1" ]]; then
+  remote_ref="refs/remotes/origin/$RELEASE_BRANCH"
+  git -C "$ROOT_DIR" show-ref --verify --quiet "$remote_ref" \
+    || fail "Missing $remote_ref; fetch the release branch before verification."
+  git -C "$ROOT_DIR" merge-base --is-ancestor "$RELEASE_COMMIT" "$remote_ref" \
+    || fail "$TAG is not reachable from origin/$RELEASE_BRANCH."
+fi
+
+/usr/bin/grep -Eq "^## $VERSION — [0-9]{4}-[0-9]{2}-[0-9]{2}$" \
+  "$ROOT_DIR/CHANGELOG.md" \
+  || fail "CHANGELOG.md has no dated $VERSION section."
+UNRELEASED_CONTENT=$(/usr/bin/awk '
+  /^## Unreleased$/ { in_unreleased = 1; next }
+  in_unreleased && /^## / { exit }
+  in_unreleased && NF { print }
+' "$ROOT_DIR/CHANGELOG.md")
+[[ -z "$UNRELEASED_CONTENT" ]] || fail "CHANGELOG.md Unreleased must be empty."
+
+if [[ ${GITHUB_ACTIONS:-false} == "true" ]]; then
+  if [[ ${GITHUB_REF_TYPE:-} == "branch" ]]; then
+    "$ROOT_DIR/Scripts/verify-publisher-ref.sh"
+  else
+    [[ ${GITHUB_REF_TYPE:-} == "tag" ]] || fail "Unsupported GitHub release ref."
+    [[ ${GITHUB_REF_NAME:-} == "$TAG" ]] || fail "GitHub ref name does not match $TAG."
+  fi
+  [[ ${GITHUB_SHA:-} == $(git -C "$ROOT_DIR" rev-parse HEAD) ]] \
+    || fail "GITHUB_SHA does not match HEAD."
+fi
+
+if [[ "$REQUIRE_REMOTE_BRANCH" == "1" ]]; then
+  echo "Release ref verification passed: $TAG on origin/$RELEASE_BRANCH."
+else
+  echo "Release ref verification passed: $TAG."
+fi

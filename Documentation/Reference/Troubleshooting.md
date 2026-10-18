@@ -1,0 +1,403 @@
+# Troubleshooting
+
+Start with the journey-specific readiness result:
+
+```sh
+computer-mcp doctor --journey local
+computer-mcp doctor --journey chatgpt
+computer-mcp doctor --journey cloudflare
+computer-mcp doctor --journey chatgpt --json
+```
+
+The command exits 0 only for Ready or Verified. A blocked App connection still
+returns parseable, redacted schema-1 JSON.
+
+## App Does Not Start
+
+Run the bundled executable directly to capture startup diagnostics:
+
+```sh
+"dist/Computer MCP.app/Contents/MacOS/Computer MCP"
+```
+
+Check:
+
+```text
+~/Library/Logs/Computer MCP/computer-mcp.jsonl
+~/Library/Application Support/Computer MCP/
+```
+
+The App rejects symlinked or foreign-owned control-plane directories. Product
+log files should be mode `0600`.
+
+## Bridge Cannot Connect
+
+Confirm the App is running and the socket shown in Diagnostics exists. Then:
+
+```sh
+"dist/Computer MCP.app/Contents/Resources/computer-mcp" bridge
+```
+
+A stale socket should be recovered on App startup. Normal Quit removes the
+owned socket. Do not start a second product owner with `serve`.
+
+Custom control-plane test directories must keep the Unix socket path within the
+platform `sockaddr_un` limit. A deeply nested temporary home can fail with
+`SocketAddressError`; the standard
+`~/Library/Application Support/Computer MCP/Runtime/gateway.sock` path is
+supported.
+
+## No Workspace Tools
+
+A fresh App intentionally exposes only onboarding-safe tools until a workspace
+is registered. Add a folder in **Workspaces**, verify its bookmark is
+Available, and retry `workspace.list`.
+
+**Add** opens the native macOS folder panel on every supported release. Select
+the folder itself, choose **Add**, and the existing Workspaces page refreshes
+in place. If the panel is already inside the desired folder, go to its parent
+first so the folder can be selected. A panel that does not appear is an App UI
+presentation problem, not a network, anti-scraping, Shell, or Keychain denial.
+
+When multiple workspaces are granted, include `workspace_id`; Computer MCP does
+not maintain a global current workspace.
+
+## Manifest Does Not Validate
+
+Use the Diagnostics manifest editor or:
+
+```sh
+swift run computer-mcp config validate --config <path>
+```
+
+Typical failures include duplicate IDs, invalid workspace grants, a remote
+`local-admin` binding, unknown capabilities, missing MCP transport fields,
+reexport prefix conflicts, and `danger-full-access` Codex sandbox.
+
+## An External Manifest Edit Does Not Take Effect
+
+While the gateway is running, saving its manifest prepares a candidate before
+changing active configuration. Existing connections and task owners remain
+available. If syntax, provider startup, workspace access or persistence fails,
+the gateway status reports a configuration reload error and keeps the previously
+admitted configuration active. Your edited file remains unchanged.
+
+Fix the reported cause and save the manifest again, or apply the corrected
+configuration through the App or owner CLI. Saving the same text again retries
+after an external cause, such as an unavailable provider, has been fixed.
+Starting the gateway again in the same App process also rechecks edits made while
+it was stopped. On a fresh App process launch, the startup manifest must validate;
+the retained running configuration is not a fallback for an invalid startup file.
+
+## Manifest Recovery Reports a Conflict
+
+Managed activation records the previous file and proposed revision in a private
+recovery file beside the manifest. After an interrupted write, recovery uses the
+database's committed revision to finish the replacement or restore the previous
+file. An unsuccessful transaction does not create an activated history entry.
+
+If the manifest contains an unrecognized external edit, recovery preserves both
+the edit and recovery record and reports a conflict. Preserve the manifest,
+recovery record, and control-plane database together for diagnosis; do not delete
+the record or discard the external edit to bypass the error. Treat these files as
+private configuration and do not post their contents in a public issue.
+
+Another active writer produces a retryable transaction-in-progress error. A
+stale preview requires a fresh preview before applying the change.
+
+## ChatGPT Cannot Connect
+
+ChatGPT Web cannot connect directly to local stdio or `localhost`. Follow the
+[ChatGPT Web Runbook](ChatGPTWebRunbook.md).
+
+Verify:
+
+- Developer mode and custom Apps are available for the account/workspace;
+- the Tunnel is associated with the exact ChatGPT workspace;
+- both runtime key and app creator have `Tunnels Read + Use`;
+- the App Tunnel state is Running;
+- `/healthz` and `/readyz` succeed;
+- the local MCP subprocess remains alive.
+
+Custom MCP Apps are web-configured. ChatGPT Pro is read/fetch only; eligible
+Business, Enterprise, and Edu workspaces can expose write/modify tools.
+
+## Tunnel Doctor Fails
+
+Verify the installed client:
+
+```sh
+command -v tunnel-client
+tunnel-client --version
+```
+
+The App uses a Keychain runtime key. Re-enter it if revoked. Platform Tunnel
+creation/edit requires `Read + Manage`; running/selecting requires
+`Read + Use`.
+
+If ChatGPT reports an SSE probe failure and the Tunnel log contains an HTTP 403
+before any Gateway request is recorded, compare Safari connectivity with the
+App-launched Tunnel. Leave the Tunnel HTTP proxy field blank to follow the
+fixed macOS HTTPS/HTTP proxy, or configure a credential-free `http://` or
+`https://` proxy URL explicitly. Run Diagnostics validates the profile but
+cannot prove that a later long-poll reached the OpenAI control plane; confirm
+the live Tunnel log and a correlated Gateway request.
+
+When the App already owns a running OpenAI Tunnel, Run Diagnostics keeps the
+saved runtime health address unchanged and gives the diagnostic subprocess an
+ephemeral loopback health listener. This prevents Doctor from reporting the
+managed Tunnel's own listener as an unrelated port conflict. A stopped Tunnel
+is still diagnosed against its saved health-listener configuration so a real
+conflict is caught before launch.
+
+If a rebuilt App leaves a Tunnel in Starting while no Tunnel process appears,
+inspect its signature and provisioning before changing the profile. The live
+App requires a non-ad-hoc Team ID, a matching environment/Bundle ID, an
+embedded provisioning profile, and the exact private Data Protection Keychain
+group `<TeamID>.<BundleID>`. Apple Development and Developer ID certificates
+for the same Team and production Bundle share that group. The credential is not
+owned by an individual App binary, so routine builds with the stable signed
+identity do not require an owner prompt. An ad-hoc build fails the App control
+plane closed rather than reading production secrets. Never copy a key into TOML
+or logs. Run Diagnostics to verify credential availability; list views
+intentionally do not query Keychain.
+
+Use the official local admin UI and endpoints:
+
+```text
+/ui
+/healthz
+/readyz
+/metrics
+```
+
+If ChatGPT asks for OAuth, recreate the integration as a Tunnel connection
+instead of pasting the OpenAI-hosted Tunnel endpoint as a Server URL.
+
+## Provider Is Unavailable
+
+Open **Providers** and run Doctor. Optional providers do not block the gateway.
+Confirm the executable is available in the App launch environment, not only an
+interactive shell.
+
+For downstream MCP:
+
+```sh
+swift run computer-mcp config validate --connect --config <path>
+```
+
+Then use `mcp.servers.status`, `mcp.tools.list`, and provider events to separate
+startup, protocol, authentication, and downstream tool failures.
+
+## CLI Call Fails
+
+Use `cli.describe` and `cli.help`, then execute the returned argv through
+`cli.exec`. No shell expansion is performed. `cli.exec` is unavailable to a
+remote caller unless its locally selected profile grants Full Shell-equivalent
+authority.
+
+## Codex Call Fails
+
+Run Provider Doctor and inspect each path independently:
+
+- `codex.app.status`
+- `codex.exec.list`
+
+When another official Codex client cannot claim a thread, inspect ownership
+before restarting applications or touching processes:
+
+```sh
+computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> \
+  --observed-error '<message shown by the other client>'
+computer-mcp codex diagnostics --workspace-id <workspace-id>
+```
+
+Interpret `classification` as follows:
+
+- `computer_mcp_owned`: inspect the reported exact runtime, allow any pending
+  approval to finish or deny it, then call `codex.app.thread.release`; stop that
+  exact runtime only when the whole owned session should end.
+- `released_persisted`: no live Computer MCP writer is reported; retry opening
+  the persisted thread in the intended official client.
+- `persisted_or_external`: Computer MCP has no verified live owner. Use the
+  offered reclaim action only when Computer MCP should deliberately become the
+  writer.
+- `external_writer_or_unfinished_watchdog`: preview stale Computer MCP receipt
+  cleanup and allow bounded shutdown to finish. An external Desktop, IDE, CLI,
+  or gateway owner is only inferred and is never signalled by Computer MCP.
+
+If reclaim returns a writer conflict, close or release the owning application
+through that application's own controls. Do not use `killall`, delete session
+files, or assume an unrelated Codex process belongs to Computer MCP.
+
+If a graceful release reports an active turn or pending interactive request,
+resolve it first or explicitly choose the matching release option. A successful
+unsubscribe alone is not handoff success. Use `release-thread` and require
+`final_classification = released_persisted`, `externally_claimable = true`, and
+an empty `computer_mcp_writer_ownership_remaining` result. If an ownership
+receipt remains loaded after its exact runtime and owned process are gone, run
+`codex.app.ownership.reconcile.preview`, review the plan, and apply that exact
+digest; this repair changes local receipts only.
+
+### Full access was requested but did not apply
+
+Inspect the adapter's configuration and runtime diagnostics:
+
+```sh
+computer-mcp codex diagnostics --workspace-id <workspace-id>
+```
+
+An omitted native setting inherits the user's Codex configuration. Check the
+installed executable, its effective configuration, and any explicit request
+override. Thread and turn responses report the vendor's applied permissions;
+a host profile name is not proof of a particular Codex sandbox mode.
+
+A host permission denial stops the call before execution. It does not silently
+select a narrower native mode. If Codex has Full Access but a callback tool is
+denied, inspect the host capability, workspace and confirmation policy for that
+tool. Native Codex execution permissions do not grant additional Computer MCP
+capabilities, operation tickets or macOS system permissions.
+
+### A long thread is slow to inspect
+
+Use `computer-mcp codex recent-thread` with its default bounds instead of full
+`thread/read`. Follow `next_before_cursor` only when older context is needed.
+The returned `bounds` report page and Goal-scan I/O, output limit, elapsed scan,
+and whether the cooperative latency budget was exhausted. A cursor is tied to
+the exact rollout snapshot; restart from the newest page if the file identity
+changes.
+
+The installed Codex must support the configured experimental App Server API.
+Computer MCP fails closed on incompatible methods and does not silently fall
+back from App Server to Exec.
+
+Non-Git registered workspaces are supported. The gateway supplies
+`--skip-git-repo-check` to Exec while retaining its registered workspace and
+sandbox policy.
+
+Exec reads the user's Codex configuration, including the selected provider,
+MCP servers and hooks, and uses Codex-managed authentication. The adapter still
+supplies the registered working directory, sandbox and approval policy as
+explicit launch options. A broken or slow personal integration can therefore
+affect Exec startup; diagnose it in Codex without copying its credentials into
+Computer MCP. Both execution paths resolve the configured program against
+the launch workspace and PATH; an unavailable custom program never falls back
+to a different `codex` executable.
+
+If `codex.app.apps.list` returns HTTP 403 while Safari and interactive Codex
+work, confirm that a fixed macOS HTTP, HTTPS, or SOCKS proxy is enabled, then
+restart Computer MCP so both Codex provider lifecycles resolve it at
+launch. Computer MCP preserves an explicitly inherited proxy environment,
+otherwise maps the current fixed macOS settings to conventional upper- and
+lowercase child variables with loopback in `NO_PROXY`. It does not persist or
+log the derived values and does not evaluate PAC scripts.
+
+If the structured error contains `codex.app.request_failed`, `403 Forbidden`,
+and a correlated failed audit with `gateway.execution_failed`, the request was
+rejected by the upstream ChatGPT connector-directory endpoint. It is not a
+Computer MCP anti-scraping decision and does not mean the local App, loopback
+traffic, workspace content, or Shell was identified as hostile. The release
+validator accepts only that exact fail-closed directory challenge as a reviewed
+expected outcome; all other provider and network failures still fail closed.
+
+## Computer Use Is Denied
+
+Open **Permissions**. Grant Accessibility or Screen Recording to the signed
+`Computer MCP.app` with the local **Request Access** action, complete the
+highlighted step in System Settings, then relaunch if macOS requires it. The
+App automatically rechecks the permission while the guide is visible. Remote
+calls never trigger TCC prompts.
+
+Accessibility and Screen Recording block only enabled capabilities that need
+them. Revoking either grant does not stop ordinary file, system, provider, or
+non-Computer-Use paths. The grant must belong to the signed App bundle that
+performs the protected action, not Terminal, Codex, or a copied executable.
+
+For local builds, `Scripts/build-app.sh` automatically uses the only available
+Apple Development identity and compatible provisioning profile. A stable signed
+Bundle identity matters for TCC grants. Keychain access is separate: the modern
+Data Protection Keychain uses the provisioned Team ID plus Bundle ID access
+group, so Development and Developer ID builds of the production Bundle can
+share credentials without per-build ACL prompts. If several identities or
+profiles are installed, set `SIGNING_IDENTITY` and `PROVISIONING_PROFILE`
+explicitly. Use `ADHOC_SIGNING=1` only for isolated packaging tests; the live
+App rejects ad-hoc identity before opening the control plane.
+
+## Release Artifact Is Rejected
+
+Development and validation artifacts name their class and build identity. They
+use Apple Development signing when exactly one identity is available;
+otherwise they are ad-hoc signed. Neither path is notarized or allowed to use a
+final-release-looking filename. For official distribution, push a signed
+`vMAJOR.MINOR.PATCH` tag only after all local and real acceptance is complete.
+Do not promote a local DMG. The protected release job must report successful
+Developer ID signing, App and DMG notarization, stapling, Gatekeeper assessment,
+checksum assembly, provenance verification, and uploaded-byte identity before
+it publishes the Release.
+
+For a downloaded draft candidate, run:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+spctl --assess --type open --context context:primary-signature --verbose=2 \
+  Computer-MCP-<version>-universal.dmg
+xcrun stapler validate Computer-MCP-<version>-universal.dmg
+BUILD_IDENTITY_PATH="Computer MCP.app/Contents/Resources/ComputerMCPBuildIdentity.plist" \
+  Scripts/verify-artifact-provenance.sh \
+  Computer-MCP-<version>-PublishedArtifactProvenance.json \
+  Computer-MCP-<version>-universal.dmg exact_published_release
+```
+
+Common workflow failures are intentionally fail-closed:
+
+- A failure in `Verify trusted runner tooling` means the protected job cannot
+  prove its system/Xcode tool boundary. GitHub jobs have isolated filesystems:
+  a Homebrew tool installed by `verify` is not available to `release`. The
+  formal build/sign/notarize path must remain free of Homebrew and ripgrep;
+  `verify-protected-release-boundary.sh` and its negative regression enforce
+  this before the protected candidate build.
+- `Release ref verification failed` means the tag is unsigned, not annotated,
+  does not match the App version, or is not reachable from `origin/master`.
+- `Release readiness verification failed` means legal approval is incomplete
+  or a release-record template has missing, obsolete, or unexpected render
+  tokens.
+- `Missing protected release value` means the GitHub `production` Environment
+  variable or Secret set is incomplete.
+- `No provisioning profile authorizes ...` means the embedded certificate,
+  production App ID, and private Keychain group do not match the CI profile.
+- `Invalid credentials` from `notarytool` means the Team API key, key ID, or
+  issuer ID is wrong. Individual API keys cannot notarize.
+- `Notarization record verification failed` means the receipt is rejected,
+  missing, malformed, or bound to a different submission. Inspect the failed
+  stage and its retained receipt. Changes to artifact bytes or signing inputs
+  require a new candidate and acceptance. A checker-only correction may reuse
+  unchanged candidate bytes through the authenticated recovery flow in
+  [Release Reference](Release.md). Preserve existing formal tags and published
+  artifacts.
+- `source=no usable signature` for a DMG means the disk-image container was not
+  Developer ID signed, even if Apple accepted and stapled its notarization
+  ticket and the App inside is valid. The formal order is: create DMG, sign the
+  exact DMG with `Developer ID Application` plus a secure timestamp, verify its
+  authority, unique signing identifier, and Team ID, notarize, staple, then
+  assess with Gatekeeper. Correct the signing inputs and build a new candidate
+  through the protected workflow, then accept those exact bytes before tagging
+  and publishing. If the defective artifact was already published, preserve
+  that release and deliver the fix under the next compatible version.
+- `SHA256SUMS` reports `No such file or directory` for an App or DMG
+  notarization JSON when the release asset root is incomplete or inconsistent.
+  An accepted Apple receipt does not excuse an incomplete Release. The
+  root-level asset-layout gate rejects nested, external, missing, duplicate, or
+  symlinked inputs and verifies the complete checksum file before draft
+  creation.
+- `Unnotarized Developer ID` from `spctl` means the artifact was assessed
+  before Apple accepted and stapled the exact App/DMG, or a different artifact
+  was substituted afterward.
+- `development artifact has a final-release-looking name` means a local build
+  was named like an official release. Repackage it with its generated
+  `-development-<build-id>-` or `-validation-<build-id>-` name; do not rename it.
+- `published byte identity was not proven` or a published checksum mismatch
+  means the downloaded GitHub asset is not proven to be the verified candidate.
+  Keep the Release non-public and investigate; never overwrite or repair the
+  artifact in place.
+
+See [Release](Release.md).

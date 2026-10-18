@@ -1,0 +1,282 @@
+import ComputerMCP
+import SwiftUI
+
+struct WorkspaceHeader<Actions: View>: View {
+  let title: String
+  let subtitle: String
+  let actions: Actions
+
+  init(
+    _ title: String,
+    subtitle: String,
+    @ViewBuilder actions: () -> Actions
+  ) {
+    self.title = title
+    self.subtitle = subtitle
+    self.actions = actions()
+  }
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 16) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(verbatim: AppLocalization.string(title))
+          .font(.title2.weight(.semibold))
+        Text(verbatim: AppLocalization.string(subtitle))
+          .foregroundStyle(.secondary)
+      }
+
+      Spacer(minLength: 24)
+
+      actions
+        .controlSize(.regular)
+    }
+    .padding(.horizontal, 24)
+    .padding(.top, 20)
+    .padding(.bottom, 14)
+  }
+}
+
+struct RefreshButton: View {
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label("Refresh", systemImage: "arrow.clockwise")
+    }
+  }
+}
+
+struct LoadingWorkspaceView: View {
+  let title: String
+
+  var body: some View {
+    VStack(spacing: 10) {
+      ProgressView()
+        .controlSize(.regular)
+      Text(verbatim: AppLocalization.string(title))
+        .foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+struct EmptyWorkspaceView: View {
+  let title: String
+  let detail: String
+  let systemImage: String
+
+  var body: some View {
+    ContentUnavailableView(
+      AppLocalization.string(title),
+      systemImage: systemImage,
+      description: Text(verbatim: AppLocalization.string(detail))
+    )
+  }
+}
+
+struct FailedWorkspaceView: View {
+  let message: String
+  let retry: () -> Void
+
+  var body: some View {
+    ContentUnavailableView {
+      Label("Control plane unavailable", systemImage: "exclamationmark.triangle")
+    } description: {
+      Text(verbatim: AppLocalization.string(message))
+    } actions: {
+      Button("Retry", action: retry)
+    }
+  }
+}
+
+struct StateBadge: View {
+  let text: String
+  let color: Color
+  var systemImage: String?
+
+  var body: some View {
+    HStack(spacing: 5) {
+      if let systemImage {
+        Image(systemName: systemImage)
+      }
+      Text(verbatim: AppLocalization.string(text))
+    }
+    .font(.caption.weight(.medium))
+    .foregroundStyle(color)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 3)
+    .background(color.opacity(0.12))
+    .clipShape(RoundedRectangle(cornerRadius: 6))
+    .accessibilityElement(children: .combine)
+  }
+}
+
+extension ServiceState {
+  var color: Color {
+    switch self {
+    case .running: .green
+    case .starting, .stopping: .blue
+    case .degraded: .orange
+    case .failed: .red
+    case .stopped: .secondary
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .running: "checkmark.circle.fill"
+    case .starting, .stopping: "arrow.triangle.2.circlepath"
+    case .degraded: "exclamationmark.triangle.fill"
+    case .failed: "xmark.octagon.fill"
+    case .stopped: "stop.circle"
+    }
+  }
+}
+
+extension WorkspaceHealth {
+  var color: Color {
+    switch self {
+    case .available: .green
+    case .bookmarkStale: .orange
+    case .missing, .unavailable: .red
+    }
+  }
+}
+
+extension RiskLevel {
+  var color: Color {
+    switch self {
+    case .low: .green
+    case .elevated: .orange
+    case .high: .red
+    }
+  }
+}
+
+extension ProductReadinessStatus {
+  var label: String {
+    let key =
+      switch self {
+      case .notConfigured: "Not configured"
+      case .blocked: "Blocked"
+      case .needsAttention: "Needs attention"
+      case .ready: "Ready"
+      case .verified: "Verified"
+      }
+    return AppLocalization.string(key)
+  }
+
+  var color: Color {
+    switch self {
+    case .notConfigured: .secondary
+    case .blocked: .red
+    case .needsAttention: .orange
+    case .ready: .blue
+    case .verified: .green
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .notConfigured: "circle.dotted"
+    case .blocked: "xmark.octagon.fill"
+    case .needsAttention: "exclamationmark.triangle.fill"
+    case .ready: "checkmark.circle"
+    case .verified: "checkmark.seal.fill"
+    }
+  }
+}
+
+extension ProductReadinessCheckStatus {
+  var localizedLabel: String {
+    let key =
+      switch self {
+      case .pass: "Pass"
+      case .warning: "Warning"
+      case .fail: "Fail"
+      case .notApplicable: "Not applicable"
+      }
+    return AppLocalization.string(key)
+  }
+
+  var color: Color {
+    switch self {
+    case .pass: .green
+    case .warning: .orange
+    case .fail: .red
+    case .notApplicable: .secondary
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .pass: "checkmark.circle.fill"
+    case .warning: "exclamationmark.triangle.fill"
+    case .fail: "xmark.octagon.fill"
+    case .notApplicable: "minus.circle"
+    }
+  }
+}
+
+extension EmbeddedCLIInstallationState {
+  var localizedLabel: String {
+    let key =
+      switch self {
+      case .notInstalled: "Not installed"
+      case .installed: "Installed"
+      case .brokenLink: "Broken link"
+      case .wrongTarget: "Wrong target"
+      case .occupied: "Installation location occupied"
+      }
+    return AppLocalization.string(key)
+  }
+}
+
+extension PermissionState {
+  var color: Color {
+    switch self {
+    case .granted: .green
+    case .denied: .red
+    case .notGranted: .orange
+    case .notDetermined: .orange
+    case .unavailable: .secondary
+    }
+  }
+}
+
+extension AuditDecision {
+  var color: Color {
+    switch self {
+    case .allowed, .committed: .green
+    case .denied, .failed: .red
+    case .prepared: .blue
+    }
+  }
+}
+
+extension DiagnosticLevel {
+  var color: Color {
+    switch self {
+    case .information: .secondary
+    case .warning: .orange
+    case .error: .red
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .information: "info.circle"
+    case .warning: "exclamationmark.triangle"
+    case .error: "xmark.octagon"
+    }
+  }
+}
+
+extension DateFormatter {
+  static let computerMCPDateTime: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .medium
+    return formatter
+  }()
+}

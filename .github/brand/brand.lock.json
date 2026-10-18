@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "authority": "https://github.com/computer-mcp/.github",
+  "revision": "2d9913a442afcb22faca90f5272d3988eb961be6e858b71c5067303cf7c627d6",
+  "consumer": "computer-mcp",
+  "files": {
+    "Documentation/Brand/header-light.png": "be4f591070fe6092bb39882e5ebe562b87cb0171ac3ad8df81109b6a6558a86c",
+    "Documentation/Brand/header-dark.png": "38b4e4ce42cb440e658fe837899575da34761766b909482ef5a185a12251b841",
+    "Documentation/Brand/header-zh-CN-light.png": "c72c89c9abc2ee4668220cd33c6192da93dbf31a747151814010acab9b2f1430",
+    "Documentation/Brand/header-zh-CN-dark.png": "08d8f006bf3e1eefcbb13627fdf5ab024c164f92b978dc8019ccd8af9bded15c",
+    ".github/brand/social.png": "574a4ddb9e0787880af0db87a611e81f101280cf0588176ffcdbf15d303e4c69",
+    ".github/brand/social-zh-CN.png": "7f5b90e73ec27078796db3e20b339d850cb0afb24bdb17d738d26ce185ccc744",
+    "Resources/ComputerMCPApp/AppIcon.icon/Assets/glyph.svg": "bd32f4608a2eab804d8cf0111aa57fc36d3a4941d1e799f1acbe59adb5a45dab",
+    "Resources/ComputerMCPApp/AppIcon.icon/Assets/plane-capabilities.svg": "29c598be035a6270d387c7b0b46cb83de415160c55b275c9aa83bbdf4952396e",
+    "Resources/ComputerMCPApp/AppIcon.icon/Assets/plane-result.svg": "e0beeac54b3e1a1a442a13527032d5ced644040f5e9b2f877d431d36a458170e",
+    "Resources/ComputerMCPApp/AppIcon.icon/Assets/plane-workspace.svg": "b745481845148ba636bef4a5cdbc070cf3d48aaa0ee778eb12e10ee8bd5395c9",
+    "Resources/ComputerMCPApp/AppIcon.icon/icon.json": "e2238e493bc3d2e98bc9a170a3eca4344f0cdf55eca84d4a770c1fe3c0b8938b"
+  },
+  "entries": {
+    "README.md": [
+      "Computer MCP",
+      "Documentation/Brand/header-light.png",
+      "Documentation/Brand/header-dark.png",
+      "Wherever you chat, your computer is there."
+    ],
+    "README.zh-CN.md": [
+      "Computer MCP",
+      "Documentation/Brand/header-zh-CN-light.png",
+      "Documentation/Brand/header-zh-CN-dark.png",
+      "聊天在哪，你的电脑就在哪。"
+    ]
+  }
+}

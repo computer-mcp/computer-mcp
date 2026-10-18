@@ -1,0 +1,85 @@
+# 常见故障
+
+## 先运行 Doctor
+
+```sh
+computer-mcp doctor --journey local
+computer-mcp doctor --journey chatgpt
+computer-mcp doctor --journey cloudflare
+computer-mcp doctor --journey chatgpt --json
+```
+
+Ready/Verified 返回 0，其他状态返回 1。App 不可达时 JSON 仍符合 `schema_version: 1`。
+
+## App 不可达
+
+- 从 Finder 打开 `/Applications/Computer MCP.app`。
+- 确认没有把 embedded CLI 或 App 可执行文件单独复制到别处运行。
+- 回到 Home 选择 Retry；CLI 不会静默启动第二套数据库或 Gateway。
+
+## 无法添加工作区
+
+**工作区 > 添加** 在所有受支持系统上都会打开 macOS 原生文件夹面板。选择文件夹
+本身并点 **添加**，原工作区页面会原位刷新；如果面板已经进入目标文件夹，先返回
+上一级再选中它。面板未出现属于 App 界面呈现问题，不是网络安全、反爬、Shell 或
+Keychain 拒绝。
+
+## 依赖缺失
+
+```sh
+command -v codex
+command -v tunnel-client
+command -v cloudflared
+cloudflared --version
+```
+
+App 只检测依赖，不会自动安装。使用任务页提供的官方入口安装后重试。
+
+Computer MCP 的 `codex.exec.*` 读取用户的 Codex 配置，包括 provider、MCP 和 hooks，
+认证由 Codex 管理。这些个人集成的故障或延迟可能影响启动；请在 Codex 中检查，
+不要向 Computer MCP 复制凭据。宿主指定的工作区、沙箱和审批策略仍然生效，
+个人配置不能扩大宿主授权。
+
+## 权限拒绝或撤销
+
+1. 在 **Permissions** 重新预检。
+2. 选择 Request Access；如系统没有打开正确页面，按 App 提供的手动路径进入
+   “系统设置 > 隐私与安全性”。
+3. 权限必须授予签名 `Computer MCP.app`。
+4. 返回 App 后等待自动轮询；系统提示时重启 App。
+
+权限撤销会立即影响需要该权限的能力，但不阻塞普通文件、系统和非 Computer Use 路径。
+
+## Ready 但没有 Verified
+
+- Ready 只表示 Transport 和本地组件健康。
+- 必须由目标消费者在当前 Gateway/Tunnel 启动之后发起真实成功请求。
+- 核对 Caller、Profile 和 Tunnel identity；被拒绝或失败的审计记录不会验证路径。
+- 新建 ChatGPT 会话或重连公网消费者，再调用一个只读工具并刷新。
+
+## 外部编辑配置后未生效
+
+Gateway 运行时，保存配置文件会先验证候选配置，再切换正在使用的配置。现有连接和任务
+继续保留。如果配置格式、Provider 启动、工作目录访问或持久化失败，Gateway 状态会显示
+配置重新加载错误，继续使用此前已接纳的配置，不会改写你保存的文件。
+
+修复报错原因后再次保存文件，或通过 App、所有者 CLI 应用修正后的配置。如果原因是
+Provider 暂时不可用等外部问题，修复后再次保存相同文本也会触发重试。在同一 App 进程中
+重新启动 Gateway，会重新检查其停止期间保存的配置。全新 App 进程启动时，磁盘上的
+配置仍必须通过验证；不能依靠此前进程的运行配置绕过无效的启动文件。
+
+## 配置恢复冲突
+
+配置文件写入中断后，恢复逻辑会根据数据库实际提交的版本完成替换或还原原文件。
+恢复记录保存在配置文件旁，未成功提交的事务不会生成已激活的历史版本。
+如果恢复时发现无法确认归属的外部编辑，会保留编辑内容和恢复记录并报告冲突。
+请一起保留配置文件、恢复记录和控制平面数据库用于诊断；不要删除恢复记录或丢弃
+外部编辑来绕过错误。这些文件属于私有配置，不要把内容发布到公开 Issue。
+
+如果提示另一项配置写入正在进行，可在其结束后重试；预览已过期时，需要重新预览再应用。
+
+## 安全地收集诊断
+
+在 **Diagnostics** 导出诊断包。包内日志和摘要会脱敏；不要手工粘贴 Keychain 内容、
+API Key、Tunnel Token 或 Computer MCP Access Token。一次性 Access Token 关闭后无法
+重新显示，遗失时请重新生成并更新消费者。

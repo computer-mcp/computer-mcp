@@ -1,0 +1,1337 @@
+import AppKit
+import ComputerMCP
+import Foundation
+
+@MainActor
+final class LiveAppControlPlane: AppControlPlane {
+  private let controlPlane: AppControlPlaneService
+  private let gatewayService: AppGatewayService
+  private let operations: AppControlPlaneOperations
+  private let controlSocketService: ControlSocketService?
+  private let fileLogger: AppFileLogger
+  private let permissionRequester: any SystemPermissionRequesting
+  private var reconnectAttempts: [String: Int] = [:]
+  private var nextReconnectAt: [String: Date] = [:]
+  private var maintenanceInProgress = false
+
+  init() throws {
+    let identity = try AppDistributionIdentity.bundled()
+    let directories = try AppControlPlaneServiceDirectories.standard(
+      environment: identity.environment
+    )
+    let controlPlane = try AppControlPlaneService.live(
+      directories: directories,
+      gatewayExecutablePath: Self.embeddedGatewayExecutablePath(),
+      keychainService: identity.environment.keychainService,
+      keychainAccessGroup: identity.keychainAccessGroup
+    )
+    self.controlPlane = controlPlane
+    self.gatewayService = AppGatewayService.live(
+      controlPlane: controlPlane,
+      directories: controlPlane.directories
+    )
+    self.operations = AppControlPlaneOperations(
+      controlPlane: controlPlane,
+      gatewayService: gatewayService
+    )
+    self.controlSocketService = ControlSocketService(
+      controlPlane: controlPlane,
+      gatewayService: gatewayService,
+      socketURL: controlPlane.directories.controlSocket
+    )
+    self.fileLogger = try AppFileLogger(directory: controlPlane.directories.logs)
+    self.permissionRequester = MacOSSystemPermissionRequester()
+    fileLogger.append(.info, event: "app.control_plane.initialized")
+  }
+
+  init(
+    controlPlane: AppControlPlaneService,
+    gatewayService: AppGatewayService,
+    fileLogger: AppFileLogger,
+    controlSocketService: ControlSocketService? = nil,
+    permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester()
+  ) {
+    self.controlPlane = controlPlane
+    self.gatewayService = gatewayService
+    self.operations = AppControlPlaneOperations(
+      controlPlane: controlPlane,
+      gatewayService: gatewayService
+    )
+    self.controlSocketService = controlSocketService
+    self.fileLogger = fileLogger
+    self.permissionRequester = permissionRequester
+    fileLogger.append(.info, event: "app.control_plane.initialized")
+  }
+
+  func startApplication() async throws {
+    fileLogger.append(.info, event: "app.start.requested")
+    try await controlSocketService?.start()
+    try await controlPlane.recoverPluginsAtStartup()
+    guard try await controlPlane.gatewayDesiredRunning() else {
+      fileLogger.append(.info, event: "app.start.gateway_disabled")
+      return
+    }
+    let desiredProfiles = try await restoreGatewayRuntime()
+    restoreTransportsAfterStartup(profiles: desiredProfiles)
+    fileLogger.append(.info, event: "app.start.completed")
+  }
+
+  func maintainApplication() async {
+    guard !maintenanceInProgress else {
+      return
+    }
+    maintenanceInProgress = true
+    defer {
+      maintenanceInProgress = false
+    }
+
+    do {
+      guard try await controlPlane.gatewayDesiredRunning() else {
+        return
+      }
+      let service = await gatewayService.snapshot()
+      if service.state == .stopped || service.state == .failed {
+        try await restoreRuntime()
+        return
+      }
+      guard service.state == .running else { return }
+      try await restoreDesiredOpenAITunnels()
+      try await restoreDesiredCloudflareTunnels()
+    } catch {
+      fileLogger.append(
+        .warning,
+        event: "app.maintenance.failed",
+        fields: ["error_type": String(describing: type(of: error))]
+      )
+      // Runtime snapshots retain stable failure state for Diagnostics and the Tunnel UI.
+    }
+  }
+
+  func stopApplication() async {
+    fileLogger.append(.info, event: "app.stop.requested")
+    reconnectAttempts.removeAll()
+    nextReconnectAt.removeAll()
+    await controlSocketService?.stop()
+    await gatewayService.stop()
+    fileLogger.append(.info, event: "app.stop.completed")
+  }
+
+  func fetchStatus() async throws -> AppStatusSnapshot {
+    let service = await gatewayService.snapshot()
+    let snapshot = try await controlPlane.snapshot()
+    let providers = try await providerSummaries(service: service)
+    let activeProfile = try await controlPlane.activeGatewayProfile()
+    return AppStatusSnapshot(
+      serviceState: service.state.appState,
+      version: ComputerMCPCLI.version,
+      activeProfileName: service.profileID?.rawValue ?? activeProfile.rawValue,
+      activeWorkspaceCount: try await controlPlane.workspaces().count,
+      providerCount: providers.count,
+      runningProviderCount: providers.filter { $0.state == .running }.count,
+      runningTunnelCount:
+        snapshot.openAITunnelStatuses.filter { $0.state == .running }.count
+        + snapshot.cloudflareStatuses.filter { $0.state == .running }.count,
+      socketPath: service.socketPath,
+      processIdentifier: service.processIdentifier,
+      startedAt: service.startedAt,
+      lastError: service.lastError,
+      launchAtLogin: snapshot.launchAtLogin.appState
+    )
+  }
+
+  func fetchReadiness() async throws -> [ProductReadinessSnapshot] {
+    let gateway = await gatewayService.snapshot()
+    let cliInstallation = try? EmbeddedCLIInstaller().status()
+    var snapshots = [ProductReadinessSnapshot]()
+    for journey in ProductJourney.allCases {
+      snapshots.append(
+        try await controlPlane.readinessSnapshot(
+          journey: journey,
+          gateway: gateway,
+          cliInstallation: cliInstallation
+        )
+      )
+    }
+    return snapshots
+  }
+
+  func fetchWorkspaces() async throws -> [WorkspaceSummary] {
+    let activeProfile = try await controlPlane.activeGatewayProfile()
+    let grant = try await controlPlane.profileGrants().first { $0.id == activeProfile }
+    return try await controlPlane.workspaceAccessReports().map { report in
+      let workspace = report.workspace
+      let health: WorkspaceHealth
+      switch report.error {
+      case nil:
+        health = .available
+      case .rootDoesNotExist?, .rootIsNotDirectory?:
+        health = .missing
+      default:
+        health = .unavailable
+      }
+      return WorkspaceSummary(
+        id: workspace.id,
+        displayName: workspace.displayName,
+        path: workspace.rootPath,
+        health: health,
+        activeProfileID: activeProfile.rawValue,
+        isEnabled: grant?.workspaceIDs.contains("*") == true
+          || grant?.workspaceIDs.contains(workspace.id) == true,
+        isSelected: grant?.workspaceIDs.contains("*") == true
+          || grant?.workspaceIDs.contains(workspace.id) == true,
+        lastResolvedAt: report.error == nil ? Date() : nil,
+        healthDetail: report.error?.localizedDescription
+      )
+    }
+  }
+
+  func fetchProfiles() async throws -> [ProfileSummary] {
+    let activeProfile = try await controlPlane.activeGatewayProfile()
+    return try await controlPlane.profileGrants().map { grant in
+      ProfileSummary(
+        id: grant.id.rawValue,
+        displayName: grant.id.displayName,
+        summary: grant.mode.summary,
+        isActive: grant.id == activeProfile,
+        isEnabled: grant.id != .localAdmin,
+        riskLevel: grant.mode.riskLevel,
+        permitsRemoteAccess: grant.allowedCallers.contains(where: \.isRemote),
+        permissions: grant
+      )
+    }
+  }
+
+  func fetchClientAccess() async throws -> ClientAccessSnapshot {
+    let sessions = await operations.controlSessions()
+    return try ClientAccessSnapshot(sessions: sessions, trusts: operations.clientTrusts())
+  }
+
+  func grantClientFullAccess(
+    id: String, lifetime: GatewayFullAccessLifetime,
+    expectedRevision: Int64, expectedTrustRevision: Int64
+  ) async throws {
+    _ = try await operations.approveControlSession(
+      id: id, lifetime: lifetime, expectedRevision: expectedRevision,
+      expectedTrustRevision: expectedTrustRevision, enableShellFacility: true)
+  }
+
+  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+    async throws
+  {
+    _ = try await operations.limitControlSession(
+      id: id, to: mode, expectedRevision: expectedRevision)
+  }
+
+  func endClientAccess(id: String, expectedRevision: Int64) async throws {
+    try await operations.endControlSession(id: id, expectedRevision: expectedRevision)
+  }
+
+  func revokeClientTrust(id: String, expectedRevision: Int64) async throws {
+    try operations.revokeClientTrust(id: id, expectedRevision: expectedRevision)
+  }
+
+  func fetchProviders() async throws -> [ProviderSummary] {
+    try await providerSummaries(service: gatewayService.snapshot())
+  }
+
+  func fetchPlugins() async throws -> PluginHostSnapshot {
+    try await controlPlane.pluginSnapshot()
+  }
+
+  func fetchMCPRegistrations() async throws -> MCPRegistrationSnapshot {
+    try await controlPlane.mcpRegistrations()
+  }
+
+  func mcpCredentialStatus(id: String) async throws -> MCPRegistrationCredentialStatus {
+    try await controlPlane.mcpCredentialStatus(id: id)
+  }
+
+  func changeMCPCredential(id: String, expectedBindingDigest: String, token: String?) async throws {
+    try await controlPlane.changeMCPCredential(
+      id: id, expectedBindingDigest: expectedBindingDigest, token: token)
+  }
+
+  func doctorMCPRegistration(id: String, workspaceID: String) async throws
+    -> MCPRegistrationDoctorReport
+  {
+    try await controlPlane.doctorMCPRegistration(id: id, workspaceID: workspaceID)
+  }
+
+  func recoverMCPProcessReceipt(
+    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    expectedCurrentDigest: String
+  ) async throws {
+    try await controlPlane.recoverMCPProcessReceipt(
+      id: id, workspaceID: workspaceID, receiptID: receiptID,
+      expectedReceiptDigest: expectedReceiptDigest, expectedCurrentDigest: expectedCurrentDigest)
+  }
+
+  func changeMCPRegistration(
+    _ change: MCPRegistrationChange, apply: Bool, expectedCurrentDigest: String?
+  ) async throws -> MCPRegistrationChangePreview {
+    try await operations.changeMCPRegistration(
+      change, apply: apply, expectedCurrentDigest: expectedCurrentDigest)
+  }
+
+  func doctorPlugin(id: String) async throws -> PluginDoctorReport {
+    try await controlPlane.doctorPlugin(id: id)
+  }
+
+  func pluginReleaseArtifacts(repository: String, repositoryID: Int64, tag: String?, page: Int)
+    async throws -> GitHubPluginReleaseArtifacts
+  {
+    try await controlPlane.pluginReleaseArtifacts(
+      repository: repository, repositoryID: repositoryID, tag: tag, page: page)
+  }
+
+  func searchPlugins(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
+    -> PluginCatalogSearchResult
+  {
+    try await controlPlane.searchPlugins(query: query, kind: kind, page: page, refresh: refresh)
+  }
+
+  func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> PluginHostSnapshot
+  {
+    try await operations.changePlugins(change, expectedRevision: expectedRevision)
+  }
+
+  func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] {
+    let snapshot = try await controlPlane.snapshot()
+    let statusByID = Dictionary(
+      uniqueKeysWithValues: snapshot.openAITunnelStatuses.map { ($0.profileID, $0) }
+    )
+    var summaries: [OpenAITunnelSummary] = []
+    for profile in snapshot.openAITunnelConfigurations {
+      let status =
+        statusByID[profile.id]
+        ?? OpenAITunnelStatus(profileID: profile.id, state: .stopped)
+      summaries.append(
+        OpenAITunnelSummary(
+          id: profile.id,
+          displayName: profile.tunnelClientProfile,
+          profileID: profile.gatewayProfile.rawValue,
+          state: status.state.appState,
+          tunnelIdentifier: profile.tunnelID,
+          endpoint: nil,
+          connectedAt: status.startedAt,
+          reconnectAttempt: reconnectAttempts[profile.id] ?? 0,
+          lastError: status.lastError,
+          tunnelClientPath: profile.tunnelClientPath,
+          httpProxy: profile.httpProxy
+        )
+      )
+    }
+    return summaries
+  }
+
+  func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] {
+    let profiles = try await controlPlane.cloudflareTunnelConfigurations()
+    let statusByID = Dictionary(
+      uniqueKeysWithValues: await controlPlane.cloudflareTunnelStatuses().map {
+        ($0.profileID, $0)
+      }
+    )
+    var summaries: [CloudflareTunnelSummary] = []
+    for profile in profiles {
+      let status = statusByID[profile.id]
+      summaries.append(
+        CloudflareTunnelSummary(
+          id: profile.id,
+          tunnelName: profile.tunnelName,
+          publicHostname: profile.publicHostname,
+          profileID: profile.gatewayProfile.rawValue,
+          state: (status?.state ?? .stopped).appState,
+          localPort: profile.localPort,
+          metricsPort: profile.metricsPort,
+          processIdentifier: status?.processID,
+          connectedAt: status?.startedAt,
+          lastError: status?.lastError
+        ))
+    }
+    return summaries
+  }
+
+  func fetchPermissions() async throws -> [PermissionSummary] {
+    let snapshot = await controlPlane.computerUsePermissions()
+    let checkedAt = Date()
+    return [
+      PermissionSummary(
+        id: "accessibility",
+        displayName: "Accessibility",
+        detail: "Required for pointer, keyboard, scroll, and Accessibility actions.",
+        state: snapshot.accessibility.appState,
+        settingsURL: URL(
+          string:
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+        ),
+        checkedAt: checkedAt
+      ),
+      PermissionSummary(
+        id: "screen-recording",
+        displayName: "Screen Recording",
+        detail: "Required for window observation and screenshots.",
+        state: snapshot.screenRecording.appState,
+        settingsURL: URL(
+          string:
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+        ),
+        checkedAt: checkedAt
+      ),
+    ]
+  }
+
+  func requestPermission(id: String) async throws -> PermissionRequestOutcome {
+    fileLogger.append(
+      .info,
+      event: "app.permission.requested",
+      fields: ["permission_id": id]
+    )
+    let outcome = try permissionRequester.requestPermission(id: id)
+    fileLogger.append(
+      .info,
+      event: "app.permission.request.completed",
+      fields: [
+        "permission_id": id,
+        "state": outcome.state.rawValue,
+      ]
+    )
+    return outcome
+  }
+
+  func fetchAudit() async throws -> [AuditEntrySummary] {
+    let workspaces = Dictionary(
+      uniqueKeysWithValues: try await controlPlane.workspaces().map { ($0.id, $0.displayName) }
+    )
+    return try await controlPlane.auditEvents().map { event in
+      let summary: String
+      if let errorCode = event.errorCode {
+        summary = errorCode
+      } else if let duration = event.durationMilliseconds {
+        summary = AppLocalization.formatted("Completed in %@ ms", String(duration))
+      } else {
+        summary = AppLocalization.string("Capability decision recorded")
+      }
+      return AuditEntrySummary(
+        id: event.id,
+        requestID: event.requestID,
+        timestamp: event.occurredAt,
+        decision: event.decision.appDecision,
+        caller: "\(event.caller.rawValue) / \(event.profileID.rawValue)",
+        capability: event.capabilityID,
+        workspaceName: event.workspaceID.flatMap { workspaces[$0] },
+        summary: summary,
+        inputDigest: event.inputDigest,
+        outputByteCount: event.outputByteCount
+      )
+    }
+  }
+
+  func fetchDiagnostics() async throws -> DiagnosticsSnapshot {
+    let service = await gatewayService.snapshot()
+    let configuration = try await controlPlane.activeConfiguration()
+    let snapshot = try await controlPlane.snapshot()
+    let providers = try await providerSummaries(service: service)
+    var items = [
+      DiagnosticItem(
+        id: "gateway",
+        title: "Gateway",
+        value: AppLocalization.string(service.state.rawValue.capitalized),
+        detail: service.lastError,
+        level: service.state == .failed ? .error : .information
+      ),
+      DiagnosticItem(
+        id: "socket",
+        title: "Local socket",
+        value: service.socketPath,
+        detail: AppLocalization.formatted(
+          "%@ active connection(s)",
+          String(service.connectionCount)
+        ),
+        level: .information
+      ),
+      DiagnosticItem(
+        id: "manifest",
+        title: "Manifest",
+        value: configuration.server.name,
+        detail: controlPlane.directories.manifest.path,
+        level: .information
+      ),
+      DiagnosticItem(
+        id: "database",
+        title: "Database",
+        value: AppLocalization.formatted(
+          "%@ revision(s)",
+          String(snapshot.configurationRevisionCount)
+        ),
+        detail: controlPlane.directories.database.path,
+        level: .information
+      ),
+    ]
+    items.append(
+      contentsOf: providers.filter { $0.state == .failed }.map {
+        DiagnosticItem(
+          id: "provider:\($0.id)",
+          title: $0.displayName,
+          value: AppLocalization.string("Failed"),
+          detail: $0.lastError ?? $0.lastDoctorMessage,
+          level: .error
+        )
+      }
+    )
+    let manifestContent = try String(
+      contentsOf: controlPlane.directories.manifest,
+      encoding: .utf8
+    )
+    var foundCurrentRevision = false
+    let revisions = try await controlPlane.configurationHistory().map { revision in
+      let isCurrent =
+        !foundCurrentRevision
+        && revision.manifest == manifestContent
+        && revision.activationError == nil
+      if isCurrent {
+        foundCurrentRevision = true
+      }
+      return ManifestRevisionSummary(
+        id: revision.id,
+        digest: revision.digest,
+        createdAt: revision.createdAt,
+        isCurrent: isCurrent,
+        activationError: revision.activationError
+      )
+    }
+    return DiagnosticsSnapshot(
+      generatedAt: Date(),
+      items: items,
+      logDirectory: controlPlane.directories.logs.path,
+      applicationSupportDirectory: controlPlane.directories.applicationSupport.path,
+      manifest: ManifestSnapshot(
+        path: controlPlane.directories.manifest.path,
+        content: manifestContent,
+        revisions: revisions
+      )
+    )
+  }
+
+  func startGateway() async throws {
+    fileLogger.append(.info, event: "gateway.start.requested")
+    _ = try await operations.startGateway()
+    fileLogger.append(.info, event: "gateway.start.completed")
+  }
+
+  func stopGateway() async throws {
+    fileLogger.append(.info, event: "gateway.stop.requested")
+    _ = try await operations.stopGateway()
+    fileLogger.append(.info, event: "gateway.stop.completed")
+  }
+
+  func setLaunchAtLoginEnabled(_ enabled: Bool) async throws {
+    _ = try await controlPlane.setLaunchAtLoginEnabled(enabled)
+  }
+
+  func registerWorkspace(at url: URL) async throws {
+    let workspace = try await operations.registerWorkspace(at: url)
+    fileLogger.append(
+      .info,
+      event: "workspace.registered",
+      fields: ["workspace_id": workspace.id]
+    )
+  }
+
+  func repairWorkspace(id: String, at url: URL) async throws {
+    let workspace = try await operations.repairWorkspace(id: id, at: url)
+    fileLogger.append(.info, event: "workspace.repaired", fields: ["workspace_id": workspace.id])
+  }
+
+  func removeWorkspace(id: String) async throws {
+    try await operations.removeWorkspace(id: id)
+    fileLogger.append(.info, event: "workspace.removed", fields: ["workspace_id": id])
+  }
+
+  func setWorkspaceEnabled(
+    _ enabled: Bool,
+    workspaceID: String,
+    profileID: String
+  ) async throws {
+    guard let profile = GatewayProfileID(rawValue: profileID) else {
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown gateway profile: %@", profileID)
+      )
+    }
+    _ = try await operations.setWorkspaceEnabled(
+      enabled,
+      workspaceID: workspaceID,
+      profileID: profile
+    )
+    fileLogger.append(
+      .info,
+      event: enabled ? "workspace.granted" : "workspace.revoked",
+      fields: [
+        "profile_id": profileID,
+        "workspace_id": workspaceID,
+      ]
+    )
+  }
+
+  func activateProfile(id: String) async throws {
+    guard let profile = GatewayProfileID(rawValue: id) else {
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown gateway profile: %@", id)
+      )
+    }
+    _ = try await operations.activateProfile(profile)
+    fileLogger.append(
+      .info,
+      event: "profile.activated",
+      fields: ["profile_id": profile.rawValue]
+    )
+  }
+
+  func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
+  {
+    try await controlPlane.profilePermissionOptions(profileID: id)
+  }
+
+  func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
+    async throws
+  {
+    _ = try await operations.updateProfilePermissions(
+      profileID: grant.id, mode: grant.mode, confirmationPolicy: grant.confirmationPolicy,
+      fullShellEnabled: grant.fullShellEnabled, capabilityIDs: grant.capabilityIDs,
+      workspaceIDs: grant.workspaceIDs, mcpServerIDs: grant.mcpServerIDs,
+      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision,
+      reviewedOptions: reviewed)
+    fileLogger.append(
+      .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
+  }
+
+  func fetchOperationApprovals() async throws -> [OperationTicket] {
+    try await controlPlane.operationApprovals()
+  }
+
+  func resolveOperationApproval(id: String, approved: Bool) async throws {
+    _ = try await controlPlane.resolveOperationApproval(
+      id: id, approved: approved, resolver: .localApp)
+  }
+
+  func startProvider(id: String) async throws {
+    throw AppControlPlaneError.unavailable(
+      AppLocalization.formatted(
+        "Provider '%@' is configuration-driven and starts on demand with the gateway.",
+        id
+      )
+    )
+  }
+
+  func stopProvider(id: String) async throws {
+    throw AppControlPlaneError.unavailable(
+      AppLocalization.formatted(
+        "Provider '%@' is configuration-driven. Disable it in the active manifest.",
+        id
+      )
+    )
+  }
+
+  func doctorProvider(id: String) async throws {
+    let states = try await operations.refreshProvider(id: id)
+    guard states.contains(where: { $0.id == id }) else {
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Provider '%@' has no independent doctor contract.", id)
+      )
+    }
+  }
+
+  func startOpenAITunnel(id: String) async throws {
+    fileLogger.append(.info, event: "tunnel.start.requested", fields: ["profile_id": id])
+    _ = try await operations.startOpenAITunnel(id: id)
+    fileLogger.append(.info, event: "tunnel.start.completed", fields: ["profile_id": id])
+  }
+
+  func reconnectOpenAITunnel(id: String) async throws {
+    _ = try await operations.reconnectOpenAITunnel(id: id)
+    reconnectAttempts[id] = 0
+    nextReconnectAt[id] = nil
+  }
+
+  func stopOpenAITunnel(id: String) async throws {
+    _ = try await operations.stopOpenAITunnel(id: id)
+    fileLogger.append(.info, event: "tunnel.stop.completed", fields: ["profile_id": id])
+  }
+
+  func fetchOpenAITunnelLogs(id: String) async throws -> OpenAITunnelLogSnapshot {
+    let page = try await controlPlane.openAITunnelLogs(profileID: id)
+    return OpenAITunnelLogSnapshot(
+      profileID: id,
+      state: page.status.state.appState,
+      stdout: page.stdout.text ?? "",
+      stderr: page.stderr.text ?? ""
+    )
+  }
+
+  func doctorOpenAITunnel(id: String) async throws {
+    _ = try await appOpenAITunnelConfiguration(id: id)
+    let report = try await controlPlane.doctorOpenAITunnel(profileID: id)
+    guard report.passed else {
+      let detail =
+        [report.stderr, report.stdout]
+        .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        ?? "Tunnel diagnostics failed."
+      throw AppControlPlaneError.unavailable(detail)
+    }
+  }
+
+  func provisionOpenAITunnel(id: String) async throws {
+    _ = try await appOpenAITunnelConfiguration(id: id)
+    let report = try await controlPlane.provisionOpenAITunnel(profileID: id, force: true)
+    guard report.passed else {
+      let detail =
+        [report.stderr, report.stdout]
+        .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        ?? "Tunnel provisioning failed."
+      throw AppControlPlaneError.unavailable(detail)
+    }
+  }
+
+  func saveOpenAITunnelConfiguration(_ draft: OpenAITunnelConfigurationDraft) async throws {
+    guard let gatewayProfile = GatewayProfileID(rawValue: draft.gatewayProfileID) else {
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown gateway profile: %@", draft.gatewayProfileID)
+      )
+    }
+    let result = try await operations.saveOpenAITunnelConfiguration(
+      OpenAITunnelConfigurationInput(
+        id: draft.id,
+        tunnelClientProfile: draft.tunnelClientProfile,
+        tunnelID: draft.tunnelID,
+        gatewayProfile: gatewayProfile,
+        tunnelClientPath: draft.tunnelClientPath,
+        httpProxy: draft.httpProxy,
+        apiKey: draft.apiKey
+      )
+    )
+    if result.reconnected {
+      reconnectAttempts[result.configuration.id] = 0
+      nextReconnectAt[result.configuration.id] = nil
+    }
+  }
+
+  func deleteOpenAITunnel(id: String) async throws {
+    try await operations.deleteOpenAITunnelConfiguration(id: id)
+  }
+
+  func startCloudflareTunnel(id: String) async throws {
+    fileLogger.append(.info, event: "cloudflare.start.requested", fields: ["profile_id": id])
+    _ = try await operations.startCloudflareTunnel(id: id)
+  }
+
+  func stopCloudflareTunnel(id: String) async throws {
+    _ = try await operations.stopCloudflareTunnel(id: id)
+    fileLogger.append(.info, event: "cloudflare.stop.completed", fields: ["profile_id": id])
+  }
+
+  func doctorCloudflareTunnel(id: String) async throws {
+    let report = try await controlPlane.doctorCloudflareTunnel(profileID: id)
+    guard report.passed else {
+      throw AppControlPlaneError.unavailable(
+        report.diagnostics.joined(separator: "\n")
+      )
+    }
+  }
+
+  func fetchCloudflareTunnelLogs(id: String) async throws -> CloudflareTunnelLogSnapshot {
+    let logs = try await controlPlane.cloudflareTunnelLogs(profileID: id)
+    return CloudflareTunnelLogSnapshot(
+      profileID: id,
+      stdout: logs.stdout,
+      stderr: logs.stderr,
+      truncated: logs.truncated
+    )
+  }
+
+  func saveCloudflareTunnelConfiguration(
+    _ draft: CloudflareTunnelConfigurationDraft
+  ) async throws -> String? {
+    guard let gatewayProfile = GatewayProfileID(rawValue: draft.gatewayProfileID) else {
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown gateway profile: %@", draft.gatewayProfileID)
+      )
+    }
+    let result = try await operations.saveCloudflareTunnelConfiguration(
+      CloudflareTunnelConfigurationInput(
+        id: draft.id,
+        tunnelName: draft.tunnelName,
+        publicHostname: draft.publicHostname,
+        gatewayProfile: gatewayProfile,
+        localPort: draft.localPort,
+        metricsPort: draft.metricsPort,
+        cloudflaredPath: draft.cloudflaredPath,
+        tunnelToken: draft.tunnelToken,
+        regenerateAccessToken: draft.regenerateAccessToken
+      )
+    )
+    return result.generatedAccessToken
+  }
+
+  func deleteCloudflareTunnel(id: String) async throws {
+    try await operations.deleteCloudflareTunnelConfiguration(id: id)
+  }
+
+  func installCommandLineTool() async throws -> EmbeddedCLIInstallationStatus {
+    try EmbeddedCLIInstaller().install(
+      source: URL(fileURLWithPath: try Self.embeddedGatewayExecutablePath()),
+      replaceInvalidLink: true
+    )
+  }
+
+  func commandLineToolStatus() async throws -> EmbeddedCLIInstallationStatus {
+    try EmbeddedCLIInstaller().status()
+  }
+
+  func localMCPConnection() async throws -> LocalMCPConnectionSummary {
+    let installation = try EmbeddedCLIInstaller().status()
+    return LocalMCPConnectionSummary(
+      command: controlPlane.gatewayExecutablePath,
+      arguments: [
+        "bridge", "--client-identity", "local-mcp", "--socket",
+        gatewayService.socketConfiguration.socketURL.path,
+      ],
+      cliInstallation: installation
+    )
+  }
+
+  func previewCodexRegistration() async throws -> CodexMCPInstallInvocation {
+    let connection = try await localMCPConnection()
+    let socketPath = gatewayService.socketConfiguration.socketURL.path
+    return try await Task.detached {
+      try CodexMCPInstaller().planApp(
+        codexCLI: nil,
+        serverName: "computer-mcp",
+        executablePath: connection.command,
+        socketPath: socketPath
+      )
+    }.value
+  }
+
+  func installCodexRegistration() async throws -> CommandResult {
+    let connection = try await localMCPConnection()
+    let socketPath = gatewayService.socketConfiguration.socketURL.path
+    let result = try await Task.detached {
+      try CodexMCPInstaller().installApp(
+        codexCLI: nil,
+        serverName: "computer-mcp",
+        executablePath: connection.command,
+        socketPath: socketPath
+      )
+    }.value
+    guard result.exitCode == 0 else {
+      let message =
+        [result.stderr, result.stdout]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty }
+        ?? "Codex MCP registration exited without a diagnostic message."
+      throw AppControlPlaneError.unavailable(message)
+    }
+    return result
+  }
+
+  func saveManifest(_ content: String) async throws {
+    _ = try await operations.activateManifest(content)
+  }
+
+  func rollbackManifest(to revisionID: String) async throws {
+    _ = try await operations.rollbackManifest(to: revisionID)
+  }
+
+  func exportDiagnostics(to destination: URL) async throws {
+    let diagnostics = try await fetchDiagnostics()
+    let audit = try await fetchAudit()
+    let text = Self.diagnosticText(diagnostics: diagnostics, audit: audit)
+    try await Task.detached {
+      let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+      defer { try? FileManager.default.removeItem(at: root) }
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      try text.write(
+        to: root.appendingPathComponent("diagnostics.txt"),
+        atomically: true,
+        encoding: .utf8
+      )
+      if FileManager.default.fileExists(atPath: destination.path) {
+        try FileManager.default.removeItem(at: destination)
+      }
+      let result = try ProcessCommandRunner().run(
+        executable: "/usr/bin/ditto",
+        arguments: ["-c", "-k", "--sequesterRsrc", root.path, destination.path],
+        workingDirectory: nil,
+        environment: [:],
+        timeoutMilliseconds: 30_000,
+        maxOutputBytes: 65_536
+      )
+      guard result.exitCode == 0, !result.timedOut else {
+        throw AppControlPlaneError.unavailable(
+          result.stderr.isEmpty ? "Could not create diagnostics archive." : result.stderr
+        )
+      }
+    }.value
+  }
+
+  private func restartGatewayIfRunning(
+    profile requestedProfile: GatewayProfileID? = nil
+  ) async throws {
+    let result = try await operations.restartGatewayIfRunning(profile: requestedProfile)
+    for id in result.reconnectedTunnelIDs {
+      reconnectAttempts[id] = 0
+      nextReconnectAt[id] = nil
+    }
+    for id in result.deferredTunnelIDs {
+      reconnectAttempts[id] = 1
+      nextReconnectAt[id] = Date().addingTimeInterval(2)
+      fileLogger.append(
+        .warning,
+        event: "tunnel.reconnect.deferred",
+        fields: ["profile_id": id]
+      )
+    }
+  }
+
+  private func validateDesiredTunnelProfileAlignment(
+    with profile: GatewayProfileID,
+    excludingTunnelID: String? = nil
+  ) async throws {
+    try await operations.validateDesiredTunnelProfileAlignment(
+      with: profile,
+      excludingTunnelID: excludingTunnelID
+    )
+  }
+
+  private func appOpenAITunnelConfiguration(id: String) async throws -> OpenAITunnelConfiguration {
+    guard
+      let profile = try await controlPlane.openAITunnelConfigurations().first(where: { $0.id == id }
+      )
+    else {
+      throw AppControlPlaneError.unavailable(
+        AppLocalization.formatted("Unknown Tunnel profile: %@", id)
+      )
+    }
+    return profile
+  }
+
+  private func ensureGateway(for profile: OpenAITunnelConfiguration) async throws {
+    try await operations.ensureGateway(for: profile)
+  }
+
+  private func restoreRuntime() async throws {
+    let desiredProfiles = try await restoreGatewayRuntime()
+    try await restoreDesiredOpenAITunnels(profiles: desiredProfiles)
+    try await restoreDesiredCloudflareTunnels()
+  }
+
+  private func restoreGatewayRuntime() async throws -> [OpenAITunnelConfiguration] {
+    let desiredProfiles = try await desiredOpenAITunnelConfigurations()
+    let gatewayProfiles = Set(desiredProfiles.map(\.gatewayProfile))
+    guard gatewayProfiles.count <= 1 else {
+      throw AppControlPlaneError.unavailable(
+        "Saved Tunnel profiles require different gateway profiles. Start only compatible Tunnels."
+      )
+    }
+
+    let selectedProfile: GatewayProfileID
+    if let profile = gatewayProfiles.first {
+      selectedProfile = profile
+    } else {
+      selectedProfile = try await controlPlane.activeGatewayProfile()
+    }
+    try await controlPlane.setActiveGatewayProfile(selectedProfile)
+    try await gatewayService.start(profile: selectedProfile)
+    return desiredProfiles
+  }
+
+  private func restoreTransportsAfterStartup(
+    profiles: [OpenAITunnelConfiguration]
+  ) {
+    Task { [weak self] in
+      guard let self else {
+        return
+      }
+      do {
+        try await restoreDesiredOpenAITunnels(profiles: profiles)
+        try await restoreDesiredCloudflareTunnels()
+      } catch {
+        fileLogger.append(
+          .warning,
+          event: "app.transport_restore.failed",
+          fields: ["error_type": String(describing: type(of: error))]
+        )
+      }
+    }
+  }
+
+  private func restoreDesiredCloudflareTunnels() async throws {
+    let desired = try await controlPlane.desiredCloudflareProfileIDs()
+    let statusByID = Dictionary(
+      uniqueKeysWithValues: await controlPlane.cloudflareTunnelStatuses().map {
+        ($0.profileID, $0.state)
+      }
+    )
+    for id in desired where statusByID[id] != .running && statusByID[id] != .starting {
+      _ = try await operations.startCloudflareTunnel(id: id)
+    }
+  }
+
+  private func restoreDesiredOpenAITunnels(
+    profiles suppliedProfiles: [OpenAITunnelConfiguration]? = nil
+  ) async throws {
+    let profiles: [OpenAITunnelConfiguration]
+    if let suppliedProfiles {
+      profiles = suppliedProfiles
+    } else {
+      profiles = try await desiredOpenAITunnelConfigurations()
+    }
+    let statuses = Dictionary(
+      uniqueKeysWithValues: try await controlPlane.snapshot().openAITunnelStatuses.map {
+        ($0.profileID, $0)
+      }
+    )
+    for profile in profiles {
+      if statuses[profile.id]?.state == .running || statuses[profile.id]?.state == .starting {
+        reconnectAttempts[profile.id] = 0
+        nextReconnectAt[profile.id] = nil
+        continue
+      }
+      if let nextAttempt = nextReconnectAt[profile.id], nextAttempt > Date() {
+        continue
+      }
+      let attempt = min((reconnectAttempts[profile.id] ?? 0) + 1, 10)
+      fileLogger.append(
+        .info,
+        event: "tunnel.reconnect.requested",
+        fields: [
+          "attempt": String(attempt),
+          "profile_id": profile.id,
+        ]
+      )
+      do {
+        try await ensureGateway(for: profile)
+        _ = try await controlPlane.reconnectOpenAITunnel(
+          profileID: profile.id,
+          allowKeychainAuthenticationUI: false
+        )
+        reconnectAttempts[profile.id] = 0
+        nextReconnectAt[profile.id] = nil
+        fileLogger.append(
+          .info,
+          event: "tunnel.reconnect.completed",
+          fields: ["profile_id": profile.id]
+        )
+      } catch {
+        reconnectAttempts[profile.id] = attempt
+        nextReconnectAt[profile.id] = Date().addingTimeInterval(
+          Self.reconnectDelay(for: attempt)
+        )
+        fileLogger.append(
+          .warning,
+          event: "tunnel.reconnect.failed",
+          fields: [
+            "attempt": String(attempt),
+            "error_type": String(describing: type(of: error)),
+            "profile_id": profile.id,
+          ]
+        )
+      }
+    }
+  }
+
+  private func desiredOpenAITunnelConfigurations() async throws -> [OpenAITunnelConfiguration] {
+    try await operations.desiredOpenAITunnelConfigurations()
+  }
+
+  private static func reconnectDelay(for attempt: Int) -> TimeInterval {
+    min(pow(2, Double(max(0, attempt - 1))), 60)
+  }
+
+  private static func embeddedGatewayExecutablePath() throws -> String {
+    var candidates: [URL] = []
+    if let resourceURL = Bundle.main.resourceURL {
+      candidates.append(resourceURL.appendingPathComponent("computer-mcp"))
+    }
+    if let executableURL = Bundle.main.executableURL {
+      candidates.append(
+        executableURL.deletingLastPathComponent().appendingPathComponent("computer-mcp")
+      )
+      candidates.append(
+        executableURL
+          .deletingLastPathComponent()
+          .deletingLastPathComponent()
+          .appendingPathComponent("Resources/computer-mcp")
+      )
+    }
+    guard
+      let executable = candidates.first(where: {
+        FileManager.default.isExecutableFile(atPath: $0.path)
+      })
+    else {
+      throw AppControlPlaneError.unavailable(
+        "The embedded computer-mcp bridge executable is missing. Reinstall Computer MCP.app."
+      )
+    }
+    return executable.standardizedFileURL.path
+  }
+
+  private func providerSummaries(
+    service: AppGatewayServiceSnapshot
+  ) async throws -> [ProviderSummary] {
+    let configuration = try await controlPlane.activeConfiguration()
+    let inProcessState: ServiceState = service.state == .running ? .running : .stopped
+    var summaries: [ProviderSummary] = []
+
+    if !configuration.builtin.enabled.isEmpty {
+      summaries.append(
+        ProviderSummary(
+          id: "builtin",
+          displayName: "Built-in Tools",
+          kind: .builtin,
+          state: inProcessState,
+          version: ComputerMCPCLI.version,
+          executablePath: nil,
+          toolCount: configuration.builtin.enabled.count,
+          lastDoctorMessage: "Hosted in the gateway process.",
+          lastError: nil,
+          lifecycleManaged: false
+        )
+      )
+    }
+    if configuration.skills.enabled {
+      summaries.append(
+        ProviderSummary(
+          id: "skills",
+          displayName: "Skills",
+          kind: .builtin,
+          state: inProcessState,
+          version: nil,
+          executablePath: nil,
+          toolCount: GatewayToolCounts.skills,
+          lastDoctorMessage: AppLocalization.formatted(
+            "%@ registered root(s)",
+            String(configuration.skills.roots.count)
+          ),
+          lastError: nil,
+          lifecycleManaged: false
+        )
+      )
+    }
+    for command in configuration.cli.commands {
+      summaries.append(
+        ProviderSummary(
+          id: "cli:\(command.id)",
+          displayName: command.id,
+          kind: .cli,
+          state: inProcessState,
+          version: nil,
+          executablePath: command.executable,
+          toolCount: nil,
+          lastDoctorMessage: "Executed on demand through cli.exec.",
+          lastError: nil,
+          lifecycleManaged: false
+        )
+      )
+    }
+    for server in configuration.mcp.servers {
+      summaries.append(
+        ProviderSummary(
+          id: "mcp:\(server.id)",
+          displayName: server.id,
+          kind: .mcp,
+          state: server.enabled ? inProcessState : .stopped,
+          version: nil,
+          executablePath: server.command ?? server.url,
+          toolCount: nil,
+          lastDoctorMessage: server.enabled
+            ? "Connected on demand through the MCP proxy."
+            : AppLocalization.string("Disabled"),
+          lastError: nil,
+          lifecycleManaged: false
+        )
+      )
+    }
+    summaries.append(
+      ProviderSummary(
+        id: "computer-use",
+        displayName: "Computer Use",
+        kind: .computerUse,
+        state: inProcessState,
+        version: nil,
+        executablePath: nil,
+        toolCount: GatewayToolCounts.computerUse,
+        lastDoctorMessage: "TCC permissions are checked without prompting.",
+        lastError: nil,
+        lifecycleManaged: false
+      )
+    )
+
+    for provider in try await controlPlane.providerStates() {
+      if provider.id == "codex",
+        let index = summaries.firstIndex(where: { $0.id == "codex" })
+      {
+        summaries[index].state = provider.health.appState
+        summaries[index].version = provider.observedVersion
+        summaries[index].executablePath = provider.executablePath
+        summaries[index].lastDoctorMessage = provider.detail
+        summaries[index].lastError = provider.health == "failed" ? provider.detail : nil
+        continue
+      }
+      summaries.append(
+        ProviderSummary(
+          id: provider.id,
+          displayName: provider.id,
+          kind: .external,
+          state: provider.health.appState,
+          version: provider.observedVersion,
+          executablePath: provider.executablePath,
+          toolCount: nil,
+          lastDoctorMessage: provider.detail,
+          lastError: provider.health == "failed" ? provider.detail : nil,
+          lifecycleManaged: false
+        )
+      )
+    }
+    return summaries.sorted {
+      $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+    }
+  }
+
+  private static func diagnosticText(
+    diagnostics: DiagnosticsSnapshot,
+    audit: [AuditEntrySummary]
+  ) -> String {
+    var lines = [
+      "Computer MCP Diagnostics",
+      "Generated: \(diagnostics.generatedAt)",
+      "Application Support: \(diagnostics.applicationSupportDirectory)",
+      "Logs: \(diagnostics.logDirectory)",
+      "",
+      "Checks:",
+    ]
+    lines.append(
+      contentsOf: diagnostics.items.map {
+        "- [\($0.level)] \($0.title): \($0.value)"
+          + ($0.detail.map { " (\($0))" } ?? "")
+      }
+    )
+    lines.append("")
+    lines.append("Recent redacted audit:")
+    lines.append(
+      contentsOf: audit.prefix(200).map {
+        "- \($0.timestamp) [\($0.decision.rawValue)] \($0.capability) \($0.summary)"
+      }
+    )
+    return lines.joined(separator: "\n") + "\n"
+  }
+}
+
+extension AppGatewayServiceState {
+  fileprivate var appState: ServiceState {
+    switch self {
+    case .stopped: .stopped
+    case .starting: .starting
+    case .running: .running
+    case .stopping: .stopping
+    case .failed: .failed
+    }
+  }
+}
+
+extension LaunchAtLoginState {
+  fileprivate var appState: LoginItemState {
+    switch self {
+    case .disabled: .disabled
+    case .enabled: .enabled
+    case .requiresApproval: .requiresApproval
+    case .unavailable: .unavailable
+    }
+  }
+}
+
+extension GatewayProfileID {
+  var displayName: String {
+    if self == .chatGPTObserve { return "ChatGPT Observe" }
+    if self == .chatGPTOperate { return "ChatGPT Control" }
+    if self == .cloudflareObserve { return "Cloudflare Observe" }
+    if self == .cloudflareOperate { return "Cloudflare Control" }
+    if self == .localAdmin { return "Local Admin" }
+    return rawValue
+  }
+
+}
+
+extension GatewayPermissionMode {
+  fileprivate var summary: String {
+    switch self {
+    case .readOnly: "Read selected tools and workspaces without changing them."
+    case .workspaceOperations:
+      "Control selected capabilities, projects, and integrations."
+    case .localFullAccess:
+      "Control selected capabilities. Full Access requires approval for a connected client."
+    }
+  }
+  fileprivate var riskLevel: RiskLevel {
+    switch self {
+    case .readOnly: .low
+    case .workspaceOperations: .elevated
+    case .localFullAccess: .high
+    }
+  }
+}
+
+extension OpenAITunnelLifecycleState {
+  fileprivate var appState: ServiceState {
+    switch self {
+    case .stopped: .stopped
+    case .starting: .starting
+    case .running: .running
+    case .stopping: .stopping
+    case .failed: .failed
+    }
+  }
+}
+
+extension CloudflareTunnelLifecycleState {
+  fileprivate var appState: ServiceState {
+    switch self {
+    case .stopped: .stopped
+    case .starting: .starting
+    case .running: .running
+    case .stopping: .stopping
+    case .failed: .failed
+    }
+  }
+}
+
+extension ComputerUsePermissionStatus {
+  fileprivate var appState: PermissionState {
+    switch self {
+    case .granted: .granted
+    case .notGranted: .notGranted
+    }
+  }
+}
+
+extension ComputerMCP.AuditDecision {
+  fileprivate var appDecision: AuditDecision {
+    switch self {
+    case .allowed: .allowed
+    case .denied: .denied
+    case .failed: .failed
+    }
+  }
+}
+
+extension String {
+  fileprivate var appState: ServiceState {
+    switch self {
+    case "ready": .running
+    case "failed": .failed
+    case "unavailable": .stopped
+    default: .degraded
+    }
+  }
+}

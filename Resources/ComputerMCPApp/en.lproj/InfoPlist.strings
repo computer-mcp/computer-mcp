@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "Computer MCP";
+"NSAccessibilityUsageDescription" = "Computer MCP uses Accessibility only when you explicitly enable Computer Use actions.";
+"NSScreenCaptureUsageDescription" = "Computer MCP captures the screen only when an authorized MCP profile invokes screen observation.";

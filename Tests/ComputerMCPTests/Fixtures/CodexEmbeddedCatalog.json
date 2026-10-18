@@ -1,0 +1,3926 @@
+[
+  {
+    "tool": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Diagnostics Snapshot",
+      "name": "codex.diagnostics.snapshot",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read one redacted, workspace-scoped operational snapshot that correlates Codex runtimes, process and connection ownership, approvals, acceptance runs, worktree leases, cleanup state, and recent tool or Git audit receipts.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.diagnostics.snapshot"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.status",
+      "title": "Codex App Status",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read the persistent Codex App Server connection status."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.status"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.runtimes.list",
+      "title": "Codex App Runtimes List",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List active Computer MCP-owned Codex App Server runtimes for the selected workspace.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.runtimes.list"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.runtimes.history",
+      "title": "Codex App Runtimes History",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List persisted Computer MCP runtime ownership and shutdown receipts for the selected workspace.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.runtimes.history"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.runtimes.cleanup.preview",
+      "title": "Codex App Runtimes Cleanup Preview",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Classify active runtimes, watchdog-pending processes, and stale runtime records without sending signals or changing state.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.app.runtimes.cleanup.preview",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.runtimes.cleanup.perform",
+      "title": "Codex App Runtimes Cleanup Perform",
+      "inputSchema": {
+        "required": [
+          "confirm_cleanup"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "confirm_cleanup": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Clean reviewed stale Computer MCP runtime records only after their owned process and supervisor are gone. This never signals unrelated Codex processes.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.app.runtimes.cleanup.perform"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.ownership.reconcile.preview",
+      "title": "Codex App Ownership Reconcile Preview",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Preview stale loaded ownership receipts whose Computer MCP runtime and owned process are provably gone. This never changes external Codex state or sends a signal."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.ownership.reconcile.preview"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.ownership.reconcile.perform",
+      "inputSchema": {
+        "required": [
+          "expected_plan_digest",
+          "confirm_reconciliation"
+        ],
+        "properties": {
+          "confirm_reconciliation": {
+            "type": "boolean"
+          },
+          "expected_plan_digest": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Ownership Reconcile Perform",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Locally apply an exact reviewed ownership-receipt repair plan without changing external Codex state or signaling any process.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.app.ownership.reconcile.perform",
+      "usesNetwork": true,
+      "localOnly": true,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "runtime_id"
+        ],
+        "properties": {
+          "runtime_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.app.runtimes.inspect",
+      "title": "Codex App Runtimes Inspect",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Inspect one Computer MCP-owned runtime, including owner, connection generation, process group, known threads, and shutdown state.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.app.runtimes.inspect",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.runtimes.stop",
+      "inputSchema": {
+        "required": [
+          "runtime_id"
+        ],
+        "properties": {
+          "runtime_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Runtimes Stop",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Stop and reap one specific Computer MCP-owned runtime. Other Codex applications and user-owned processes are never targeted.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.app.runtimes.stop",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.methods.list",
+      "title": "Codex App Methods List",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List reviewed Codex App Server RPC methods. Authentication, configuration mutation, marketplace mutation, raw shell, filesystem bypass, and remote pairing methods are never included."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.methods.list"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.methods.describe",
+      "inputSchema": {
+        "required": [
+          "method"
+        ],
+        "properties": {
+          "method": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Methods Describe",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Describe one reviewed Codex App Server RPC and the fixed follow-up call context."
+    },
+    "capability": {
+      "id": "codex.app.methods.describe",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.methods.call",
+      "title": "Codex App Methods Call",
+      "inputSchema": {
+        "required": [
+          "method"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "method": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Call one reviewed Codex App Server RPC. The gateway fixes cwd, sandbox, and approval policy and rejects instruction/config overrides. A leased turn must use codex.app.turn.start with its lease ID.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.app.methods.call"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "properties": {
+          "service_tier": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "personality": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ephemeral": {
+            "type": "boolean"
+          },
+          "model": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.app.thread.start",
+      "title": "Codex App Thread Start",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start a Codex thread in the bound workspace."
+    },
+    "capability": {
+      "id": "codex.app.thread.start",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.thread.list",
+      "title": "Codex App Thread List",
+      "inputSchema": {
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "source_kinds": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 1048576,
+              "type": "string"
+            }
+          },
+          "cursor": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          },
+          "search_term": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sort_key": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sort_direction": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List Codex threads restricted to the bound workspace."
+    },
+    "capability": {
+      "id": "codex.app.thread.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.thread.reclaim",
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "properties": {
+          "service_tier": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "personality": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Thread Reclaim",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Explicitly resume a persisted thread under the current Computer MCP runtime after workspace validation. A writer conflict is reported without terminating external Codex applications.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.app.thread.reclaim"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.thread.loaded.list",
+      "title": "Codex App Thread Loaded List",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List thread IDs loaded by the current Computer MCP-owned App Server runtime.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.app.thread.loaded.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "include_turns": {
+            "type": "boolean"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex App Thread Read",
+      "name": "codex.app.thread.read",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read one Codex thread after verifying its workspace."
+    },
+    "capability": {
+      "id": "codex.app.thread.read",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "max_turns": {
+            "minimum": 1,
+            "maximum": 50,
+            "type": "integer"
+          },
+          "max_items": {
+            "minimum": 1,
+            "maximum": 500,
+            "type": "integer"
+          },
+          "before_cursor": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_output_bytes": {
+            "minimum": 4096,
+            "maximum": 1048576,
+            "type": "integer"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_messages": {
+            "minimum": 1,
+            "maximum": 200,
+            "type": "integer"
+          },
+          "max_elapsed_milliseconds": {
+            "minimum": 50,
+            "type": "integer",
+            "maximum": 5000
+          },
+          "max_bytes": {
+            "minimum": 4096,
+            "maximum": 1048576,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "codex.app.thread.recent",
+      "title": "Codex App Thread Recent",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read bounded metadata, Goal status, active/recent turns, messages, items, pending lifecycle state, and compact progress from a persisted thread without loading full history."
+    },
+    "capability": {
+      "id": "codex.app.thread.recent",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "properties": {
+          "service_tier": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ephemeral": {
+            "type": "boolean"
+          },
+          "model": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Thread Fork",
+      "name": "codex.app.thread.fork",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Fork a Codex thread in the bound workspace.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.app.thread.fork"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "properties": {
+          "interrupt_active_turn": {
+            "type": "boolean"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "graceful",
+              "force-computer-mcp-owned-runtime-only"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.app.thread.release",
+      "title": "Codex App Thread Release",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Release a thread from every matching Computer-MCP-owned runtime and verify that another official Codex client can claim it immediately. Active turns are interrupted only when explicitly requested; force mode can stop only exact Computer-MCP-owned runtimes.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.app.thread.release",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.handoff.diagnose",
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "properties": {
+          "observed_error": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Handoff Diagnose",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Inspect thread ownership and handoff blockers using Computer MCP runtime, process, connection, and approval evidence.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.app.handoff.diagnose",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "codex.app.goal.get",
+      "title": "Codex App Goal Get",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read the official persisted Codex Goal for a verified workspace thread."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.goal.get"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.goal.set",
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "objective": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused",
+              "blocked",
+              "usageLimited",
+              "budgetLimited",
+              "complete"
+            ],
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "token_budget": {
+            "minimum": 1,
+            "maximum": 100000000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex App Goal Set",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Create or update the official persisted Codex Goal. A completed turn does not complete the Goal unless its status is explicitly accepted as complete.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.app.goal.set",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.goal.clear",
+      "title": "Codex App Goal Clear",
+      "inputSchema": {
+        "required": [
+          "thread_id"
+        ],
+        "properties": {
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Clear the official persisted Codex Goal for a verified workspace thread.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.app.goal.clear",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.runtime.stop",
+      "title": "Codex App Runtime Stop",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Release all thread subscriptions and stop the current Computer MCP-owned App Server runtime."
+    },
+    "capability": {
+      "id": "codex.app.runtime.stop",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.turn.start",
+      "title": "Codex App Turn Start",
+      "inputSchema": {
+        "required": [
+          "thread_id",
+          "prompt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "summary": {
+            "minLength": 1,
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "service_tier": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "effort": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "personality": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "worktree_lease_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "output_schema": {
+            "maxProperties": 1000,
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Start a Codex turn with gateway-owned sandbox and approval policy.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.app.turn.start",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id",
+          "expected_turn_id",
+          "prompt"
+        ],
+        "properties": {
+          "expected_turn_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "client_user_message_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.app.turn.steer",
+      "title": "Codex App Turn Steer",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Steer the currently active Codex turn. The expected turn ID prevents instructions from being applied to a newer turn."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.app.turn.steer"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.turn.interrupt",
+      "title": "Codex App Turn Interrupt",
+      "inputSchema": {
+        "required": [
+          "thread_id",
+          "turn_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "turn_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Interrupt an active Codex turn."
+    },
+    "capability": {
+      "id": "codex.app.turn.interrupt",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id",
+          "target"
+        ],
+        "properties": {
+          "delivery": {
+            "enum": [
+              "inline",
+              "detached"
+            ],
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "maxProperties": 1000,
+            "additionalProperties": true
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.app.review.start",
+      "title": "Codex App Review Start",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start a Codex review for a verified workspace thread."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.app.review.start"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.models.list",
+      "inputSchema": {
+        "properties": {
+          "cursor": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "include_hidden": {
+            "type": "boolean"
+          },
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Models List",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List models exposed by Codex App Server."
+    },
+    "capability": {
+      "id": "codex.app.models.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "properties": {
+          "force_reload": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.app.skills.list",
+      "title": "Codex App Skills List",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List Skills for the bound workspace.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.app.skills.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.apps.list",
+      "title": "Codex App Apps List",
+      "inputSchema": {
+        "properties": {
+          "cursor": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "force_refetch": {
+            "type": "boolean"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "minimum": 1,
+            "maximum": 100,
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List a bounded page of apps exposed by Codex App Server."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.apps.list"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.events.read",
+      "title": "Codex App Events Read",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "after_cursor": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_results": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read App Server notifications by monotonic cursor.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.events.read"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "title": "Codex App Requests List",
+      "name": "codex.app.requests.list",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List pending ordinary user-input and MCP elicitation requests. Native approval requests use codex.app.approvals.*, while credential refresh remains denied."
+    },
+    "capability": {
+      "id": "codex.app.requests.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.requests.respond",
+      "inputSchema": {
+        "required": [
+          "request_id",
+          "response"
+        ],
+        "properties": {
+          "request_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "response": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex App Requests Respond",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Respond to one pending ordinary user-input or MCP elicitation request. Native approval decisions use codex.app.approvals.respond; credential refresh cannot be approved.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.app.requests.respond"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "timed_out",
+              "interrupted",
+              "failed"
+            ]
+          },
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex App Approvals List",
+      "name": "codex.app.approvals.list",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List durable App Server approval records. Policy authorization and user consent remain separate decisions."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.app.approvals.list"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.approvals.read",
+      "title": "Codex App Approvals Read",
+      "inputSchema": {
+        "required": [
+          "approval_id"
+        ],
+        "properties": {
+          "approval_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read one durable, redacted App Server approval record and its audit outcome.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.app.approvals.read",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.app.approvals.respond",
+      "title": "Codex App Approvals Respond",
+      "inputSchema": {
+        "required": [
+          "approval_id",
+          "decision"
+        ],
+        "properties": {
+          "approval_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve_once",
+              "approve_session",
+              "deny"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Approve once, approve for a bounded session scope when supported, or deny one live App Server request. Workspace and capability policy are revalidated before approval.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.app.approvals.respond",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.run.create",
+      "title": "Codex Run Create",
+      "inputSchema": {
+        "required": [
+          "objective",
+          "accepted_scope",
+          "acceptance_criteria"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "objective": {
+            "minLength": 1,
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "max_turns": {
+            "minimum": 1,
+            "type": "integer",
+            "maximum": 10000
+          },
+          "parent_run_id": {
+            "minLength": 1,
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "max_no_progress_seconds": {
+            "minimum": 30,
+            "maximum": 86400,
+            "type": "integer"
+          },
+          "required_evidence_kinds": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 1048576,
+              "type": "string"
+            }
+          },
+          "max_duration_seconds": {
+            "minimum": 60,
+            "maximum": 2592000,
+            "type": "integer"
+          },
+          "acceptance_criteria": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 1048576,
+              "type": "string"
+            }
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_repeated_failures": {
+            "minimum": 1,
+            "type": "integer",
+            "maximum": 100
+          },
+          "accepted_scope": {
+            "items": {
+              "maxLength": 1048576,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 1000
+          },
+          "official_goal_linked": {
+            "type": "boolean"
+          },
+          "phase": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Create a persisted Computer MCP acceptance run. This may link to an official Goal thread, but its acceptance criteria and evidence remain explicitly Computer MCP-owned."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.run.create"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.run.list",
+      "title": "Codex Run List",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List persisted Computer MCP acceptance runs for the selected workspace.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.run.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.run.read",
+      "title": "Codex Run Read",
+      "inputSchema": {
+        "required": [
+          "run_id"
+        ],
+        "properties": {
+          "run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read one Computer MCP acceptance run, including open criteria, evidence, budgets, blockers, and terminal reason."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.run.read"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.run.record",
+      "title": "Codex Run Record",
+      "inputSchema": {
+        "required": [
+          "run_id",
+          "expected_revision",
+          "event",
+          "summary"
+        ],
+        "properties": {
+          "criterion_id": {
+            "minLength": 1,
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "external_blocker": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "command_id": {
+            "minLength": 1,
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "request_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "failure_fingerprint": {
+            "minLength": 1,
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "repository_digest": {
+            "minLength": 1,
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "correlation_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "phase": {
+            "minLength": 1,
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "approval_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "evidence_kind": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "turn_id": {
+            "minLength": 1,
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "artifact": {
+            "minLength": 1,
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "next_action": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "event": {
+            "enum": [
+              "planning",
+              "turn_started",
+              "turn_completed",
+              "repository_changed",
+              "command_started",
+              "command_progress",
+              "command_completed",
+              "failure",
+              "acceptance_passed",
+              "acceptance_failed",
+              "approval_pending",
+              "approval_resolved",
+              "blocker"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "minLength": 1,
+            "maxLength": 1048576,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Record one revision-checked progress event and apply bounded stall, failure, approval, and turn-completion rules.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.run.record"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "run_id",
+          "expected_revision"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Run Evaluate",
+      "name": "codex.run.evaluate",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Evaluate a run against time, turn, repeated-failure, and no-progress bounds without claiming completion.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.run.evaluate",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "run_id",
+          "expected_revision",
+          "worktree_clean"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "worktree_clean": {
+            "type": "boolean"
+          },
+          "run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "codex.run.accept",
+      "title": "Codex Run Accept",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Accept completion only when every criterion has evidence, required build/test/Git evidence is present, no turn or approval remains active, and the caller confirms a clean worktree."
+    },
+    "capability": {
+      "id": "codex.run.accept",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.run.transition",
+      "title": "Codex Run Transition",
+      "inputSchema": {
+        "required": [
+          "run_id",
+          "expected_revision",
+          "action"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "pause",
+              "resume",
+              "cancel"
+            ],
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Pause, resume, or cancel a Computer MCP acceptance run. This does not invent or change official Codex Goal statuses."
+    },
+    "capability": {
+      "id": "codex.run.transition",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "parent_run_id",
+          "expected_revision",
+          "child_run_id",
+          "child_evidence_ids",
+          "criterion_id"
+        ],
+        "properties": {
+          "criterion_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "child_evidence_ids": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 1048576,
+              "type": "string"
+            }
+          },
+          "child_run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "parent_run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "accept_criterion": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.run.reconcile",
+      "title": "Codex Run Reconcile",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Explicitly import selected evidence from an accepted child run into one parent criterion. Unselected child output never overwrites the parent run.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.run.reconcile"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.leases.acquire",
+      "inputSchema": {
+        "required": [
+          "agent_id"
+        ],
+        "properties": {
+          "parent_lease_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "agent_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "branch": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "minimum": 30,
+            "maximum": 86400,
+            "type": "integer"
+          },
+          "run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "exclusive",
+              "isolated_worktree"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex Worktree Leases Acquire",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Acquire exclusive mutation ownership for the selected registered worktree. Independent child tasks use a separately registered worktree and an isolated_worktree lease linked to its parent.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.worktree.leases.acquire",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex Worktree Leases List",
+      "name": "codex.worktree.leases.list",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List active and historical worktree mutation leases for the selected workspace.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.worktree.leases.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "lease_id"
+        ],
+        "properties": {
+          "lease_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex Worktree Leases Read",
+      "name": "codex.worktree.leases.read",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read one worktree mutation lease and its task lineage.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.worktree.leases.read"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.leases.heartbeat",
+      "title": "Codex Worktree Leases Heartbeat",
+      "inputSchema": {
+        "required": [
+          "lease_id",
+          "expected_revision"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "ttl_seconds": {
+            "minimum": 30,
+            "maximum": 86400,
+            "type": "integer"
+          },
+          "lease_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Renew one active revision-checked worktree lease for a bounded duration."
+    },
+    "capability": {
+      "id": "codex.worktree.leases.heartbeat",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "lease_id",
+          "expected_revision",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "lease_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Worktree Leases Release",
+      "name": "codex.worktree.leases.release",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Release one active revision-checked worktree lease without deleting files or worktrees.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.worktree.leases.release"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.leases.cleanup.preview",
+      "title": "Codex Worktree Leases Cleanup Preview",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Preview expired worktree lease receipts. This does not change files, worktrees, branches, or processes.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.worktree.leases.cleanup.preview",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "confirm_cleanup"
+        ],
+        "properties": {
+          "confirm_cleanup": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.worktree.leases.cleanup.perform",
+      "title": "Codex Worktree Leases Cleanup Perform",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Mark reviewed expired lease receipts as expired. Filesystem and Git cleanup remain separate governed operations."
+    },
+    "capability": {
+      "id": "codex.worktree.leases.cleanup.perform",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.managed.list",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Worktree Managed List",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List Computer MCP-owned worktree plans and lifecycle receipts rooted in the selected source workspace.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.worktree.managed.list"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.managed.read",
+      "inputSchema": {
+        "required": [
+          "managed_worktree_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "managed_worktree_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Worktree Managed Read",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read one Computer MCP-owned worktree plan or lifecycle receipt."
+    },
+    "capability": {
+      "id": "codex.worktree.managed.read",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "agent_id",
+          "parent_lease_id",
+          "branch"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "parent_lease_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start_point": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "agent_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "branch": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "minimum": 30,
+            "maximum": 86400,
+            "type": "integer"
+          },
+          "run_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Worktree Provision Plan",
+      "name": "codex.worktree.provision.plan",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Persist and validate a five-minute plan for a new isolated Git worktree under the Computer MCP-managed root. This does not create a branch or directory.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.worktree.provision.plan",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.provision.perform",
+      "inputSchema": {
+        "required": [
+          "plan_id",
+          "expected_revision",
+          "confirm_provision"
+        ],
+        "properties": {
+          "confirm_provision": {
+            "type": "boolean"
+          },
+          "plan_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex Worktree Provision Perform",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Create exactly one reviewed managed worktree, register it as a child workspace, inherit the current profile's workspace grant, and acquire an isolated writer lease.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.worktree.provision.perform",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.remove.plan",
+      "title": "Codex Worktree Remove Plan",
+      "inputSchema": {
+        "required": [
+          "managed_worktree_id"
+        ],
+        "properties": {
+          "managed_worktree_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Verify Computer MCP ownership, an inactive writer lease, no live runtime, exact Git linkage, and a clean worktree before persisting a five-minute removal plan.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.worktree.remove.plan"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.worktree.remove.perform",
+      "title": "Codex Worktree Remove Perform",
+      "inputSchema": {
+        "required": [
+          "managed_worktree_id",
+          "expected_revision",
+          "confirm_remove"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "confirm_remove": {
+            "type": "boolean"
+          },
+          "managed_worktree_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Remove exactly the reviewed clean Computer MCP-owned worktree and its managed workspace registration. The local branch is preserved. This destructive operation also requires a gateway operation ticket.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "id": "codex.worktree.remove.perform",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "destructive",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.exec.start",
+      "title": "Codex Exec Start",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start an isolated `codex exec` JSONL session. cwd, sandbox, approval policy, writable roots, and config overrides are fixed locally."
+    },
+    "capability": {
+      "id": "codex.exec.start",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "upstream_session_id"
+        ],
+        "properties": {
+          "upstream_session_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex Exec Resume",
+      "name": "codex.exec.resume",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Resume one upstream Codex Exec session under the same fixed workspace and policy."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.exec.resume"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "title": "Codex Exec List",
+      "name": "codex.exec.list",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List gateway-owned Codex Exec sessions."
+    },
+    "capability": {
+      "id": "codex.exec.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "session_id"
+        ],
+        "properties": {
+          "after_cursor": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_results": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "codex.exec.events",
+      "title": "Codex Exec Events",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read JSONL events for one Codex Exec session by monotonic cursor.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.exec.events"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "codex.exec.result",
+      "title": "Codex Exec Result",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read the terminal result for one completed Codex Exec session."
+    },
+    "capability": {
+      "id": "codex.exec.result",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.exec.cancel",
+      "title": "Codex Exec Cancel",
+      "inputSchema": {
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Cancel one running Codex Exec session.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.exec.cancel"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "codex.mcp.status",
+      "title": "Codex Mcp Status",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read the persistent `codex mcp-server` connection status.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.mcp.status"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.mcp.tools.list",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "title": "Codex Mcp Tools List",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List tools reported by `codex mcp-server`."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.mcp.tools.list"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "prompt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "codex.mcp.run",
+      "title": "Codex Mcp Run",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Start the Codex MCP `codex` tool with gateway-owned cwd, sandbox, approval policy, and no instruction/config overrides.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.mcp.run"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "thread_id",
+          "prompt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "thread_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Mcp Reply",
+      "name": "codex.mcp.reply",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Reply to an existing Codex MCP thread."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.mcp.reply"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "title": "Codex Mcp Calls List",
+      "name": "codex.mcp.calls.list",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List gateway-owned Codex MCP calls.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.mcp.calls.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "call_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "after_cursor": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "call_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_results": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "codex.mcp.events",
+      "title": "Codex Mcp Events",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read server messages and approval events for one Codex MCP call by cursor.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.mcp.events",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "call_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "call_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Mcp Result",
+      "name": "codex.mcp.result",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Read the current or terminal result for one Codex MCP call.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "id": "codex.mcp.result"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.mcp.approvals.list",
+      "title": "Codex Mcp Approvals List",
+      "inputSchema": {
+        "required": [
+          "call_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "call_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "List pending command or patch approvals for one Codex MCP call.",
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "readOnlyHint": true
+      }
+    },
+    "capability": {
+      "id": "codex.mcp.approvals.list",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "read-only",
+      "tccServices": [],
+      "workspaceRequirement": "required"
+    }
+  },
+  {
+    "tool": {
+      "name": "codex.mcp.approval.respond",
+      "inputSchema": {
+        "required": [
+          "call_id",
+          "approval_id",
+          "decision"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "call_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Codex Mcp Approval Respond",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Allow or deny one pending Codex MCP approval. Allow is accepted only when every cwd, grant root, and patch path stays within the bound workspace."
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.mcp.approval.respond"
+    }
+  },
+  {
+    "tool": {
+      "inputSchema": {
+        "required": [
+          "call_id"
+        ],
+        "properties": {
+          "call_id": {
+            "maxLength": 1048576,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "title": "Codex Mcp Cancel",
+      "name": "codex.mcp.cancel",
+      "outputSchema": {
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {}
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "description": "Request cancellation for one active Codex MCP call.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false,
+        "readOnlyHint": false
+      }
+    },
+    "capability": {
+      "workspaceRequirement": "required",
+      "usesNetwork": true,
+      "localOnly": false,
+      "risk": "workspace-write",
+      "tccServices": [],
+      "id": "codex.mcp.cancel"
+    }
+  }
+]

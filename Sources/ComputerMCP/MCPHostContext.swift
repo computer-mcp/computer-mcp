@@ -1,0 +1,79 @@
+import Foundation
+
+/// Immutable launch provenance for a workspace's downstream stdio processes.
+/// This is not a credential or a grant. The gateway still authorizes and audits every call.
+package struct MCPHostContext: Encodable, Sendable {
+  package static let environmentKey = "COMPUTER_MCP_HOST_CONTEXT"
+  static let descriptorEnvironmentKey = "COMPUTER_MCP_HOST_FD"
+  static let readHandleEnvironmentKey = "COMPUTER_MCP_HOST_READ_HANDLE"
+  static let writeHandleEnvironmentKey = "COMPUTER_MCP_HOST_WRITE_HANDLE"
+
+  package struct Workspace: Encodable, Sendable {
+    let id: String
+    let rootPath: String
+  }
+
+  let formatVersion = 1
+  let runtimeID: UUID
+  let caller: GatewayCallerKind
+  let profileID: GatewayProfileID
+  let workspace: Workspace
+  let readOnly: Bool
+  let transportTrace: GatewayTransportTrace?
+  let tools: MCPHostToolDirectory?
+  let managedWorkspaceRoot: String?
+  /// Host-local recovery storage; never serialized into downstream launch metadata.
+  var processOwnershipRoot: URL?
+  /// Host-owned file identities by registration; never supplied in plugin arguments.
+  var pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
+  /// In-process work ownership is never serialized or asserted by a plugin.
+  var ownedWork: GatewayOwnedWork?
+  /// Host-local execution receipts and identity are never environment credentials.
+  let executionDatabase: GatewayDatabase?
+  let principalID: String
+  /// Verified admission evidence for host ownership writes, never inferred from caller provenance.
+  let verifiedPrincipalID: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case formatVersion, runtimeID, caller, profileID, workspace, readOnly, transportTrace,
+      managedWorkspaceRoot, principalID
+  }
+
+  package init(
+    runtimeID: UUID, context: ExecutionContext, workspaceID: String, rootURL: URL,
+    readOnly: Bool, tools: MCPHostToolDirectory? = nil, managedWorkspaceRoot: URL? = nil,
+    processOwnershipRoot: URL? = nil, executionDatabase: GatewayDatabase? = nil
+  ) {
+    self.runtimeID = runtimeID
+    caller = context.caller
+    profileID = context.profileID
+    workspace = Workspace(id: workspaceID, rootPath: rootURL.path)
+    self.readOnly = readOnly
+    transportTrace = context.transportTrace
+    self.tools = tools
+    self.managedWorkspaceRoot = managedWorkspaceRoot?.standardizedFileURL.path
+    self.processOwnershipRoot = processOwnershipRoot
+    self.executionDatabase = executionDatabase
+    self.principalID = context.principalID
+    self.verifiedPrincipalID = context.trustedPrincipalID
+  }
+
+  /// Registration overrides and inherited environments cannot assert host provenance.
+  static func launchEnvironment(
+    inherited: [String: String], overrides: [String: String], context: Self?
+  ) throws -> [String: String] {
+    var result = inherited.merging(overrides) { _, value in value }
+    result.removeValue(forKey: environmentKey)
+    for key in [descriptorEnvironmentKey, readHandleEnvironmentKey, writeHandleEnvironmentKey] {
+      result.removeValue(forKey: key)
+    }
+    if let context {
+      let data = try JSONEncoder().encode(context)
+      guard data.count <= 16_384 else {
+        throw GatewayToolError.executionFailed("Downstream MCP host context exceeds 16 KiB.")
+      }
+      result[environmentKey] = String(decoding: data, as: UTF8.self)
+    }
+    return result
+  }
+}

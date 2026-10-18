@@ -1,0 +1,5 @@
+module CSystemArchive [system] {
+  header "archive.h"
+  link "archive.2"
+  export *
+}

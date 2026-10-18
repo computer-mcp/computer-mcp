@@ -1,0 +1,4 @@
+import ComputerMCPPlatform
+
+package typealias WorkspacePathResolver = ComputerMCPPlatform.WorkspacePathResolver
+package typealias WorkspacePathResolutionError = ComputerMCPPlatform.WorkspacePathResolutionError

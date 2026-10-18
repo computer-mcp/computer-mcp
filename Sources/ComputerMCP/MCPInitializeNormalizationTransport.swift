@@ -1,0 +1,186 @@
+import Foundation
+import Logging
+import MCP
+
+/// Adapts open-ended MCP initialize capabilities to the narrower Swift SDK 0.12 model.
+internal actor MCPInitializeNormalizationTransport: Transport {
+  private let underlying: any Transport
+  private var initialInitializeID: JSONValue?
+  private var initializeResponse: JSONValue?
+  private var pendingInitializeIDs: [JSONValue] = []
+
+  internal nonisolated let logger: Logger
+
+  internal init(
+    wrapping underlying: any Transport,
+    logger: Logger = Logger(label: "computer-mcp.mcp-initialize-normalization")
+  ) {
+    self.underlying = underlying
+    self.logger = logger
+  }
+
+  internal func connect() async throws {
+    try await underlying.connect()
+  }
+
+  internal func disconnect() async {
+    initialInitializeID = nil
+    initializeResponse = nil
+    pendingInitializeIDs.removeAll()
+    await underlying.disconnect()
+  }
+
+  internal func send(_ data: Data) async throws {
+    guard
+      let initialInitializeID,
+      let response = MCPInitializeNormalization.initializationResponse(
+        in: data,
+        matching: initialInitializeID
+      )
+    else {
+      try await underlying.send(data)
+      return
+    }
+
+    // The peer can reuse the ID as soon as bytes arrive, before send resumes.
+    // Commit negotiation state before yielding to the underlying transport.
+    if response.objectValue?["error"] == nil { initializeResponse = response }
+    self.initialInitializeID = nil
+    let pendingIDs = pendingInitializeIDs
+    pendingInitializeIDs.removeAll()
+    do {
+      try await underlying.send(data)
+      for id in pendingIDs {
+        try await underlying.send(
+          MCPInitializeNormalization.replay(response: response, with: id)
+        )
+      }
+    } catch {
+      await disconnect()
+      throw error
+    }
+  }
+
+  internal func receive() -> AsyncThrowingStream<Data, Swift.Error> {
+    return AsyncThrowingStream { continuation in
+      Task {
+        await self.forwardMessages(to: continuation)
+      }
+    }
+  }
+
+  private func forwardMessages(
+    to continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
+  ) async {
+    let stream = await underlying.receive()
+    do {
+      for try await data in stream {
+        try await forwardMessage(data, to: continuation)
+      }
+      continuation.finish()
+    } catch {
+      continuation.finish(throwing: error)
+    }
+  }
+
+  private func forwardMessage(
+    _ data: Data,
+    to continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
+  ) async throws {
+    let normalized = MCPInitializeNormalization.normalize(data)
+    guard let requestID = MCPInitializeNormalization.initializeRequestID(in: normalized) else {
+      continuation.yield(normalized)
+      return
+    }
+
+    if let initializeResponse {
+      try await underlying.send(
+        MCPInitializeNormalization.replay(response: initializeResponse, with: requestID)
+      )
+    } else if initialInitializeID != nil {
+      guard pendingInitializeIDs.count < 128 else {
+        throw MCPError.invalidRequest("Too many concurrent initialization requests.")
+      }
+      pendingInitializeIDs.append(requestID)
+    } else {
+      initialInitializeID = requestID
+      continuation.yield(normalized)
+    }
+  }
+}
+
+enum MCPInitializeNormalization {
+  static func normalize(_ data: Data) -> Data {
+    guard
+      var message = (try? JSONDecoder().decode(JSONValue.self, from: data))?.objectValue,
+      message["method"]?.stringValue == "initialize",
+      var parameters = message["params"]?.objectValue,
+      var capabilities = parameters["capabilities"]?.objectValue,
+      let experimental = capabilities["experimental"]?.objectValue
+    else {
+      return data
+    }
+
+    let supported = experimental.filter { $0.value.stringValue != nil }
+    if supported.count == experimental.count { return data }
+    if supported.isEmpty {
+      capabilities.removeValue(forKey: "experimental")
+    } else {
+      capabilities["experimental"] = .object(supported)
+    }
+    parameters["capabilities"] = .object(capabilities)
+    message["params"] = .object(parameters)
+    return (try? JSONEncoder().encode(JSONValue.object(message))) ?? data
+  }
+
+  static func initializeRequestID(in data: Data) -> JSONValue? {
+    guard
+      let message = try? JSONDecoder().decode(JSONValue.self, from: data),
+      let object = message.objectValue,
+      object["method"]?.stringValue == "initialize",
+      let id = object["id"],
+      id != .null
+    else {
+      return nil
+    }
+    return id
+  }
+
+  static func successfulResponse(in data: Data, matching id: JSONValue) -> JSONValue? {
+    guard let response = initializationResponse(in: data, matching: id),
+      response.objectValue?["error"] == nil
+    else { return nil }
+    return response
+  }
+
+  static func initializationResponse(in data: Data, matching id: JSONValue) -> JSONValue? {
+    guard
+      let response = try? JSONDecoder().decode(JSONValue.self, from: data),
+      let object = response.objectValue,
+      object["id"] == id
+    else {
+      return nil
+    }
+    if let result = object["result"]?.objectValue,
+      result["protocolVersion"]?.stringValue != nil,
+      result["capabilities"]?.objectValue != nil,
+      result["serverInfo"]?.objectValue != nil
+    {
+      return response
+    }
+    if let error = object["error"]?.objectValue,
+      error["code"]?.intValue != nil, error["message"]?.stringValue != nil
+    {
+      return response
+    }
+    return nil
+  }
+
+  static func replay(response: JSONValue, with id: JSONValue) throws -> Data {
+    guard var object = response.objectValue else {
+      throw MCPError.internalError("Cached initialize response is not a JSON object")
+    }
+    object["id"] = id
+    return try JSONEncoder().encode(JSONValue.object(object))
+  }
+}

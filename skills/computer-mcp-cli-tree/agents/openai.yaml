@@ -1,0 +1,4 @@
+interface:
+  display_name: "Computer MCP CLI Tree"
+  short_description: "Author and verify canonical CLI interface trees"
+  default_prompt: "Use $computer-mcp-cli-tree to verify this vendor interface and update its canonical CLI Tree with bounded drift checks."

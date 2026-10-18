@@ -196,6 +196,59 @@ class PlanModeTests(unittest.TestCase):
         self.assertIn("unallocated: Shared/Stray.swift:Stray", self.problems())
 
 
+class TestAllocationTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.sources = self.root / "Sources"
+        (self.sources / "Shared").mkdir(parents=True)
+        (self.sources / "Shared/Low.swift").write_text("struct LowValue {}\n")
+        self.tests = self.root / "Tests/ComputerMCPTests"
+        (self.tests / "Nested").mkdir(parents=True)
+        (self.tests / "Nested/ValueTests.swift").write_text("import Testing\n")
+        (self.tests / "TestingSupport.swift").write_text("struct Fixture {}\n")
+        self.allocations = {"Nested/ValueTests.swift": "LowTests", "TestingSupport.swift": "HighTests"}
+
+    def check(self, allocations):
+        return module_graph.plan(graph(tests=allocations), self.sources)
+
+    def test_complete_allocation_to_layer_targets_passes(self):
+        self.assertEqual(self.check(self.allocations), [])
+
+    def test_missing_test_and_support_allocations_fail(self):
+        self.assertEqual(self.check({}), ["unallocated test: Nested/ValueTests.swift",
+                                        "unallocated test: TestingSupport.swift"])
+
+    def test_unknown_target_and_missing_test_suffix_fail(self):
+        for target in ("UnknownTests", "Low", "LowTestsTests", None):
+            with self.subTest(target=target):
+                allocations = dict(self.allocations, **{"Nested/ValueTests.swift": target})
+                self.assertIn(f"invalid test target: Nested/ValueTests.swift -> {target}",
+                              self.check(allocations))
+
+    def test_stale_allocation_fails(self):
+        self.assertIn("test allocation has no source: MissingTests.swift",
+                      self.check(dict(self.allocations, **{"MissingTests.swift": "LowTests"})))
+
+    def test_copied_swift_fixture_is_not_a_test_source(self):
+        (self.tests / "Fixtures").mkdir()
+        (self.tests / "Fixtures/server.swift").write_text("print(1)\n")
+        self.assertEqual(self.check(self.allocations), [])
+
+    def test_explicit_test_directory_is_checked(self):
+        moved = self.root / "OtherTests"
+        moved.mkdir()
+        (moved / "Extra.swift").write_text("struct Extra {}\n")
+        self.assertEqual(module_graph.plan(graph(tests={"Extra.swift": "LowTests"}), self.sources, moved), [])
+        self.assertIn("unallocated test: Extra.swift", module_graph.plan(graph(), self.sources, moved))
+
+    def test_nested_fixture_directory_still_contains_test_sources(self):
+        (self.tests / "Nested/Fixtures").mkdir()
+        (self.tests / "Nested/Fixtures/Helper.swift").write_text("struct Helper {}\n")
+        self.assertIn("unallocated test: Nested/Fixtures/Helper.swift", self.check(self.allocations))
+
+
 class PackageModeTests(unittest.TestCase):
     def check(self, targets, **overrides):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:

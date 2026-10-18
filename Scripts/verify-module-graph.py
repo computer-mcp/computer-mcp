@@ -10,7 +10,8 @@ Modes:
            target directory belong to that target; declarations in the residual target
            are allocated by the planned rules. Fail on cycles, dependencies the layer
            rules do not permit, neutral targets that reference macOS-only targets, and
-           macOS imports in extracted neutral targets.
+           macOS imports in extracted neutral targets. Every residual Swift test
+           source must be allocated to a test target whose owner is in layers.
   package  Read `swift package dump-package` and apply the same layer, permission and
            neutrality rules to the declared target dependencies.
 
@@ -19,7 +20,7 @@ types, module-qualified names and non-private free functions; it does not perfor
 full Swift name lookup. Once a target exists, the compiler enforces its imports and
 package mode enforces its declared dependencies.
 
-Usage: verify-module-graph.py [plan|package] [--graph FILE] [--sources DIR] [--package-json FILE]
+Usage: verify-module-graph.py [plan|package] [--graph FILE] [--sources DIR] [--tests DIR] [--package-json FILE]
 """
 import argparse
 import collections
@@ -273,7 +274,22 @@ def strongly_connected(edges):
     return [c for c in result if len(c) > 1]
 
 
-def plan(graph, sources):
+def test_allocation(graph, tests):
+    """Allocate test sources and support files; Fixtures are copied resources in Package.swift."""
+    files = {str(path.relative_to(tests)) for path in tests.rglob("*.swift")
+             if path.relative_to(tests).parts[0] != "Fixtures"}
+    allocations = graph.get("tests", {})
+    targets = Rules(graph).layer
+    problems = [f"unallocated test: {name}" for name in sorted(files - allocations.keys())]
+    problems += [f"test allocation has no source: {name}"
+                 for name in sorted(allocations.keys() - files)]
+    for name, target in sorted(allocations.items()):
+        if not isinstance(target, str) or not target.endswith("Tests") or target[:-5] not in targets:
+            problems.append(f"invalid test target: {name} -> {target}")
+    return problems
+
+
+def plan(graph, sources, tests=None):
     rules = Rules(graph)
     removed = set(graph.get("removed", []))
     cuts = {tuple(cut.split("->")) for cut in graph.get("cuts", [])}
@@ -346,6 +362,7 @@ def plan(graph, sources):
                 problems.append(problem + ": " + "; ".join(evidence[(source, target)]))
     for component in strongly_connected(edges):
         problems.append("cycle: " + " <-> ".join(component))
+    problems.extend(test_allocation(graph, tests if tests is not None else sources.parent / "Tests/ComputerMCPTests"))
     return list(dict.fromkeys(problems))
 
 
@@ -376,10 +393,11 @@ def main():
     parser.add_argument("mode", nargs="?", choices=["plan", "package"], default="plan")
     parser.add_argument("--graph", default=ROOT / "Scripts/module-graph.json")
     parser.add_argument("--sources", default=ROOT / "Sources")
+    parser.add_argument("--tests", default=ROOT / "Tests/ComputerMCPTests")
     parser.add_argument("--package-json")
     args = parser.parse_args()
     graph = json.loads(pathlib.Path(args.graph).read_text())
-    problems = plan(graph, pathlib.Path(args.sources)) if args.mode == "plan" else package(graph, args.package_json)
+    problems = plan(graph, pathlib.Path(args.sources), pathlib.Path(args.tests)) if args.mode == "plan" else package(graph, args.package_json)
     for problem in problems:
         print(problem, file=sys.stderr)
     if problems:

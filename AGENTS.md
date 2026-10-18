@@ -4,7 +4,8 @@ Use this guide for agent work in this repository.
 
 ## Task Route
 
-- For package work, inspect `Package.swift` before editing targets or products.
+- For package work, inspect `Package.swift` before editing targets or products,
+  and follow the layer rules in `Documentation/Decisions/ModuleArchitecture.md`.
 - For build, run, and test tasks, use SwiftPM commands from the repository root.
 - For documentation work, keep the role boundaries in `Documentation/README.md`.
 - For product positioning, read `Documentation/Architecture/ProductIdentity.md`.
@@ -87,6 +88,8 @@ swift-format format --in-place --recursive --configuration .swift-format Package
 swift-format lint --strict --recursive --configuration .swift-format Package.swift Sources Tests
 /usr/bin/swift build
 /usr/bin/swift test
+python3 Scripts/verify-module-graph.py plan
+python3 Scripts/verify-module-graph.py package
 ```
 
 For user-facing CLI behavior, also run the relevant command directly, such as:

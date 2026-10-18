@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""Verify the gateway module graph described in Documentation/Decisions/ModuleArchitecture.md.
+
+Scripts/module-graph.json declares the layers (bottom-up), the dependencies permitted
+between targets of the same layer, the macOS-only targets and imports, and the planned
+allocation of the declarations that remain in the shared residual target.
+
+Modes:
+  plan     Read every target directory under Sources/. Declarations in an extracted
+           target directory belong to that target; declarations in the residual target
+           are allocated by the planned rules. Fail on cycles, dependencies the layer
+           rules do not permit, neutral targets that reference macOS-only targets, and
+           macOS imports in extracted neutral targets.
+  package  Read `swift package dump-package` and apply the same layer, permission and
+           neutrality rules to the declared target dependencies.
+
+Plan mode resolves names lexically from top-level declarations, their direct member
+types, module-qualified names and non-private free functions; it does not perform
+full Swift name lookup. Once a target exists, the compiler enforces its imports and
+package mode enforces its declared dependencies.
+
+Usage: verify-module-graph.py [plan|package] [--graph FILE] [--sources DIR] [--package-json FILE]
+"""
+import argparse
+import collections
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+MODIFIERS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:package|public|internal|private|fileprivate|final|indirect|nonisolated|open|static)\s+)*"
+DECL = re.compile(r"^" + MODIFIERS + r"(struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
+EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z][\w.]*)")
+FREE = re.compile(r"^" + MODIFIERS + r"(?:func|let|var)\s+(\w+)")
+IMPORT = re.compile(r"^\s*(?:@\w+\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
+IDENTIFIER = re.compile(r"\b[A-Z]\w*\b")
+FUNC = re.compile(MODIFIERS + r"func\s")
+PRIVATE = re.compile(r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:private|fileprivate)\s")
+COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+STRING_START = re.compile(r'(#*)("""|")')
+
+
+def skip_string(text, index):
+    """Index just past the string literal starting at index (including raw and multi-line forms)."""
+    match = STRING_START.match(text, index)
+    hashes, quote = match.group(1), match.group(2)
+    index = match.end()
+    close, escape = quote + hashes, "\\" + hashes
+    while index < len(text):
+        if text.startswith(close, index):
+            return index + len(close)
+        if text.startswith(escape + "(", index):
+            index = skip_group(text, index + len(escape) + 1)
+            continue
+        if text.startswith(escape, index):
+            index += len(escape) + 1
+            continue
+        if quote == '"' and text[index] == "\n":
+            return index
+        index += 1
+    return index
+
+
+def skip_group(text, index):
+    """Index just past the parenthesized group whose opening parenthesis precedes index."""
+    depth = 1
+    while index < len(text) and depth:
+        if STRING_START.match(text, index) and text[index] in "\"#":
+            index = skip_string(text, index)
+            continue
+        depth += {"(": 1, ")": -1}.get(text[index], 0)
+        index += 1
+    return index
+
+
+def code_text(text):
+    """Remove comments and string literal text in one pass, keeping interpolated expressions."""
+    out, index, length = [], 0, len(text)
+    while index < length:
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            index = length if end < 0 else end
+            out.append(" ")
+        elif text.startswith("/*", index):
+            depth, index = 1, index + 2
+            while index < length and depth:
+                if text.startswith("/*", index):
+                    depth, index = depth + 1, index + 2
+                elif text.startswith("*/", index):
+                    depth, index = depth - 1, index + 2
+                else:
+                    index += 1
+            out.append(" ")
+        elif text[index] in "\"#" and STRING_START.match(text, index):
+            match = STRING_START.match(text, index)
+            hashes = match.group(1)
+            end = skip_string(text, index)
+            literal, escape, parts, cursor = text[index:end], "\\" + hashes + "(", [], 0
+            while True:
+                start = literal.find(escape, cursor)
+                if start < 0:
+                    break
+                group_end = skip_group(literal, start + len(escape))
+                parts.append(code_text(literal[start + len(escape):group_end - 1]))
+                cursor = group_end
+            out.append(" " + " ".join(parts) + " ")
+            index = end
+        else:
+            out.append(text[index])
+            index += 1
+    return "".join(out)
+
+
+MEMBER = re.compile(r"[{}]|\b(?:struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
+SCOPE = re.compile(r"[{}]|\b(?:let|var)\s+([A-Za-z_]\w*)|(?<![.\w])([A-Za-z_]\w*)\b")
+
+
+def member_types(text, path, index):
+    """Record the types declared directly inside each type body, keyed by dotted type path."""
+    # The first body opened in a chunk belongs to the chunk's own declaration or extension.
+    stack, pending, depth = [path], path, 0
+    for token in MEMBER.finditer(text):
+        if token.group(0) == "{":
+            depth += 1
+            stack = stack[:depth] + [pending or stack[-1] + ".{}"]
+            pending = None
+        elif token.group(0) == "}":
+            depth -= 1
+            stack = stack[:depth + 1]
+        else:
+            if depth >= 1:
+                index[stack[depth]].add(token.group(1))
+            pending = f"{stack[depth]}.{token.group(1)}" if depth >= 1 else path
+
+
+def free_references(text, functions):
+    """Free-function names used in text that are not shadowed by a binding in an enclosing block."""
+    found, scopes = set(), [set()]
+    for token in SCOPE.finditer(text):
+        if token.group(0) == "{":
+            scopes.append(set())
+        elif token.group(0) == "}":
+            if len(scopes) > 1:
+                scopes.pop()
+        elif token.group(1):
+            scopes[-1].add(token.group(1))
+        elif token.group(2) in functions and not any(token.group(2) in scope for scope in scopes):
+            found.add(token.group(2))
+    return found
+
+
+def unconditional_imports(text):
+    """Modules imported outside any #if block; conditional imports select a platform."""
+    imports, depth = set(), 0
+    for line in COMMENT.sub(" ", text).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#if"):
+            depth += 1
+        elif stripped.startswith("#endif"):
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            match = IMPORT.match(line)
+            if match:
+                imports.add(match.group(1))
+    return imports
+
+
+def chunks(path, directory):
+    """Split a Swift file into top-level declaration, extension and free-symbol chunks."""
+    text = path.read_text()
+    imports = unconditional_imports(text)
+    out, current = [], None
+    for line in text.splitlines():
+        decl, ext, free = DECL.match(line), EXT.match(line), FREE.match(line)
+        if decl or ext or free:
+            if current:
+                out.append(current)
+            if decl:
+                current = {"kind": "decl", "name": decl.group(2), "lines": [line]}
+            elif ext:
+                current = {"kind": "ext", "name": ext.group(1).split(".")[0], "path": ext.group(1), "lines": [line]}
+            else:
+                current = {"kind": "free", "name": free.group(1), "lines": [line]}
+        elif current is not None:
+            current["lines"].append(line)
+        else:
+            current = {"kind": "prelude", "name": "", "lines": [line]}
+    if current:
+        out.append(current)
+    for chunk in out:
+        chunk["text"] = code_text("\n".join(chunk.pop("lines")))
+        chunk["file"] = path.name
+        chunk["directory"] = directory
+        chunk["imports"] = imports
+    return out
+
+
+class Rules:
+    def __init__(self, graph):
+        self.layer = {}
+        for position, layer in enumerate(graph["layers"]):
+            for target in layer["targets"]:
+                self.layer[target] = position
+        self.allowed = {tuple(edge.split("->")) for edge in graph.get("allow", [])}
+        self.macos_only = set(graph["macos_only"])
+
+    def violations(self, source, target):
+        problems = []
+        if source not in self.layer:
+            problems.append(f"unranked target: {source}")
+        elif target not in self.layer:
+            problems.append(f"unranked target: {target}")
+        elif self.layer[target] > self.layer[source]:
+            problems.append(f"upward: {source} -> {target}")
+        elif self.layer[target] == self.layer[source] and (source, target) not in self.allowed:
+            problems.append(f"same-layer dependency not permitted: {source} -> {target}")
+        if source not in self.macos_only and target in self.macos_only:
+            problems.append(f"neutral to macOS: {source} -> {target}")
+        return problems
+
+
+def allocate(chunk, graph):
+    """Planned target of a chunk: type and extension overrides, then file relocations,
+    then the chunk's own target directory, then the residual target's file rules."""
+    if chunk["kind"] in ("decl", "free") and chunk["name"] in graph.get("types", {}):
+        return graph["types"][chunk["name"]]
+    if chunk["kind"] == "ext":
+        key = f'{chunk["file"]}:{chunk["name"]}'
+        if key in graph.get("extensions", {}):
+            return graph["extensions"][key]
+    relocated = graph.get("relocations", {}).get(f'{chunk["directory"]}/{chunk["file"]}')
+    if relocated:
+        return relocated
+    if chunk["directory"] != graph["residual"]:
+        return chunk["directory"]
+    for pattern, target in graph["files"].items():
+        if re.search(pattern, chunk["file"]):
+            return target
+    return None
+
+
+def strongly_connected(edges):
+    nodes = set(edges) | {t for targets in edges.values() for t in targets}
+    index, low, stack, on_stack, result, counter = {}, {}, [], set(), [], [0]
+
+    def visit(node):
+        index[node] = low[node] = counter[0]
+        counter[0] += 1
+        stack.append(node)
+        on_stack.add(node)
+        for successor in sorted(edges.get(node, ())):
+            if successor not in index:
+                visit(successor)
+                low[node] = min(low[node], low[successor])
+            elif successor in on_stack:
+                low[node] = min(low[node], index[successor])
+        if low[node] == index[node]:
+            component = []
+            while True:
+                member = stack.pop()
+                on_stack.discard(member)
+                component.append(member)
+                if member == node:
+                    break
+            result.append(sorted(component))
+
+    sys.setrecursionlimit(10000)
+    for node in sorted(nodes):
+        if node not in index:
+            visit(node)
+    return [c for c in result if len(c) > 1]
+
+
+def plan(graph, sources):
+    rules = Rules(graph)
+    removed = set(graph.get("removed", []))
+    cuts = {tuple(cut.split("->")) for cut in graph.get("cuts", [])}
+    macos_imports = set(graph.get("macos_imports", []))
+    directories = [d for d in sorted(sources.iterdir()) if d.is_dir()] if sources.is_dir() else []
+    all_chunks = []
+    for directory in directories:
+        for path in sorted(directory.rglob("*.swift")):
+            all_chunks.extend(chunks(path, directory.name))
+    if not all_chunks:
+        return [f"no Swift sources under {sources}"]
+    known = set(rules.layer) | removed
+    for directory in sorted({c["directory"] for c in all_chunks} - known - {graph["residual"]}):
+        return [f"unranked target directory: {directory}"]
+    targets = [allocate(c, graph) for c in all_chunks]
+    problems = [f'unallocated: {c["directory"]}/{c["file"]}:{c["name"]}' for c, t in zip(all_chunks, targets) if t is None]
+    for chunk, target in zip(all_chunks, targets):
+        if target and chunk["directory"] == target and target not in rules.macos_only:
+            for name in sorted(chunk["imports"] & macos_imports):
+                problems.append(f'macOS import in neutral target: {target}/{chunk["file"]} imports {name}')
+    # Executable targets cannot be imported, so their declarations never own a reference.
+    executables = set(graph.get("executables", []))
+    types, functions = collections.defaultdict(set), collections.defaultdict(set)
+    nested = collections.defaultdict(set)
+    for chunk, target in zip(all_chunks, targets):
+        if target is None:
+            continue
+        if chunk["kind"] in ("decl", "ext"):
+            members = collections.defaultdict(set)
+            member_types(chunk["text"], chunk.get("path", chunk["name"]), members)
+            for path, names in members.items():
+                nested[(target, path)].update(names)
+        if target in executables:
+            continue
+        if chunk["kind"] == "decl":
+            types[chunk["name"]].add(target)
+        elif chunk["kind"] == "free" and FUNC.match(chunk["text"].lstrip()) and not PRIVATE.match(chunk["text"].lstrip()):
+            functions[chunk["name"]].add(target)
+    modules = set(rules.layer) | {graph["residual"]}
+    edges, evidence = collections.defaultdict(set), collections.defaultdict(list)
+    for chunk, source in zip(all_chunks, targets):
+        if source is None or source in removed:
+            continue
+        # Names declared in this declaration, or nested in the type an extension extends,
+        # resolve locally; other unqualified or module-qualified names resolve to owners.
+        local = nested.get((source, chunk.get("path", chunk["name"])), set())
+        references = set()
+        for match in IDENTIFIER.finditer(chunk["text"]):
+            name, start = match.group(0), match.start()
+            if name not in types or name in local or source in types[name]:
+                continue
+            if start > 0 and chunk["text"][start - 1] == ".":
+                qualifier = re.search(r"([A-Za-z_]\w*)\s*\.$", chunk["text"][max(0, start - 80):start])
+                if not qualifier or qualifier.group(1) not in modules:
+                    continue
+            references.add(name)
+        if chunk["kind"] == "ext" and chunk["name"] in types:
+            references.add(chunk["name"])
+        references |= {n for n in free_references(chunk["text"], functions) if source not in functions[n]}
+        for name in references:
+            if (chunk["name"], name) in cuts:
+                continue
+            for target in (types.get(name, set()) | functions.get(name, set())) - {source} - removed:
+                edges[source].add(target)
+                if len(evidence[(source, target)]) < 5:
+                    evidence[(source, target)].append(f'{chunk["file"]}:{chunk["name"]} -> {name}')
+    for source in sorted(edges):
+        for target in sorted(edges[source]):
+            for problem in rules.violations(source, target):
+                problems.append(problem + ": " + "; ".join(evidence[(source, target)]))
+    for component in strongly_connected(edges):
+        problems.append("cycle: " + " <-> ".join(component))
+    return list(dict.fromkeys(problems))
+
+
+def package(graph, package_json):
+    rules = Rules(graph)
+    if package_json:
+        description = json.loads(pathlib.Path(package_json).read_text())
+    else:
+        description = json.loads(subprocess.run(["/usr/bin/swift", "package", "dump-package"], cwd=ROOT,
+                                                check=True, capture_output=True, text=True).stdout)
+    names = {t["name"] for t in description["targets"]}
+    problems = []
+    for target in description["targets"]:
+        if target["type"] == "test":
+            continue
+        if target["name"] not in rules.layer:
+            problems.append(f"unranked target: {target['name']}")
+            continue
+        for dependency in target.get("dependencies", []):
+            reference = dependency.get("byName") or dependency.get("target")
+            if reference and reference[0] in names:
+                problems.extend(rules.violations(target["name"], reference[0]))
+    return list(dict.fromkeys(problems))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("mode", nargs="?", choices=["plan", "package"], default="plan")
+    parser.add_argument("--graph", default=ROOT / "Scripts/module-graph.json")
+    parser.add_argument("--sources", default=ROOT / "Sources")
+    parser.add_argument("--package-json")
+    args = parser.parse_args()
+    graph = json.loads(pathlib.Path(args.graph).read_text())
+    problems = plan(graph, pathlib.Path(args.sources)) if args.mode == "plan" else package(graph, args.package_json)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    if problems:
+        print(f"Module graph check failed: {len(problems)} problem(s).", file=sys.stderr)
+        return 1
+    print(f"Module graph check passed ({args.mode}).")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

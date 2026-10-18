@@ -1,0 +1,289 @@
+{
+  "description": "Planned allocation of Sources/ComputerMCP declarations to targets. See Documentation/Decisions/ModuleArchitecture.md. A cut 'A->B' is a reference from declaration A to type B that is replaced by an injected interface.",
+  "layers": [
+    {
+      "name": "base",
+      "targets": [
+        "ComputerMCPCore"
+      ]
+    },
+    {
+      "name": "platform",
+      "targets": [
+        "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX",
+        "CSystemArchive",
+        "ComputerMCPPlatformDarwin"
+      ]
+    },
+    {
+      "name": "services",
+      "targets": [
+        "ComputerMCPConfiguration",
+        "ComputerMCPPersistence",
+        "ComputerMCPProcess",
+        "ComputerMCPTransport",
+        "ComputerMCPDownstream",
+        "ComputerMCPTunnels"
+      ]
+    },
+    {
+      "name": "capabilities",
+      "targets": [
+        "ComputerMCPToolKit",
+        "ComputerMCPToolsMCP",
+        "ComputerMCPToolsCLI",
+        "ComputerMCPToolsFiles",
+        "ComputerMCPToolsWorkspace",
+        "ComputerMCPToolsStructured",
+        "ComputerMCPToolsGit",
+        "ComputerMCPToolsShell",
+        "ComputerMCPToolsSkills",
+        "ComputerMCPToolsSystem",
+        "ComputerMCPDelivery",
+        "ComputerMCPAuthorization",
+        "ComputerMCPPlugins",
+        "ComputerMCPComputerUse"
+      ]
+    },
+    {
+      "name": "composition",
+      "targets": [
+        "ComputerMCPGateway",
+        "ComputerMCPControlPlane"
+      ]
+    },
+    {
+      "name": "transitional",
+      "targets": [
+        "ComputerMCP"
+      ]
+    },
+    {
+      "name": "composition-root",
+      "targets": [
+        "ComputerMCPMacOS"
+      ]
+    },
+    {
+      "name": "front-ends",
+      "targets": [
+        "ComputerMCPApp",
+        "computer-mcp"
+      ]
+    }
+  ],
+  "allow": [
+    "ComputerMCPPlatformPOSIX->ComputerMCPPlatform",
+    "ComputerMCPPlatformDarwin->ComputerMCPPlatform",
+    "ComputerMCPPlatformDarwin->ComputerMCPPlatformPOSIX",
+    "ComputerMCPPlatformDarwin->CSystemArchive",
+    "ComputerMCPProcess->ComputerMCPConfiguration",
+    "ComputerMCPTransport->ComputerMCPConfiguration",
+    "ComputerMCPDownstream->ComputerMCPConfiguration",
+    "ComputerMCPDownstream->ComputerMCPProcess",
+    "ComputerMCPTunnels->ComputerMCPConfiguration",
+    "ComputerMCPTunnels->ComputerMCPProcess",
+    "ComputerMCPToolsMCP->ComputerMCPToolKit",
+    "ComputerMCPToolsCLI->ComputerMCPToolKit",
+    "ComputerMCPToolsFiles->ComputerMCPToolKit",
+    "ComputerMCPToolsWorkspace->ComputerMCPToolKit",
+    "ComputerMCPToolsStructured->ComputerMCPToolKit",
+    "ComputerMCPToolsGit->ComputerMCPToolKit",
+    "ComputerMCPToolsShell->ComputerMCPToolKit",
+    "ComputerMCPToolsSkills->ComputerMCPToolKit",
+    "ComputerMCPToolsSystem->ComputerMCPToolKit",
+    "ComputerMCPToolsWorkspace->ComputerMCPToolsFiles",
+    "ComputerMCPToolsStructured->ComputerMCPToolsFiles",
+    "ComputerMCPToolsSkills->ComputerMCPToolsFiles",
+    "ComputerMCPToolsSkills->ComputerMCPToolsStructured",
+    "ComputerMCPToolsSystem->ComputerMCPToolsFiles",
+    "ComputerMCPPlugins->ComputerMCPToolsCLI",
+    "ComputerMCPControlPlane->ComputerMCPGateway"
+  ],
+  "macos_only": [
+    "CSystemArchive",
+    "ComputerMCPPlatformDarwin",
+    "ComputerMCPComputerUse",
+    "ComputerMCP",
+    "ComputerMCPMacOS",
+    "ComputerMCPApp",
+    "computer-mcp"
+  ],
+  "macos_imports": [
+    "AppKit",
+    "ApplicationServices",
+    "CSystemArchive",
+    "Combine",
+    "CoreGraphics",
+    "CryptoKit",
+    "Darwin",
+    "ImageIO",
+    "LocalAuthentication",
+    "PDFKit",
+    "Security",
+    "ServiceManagement",
+    "SwiftUI",
+    "UniformTypeIdentifiers",
+    "os"
+  ],
+  "executables": [
+    "ComputerMCPApp",
+    "computer-mcp"
+  ],
+  "residual": "ComputerMCP",
+  "removed": [
+    "(removed)"
+  ],
+  "relocations": {
+    "ComputerMCPPlatform/ApplicationBundleLookup.swift": "ComputerMCPPlatformDarwin",
+    "ComputerMCPPlatform/ExecutableInspection+macOS.swift": "ComputerMCPPlatformDarwin",
+    "ComputerMCPPlatform/KeychainAdapter.swift": "ComputerMCPPlatformDarwin",
+    "ComputerMCPPlatform/SecurityKeychainAdapter.swift": "ComputerMCPPlatformDarwin",
+    "ComputerMCPPlatform/WorkspacePathResolver+macOS.swift": "ComputerMCPPlatformDarwin",
+    "ComputerMCPPlatform/ExecutableInspection+Windows.swift": "(removed)",
+    "ComputerMCPPlatform/ProcessCommandRunner+Windows.swift": "(removed)",
+    "ComputerMCPPlatform/WindowsCommandProcess.swift": "(removed)",
+    "ComputerMCPPlatform/WindowsFilePath.swift": "(removed)",
+    "ComputerMCPPlatform/WindowsProcessJob.swift": "(removed)",
+    "ComputerMCPPlatform/WorkspacePathResolver+Windows.swift": "(removed)"
+  },
+  "types": {
+    "BlockingOperationExecutor": "ComputerMCPPlatform",
+    "CLIProcessExecution": "ComputerMCPProcess",
+    "ChatGPTProfileAuditor": "ComputerMCPControlPlane",
+    "ComputerMCPCLI": "ComputerMCPCore",
+    "ComputerMCPProductContracts": "ComputerMCPControlPlane",
+    "ComputerUsePermissionSnapshot": "ComputerMCPPlatform",
+    "ComputerUsePermissionStatus": "ComputerMCPPlatform",
+    "ControlToolContract": "ComputerMCPControlPlane",
+    "ControlToolResponse": "ComputerMCPGateway",
+    "ExecutableInspection": "ComputerMCPPlatform",
+    "ExecutableInvocation": "ComputerMCPPlatform",
+    "FileNameMatchMode": "ComputerMCPToolKit",
+    "GatewayDatabase": "ComputerMCPGateway",
+    "GatewayManagementAuthorization": "ComputerMCPGateway",
+    "GatewayToolCounts": "ComputerMCPGateway",
+    "GatewayToolProvider": "ComputerMCPCore",
+    "HTTPCheckOutput": "ComputerMCPToolKit",
+    "HTTPClientControlRegistry": "ComputerMCPGateway",
+    "KeychainAuthenticationUI": "ComputerMCPPlatform",
+    "KeychainSecretStoreError": "ComputerMCPPlatform",
+    "LaunchAtLoginControlling": "ComputerMCPPlatform",
+    "LaunchAtLoginState": "ComputerMCPPlatform",
+    "MCPHTTPAuthentication": "ComputerMCPConfiguration",
+    "MCPHTTPAuthenticationError": "ComputerMCPConfiguration",
+    "MCPHostServiceAction": "ComputerMCPCore",
+    "MCPInvocationAdmission": "ComputerMCPDownstream",
+    "MCPRuntimeAdapter": "ComputerMCPGateway",
+    "MCPToolAccessPolicy": "ComputerMCPDownstream",
+    "ManifestFileMonitor": "ComputerMCPControlPlane",
+    "ManifestFileTransaction": "ComputerMCPControlPlane",
+    "ManifestRecoveryRecord": "ComputerMCPControlPlane",
+    "PluginArchiveDirectory": "ComputerMCPPlatform",
+    "PluginArchiveError": "ComputerMCPPlatform",
+    "PluginArchiveExtractor": "ComputerMCPPlatformDarwin",
+    "PluginArchiveLimits": "ComputerMCPPlatform",
+    "PluginDirectoryIdentity": "ComputerMCPPlatform",
+    "ResolvedWorkspaceAccess": "ComputerMCPPlatform",
+    "SecretReference": "ComputerMCPPlatform",
+    "StructuredPathSegment": "ComputerMCPToolKit",
+    "WorkspaceAccessReport": "ComputerMCPPlatform",
+    "WorkspaceBookmarkError": "ComputerMCPCore",
+    "WorkspaceBookmarkServicing": "ComputerMCPPlatform",
+    "WorkspaceDeduplicationDigestInput": "ComputerMCPToolsWorkspace",
+    "WorkspacePathResolutionError": "ComputerMCPPlatform",
+    "WorkspacePathResolver": "ComputerMCPPlatform",
+    "WorkspaceRootIdentity": "ComputerMCPCore",
+    "openAITunnelHTTPProxyValidationFailure": "ComputerMCPConfiguration"
+  },
+  "extensions": {
+    "CloudflareTunnel.swift:AppControlPlaneService": "ComputerMCPControlPlane",
+    "GatewayDatabase.swift:GatewayClientTrust": "ComputerMCPGateway",
+    "GatewayDatabase.swift:GatewayDatabase": "ComputerMCPGateway",
+    "MCPToolRisk.swift:GatewayConfiguration": "ComputerMCPDownstream"
+  },
+  "files": {
+    "^GatewayRemoteManagement": "ComputerMCPControlPlane",
+    "^ExternalProviderDiscovery": "ComputerMCPProcess",
+    "^MCPToolCatalogNotifier": "ComputerMCPGateway",
+    "^(MCPProxyClient|MCPContinuationDirectory|MCPProviderContinuation|MCPCallCancellation)": "ComputerMCPGateway",
+    "^MCPProviderWork": "ComputerMCPGateway",
+    "^GatewayToolRegistry\\+MCP": "ComputerMCPToolsMCP",
+    "^GatewayHTTPRuntime": "ComputerMCPGateway",
+    "^MCPChildProcessTransport": "ComputerMCPDownstream",
+    "^ShellSessionRuntime": "ComputerMCPProcess",
+    "^ComputerUse": "ComputerMCPComputerUse",
+    "^GatewayToolRegistry\\+Skills": "ComputerMCPToolsSkills",
+    "^GatewayToolRegistry\\+Git": "ComputerMCPToolsGit",
+    "^GatewayToolRegistry\\+(System|Network|MacOS)": "ComputerMCPToolsSystem",
+    "^GatewayToolRegistry\\+(StructuredData|Markdown|Media)": "ComputerMCPToolsStructured",
+    "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
+    "^GatewayToolRegistry\\+(Workspace|WorkspaceInventory)\\.swift|^Workspace(PathResolver|RootIdentity|Deduplication|ConfigurationChange)": "ComputerMCPToolsWorkspace",
+    "^GatewayToolRegistry\\+(Arguments|WorkspacePaths)": "ComputerMCPToolKit",
+    "^GatewayToolRegistry\\+(Shell|Process)": "ComputerMCPToolsShell",
+    "^GatewayToolRegistry\\+CLI|^CLI(Tree|ArgumentEncoder|ValueValidation|Executable|ProcessExecution)": "ComputerMCPToolsCLI",
+    "^MCPRegistration": "ComputerMCPControlPlane",
+    "^GatewayToolRegistry\\+MCP|^(DownstreamMCPClient|MCPProxyClient|MCPToolCatalog|MCPValueBridge|MCPProvider|MCPContinuation|MCPCallCancellation|MCPDerivedWorkspace|MCPProcessOwnership|AuthorizedMCPClient)": "ComputerMCPDownstream",
+    "^MCPRuntimeAdapter": "ComputerMCPGateway",
+    "^(GatewaySocket|GatewayHTTPRuntime|MCP(ChildProcess|HTTPClient|HTTPEventSubscription|Inherited|InitializeNormalization)|MCPSSEDecoder|MCPHTTPAuthentication)": "ComputerMCPTransport",
+    "^(CommandRunner|ManagedCommandRunner|ManagedLineProcess|ManagedProcessRegistry|ProcessOutputReader|BlockingOperationExecutor|ExecutableInspection)": "ComputerMCPProcess",
+    "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
+    "^(OpenAITunnel|CloudflareTunnel)": "ComputerMCPTunnels",
+    "^GatewayDatabase": "ComputerMCPPersistence",
+    "^(GatewayConfiguration|DefaultGatewayConfiguration|ManifestFile)": "ComputerMCPConfiguration",
+    "^(KeychainSecretStore|WorkspaceBookmarkService|AppControlPlaneLaunchAtLogin|AppDistributionEnvironment)": "ComputerMCPPlatformDarwin",
+    "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|HTTPClientControlRegistry|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|ComputerMCPCLI|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane",
+    "^Codex(Configuration)": "(removed)",
+    "^(JSONValue|CanonicalJSONCoding|GatewayModels|GatewayPolicy|GatewayToolError|MCPTool(\\.|Risk|AccessPolicy|Reference)|ComputerMCPProductContracts|HostApprovalRedactor|GatewayToolCounts|MCPHostServiceAction)": "ComputerMCPCore",
+    "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway"
+  },
+  "cuts": [
+    "AppControlPlaneService->ComputerUseService",
+    "AppControlPlaneService->KeychainSecretStore",
+    "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
+    "AppControlPlaneService->WorkspaceBookmarkService",
+    "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
+    "AuthorizedMCPClient->GatewayControlSession",
+    "AuthorizedMCPClient->MCPContinuationTarget",
+    "AuthorizedMCPClient->MCPHostContext",
+    "CLICommandConfig->CLITreeSource",
+    "CLIProcessExecution->CLIExecutableCheck",
+    "CLIProcessExecution->CLIInvocation",
+    "CLIProcessExecution->CLIProcessCall",
+    "CLIProcessExecution->CLITreeError",
+    "CLITreeSource->PluginPackageFiles",
+    "CLITreeValidation->PluginPackageFiles",
+    "CloudflareRuntimeState->GatewayHTTPRuntime",
+    "ControlToolResponse->AppControlPlaneServiceError",
+    "DownstreamMCPClient->GatewayControlSession",
+    "DownstreamMCPClient->MCPContinuationTarget",
+    "DownstreamMCPClient->MCPHostContext",
+    "ExecutionContext->GatewayControlSession",
+    "GatewayCapabilityCatalog->GatewayRemoteManagement",
+    "GatewayHTTPApp->AppControlPlaneServiceError",
+    "GatewayHTTPApp->GatewayDatabase",
+    "GatewayHTTPControlConfiguration->GatewayDatabase",
+    "GatewayRuntime->ComputerUseGatewayProvider",
+    "GatewayRuntime->ComputerUseGatewayProviderError",
+    "GatewayRuntime->GatewayRemoteManagement",
+    "GatewayRuntime->WorkspaceBookmarkService",
+    "GatewayToolCounts->ComputerUseGatewayProvider",
+    "GatewayToolRegistry->GatewayToolRegistry",
+    "HTTPClientControlRegistry->GatewayClientControl",
+    "MCPChildProcessTransport->MCPHostContext",
+    "MCPChildProcessTransport->MCPHostSession",
+    "MCPConnectionPool->KeychainSecretStore",
+    "MCPHTTPAuthentication->KeychainSecretStore",
+    "MCPProcessOwnership->PluginStoreError",
+    "MCPProxyClient->GatewayDatabase",
+    "MCPProxyClient->KeychainSecretStore",
+    "MCPProxyConnection->KeychainSecretStore",
+    "OpenAITunnelSupervisor->KeychainSecretStore",
+    "PluginArchiveWorker->PluginArchiveExtractor",
+    "PluginDependencyResolver->ApplicationBundleLookup",
+    "PluginStore->GatewayDatabase",
+    "PreparedWorkspaceChange->GatewayDatabase",
+    "SubprocessShellRuntime->GatewayOwnedWork"
+  ]
+}

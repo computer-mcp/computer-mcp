@@ -8,5 +8,8 @@ This directory contains accepted decision records.
 - [Stdio MCP Transport](StdioMCPTransport.md)
 - [Target-level DocC](TargetLevelDocC.md)
 - [Gateway Direction](GatewayDirection.md)
+- [Platform Scope](PlatformScope.md)
+- [Module Architecture](ModuleArchitecture.md)
+- [Fresh Start at 0.1.0](FreshStart.md)
 
 Current architecture truth remains in `Documentation/Architecture/`.

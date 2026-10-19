@@ -1,6 +1,10 @@
 /// Live authority of one connected client, owned by the gateway. Contexts and
 /// downstream hops carry the instance itself, so restriction and revocation checks
 /// read its current state; contexts compare sessions by identity.
+///
+/// The gateway's control session is the only production conformer. A context or
+/// task receives one only from the host's authenticated admission path; tool
+/// arguments and transports never supply it.
 package protocol GatewaySessionAuthority: AnyObject, Sendable {
   var id: String { get }
   /// Current revision; any consent or profile change after capture increments it.

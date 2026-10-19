@@ -58,6 +58,8 @@ package final class ResolvedWorkspaceAccess: @unchecked Sendable {
   private var active = true
   private var stopAccessing: (@Sendable () -> Void)?
 
+  /// Created by a workspace bookmark service after it starts access to `rootURL`;
+  /// `stopAccessing` ends that access and runs at most once.
   package init(
     workspace: RegisteredWorkspace,
     rootURL: URL,

@@ -21,10 +21,7 @@ let neutralTargets: [Target] =
       path: "Tests/ComputerMCPTestSupport"),
     .testTarget(
       name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
-    .testTarget(
-      name: "ComputerMCPPlatformTests",
-      dependencies: ["ComputerMCPPlatform", "ComputerMCPTestSupport"]
-    ),
+    .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
   ]
 
 #if os(macOS)
@@ -85,19 +82,25 @@ let neutralTargets: [Target] =
         dependencies: [
           "ComputerMCP",
           "ComputerMCPCore",
+          "ComputerMCPPlatform",
           .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]
       ),
       .executableTarget(
         name: "ComputerMCPApp",
-        dependencies: ["ComputerMCP", "ComputerMCPCore"],
+        dependencies: [
+          "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
+        ],
         resources: [
           .process("Resources")
         ]
       ),
       .testTarget(
         name: "ComputerMCPPlatformDarwinTests",
-        dependencies: ["ComputerMCPPlatformDarwin", "ComputerMCPTestSupport"]
+        dependencies: [
+          "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
+          "ComputerMCPTestSupport",
+        ]
       ),
       .testTarget(
         name: "ComputerMCPTests",

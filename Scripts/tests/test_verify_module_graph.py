@@ -96,6 +96,14 @@ class PlanModeTests(unittest.TestCase):
         (self.sources / "Shared/Low.swift").unlink()
         self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit", self.problems())
 
+    def test_attributed_and_declaration_imports_are_macos_imports(self):
+        (self.sources / "Shared/Low.swift").unlink()
+        for line in ("@_spi(Private) import AppKit", "import struct AppKit.NSImage",
+                     "@preconcurrency import AppKit"):
+            self.write("Low/Low.swift", line + "\npackage struct LowValue {\n  let id: String\n}\n")
+            self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit",
+                          self.problems(), line)
+
     def test_conditional_import_is_allowed(self):
         self.write("Low/Low.swift", "#if canImport(AppKit)\nimport AppKit\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
         (self.sources / "Shared/Low.swift").unlink()
@@ -294,6 +302,12 @@ class PackageModeTests(unittest.TestCase):
         targets.append({"name": "High", "type": "regular", "dependencies": [{"byName": ["Support", None]}]})
         self.assertIn("test support outside tests: High -> Support",
                       self.check(targets, test_support=["Support"]))
+
+    def test_test_support_stays_neutral(self):
+        targets = [{"name": "Native", "type": "regular", "dependencies": []},
+                   {"name": "Support", "type": "regular", "dependencies": [{"byName": ["Native", None]}]}]
+        self.assertIn("neutral test support to macOS: Support -> Native",
+                      self.check(targets, test_support=["Support"], macos_only=["Native"]))
 
 
 if __name__ == "__main__":

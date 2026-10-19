@@ -172,7 +172,8 @@ package struct ExecutionContext: Codable, Sendable {
   package var transportTrace: GatewayTransportTrace?
   /// Established by the host's authenticated admission path, never by tool arguments.
   package var trustedPrincipalID: String?
-  /// In-process admission evidence. Encoding a context never conveys session authority.
+  /// In-process admission evidence, set only by the host's admission path. Encoding a
+  /// context never conveys session authority.
   package var controlSession: (any GatewaySessionAuthority)? = nil
 
   private enum CodingKeys: String, CodingKey {

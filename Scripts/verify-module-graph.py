@@ -14,7 +14,7 @@ Modes:
            source must be allocated to a test target whose owner is in layers.
   package  Read `swift package dump-package` and apply the same layer, permission and
            neutrality rules to the declared target dependencies. Test support libraries
-           are unranked and may be dependencies of test targets only.
+           are unranked, neutral, and may be dependencies of test targets only.
 
 Plan mode resolves names lexically from top-level declarations, their direct member
 types, module-qualified names and non-private free functions; it does not perform
@@ -36,7 +36,7 @@ MODIFIERS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:package|public|internal|private
 DECL = re.compile(r"^" + MODIFIERS + r"(struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
 EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z][\w.]*)")
 FREE = re.compile(r"^" + MODIFIERS + r"(?:func|let|var)\s+(\w+)")
-IMPORT = re.compile(r"^\s*(?:@\w+\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
+IMPORT = re.compile(r"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
 IDENTIFIER = re.compile(r"\b[A-Z]\w*\b")
 FUNC = re.compile(MODIFIERS + r"func\s")
 PRIVATE = re.compile(r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:private|fileprivate)\s")
@@ -384,6 +384,8 @@ def package(graph, package_json):
             reference = dependency.get("byName") or dependency.get("target")
             if reference and reference[0] in support and target["name"] not in support:
                 problems.append(f"test support outside tests: {target['name']} -> {reference[0]}")
+            if reference and target["name"] in support and reference[0] in rules.macos_only:
+                problems.append(f"neutral test support to macOS: {target['name']} -> {reference[0]}")
         if target["name"] in support:
             continue
         if target["name"] not in rules.layer:

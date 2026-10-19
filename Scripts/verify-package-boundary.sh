@@ -35,8 +35,9 @@ if rg -n '^\s*public\b' "${LIBRARIES[@]}" --glob '*.swift'; then
   exit 1
 fi
 
-# Neutral targets build on Linux: no macOS framework imports, even conditional ones,
-# and no macOS executable paths. A test target is neutral when the target it tests is.
+# Neutral targets build on Linux: no unconditional macOS framework imports (a conditional
+# import selects a platform, as in the module graph check) and no macOS paths. A test
+# target is neutral when the target it tests is.
 NEUTRAL=(${(f)"$(jq -r --argjson graph "$(<Scripts/module-graph.json)" '
   ($graph.macos_only) as $macos
   | .targets[]
@@ -44,13 +45,26 @@ NEUTRAL=(${(f)"$(jq -r --argjson graph "$(<Scripts/module-graph.json)" '
   | select((.name | IN($macos[])) or (.type == "test" and (.name | rtrimstr("Tests") | IN($macos[]))) | not)
   | .path // (if .type == "test" then "Tests/\(.name)" else "Sources/\(.name)" end)
 ' <<<"$PACKAGE")"})
-MACOS_IMPORTS=$(jq -r '.macos_imports | join("|")' Scripts/module-graph.json)
-if rg -n "^\\s*(@\\w+\\s+)*import\\s+(${MACOS_IMPORTS})\\b" "${NEUTRAL[@]}" --glob '*.swift'; then
+if ! python3 - "${NEUTRAL[@]}" <<'PY'
+import importlib.util, json, pathlib, sys
+spec = importlib.util.spec_from_file_location("graph", "Scripts/verify-module-graph.py")
+graph = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(graph)
+macos = set(json.loads(pathlib.Path("Scripts/module-graph.json").read_text())["macos_imports"])
+found = False
+for root in sys.argv[1:]:
+    for path in sorted(pathlib.Path(root).rglob("*.swift")):
+        for name in sorted(graph.unconditional_imports(path.read_text()) & macos):
+            print(f"{path}: imports {name}")
+            found = True
+sys.exit(1 if found else 0)
+PY
+then
   echo "Package boundary gate failed: neutral targets must not import macOS frameworks." >&2
   exit 1
 fi
-if rg -n '"/usr/s?bin/' "${NEUTRAL[@]}" --glob '*.swift'; then
-  echo "Package boundary gate failed: neutral targets must not reference macOS executable paths." >&2
+if rg -n '"/(usr/s?bin|System|Applications)/' "${NEUTRAL[@]}" --glob '*.swift'; then
+  echo "Package boundary gate failed: neutral targets must not reference macOS system paths." >&2
   exit 1
 fi
 

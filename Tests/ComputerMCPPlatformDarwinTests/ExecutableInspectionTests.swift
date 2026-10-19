@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 struct PlatformExecutableInspectionTests {
   @Test

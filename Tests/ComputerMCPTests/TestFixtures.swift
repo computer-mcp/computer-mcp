@@ -1,5 +1,7 @@
 import ComputerMCP
 
+@testable import ComputerMCPConfiguration
+
 extension GatewayConfiguration {
   static func fixture(
     server: ServerConfig = ServerConfig(),

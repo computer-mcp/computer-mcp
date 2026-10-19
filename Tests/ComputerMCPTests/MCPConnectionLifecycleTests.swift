@@ -5,6 +5,7 @@ import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))

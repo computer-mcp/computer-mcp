@@ -3,6 +3,7 @@ import GRDB
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 
 struct GatewayFullAccessConsentTests {

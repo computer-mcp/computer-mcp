@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCP
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import SwiftUI
 

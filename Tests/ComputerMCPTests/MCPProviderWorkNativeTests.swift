@@ -4,6 +4,7 @@ import Testing
 import os
 
 @testable import ComputerMCP
+@testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 

@@ -35,19 +35,6 @@ Tunnel profiles expose explicit capabilities only. Generic CLI execution,
 process spawning, and Full Shell remain off by default; only
 `chatgpt-operate` can receive them through an explicit local opt-in.
 
-### Configuration And Policy
-
-- ``GatewayConfiguration``
-- ``ServerConfig``
-- ``PolicyConfig``
-- ``CLISectionConfig``
-- ``CLICommandConfig``
-- ``MCPSectionConfig``
-- ``MCPServerConfig``
-- ``ToolConfig``
-- ``BuiltinConfig``
-- ``ConfigurationError``
-
 ### Gateway Runtime
 
 - ``GatewayToolRegistry``

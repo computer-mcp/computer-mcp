@@ -8,6 +8,9 @@ let subprocessDependency: Package.Dependency =
 let cryptoDependency: Package.Dependency =
   .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2")
 
+let tomlDependency: Package.Dependency =
+  .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0")
+
 // Platform-neutral targets; they build on macOS and on Linux.
 let neutralTargets: [Target] =
   [
@@ -17,11 +20,24 @@ let neutralTargets: [Target] =
     ),
     .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
     .target(
+      name: "ComputerMCPConfiguration",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPPlatform", .product(name: "TOML", package: "swift-toml"),
+      ]
+    ),
+    .target(
       name: "ComputerMCPTestSupport", dependencies: ["ComputerMCPPlatform"],
       path: "Tests/ComputerMCPTestSupport"),
     .testTarget(
       name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
+    .testTarget(
+      name: "ComputerMCPConfigurationTests",
+      dependencies: [
+        "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+        "ComputerMCPTestSupport",
+      ]
+    ),
   ]
 
 #if os(macOS)
@@ -49,7 +65,7 @@ let neutralTargets: [Target] =
       cryptoDependency,
       .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
-      .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0"),
+      tomlDependency,
       .package(
         url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.1-computer-mcp.1"),
     ],
@@ -62,6 +78,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCP",
         dependencies: [
+          "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin",
@@ -81,6 +98,7 @@ let neutralTargets: [Target] =
         name: "computer-mcp",
         dependencies: [
           "ComputerMCP",
+          "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
           .product(name: "ArgumentParser", package: "swift-argument-parser"),
@@ -89,7 +107,8 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "ComputerMCPApp",
         dependencies: [
-          "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
+          "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin",
         ],
         resources: [
           .process("Resources")
@@ -105,16 +124,16 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPTests",
         dependencies: [
-          "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
-          "ComputerMCPTestSupport",
+          "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ],
         resources: [.copy("Fixtures")]
       ),
       .testTarget(
         name: "ComputerMCPAppTests",
         dependencies: [
-          "ComputerMCPApp", "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+          "ComputerMCPApp", "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore",
+          "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ]
       ),
     ]
@@ -122,7 +141,7 @@ let neutralTargets: [Target] =
 #elseif os(Linux)
   let package = Package(
     name: "computer-mcp",
-    dependencies: [cryptoDependency],
+    dependencies: [cryptoDependency, tomlDependency],
     targets: neutralTargets
   )
 #else

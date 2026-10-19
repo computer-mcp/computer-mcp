@@ -6,6 +6,7 @@ import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatformDarwin
 

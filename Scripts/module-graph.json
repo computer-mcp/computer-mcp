@@ -203,6 +203,7 @@
     "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
     "^(OpenAITunnel|CloudflareTunnel)": "ComputerMCPTunnels",
     "^GatewayDatabase": "ComputerMCPPersistence",
+    "^DefaultGatewayConfiguration\\+macOS": "ComputerMCPMacOS",
     "^ManifestFile": "ComputerMCPConfiguration",
     "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|HTTPClientControlRegistry|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane",
     "^(MCPTool(Risk|AccessPolicy)|ComputerMCPProductContracts|GatewayToolCounts)": "ComputerMCPCore",

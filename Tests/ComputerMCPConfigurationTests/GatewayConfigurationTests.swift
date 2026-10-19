@@ -412,7 +412,7 @@ final class GatewayConfigurationTests {
       """
       [[cli.commands]]
       id = "git"
-      executable = "/usr/bin/git"
+      executable = "/bin/cat"
 
       [[cli.commands]]
       id = "git"

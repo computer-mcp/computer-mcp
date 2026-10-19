@@ -104,10 +104,18 @@ class PlanModeTests(unittest.TestCase):
             self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit",
                           self.problems(), line)
 
-    def test_conditional_import_is_allowed(self):
+    def test_conditional_macos_framework_import_fails(self):
         self.write("Low/Low.swift", "#if canImport(AppKit)\nimport AppKit\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
         (self.sources / "Shared/Low.swift").unlink()
-        self.assertEqual(self.problems(), [])
+        self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit", self.problems())
+
+    def test_platform_c_library_is_allowed_only_inside_a_condition(self):
+        (self.sources / "Shared/Low.swift").unlink()
+        overrides = {"macos_imports": ["AppKit", "Darwin"], "conditional_macos_imports": ["Darwin"]}
+        self.write("Low/Low.swift", "#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
+        self.assertEqual(self.problems(**overrides), [])
+        self.write("Low/Low.swift", "import Darwin\npackage struct LowValue {\n  let id: String\n}\n")
+        self.assertIn("macOS import in neutral target: Low/Low.swift imports Darwin", self.problems(**overrides))
 
     def test_relocation_moves_a_file_of_an_extracted_target(self):
         self.write("Low/Native.swift", "import AppKit\npackage struct NativeValue {\n  let id: String\n}\n")

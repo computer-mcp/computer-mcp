@@ -136,6 +136,9 @@
     "UniformTypeIdentifiers",
     "os"
   ],
+  "conditional_macos_imports": [
+    "Darwin"
+  ],
   "executables": [
     "ComputerMCPApp",
     "computer-mcp"

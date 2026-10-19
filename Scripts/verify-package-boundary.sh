@@ -35,8 +35,8 @@ if rg -n '^\s*public\b' "${LIBRARIES[@]}" --glob '*.swift'; then
   exit 1
 fi
 
-# Neutral targets build on Linux: no unconditional macOS framework imports (a conditional
-# import selects a platform, as in the module graph check) and no macOS paths. A test
+# Neutral targets build on Linux: no macOS framework imports, also inside #if, except the
+# platform C library selection the module graph declares, and no macOS paths. A test
 # target is neutral when the target it tests is.
 NEUTRAL=(${(f)"$(jq -r --argjson graph "$(<Scripts/module-graph.json)" '
   ($graph.macos_only) as $macos
@@ -50,11 +50,11 @@ import importlib.util, json, pathlib, sys
 spec = importlib.util.spec_from_file_location("graph", "Scripts/verify-module-graph.py")
 graph = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(graph)
-macos = set(json.loads(pathlib.Path("Scripts/module-graph.json").read_text())["macos_imports"])
+rules = json.loads(pathlib.Path("Scripts/module-graph.json").read_text())
 found = False
 for root in sys.argv[1:]:
     for path in sorted(pathlib.Path(root).rglob("*.swift")):
-        for name in sorted(graph.unconditional_imports(path.read_text()) & macos):
+        for name in sorted(graph.macos_imports(path.read_text(), rules)):
             print(f"{path}: imports {name}")
             found = True
 sys.exit(1 if found else 0)

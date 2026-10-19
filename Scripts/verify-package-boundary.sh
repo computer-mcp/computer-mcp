@@ -22,14 +22,35 @@ rg() {
 ROOT_DIR=${0:A:h:h}
 cd "$ROOT_DIR"
 
-PRODUCTS=$(/usr/bin/swift package dump-package | jq -c '[.products[].name] | sort')
+PACKAGE=$(/usr/bin/swift package dump-package)
+PRODUCTS=$(jq -c '[.products[].name] | sort' <<<"$PACKAGE")
 if [[ "$PRODUCTS" != '["ComputerMCPApp","computer-mcp"]' ]]; then
   echo "Package boundary gate failed: only the App and CLI executable products are allowed." >&2
   exit 1
 fi
 
-if rg -n '^\s*public\b' Sources/ComputerMCP Sources/ComputerMCPPlatform --glob '*.swift'; then
-  echo "Package boundary gate failed: ComputerMCP implementation declarations must not be public." >&2
+LIBRARIES=(${(f)"$(jq -r '.targets[] | select(.type == "regular") | .path // "Sources/\(.name)"' <<<"$PACKAGE")"})
+if rg -n '^\s*public\b' "${LIBRARIES[@]}" --glob '*.swift'; then
+  echo "Package boundary gate failed: internal target declarations must not be public." >&2
+  exit 1
+fi
+
+# Neutral targets build on Linux: no macOS framework imports, even conditional ones,
+# and no macOS executable paths. A test target is neutral when the target it tests is.
+NEUTRAL=(${(f)"$(jq -r --argjson graph "$(<Scripts/module-graph.json)" '
+  ($graph.macos_only) as $macos
+  | .targets[]
+  | select(.type == "regular" or .type == "test")
+  | select((.name | IN($macos[])) or (.type == "test" and (.name | rtrimstr("Tests") | IN($macos[]))) | not)
+  | .path // (if .type == "test" then "Tests/\(.name)" else "Sources/\(.name)" end)
+' <<<"$PACKAGE")"})
+MACOS_IMPORTS=$(jq -r '.macos_imports | join("|")' Scripts/module-graph.json)
+if rg -n "^\\s*(@\\w+\\s+)*import\\s+(${MACOS_IMPORTS})\\b" "${NEUTRAL[@]}" --glob '*.swift'; then
+  echo "Package boundary gate failed: neutral targets must not import macOS frameworks." >&2
+  exit 1
+fi
+if rg -n '"/usr/s?bin/' "${NEUTRAL[@]}" --glob '*.swift'; then
+  echo "Package boundary gate failed: neutral targets must not reference macOS executable paths." >&2
   exit 1
 fi
 

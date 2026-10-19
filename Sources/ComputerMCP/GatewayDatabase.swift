@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlatform
 import CryptoKit
 import Foundation
 import GRDB

@@ -15,8 +15,16 @@ let neutralTargets: [Target] =
       name: "ComputerMCPCore",
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]
     ),
-    .target(name: "ComputerMCPPlatform"),
-    .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
+    .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
+    .target(
+      name: "ComputerMCPTestSupport", dependencies: ["ComputerMCPPlatform"],
+      path: "Tests/ComputerMCPTestSupport"),
+    .testTarget(
+      name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
+    .testTarget(
+      name: "ComputerMCPPlatformTests",
+      dependencies: ["ComputerMCPPlatform", "ComputerMCPTestSupport"]
+    ),
   ]
 
 #if os(macOS)
@@ -51,11 +59,15 @@ let neutralTargets: [Target] =
     targets: neutralTargets + [
       .systemLibrary(name: "CSystemArchive"),
       .target(
+        name: "ComputerMCPPlatformDarwin",
+        dependencies: ["CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform"]
+      ),
+      .target(
         name: "ComputerMCP",
         dependencies: [
-          "CSystemArchive",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
@@ -84,18 +96,32 @@ let neutralTargets: [Target] =
         ]
       ),
       .testTarget(
+        name: "ComputerMCPPlatformDarwinTests",
+        dependencies: ["ComputerMCPPlatformDarwin", "ComputerMCPTestSupport"]
+      ),
+      .testTarget(
         name: "ComputerMCPTests",
-        dependencies: ["ComputerMCP", "ComputerMCPCore"],
+        dependencies: [
+          "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
+          "ComputerMCPTestSupport",
+        ],
         resources: [.copy("Fixtures")]
       ),
       .testTarget(
         name: "ComputerMCPAppTests",
-        dependencies: ["ComputerMCPApp", "ComputerMCP", "ComputerMCPCore"]
+        dependencies: [
+          "ComputerMCPApp", "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+        ]
       ),
     ]
   )
 #elseif os(Linux)
-  let package = Package(name: "computer-mcp", targets: [])
+  let package = Package(
+    name: "computer-mcp",
+    dependencies: [cryptoDependency],
+    targets: neutralTargets
+  )
 #else
   #error("Computer MCP supports package manifests on macOS and Linux.")
 #endif

@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 
 extension GatewayToolRegistry {

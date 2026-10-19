@@ -1,3 +1,4 @@
+import ComputerMCPPlatform
 import Foundation
 
 internal enum ExternalProviderKind: String, Codable, CaseIterable, Equatable, Sendable {

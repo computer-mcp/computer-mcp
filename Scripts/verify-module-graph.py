@@ -13,7 +13,8 @@ Modes:
            macOS imports in extracted neutral targets. Every residual Swift test
            source must be allocated to a test target whose owner is in layers.
   package  Read `swift package dump-package` and apply the same layer, permission and
-           neutrality rules to the declared target dependencies.
+           neutrality rules to the declared target dependencies. Test support libraries
+           are unranked and may be dependencies of test targets only.
 
 Plan mode resolves names lexically from top-level declarations, their direct member
 types, module-qualified names and non-private free functions; it does not perform
@@ -374,16 +375,23 @@ def package(graph, package_json):
         description = json.loads(subprocess.run(["/usr/bin/swift", "package", "dump-package"], cwd=ROOT,
                                                 check=True, capture_output=True, text=True).stdout)
     names = {t["name"] for t in description["targets"]}
+    support = set(graph.get("test_support", []))
     problems = []
     for target in description["targets"]:
         if target["type"] == "test":
+            continue
+        for dependency in target.get("dependencies", []):
+            reference = dependency.get("byName") or dependency.get("target")
+            if reference and reference[0] in support and target["name"] not in support:
+                problems.append(f"test support outside tests: {target['name']} -> {reference[0]}")
+        if target["name"] in support:
             continue
         if target["name"] not in rules.layer:
             problems.append(f"unranked target: {target['name']}")
             continue
         for dependency in target.get("dependencies", []):
             reference = dependency.get("byName") or dependency.get("target")
-            if reference and reference[0] in names:
+            if reference and reference[0] in names and reference[0] not in support:
                 problems.extend(rules.violations(target["name"], reference[0]))
     return list(dict.fromkeys(problems))
 

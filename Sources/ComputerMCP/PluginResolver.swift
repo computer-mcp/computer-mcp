@@ -1,3 +1,4 @@
+import ComputerMCPPlatform
 import Foundation
 
 package enum IntegrationKind: String, Codable, Hashable, Sendable { case mcp, cli, skills }

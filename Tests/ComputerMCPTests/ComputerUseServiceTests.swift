@@ -1,11 +1,24 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPPlatform
 
 @Suite
 
 final class ComputerUseServiceTests {
+  @Test func accessibilityNumbersPreserveNativeIntegerIdentity() throws {
+    let large: Int64 = 9_007_199_254_740_993
+    #expect(
+      try ComputerUseAccessibilityValue(foundationNumber: NSNumber(value: large)) == .integer(large)
+    )
+    #expect(ComputerUseAccessibilityValue.integer(large) != .number(Double(large)))
+    #expect(ComputerUseAccessibilityValue.integer(1) == .number(1))
+    #expect(
+      try ComputerUseAccessibilityValue(foundationNumber: NSNumber(value: true)) == .bool(true))
+  }
+
   @Test
   func testPermissionSnapshotOnlyReadsCurrentStatus() {
     let adapter = FakeComputerUseAdapter(

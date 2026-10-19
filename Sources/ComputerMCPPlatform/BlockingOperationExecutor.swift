@@ -2,12 +2,12 @@ import Foundation
 
 /// Runs synchronous system APIs away from Swift's cooperative executor.
 ///
-/// This is intentionally internal. Callers remain responsible for exposing an
-/// asynchronous, cancellation-aware caller API around the blocking operation.
-final class BlockingOperationExecutor: @unchecked Sendable {
+/// Callers remain responsible for exposing an asynchronous, cancellation-aware
+/// API around the blocking operation.
+package final class BlockingOperationExecutor: @unchecked Sendable {
   private let queue: DispatchQueue
 
-  init(label: String, serial: Bool = true) {
+  package init(label: String, serial: Bool = true) {
     queue = DispatchQueue(
       label: label,
       qos: .userInitiated,
@@ -15,7 +15,7 @@ final class BlockingOperationExecutor: @unchecked Sendable {
     )
   }
 
-  func perform<Value: Sendable>(
+  package func perform<Value: Sendable>(
     _ operation: @escaping @Sendable () throws -> Value
   ) async throws -> Value {
     try await withCheckedThrowingContinuation { continuation in

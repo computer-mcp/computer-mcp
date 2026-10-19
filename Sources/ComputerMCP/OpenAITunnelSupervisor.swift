@@ -1,4 +1,6 @@
 import ComputerMCPCore
+import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import Foundation
 
 package struct OpenAITunnelConfiguration: Codable, Equatable, Sendable, Identifiable {

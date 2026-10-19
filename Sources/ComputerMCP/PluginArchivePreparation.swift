@@ -1,3 +1,5 @@
+import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import Darwin
 import Foundation
 import Subprocess

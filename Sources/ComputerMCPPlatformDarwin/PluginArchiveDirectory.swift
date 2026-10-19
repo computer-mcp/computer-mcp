@@ -1,20 +1,21 @@
+import ComputerMCPPlatform
 import Darwin
 import Foundation
 
 /// Owns a private directory created by the host or reopened from its ownership receipt.
 /// All child writes and cleanup are anchored to open directory descriptors.
-final class PluginArchiveDirectory {
-  let url: URL
-  let descriptor: Int32
+package final class PluginArchiveDirectory {
+  package let url: URL
+  package let descriptor: Int32
   private let parent: Int32
   private let name: String
   private var directoryPaths: [ino_t: [String]] = [:]
 
-  convenience init(at requestedURL: URL) throws {
+  package convenience init(at requestedURL: URL) throws {
     try self.init(at: requestedURL, identity: nil)
   }
 
-  convenience init(recovering identity: PluginDirectoryIdentity) throws {
+  package convenience init(recovering identity: PluginDirectoryIdentity) throws {
     try self.init(at: identity.url, identity: identity)
   }
 
@@ -69,13 +70,13 @@ final class PluginArchiveDirectory {
     Darwin.close(parent)
   }
 
-  func createDirectory(_ parts: [String]) throws {
+  package func createDirectory(_ parts: [String]) throws {
     let directory = try openDirectory(parts)
     defer { Darwin.close(directory) }
     guard fsync(directory) == 0 else { throw PluginArchiveError.fileSystemFailure }
   }
 
-  func createFile(
+  package func createFile(
     _ parts: [String], executable: Bool, readOnly: Bool = false,
     write: (Int32) throws -> Void
   ) throws {
@@ -93,13 +94,13 @@ final class PluginArchiveDirectory {
     else { throw PluginArchiveError.fileSystemFailure }
   }
 
-  func finish() throws {
+  package func finish() throws {
     guard stillOwnsName(), fsync(descriptor) == 0, fsync(parent) == 0 else {
       throw PluginArchiveError.fileSystemFailure
     }
   }
 
-  func identity() throws -> PluginDirectoryIdentity {
+  package func identity() throws -> PluginDirectoryIdentity {
     var status = stat()
     guard stillOwnsName(), fstat(descriptor, &status) == 0 else {
       throw PluginArchiveError.fileSystemFailure
@@ -108,7 +109,7 @@ final class PluginArchiveDirectory {
   }
 
   /// Only the reserved staging child is disposable in a committed installation.
-  func removeStaging() throws {
+  package func removeStaging() throws {
     guard stillOwnsName() else { throw PluginArchiveError.fileSystemFailure }
     var status = stat()
     guard fstatat(descriptor, "package", &status, AT_SYMLINK_NOFOLLOW) == 0,
@@ -132,7 +133,7 @@ final class PluginArchiveDirectory {
   }
 
   /// A renamed/replaced staging root is never deleted by pathname.
-  func discard() throws {
+  package func discard() throws {
     guard stillOwnsName() else { throw PluginArchiveError.fileSystemFailure }
     try Self.removeContents(descriptor)
     guard stillOwnsName(), unlinkat(parent, name, AT_REMOVEDIR) == 0, fsync(parent) == 0 else {

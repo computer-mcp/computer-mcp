@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 
 /// Applies one profile's host-owned scope to every route into a downstream session.

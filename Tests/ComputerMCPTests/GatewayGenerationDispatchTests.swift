@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import CryptoKit
 import Darwin
 import Foundation
@@ -6,6 +7,8 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {

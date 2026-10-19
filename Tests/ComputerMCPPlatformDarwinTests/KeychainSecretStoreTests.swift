@@ -1,8 +1,10 @@
+import ComputerMCPTestSupport
 import Foundation
 import Security
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 @Suite
 
@@ -114,35 +116,6 @@ final class KeychainSecretStoreTests {
   }
 }
 
-final class MemoryKeychainAdapter: KeychainAdapter, @unchecked Sendable {
-  private let lock = NSLock()
-  private var values: [String: Data] = [:]
-
-  var accounts: [String] {
-    lock.lock()
-    defer { lock.unlock() }
-    return values.keys.sorted()
-  }
-
-  func set(service: String, account: String, data: Data) throws {
-    lock.lock()
-    values["\(service):\(account)"] = data
-    lock.unlock()
-  }
-
-  func get(service: String, account: String) throws -> Data? {
-    lock.lock()
-    defer { lock.unlock() }
-    return values["\(service):\(account)"]
-  }
-
-  func delete(service: String, account: String) throws {
-    lock.lock()
-    values.removeValue(forKey: "\(service):\(account)")
-    lock.unlock()
-  }
-}
-
 private final class MetadataKeychainAdapter: KeychainAdapter, @unchecked Sendable {
   private let lock = NSLock()
   private var reads = 0
@@ -208,4 +181,13 @@ private final class MetadataKeychainAdapter: KeychainAdapter, @unchecked Sendabl
   }
 
   func delete(service: String, account: String) throws {}
+}
+
+extension KeychainSecretStore {
+  fileprivate init(
+    service: String = "com.showxu.computer-mcp.tests", adapter: any KeychainAdapter
+  ) throws {
+    try self.init(
+      service: service, accessGroup: "TESTTEAMID.com.showxu.computer-mcp.tests", adapter: adapter)
+  }
 }

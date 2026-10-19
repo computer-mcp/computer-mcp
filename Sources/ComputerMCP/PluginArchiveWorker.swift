@@ -1,3 +1,4 @@
+import ComputerMCPPlatformDarwin
 import Foundation
 
 package struct PluginArchiveReceipt: Codable, Equatable, Sendable {

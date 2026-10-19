@@ -4,6 +4,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
 
 @Suite(.serialized)
 struct GatewayTerminalSessionsTests {

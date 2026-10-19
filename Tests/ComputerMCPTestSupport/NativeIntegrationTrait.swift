@@ -2,14 +2,14 @@ import Testing
 
 /// Native integration cases share the machine's process and I/O capacity even
 /// when their files and ports are independent. Concurrency inside a case is retained.
-struct NativeIntegrationTrait: TestTrait, SuiteTrait, TestScoping {
-  var isRecursive: Bool { true }
+package struct NativeIntegrationTrait: TestTrait, SuiteTrait, TestScoping {
+  package var isRecursive: Bool { true }
 
-  func scopeProvider(for test: Test, testCase: Test.Case?) -> Self? {
+  package func scopeProvider(for test: Test, testCase: Test.Case?) -> Self? {
     testCase == nil ? nil : self
   }
 
-  func provideScope(
+  package func provideScope(
     for test: Test, testCase: Test.Case?, performing function: @Sendable () async throws -> Void
   ) async throws {
     await NativeIntegrationCapacity.shared.acquire()
@@ -25,7 +25,7 @@ struct NativeIntegrationTrait: TestTrait, SuiteTrait, TestScoping {
 }
 
 extension Trait where Self == NativeIntegrationTrait {
-  static var nativeIntegration: Self { .init() }
+  package static var nativeIntegration: Self { .init() }
 }
 
 private actor NativeIntegrationCapacity {

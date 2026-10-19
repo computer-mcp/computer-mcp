@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing

@@ -1,9 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
 
-package typealias ExecutableInspection = ComputerMCPPlatform.ExecutableInspection
-typealias ExecutableInvocation = ComputerMCPPlatform.ExecutableInvocation
-
 extension ExecutableInspection {
   package var json: JSONValue {
     .object([

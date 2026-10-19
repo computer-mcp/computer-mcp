@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
 import Testing

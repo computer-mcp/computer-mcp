@@ -11,6 +11,8 @@ package struct PluginPlatformCompatibility: Codable, Equatable, Sendable {
   package static var currentPlatform: String {
     #if os(macOS)
       "macos"
+    #elseif os(Linux)
+      "linux"
     #endif
   }
 

@@ -1,6 +1,8 @@
 import AppKit
 import ComputerMCP
 import ComputerMCPCore
+import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import Foundation
 
 @MainActor

@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Foundation
 import Logging
 import MCP
@@ -6,6 +7,7 @@ import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
 
 @Suite(.nativeIntegration)
 struct GatewayToolCatalogTests {

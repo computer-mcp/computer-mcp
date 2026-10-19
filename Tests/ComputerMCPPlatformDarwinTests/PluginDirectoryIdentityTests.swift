@@ -1,8 +1,10 @@
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 @Suite(.nativeIntegration)
 struct PluginDirectoryIdentityTests {

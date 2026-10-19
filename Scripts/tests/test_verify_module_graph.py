@@ -286,6 +286,15 @@ class PackageModeTests(unittest.TestCase):
                    {"name": "High", "type": "regular", "dependencies": [{"byName": ["Low", None]}]}]
         self.assertIn("neutral to macOS: High -> Low", self.check(targets, macos_only=["Low"]))
 
+    def test_test_support_serves_only_test_targets(self):
+        targets = [{"name": "Low", "type": "regular", "dependencies": []},
+                   {"name": "Support", "type": "regular", "dependencies": [{"byName": ["Low", None]}]},
+                   {"name": "LowTests", "type": "test", "dependencies": [{"byName": ["Support", None]}]}]
+        self.assertEqual(self.check(targets, test_support=["Support"]), [])
+        targets.append({"name": "High", "type": "regular", "dependencies": [{"byName": ["Support", None]}]})
+        self.assertIn("test support outside tests: High -> Support",
+                      self.check(targets, test_support=["Support"]))
+
 
 if __name__ == "__main__":
     unittest.main()

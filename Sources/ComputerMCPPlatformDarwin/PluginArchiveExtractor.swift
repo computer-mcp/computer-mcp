@@ -1,4 +1,5 @@
 import CSystemArchive
+import ComputerMCPPlatform
 import Darwin
 import Foundation
 
@@ -6,20 +7,20 @@ import Foundation
 /// It does not verify publisher identity, activate packages, or execute their code.
 /// Cancellation is cooperative between parser calls; untrusted parsing belongs
 /// in an installer worker with independent CPU/memory/time limits.
-struct PluginArchiveExtractor {
-  struct Result: Equatable, Sendable {
-    let root: URL
-    let entries: Int
-    let bytes: Int
+package struct PluginArchiveExtractor {
+  package struct Result: Equatable, Sendable {
+    package let root: URL
+    package let entries: Int
+    package let bytes: Int
   }
 
-  let limits: PluginArchiveLimits
+  package let limits: PluginArchiveLimits
 
-  init(limits: PluginArchiveLimits = PluginArchiveLimits()) {
+  package init(limits: PluginArchiveLimits = PluginArchiveLimits()) {
     self.limits = limits
   }
 
-  func extract(
+  package func extract(
     _ source: URL, toNewDirectory destination: URL,
     checkCancellation: () throws -> Void = { try Task.checkCancellation() }
   ) throws -> Result {

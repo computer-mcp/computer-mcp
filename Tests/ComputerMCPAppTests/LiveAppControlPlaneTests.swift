@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
@@ -5,6 +6,8 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPApp
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 @MainActor
 @Suite(.serialized)

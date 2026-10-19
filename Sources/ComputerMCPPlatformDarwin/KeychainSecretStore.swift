@@ -1,23 +1,6 @@
 import ComputerMCPPlatform
 import Foundation
 
-package typealias KeychainAdapter = ComputerMCPPlatform.KeychainAdapter
-package typealias KeychainAuthenticationUI = ComputerMCPPlatform.KeychainAuthenticationUI
-package typealias KeychainSecretStoreError = ComputerMCPPlatform.KeychainSecretStoreError
-package typealias SecurityKeychainAdapter = ComputerMCPPlatform.SecurityKeychainAdapter
-
-package struct SecretReference: Codable, Equatable, Hashable, Sendable {
-  package var account: String
-
-  package init(account: String) throws {
-    let normalized = account.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalized.isEmpty, normalized.utf8.count <= 256, !normalized.contains("\0") else {
-      throw KeychainSecretStoreError.invalidReference
-    }
-    self.account = normalized
-  }
-}
-
 package struct KeychainSecretStore: Sendable {
   package let service: String
   package let accessGroup: String
@@ -105,13 +88,13 @@ package struct KeychainSecretStore: Sendable {
     try adapter.delete(service: service, account: reference.account)
   }
 
-  func setAsynchronously(_ secret: String, for reference: SecretReference) async throws {
+  package func setAsynchronously(_ secret: String, for reference: SecretReference) async throws {
     try await operationQueue.perform {
       try set(secret, for: reference)
     }
   }
 
-  func valueAsynchronously(
+  package func valueAsynchronously(
     for reference: SecretReference,
     authenticationUI: KeychainAuthenticationUI = .allow
   ) async throws -> String? {
@@ -120,7 +103,7 @@ package struct KeychainSecretStore: Sendable {
     }
   }
 
-  func containsAsynchronously(
+  package func containsAsynchronously(
     _ reference: SecretReference,
     authenticationUI: KeychainAuthenticationUI = .fail
   ) async throws -> Bool {
@@ -129,7 +112,7 @@ package struct KeychainSecretStore: Sendable {
     }
   }
 
-  func deleteAsynchronously(_ reference: SecretReference) async throws {
+  package func deleteAsynchronously(_ reference: SecretReference) async throws {
     try await operationQueue.perform {
       try delete(reference)
     }

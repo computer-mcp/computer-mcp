@@ -1,3 +1,4 @@
+import ComputerMCPPlatform
 import Foundation
 
 /// Finite argv commands using the shared CLI lifecycle and a complete child environment.

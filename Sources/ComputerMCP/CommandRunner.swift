@@ -2,11 +2,6 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import Foundation
 
-package typealias CommandResult = ComputerMCPPlatform.CommandResult
-package typealias CommandDataResult = ComputerMCPPlatform.CommandDataResult
-package typealias CommandRunning = ComputerMCPPlatform.CommandRunning
-package typealias CommandRunnerError = ComputerMCPPlatform.CommandRunnerError
-
 extension CommandResult {
   package var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])

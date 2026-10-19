@@ -1,3 +1,5 @@
+import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import Foundation
 
 /// Host-owned credential binding. Package manifests cannot select Keychain items.

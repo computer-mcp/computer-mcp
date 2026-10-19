@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 
 /// Stable, executable-facing artifacts used by the CLI product boundary.

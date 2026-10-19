@@ -1,9 +1,9 @@
 # Package
 
-Computer MCP is a SwiftPM package that builds an internal gateway implementation
-target, the `computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only
-the App and CLI are package products. Linux validates the neutral package
-boundary in CI.
+Computer MCP is a SwiftPM package that builds layered internal targets, the
+`computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only the App and
+CLI are package products. On Linux the manifest declares the platform-neutral
+targets, and CI builds and tests them there.
 
 ## Constraints
 
@@ -25,6 +25,7 @@ boundary in CI.
 | swift-subprocess | Process, Shell, and streaming lifecycle |
 | GRDB | Transactional App metadata and redacted audit |
 | swift-log | Runtime logging integration |
+| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore` target on macOS and Linux |
 | macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
 
 `CSystemArchive` is an internal system-library module with the minimal C ABI
@@ -42,13 +43,16 @@ package product and does not install or bundle vendor binaries.
 | Path | Role |
 | --- | --- |
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
-| `Sources/ComputerMCP/` | Gateway core, transports, providers, policy, persistence, tunnel, and App Control Plane |
-| `Sources/ComputerMCPPlatform/` | Shared platform observations and operating-system implementations, used by the gateway |
+| `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
+| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login and process inspection |
+| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, archive extraction and staging |
+| `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
 | `Resources/ComputerMCPApp/` | Bundle metadata, entitlements and the imported App icon document |
-| `Tests/` | Swift Testing component, policy, transport, App, and provider tests |
+| `Tests/` | Swift Testing component, policy, transport, App, and provider tests; each target's tests are in `Tests/<Target>Tests/` |
+| `Tests/ComputerMCPTestSupport/` | Neutral helpers shared by test targets; package checks reject product targets that depend on it |
 | `Tools/Validation/` | Independent Test Case catalog, probes, fixtures, evidence correlation, and reports |
 | `Sources/ComputerMCP/ComputerMCP.docc/` | Internal target documentation |
 | `Examples/` | Standalone development and dogfood manifests |

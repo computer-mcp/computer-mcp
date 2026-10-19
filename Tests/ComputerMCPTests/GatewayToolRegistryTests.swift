@@ -1,4 +1,5 @@
 import AppKit
+import ComputerMCPTestSupport
 import CoreText
 import Darwin
 import Foundation
@@ -7,6 +8,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
 
 @Suite(.nativeIntegration, .serialized)
 

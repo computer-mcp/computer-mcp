@@ -1,8 +1,6 @@
 import Foundation
-import MCP
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
 
 @Suite
@@ -28,14 +26,12 @@ final class JSONValueTests {
     Int64.min, -9_007_199_254_740_993, 9_007_199_254_740_991,
     9_007_199_254_740_992, 9_007_199_254_740_993, Int64.max,
   ])
-  func integersPreserveIdentityAcrossWireAndMCP(_ integer: Int64) throws {
+  func integersPreserveIdentityAcrossWire(_ integer: Int64) throws {
     let literal = String(integer)
     let value = try JSONDecoder().decode(JSONValue.self, from: Data(literal.utf8))
     #expect(value.int64Value == integer)
     #expect(value == .integer(integer))
     #expect(String(decoding: try JSONEncoder().encode(value), as: UTF8.self) == literal)
-    #expect(value.sdkValue == .int(Int(integer)))
-    #expect(JSONValue(sdkValue: value.sdkValue).int64Value == integer)
     let nested = try JSONValue.encoded(["id": integer])
     #expect(nested.objectValue?["id"]?.int64Value == integer)
     #expect(JSONValue.integer(integer) != .integer(integer == .max ? integer - 1 : integer + 1))
@@ -78,35 +74,12 @@ final class JSONValueTests {
     #expect(throws: EncodingError.self) { try JSONValue.integer(exactly: UInt64.max) }
   }
 
-  @Test func initializeNormalizationPreservesLargeRequestIdentifiers() throws {
-    let data = Data(
-      "{\"id\":9223372036854775807,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"experimental\":{\"unsupported\":true}}}}"
-        .utf8)
-    let normalized = MCPInitializeNormalization.normalize(data)
-    #expect(normalized != data)
-    #expect(MCPInitializeNormalization.initializeRequestID(in: normalized)?.int64Value == .max)
-  }
-
   @Test func floatingPointStorageCannotEmitAnUnsupportedInteger() throws {
     let minimum = try JSONEncoder().encode(JSONValue.number(Double(Int64.min)))
     #expect(String(decoding: minimum, as: UTF8.self) == String(Int64.min))
     #expect(throws: EncodingError.self) {
       try JSONEncoder().encode(JSONValue.number(Double(Int64.max)))
     }
-    #expect(throws: EncodingError.self) {
-      try JSONEncoder().encode(JSONValue(sdkValue: .double(1e100)))
-    }
-  }
-
-  @Test func accessibilityNumbersPreserveNativeIntegerIdentity() throws {
-    let large: Int64 = 9_007_199_254_740_993
-    #expect(
-      try ComputerUseAccessibilityValue(foundationNumber: NSNumber(value: large)) == .integer(large)
-    )
-    #expect(ComputerUseAccessibilityValue.integer(large) != .number(Double(large)))
-    #expect(ComputerUseAccessibilityValue.integer(1) == .number(1))
-    #expect(
-      try ComputerUseAccessibilityValue(foundationNumber: NSNumber(value: true)) == .bool(true))
   }
 
   @Test
@@ -116,11 +89,4 @@ final class JSONValueTests {
     #expect((JSONValue.number(-Double(Int.min)).intValue) == nil)
   }
 
-  @Test
-  func testMCPBridgeKeepsIntegralNumbersOutsideIntRangeAsDouble() {
-    let value = -Double(Int.min)
-
-    #expect((JSONValue.number(value).sdkValue) == (MCP.Value.double(value)))
-    #expect((JSONValue.number(42).sdkValue) == (MCP.Value.int(42)))
-  }
 }

@@ -1,5 +1,6 @@
 import ArgumentParser
 import ComputerMCP
+import ComputerMCPPlatform
 import Darwin
 import Foundation
 

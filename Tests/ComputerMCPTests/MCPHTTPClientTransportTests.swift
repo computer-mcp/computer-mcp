@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Foundation
 import MCP
 import Testing

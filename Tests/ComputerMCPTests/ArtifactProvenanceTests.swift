@@ -1,9 +1,11 @@
+import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
 import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
 
 @Suite(.nativeIntegration, .serialized)
 final class ArtifactProvenanceTests {

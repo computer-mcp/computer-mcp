@@ -34,3 +34,28 @@ package enum WorkspaceBookmarkError: Error, Equatable, Sendable {
     }
   }
 }
+
+extension WorkspaceBookmarkError: LocalizedError {
+  package var errorDescription: String? {
+    switch self {
+    case .notFileURL:
+      "Workspace root must be a file URL."
+    case .rootDoesNotExist(let path):
+      "Workspace root does not exist: \(path)"
+    case .rootIsNotDirectory(let path):
+      "Workspace root is not a directory: \(path)"
+    case .rootIdentityUnavailable(let path):
+      "Could not verify the workspace folder's identity: \(path)"
+    case .rootChanged(let workspaceID):
+      "The workspace folder no longer matches this runtime: \(workspaceID)"
+    case .bookmarkCreationFailed(let path):
+      "Could not create a security-scoped bookmark for workspace root: \(path)"
+    case .bookmarkResolutionFailed(let workspaceID):
+      "Could not resolve the security-scoped bookmark for workspace: \(workspaceID)"
+    case .securityScopeAccessDenied(let workspaceID):
+      "Could not access the security-scoped workspace: \(workspaceID)"
+    case .bookmarkRefreshFailed(let workspaceID):
+      "Could not refresh the stale security-scoped bookmark for workspace: \(workspaceID)"
+    }
+  }
+}

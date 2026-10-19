@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
 import MCP
@@ -5,6 +6,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPBoundHostServicesTests {

@@ -1,7 +1,7 @@
 import ServiceManagement
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPPlatformDarwin
 
 @Suite
 struct AppControlPlaneLaunchAtLoginTests {

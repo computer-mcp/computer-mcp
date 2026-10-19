@@ -101,7 +101,7 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
 - Share executable inspection across CLI/MCP status and plugin contribution
   resolution. The inspector reads regular-file metadata and at most 512 header
   bytes per interpreter, with bounded interpreter traversal. It does not run
-  code or establish launch-time trust. Shebang handling follows the macOS
+  code or establish launch-time trust. On every platform, shebang handling follows the macOS
   [XNU interpreter rules](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_exec.c)
   and distinguishes supported plain
   [env invocations](https://github.com/apple-oss-distributions/shell_cmds/blob/main/env/env.c)

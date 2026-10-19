@@ -136,6 +136,7 @@ let neutralTargets: [Target] =
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
+          "ComputerMCPProcess",
           .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]
       ),
@@ -143,7 +144,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCPApp",
         dependencies: [
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin",
+          "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
         ],
         resources: [
           .process("Resources")
@@ -160,7 +161,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPTests",
         dependencies: [
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX", "ComputerMCPTestSupport",
+          "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+          "ComputerMCPTestSupport",
         ],
         resources: [.copy("Fixtures")]
       ),
@@ -168,7 +170,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPAppTests",
         dependencies: [
           "ComputerMCPApp", "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore",
-          "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+          "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
+          "ComputerMCPTestSupport",
         ]
       ),
     ]

@@ -182,7 +182,7 @@ def imports(text):
     return set(found)
 
 
-STRING_LITERAL = re.compile(r'"([^"\\\n]*)"')
+STRING_LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
 
 
 def macos_paths(text, graph):

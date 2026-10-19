@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -108,5 +109,6 @@ struct ManagedCommandRunnerTests {
     #expect(result.first?.diagnostics.isEmpty == true)
   }
 
-  private static func exited(_ pid: Int32) -> Bool { kill(pid, 0) == -1 && errno == ESRCH }
+  /// A killed process whose new parent never reaps it remains a zombie; it has still exited.
+  private static func exited(_ pid: Int32) -> Bool { ProcessTable.hasExited(pid) }
 }

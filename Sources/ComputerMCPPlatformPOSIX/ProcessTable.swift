@@ -21,13 +21,13 @@ package enum ProcessTable {
       }
       return actualSize <= 0 && errno == ESRCH
     #else
-      guard let status = try? String(contentsOfFile: "/proc/\(processID)/stat", encoding: .utf8)
-      else {
+      guard let status = FileManager.default.contents(atPath: "/proc/\(processID)/stat") else {
         return kill(processID, 0) == -1 && errno == ESRCH
       }
-      // The state follows the parenthesized command name, which may contain parentheses.
-      guard let nameEnd = status.lastIndex(of: ")") else { return false }
-      return status[status.index(after: nameEnd)...].split(separator: " ").first == "Z"
+      // The state follows the parenthesized command name, which may contain any bytes.
+      guard let nameEnd = status.lastIndex(of: UInt8(ascii: ")")) else { return false }
+      return status[(nameEnd + 1)...].first(where: { $0 != UInt8(ascii: " ") })
+        == UInt8(ascii: "Z")
     #endif
   }
 }

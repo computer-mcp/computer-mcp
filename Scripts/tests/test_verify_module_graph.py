@@ -277,6 +277,8 @@ class NeutralPathTests(unittest.TestCase):
         rules = {"macos_path_prefixes": ["/Applications/", "/usr/bin/"], "posix_paths": ["/usr/bin/env"]}
         text = 'let a = "/usr/bin/env"\nlet b = "/usr/bin/git"\nlet c = "/Applications/X.app"\nlet d = "/bin/sh"\n'
         self.assertEqual(module_graph.macos_paths(text, rules), [(2, "/usr/bin/git"), (3, "/Applications/X.app")])
+        interpolated = 'let e = "/Applications/\\(name).app"\n'
+        self.assertEqual(module_graph.macos_paths(interpolated, rules), [(1, "/Applications/\\(name).app")])
 
 
 class PackageModeTests(unittest.TestCase):

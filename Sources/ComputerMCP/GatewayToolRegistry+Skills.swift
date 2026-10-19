@@ -1,3 +1,4 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import Foundation
 import Yams

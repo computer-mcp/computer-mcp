@@ -5,6 +5,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPApp
+@testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 
 @MainActor

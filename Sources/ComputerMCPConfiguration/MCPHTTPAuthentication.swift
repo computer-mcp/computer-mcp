@@ -1,5 +1,4 @@
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import Foundation
 
 /// Host-owned credential binding. Package manifests cannot select Keychain items.
@@ -18,7 +17,14 @@ package struct MCPHTTPAuthentication: Codable, Equatable, Sendable {
   }
 
   package init(from decoder: any Decoder) throws {
-    let values = try decoder.pluginContainer(keyedBy: CodingKeys.self)
+    let keys = try decoder.container(keyedBy: ConfigurationCodingKey.self).allKeys.map(
+      \.stringValue)
+    let unknown = Set(keys).subtracting(CodingKeys.allCases.map(\.stringValue)).sorted()
+    guard unknown.isEmpty else {
+      throw ConfigurationError.invalid(
+        "Unknown MCP authentication fields: \(unknown.joined(separator: ", "))")
+    }
+    let values = try decoder.container(keyedBy: CodingKeys.self)
     endpoint = try values.decode(String.self, forKey: .endpoint)
     keychainAccount = try values.decode(String.self, forKey: .keychainAccount)
     try validate(endpoint: endpoint, transport: .streamableHTTP)
@@ -38,7 +44,7 @@ package struct MCPHTTPAuthentication: Codable, Equatable, Sendable {
     }
   }
 
-  func bearerToken(from store: KeychainSecretStore?) async throws -> String {
+  package func bearerToken(from store: (any SecretStore)?) async throws -> String {
     guard let store else { throw MCPHTTPAuthenticationError.unavailable }
     let value: String?
     do {

@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPConfiguration
 import SwiftUI
 
 struct PluginSettingsEditor: View {

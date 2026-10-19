@@ -2,7 +2,7 @@ import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 
 @Suite
@@ -412,7 +412,7 @@ final class GatewayConfigurationTests {
       """
       [[cli.commands]]
       id = "git"
-      executable = "/usr/bin/git"
+      executable = "/bin/cat"
 
       [[cli.commands]]
       id = "git"

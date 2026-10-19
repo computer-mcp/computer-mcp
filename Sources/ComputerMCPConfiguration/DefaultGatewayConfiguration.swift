@@ -278,13 +278,9 @@ package enum DefaultGatewayConfiguration {
     ].contains(domain)
   }
 
-  package static let manifest = makeManifest(
-    environment: ProcessInfo.processInfo.environment,
-    homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
-
-  internal static func makeManifest(environment: [String: String], homeDirectory: URL) -> String {
+  /// The default manifest, launching the Codex CLI from `codexExecutable`.
+  package static func makeManifest(homeDirectory: URL, codexExecutable: String) -> String {
     let home = homeDirectory.standardizedFileURL.path
-    let codexExecutable = resolvedCodexExecutable(environment: environment, home: homeDirectory)
     return """
       schema_version = 1
 
@@ -393,7 +389,7 @@ package enum DefaultGatewayConfiguration {
   }
 
   package static func configuration(
-    for profileID: GatewayProfileID
+    for profileID: GatewayProfileID, manifest: String
   ) throws -> GatewayConfiguration {
     var configuration = try GatewayConfiguration.load(
       text: manifest,
@@ -430,23 +426,16 @@ package enum DefaultGatewayConfiguration {
     return "\"\(escaped)\""
   }
 
-  private static func resolvedCodexExecutable(environment: [String: String], home: URL) -> String {
-    var candidates = [
-      URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
-      URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex"),
-      home.appendingPathComponent(".local/bin/codex"),
-      home.appendingPathComponent("bin/codex"),
-      URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
-      URL(fileURLWithPath: "/usr/local/bin/codex"),
-    ]
-    candidates.insert(
-      contentsOf: (environment["PATH"] ?? "")
-        .split(separator: ":", omittingEmptySubsequences: true)
-        .map { URL(fileURLWithPath: String($0)).appendingPathComponent("codex") },
-      at: 0
-    )
-    return candidates.first {
+  /// The first executable `name` in `PATH`, then among `candidates` in order; the bare
+  /// name when none is executable.
+  package static func resolvedExecutable(
+    named name: String, environment: [String: String], candidates: [URL]
+  ) -> String {
+    let searchPath = (environment["PATH"] ?? "")
+      .split(separator: ":", omittingEmptySubsequences: true)
+      .map { URL(fileURLWithPath: String($0)).appendingPathComponent(name) }
+    return (searchPath + candidates).first {
       FileManager.default.isExecutableFile(atPath: $0.standardizedFileURL.path)
-    }?.standardizedFileURL.path ?? "codex"
+    }?.standardizedFileURL.path ?? name
   }
 }

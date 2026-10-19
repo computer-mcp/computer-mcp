@@ -1,7 +1,7 @@
 import ComputerMCPPlatform
 import Foundation
 
-package struct KeychainSecretStore: Sendable {
+package struct KeychainSecretStore: SecretStore {
   package let service: String
   package let accessGroup: String
   private let adapter: any KeychainAdapter

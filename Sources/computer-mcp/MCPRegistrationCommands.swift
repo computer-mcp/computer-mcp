@@ -1,5 +1,6 @@
 import ArgumentParser
 import ComputerMCP
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import Darwin
 import Foundation

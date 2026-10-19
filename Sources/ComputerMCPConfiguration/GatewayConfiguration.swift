@@ -2,7 +2,7 @@ import ComputerMCPCore
 import Foundation
 import TOML
 
-private struct ConfigurationCodingKey: CodingKey {
+struct ConfigurationCodingKey: CodingKey {
   let stringValue: String
   let intValue: Int?
 
@@ -1497,7 +1497,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     try container.encode(confirmationPolicy, forKey: .confirmationPolicy)
   }
 
-  func validate(knownWorkspaceIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
+  package func validate(knownWorkspaceIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
     guard Set(mcpServers).count == mcpServers.count else {
       throw ConfigurationError.invalid("Profile '\(id.rawValue)' has duplicate mcp_servers.")
     }
@@ -1564,7 +1564,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   }
 }
 
-func validateConfigIdentifier(
+package func validateConfigIdentifier(
   _ value: String,
   label: String,
   allowDots: Bool = false
@@ -1750,7 +1750,7 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
   package var interface: CLIInterfaceConfig?
   package var tree: CLITreeSource?
   /// Derived from plugin dependencies; not part of portable CLI registration settings.
-  var interpreterBindings: [String: String] = [:]
+  package var interpreterBindings: [String: String] = [:]
 
   package init(
     id: String,

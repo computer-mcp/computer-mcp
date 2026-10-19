@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPConfiguration
 @testable import ComputerMCPPlatform
 
 @Suite(.serialized)

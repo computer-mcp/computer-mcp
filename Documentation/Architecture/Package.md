@@ -45,6 +45,7 @@ package product and does not install or bundle vendor binaries.
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login and process inspection |
+| `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, archive extraction and staging |
 | `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
@@ -123,10 +124,10 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   observes Launch Services without launching an application. Explicit executable and PATH bindings
   retain precedence. The gateway validates bundle identity and workspace path
   containment before binding a located executable.
-- Keep the byte-level Keychain adapter protocol and secret-reference validation
-  in `ComputerMCPPlatform`. `ComputerMCPPlatformDarwin` owns the Security calls
-  and `KeychainSecretStore`, which handles UTF-8 values and blocking operation
-  scheduling. macOS uses the private Data Protection Keychain access group and
+- Keep the `SecretStore` protocol, the byte-level Keychain adapter protocol and
+  secret-reference validation in `ComputerMCPPlatform`. `ComputerMCPPlatformDarwin`
+  owns the Security calls and `KeychainSecretStore`, which implements
+  `SecretStore` and handles UTF-8 values and blocking operation scheduling. macOS uses the private Data Protection Keychain access group and
   preserves noninteractive metadata-only existence checks.
 - Keep explicit package checks in the App-owned control plane, shared by SwiftUI
   and the owner-only management CLI. `PluginDoctorReport` reuses activation's

@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPersistence
 import ComputerMCPPlatform
 import Foundation
 

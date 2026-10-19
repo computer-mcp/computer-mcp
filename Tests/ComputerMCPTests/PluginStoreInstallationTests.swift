@@ -6,6 +6,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPPersistence
 @testable import ComputerMCPPlatform
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))

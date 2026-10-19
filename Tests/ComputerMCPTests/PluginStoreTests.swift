@@ -4,6 +4,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPPersistence
 
 struct PluginStoreTests {
   @Test(arguments: ["workspace", "profile"])

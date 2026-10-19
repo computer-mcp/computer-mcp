@@ -3,6 +3,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPersistence
 
 @Suite
 struct WorkspaceRepairTests {

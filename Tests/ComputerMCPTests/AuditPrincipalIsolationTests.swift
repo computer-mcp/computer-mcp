@@ -77,40 +77,6 @@ struct AuditPrincipalIsolationTests {
     }
   }
 
-  @Test
-  func migrationPreservesUnboundHistoryWithoutInventingPrincipalAuthority() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let path = root.appendingPathComponent("history.sqlite").path
-    let historical = AuditEvent(
-      id: "historical", occurredAt: Date(timeIntervalSince1970: 1000), requestID: "legacy",
-      caller: .secureTunnel, transport: "http", profileID: .chatGPTOperate,
-      workspaceID: "fixture", capabilityID: "file.read", decision: .allowed)
-    try GatewayDatabase(path: path).recordAudit(historical)
-    let previous = try DatabaseQueue(path: path)
-    try previous.write { database in
-      try database.execute(sql: "DROP INDEX auditEvents_on_verified_scope")
-      try database.execute(sql: "ALTER TABLE auditEvents DROP COLUMN principalDigest")
-      try database.execute(
-        sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-        arguments: ["audit-verified-principal"])
-    }
-    try previous.close()
-    let migrated = try GatewayDatabase(path: path)
-    #expect(try migrated.auditEvents() == [historical])
-    let remote = ExecutionContext(
-      caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture",
-      transportTrace: .init(transport: "http"), trustedPrincipalID: "credential:first")
-    #expect(try migrated.hostDiagnosticAudits(context: remote, limit: 100).isEmpty)
-    var bound = historical
-    bound.id = "bound"
-    bound.requestID = "verified"
-    bound.principalDigest = AuditEvent.verifiedPrincipalDigest(remote.trustedPrincipalID)
-    try migrated.recordAudit(bound)
-    #expect(try migrated.hostDiagnosticAudits(context: remote, limit: 100) == [bound])
-    #expect(try GatewayDatabase(path: path).auditEvents().count == 2)
-  }
 }
 
 private struct AuditPrincipalFixture {

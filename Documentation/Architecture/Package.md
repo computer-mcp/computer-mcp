@@ -24,7 +24,7 @@ targets, and CI builds and tests them there.
 | SwiftNIO | HTTP and Unix-socket transport adapters; the lock primitive of the neutral process target |
 | swift-subprocess | Process, Shell, and streaming lifecycle |
 | swift-system | `FilePath` for process launches where the System framework is unavailable |
-| GRDB | Transactional App metadata and redacted audit |
+| GRDB | Transactional App metadata and redacted audit; system SQLite on Linux |
 | swift-log | Runtime logging integration |
 | swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore` target on macOS and Linux |
 | macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
@@ -49,6 +49,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection and workspace path resolution |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
+| `Sources/ComputerMCPPersistence/` | Platform-neutral database connection, initial schema, migration-ledger check and stored records |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, archive extraction and staging |
 | `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |

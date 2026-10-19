@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPersistence
 import Foundation
 
 extension AppControlPlaneService {

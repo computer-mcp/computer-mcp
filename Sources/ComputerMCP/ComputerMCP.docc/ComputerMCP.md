@@ -10,7 +10,6 @@ Swift SDK. The module provides:
 
 - MCP Swift SDK server and client integration;
 - a private current-user Unix socket and stdio bridge;
-- schema 1 TOML configuration;
 - registered workspaces and static capability profiles;
 - policy, single-use operation tickets, and redacted audit persistence;
 - bounded Builtin, Skill, CLI, Shell, process, downstream MCP, and Computer Use
@@ -18,7 +17,6 @@ Swift SDK. The module provides:
 - Codex execution through an independent standard MCP adapter plugin;
 - independent App-managed OpenAI and Cloudflare transport profiles and Keychain
   credentials;
-- built-in profile defaults;
 - standalone stdio and HTTP development modes.
 
 The runtime does not plan, select tools, infer grants, or rewrite provider

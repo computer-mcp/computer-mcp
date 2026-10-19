@@ -94,7 +94,7 @@ struct MCPHTTPAuthenticationTests {
     #expect(throws: (any Error).self) {
       try binding.validate(endpoint: binding.endpoint, transport: .stdio)
     }
-    #expect(throws: (any Error).self) {
+    #expect(throws: ConfigurationError.invalid("Unknown MCP authentication fields: token")) {
       try JSONDecoder().decode(
         MCPHTTPAuthentication.self,
         from: Data(

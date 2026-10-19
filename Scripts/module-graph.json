@@ -204,7 +204,7 @@
     "^(OpenAITunnel|CloudflareTunnel)": "ComputerMCPTunnels",
     "^GatewayDatabase": "ComputerMCPPersistence",
     "^DefaultGatewayConfiguration\\+macOS": "ComputerMCPMacOS",
-    "^ManifestFile": "ComputerMCPConfiguration",
+    "^ManifestFile": "ComputerMCPControlPlane",
     "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|HTTPClientControlRegistry|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane",
     "^(MCPTool(Risk|AccessPolicy)|ComputerMCPProductContracts|GatewayToolCounts)": "ComputerMCPCore",
     "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway"
@@ -276,7 +276,7 @@
     "CombinedPluginWorkflowTests.swift": "ComputerMCPPluginsTests",
     "ComputerUseGatewayProviderTests.swift": "ComputerMCPComputerUseTests",
     "ComputerUseServiceTests.swift": "ComputerMCPComputerUseTests",
-    "DefaultGatewayConfigurationTests.swift": "ComputerMCPGatewayTests",
+    "DefaultGatewayConfigurationTests.swift": "ComputerMCPMacOSTests",
     "EmbeddedCLIInstallerTests.swift": "ComputerMCPControlPlaneTests",
     "ExecutableInspectionTests.swift": "ComputerMCPPlatformDarwinTests",
     "ExternalProviderDiscoveryTests.swift": "ComputerMCPProcessTests",

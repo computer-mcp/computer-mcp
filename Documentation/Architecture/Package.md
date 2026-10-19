@@ -124,10 +124,10 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   observes Launch Services without launching an application. Explicit executable and PATH bindings
   retain precedence. The gateway validates bundle identity and workspace path
   containment before binding a located executable.
-- Keep the byte-level Keychain adapter protocol and secret-reference validation
-  in `ComputerMCPPlatform`. `ComputerMCPPlatformDarwin` owns the Security calls
-  and `KeychainSecretStore`, which handles UTF-8 values and blocking operation
-  scheduling. macOS uses the private Data Protection Keychain access group and
+- Keep the `SecretStore` protocol, the byte-level Keychain adapter protocol and
+  secret-reference validation in `ComputerMCPPlatform`. `ComputerMCPPlatformDarwin`
+  owns the Security calls and `KeychainSecretStore`, which implements
+  `SecretStore` and handles UTF-8 values and blocking operation scheduling. macOS uses the private Data Protection Keychain access group and
   preserves noninteractive metadata-only existence checks.
 - Keep explicit package checks in the App-owned control plane, shared by SwiftUI
   and the owner-only management CLI. `PluginDoctorReport` reuses activation's

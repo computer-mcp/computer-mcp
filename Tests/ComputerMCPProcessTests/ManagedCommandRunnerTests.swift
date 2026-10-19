@@ -17,17 +17,18 @@ struct ManagedCommandRunnerTests {
   @Test
   func closesInputAndUsesOnlyTheCompleteEnvironment() async throws {
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
+      // A shell adds nothing to its environment, unlike interpreter launchers.
       try ManagedCommandRunner().run(
-        executable: "python3",
+        executable: "/bin/sh",
         arguments: [
           "-c",
-          "import os,sys; assert sys.stdin.read() == ''; assert 'HOME' not in os.environ; print(os.environ['PROBE_VALUE'])",
+          #"if IFS= read -r line; then exit 3; fi; [ -z "${HOME+x}" ] || exit 4; printf '%s\n' "$PROBE_VALUE""#,
         ],
         workingDirectory: FileManager.default.temporaryDirectory,
         environment: ["PATH": "/usr/bin:/bin", "PROBE_VALUE": "isolated"],
         timeoutMilliseconds: 2000, maxOutputBytes: 1024)
     }
-    #expect(result.exitCode == 0 && !result.timedOut)
+    #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
     #expect(result.stdout == "isolated\n")
   }
 

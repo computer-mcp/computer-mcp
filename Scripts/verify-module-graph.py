@@ -10,10 +10,13 @@ Modes:
            target directory belong to that target; declarations in the residual target
            are allocated by the planned rules. Fail on cycles, dependencies the layer
            rules do not permit, neutral targets that reference macOS-only targets, and
-           macOS imports in extracted neutral targets. Every residual Swift test
-           source must be allocated to a test target whose owner is in layers.
+           macOS imports in extracted neutral targets, also inside #if blocks; only the
+           modules in conditional_macos_imports may appear there, and only inside #if.
+           Every residual Swift test source must be allocated to a test target whose
+           owner is in layers.
   package  Read `swift package dump-package` and apply the same layer, permission and
-           neutrality rules to the declared target dependencies.
+           neutrality rules to the declared target dependencies. Test support libraries
+           are unranked, neutral, and may be dependencies of test targets only.
 
 Plan mode resolves names lexically from top-level declarations, their direct member
 types, module-qualified names and non-private free functions; it does not perform
@@ -35,7 +38,7 @@ MODIFIERS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:package|public|internal|private
 DECL = re.compile(r"^" + MODIFIERS + r"(struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
 EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z][\w.]*)")
 FREE = re.compile(r"^" + MODIFIERS + r"(?:func|let|var)\s+(\w+)")
-IMPORT = re.compile(r"^\s*(?:@\w+\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
+IMPORT = re.compile(r"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
 IDENTIFIER = re.compile(r"\b[A-Z]\w*\b")
 FUNC = re.compile(MODIFIERS + r"func\s")
 PRIVATE = re.compile(r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:private|fileprivate)\s")
@@ -152,26 +155,34 @@ def free_references(text, functions):
     return found
 
 
-def unconditional_imports(text):
-    """Modules imported outside any #if block; conditional imports select a platform."""
-    imports, depth = set(), 0
+def imports(text):
+    """Imported modules, each paired with whether the import is inside an #if block."""
+    found, depth = set(), 0
     for line in COMMENT.sub(" ", text).splitlines():
         stripped = line.strip()
         if stripped.startswith("#if"):
             depth += 1
         elif stripped.startswith("#endif"):
             depth = max(0, depth - 1)
-        elif depth == 0:
+        else:
             match = IMPORT.match(line)
             if match:
-                imports.add(match.group(1))
-    return imports
+                found.add((match.group(1), depth > 0))
+    return found
+
+
+def macos_imports(text, graph):
+    """macOS modules a neutral source imports. A module in conditional_macos_imports is
+    permitted inside #if, where it selects the platform's C library."""
+    macos = set(graph.get("macos_imports", []))
+    conditional = set(graph.get("conditional_macos_imports", []))
+    return {name for name, guarded in imports(text)
+            if name in macos and not (guarded and name in conditional)}
 
 
 def chunks(path, directory):
     """Split a Swift file into top-level declaration, extension and free-symbol chunks."""
     text = path.read_text()
-    imports = unconditional_imports(text)
     out, current = [], None
     for line in text.splitlines():
         decl, ext, free = DECL.match(line), EXT.match(line), FREE.match(line)
@@ -194,7 +205,7 @@ def chunks(path, directory):
         chunk["text"] = code_text("\n".join(chunk.pop("lines")))
         chunk["file"] = path.name
         chunk["directory"] = directory
-        chunk["imports"] = imports
+        chunk["source"] = text
     return out
 
 
@@ -293,7 +304,6 @@ def plan(graph, sources, tests=None):
     rules = Rules(graph)
     removed = set(graph.get("removed", []))
     cuts = {tuple(cut.split("->")) for cut in graph.get("cuts", [])}
-    macos_imports = set(graph.get("macos_imports", []))
     directories = [d for d in sorted(sources.iterdir()) if d.is_dir()] if sources.is_dir() else []
     all_chunks = []
     for directory in directories:
@@ -308,7 +318,7 @@ def plan(graph, sources, tests=None):
     problems = [f'unallocated: {c["directory"]}/{c["file"]}:{c["name"]}' for c, t in zip(all_chunks, targets) if t is None]
     for chunk, target in zip(all_chunks, targets):
         if target and chunk["directory"] == target and target not in rules.macos_only:
-            for name in sorted(chunk["imports"] & macos_imports):
+            for name in sorted(macos_imports(chunk["source"], graph)):
                 problems.append(f'macOS import in neutral target: {target}/{chunk["file"]} imports {name}')
     # Executable targets cannot be imported, so their declarations never own a reference.
     executables = set(graph.get("executables", []))
@@ -374,16 +384,25 @@ def package(graph, package_json):
         description = json.loads(subprocess.run(["/usr/bin/swift", "package", "dump-package"], cwd=ROOT,
                                                 check=True, capture_output=True, text=True).stdout)
     names = {t["name"] for t in description["targets"]}
+    support = set(graph.get("test_support", []))
     problems = []
     for target in description["targets"]:
         if target["type"] == "test":
+            continue
+        for dependency in target.get("dependencies", []):
+            reference = dependency.get("byName") or dependency.get("target")
+            if reference and reference[0] in support and target["name"] not in support:
+                problems.append(f"test support outside tests: {target['name']} -> {reference[0]}")
+            if reference and target["name"] in support and reference[0] in rules.macos_only:
+                problems.append(f"neutral test support to macOS: {target['name']} -> {reference[0]}")
+        if target["name"] in support:
             continue
         if target["name"] not in rules.layer:
             problems.append(f"unranked target: {target['name']}")
             continue
         for dependency in target.get("dependencies", []):
             reference = dependency.get("byName") or dependency.get("target")
-            if reference and reference[0] in names:
+            if reference and reference[0] in names and reference[0] not in support:
                 problems.extend(rules.violations(target["name"], reference[0]))
     return list(dict.fromkeys(problems))
 

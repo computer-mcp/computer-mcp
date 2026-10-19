@@ -1,3 +1,5 @@
+import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 
 /// Owns configured source definitions, gateway tool schemas, and dispatch.
@@ -1212,13 +1214,13 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
     let authorization = MCPInvocationAdmission.current
     let target = MCPContinuationTarget.current
-    let session = GatewayControlSession.current
+    let session = GatewaySessionScope.current
     return try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         continuation.resume(
           with: Result {
             try MCPInvocationAdmission.$current.withValue(authorization) {
-              try GatewayControlSession.$current.withValue(session) {
+              try GatewaySessionScope.$current.withValue(session) {
                 try MCPContinuationTarget.$current.withValue(target) {
                   try self.callTool(definition: definition, arguments: arguments)
                 }

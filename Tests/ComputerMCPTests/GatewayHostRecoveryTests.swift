@@ -1,7 +1,10 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct GatewayHostRecoveryTests {

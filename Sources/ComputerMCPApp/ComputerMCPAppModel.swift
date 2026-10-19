@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import ComputerMCP
+import ComputerMCPCore
 import Foundation
 
 enum LoadState<Value> {

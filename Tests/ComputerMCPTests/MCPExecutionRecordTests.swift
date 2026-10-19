@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct MCPExecutionRecordTests {
   private let server = MCPServerConfig(id: "fixture", transport: .stdio, command: "/usr/bin/false")

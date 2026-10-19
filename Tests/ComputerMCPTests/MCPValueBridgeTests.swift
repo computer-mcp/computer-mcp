@@ -3,6 +3,7 @@ import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct MCPValueBridgeTests {
   @Test func structuredContentMetadataAndSchemaKeepExactIntegers() throws {
@@ -59,5 +60,29 @@ struct MCPValueBridgeTests {
     let content = try JSONValue.encoded(result.content)
     let text = try #require(content.arrayValue?.first?.objectValue?["text"]?.stringValue)
     #expect(try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) == value)
+  }
+
+  @Test(arguments: [
+    Int64.min, -9_007_199_254_740_993, 9_007_199_254_740_991,
+    9_007_199_254_740_992, 9_007_199_254_740_993, Int64.max,
+  ])
+  func integersPreserveIdentityAcrossMCP(_ integer: Int64) {
+    let value = JSONValue.integer(integer)
+    #expect(value.sdkValue == .int(Int(integer)))
+    #expect(JSONValue(sdkValue: value.sdkValue).int64Value == integer)
+  }
+
+  @Test func unsupportedIntegralDoublesCannotBeEncoded() {
+    #expect(throws: EncodingError.self) {
+      try JSONEncoder().encode(JSONValue(sdkValue: .double(1e100)))
+    }
+  }
+
+  @Test
+  func testMCPBridgeKeepsIntegralNumbersOutsideIntRangeAsDouble() {
+    let value = -Double(Int.min)
+
+    #expect((JSONValue.number(value).sdkValue) == (MCP.Value.double(value)))
+    #expect((JSONValue.number(42).sdkValue) == (MCP.Value.int(42)))
   }
 }

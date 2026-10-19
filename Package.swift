@@ -5,9 +5,22 @@ import PackageDescription
 let subprocessDependency: Package.Dependency =
   .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0")
 
-let platformTargets: [Target] =
+let cryptoDependency: Package.Dependency =
+  .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2")
+
+// Platform-neutral targets; they build on macOS and on Linux.
+let neutralTargets: [Target] =
   [
-    .target(name: "ComputerMCPPlatform"),
+    .target(
+      name: "ComputerMCPCore",
+      dependencies: [.product(name: "Crypto", package: "swift-crypto")]
+    ),
+    .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
+    .target(
+      name: "ComputerMCPTestSupport", dependencies: ["ComputerMCPPlatform"],
+      path: "Tests/ComputerMCPTestSupport"),
+    .testTarget(
+      name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
   ]
 
@@ -33,19 +46,25 @@ let platformTargets: [Target] =
       .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
       .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
       subprocessDependency,
+      cryptoDependency,
       .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
       .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0"),
       .package(
         url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.1-computer-mcp.1"),
     ],
-    targets: platformTargets + [
+    targets: neutralTargets + [
       .systemLibrary(name: "CSystemArchive"),
+      .target(
+        name: "ComputerMCPPlatformDarwin",
+        dependencies: ["CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform"]
+      ),
       .target(
         name: "ComputerMCP",
         dependencies: [
-          "CSystemArchive",
+          "ComputerMCPCore",
           "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
@@ -62,29 +81,50 @@ let platformTargets: [Target] =
         name: "computer-mcp",
         dependencies: [
           "ComputerMCP",
+          "ComputerMCPCore",
+          "ComputerMCPPlatform",
           .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]
       ),
       .executableTarget(
         name: "ComputerMCPApp",
-        dependencies: ["ComputerMCP"],
+        dependencies: [
+          "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
+        ],
         resources: [
           .process("Resources")
         ]
       ),
       .testTarget(
+        name: "ComputerMCPPlatformDarwinTests",
+        dependencies: [
+          "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
+          "ComputerMCPTestSupport",
+        ]
+      ),
+      .testTarget(
         name: "ComputerMCPTests",
-        dependencies: ["ComputerMCP"],
+        dependencies: [
+          "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
+          "ComputerMCPTestSupport",
+        ],
         resources: [.copy("Fixtures")]
       ),
       .testTarget(
         name: "ComputerMCPAppTests",
-        dependencies: ["ComputerMCPApp", "ComputerMCP"]
+        dependencies: [
+          "ComputerMCPApp", "ComputerMCP", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+        ]
       ),
     ]
   )
 #elseif os(Linux)
-  let package = Package(name: "computer-mcp", targets: [])
+  let package = Package(
+    name: "computer-mcp",
+    dependencies: [cryptoDependency],
+    targets: neutralTargets
+  )
 #else
   #error("Computer MCP supports package manifests on macOS and Linux.")
 #endif

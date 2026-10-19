@@ -1,9 +1,11 @@
+import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
 import GRDB
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite
 

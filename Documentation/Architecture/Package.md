@@ -1,9 +1,9 @@
 # Package
 
-Computer MCP is a SwiftPM package that builds an internal gateway implementation
-target, the `computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only
-the App and CLI are package products. Linux validates the neutral package
-boundary in CI.
+Computer MCP is a SwiftPM package that builds layered internal targets, the
+`computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only the App and
+CLI are package products. On Linux the manifest declares the platform-neutral
+targets, and CI builds and tests them there.
 
 ## Constraints
 
@@ -25,6 +25,7 @@ boundary in CI.
 | swift-subprocess | Process, Shell, and streaming lifecycle |
 | GRDB | Transactional App metadata and redacted audit |
 | swift-log | Runtime logging integration |
+| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore` target on macOS and Linux |
 | macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
 
 `CSystemArchive` is an internal system-library module with the minimal C ABI
@@ -42,13 +43,16 @@ package product and does not install or bundle vendor binaries.
 | Path | Role |
 | --- | --- |
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
-| `Sources/ComputerMCP/` | Gateway core, transports, providers, policy, persistence, tunnel, and App Control Plane |
-| `Sources/ComputerMCPPlatform/` | Shared platform observations and operating-system implementations, used by the gateway |
+| `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
+| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login and process inspection |
+| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, archive extraction and staging |
+| `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
 | `Resources/ComputerMCPApp/` | Bundle metadata, entitlements and the imported App icon document |
-| `Tests/` | Swift Testing component, policy, transport, App, and provider tests |
+| `Tests/` | Swift Testing component, policy, transport, App, and provider tests; an extracted target's tests are in `Tests/<Target>Tests/`, the shared target's in `Tests/ComputerMCPTests/` |
+| `Tests/ComputerMCPTestSupport/` | Neutral helpers shared by test targets; package checks reject any non-test target that depends on it |
 | `Tools/Validation/` | Independent Test Case catalog, probes, fixtures, evidence correlation, and reports |
 | `Sources/ComputerMCP/ComputerMCP.docc/` | Internal target documentation |
 | `Examples/` | Standalone development and dogfood manifests |
@@ -88,7 +92,7 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
 ## Principles
 
 - Keep executable targets thin; shared product behavior belongs in the internal
-  `ComputerMCP` implementation target.
+  library targets.
 - Keep side effects behind provider and transport adapters.
 - Share executable inspection across CLI/MCP status and plugin contribution
   resolution. The inspector reads regular-file metadata and at most 512 header
@@ -99,14 +103,15 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   [env invocations](https://github.com/apple-oss-distributions/shell_cmds/blob/main/env/env.c)
   from invocations needing further verification. Transport and process owners
   remain responsible for actual launch, cancellation, policy and runtime health.
-- Keep executable observation independent of gateway JSON and macOS frameworks.
-  The platform target owns the result and native inspection; the gateway adds
-  its JSON projection.
-- Keep finite command inputs and results in the platform target. macOS adapters
-  own process lifecycle and bounded output capture.
-- Keep workspace path resolution in the platform target. macOS uses
-  `lstat`/`realpath` ancestor checks; mutation owners retain responsibility for
-  containment and replacement checks.
+- Keep the executable observation result independent of gateway JSON and macOS
+  frameworks. `ComputerMCPPlatform` owns the result, `ComputerMCPPlatformDarwin`
+  the native inspection, and the gateway adds its JSON projection.
+- Keep finite command inputs and results in `ComputerMCPPlatform`. The command
+  runners own process lifecycle and bounded output capture.
+- Keep workspace path resolution errors in `ComputerMCPPlatform` and the macOS
+  resolution in `ComputerMCPPlatformDarwin`, which uses `lstat`/`realpath`
+  ancestor checks; mutation owners retain responsibility for containment and
+  replacement checks.
 - Share declared platform/architecture matching between package preparation,
   retained source activation, diagnostics, static discovery and selected-asset
   provenance checks. Per-archive targets come from the exact tagged manifest;
@@ -114,14 +119,15 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   Legacy macOS declarations retain their stored fingerprints. Catalog schema 2
   materializes per-asset targets; schema 1 remains readable, and a schema upgrade
   cannot alter the implied target or any immutable package identity.
-- Keep Apple application-bundle discovery in the platform target. macOS observes
-  Launch Services without launching an application. Explicit executable and PATH bindings
+- Keep Apple application-bundle discovery in `ComputerMCPPlatformDarwin`, which
+  observes Launch Services without launching an application. Explicit executable and PATH bindings
   retain precedence. The gateway validates bundle identity and workspace path
   containment before binding a located executable.
-- Keep the byte-level Keychain adapter and native Security calls in the platform
-  target. The gateway owns secret-reference validation, UTF-8 values and blocking
-  operation scheduling. macOS uses the private Data Protection Keychain access
-  group and preserves noninteractive metadata-only existence checks.
+- Keep the byte-level Keychain adapter protocol and secret-reference validation
+  in `ComputerMCPPlatform`. `ComputerMCPPlatformDarwin` owns the Security calls
+  and `KeychainSecretStore`, which handles UTF-8 values and blocking operation
+  scheduling. macOS uses the private Data Protection Keychain access group and
+  preserves noninteractive metadata-only existence checks.
 - Keep explicit package checks in the App-owned control plane, shared by SwiftUI
   and the owner-only management CLI. `PluginDoctorReport` reuses activation's
   source selection, declaration identity, dependency binding and file inspection

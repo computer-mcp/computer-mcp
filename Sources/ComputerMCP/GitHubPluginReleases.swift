@@ -1,3 +1,4 @@
+import ComputerMCPPlatform
 import Foundation
 
 /// A publisher-bound release selection, not an artifact signature or tool grant.

@@ -1,4 +1,5 @@
 import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import Foundation
 
 /// Locates user-owned programs without launching applications or changing their installations.
@@ -11,7 +12,7 @@ package enum PluginDependencyResolver {
   package static func applicationURL(bundleIdentifier: String) -> URL? {
     switch ApplicationBundleLookup.locate(bundleIdentifier: bundleIdentifier) {
     case .found(let url): url
-    case .notFound, .unsupported: nil
+    case .notFound: nil
     }
   }
 

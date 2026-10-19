@@ -1,7 +1,10 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 @Suite(.nativeIntegration, .serialized)
 

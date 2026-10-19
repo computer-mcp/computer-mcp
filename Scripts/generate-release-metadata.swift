@@ -191,6 +191,10 @@ private let distributed: [String: DistributedDefinition] = [
     licenseExpression: "Apache-2.0",
     legalFiles: ["LICENSE.txt"]
   ),
+  "swift-crypto": DistributedDefinition(
+    licenseExpression: "Apache-2.0",
+    legalFiles: ["LICENSE.txt", "NOTICE.txt"]
+  ),
   "swift-log": DistributedDefinition(
     licenseExpression: "Apache-2.0",
     legalFiles: ["LICENSE.txt", "NOTICE.txt"]

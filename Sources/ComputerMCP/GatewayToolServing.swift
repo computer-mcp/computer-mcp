@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// MCP admission and execution may suspend while selecting an owned runtime.

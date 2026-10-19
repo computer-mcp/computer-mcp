@@ -5,6 +5,12 @@ package struct ExecutableInvocation: Sendable {
   package let inspection: ExecutableInspection
   package let executable: String?
   package let arguments: [String]
+
+  package init(inspection: ExecutableInspection, executable: String?, arguments: [String]) {
+    self.inspection = inspection
+    self.executable = executable
+    self.arguments = arguments
+  }
 }
 
 /// A bounded, non-executing observation of a launch path and its script interpreters.

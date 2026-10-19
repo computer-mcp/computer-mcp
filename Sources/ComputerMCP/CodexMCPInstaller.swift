@@ -1,3 +1,4 @@
+import ComputerMCPPlatform
 import Foundation
 
 package struct CodexMCPInstallInvocation: Codable, Equatable, Sendable {

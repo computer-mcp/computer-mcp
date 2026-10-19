@@ -1,8 +1,9 @@
+import ComputerMCPCore
 import Foundation
 
 /// Provider-owned argument bindings select existing work; they confer no permission.
 struct MCPProviderContinuation: Equatable, Sendable {
-  static let metadataKey = "io.github.computer-mcp/continuation"
+  static let metadataKey = MCPProviderMetadataKey.continuation
   static let maximumHandles = 16
 
   struct Query: Equatable, Sendable {

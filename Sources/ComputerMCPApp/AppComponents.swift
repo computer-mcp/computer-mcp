@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPCore
 import SwiftUI
 
 struct WorkspaceHeader<Actions: View>: View {

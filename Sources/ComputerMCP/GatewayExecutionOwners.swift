@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// A locator for one host-owned lifetime; possession confers no authorization.

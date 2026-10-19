@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import AppKit
+import ComputerMCPCore
 import Foundation
 import ImageIO
 import PDFKit

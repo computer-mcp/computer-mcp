@@ -1,4 +1,6 @@
 import AppKit
+import ComputerMCPCore
+import ComputerMCPPlatform
 import CryptoKit
 import Darwin
 import Foundation

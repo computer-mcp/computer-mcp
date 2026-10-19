@@ -1,8 +1,11 @@
+import ComputerMCPTestSupport
 import Foundation
 import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPAuthenticationTests {

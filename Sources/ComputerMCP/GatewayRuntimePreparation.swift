@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Configuration writes discovered by runtime preparation, applied only at publication.

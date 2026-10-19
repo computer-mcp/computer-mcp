@@ -1,8 +1,6 @@
 import ComputerMCPPlatform
 import Foundation
 
-package typealias PluginPlatformCompatibility = ComputerMCPPlatform.PluginPlatformCompatibility
-
 package struct PluginCompatibility: Codable, Equatable, Sendable {
   package let minimumHost: PluginVersion?
   package let maximumHost: PluginVersion?

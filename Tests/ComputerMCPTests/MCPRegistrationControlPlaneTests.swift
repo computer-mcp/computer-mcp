@@ -1,9 +1,13 @@
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPRegistrationControlPlaneTests {

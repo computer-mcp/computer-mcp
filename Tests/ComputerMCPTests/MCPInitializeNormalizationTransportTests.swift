@@ -4,8 +4,18 @@ import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct MCPInitializeNormalizationTransportTests {
+  @Test func initializeNormalizationPreservesLargeRequestIdentifiers() throws {
+    let data = Data(
+      "{\"id\":9223372036854775807,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"experimental\":{\"unsupported\":true}}}}"
+        .utf8)
+    let normalized = MCPInitializeNormalization.normalize(data)
+    #expect(normalized != data)
+    #expect(MCPInitializeNormalization.initializeRequestID(in: normalized)?.int64Value == .max)
+  }
+
   @Test
   func reconnectNegotiatesAgainInsteadOfReusingPreviousCapabilities() async throws {
     let pair = await InMemoryTransport.createConnectedPair()

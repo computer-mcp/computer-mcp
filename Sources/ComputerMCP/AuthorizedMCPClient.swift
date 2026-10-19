@@ -1,3 +1,5 @@
+import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 
 /// Applies one profile's host-owned scope to every route into a downstream session.
@@ -67,10 +69,10 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     try Task.checkCancellation()
     let authorization = MCPInvocationAdmission.current
     let continuation = MCPContinuationTarget.current
-    let session = GatewayControlSession.current
+    let session = GatewaySessionScope.current
     try await Self.discovery.perform {
       try MCPContinuationTarget.$current.withValue(continuation) {
-        try GatewayControlSession.$current.withValue(session) {
+        try GatewaySessionScope.$current.withValue(session) {
           try requireTool(name, server: server, authorization: authorization)
         }
       }

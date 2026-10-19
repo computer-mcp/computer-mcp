@@ -1,3 +1,5 @@
+import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 import Logging
 import MCP

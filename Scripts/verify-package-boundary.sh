@@ -22,14 +22,49 @@ rg() {
 ROOT_DIR=${0:A:h:h}
 cd "$ROOT_DIR"
 
-PRODUCTS=$(/usr/bin/swift package dump-package | jq -c '[.products[].name] | sort')
+PACKAGE=$(/usr/bin/swift package dump-package)
+PRODUCTS=$(jq -c '[.products[].name] | sort' <<<"$PACKAGE")
 if [[ "$PRODUCTS" != '["ComputerMCPApp","computer-mcp"]' ]]; then
   echo "Package boundary gate failed: only the App and CLI executable products are allowed." >&2
   exit 1
 fi
 
-if rg -n '^\s*public\b' Sources/ComputerMCP Sources/ComputerMCPPlatform --glob '*.swift'; then
-  echo "Package boundary gate failed: ComputerMCP implementation declarations must not be public." >&2
+LIBRARIES=(${(f)"$(jq -r '.targets[] | select(.type == "regular") | .path // "Sources/\(.name)"' <<<"$PACKAGE")"})
+if rg -n '^\s*public\b' "${LIBRARIES[@]}" --glob '*.swift'; then
+  echo "Package boundary gate failed: internal target declarations must not be public." >&2
+  exit 1
+fi
+
+# Neutral targets build on Linux: no macOS framework imports, also inside #if, except the
+# platform C library selection the module graph declares, and no macOS paths. A test
+# target is neutral when the target it tests is.
+NEUTRAL=(${(f)"$(jq -r --argjson graph "$(<Scripts/module-graph.json)" '
+  ($graph.macos_only) as $macos
+  | .targets[]
+  | select(.type == "regular" or .type == "test")
+  | select((.name | IN($macos[])) or (.type == "test" and (.name | rtrimstr("Tests") | IN($macos[]))) | not)
+  | .path // (if .type == "test" then "Tests/\(.name)" else "Sources/\(.name)" end)
+' <<<"$PACKAGE")"})
+if ! python3 - "${NEUTRAL[@]}" <<'PY'
+import importlib.util, json, pathlib, sys
+spec = importlib.util.spec_from_file_location("graph", "Scripts/verify-module-graph.py")
+graph = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(graph)
+rules = json.loads(pathlib.Path("Scripts/module-graph.json").read_text())
+found = False
+for root in sys.argv[1:]:
+    for path in sorted(pathlib.Path(root).rglob("*.swift")):
+        for name in sorted(graph.macos_imports(path.read_text(), rules)):
+            print(f"{path}: imports {name}")
+            found = True
+sys.exit(1 if found else 0)
+PY
+then
+  echo "Package boundary gate failed: neutral targets must not import macOS frameworks." >&2
+  exit 1
+fi
+if rg -n '"/(usr/s?bin|System|Applications)/' "${NEUTRAL[@]}" --glob '*.swift'; then
+  echo "Package boundary gate failed: neutral targets must not reference macOS system paths." >&2
   exit 1
 fi
 

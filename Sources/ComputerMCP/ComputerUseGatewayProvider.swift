@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 internal enum ComputerUseGatewayProviderError: Error, Equatable, Sendable {

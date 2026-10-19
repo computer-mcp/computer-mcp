@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Darwin
 import Foundation
 import Subprocess

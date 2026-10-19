@@ -52,15 +52,10 @@ process spawning, and Full Shell remain off by default; only
 
 - ``GatewayToolRegistry``
 - ``MCPRuntimeAdapter``
-- ``MCPTool``
-- ``MCPToolAnnotations``
-- ``GatewayToolError``
 
 ### Execution
 
-- ``CommandRunning``
 - ``ProcessCommandRunner``
-- ``CommandResult``
 - ``ProcessManaging``
 - ``ManagedProcessRegistry``
 - ``ManagedProcessSnapshot``
@@ -88,8 +83,3 @@ process spawning, and Full Shell remain off by default; only
 - ``CodexMCPInstaller``
 - ``CodexMCPInstallInvocation``
 - ``CodexMCPInstallerError``
-
-### Values And CLI
-
-- ``JSONValue``
-- ``ComputerMCPCLI``

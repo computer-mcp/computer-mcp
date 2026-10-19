@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Exposes canonical registry tools directly through MCP.

@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// The supported JSON Schema subset is explicit: unsupported assertions fail at load time,

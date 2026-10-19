@@ -17,14 +17,14 @@ jobs:
   linux-core:
     runs-on: ubuntu-24.04
     container: swift:6.2.4-noble
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install SQLite headers
-        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
-      - name: Describe package
-        run: swift package describe
+      - name: Build neutral targets
+        run: swift build
+      - name: Test neutral targets
+        run: swift test
 
   dependency-gate:
     runs-on: macos-26

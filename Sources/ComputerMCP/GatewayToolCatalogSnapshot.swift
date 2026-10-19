@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Definitions, capabilities, and provider ownership are published together.

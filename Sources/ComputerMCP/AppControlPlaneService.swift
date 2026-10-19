@@ -1,3 +1,6 @@
+import ComputerMCPCore
+import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import Foundation
 import MCP
 

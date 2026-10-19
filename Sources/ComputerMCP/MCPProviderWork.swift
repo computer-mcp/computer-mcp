@@ -1,19 +1,10 @@
+import ComputerMCPCore
 import Foundation
 import MCP
 
-extension MCPTool {
-  /// A downstream resource URI is meaningful only on that provider's connection.
-  var exportedMetadata: JSONValue? {
-    guard mcpReference != nil, var fields = meta?.objectValue else { return meta }
-    fields.removeValue(forKey: MCPProviderWork.metadataKey)
-    fields.removeValue(forKey: MCPProviderContinuation.metadataKey)
-    return fields.isEmpty ? nil : .object(fields)
-  }
-}
-
 /// An ordinary MCP resource reports live ownership; it never supplies host authority.
 struct MCPProviderWork {
-  static let metadataKey = "io.github.computer-mcp/work"
+  static let metadataKey = MCPProviderMetadataKey.work
   static let invocationKey = "io.github.computer-mcp/work-invocation"
   static let resourceURI = "computer-mcp://runtime/work/v1"
   static let maximumResources = 1_024

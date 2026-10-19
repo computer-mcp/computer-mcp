@@ -1,3 +1,5 @@
+import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 
 /// Immutable launch provenance for a workspace's downstream stdio processes.

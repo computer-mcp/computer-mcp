@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 package enum GatewayFullAccessLifetime: String, Codable, CaseIterable, Sendable {
@@ -38,16 +39,14 @@ package struct GatewayClientTrust: Codable, Equatable, Sendable, Identifiable {
 }
 
 /// Host-created authority retained by invocations, independently of runtime generations.
-final class GatewayControlSession: @unchecked Sendable, Equatable {
-  @TaskLocal static var current: GatewayControlSession?
-
+final class GatewayControlSession: GatewaySessionAuthority, @unchecked Sendable, Equatable {
   let id = UUID().uuidString
   let principalID: String
   let profileID: GatewayProfileID
   let caller: GatewayCallerKind
   let changes = GatewayToolChangeBroadcaster()
   private let lock = NSLock()
-  private var revision: Int64 = 0
+  private var currentRevision: Int64 = 0
   private var accessLimit = GatewayPermissionMode.workspaceOperations
   private var fullAccessConsent: GatewayFullAccessConsent?
   private let database: GatewayDatabase?
@@ -68,7 +67,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
 
   func restoreTrustedAccess() throws {
     try lock.withLock {
-      guard !ended, revision == 0, fullAccessConsent == nil, let database,
+      guard !ended, currentRevision == 0, fullAccessConsent == nil, let database,
         let trust = try database.clientTrust(
           principalID: principalID, profileID: profileID, caller: caller),
         trust.fullAccessAllowed,
@@ -91,7 +90,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
     try lock.withLock {
       refreshConsent()
       let current = try currentProfile()
-      guard !ended, revision == expectedRevision, revision < Int64.max,
+      guard !ended, currentRevision == expectedRevision, currentRevision < Int64.max,
         let database, !principalID.isEmpty, let current
       else { throw Self.denied("Reload the connected client before granting access.") }
       // Persistence and audit must succeed before this session receives authority.
@@ -100,7 +99,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
         lifetime: lifetime, expectedTrustRevision: expectedTrustRevision, approver: approver)
       fullAccessConsent = consent
       accessLimit = .localFullAccess
-      revision += 1
+      currentRevision += 1
     }
     changes.send()
     return snapshot
@@ -121,7 +120,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
       if fullAccessConsent != nil {
         clearConsent(mode: current.grant.mode)
       } else {
-        if revision < Int64.max { revision += 1 } else { ended = true }
+        if currentRevision < Int64.max { currentRevision += 1 } else { ended = true }
         changes.send()
       }
     }
@@ -154,11 +153,19 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
   private func clearConsent(mode: GatewayPermissionMode?) {
     fullAccessConsent = nil
     accessLimit = mode == .readOnly ? .readOnly : .workspaceOperations
-    if revision < Int64.max { revision += 1 } else { ended = true }
+    if currentRevision < Int64.max { currentRevision += 1 } else { ended = true }
     changes.send()
   }
 
   static func == (lhs: GatewayControlSession, rhs: GatewayControlSession) -> Bool { lhs === rhs }
+
+  var revision: Int64 {
+    lock.withLock {
+      _ = try? currentProfile()
+      refreshConsent()
+      return currentRevision
+    }
+  }
 
   var snapshot: GatewayControlSessionSnapshot {
     lock.withLock {
@@ -166,7 +173,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
       refreshConsent()
       return GatewayControlSessionSnapshot(
         id: id, principalID: principalID, profileID: profileID, caller: caller,
-        revision: revision, accessLimit: accessLimit, ended: ended,
+        revision: currentRevision, accessLimit: accessLimit, ended: ended,
         fullAccessConsent: fullAccessConsent, profile: current)
     }
   }
@@ -177,7 +184,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
     try lock.withLock {
       _ = try currentProfile()
       refreshConsent()
-      guard !ended, revision == expectedRevision, revision < Int64.max else {
+      guard !ended, currentRevision == expectedRevision, currentRevision < Int64.max else {
         throw Self.denied("The control session changed. Reload before changing its access.")
       }
       guard allowIncrease || accessLimit != .readOnly || mode == .readOnly else {
@@ -188,7 +195,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
       }
       fullAccessConsent = nil
       accessLimit = mode
-      revision += 1
+      currentRevision += 1
     }
     changes.send()
   }
@@ -238,7 +245,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
     try lock.withLock {
       _ = try currentProfile()
       refreshConsent()
-      guard !ended, expected == revision else {
+      guard !ended, expected == currentRevision else {
         throw Self.denied("The control session changed after this operation was prepared.")
       }
     }
@@ -252,7 +259,7 @@ final class GatewayControlSession: @unchecked Sendable, Equatable {
     try lock.withLock {
       let current = try currentProfile()
       refreshConsent(profile: current)
-      guard !ended, revision == expectedRevision, context.controlSession === self,
+      guard !ended, currentRevision == expectedRevision, context.controlSession === self,
         context.trustedPrincipalID == principalID, context.profileID == profileID,
         context.caller == caller, current?.grant.allowedCallers.contains(caller) == true
       else { throw Self.denied("The management session changed before publication.") }
@@ -273,31 +280,31 @@ struct GatewayControlSessionServing: GatewayAsyncToolServing {
   let session: GatewayControlSession
 
   func listToolsAsync() async throws -> [MCPTool] {
-    try await GatewayControlSession.$current.withValue(session) {
+    try await GatewaySessionScope.$current.withValue(session) {
       try await base.listToolsAsync()
     }
   }
 
   func refreshTools() async throws {
-    try await GatewayControlSession.$current.withValue(session) {
+    try await GatewaySessionScope.$current.withValue(session) {
       try await base.refreshTools()
     }
   }
 
   func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try await GatewayControlSession.$current.withValue(session) {
+    try await GatewaySessionScope.$current.withValue(session) {
       try await base.callToolAsync(name: name, arguments: arguments)
     }
   }
 
   func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try await GatewayControlSession.$current.withValue(session) {
+    try await GatewaySessionScope.$current.withValue(session) {
       try await base.callToolForMCPAsync(name: name, arguments: arguments)
     }
   }
 
   func toolChanges() -> AsyncStream<Void> {
-    let sources = GatewayControlSession.$current.withValue(session) {
+    let sources = GatewaySessionScope.$current.withValue(session) {
       [base.toolChanges(), session.changes.stream()]
     }
     let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))

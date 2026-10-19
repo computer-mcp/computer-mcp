@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 import Logging
 import MCP

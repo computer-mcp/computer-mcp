@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCP
+import ComputerMCPCore
 import SwiftUI
 
 struct ProfilesView: View {

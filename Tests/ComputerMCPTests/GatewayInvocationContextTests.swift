@@ -1,8 +1,10 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 import os
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct GatewayInvocationContextTests {
   @Test(arguments: ["sync", "async", "background"])
@@ -10,7 +12,7 @@ struct GatewayInvocationContextTests {
     let fixture = try InvocationFixture()
     let session = fixture.session
     do {
-      try await GatewayControlSession.$current.withValue(session) {
+      try await GatewaySessionScope.$current.withValue(session) {
         var arguments = fixture.arguments(tool: "inspect")
         if path == "background" {
           arguments["wait_for_result"] = .bool(false)
@@ -35,7 +37,7 @@ struct GatewayInvocationContextTests {
       unbound.hostServices = false
       #expect(admission.correlationID(for: unbound, tool: "inspect") == nil)
       #expect(MCPInvocationAdmission.current == nil)
-      #expect(GatewayControlSession.current == nil)
+      #expect(GatewaySessionScope.current == nil)
       await fixture.runtime.shutdown()
     } catch {
       await fixture.runtime.shutdown()
@@ -155,7 +157,7 @@ private struct InvocationFixture {
 private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
   struct Observation: Sendable {
     let admission: MCPInvocationAdmission?
-    let session: GatewayControlSession?
+    let session: (any GatewaySessionAuthority)?
     let correlationID: UUID?
   }
   private let observations = OSAllocatedUnfairLock(initialState: [Observation]())
@@ -173,7 +175,7 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
     observations.withLock {
       $0.append(
         .init(
-          admission: admission, session: GatewayControlSession.current,
+          admission: admission, session: GatewaySessionScope.current,
           correlationID: admission?.correlationID(for: server, tool: name)))
     }
     return .object(["content": .array([]), "isError": .bool(false)])

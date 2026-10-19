@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 package enum ProductJourney: String, Codable, CaseIterable, Sendable {

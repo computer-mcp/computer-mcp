@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Owns one bounded discovery snapshot. Searches and release choices never enumerate GitHub.

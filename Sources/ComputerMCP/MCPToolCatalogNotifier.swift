@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import MCP
 
 /// The SDK server's initialized connection owns this subscription until its receive loop ends.

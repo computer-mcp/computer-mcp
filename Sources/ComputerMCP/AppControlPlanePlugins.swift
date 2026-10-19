@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 extension AppControlPlaneService {

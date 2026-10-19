@@ -1,5 +1,7 @@
 import ArgumentParser
 import ComputerMCP
+import ComputerMCPCore
+import ComputerMCPPlatform
 import Foundation
 
 @main

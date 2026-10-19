@@ -1,8 +1,10 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 import os
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct MCPAuthorizationTests {
   @Test

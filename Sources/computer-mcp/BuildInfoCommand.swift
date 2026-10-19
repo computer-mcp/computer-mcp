@@ -1,5 +1,6 @@
 import ArgumentParser
 import ComputerMCP
+import ComputerMCPCore
 import CryptoKit
 import Foundation
 

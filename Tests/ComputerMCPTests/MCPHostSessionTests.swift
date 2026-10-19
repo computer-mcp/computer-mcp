@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import GRDB
@@ -5,6 +6,7 @@ import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHostSessionTests {

@@ -96,10 +96,26 @@ class PlanModeTests(unittest.TestCase):
         (self.sources / "Shared/Low.swift").unlink()
         self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit", self.problems())
 
-    def test_conditional_import_is_allowed(self):
+    def test_attributed_and_declaration_imports_are_macos_imports(self):
+        (self.sources / "Shared/Low.swift").unlink()
+        for line in ("@_spi(Private) import AppKit", "import struct AppKit.NSImage",
+                     "@preconcurrency import AppKit"):
+            self.write("Low/Low.swift", line + "\npackage struct LowValue {\n  let id: String\n}\n")
+            self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit",
+                          self.problems(), line)
+
+    def test_conditional_macos_framework_import_fails(self):
         self.write("Low/Low.swift", "#if canImport(AppKit)\nimport AppKit\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
         (self.sources / "Shared/Low.swift").unlink()
-        self.assertEqual(self.problems(), [])
+        self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit", self.problems())
+
+    def test_platform_c_library_is_allowed_only_inside_a_condition(self):
+        (self.sources / "Shared/Low.swift").unlink()
+        overrides = {"macos_imports": ["AppKit", "Darwin"], "conditional_macos_imports": ["Darwin"]}
+        self.write("Low/Low.swift", "#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
+        self.assertEqual(self.problems(**overrides), [])
+        self.write("Low/Low.swift", "import Darwin\npackage struct LowValue {\n  let id: String\n}\n")
+        self.assertIn("macOS import in neutral target: Low/Low.swift imports Darwin", self.problems(**overrides))
 
     def test_relocation_moves_a_file_of_an_extracted_target(self):
         self.write("Low/Native.swift", "import AppKit\npackage struct NativeValue {\n  let id: String\n}\n")
@@ -285,6 +301,21 @@ class PackageModeTests(unittest.TestCase):
         targets = [{"name": "Low", "type": "regular", "dependencies": []},
                    {"name": "High", "type": "regular", "dependencies": [{"byName": ["Low", None]}]}]
         self.assertIn("neutral to macOS: High -> Low", self.check(targets, macos_only=["Low"]))
+
+    def test_test_support_serves_only_test_targets(self):
+        targets = [{"name": "Low", "type": "regular", "dependencies": []},
+                   {"name": "Support", "type": "regular", "dependencies": [{"byName": ["Low", None]}]},
+                   {"name": "LowTests", "type": "test", "dependencies": [{"byName": ["Support", None]}]}]
+        self.assertEqual(self.check(targets, test_support=["Support"]), [])
+        targets.append({"name": "High", "type": "regular", "dependencies": [{"byName": ["Support", None]}]})
+        self.assertIn("test support outside tests: High -> Support",
+                      self.check(targets, test_support=["Support"]))
+
+    def test_test_support_stays_neutral(self):
+        targets = [{"name": "Native", "type": "regular", "dependencies": []},
+                   {"name": "Support", "type": "regular", "dependencies": [{"byName": ["Native", None]}]}]
+        self.assertIn("neutral test support to macOS: Support -> Native",
+                      self.check(targets, test_support=["Support"], macos_only=["Native"]))
 
 
 if __name__ == "__main__":

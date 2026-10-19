@@ -1,65 +1,8 @@
+import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import Darwin
 import Foundation
 import os
-
-/// Local ownership evidence, not plugin metadata or an importable authorization.
-struct PluginDirectoryIdentity: Codable, Equatable, Sendable {
-  let url: URL
-  let volumeUUID: UUID?
-  // Kept current during verified recovery so a previous host can read the receipt on rollback.
-  private let device: Int32
-  let inode: UInt64
-  let birthSeconds: Int
-  let birthNanoseconds: Int
-
-  private enum CodingKeys: String, CodingKey {
-    case url, volumeUUID, device, inode, birthSeconds, birthNanoseconds
-  }
-
-  init(url: URL, status: stat, descriptor: Int32) throws {
-    self.url = url
-    volumeUUID = try Self.volumeUUID(descriptor: descriptor)
-    device = status.st_dev
-    inode = status.st_ino
-    birthSeconds = status.st_birthtimespec.tv_sec
-    birthNanoseconds = status.st_birthtimespec.tv_nsec
-  }
-
-  func matches(_ status: stat, descriptor: Int32) throws -> Bool {
-    guard
-      inode == status.st_ino
-        && birthSeconds == status.st_birthtimespec.tv_sec
-        && birthNanoseconds == status.st_birthtimespec.tv_nsec
-    else { return false }
-    if let volumeUUID { return try volumeUUID == Self.volumeUUID(descriptor: descriptor) }
-    return device == status.st_dev
-  }
-
-  /// Legacy provenance may conservatively retain files, but cannot authorize their adoption.
-  func mayReferToSameDirectory(as other: Self) -> Bool {
-    url == other.url && inode == other.inode && birthSeconds == other.birthSeconds
-      && birthNanoseconds == other.birthNanoseconds
-      && (volumeUUID == nil || other.volumeUUID == nil || volumeUUID == other.volumeUUID)
-  }
-
-  private static func volumeUUID(descriptor: Int32) throws -> UUID {
-    var attributes = attrlist()
-    attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
-    attributes.volattr = UInt32(ATTR_VOL_INFO) | UInt32(ATTR_VOL_UUID)
-    // getattrlist packs the length and uuid without the padding of a Swift struct.
-    var bytes = [UInt8](repeating: 0, count: 4 + MemoryLayout<uuid_t>.size)
-    let result = bytes.withUnsafeMutableBytes {
-      fgetattrlist(descriptor, &attributes, $0.baseAddress, $0.count, 0)
-    }
-    guard result == 0,
-      bytes.withUnsafeBytes({ $0.loadUnaligned(as: UInt32.self) }) == bytes.count,
-      bytes.dropFirst(4).contains(where: { $0 != 0 })
-    else { throw PluginArchiveError.fileSystemFailure }
-    return bytes.withUnsafeBytes {
-      UUID(uuid: $0.loadUnaligned(fromByteOffset: 4, as: uuid_t.self))
-    }
-  }
-}
 
 /// Serializes filesystem transactions across store instances and host restarts.
 /// A worker inherits the same open lock reference; closing the host reference

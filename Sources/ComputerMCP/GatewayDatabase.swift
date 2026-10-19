@@ -1,3 +1,4 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
@@ -1015,6 +1016,30 @@ package final class GatewayDatabase: @unchecked Sendable {
         .limit(max(1, min(limit, 1_000)))
         .fetchAll(database)
         .map(\.value)
+    }
+  }
+
+  /// Reads every record a state import carries with this version's decoders and parses the
+  /// latest activated configuration revision, resolving relative paths against
+  /// `configurationDirectory`. Throws when this version cannot use the imported state.
+  package func verifyImportedState(configurationDirectory: URL) throws {
+    let state = try configurationState()
+    _ = try pluginOwnedDirectories()
+    _ = try clientTrusts()
+    let active = try writer.read { database in
+      for id in try String.fetchAll(
+        database, sql: "SELECT workspaceID FROM pluginDerivedWorkspaces")
+      {
+        _ = try Self.derivedRegistration(id: id, database: database)
+      }
+      return try ConfigurationRevisionRecord.filter(Column("activatedAt") != nil)
+        .order(Column("activatedAt").desc, Column("createdAt").desc, Column("id").desc)
+        .fetchOne(database)
+    }
+    if let active {
+      _ = try GatewayConfiguration.load(
+        text: active.manifest, baseURL: configurationDirectory,
+        knownPluginMCPServerIDs: state.plugins.knownMCPRegistrationIDs)
     }
   }
 

@@ -42,7 +42,19 @@ package struct UnsupportedDatabaseSchema: Error, LocalizedError, Equatable {
       ? "tables without a migration ledger"
       : "migrations: \(identifiers.joined(separator: ", "))"
     return "This database's schema (\(schema)) is not one this version of Computer MCP uses, "
-      + "so it was left unchanged. A database created before 0.1.0 moves to a new database "
-      + "through a state import."
+      + "so it was left unchanged. Move the state of an installation created before 0.1.0 "
+      + "with `computer-mcp state import <export-file>`."
+  }
+}
+
+/// A state import was replacing the database at `path` and did not finish. The database is
+/// not opened until the next import restores the previous one.
+package struct InterruptedStateImport: Error, LocalizedError, Equatable {
+  package let path: String
+
+  package var errorDescription: String? {
+    "A state import replacing the database at \(path) did not finish, so it was not opened. "
+      + "Run `computer-mcp state import <export-file>` again: it first restores the previous "
+      + "database."
   }
 }

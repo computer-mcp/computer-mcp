@@ -85,6 +85,7 @@ computer-mcp permissions approvals approve <id> [--control-socket <control-socke
 computer-mcp permissions approvals deny <id> [--control-socket <control-socket>]
 computer-mcp audit list [--control-socket <control-socket>] [--limit <limit>]
 computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
+computer-mcp state import <file> [--database <database>]
 computer-mcp providers list [--control-socket <control-socket>]
 computer-mcp providers doctor [--control-socket <control-socket>] [<id>]
 computer-mcp providers discover --config <config>
@@ -531,6 +532,30 @@ New OpenAI API keys and Cloudflare named-tunnel tokens are accepted only from
 standard input through `--api-key-stdin` or `--tunnel-token-stdin`; the CLI has
 no option that places either credential in argv. Updating a configuration
 without either flag preserves its existing Keychain secret.
+
+## State import
+
+`state import` moves the state of an installation created before 0.1.0 into a
+database with the current schema. Its input is that installation's one-time
+schema 1 JSON export: workspaces with their canonical roots and aliases,
+profiles, client trust, runtime settings, the latest activated configuration
+revision, plugin selections, settings and owned directories, and derived
+workspace registrations. Audit history, approvals, operation tickets and
+execution receipts are not carried over. The configuration file and Keychain
+items stay where they are.
+
+Quit the App and stop every gateway, bridge and tunnel process first. The
+command refuses a database that any process has open, a database that already
+uses the current schema, and an existing `<database>.before-import`. It writes
+the rows into a staged database, checks that every row arrived, that this
+version reads every imported record and that the activated configuration
+parses, and only then puts the staged database in place. The previous database
+and its sidecar files are kept as `<database>.before-import`; to return to the
+earlier version, quit the App and move them back.
+
+If the replacement is interrupted, the database is not opened until the next
+`state import` restores the previous database and imports again. `--database`
+selects a database other than the App's.
 
 ## `bridge`
 

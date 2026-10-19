@@ -9,9 +9,13 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
 
   /// Opens or creates the database at `path`. A database whose migration ledger names
   /// migrations this version does not have, or that holds tables without a ledger, is
-  /// refused unchanged.
+  /// refused unchanged, as is one whose replacement by a state import was interrupted.
   package init(path: String) throws {
-    fileURL = URL(fileURLWithPath: path).standardizedFileURL
+    let url = URL(fileURLWithPath: path).standardizedFileURL
+    guard !GatewayStateImport.isReplacing(url) else {
+      throw InterruptedStateImport(path: url.path)
+    }
+    fileURL = url
     var configuration = Configuration()
     // Independent management connections must acquire the write lock before checking revisions.
     configuration.busyMode = .timeout(5)
@@ -34,18 +38,22 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
   }()
 
   private static func open(_ writer: any DatabaseWriter) throws {
-    try writer.read { database in
-      let unknown = try migrator.appliedIdentifiers(database).subtracting(migrator.migrations)
-      guard unknown.isEmpty else {
-        throw UnsupportedDatabaseSchema(identifiers: unknown.sorted())
-      }
-      let tables = try Int.fetchOne(
-        database,
-        sql: "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-      guard try database.tableExists("grdb_migrations") || tables == 0 else {
-        throw UnsupportedDatabaseSchema(identifiers: [])
-      }
-    }
+    try writer.read(checkSchema)
     try migrator.migrate(writer)
+  }
+
+  /// Throws `UnsupportedDatabaseSchema` unless `database` is empty or has only migrations
+  /// this version registers.
+  static func checkSchema(_ database: Database) throws {
+    let unknown = try migrator.appliedIdentifiers(database).subtracting(migrator.migrations)
+    guard unknown.isEmpty else {
+      throw UnsupportedDatabaseSchema(identifiers: unknown.sorted())
+    }
+    let tables = try Int.fetchOne(
+      database,
+      sql: "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    guard try database.tableExists("grdb_migrations") || tables == 0 else {
+      throw UnsupportedDatabaseSchema(identifiers: [])
+    }
   }
 }

@@ -296,6 +296,7 @@
     "GatewayRuntimeTests.swift": "ComputerMCPGatewayTests",
     "GatewaySocketPrincipalLifecycleTests.swift": "ComputerMCPControlPlaneTests",
     "GatewaySocketTests.swift": "ComputerMCPTransportTests",
+    "GatewayStateImportVerificationTests.swift": "ComputerMCPGatewayTests",
     "GatewayTerminalSessionsTests.swift": "ComputerMCPGatewayTests",
     "GatewayToolCatalogTests.swift": "ComputerMCPGatewayTests",
     "GatewayToolProviderTests.swift": "ComputerMCPGatewayTests",

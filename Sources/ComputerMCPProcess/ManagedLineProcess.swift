@@ -303,12 +303,19 @@ package final class ManagedLineProcess: @unchecked Sendable {
       let descriptorMappings = inheritedDescriptors.map {
         (destination: $0.key, source: $0.value.fileDescriptor)
       }.sorted { $0.destination < $1.destination }
-      platformOptions.preSpawnProcessConfigurator = { _, actions in
-        for mapping in descriptorMappings {
-          guard posix_spawn_file_actions_adddup2(&actions, mapping.source, mapping.destination) == 0
-          else { throw ManagedLineProcessError.invalidConfiguration }
+      #if canImport(Darwin)
+        platformOptions.preSpawnProcessConfigurator = { _, actions in
+          for mapping in descriptorMappings {
+            guard
+              posix_spawn_file_actions_adddup2(&actions, mapping.source, mapping.destination) == 0
+            else { throw ManagedLineProcessError.invalidConfiguration }
+          }
         }
-      }
+      #else
+        // swift-subprocess has no spawn file actions on this platform, so a child can
+        // receive only its standard descriptors.
+        guard descriptorMappings.isEmpty else { throw ManagedLineProcessError.invalidConfiguration }
+      #endif
       let standardOutput = try FileDescriptor.pipe()
       let outputReader = try ProcessOutputReader(
         handle: FileHandle(fileDescriptor: standardOutput.readEnd.rawValue, closeOnDealloc: true),

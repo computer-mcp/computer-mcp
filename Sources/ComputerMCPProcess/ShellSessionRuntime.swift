@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlatformPOSIX
 import Foundation
 import NIOConcurrencyHelpers
 import Subprocess
@@ -977,20 +978,7 @@ private final class ShellSession: @unchecked Sendable {
   }
 
   private static func processHasExited(_ processID: Int32) -> Bool {
-    var info = proc_bsdinfo()
-    let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
-    errno = 0
-    let actualSize = proc_pidinfo(
-      processID,
-      PROC_PIDTBSDINFO,
-      0,
-      &info,
-      expectedSize
-    )
-    if actualSize == expectedSize {
-      return info.pbi_status == SZOMB
-    }
-    return actualSize <= 0 && errno == ESRCH
+    ProcessTable.hasExited(processID)
   }
 
   private func requestTermination(_ execution: Execution?) {

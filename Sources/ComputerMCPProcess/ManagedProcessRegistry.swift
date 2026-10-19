@@ -1,7 +1,7 @@
 import ComputerMCPCore
 import Foundation
 
-internal struct ManagedProcessSnapshot: Codable, Equatable, Sendable {
+package struct ManagedProcessSnapshot: Codable, Equatable, Sendable {
   internal var processID: String
   internal var isRunning: Bool
   internal var exitCode: Int32?
@@ -20,12 +20,12 @@ internal struct ManagedProcessSnapshot: Codable, Equatable, Sendable {
     case stderrTruncated = "stderr_truncated"
   }
 
-  internal var json: JSONValue {
+  package var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])
   }
 }
 
-internal struct ManagedProcessCancelResult: Codable, Equatable, Sendable {
+package struct ManagedProcessCancelResult: Codable, Equatable, Sendable {
   internal var processID: String
   internal var cancelled: Bool
   internal var exitCode: Int32?
@@ -36,12 +36,12 @@ internal struct ManagedProcessCancelResult: Codable, Equatable, Sendable {
     case exitCode = "exit_code"
   }
 
-  internal var json: JSONValue {
+  package var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])
   }
 }
 
-internal protocol ProcessManaging: Sendable {
+package protocol ProcessManaging: Sendable {
   func spawn(
     executable: String,
     arguments: [String],
@@ -54,11 +54,11 @@ internal protocol ProcessManaging: Sendable {
   func cancel(processID: String) throws -> ManagedProcessCancelResult
 }
 
-internal enum ProcessRegistryError: Error, LocalizedError, Equatable {
+package enum ProcessRegistryError: Error, LocalizedError, Equatable {
   case unknownProcess(String)
   case launchFailed(String)
 
-  internal var errorDescription: String? {
+  package var errorDescription: String? {
     switch self {
     case .unknownProcess(let id):
       return "Unknown process id: \(id). Results may have expired or been evicted."
@@ -68,13 +68,13 @@ internal enum ProcessRegistryError: Error, LocalizedError, Equatable {
   }
 }
 
-internal final class ManagedProcessRegistry: ProcessManaging, @unchecked Sendable {
+package final class ManagedProcessRegistry: ProcessManaging, @unchecked Sendable {
   private let lock = NSLock()
   private var processes: [String: ManagedProcess] = [:]
 
-  internal init() {}
+  package init() {}
 
-  internal func spawn(
+  package func spawn(
     executable: String,
     arguments: [String],
     workingDirectory: URL?,
@@ -109,19 +109,19 @@ internal final class ManagedProcessRegistry: ProcessManaging, @unchecked Sendabl
     return id
   }
 
-  internal func read(processID: String) throws -> ManagedProcessSnapshot {
+  package func read(processID: String) throws -> ManagedProcessSnapshot {
     let process = try managed(processID)
     return process.snapshot()
   }
 
-  internal func list() throws -> [ManagedProcessSnapshot] {
+  package func list() throws -> [ManagedProcessSnapshot] {
     lock.lock()
     let processes = self.processes.values.sorted { $0.id < $1.id }
     lock.unlock()
     return processes.map { $0.snapshot() }
   }
 
-  internal func cancel(processID: String) throws -> ManagedProcessCancelResult {
+  package func cancel(processID: String) throws -> ManagedProcessCancelResult {
     let process = try managed(processID)
     return process.cancel()
   }
@@ -136,12 +136,12 @@ internal final class ManagedProcessRegistry: ProcessManaging, @unchecked Sendabl
   }
 }
 
-internal final class SubprocessProcessRegistry: ProcessManaging, Sendable {
+package final class SubprocessProcessRegistry: ProcessManaging, Sendable {
   private let shellManager: SubprocessShellRuntime
   private let maxSessions: Int
   private let terminationGraceMilliseconds: Int
 
-  internal init(
+  package init(
     shellManager: SubprocessShellRuntime = SubprocessShellRuntime(),
     maxSessions: Int = 32,
     terminationGraceMilliseconds: Int = 1_000
@@ -151,7 +151,7 @@ internal final class SubprocessProcessRegistry: ProcessManaging, Sendable {
     self.terminationGraceMilliseconds = terminationGraceMilliseconds
   }
 
-  internal func spawn(
+  package func spawn(
     executable: String,
     arguments: [String],
     workingDirectory: URL?,
@@ -169,15 +169,15 @@ internal final class SubprocessProcessRegistry: ProcessManaging, Sendable {
       maxSessions: maxSessions, terminationGraceMilliseconds: terminationGraceMilliseconds)
   }
 
-  internal func list() throws -> [ManagedProcessSnapshot] {
+  package func list() throws -> [ManagedProcessSnapshot] {
     shellManager.processSnapshots()
   }
 
-  internal func read(processID: String) throws -> ManagedProcessSnapshot {
+  package func read(processID: String) throws -> ManagedProcessSnapshot {
     try shellManager.processSnapshot(processID)
   }
 
-  internal func cancel(processID: String) throws -> ManagedProcessCancelResult {
+  package func cancel(processID: String) throws -> ManagedProcessCancelResult {
     try shellManager.cancelProcess(processID)
   }
 }

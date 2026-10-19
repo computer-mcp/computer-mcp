@@ -21,8 +21,9 @@ targets, and CI builds and tests them there.
 | `computer-mcp/swift-sdk` compatibility fork | MCP server/client protocol, exact integer wire values, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
 | ArgumentParser | CLI parsing |
 | swift-toml and Yams | TOML config and Skill YAML frontmatter |
-| SwiftNIO | HTTP and Unix-socket transport adapters |
+| SwiftNIO | HTTP and Unix-socket transport adapters; the lock primitive of the neutral process target |
 | swift-subprocess | Process, Shell, and streaming lifecycle |
+| swift-system | `FilePath` for process launches where the System framework is unavailable |
 | GRDB | Transactional App metadata and redacted audit |
 | swift-log | Runtime logging integration |
 | swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore` target on macOS and Linux |
@@ -46,6 +47,8 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login and process inspection |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
+| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection and workspace path resolution |
+| `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, archive extraction and staging |
 | `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
@@ -105,12 +108,13 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   from invocations needing further verification. Transport and process owners
   remain responsible for actual launch, cancellation, policy and runtime health.
 - Keep the executable observation result independent of gateway JSON and macOS
-  frameworks. `ComputerMCPPlatform` owns the result, `ComputerMCPPlatformDarwin`
-  the native inspection, and the gateway adds its JSON projection.
+  frameworks. `ComputerMCPPlatform` owns the result, `ComputerMCPPlatformPOSIX`
+  the native inspection, and `ComputerMCPProcess` the JSON projection.
 - Keep finite command inputs and results in `ComputerMCPPlatform`. The command
-  runners own process lifecycle and bounded output capture.
-- Keep workspace path resolution errors in `ComputerMCPPlatform` and the macOS
-  resolution in `ComputerMCPPlatformDarwin`, which uses `lstat`/`realpath`
+  runners in `ComputerMCPProcess` own process lifecycle and bounded output
+  capture; CLI compatibility checks run on top of its bounded execution.
+- Keep workspace path resolution errors in `ComputerMCPPlatform` and the
+  resolution in `ComputerMCPPlatformPOSIX`, which uses `lstat`/`realpath`
   ancestor checks; mutation owners retain responsibility for containment and
   replacement checks.
 - Share declared platform/architecture matching between package preparation,

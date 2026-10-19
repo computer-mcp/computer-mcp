@@ -1,6 +1,7 @@
 import ComputerMCP
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {

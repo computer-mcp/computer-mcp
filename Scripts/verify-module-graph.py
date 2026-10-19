@@ -163,7 +163,7 @@ def imports(text):
     """Imported modules, each paired with whether its innermost #if chain also imports a
     Linux C library, which makes the chain a platform C library selection."""
     found, chains = [], []
-    for line in COMMENT.sub(" ", text).splitlines():
+    for line in code_text(text).splitlines():
         stripped = line.strip()
         if stripped.startswith("#if"):
             chains.append({"imports": [], "selects": False})

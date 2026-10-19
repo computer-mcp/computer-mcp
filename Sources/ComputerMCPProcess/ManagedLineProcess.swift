@@ -1,9 +1,19 @@
-import Darwin
 import Foundation
 import Subprocess
-import System
 
-struct ManagedLineProcessSnapshot: Codable, Equatable, Sendable {
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
+#if canImport(System)
+  @preconcurrency import System
+#else
+  import SystemPackage
+#endif
+
+package struct ManagedLineProcessSnapshot: Codable, Equatable, Sendable {
   enum State: String, Codable, Equatable, Sendable {
     case starting
     case running
@@ -23,7 +33,7 @@ struct ManagedLineProcessSnapshot: Codable, Equatable, Sendable {
   let signal: Int32?
   let terminationEscalated: Bool
   let pendingWrites: Int
-  let hasExited: Bool
+  package let hasExited: Bool
   let lastError: String?
 
   private enum CodingKeys: String, CodingKey {
@@ -44,7 +54,7 @@ struct ManagedLineProcessSnapshot: Codable, Equatable, Sendable {
 
 }
 
-enum ManagedLineProcessError: Error, LocalizedError, Sendable {
+package enum ManagedLineProcessError: Error, LocalizedError, Sendable {
   case closed
   case invalidConfiguration
   case bufferOverflow
@@ -52,7 +62,7 @@ enum ManagedLineProcessError: Error, LocalizedError, Sendable {
   case oversizedMessage(Int)
   case terminationTimedOut(processID: Int32?)
 
-  var errorDescription: String? {
+  package var errorDescription: String? {
     switch self {
     case .closed:
       return "The gateway-owned process transport is closed."
@@ -73,8 +83,8 @@ enum ManagedLineProcessError: Error, LocalizedError, Sendable {
 
 /// Owns one supervisor generation. The lock protects closeTask; all process state is actor-owned.
 /// Foundation's callback reader is the only other lock boundary; no host process is adopted.
-final class ManagedLineProcess: @unchecked Sendable {
-  struct Configuration: Sendable {
+package final class ManagedLineProcess: @unchecked Sendable {
+  package struct Configuration: Sendable {
     var executable: String
     var arguments: [String]
     var environment: [String: String]
@@ -88,7 +98,7 @@ final class ManagedLineProcess: @unchecked Sendable {
     /// Inherited by the supervisor and its cleanup watchdog, not the vendor command.
     var ownershipHandle: FileHandle?
 
-    init(
+    package init(
       executable: String,
       arguments: [String] = [],
       environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -138,7 +148,7 @@ final class ManagedLineProcess: @unchecked Sendable {
     }
   }
 
-  let inboundLines: AsyncThrowingStream<String, Error>
+  package let inboundLines: AsyncThrowingStream<String, Error>
 
   private let configuration: Configuration
   private let state: ManagedLineProcessState
@@ -146,7 +156,7 @@ final class ManagedLineProcess: @unchecked Sendable {
   private let closeLock = NSLock()
   private var closeTask: Task<Void, Never>?
 
-  init(configuration: Configuration) throws {
+  package init(configuration: Configuration) throws {
     try configuration.validate()
     // Copy while the caller still owns its descriptors. Launch and shutdown may race,
     // so asynchronous spawn must never refer to a descriptor the caller can close/reuse.
@@ -178,11 +188,11 @@ final class ManagedLineProcess: @unchecked Sendable {
     }
   }
 
-  func sendLine(_ line: String) async throws {
+  package func sendLine(_ line: String) async throws {
     try await state.send(line: line)
   }
 
-  func close() async {
+  package func close() async {
     let task = closeLock.withLock { () -> Task<Void, Never> in
       if let closeTask {
         return closeTask
@@ -247,7 +257,7 @@ final class ManagedLineProcess: @unchecked Sendable {
     await finishInput.value
   }
 
-  func snapshot() async -> ManagedLineProcessSnapshot {
+  package func snapshot() async -> ManagedLineProcessSnapshot {
     await state.snapshot()
   }
 
@@ -608,7 +618,7 @@ private actor ManagedLineProcessState {
 
   func signalChildGroup(_ signal: Int32) -> Bool {
     guard let processID, processID > 1 else { return false }
-    return Darwin.kill(-processID, signal) == 0 || errno == ESRCH
+    return signalProcessGroup(-processID, signal) == 0 || errno == ESRCH
   }
 
   func recordTerminationEscalation() {
@@ -718,4 +728,13 @@ private actor ManagedLineProcessState {
     }
     return error.localizedDescription
   }
+}
+
+/// `kill(2)` for a process group; the libc module name differs between platforms.
+private func signalProcessGroup(_ group: pid_t, _ signal: Int32) -> Int32 {
+  #if canImport(Darwin)
+    Darwin.kill(group, signal)
+  #else
+    Glibc.kill(group, signal)
+  #endif
 }

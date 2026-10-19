@@ -2,6 +2,7 @@ import ArgumentParser
 import ComputerMCP
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPProcess
 import Darwin
 import Foundation
 

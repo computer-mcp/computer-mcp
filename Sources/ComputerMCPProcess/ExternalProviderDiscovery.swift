@@ -3,14 +3,14 @@ import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import Foundation
 
-internal enum ExternalProviderKind: String, Codable, CaseIterable, Equatable, Sendable {
+package enum ExternalProviderKind: String, Codable, CaseIterable, Equatable, Sendable {
   case appleCLIMCP = "apple-cli-mcp"
   case browser
   case codex
   case tunnelClient = "tunnel-client"
 }
 
-internal enum ExternalProviderDoctorState: String, Codable, Equatable, Sendable {
+package enum ExternalProviderDoctorState: String, Codable, Equatable, Sendable {
   case unavailable
   case notApplicable = "not-applicable"
   case passed
@@ -18,7 +18,7 @@ internal enum ExternalProviderDoctorState: String, Codable, Equatable, Sendable 
   case contractIncomplete = "contract-incomplete"
 }
 
-internal enum ExternalProviderDiagnosticCode: String, Codable, Equatable, Sendable {
+package enum ExternalProviderDiagnosticCode: String, Codable, Equatable, Sendable {
   case executableNotFound = "executable-not-found"
   case executableUnavailable = "executable-unavailable"
   case executableUnverified = "executable-unverified"
@@ -30,18 +30,18 @@ internal enum ExternalProviderDiagnosticCode: String, Codable, Equatable, Sendab
   case probeLaunchFailed = "probe-launch-failed"
 }
 
-internal struct ExternalProviderDiagnostic: Codable, Equatable, Sendable {
-  internal var code: ExternalProviderDiagnosticCode
-  internal var operation: String
-  internal var message: String
+package struct ExternalProviderDiagnostic: Codable, Equatable, Sendable {
+  package var code: ExternalProviderDiagnosticCode
+  package var operation: String
+  package var message: String
 
 }
 
-internal struct ExternalProviderDoctorStatus: Codable, Equatable, Sendable {
-  internal var state: ExternalProviderDoctorState
-  internal var message: String
-  internal var exitCode: Int32?
-  internal var missingCapabilities: [String]
+package struct ExternalProviderDoctorStatus: Codable, Equatable, Sendable {
+  package var state: ExternalProviderDoctorState
+  package var message: String
+  package var exitCode: Int32?
+  package var missingCapabilities: [String]
 
   internal init(
     state: ExternalProviderDoctorState,
@@ -56,18 +56,18 @@ internal struct ExternalProviderDoctorStatus: Codable, Equatable, Sendable {
   }
 }
 
-internal struct ExternalProviderDiscoveryResult: Codable, Equatable, Sendable {
-  internal var providerID: String
-  internal var kind: ExternalProviderKind
-  internal var resolvedPath: String?
+package struct ExternalProviderDiscoveryResult: Codable, Equatable, Sendable {
+  package var providerID: String
+  package var kind: ExternalProviderKind
+  package var resolvedPath: String?
   internal var launchArguments: [String]
-  internal var version: String?
-  internal var doctorStatus: ExternalProviderDoctorStatus
-  internal var diagnostics: [ExternalProviderDiagnostic]
+  package var version: String?
+  package var doctorStatus: ExternalProviderDoctorStatus
+  package var diagnostics: [ExternalProviderDiagnostic]
 
 }
 
-internal struct ExternalProviderLaunchConfig: Codable, Equatable, Hashable, Sendable {
+package struct ExternalProviderLaunchConfig: Codable, Equatable, Hashable, Sendable {
   internal var executable: String
   internal var arguments: [String]
   internal var workingDirectory: URL?
@@ -84,12 +84,12 @@ internal struct ExternalProviderLaunchConfig: Codable, Equatable, Hashable, Send
   }
 }
 
-internal struct ExternalProviderDefinition: Codable, Equatable, Sendable {
+package struct ExternalProviderDefinition: Codable, Equatable, Sendable {
   internal var id: String
-  internal var kind: ExternalProviderKind
+  package var kind: ExternalProviderKind
   internal var executableNames: [String]
 
-  internal static let defaults = [
+  package static let defaults = [
     ExternalProviderDefinition(
       id: "apple-cli-mcp",
       kind: .appleCLIMCP,
@@ -132,19 +132,21 @@ internal enum ExternalProviderDiscoveryError: Error, LocalizedError, Equatable {
   }
 }
 
-internal struct ExternalProviderDiscovery: @unchecked Sendable {
+package struct ExternalProviderDiscovery: @unchecked Sendable {
   internal var definitions: [ExternalProviderDefinition]
   internal var configuredProviders: [String: [ExternalProviderLaunchConfig]]
   internal var commandRunner: CommandRunning
   internal var environment: [String: String]
   internal var configurationBaseDirectory: URL
   internal var commonSearchDirectories: [URL]?
+  /// Install locations searched after the user's tool directories, in order.
+  internal var systemSearchDirectories: [String]
   internal var timeoutMilliseconds: Int
   internal var maxOutputBytes: Int
 
   private let fileManager: FileManager
 
-  internal init(
+  package init(
     definitions: [ExternalProviderDefinition] = ExternalProviderDefinition.defaults,
     configuredProviders: [String: [ExternalProviderLaunchConfig]] = [:],
     commandRunner: CommandRunning = ManagedCommandRunner(),
@@ -152,6 +154,7 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
     configurationBaseDirectory: URL = URL(
       fileURLWithPath: FileManager.default.currentDirectoryPath),
     commonSearchDirectories: [URL]? = nil,
+    systemSearchDirectories: [String] = Self.posixSearchDirectories,
     timeoutMilliseconds: Int = 10_000,
     maxOutputBytes: Int = 256 * 1024,
     fileManager: FileManager = .default
@@ -162,17 +165,19 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
     self.environment = environment
     self.configurationBaseDirectory = configurationBaseDirectory
     self.commonSearchDirectories = commonSearchDirectories
+    self.systemSearchDirectories = systemSearchDirectories
     self.timeoutMilliseconds = timeoutMilliseconds
     self.maxOutputBytes = maxOutputBytes
     self.fileManager = fileManager
   }
 
-  internal init(
+  package init(
     configuration: GatewayConfiguration,
     definitions: [ExternalProviderDefinition] = ExternalProviderDefinition.defaults,
     commandRunner: CommandRunning = ManagedCommandRunner(),
     environment: [String: String] = ProcessInfo.processInfo.environment,
     commonSearchDirectories: [URL]? = nil,
+    systemSearchDirectories: [String] = Self.posixSearchDirectories,
     timeoutMilliseconds: Int = 10_000,
     maxOutputBytes: Int = 256 * 1024,
     fileManager: FileManager = .default
@@ -187,13 +192,17 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
       environment: environment,
       configurationBaseDirectory: configuration.workspaceDirectory,
       commonSearchDirectories: commonSearchDirectories,
+      systemSearchDirectories: systemSearchDirectories,
       timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes,
       fileManager: fileManager
     )
   }
 
-  internal func discover() throws -> [ExternalProviderDiscoveryResult] {
+  /// Standard POSIX install locations.
+  internal static let posixSearchDirectories = ["/usr/local/bin", "/usr/bin", "/bin"]
+
+  package func discover() throws -> [ExternalProviderDiscoveryResult] {
     try validateDefinitions()
     return definitions.map(inspect)
   }
@@ -485,15 +494,7 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
   }
 
   private func defaultCommonSearchDirectories() -> [URL] {
-    var paths = [
-      "/Applications/ChatGPT.app/Contents/Resources",
-      "/Applications/Codex.app/Contents/Resources",
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/opt/local/bin",
-      "/usr/bin",
-      "/bin",
-    ]
+    var paths = systemSearchDirectories
     if let home = environment["HOME"], !home.isEmpty {
       paths.insert("\(home)/.local/bin", at: 0)
       paths.insert("\(home)/bin", at: 1)

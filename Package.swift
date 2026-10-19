@@ -11,6 +11,13 @@ let cryptoDependency: Package.Dependency =
 let tomlDependency: Package.Dependency =
   .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0")
 
+let nioDependency: Package.Dependency =
+  .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0")
+
+// FilePath comes from the System framework on Apple platforms and from swift-system elsewhere.
+let systemDependency: Package.Dependency =
+  .package(url: "https://github.com/apple/swift-system.git", from: "1.7.2")
+
 // Platform-neutral targets; they build on macOS and on Linux.
 let neutralTargets: [Target] =
   [
@@ -27,6 +34,17 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPProcess",
+      dependencies: [
+        "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX",
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        .product(name: "Subprocess", package: "swift-subprocess"),
+        .product(
+          name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
+      ]
+    ),
+    .target(
       name: "ComputerMCPTestSupport", dependencies: ["ComputerMCPPlatform"],
       path: "Tests/ComputerMCPTestSupport"),
     .testTarget(
@@ -35,6 +53,13 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPPlatformPOSIXTests",
       dependencies: ["ComputerMCPPlatform", "ComputerMCPPlatformPOSIX"]
+    ),
+    .testTarget(
+      name: "ComputerMCPProcessTests",
+      dependencies: [
+        "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTestSupport",
+      ]
     ),
     .testTarget(
       name: "ComputerMCPConfigurationTests",
@@ -65,12 +90,13 @@ let neutralTargets: [Target] =
     dependencies: [
       .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.0"),
       .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
-      .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
+      nioDependency,
       subprocessDependency,
       cryptoDependency,
       .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
       tomlDependency,
+      systemDependency,
       .package(
         url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.1-computer-mcp.1"),
     ],
@@ -90,6 +116,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin",
           "ComputerMCPPlatformPOSIX",
+          "ComputerMCPProcess",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
@@ -149,7 +176,9 @@ let neutralTargets: [Target] =
 #elseif os(Linux)
   let package = Package(
     name: "computer-mcp",
-    dependencies: [cryptoDependency, tomlDependency],
+    dependencies: [
+      cryptoDependency, nioDependency, subprocessDependency, systemDependency, tomlDependency,
+    ],
     targets: neutralTargets
   )
 #else

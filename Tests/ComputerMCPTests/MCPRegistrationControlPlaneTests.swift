@@ -9,6 +9,7 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPRegistrationControlPlaneTests {

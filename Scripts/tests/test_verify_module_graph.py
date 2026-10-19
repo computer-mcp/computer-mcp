@@ -104,6 +104,11 @@ class PlanModeTests(unittest.TestCase):
             self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit",
                           self.problems(), line)
 
+    def test_import_text_inside_a_string_literal_is_not_an_import(self):
+        self.write("Low/Low.swift", 'let script = """\n  import AppKit\n  """\npackage struct LowValue {\n  let id: String\n}\n')
+        (self.sources / "Shared/Low.swift").unlink()
+        self.assertEqual(self.problems(), [])
+
     def test_conditional_macos_framework_import_fails(self):
         self.write("Low/Low.swift", "#if canImport(AppKit)\nimport AppKit\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
         (self.sources / "Shared/Low.swift").unlink()

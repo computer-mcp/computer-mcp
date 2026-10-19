@@ -1,11 +1,6 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import Foundation
-
-/// Only execution consumes argv/stdin. Diagnostics must not serialize this value.
-struct CLIInvocation: Sendable {
-  let arguments: [String]
-  let standardInput: Data
-}
 
 enum CLIArgumentEncoder {
   static func encode(_ input: JSONValue, command: CLICommandDescriptor) throws -> CLIInvocation {

@@ -1,10 +1,15 @@
 import ComputerMCPTestSupport
-import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPProcess
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct ManagedCommandRunnerTests {
@@ -12,7 +17,7 @@ struct ManagedCommandRunnerTests {
   func closesInputAndUsesOnlyTheCompleteEnvironment() async throws {
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try ManagedCommandRunner().run(
-        executable: "/usr/bin/python3",
+        executable: "python3",
         arguments: [
           "-c",
           "import os,sys; assert sys.stdin.read() == ''; assert 'HOME' not in os.environ; print(os.environ['PROBE_VALUE'])",
@@ -30,7 +35,7 @@ struct ManagedCommandRunnerTests {
     let runner = ManagedCommandRunner()
     let bytes = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try runner.runData(
-        executable: "/usr/bin/python3",
+        executable: "python3",
         arguments: ["-c", "import os; os.write(1, bytes([0,255,128,10])); os.write(2, b'error')"],
         workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
         timeoutMilliseconds: 2000, maxOutputBytes: 1024)
@@ -39,7 +44,7 @@ struct ManagedCommandRunnerTests {
     #expect(bytes.stderr == Data("error".utf8))
     let truncated = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try runner.run(
-        executable: "/usr/bin/python3", arguments: ["-c", "import os; os.write(1,b'x'*8192)"],
+        executable: "python3", arguments: ["-c", "import os; os.write(1,b'x'*8192)"],
         workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
         timeoutMilliseconds: 2000, maxOutputBytes: 64)
     }
@@ -63,7 +68,7 @@ struct ManagedCommandRunnerTests {
     let started = ContinuousClock.now
     let result = try await BlockingOperationExecutor(label: "managed-probe-test").perform {
       try ManagedCommandRunner().run(
-        executable: "/usr/bin/python3", arguments: ["-c", source, receipt.path],
+        executable: "python3", arguments: ["-c", source, receipt.path],
         workingDirectory: root, environment: ["PATH": "/usr/bin:/bin"],
         timeoutMilliseconds: 1000, maxOutputBytes: 1024)
     }
@@ -88,7 +93,7 @@ struct ManagedCommandRunnerTests {
         configuredProviders: [
           "probe": [
             .init(
-              executable: "/usr/bin/python3",
+              executable: "python3",
               arguments: [
                 "-c",
                 "import os,sys; assert 'HOME' not in os.environ; assert sys.stdin.read() == ''; print('probe 1.2.3')",

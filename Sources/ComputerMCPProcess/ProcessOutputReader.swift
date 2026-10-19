@@ -1,5 +1,10 @@
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 /// File descriptor access and callback/task ownership are serialized by lock. Nonblocking reads
 /// let shutdown drain a finite pipe without waiting on a descendant that retained stdout.
@@ -96,7 +101,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   private func readChunkLocked() -> Data? {
     var bytes = [UInt8](repeating: 0, count: 65_536)
     while true {
-      let count = Darwin.read(handle.fileDescriptor, &bytes, bytes.count)
+      let count = readDescriptor(handle.fileDescriptor, &bytes, bytes.count)
       if count >= 0 { return Data(bytes.prefix(count)) }
       if errno == EINTR { continue }
       if errno == EAGAIN || errno == EWOULDBLOCK { return nil }
@@ -133,4 +138,15 @@ internal final class ProcessOutputReader: @unchecked Sendable {
       completion.continuation.finish()
     }
   }
+}
+
+/// `read(2)`; the libc module name differs between platforms.
+private func readDescriptor(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer, _ count: Int)
+  -> Int
+{
+  #if canImport(Darwin)
+    Darwin.read(descriptor, buffer, count)
+  #else
+    Glibc.read(descriptor, buffer, count)
+  #endif
 }

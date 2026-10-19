@@ -7,6 +7,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct StandaloneToolCommandTests {

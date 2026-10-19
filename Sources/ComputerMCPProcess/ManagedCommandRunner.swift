@@ -3,10 +3,12 @@ import Foundation
 
 /// Finite argv commands using the shared CLI lifecycle and a complete child environment.
 /// Synchronous callers must use their blocking executor, not a UI or cooperative executor.
-struct ManagedCommandRunner: CommandRunning {
+package struct ManagedCommandRunner: CommandRunning {
   private let execution = CLIProcessExecution(inheritsEnvironment: false)
 
-  func run(
+  package init() {}
+
+  package func run(
     executable: String, arguments: [String], workingDirectory: URL?, environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
@@ -21,11 +23,11 @@ struct ManagedCommandRunner: CommandRunning {
       stdoutTruncated: value.stdoutTruncated, stderrTruncated: value.stderrTruncated)
   }
 
-  func runData(
+  package func runData(
     executable: String, arguments: [String], workingDirectory: URL?, environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandDataResult {
-    let value = try execution.run(
+    let value = try execution.launch(
       executable: executable, invocation: .init(arguments: arguments, standardInput: Data()),
       cwd: workingDirectory ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
       environment: environment, timeoutMilliseconds: timeoutMilliseconds,

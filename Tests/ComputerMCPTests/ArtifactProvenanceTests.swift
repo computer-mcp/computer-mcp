@@ -6,6 +6,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .serialized)
 final class ArtifactProvenanceTests {

@@ -1,9 +1,10 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import Foundation
 import os
 
 /// Runtime-local ownership, separate from durable execution outcome and authorization.
-final class GatewayOwnedWork: Sendable {
+final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
   enum Kind: String, Sendable {
     case invocation
     case shell
@@ -34,6 +35,10 @@ final class GatewayOwnedWork: Sendable {
 
   var snapshot: [Record] { state.withLock { Array($0.records.values) } }
   func updates() -> AsyncStream<Void> { changes.stream() }
+
+  func retainShell(workspaceID: String?, sessionID: String) -> any OwnedWorkLease {
+    retain(.shell, workspaceID: workspaceID, resourceID: sessionID)
+  }
 
   func retain(
     _ kind: Kind, workspaceID: String? = nil, registrationID: String? = nil,
@@ -87,7 +92,7 @@ final class GatewayOwnedWork: Sendable {
   }
 
   /// Losing observation cannot establish that the underlying work stopped.
-  final class Lease: Sendable {
+  final class Lease: OwnedWorkLease, Sendable {
     let id: UUID
     private let owner: GatewayOwnedWork
 

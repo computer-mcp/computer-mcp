@@ -1,5 +1,6 @@
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import Foundation
 
 package struct CodexMCPInstallInvocation: Codable, Equatable, Sendable {

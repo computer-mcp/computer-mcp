@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import Foundation
 
 package struct OpenAITunnelConfiguration: Codable, Equatable, Sendable, Identifiable {
@@ -236,7 +237,8 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
       configuration: configuration,
       definitions: ExternalProviderDefinition.defaults.filter { $0.kind == .tunnelClient },
       commandRunner: commandRunner,
-      environment: environment
+      environment: environment,
+      systemSearchDirectories: ExternalProviderDiscovery.macOSSearchDirectories
     )
     guard let result = try discovery.discover().first,
       let path = result.resolvedPath,

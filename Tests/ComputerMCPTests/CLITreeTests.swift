@@ -7,6 +7,7 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformPOSIX
+@testable import ComputerMCPProcess
 
 struct CLITreeTests {
   @Test(arguments: [

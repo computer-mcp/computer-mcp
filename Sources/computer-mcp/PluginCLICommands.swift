@@ -1,6 +1,7 @@
 import ArgumentParser
 import ComputerMCP
 import ComputerMCPCore
+import ComputerMCPProcess
 import Foundation
 
 struct Plugins: AsyncParsableCommand {

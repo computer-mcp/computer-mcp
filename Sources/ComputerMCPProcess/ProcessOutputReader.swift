@@ -88,17 +88,21 @@ internal final class ProcessOutputReader: @unchecked Sendable {
     await task?.value
   }
 
+  /// Resumes after a consumed chunk and reads once: an edge-triggered source does not report
+  /// data or end of file that arrived while it was suspended.
   private func resume() {
     lock.withLock {
       guard !stopped, suspended, let source else { return }
       suspended = false
       source.resume()
     }
+    queue.async { [weak self] in self?.consumeAvailableData() }
   }
 
   private func consumeAvailableData() {
     lock.withLock {
-      guard !stopped, let source else { return }
+      // One chunk is outstanding at a time; its consumer resumes and reads again.
+      guard !stopped, !suspended, let source else { return }
       guard let data = readChunkLocked() else { return }
       guard !data.isEmpty else {
         stopped = true

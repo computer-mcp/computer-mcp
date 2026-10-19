@@ -208,7 +208,7 @@
     "^(GatewaySocket|GatewayHTTPRuntime|MCP(ChildProcess|HTTPClient|HTTPEventSubscription|Inherited|InitializeNormalization)|MCPSSEDecoder|MCPHTTPAuthentication)": "ComputerMCPTransport",
     "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
     "^(OpenAITunnel|CloudflareTunnel)": "ComputerMCPTunnels",
-    "^GatewayDatabase": "ComputerMCPPersistence",
+    "^GatewayDatabase": "ComputerMCPGateway",
     "^DefaultGatewayConfiguration\\+macOS": "ComputerMCPMacOS",
     "^ManifestFile": "ComputerMCPControlPlane",
     "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|HTTPClientControlRegistry|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane",

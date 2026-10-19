@@ -30,14 +30,19 @@ package enum GatewayDatabaseError: Error, LocalizedError, Equatable {
   }
 }
 
-/// The database's migration ledger names migrations this version does not have, which
-/// means it was created before the 0.1.0 schema. It is left unchanged.
+/// The database's schema is not one this version creates: its migration ledger names
+/// migrations this version does not have (`identifiers`), or it holds tables without a
+/// ledger (`identifiers` is empty). It is left unchanged.
 package struct UnsupportedDatabaseSchema: Error, LocalizedError, Equatable {
   package let identifiers: [String]
 
   package var errorDescription: String? {
-    "This database was created before Computer MCP 0.1.0 and cannot be opened "
-      + "(migrations: \(identifiers.joined(separator: ", "))). Its workspaces, profiles and "
-      + "settings move to a new database through a state import."
+    let schema =
+      identifiers.isEmpty
+      ? "tables without a migration ledger"
+      : "migrations: \(identifiers.joined(separator: ", "))"
+    return "This database's schema (\(schema)) is not one this version of Computer MCP uses, "
+      + "so it was left unchanged. A database created before 0.1.0 moves to a new database "
+      + "through a state import."
   }
 }

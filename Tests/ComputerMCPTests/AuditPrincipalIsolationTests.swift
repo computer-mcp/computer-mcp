@@ -7,6 +7,27 @@ import Testing
 
 struct AuditPrincipalIsolationTests {
   @Test
+  func unboundHistoryIsNotAttributedToAVerifiedPrincipal() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let unbound = AuditEvent(
+      id: "unbound", occurredAt: Date(timeIntervalSince1970: 1000), requestID: "unbound",
+      caller: .secureTunnel, transport: "http", profileID: .chatGPTOperate,
+      workspaceID: "fixture", capabilityID: "file.read", decision: .allowed)
+    try database.recordAudit(unbound)
+    let remote = ExecutionContext(
+      caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture",
+      transportTrace: .init(transport: "http"), trustedPrincipalID: "credential:first")
+    #expect(try database.hostDiagnosticAudits(context: remote, limit: 100).isEmpty)
+    var bound = unbound
+    bound.id = "bound"
+    bound.requestID = "verified"
+    bound.principalDigest = AuditEvent.verifiedPrincipalDigest(remote.trustedPrincipalID)
+    try database.recordAudit(bound)
+    #expect(try database.hostDiagnosticAudits(context: remote, limit: 100) == [bound])
+    #expect(try database.auditEvents().count == 2)
+  }
+
+  @Test
   func httpAuditsUseVerifiedPrincipalWhenConnectionTracesAreNil() async throws {
     let fixture = try AuditPrincipalFixture()
     defer { fixture.remove() }

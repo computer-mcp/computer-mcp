@@ -8,7 +8,8 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
   package let fileURL: URL?
 
   /// Opens or creates the database at `path`. A database whose migration ledger names
-  /// migrations this version does not have is refused unchanged.
+  /// migrations this version does not have, or that holds tables without a ledger, is
+  /// refused unchanged.
   package init(path: String) throws {
     fileURL = URL(fileURLWithPath: path).standardizedFileURL
     var configuration = Configuration()
@@ -33,10 +34,18 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
   }()
 
   private static func open(_ writer: any DatabaseWriter) throws {
-    let unknown = try writer.read { database in
-      try migrator.appliedIdentifiers(database).subtracting(migrator.migrations).sorted()
+    try writer.read { database in
+      let unknown = try migrator.appliedIdentifiers(database).subtracting(migrator.migrations)
+      guard unknown.isEmpty else {
+        throw UnsupportedDatabaseSchema(identifiers: unknown.sorted())
+      }
+      let tables = try Int.fetchOne(
+        database,
+        sql: "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      guard try database.tableExists("grdb_migrations") || tables == 0 else {
+        throw UnsupportedDatabaseSchema(identifiers: [])
+      }
     }
-    guard unknown.isEmpty else { throw UnsupportedDatabaseSchema(identifiers: unknown) }
     try migrator.migrate(writer)
   }
 }

@@ -1560,3 +1560,8 @@ extension GatewayClientTrust: FetchableRecord, PersistableRecord {
 private struct WorkspaceDeduplicationDigestInput: Codable {
   var groups: [WorkspaceDeduplicationGroup]
 }
+
+private enum OperationTicketBeginOutcome {
+  case began(OperationTicket)
+  case rejected(GatewayDatabaseError)
+}

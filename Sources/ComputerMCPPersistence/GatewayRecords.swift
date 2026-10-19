@@ -16,11 +16,6 @@ package struct RuntimeSettingRecord: Codable, FetchableRecord, PersistableRecord
   }
 }
 
-package enum OperationTicketBeginOutcome {
-  case began(OperationTicket)
-  case rejected(GatewayDatabaseError)
-}
-
 package struct WorkspaceRecord: Codable, FetchableRecord, PersistableRecord {
   package static let databaseTableName = "workspaces"
 

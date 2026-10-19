@@ -1,5 +1,3 @@
-import GRDB
-
 /// The 0.1.0 database schema, created by one migration. Statements run in this order:
 /// tables, then indexes; SQLite creates the implicit key indexes itself.
 enum GatewaySchema {

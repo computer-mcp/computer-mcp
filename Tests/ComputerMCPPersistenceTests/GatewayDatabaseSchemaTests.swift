@@ -47,6 +47,19 @@ struct GatewayDatabaseSchemaTests {
     #expect(try Self.schema(earlier) == before)
   }
 
+  @Test func populatedDatabaseWithoutALedgerIsRefusedUnchanged() throws {
+    let path = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString + ".sqlite").path
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    let unrelated = try DatabaseQueue(path: path)
+    try unrelated.write { try $0.execute(sql: "CREATE TABLE notes (id TEXT PRIMARY KEY)") }
+    let before = try Self.schema(unrelated)
+    #expect(throws: UnsupportedDatabaseSchema(identifiers: [])) {
+      try GatewayDatabaseConnection(path: path)
+    }
+    #expect(try Self.schema(unrelated) == before)
+  }
+
   private struct SchemaEntry: Codable, Equatable {
     let type: String
     let name: String

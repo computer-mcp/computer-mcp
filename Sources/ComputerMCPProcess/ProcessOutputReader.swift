@@ -90,7 +90,8 @@ internal final class ProcessOutputReader: @unchecked Sendable {
       }
       guard !data.isEmpty else {
         stopped = true
-        try? handle.close()
+        // Closing waits for the readability source, which is running this handler.
+        DispatchQueue.global(qos: .utility).async { try? handle.close() }
         completion.continuation.finish()
         return
       }

@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 DECLARATION = "Version.json"
 PLIST = "Resources/ComputerMCPApp/Info.plist"
-SWIFT = "Sources/ComputerMCP/ComputerMCPCLI.swift"
+SWIFT = "Sources/ComputerMCPCore/ComputerMCPCLI.swift"
 SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 DEPENDENCY_SEMVER = re.compile(
     r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"

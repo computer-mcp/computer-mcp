@@ -10,7 +10,6 @@ struct PluginExecutablePathsTests {
       "macos": "bin/adapter"
     ])
     #expect(try paths.path(for: "macos") == "bin/adapter")
-    #expect(try paths.path(for: PluginPlatformCompatibility.currentPlatform).hasPrefix("bin/"))
     #expect(
       try JSONDecoder().decode(PluginExecutablePaths.self, from: JSONEncoder().encode(paths))
         == paths)

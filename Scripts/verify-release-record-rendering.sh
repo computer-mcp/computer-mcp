@@ -22,7 +22,7 @@ FIXTURE_ROOT="$TEMP_ROOT/source"
 for source in \
   Version.json \
   Resources/ComputerMCPApp/Info.plist \
-  Sources/ComputerMCP/ComputerMCPCLI.swift \
+  Sources/ComputerMCPCore/ComputerMCPCLI.swift \
   Scripts/version.py \
   Scripts/render-release-records.sh \
   Scripts/ReleaseTemplates/ReleaseNotes.md \

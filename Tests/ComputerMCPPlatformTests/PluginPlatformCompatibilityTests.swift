@@ -5,6 +5,17 @@ import Testing
 
 struct PluginPlatformCompatibilityTests {
   @Test
+  func hostPlatformUsesItsManifestName() {
+    #if os(macOS)
+      #expect(PluginPlatformCompatibility.currentPlatform == "macos")
+      #expect(PluginPlatformCompatibility.supportedPlatforms.contains("macos"))
+    #elseif os(Linux)
+      #expect(PluginPlatformCompatibility.currentPlatform == "linux")
+      #expect(!PluginPlatformCompatibility.supportedPlatforms.contains("linux"))
+    #endif
+  }
+
+  @Test
   func targetsMatchOnlyDeclaredPlatformsAndArchitectures() throws {
     let universalMac = try PluginPlatformCompatibility(platforms: ["macos"], architectures: [])
     let intelMac = try PluginPlatformCompatibility(platforms: ["macos"], architectures: ["x86_64"])

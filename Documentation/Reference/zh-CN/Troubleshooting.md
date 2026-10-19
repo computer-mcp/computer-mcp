@@ -35,10 +35,7 @@ cloudflared --version
 
 App 只检测依赖，不会自动安装。使用任务页提供的官方入口安装后重试。
 
-Computer MCP 的 `codex.exec.*` 读取用户的 Codex 配置，包括 provider、MCP 和 hooks，
-认证由 Codex 管理。这些个人集成的故障或延迟可能影响启动；请在 Codex 中检查，
-不要向 Computer MCP 复制凭据。宿主指定的工作区、沙箱和审批策略仍然生效，
-个人配置不能扩大宿主授权。
+Codex 运行时排障见 [Codex 插件](https://github.com/computer-mcp/plugin-codex)。
 
 ## 权限拒绝或撤销
 

@@ -12,7 +12,7 @@ These documents state the current architecture truth for `computer-mcp`.
 - [App Control Plane](ControlPlane.md): shared SwiftUI/CLI operations and the
   local administration boundary.
 - [Gateway](Gateway.md): product topology, workspace model, and policy routing.
-- [Capability Ownership](Ownership.md): gateway, Codex, Apple-provider, and
+- [Capability Ownership](Ownership.md): gateway, plugin, Apple-provider, and
   builtin admission boundaries.
 - [Security and Privacy](SecurityAndPrivacy.md): profiles, workspaces, secrets,
   TCC, logging, and Full Shell boundaries.

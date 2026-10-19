@@ -135,7 +135,7 @@ struct ProvidersView: View {
     VStack(spacing: 0) {
       WorkspaceHeader(
         "Providers",
-        subtitle: "CLI, MCP, Codex, Computer Use, and external runtimes"
+        subtitle: "CLI, MCP, Computer Use, and external runtimes"
       ) {
         Button(AppLocalization.string("Manage MCP")) { showingMCPRegistrations = true }
         RefreshButton {
@@ -289,7 +289,6 @@ private struct ProviderRow: View {
     case .builtin: "wrench.and.screwdriver"
     case .cli: "terminal"
     case .mcp: "point.3.connected.trianglepath.dotted"
-    case .codex: "chevron.left.forwardslash.chevron.right"
     case .computerUse: "display"
     case .external: "shippingbox"
     }

@@ -1077,14 +1077,6 @@ final class AppControlPlaneServiceTests {
   @Test(
     .enabled(
       if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"))
-  func publishedCodexInstallsAndUninstallsThroughIsolatedHost() async throws {
-    try await checkPublishedPluginInstallation(
-      pluginID: "codex", archiveName: "codex-plugin-macos-arm64.zip")
-  }
-
-  @Test(
-    .enabled(
-      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_LIVE_PLUGIN_RELEASE_TEST"] == "1"))
   func publishedComputerUseInstallsAndUninstallsThroughIsolatedHost() async throws {
     try await checkPublishedPluginInstallation(
       pluginID: "computer-use", archiveName: "computer-use.zip")

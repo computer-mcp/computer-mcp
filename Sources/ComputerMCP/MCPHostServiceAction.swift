@@ -14,17 +14,6 @@ package enum MCPHostServiceAction: String, Codable, Sendable {
     case .workspaceRemoval: .destructive
     }
   }
-
-  /// Released adapters predate semantic declarations. Keep their wire identity
-  /// compatible while all private-service authorization uses the admitted action.
-  static func legacyAction(tool: String) -> Self? {
-    switch tool {
-    case "codex.diagnostics.snapshot": .diagnosticsSnapshot
-    case "codex.worktree.provision.perform": .workspaceProvision
-    case "codex.worktree.remove.perform": .workspaceRemoval
-    default: nil
-    }
-  }
 }
 
 extension MCPTool {
@@ -35,7 +24,7 @@ extension MCPTool {
           "[mcp.invalid_host_action] Tool metadata must be an object.")
       }
       guard let value = meta?.objectValue?[MCPHostServiceAction.metadataKey] else {
-        return MCPHostServiceAction.legacyAction(tool: mcpReference?.toolName ?? name)
+        return nil
       }
       guard let raw = value.stringValue, let action = MCPHostServiceAction(rawValue: raw) else {
         throw GatewayToolError.invalidArguments(

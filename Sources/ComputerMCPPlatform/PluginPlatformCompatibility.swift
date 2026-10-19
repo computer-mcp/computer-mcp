@@ -5,18 +5,18 @@ package struct PluginPlatformCompatibility: Codable, Equatable, Sendable {
   package let platforms: [String]
   package let architectures: [String]
 
+  package static let supportedPlatforms: Set<String> = ["macos"]
+
   package static let macOS = Self(uncheckedPlatforms: ["macos"], architectures: [])
   package static var currentPlatform: String {
     #if os(macOS)
       "macos"
-    #elseif os(Windows)
-      "windows"
     #endif
   }
 
   package init(platforms: [String], architectures: [String]) throws {
     guard !platforms.isEmpty, Set(platforms).count == platforms.count,
-      platforms.allSatisfy({ ["macos", "windows"].contains($0) }),
+      Set(platforms).isSubset(of: Self.supportedPlatforms),
       Set(architectures).count == architectures.count,
       architectures.allSatisfy({ ["arm64", "x86_64"].contains($0) })
     else { throw ValidationError.invalidTarget }

@@ -19,8 +19,8 @@ struct StaticPluginCatalogTests {
       http: StaticCatalogHTTPFake([.success(staticCatalogResponse(bytes))]))
     for (platform, architecture, expected) in [
       ("macos", "arm64", ["example-macos.zip"]),
-      ("windows", "x86_64", ["example-windows.zip"]),
-      ("macos", "x86_64", []), ("windows", "arm64", []),
+      ("macos", "x86_64", ["example-intel.zip"]),
+      ("macos", "unknown", []), ("windows", "arm64", []),
     ] {
       let filter = StaticPluginCatalog.Filter(
         host: try PluginVersion("2.0.0"), architecture: architecture, platform: platform)
@@ -68,7 +68,7 @@ struct StaticPluginCatalogTests {
       var release = root["releases"]!.arrayValue![0].objectValue!
       var asset = release["assets"]!.arrayValue![0].objectValue!
       asset["compatibility"] = .object([
-        "platforms": .array([.string("windows")]), "architectures": .array([]),
+        "platforms": .array([.string("macos")]), "architectures": .array([]),
       ])
       release["assets"] = .array([.object(asset)])
       root["releases"] = .array([.object(release)])

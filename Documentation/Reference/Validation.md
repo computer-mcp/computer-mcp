@@ -97,7 +97,6 @@ computer-mcp-validate probe provider discover
 computer-mcp-validate probe http call
 computer-mcp-validate probe downstream verify
 computer-mcp-validate probe gateway verify
-computer-mcp-validate probe codex verify
 computer-mcp-validate evidence correlate|verify
 computer-mcp-validate report generate|verify
 computer-mcp-validate report verification-record generate|verify
@@ -149,12 +148,8 @@ production-readiness evidence.
 
 Automated fixtures use repository-local ignored build storage or a uniquely
 created temporary directory. They never use Desktop, Documents, iCloud Drive,
-or another user-content directory. Codex lifecycle fixtures use ephemeral
-threads or a newly created private Codex home, and run reviews inline. Checks
-using shared upstream session storage archive every created thread before the
-Validation Run can pass. Private homes are removed only after their owned
-writers stop. Cleanup failure fails validation instead of leaving an active
-test task in the user's Codex task list.
+or another user-content directory. Fixture state is removed after its owned
+processes stop; cleanup failure fails validation.
 
 ## Disposable GUI target
 
@@ -197,63 +192,12 @@ Use the close button or the bounded automatic exit, and confirm both the
 receipt's stopped state and the launched target's process exit before cleanup.
 An error returned by the close action is not itself proof of failed cleanup.
 
-## Isolated Codex plugin regressions
+## Plugin acceptance
 
-The host package can test a separately packaged adapter over standard MCP:
-
-```sh
-Scripts/verify-codex-plugin-host.sh /absolute/plugin/bin/codex-mcp-adapter
-```
-
-This verifies host grants, tickets, audit, dynamic tools, migration and actual
-socket/HTTP teardown with a disposable vendor-protocol fixture. It does not
-start the user's Codex installation by default.
-
-To also verify a selected native Codex executable, opt in explicitly:
-
-```sh
-COMPUTER_MCP_REAL_CODEX_ACCEPTANCE=1 \
-COMPUTER_MCP_REAL_CODEX_EXECUTABLE=/absolute/vendor/codex \
-Scripts/verify-codex-plugin-host.sh /absolute/plugin/bin/codex-mcp-adapter
-```
-
-`RealCodexPluginAcceptanceTests` checks bounded skills/app queries, scoped
-Git and loopback-network access before approval and after revocation, cold
-thread/first-turn authorization, and three independent connections handing off
-the same thread and Goal. The native process executes the test commands;
-model responses come from a local fixture that rejects authentication.
-Command results, available execution events, filesystem/network effects,
-exact process exit and adapter database state are independently checked.
-
-These tests create private Codex homes, databases, repositories and local
-services. They do not use production host sockets, existing accounts/threads,
-external model services, system-permission changes or public Git operations.
-Successful cleanup removes the private state; failure retains isolated evidence
-and reports its path. Native sandbox tool errors can lack a command-execution
-event, so denial checks also require the exact native function-call result.
-
-To verify installation, execution and removal of a packaged adapter through the
-owner CLI, provide the archive's manifest version and the matching plugin
-repository's workflow driver:
-
-```sh
-COMPUTER_MCP_CODEX_PLUGIN_ARCHIVE=/absolute/codex-plugin-macos-arm64.zip \
-COMPUTER_MCP_CODEX_PLUGIN_VERSION=0.3.0 \
-COMPUTER_MCP_CODEX_WORKFLOW_DRIVER=/absolute/plugin-codex/Scripts/check-workflow.py \
-COMPUTER_MCP_CODEX_EXECUTABLE=/absolute/vendor/codex \
-COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE=/absolute/computer-mcp \
-/usr/bin/swift test --no-parallel \
-  --filter installedCodexPackageCompletesWorkflowAndUninstallsThroughOwnerCLI
-```
-
-The gateway executable override selects the exact packaged CLI for both owner
-commands and gateway workers; omitting it uses `.build/debug/computer-mcp`.
-The test verifies the installed version, archive digest, disabled initial state,
-native approval workflow and uninstall cleanup in disposable host storage.
-Its host grant permits MCP operations only for the temporary workspace and local
-CLI caller, with host confirmation disabled so native approvals can be checked
-independently. Use the native Codex binary; the fixture's minimal `PATH` does not
-include runtimes needed by package-manager launch scripts.
+Host contract tests use local fixture adapters for callbacks, approvals, routing,
+connection lifetime and cleanup. Installed release checks inspect a selected
+plugin through the generic management CLI. Codex runtime and end-to-end
+acceptance belong to the [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
 ## Evidence contract
 
@@ -280,14 +224,8 @@ can observe it. No local value is presented as if ChatGPT supplied it.
 
 Schema 2 records the reviewed result class explicitly. `passed` requires one
 exact `allowed` audit row without an error. `expected_denial` requires one exact
-policy `denied` row with a stable error code. `expected_failure` is reserved for
-a deliberately exercised fail-closed execution path whose independent semantic
-check passed; it requires one exact `failed` row with a stable error code. A raw
-`failed` outcome never proves acceptance. This keeps lifecycle tools that have
-no outstanding request distinguishable from authorization denials and from
-unexpected failures. The schema-2 validator permits `expected_failure` only for
-the reviewed paths of `codex.app.requests.respond` and `codex.app.apps.list` in `catalog.dynamic_full_coverage`; every other
-capability fails closed.
+policy `denied` row with a stable error code. A `failed` outcome never proves
+acceptance.
 
 The lifecycle is:
 
@@ -340,16 +278,7 @@ independent stopping postcondition and records the host execution receipt with
 `max_bytes`); a sent notification alone does not pass that lifecycle case.
 
 The full-catalog probe still calls every advertised tool and requires one
-correlated audit row per call. `codex.app.apps.list` requests a cached bounded
-page and must normally return its `data` array within the dedicated App-list
-deadline. A timeout is never admissible. The sole environment-dependent
-exception is an HTTP 403 returned in a structured `codex.app.request_failed`
-result; it may be recorded as a reviewed `expected_failure` only when its exact
-audit row has decision `failed` and error code `gateway.execution_failed`. This
-identifies an upstream ChatGPT
-connector-directory challenge; it does not classify the local App, loopback
-gateway, user content, or Shell as scraping or hostile traffic. Any other
-failure remains inadmissible and blocks readiness.
+correlated audit row and an independently validated result per call.
 
 PASS fails closed unless every applicable Test Case, capability, profile,
 transport, request, audit record, and independent result correlation is

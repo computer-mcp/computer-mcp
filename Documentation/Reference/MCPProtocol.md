@@ -355,7 +355,7 @@ and title, and bounded server instructions for using the gateway tools.
 The result contains the active profile's policy-filtered provider tools plus
 any configured reexports. Tools include standard MCP operational annotations such
 as `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
-Local gateway and Codex tools also include a human-readable `title` and an
+Local gateway tools also include a human-readable `title` and an
 `outputSchema`. Downstream reexports preserve these fields when the provider
 advertises them.
 CLI/process and downstream MCP gateway tools are listed only when at least one
@@ -501,7 +501,7 @@ references use the same identifiers without client-specific rewriting.
 }
 ```
 
-Local gateway and Codex tool results contain:
+Local gateway tool results contain:
 
 - `content`: a JSON text representation for clients that consume MCP content.
 - `structuredContent.result`: the same JSON value in a schema-declared

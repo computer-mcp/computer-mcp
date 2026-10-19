@@ -1169,16 +1169,6 @@ final class LiveAppControlPlane: AppControlPlane {
     )
 
     for provider in try await controlPlane.providerStates() {
-      if provider.id == "codex",
-        let index = summaries.firstIndex(where: { $0.id == "codex" })
-      {
-        summaries[index].state = provider.health.appState
-        summaries[index].version = provider.observedVersion
-        summaries[index].executablePath = provider.executablePath
-        summaries[index].lastDoctorMessage = provider.detail
-        summaries[index].lastError = provider.health == "failed" ? provider.detail : nil
-        continue
-      }
       summaries.append(
         ProviderSummary(
           id: provider.id,

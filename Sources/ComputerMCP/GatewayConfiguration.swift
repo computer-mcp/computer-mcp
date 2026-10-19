@@ -94,8 +94,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package var tools: [ToolConfig]
   package var builtin: BuiltinConfig
   package var skills: SkillsConfig
-  /// Embedded-provider settings retained for explicit offline migration.
-  package var codex: CodexConfigurationImport?
   package var workspaceDirectory: URL
   /// Host-owned identities remain referenceable while their contributions are disabled or unavailable.
   package var knownPluginMCPServerIDs: Set<String> = []
@@ -113,7 +111,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
     tools: [ToolConfig] = [],
     builtin: BuiltinConfig = BuiltinConfig(),
     skills: SkillsConfig = SkillsConfig(),
-    codex: CodexConfigurationImport? = nil,
     workspaceDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
   ) {
     self.schemaVersion = schemaVersion
@@ -128,7 +125,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
     self.tools = tools
     self.builtin = builtin
     self.skills = skills
-    self.codex = codex
     self.workspaceDirectory = workspaceDirectory
   }
 
@@ -181,7 +177,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
     try runtime.validate()
     try policy.validate()
     try skills.validate()
-    try codex?.validate()
     try validateUniqueIDs(workspaces.map(\.id), label: "workspace")
     try validateUniqueIDs(profiles.map { $0.id.rawValue }, label: "profile")
     try validateUniqueIDs(transports.openAI.map(\.id), label: "OpenAI transport")
@@ -831,7 +826,6 @@ extension GatewayConfiguration: Codable {
     case tools
     case builtin
     case skills
-    case codex
   }
 
   package init(from decoder: any Decoder) throws {
@@ -864,8 +858,6 @@ extension GatewayConfiguration: Codable {
     self.skills =
       try container.decodeIfPresent(SkillsConfig.self, forKey: .skills)
       ?? SkillsConfig()
-    self.codex =
-      try container.decodeIfPresent(CodexConfigurationImport.self, forKey: .codex)
     self.workspaceDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     migrateImplicitMCPApprovals(from: try ConfigurationNode(from: decoder))
     dropRetiredBuiltins()
@@ -911,7 +903,6 @@ extension GatewayConfiguration: Codable {
     try container.encode(tools, forKey: .tools)
     try container.encode(builtin, forKey: .builtin)
     try container.encode(skills, forKey: .skills)
-    try container.encodeIfPresent(codex, forKey: .codex)
   }
 }
 

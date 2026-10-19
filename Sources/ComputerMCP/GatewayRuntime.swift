@@ -200,11 +200,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let composition = try GatewayPluginComposition(
       configuration: sourceConfiguration, plugins: plugins ?? resolved?.plugins ?? [])
     let configuration = composition.runtimeConfiguration
-    guard configuration.codex?.enabled != true else {
-      throw ConfigurationError.invalid(
-        "Embedded Codex execution requires migration. Use config migrate-codex and the independent Codex plugin before starting this gateway."
-      )
-    }
     pluginOrigins = composition.origins
     pluginDiagnostics = composition.diagnostics
     pluginIssues = resolved?.issues ?? []
@@ -344,7 +339,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           try providerRouter.listTools()
             .filter {
               try providerRouter.capability(named: $0.name).risk == .readOnly
-                && !$0.name.hasPrefix("codex.")
             }
             .map(\.name)
         )

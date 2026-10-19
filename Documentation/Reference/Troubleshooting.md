@@ -72,7 +72,7 @@ swift run computer-mcp config validate --config <path>
 
 Typical failures include duplicate IDs, invalid workspace grants, a remote
 `local-admin` binding, unknown capabilities, missing MCP transport fields,
-reexport prefix conflicts, and `danger-full-access` Codex sandbox.
+and reexport prefix conflicts.
 
 ## An External Manifest Edit Does Not Take Effect
 
@@ -196,109 +196,10 @@ Use `cli.describe` and `cli.help`, then execute the returned argv through
 remote caller unless its locally selected profile grants Full Shell-equivalent
 authority.
 
-## Codex Call Fails
+## Plugin runtime failures
 
-Run Provider Doctor and inspect each path independently:
-
-- `codex.app.status`
-- `codex.exec.list`
-
-When another official Codex client cannot claim a thread, inspect ownership
-before restarting applications or touching processes:
-
-```sh
-computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> \
-  --observed-error '<message shown by the other client>'
-computer-mcp codex diagnostics --workspace-id <workspace-id>
-```
-
-Interpret `classification` as follows:
-
-- `computer_mcp_owned`: inspect the reported exact runtime, allow any pending
-  approval to finish or deny it, then call `codex.app.thread.release`; stop that
-  exact runtime only when the whole owned session should end.
-- `released_persisted`: no live Computer MCP writer is reported; retry opening
-  the persisted thread in the intended official client.
-- `persisted_or_external`: Computer MCP has no verified live owner. Use the
-  offered reclaim action only when Computer MCP should deliberately become the
-  writer.
-- `external_writer_or_unfinished_watchdog`: preview stale Computer MCP receipt
-  cleanup and allow bounded shutdown to finish. An external Desktop, IDE, CLI,
-  or gateway owner is only inferred and is never signalled by Computer MCP.
-
-If reclaim returns a writer conflict, close or release the owning application
-through that application's own controls. Do not use `killall`, delete session
-files, or assume an unrelated Codex process belongs to Computer MCP.
-
-If a graceful release reports an active turn or pending interactive request,
-resolve it first or explicitly choose the matching release option. A successful
-unsubscribe alone is not handoff success. Use `release-thread` and require
-`final_classification = released_persisted`, `externally_claimable = true`, and
-an empty `computer_mcp_writer_ownership_remaining` result. If an ownership
-receipt remains loaded after its exact runtime and owned process are gone, run
-`codex.app.ownership.reconcile.preview`, review the plan, and apply that exact
-digest; this repair changes local receipts only.
-
-### Full access was requested but did not apply
-
-Inspect the adapter's configuration and runtime diagnostics:
-
-```sh
-computer-mcp codex diagnostics --workspace-id <workspace-id>
-```
-
-An omitted native setting inherits the user's Codex configuration. Check the
-installed executable, its effective configuration, and any explicit request
-override. Thread and turn responses report the vendor's applied permissions;
-a host profile name is not proof of a particular Codex sandbox mode.
-
-A host permission denial stops the call before execution. It does not silently
-select a narrower native mode. If Codex has Full Access but a callback tool is
-denied, inspect the host capability, workspace and confirmation policy for that
-tool. Native Codex execution permissions do not grant additional Computer MCP
-capabilities, operation tickets or macOS system permissions.
-
-### A long thread is slow to inspect
-
-Use `computer-mcp codex recent-thread` with its default bounds instead of full
-`thread/read`. Follow `next_before_cursor` only when older context is needed.
-The returned `bounds` report page and Goal-scan I/O, output limit, elapsed scan,
-and whether the cooperative latency budget was exhausted. A cursor is tied to
-the exact rollout snapshot; restart from the newest page if the file identity
-changes.
-
-The installed Codex must support the configured experimental App Server API.
-Computer MCP fails closed on incompatible methods and does not silently fall
-back from App Server to Exec.
-
-Non-Git registered workspaces are supported. The gateway supplies
-`--skip-git-repo-check` to Exec while retaining its registered workspace and
-sandbox policy.
-
-Exec reads the user's Codex configuration, including the selected provider,
-MCP servers and hooks, and uses Codex-managed authentication. The adapter still
-supplies the registered working directory, sandbox and approval policy as
-explicit launch options. A broken or slow personal integration can therefore
-affect Exec startup; diagnose it in Codex without copying its credentials into
-Computer MCP. Both execution paths resolve the configured program against
-the launch workspace and PATH; an unavailable custom program never falls back
-to a different `codex` executable.
-
-If `codex.app.apps.list` returns HTTP 403 while Safari and interactive Codex
-work, confirm that a fixed macOS HTTP, HTTPS, or SOCKS proxy is enabled, then
-restart Computer MCP so both Codex provider lifecycles resolve it at
-launch. Computer MCP preserves an explicitly inherited proxy environment,
-otherwise maps the current fixed macOS settings to conventional upper- and
-lowercase child variables with loopback in `NO_PROXY`. It does not persist or
-log the derived values and does not evaluate PAC scripts.
-
-If the structured error contains `codex.app.request_failed`, `403 Forbidden`,
-and a correlated failed audit with `gateway.execution_failed`, the request was
-rejected by the upstream ChatGPT connector-directory endpoint. It is not a
-Computer MCP anti-scraping decision and does not mean the local App, loopback
-traffic, workspace content, or Shell was identified as hostile. The release
-validator accepts only that exact fail-closed directory challenge as a reviewed
-expected outcome; all other provider and network failures still fail closed.
+Run `computer-mcp plugins doctor <id>` to check the host registration and package
+files. Runtime-specific diagnosis belongs to the plugin; see the [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
 ## Computer Use Is Denied
 

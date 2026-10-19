@@ -118,8 +118,8 @@ Neither can use local Codex MCP configuration or directly reach localhost.
 
 Codex has two distinct relationships:
 
-- Computer MCP can invoke the independent Codex plugin, which owns the separate
-  App Server and Exec provider lifecycles.
+- Computer MCP can invoke the [Codex plugin](https://github.com/computer-mcp/plugin-codex)
+  through the ordinary MCP registration contract.
 - Codex can use Computer MCP as an external MCP server through
   `computer-mcp install codex`.
 

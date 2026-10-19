@@ -64,8 +64,8 @@ struct ValidationEvidenceBundleTests {
     #expect(report.issues.contains { $0.code == "attempt.test_case_unknown" })
   }
 
-  @Test("Unreviewed expected failures cannot prove coverage")
-  func unreviewedExpectedFailure() throws {
+  @Test("Failed attempts cannot prove coverage")
+  func failedAttempt() throws {
     let bundle = try makeBundle(
       transport: .openAISecureMCPTunnel,
       profileID: .chatGPTOperate,
@@ -73,7 +73,7 @@ struct ValidationEvidenceBundleTests {
       auditTransport: "gateway_socket",
       testCaseID: "catalog.dynamic_full_coverage",
       socketConnectionID: "socket-openai",
-      outcome: .expectedFailure,
+      outcome: .failed,
       auditDecision: .failed,
       auditErrorCode: "gateway.execution_failed",
       toolNameOverride: "system.time"
@@ -82,7 +82,7 @@ struct ValidationEvidenceBundleTests {
     let report = ValidationEvidenceBundleVerifier().verify(bundle)
 
     #expect(!report.isVerified)
-    #expect(report.issues.contains { $0.code == "attempt.expected_failure_unreviewed" })
+    #expect(report.issues.contains { $0.code == "attempt.outcome_failed" })
   }
 
   @Test("Digest tampering is rejected")

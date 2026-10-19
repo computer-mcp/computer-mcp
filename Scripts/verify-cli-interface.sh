@@ -71,7 +71,6 @@ verify_help "$ROOT_CLI" permissions
 verify_help "$ROOT_CLI" tunnel
 verify_help "$ROOT_CLI" tunnel openai
 verify_help "$ROOT_CLI" tunnel cloudflare
-verify_help "$ROOT_CLI" codex
 verify_help "$ROOT_CLI" permissions approvals
 verify_help "$ROOT_CLI" tools
 verify_help "$ROOT_CLI" audit
@@ -103,7 +102,6 @@ public_leaf_commands=(
   "cli-tree check"
   "config validate"
   "config export"
-  "config migrate-codex"
   "config import"
   "config history"
   "config rollback"
@@ -135,10 +133,6 @@ public_leaf_commands=(
   "tunnel cloudflare logs"
   "tunnel cloudflare save"
   "tunnel cloudflare remove"
-  "codex diagnose-thread"
-  "codex diagnostics"
-  "codex release-thread"
-  "codex recent-thread"
   "tools list"
   "tools inspect"
   "tools call"
@@ -244,7 +238,6 @@ verify_help "$VALIDATION_CLI" probe provider discover
 verify_help "$VALIDATION_CLI" probe http call
 verify_help "$VALIDATION_CLI" probe downstream verify
 verify_help "$VALIDATION_CLI" probe gateway verify
-verify_help "$VALIDATION_CLI" probe codex verify
 verify_help "$VALIDATION_CLI" evidence
 verify_help "$VALIDATION_CLI" evidence correlate
 verify_help "$VALIDATION_CLI" evidence verify
@@ -264,42 +257,12 @@ FIXTURE_MARKER="$OUTSIDE_DIR/provider-starts.log"
 DOCTOR_JSON="$OUTSIDE_DIR/doctor.json"
 CAPABILITIES_JSON="$OUTSIDE_DIR/capabilities.json"
 CODEX_APP_PLAN="$OUTSIDE_DIR/codex-app-plan.json"
-CODEX_MIGRATION="$OUTSIDE_DIR/codex-migration.json"
-CODEX_MIGRATED_HOST="$OUTSIDE_DIR/codex-migrated-host.toml"
-trap 'rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CAPABILITIES_JSON" "$CODEX_APP_PLAN" "$CODEX_MIGRATION" "$CODEX_MIGRATED_HOST"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
+trap 'rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CAPABILITIES_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
 (
   cd "$OUTSIDE_DIR"
   verify_help "$ROOT_CLI"
   verify_help "$VALIDATION_CLI"
-  "$ROOT_CLI" config migrate-codex \
-    --config "$ROOT_DIR/Examples/codex-configuration-import.toml" \
-    --adapter-config "$OUTSIDE_DIR/adapter.json" \
-    --state-directory "$OUTSIDE_DIR/adapter-state" >"$CODEX_MIGRATION"
 )
-
-/usr/bin/jq -e '
-  .pluginID == "codex" and
-  .pluginSettings.mcp["app-server"].prefix == "" and
-  .pluginSettings.mcp["app-server"].exposure == "reexport" and
-  .pluginSettings.mcp["app-server"].allowAnyTool == false and
-  .adapterConfiguration.enabled == true and
-  (.hostTOML | contains("[codex]") | not) and
-  .pluginSettings.mcp["app-server"].toolRisks["codex.worktree.remove.perform"] == "destructive"
-' "$CODEX_MIGRATION" >/dev/null
-[[ ! -e "$OUTSIDE_DIR/adapter.json" && ! -e "$OUTSIDE_DIR/adapter-state" ]]
-/usr/bin/jq -r '.hostTOML' "$CODEX_MIGRATION" >"$CODEX_MIGRATED_HOST"
-"$ROOT_CLI" config validate --config "$CODEX_MIGRATED_HOST" >/dev/null
-if "$ROOT_CLI" config migrate-codex --config "$ROOT_DIR/Examples/codex-configuration-import.toml" \
-  --adapter-config relative.json --state-directory "$OUTSIDE_DIR/adapter-state" >/dev/null 2>&1; then
-  echo "CLI interface verification failed: migration accepted a relative destination." >&2
-  exit 1
-fi
-
-if "$ROOT_CLI" config migrate-codex --config "$ROOT_DIR/Examples/computer-mcp.toml" \
-  --adapter-config "$OUTSIDE_DIR/adapter.json" --state-directory "$OUTSIDE_DIR/adapter-state" >/dev/null 2>&1; then
-  echo "CLI interface verification failed: migration synthesized absent Codex settings." >&2
-  exit 1
-fi
 
 "$ROOT_CLI" app capabilities >"$CAPABILITIES_JSON"
 /usr/bin/plutil -convert xml1 -o /dev/null "$CAPABILITIES_JSON"

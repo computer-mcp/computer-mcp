@@ -174,18 +174,18 @@ struct PluginManifestTests {
     let manifest = try PluginManifest.parse(Self.platformArtifacts)
     let compatibility = try #require(manifest.compatibility)
     #expect(compatibility.artifactTarget(named: "mac.zip")?.platforms == ["macos"])
-    #expect(compatibility.artifactTarget(named: "windows.zip")?.architectures == ["x86_64"])
+    #expect(compatibility.artifactTarget(named: "intel.zip")?.architectures == ["x86_64"])
     #expect(compatibility.artifactTarget(named: "renamed.zip") == nil)
     #expect(compatibility.artifactTarget(named: nil) == nil)
     let root = URL(fileURLWithPath: "/fixture")
     let mac = PluginSource(kind: .artifact, root: root, artifactName: "mac.zip")
-    let windows = PluginSource(kind: .artifact, root: root, artifactName: "windows.zip")
+    let intel = PluginSource(kind: .artifact, root: root, artifactName: "intel.zip")
     #expect(
       try mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64"))
     #expect(
       try !mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64"))
     #expect(
-      try !windows.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64")
+      try intel.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64")
     )
     #expect(
       try !PluginSource(kind: .artifact, root: root).permits(
@@ -194,30 +194,33 @@ struct PluginManifestTests {
   }
 
   @Test(arguments: [
-    "duplicate", "unknown-platform", "outside-parent", "missing-artifacts", "invalid-name", "extra",
+    "duplicate", "unknown-platform", "outside-parent", "invalid-name", "extra",
   ])
   func malformedArtifactDeclarationsFailClosed(fault: String) throws {
     let changed: String
     switch fault {
     case "duplicate":
-      changed = Self.platformArtifacts.replacingOccurrences(of: "windows.zip", with: "MAC.zip")
+      changed = Self.platformArtifacts.replacingOccurrences(of: "intel.zip", with: "MAC.zip")
     case "unknown-platform":
-      changed = Self.platformArtifacts.replacingOccurrences(of: "windows", with: "linux")
+      changed = Self.platformArtifacts.replacingOccurrences(of: "macos", with: "linux")
     case "outside-parent":
       changed = Self.platformArtifacts.replacingOccurrences(
-        of: "platforms = ['macos', 'windows']", with: "platforms = ['macos']")
-    case "missing-artifacts":
-      changed =
-        Self.header
-        + "[compatibility]\nplatforms = ['windows']\n[[skills]]\nid = 'guide'\npath = 'skills'"
+        of: "[compatibility]", with: "[compatibility]\narchitectures = ['arm64']")
     case "invalid-name":
       changed = Self.platformArtifacts.replacingOccurrences(
-        of: "windows.zip", with: "../windows.zip")
+        of: "intel.zip", with: "../intel.zip")
     default:
       changed = Self.platformArtifacts.replacingOccurrences(
         of: "name = 'mac.zip'", with: "name = 'mac.zip'\nextra = true")
     }
     #expect(throws: (any Error).self) { try PluginManifest.parse(changed) }
+  }
+
+  @Test(arguments: ["windows", "linux"])
+  func unsupportedManifestPlatformsAreRejected(platform: String) {
+    let text = Self.platformArtifacts.replacingOccurrences(
+      of: "platforms = ['macos']", with: "platforms = ['\(platform)']")
+    #expect(throws: PluginManifestError.self) { try PluginManifest.parse(text) }
   }
 
   @Test
@@ -231,7 +234,7 @@ struct PluginManifestTests {
     let manifest = try PluginManifest.parse(Self.platformExecutables)
     let executable = try #require(manifest.mcp[0].executable)
     #expect(try executable.packagePath(for: "macos") == "helper")
-    #expect(try executable.packagePath(for: "windows") == "helper.exe")
+    #expect(throws: PluginManifestError.self) { try executable.packagePath(for: "windows") }
     #expect(throws: PluginManifestError.self) { try executable.packagePath(for: "linux") }
     #expect(
       try JSONDecoder().decode(PluginManifest.self, from: JSONEncoder().encode(manifest))
@@ -239,14 +242,14 @@ struct PluginManifestTests {
   }
 
   @Test(arguments: [
-    "platform_paths = { macos = 'helper' }",
-    "platform_paths = { macos = 'helper', windows = 'helper.exe' }, path = 'helper'",
-    "platform_paths = { macos = 'helper', windows = 'helper.exe' }, dependency = 'vendor'",
+    "platform_paths = { windows = 'helper.exe' }",
+    "platform_paths = { macos = 'helper' }, path = 'helper'",
+    "platform_paths = { macos = 'helper' }, dependency = 'vendor'",
     "platform_paths = {}",
   ])
-  func platformExecutableCannotMixOwnershipOrOmitDeclaredTargets(fields: String) {
+  func platformExecutableRejectsUnsupportedPlatformsAndMixedOwnership(fields: String) {
     let text = Self.platformExecutables.replacingOccurrences(
-      of: "platform_paths = { macos = 'helper', windows = 'helper.exe' }", with: fields)
+      of: "platform_paths = { macos = 'helper' }", with: fields)
     #expect(throws: (any Error).self) { try PluginManifest.parse(text) }
   }
 
@@ -256,24 +259,24 @@ struct PluginManifestTests {
       [[mcp]]
       id = 'native'
       transport = 'stdio'
-      executable = { platform_paths = { macos = 'helper', windows = 'helper.exe' } }
+      executable = { platform_paths = { macos = 'helper' } }
       [[cli]]
       id = 'commands'
-      executable = { platform_paths = { macos = 'helper', windows = 'helper.exe' } }
-      tree = { kind = 'helper', helper = { platform_paths = { macos = 'helper', windows = 'helper.exe' } }, args = ['schema'] }
+      executable = { platform_paths = { macos = 'helper' } }
+      tree = { kind = 'helper', helper = { platform_paths = { macos = 'helper' } }, args = ['schema'] }
       """
 
   static let platformArtifacts =
     header + """
       [compatibility]
-      platforms = ['macos', 'windows']
+      platforms = ['macos']
       [[compatibility.artifacts]]
       name = 'mac.zip'
       platforms = ['macos']
       architectures = ['arm64']
       [[compatibility.artifacts]]
-      name = 'windows.zip'
-      platforms = ['windows']
+      name = 'intel.zip'
+      platforms = ['macos']
       architectures = ['x86_64']
       [[skills]]
       id = 'guide'

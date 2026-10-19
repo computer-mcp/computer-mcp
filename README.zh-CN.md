@@ -24,7 +24,7 @@ Codex 是可选集成。
 - **开放什么，由你决定。** 配置工具、工作区与确认策略，在本机批准需要确认的宿主操作。
 
 Computer MCP 支持 macOS 14 或更新系统，可供 ChatGPT 和其他兼容 MCP 的客户端使用。
-工具需安装并配置。Codex 需要对应插件与本机 Codex，高级编排为实验能力。
+工具需按各插件的说明安装并配置。
 Skills 提供说明和资源，实际执行使用已授权的工具。
 
 ## 30 秒理解工作方式
@@ -73,9 +73,7 @@ computer-mcp plugins list
 检查依赖和工具暴露范围后再启用。新安装默认停用，不自动授予权限。Bundled 包
 走相同生命周期，外部工具仍由用户或厂商管理。
 
-Codex 执行位于独立 MCP adapter。升级已有内置 Codex 配置时，需要执行显式的
-[配置与离线状态迁移](Documentation/Reference/CodexMigration.md)，不能热替换正在
-执行迁移任务的后端。原生 Computer Use 还受厂商调用者认证限制，并非仅授予
+原生 Computer Use 还受厂商调用者认证限制，并非仅授予
 macOS 隐私权限即可保证可用；原生 AX 工具继续作为兜底路径。
 
 安装、升级与恢复见[插件包](Documentation/Reference/PluginPackages.md)；经过验证的
@@ -131,29 +129,12 @@ Computer MCP 始终把两个决定分开：
 | 稳定 | Builtin、Skill、已注册 CLI、下游 MCP、Shell 与原生 AX 兜底 | 是否可用仍取决于 Profile、工作区、依赖和 macOS 权限 |
 | 稳定 | 受治理的工作区与 Git 操作 | 写入需要策略授权；破坏性原子操作使用经审查的一次性 Ticket；不会隐式 Push |
 | 稳定 | 插件包生命周期、直接／插件 MCP 注册、经过验证的 CLI Tree 与 Skills | 宿主授权独立，不自动安装外部依赖 |
-| 实验性 | Codex 插件的 App Server、Exec 与 MCP Provider | 选择性启用、默认关闭，并依赖已安装且完成认证的 Codex |
-| 实验性 | 原生 Codex Goal 透传、Computer MCP 验收 Run、线程占用诊断和受管子 Worktree | 官方 Goal、Computer MCP 验收与外部客户端所有权始终分开 |
 | 规划中 | 更广的平台支持和更完整的高级编排 UI | 暂无承诺日期；当前签名 App 仅支持 macOS |
-
-“实验性”不等于无边界；这些路径仍遵守与稳定能力相同的工作区、策略、审批、
-生命周期、资源上限和审计规则。
 
 ## ChatGPT 编排，Codex 执行
 
-一个典型流程如下：
-
-1. ChatGPT 通过 Computer MCP 检查已注册仓库并收集本地上下文。
-2. Computer MCP 把请求绑定到 ChatGPT Profile 和工作区，由策略决定可用的读取、
-   Git、CLI 与 Codex 能力。
-3. ChatGPT 为该工作区启动或 Steer 一个独立 Codex 任务。
-4. Codex 请求受治理的写操作；Computer MCP 持久化脱敏审批记录，由用户或被授权
-   调用方批准或拒绝。
-5. Codex 通过受治理路径修改并提交；Computer MCP 关联 Codex 请求、审批、
-   Operation Ticket、网关调用、Git 结果和审计记录。
-6. Computer MCP 验收 Run 会一直保持活动，直到必须的 Build、Test 和干净 Worktree
-   证据被显式接受；仅仅结束一个 Turn 不等于完成。
-
-这是一种可选编排能力，不是在声称 Computer MCP 就是 Codex Remote。
+ChatGPT 可以查看已注册工作区，并通过独立的 [Codex 插件](https://github.com/computer-mcp/plugin-codex)
+执行编程任务。宿主管理工具授权、工作区、审批与审计；插件负责执行与运行时生命周期。
 
 ## Computer MCP、Dots 与 Codex Remote
 
@@ -168,14 +149,6 @@ Dots 还有独立的云端电脑；Codex Remote 在选定的已连接宿主上�
 账号和服务用量条款仍然适用。
 [完整对比](https://computer-mcp.github.io/#comparison)说明接口、执行和权限边界，
 OpenAI 官方来源于 2026-10-01 核实。
-
-以下所有权模式彼此独立：快速 Codex Thread/Turn、Computer MCP-owned Codex
-Runtime、官方持久化 Codex Goal、单独的 Computer MCP 验收 Run、官方 Codex
-Remote，以及外部 Codex Desktop、IDE 或 CLI 会话。
-
-Computer MCP 只能释放或停止能够验证为自己所有的 Runtime。它可以显式尝试重新
-接管一个持久化 Thread，也能解释可能的 Writer 冲突，但不会声称有权终止其他应用的
-进程或订阅。
 
 ## 快速开始
 
@@ -234,23 +207,6 @@ TOML 模式只用于开发和诊断，不共享 App 的 Bookmark 或 Keychain �
 [能力所有权](Documentation/Architecture/Ownership.md)；完整命令与 Schema 见
 [Reference](Documentation/Reference/README.md)。
 
-## Codex 运维与诊断
-
-可选 Codex Provider 会记录自己拥有的 Runtime ID、Process Group、连接代次、已加载
-Thread、活动 Turn、Approval、Shutdown Reason 和终止升级。持久化所有权凭据使后续
-Computer MCP 代次能在尝试 Resume 前验证 Thread 所属工作区。
-
-无需手工检查进程和打开文件即可读取同一份证据：
-
-```sh
-computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
-computer-mcp codex diagnostics --workspace-id <workspace-id>
-```
-
-诊断会区分可验证的 Computer MCP 所有权与推断出的外部冲突，并且只提供安全动作，
-例如释放自有 Thread、停止精确的自有 Runtime、审查过期凭据，或尝试重新接管持久化
-Thread。
-
 ## 当前限制
 
 - 签名产品目前仅支持 macOS 14 或更高版本。
@@ -258,12 +214,7 @@ Thread。
   和可用性条件。
 - 需要 Accessibility 或 Screen Recording 的能力必须把权限授予已安装的签名 App；
   其他能力不受影响。
-- 高级 Codex Provider 需要显式启用，并依赖已安装的官方 Codex 版本、认证与稳定
-  协议支持。
-- Computer MCP 无法检查、取消订阅或终止不属于自己的外部 Codex Desktop、IDE、
-  CLI 或 Remote 连接。
-- 多个合格工作区存在时不会静默选择一个；不会隐式 Push Git Commit，也不会把普通
-  Turn 完成冒充为 Goal 已验收。
+- 多个合格工作区存在时不会静默选择一个；不会隐式 Push Git Commit。
 - 开发构建或 ad-hoc 签名 App 不是正式版本，也不会继承已安装正式版的 macOS 隐私
   与 Keychain 身份。
 

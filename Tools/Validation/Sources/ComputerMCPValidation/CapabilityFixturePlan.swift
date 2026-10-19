@@ -80,44 +80,6 @@ public struct CapabilityFixturePlan: Sendable {
     case "process.list":
       return primary([:], marker: "processes")
 
-    case "codex.app.status":
-      return primary([:])
-    case "codex.app.methods.list":
-      return primary([:], marker: "thread/list")
-    case "codex.app.methods.describe":
-      return primary(["method": .string("thread/list")], marker: "thread/list")
-    case "codex.app.methods.call":
-      return primary(
-        [
-          "method": .string("thread/list"),
-          "params": .object(["limit": .number(1)]),
-        ],
-        marker: "data"
-      )
-    case "codex.app.thread.list":
-      return primary(["limit": .number(20)])
-    case "codex.app.models.list":
-      return primary(["limit": .number(20)])
-    case "codex.app.skills.list":
-      return primary(["force_reload": .bool(false)])
-    case "codex.app.apps.list":
-      return primary(
-        [
-          "force_refetch": .bool(false),
-          "limit": .number(1),
-        ],
-        marker: "data"
-      )
-    case "codex.app.events.read":
-      return primary([
-        "after_cursor": .number(0),
-        "max_results": .number(20),
-      ])
-    case "codex.app.requests.list":
-      return primary([:])
-    case "codex.exec.list":
-      return primary([:])
-
     case "mcp.servers.list":
       return invocation([:], marker: "fixture-stdio")
     case "mcp.servers.status":
@@ -1176,13 +1138,6 @@ public struct CapabilityFixturePlan: Sendable {
     default:
       return nil
     }
-  }
-
-  public func codexThreadArchiveInvocation(threadID: String) -> CapabilityFixtureInvocation {
-    primary([
-      "method": .string("thread/archive"),
-      "params": .object(["threadId": .string(threadID)]),
-    ])
   }
 
   private func workspaceScan(

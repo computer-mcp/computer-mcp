@@ -9,7 +9,7 @@ bounded execution, or a deliberate safety gate.
 | Owner | Responsibilities |
 | --- | --- |
 | Computer MCP core | MCP transports, App socket, profiles, workspace grants, audit, operation tickets, CLI/MCP bridges, Skills, typed workspace/file/Git/structured/system tools, Shell, and generic Computer Use |
-| Independent Codex adapter plugin | App Server and Exec lifecycles through `swift-codex`; domain state, native approvals, thread/Goal and worktree receipts |
+| Plugins | Domain state, runtime configuration and vendor execution |
 | `apple-cli` / `apple-cli-mcp` | Clipboard, notifications, Finder, application launching, URL opening, and Apple application/domain workflows |
 | Browser provider | Browser engine, page lifecycle, selectors, and browser automation |
 | Other downstream MCP providers | Their own business schemas, authentication, and side-effect contracts |
@@ -21,70 +21,12 @@ escaping its root.
 `workspace.open` and `workspace.reveal` remain workspace-contained navigation
 primitives. They do not form a general Finder or application automation API.
 
-## Codex Boundaries
+## Plugin ownership
 
-Computer MCP does not maintain a hand-written coding agent or shell-based
-`coding.*` provider. The independent `plugin-codex` package integrates the installed vendor through:
-
-- App Server for stateful threads and turns;
-- Exec for isolated JSONL jobs.
-
-The host authorizes the caller, capabilities, and registered workspace.
-The adapter preserves Codex's native execution settings and approval semantics;
-omitted settings inherit the user's Codex configuration. Output bounds and
-vendor session ownership belong to the adapter. Domain persistence belongs to the adapter;
-host grants, workspace registrations, tickets and audit remain in the Gateway
-Database. Authentication mutation, config writes, marketplace mutation, and
-remote-control pairing remain local Codex/App control-plane operations.
-
-There are six deliberately distinct ownership concepts:
-
-| Concept | Owner and meaning |
-| --- | --- |
-| Quick thread or turn | One ordinary request against the workspace App Server runtime; turn completion is not durable Goal completion |
-| Dedicated Computer MCP execution | A Computer MCP-owned runtime, process group, thread subscription, approvals, and audit linkage |
-| Official Codex Goal | Native App Server Goal state exposed through official get/set/clear methods; Computer MCP does not invent native statuses |
-| Computer MCP acceptance run | A separate durable acceptance, evidence, budget, pause, and reconciliation layer that may reference an official Goal |
-| Codex Remote | The official first-party remote-control experience and preferred interface for ordinary remote Codex work |
-| Codex Desktop, IDE, or CLI | An external official client whose connection and processes Computer MCP cannot inspect or terminate without verified ownership |
-
-Computer MCP can run one deterministic handoff transaction across every live
-Computer MCP runtime that verifiably owns a thread. The transaction refuses an
-active turn unless interruption was explicitly requested, refuses unresolved
-approval or user-input requests in graceful mode, performs bounded official
-unsubscription, verifies that no owned runtime still reports the thread
-loaded, and reaps an empty runtime. A runtime with other useful work remains
-alive. Success is the postcondition `released_persisted`: the persisted thread
-and Goal are unchanged and no live Computer MCP writer remains, so another
-official client can claim the thread immediately. Repeating the transaction is
-idempotent.
-
-Computer MCP can also stop one exact owned runtime and deliberately ask its App
-Server to resume a persisted thread. The latter is exposed internally as
-`thread.reclaim`; product surfaces describe the action naturally in context,
-with labels such as “重新接管线程” treated as illustrative rather than
-normative. If a different client owns the writer, Computer MCP reports the
-conflict and does not signal or unsubscribe that client.
-
-After Computer MCP creates, forks, or successfully resumes a thread, it stores
-a durable thread-to-registered-workspace ownership receipt. A later gateway
-generation validates that receipt before asking the official App Server to
-resume the thread. An unfamiliar thread falls back to the official persisted
-thread index and must still resolve inside the bound workspace. The receipt is
-updated to loaded, released, or archived as the official lifecycle changes; it
-is evidence of scope, not authority to terminate another client.
-
-Thread handoff diagnosis combines live runtime, process-group, connection,
-thread, turn, approval, user-input, durable thread ownership, and runtime
-receipt evidence. Live evidence outranks persisted receipts. A stopped runtime
-cannot remain the authoritative owner, and a released thread cannot
-simultaneously appear in an owned runtime's loaded set. Stale loaded receipts
-are reconciled only after both the runtime directory and exact receipted
-process/supervisor are proven gone; reconciliation changes local receipts only
-and sends no signal. External ownership is explicitly inferred when no
-verifiable Computer MCP owner exists. Questions about why another official
-client cannot claim a thread are an acceptance scenario for this diagnostic
-capability, not required interface copy.
+Plugins own their runtime configuration, domain state and vendor execution.
+The host owns admission, workspace registrations, grants, operation tickets and
+audit through the [host-service contract](../Reference/HostServices.md).
+For coding runtime details, see the [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
 ## Workspace Identity
 
@@ -106,36 +48,9 @@ The host decides whether the authenticated caller may use a capability in a
 registered workspace, then applies its confirmation policy to that operation.
 Only the local control plane resolves pending host approval tickets.
 
-Codex native execution approvals are owned by Codex and adapted through
-`swift-codex`. The adapter retains official response fields and decision
-scope, including acceptance, denial and cancellation. A native approval does
-not approve a host operation ticket. Dynamic calls from Codex to host tools
-follow the same host authorization and confirmation path as other callers.
+Plugin execution approvals do not approve host operation tickets. Calls back
+into host tools follow the host authorization and confirmation path.
 MCP elicitation is interaction, not permission.
-
-## Multi-executor Worktrees
-
-A mutation lease names the registered workspace, agent, optional thread/run,
-parent lease, branch, heartbeat, expiry, and revision. One active lease owns a
-worktree at a time. A turn that targets a leased workspace must present the
-matching lease; concurrent writers receive a conflict instead of sharing the
-directory.
-
-Computer MCP can create an isolated child worktree only from a persisted,
-five-minute provision plan linked to an active parent lease. It derives the
-path under its Application Support-managed root, validates the source Git root,
-new branch, start commit, and exact Git common directory, then registers the
-child as a workspace, carries the current profile's workspace grant forward,
-and creates the isolated child lease. A new gateway session discovers the new
-workspace.
-
-Removal is a separate reviewed lifecycle. The child lease must first be
-released, no Computer MCP runtime may remain live, the Git linkage and
-ownership receipt must still match, the worktree must be clean, and HEAD must
-not change between plan and execution. The destructive perform call also uses
-a single-use gateway operation ticket. It removes only the exact managed
-worktree and workspace grant; the local branch is preserved. A user-created or
-otherwise unreceipted worktree cannot be selected for removal.
 
 ## External Provider Composition
 

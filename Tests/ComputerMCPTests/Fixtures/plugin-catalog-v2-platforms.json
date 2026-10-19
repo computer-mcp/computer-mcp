@@ -29,14 +29,14 @@
               "x86_64"
             ],
             "platforms": [
-              "windows"
+              "macos"
             ]
           },
           "id": 31,
-          "name": "example-windows.zip",
+          "name": "example-intel.zip",
           "sha256": "7b319de6ed80df657f2654a2372ab65a7760a881db393b03ef247e80105ba5dc",
           "size": 722,
-          "url": "https://github.com/computer-mcp/plugin-example/releases/download/v1.0.0/example-windows.zip"
+          "url": "https://github.com/computer-mcp/plugin-example/releases/download/v1.0.0/example-intel.zip"
         }
       ],
       "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -45,8 +45,7 @@
         "maximum_host": null,
         "minimum_host": null,
         "platforms": [
-          "macos",
-          "windows"
+          "macos"
         ]
       },
       "contributions": {
@@ -73,6 +72,6 @@
       "withdrawn": false
     }
   ],
-  "revision": "2f6f21d1b1c46fb120c418cce9c804eb77778704ad520aaff866cb45bf349bd5",
+  "revision": "09ca448990f5a1556c0a9f4f0c4f8059951d3091d44371da55e8296954146101",
   "schema_version": 2
 }

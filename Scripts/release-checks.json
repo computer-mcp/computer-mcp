@@ -28,7 +28,7 @@
         ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--configuration", ".swift-format", "Package.swift", "Sources", "Tests"],
         ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--configuration", ".swift-format", "Tools/Validation/Package.swift", "Tools/Validation/Sources", "Tools/Validation/Tests"],
         ["python3", "-m", "unittest", "discover", "-s", "Scripts/tests", "-p", "test_*.py"],
-        ["python3", "-m", "py_compile", "Scripts/accept-release.py", "Scripts/install-candidate.py", "Scripts/verify-installed-workspaces.py", "Scripts/verify-installed-runtime.py", "Scripts/verify-codex-gateway-flow.py", "Scripts/publish-release.py", "Scripts/restore-cloud-release.py"],
+        ["python3", "-m", "py_compile", "Scripts/accept-release.py", "Scripts/install-candidate.py", "Scripts/verify-installed-workspaces.py", "Scripts/verify-installed-runtime.py", "Scripts/publish-release.py", "Scripts/restore-cloud-release.py"],
         ["xcrun", "swiftc", "-typecheck", "Scripts/verify-app-navigation.swift"],
         ["xcrun", "swiftc", "-typecheck", "Scripts/quit-installed-app.swift"],
         ["zsh", "-c", "for script in Scripts/*.sh; do zsh -n \"$script\" || exit; done"],

@@ -59,7 +59,6 @@ final class DefaultGatewayConfigurationTests {
     let configuration = try GatewayConfiguration.load(path: fixture.manifest.path)
 
     #expect(!(configuration.policy.shellEnabled))
-    #expect(configuration.codex == nil)
     #expect(
       (configuration.skills.roots.map(\.id))
         == ([
@@ -134,7 +133,6 @@ final class DefaultGatewayConfigurationTests {
       (Set(observeTools.map(\.name))) == (Set(DefaultGatewayConfiguration.observeCapabilities)))
     #expect(observeTools.allSatisfy { $0.annotations?.readOnlyHint == true })
     #expect(observeTools.contains { $0.name == "git.commit_files" })
-    #expect(!(observeTools.contains { $0.name.hasPrefix("codex.") }))
     _ = try ChatGPTProfileAuditor().audit(
       configuration: configuration,
       registry: observeGateway,
@@ -154,7 +152,6 @@ final class DefaultGatewayConfigurationTests {
     #expect(operateNames.isSuperset(of: Set(observeTools.map(\.name))))
     #expect(operateNames.contains("file.write"))
     #expect(operateNames.contains("computer.keyboard.text"))
-    #expect(!operateNames.contains("codex.app.thread.start"))
     #expect(operateNames.contains("policy.probe"))
     #expect(operateNames.contains("process.list"))
     #expect(!(operateNames.contains("cli.exec")))

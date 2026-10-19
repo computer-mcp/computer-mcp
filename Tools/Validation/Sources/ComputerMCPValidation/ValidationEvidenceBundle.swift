@@ -173,41 +173,7 @@ public struct ValidationConsumer: Codable, Equatable, Sendable {
 public enum ValidationAttemptOutcome: String, Codable, Sendable {
   case passed
   case expectedDenial = "expected_denial"
-  case expectedFailure = "expected_failure"
   case failed
-}
-
-public enum ValidationReviewedOutcomePolicy {
-  public static func permitsExpectedFailure(
-    testCaseID: String,
-    toolName: String
-  ) -> Bool {
-    testCaseID == "catalog.dynamic_full_coverage"
-      && reviewedExpectedFailureTools.contains(toolName)
-  }
-
-  public static func permitsUpstreamDirectoryChallenge(
-    testCaseID: String,
-    toolName: String,
-    providerResult: String,
-    auditDecision: String?,
-    auditErrorCode: String?
-  ) -> Bool {
-    permitsExpectedFailure(testCaseID: testCaseID, toolName: toolName)
-      && toolName == "codex.app.apps.list"
-      && providerResult.contains("codex.app.request_failed")
-      && providerResult.range(
-        of: "status 403 Forbidden",
-        options: [.caseInsensitive]
-      ) != nil
-      && auditDecision == "failed"
-      && auditErrorCode == "gateway.execution_failed"
-  }
-
-  private static let reviewedExpectedFailureTools: Set<String> = [
-    "codex.app.apps.list",
-    "codex.app.requests.respond",
-  ]
 }
 
 public struct ValidationResultDigest: Codable, Equatable, Sendable {
@@ -730,9 +696,7 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
     for run in evidenceBundle.runs {
       let socketConnectionID = run.transport.socketConnectionID ?? ""
       for attempt in run.attempts
-      where attempt.outcome == .passed || attempt.outcome == .expectedDenial
-        || attempt.outcome == .expectedFailure
-      {
+      where attempt.outcome == .passed || attempt.outcome == .expectedDenial {
         let evidenceID = "\(evidenceBundle.id)/\(run.id)/\(attempt.id)"
         let transport = run.transport.transport.rawValue
         let detail =
@@ -1035,18 +999,6 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
         "Failed attempts cannot prove acceptance."
       )
     }
-    if attempt.outcome == .expectedFailure,
-      !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
-        testCaseID: attempt.testCaseID,
-        toolName: attempt.toolName
-      )
-    {
-      issue(
-        "attempt.expected_failure_unreviewed",
-        "\(path).outcome",
-        "Expected failure is limited to reviewed fail-closed lifecycle capabilities."
-      )
-    }
 
     validateChecks(attempt.assertions, path: "\(path).assertions", issue: issue)
     validatePostconditions(
@@ -1159,16 +1111,6 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
           "audit.exact_denial_missing",
           "\(path).auditEvent",
           "An expected-denial attempt requires one exact denied audit event with a stable error code."
-        )
-      }
-    case .expectedFailure:
-      if audit.decision != .failed
-        || audit.errorCode?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
-      {
-        issue(
-          "audit.exact_failure_missing",
-          "\(path).auditEvent",
-          "An expected-failure attempt requires one exact failed audit event with a stable error code."
         )
       }
     case .failed:

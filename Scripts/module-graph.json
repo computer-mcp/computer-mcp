@@ -132,21 +132,13 @@
     "computer-mcp"
   ],
   "residual": "ComputerMCP",
-  "removed": [
-    "(removed)"
-  ],
+  "removed": [],
   "relocations": {
     "ComputerMCPPlatform/ApplicationBundleLookup.swift": "ComputerMCPPlatformDarwin",
     "ComputerMCPPlatform/ExecutableInspection+macOS.swift": "ComputerMCPPlatformDarwin",
     "ComputerMCPPlatform/KeychainAdapter.swift": "ComputerMCPPlatformDarwin",
     "ComputerMCPPlatform/SecurityKeychainAdapter.swift": "ComputerMCPPlatformDarwin",
-    "ComputerMCPPlatform/WorkspacePathResolver+macOS.swift": "ComputerMCPPlatformDarwin",
-    "ComputerMCPPlatform/ExecutableInspection+Windows.swift": "(removed)",
-    "ComputerMCPPlatform/ProcessCommandRunner+Windows.swift": "(removed)",
-    "ComputerMCPPlatform/WindowsCommandProcess.swift": "(removed)",
-    "ComputerMCPPlatform/WindowsFilePath.swift": "(removed)",
-    "ComputerMCPPlatform/WindowsProcessJob.swift": "(removed)",
-    "ComputerMCPPlatform/WorkspacePathResolver+Windows.swift": "(removed)"
+    "ComputerMCPPlatform/WorkspacePathResolver+macOS.swift": "ComputerMCPPlatformDarwin"
   },
   "types": {
     "BlockingOperationExecutor": "ComputerMCPPlatform",
@@ -234,7 +226,6 @@
     "^(GatewayConfiguration|DefaultGatewayConfiguration|ManifestFile)": "ComputerMCPConfiguration",
     "^(KeychainSecretStore|WorkspaceBookmarkService|AppControlPlaneLaunchAtLogin|AppDistributionEnvironment)": "ComputerMCPPlatformDarwin",
     "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|HTTPClientControlRegistry|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|ComputerMCPCLI|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane",
-    "^Codex(Configuration)": "(removed)",
     "^(JSONValue|CanonicalJSONCoding|GatewayModels|GatewayPolicy|GatewayToolError|MCPTool(\\.|Risk|AccessPolicy|Reference)|ComputerMCPProductContracts|HostApprovalRedactor|GatewayToolCounts|MCPHostServiceAction)": "ComputerMCPCore",
     "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway"
   },
@@ -304,12 +295,6 @@
     "CLITreeValidationTests.swift": "ComputerMCPToolsCLITests",
     "CanonicalJSONCodingTests.swift": "ComputerMCPCoreTests",
     "CloudflareTunnelTests.swift": "ComputerMCPControlPlaneTests",
-    "CodexConfigurationMigrationTests.swift": "ComputerMCPConfigurationTests",
-    "CodexConfigurationTests.swift": "ComputerMCPConfigurationTests",
-    "CodexEmbeddedFixture.swift": "ComputerMCPGatewayTests",
-    "CodexPluginBoundServicesTests.swift": "ComputerMCPGatewayTests",
-    "CodexPluginConnectionTests.swift": "ComputerMCPGatewayTests",
-    "CodexPluginHostIntegrationTests.swift": "ComputerMCPGatewayTests",
     "CombinedPluginWorkflowTests.swift": "ComputerMCPPluginsTests",
     "ComputerUseGatewayProviderTests.swift": "ComputerMCPComputerUseTests",
     "ComputerUseServiceTests.swift": "ComputerMCPComputerUseTests",
@@ -405,7 +390,6 @@
     "ProcessAndOpenAITunnelTests.swift": "ComputerMCPControlPlaneTests",
     "ProductReadinessTests.swift": "ComputerMCPControlPlaneTests",
     "ProfileGrantConfigTests.swift": "ComputerMCPConfigurationTests",
-    "RealCodexPluginAcceptanceTests.swift": "ComputerMCPGatewayTests",
     "ShellSessionRuntimeTests.swift": "ComputerMCPGatewayTests",
     "SkillFrontmatterConsistencyTests.swift": "ComputerMCPToolsSkillsTests",
     "StandaloneToolCommandTests.swift": "ComputerMCPControlPlaneTests",

@@ -30,7 +30,7 @@ CANDIDATE_CHECK_FILES = frozenset({
     "Scripts/release.py", "Scripts/candidate.py", "Scripts/publish-release.py",
     "Scripts/accept-release.py", "Scripts/verify-app-navigation.swift",
     "Scripts/verify-installed-runtime.py", "Scripts/verify-installed-workspaces.py",
-    "Scripts/verify-codex-gateway-flow.py", "Scripts/verify-release-ref.sh",
+    "Scripts/verify-release-ref.sh",
     "Scripts/assemble-release-assets.sh", "Scripts/tests/test_release.py",
     "Scripts/tests/test_candidate.py", "Scripts/tests/test_publication.py",
     "Documentation/Architecture/VersioningAndRelease.md", "Documentation/Reference/Release.md",

@@ -67,7 +67,7 @@ internal struct GatewayCapabilityCatalog: Sendable {
       workspaceRequirement = .required
     } else if name.hasPrefix("file.") || name.hasPrefix("git.")
       || name.hasPrefix("workspace.") || name.hasPrefix("cli.")
-      || name.hasPrefix("process.") || name.hasPrefix("codex.")
+      || name.hasPrefix("process.")
     {
       workspaceRequirement = .required
     } else {

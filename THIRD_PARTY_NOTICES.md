@@ -6,8 +6,8 @@ Third-party components keep their own licenses.
 The App and embedded CLI statically link the following resolved packages:
 
 - GRDB.swift, Yams, EventSource, swift-toml — MIT;
-- swift-argument-parser, swift-atomics, swift-collections, swift-log,
-  swift-nio, swift-subprocess, and swift-system — Apache-2.0;
+- swift-argument-parser, swift-atomics, swift-collections, swift-crypto,
+  swift-log, swift-nio, swift-subprocess, and swift-system — Apache-2.0;
 - Model Context Protocol Swift SDK — code covered by its upstream
   Apache-2.0/MIT transition notice.
 

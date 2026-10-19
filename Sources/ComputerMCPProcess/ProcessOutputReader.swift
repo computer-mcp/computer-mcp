@@ -42,30 +42,29 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   }
 
   func stop(drainRemainingOutput: Bool) async {
-    let task = lock.withLock { () -> Task<Void, Never>? in
-      if !stopped {
-        stopped = true
-        handle.readabilityHandler = nil
-        if drainRemainingOutput {
-          // A pipe holds fewer bytes than this budget. A concurrent writer cannot make drain infinite.
-          var remaining = 1_048_576
-          while remaining > 0, let data = readChunkLocked(), !data.isEmpty {
-            remaining -= data.count
-            enqueueLocked(data)
-          }
-          if remaining <= 0 {
-            let previous = consumptionTask
-            consumptionTask = Task { [onError] in
-              await previous?.value
-              await onError(POSIXError(.EOVERFLOW))
-            }
+    let (task, stopping) = lock.withLock { () -> (Task<Void, Never>?, Bool) in
+      guard !stopped else { return (consumptionTask, false) }
+      stopped = true
+      handle.readabilityHandler = nil
+      if drainRemainingOutput {
+        // A pipe holds fewer bytes than this budget. A concurrent writer cannot make drain infinite.
+        var remaining = 1_048_576
+        while remaining > 0, let data = readChunkLocked(), !data.isEmpty {
+          remaining -= data.count
+          enqueueLocked(data)
+        }
+        if remaining <= 0 {
+          let previous = consumptionTask
+          consumptionTask = Task { [onError] in
+            await previous?.value
+            await onError(POSIXError(.EOVERFLOW))
           }
         }
-        try? handle.close()
-        completion.continuation.finish()
       }
-      return consumptionTask
+      completion.continuation.finish()
+      return (consumptionTask, true)
     }
+    if stopping { closeAfterHandlers() }
     await task?.value
   }
 
@@ -90,8 +89,8 @@ internal final class ProcessOutputReader: @unchecked Sendable {
       }
       guard !data.isEmpty else {
         stopped = true
-        // Closing waits for the readability source, which is running this handler.
-        DispatchQueue.global(qos: .utility).async { try? handle.close() }
+        // This handler is running on the readability source that closing waits for.
+        DispatchQueue.global(qos: .utility).async { self.closeAfterHandlers() }
         completion.continuation.finish()
         return
       }
@@ -131,13 +130,20 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   }
 
   private func stopProducing() {
-    lock.withLock {
-      guard !stopped else { return }
+    let stopping = lock.withLock { () -> Bool in
+      guard !stopped else { return false }
       stopped = true
       handle.readabilityHandler = nil
-      try? handle.close()
       completion.continuation.finish()
+      return true
     }
+    if stopping { closeAfterHandlers() }
+  }
+
+  /// Closing a handle can wait for a readability handler that is still running, and the
+  /// handler takes `lock`, so close only outside the lock and off the handler's queue.
+  private func closeAfterHandlers() {
+    try? handle.close()
   }
 }
 

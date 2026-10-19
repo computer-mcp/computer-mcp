@@ -25,7 +25,7 @@ input, output, persistence and lifecycle resources.
 - `local-admin` is local-only and rejected for remote callers.
 - All workspace operations resolve a stable registered id and normalized path.
 - More than one workspace requires explicit selection.
-- Unknown tools, providers, Codex RPC methods, paths, and capabilities fail
+- Unknown tools, providers, paths, and capabilities fail
   closed.
 - Remote callers cannot approve host tickets or expand their own grants.
 
@@ -191,60 +191,17 @@ an implicit App administration channel and avoids re-entering AppKit menu
 presentation from a non-main executor. App administration uses the local
 SwiftUI adapter or owner-only `computer-mcp` control CLI.
 
-## Codex
+## Plugin execution
 
-The host authorizes access to the Codex plugin using the authenticated caller,
-profile and registered workspace. The plugin and `swift-codex` preserve native
-App Server and Exec semantics. Omitted execution settings inherit Codex
-configuration; explicit supported settings retain their official meaning.
-Provider, MCP, Skills, hooks and authentication remain Codex-owned.
+The host authorizes plugin invocations through caller identity, profile and
+registered workspace. Plugin runtime permissions and vendor configuration belong
+to the plugin; see the [Codex plugin](https://github.com/computer-mcp/plugin-codex) for its execution model.
 
-Native Full Access may be the user's configured default or an explicit request.
-It carries the operating-system permissions of the executing user. A workspace
-is an initial directory and ownership reference, not containment for arbitrary
-execution. The host does not silently lower an accepted native mode. A denied
-host capability is rejected before invoking the plugin.
-
-Native execution approval requests retain their official response shapes,
-decision scopes and cancellation semantics. The adapter preserves correlation,
-deadline and terminal state so a lost connection is not mistaken for approval
-or replay authorization. Account management, marketplace management and remote
-pairing are outside the coding surface.
-
-Dynamic Codex requests for Computer MCP tools are independently subject to
-host policy. Local control-plane confirmation applies to host operation
-tickets; a native Codex approval does not resolve such a ticket or expand host
-tool, workspace, profile, path or system permissions. Builtin dry-run paths
-whose implementation is known not to mutate state have read-only consent risk.
-Unverified downstream `dry_run` arguments do not lower risk.
-
-Host approval previews and audit summaries redact credentials and bound their
-size before persistence. Complete canonical inputs are bound to the operation
-ticket, not copied into its human-facing preview. Protocol output and retained
-events are bounded; consumers must distinguish native payloads from sanitized
-diagnostic summaries. Unresolved native approvals after restart remain
-auditable receipts, not reusable authority.
-
-Runtime cleanup is receipt- and ownership-based. Computer MCP may unsubscribe
-threads and signal only the exact process group created by the current owned
-runtime generation. Stale-receipt cleanup is previewable before mutation and
-does not grant control over Codex Desktop, IDE, CLI, or another gateway.
-External writer ownership remains an inference unless a Computer MCP receipt
-and live runtime prove it. A deliberate reclaim asks the official App Server to
-resume the thread and returns a writer conflict without terminating an
-unverified process.
-
-Managed Git worktrees use the same verified-ownership rule. Provisioning is
-bound to a registered source repository, active parent lease, reviewed branch
-and start commit, derived Application Support path, and short-lived persisted
-plan. Removal requires the Computer MCP ownership receipt, inactive child
-lease, no live child runtime, exact common-repository match, clean status,
-unchanged reviewed HEAD, explicit confirmation, and a gateway operation ticket.
-The managed root and worktree must resolve as real, current-user-owned
-directories under the canonical managed root; a receipted path replaced by a
-symbolic link is rejected. Removal does not use force or delete the preserved
-branch. Paths created by users or other tools have no qualifying receipt and
-are never cleanup targets.
+Callbacks into host tools require current host grants and operation approvals.
+A plugin approval does not authorize a host operation. Verified builtin dry runs
+can have read-only consent risk; unverified downstream `dry_run` arguments do not
+lower risk. Host approval previews and audit summaries redact credentials and
+bound their size. Canonical inputs remain bound to the exact operation ticket.
 
 ## Stable Denials And Audit Decisions
 

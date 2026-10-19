@@ -413,7 +413,7 @@ struct ProfilePermissions: AsyncParsableCommand {
     commandName: "permissions",
     abstract: "Update host permissions without restarting the gateway or stopping active work.",
     discussion:
-      "Unspecified settings are preserved. Run profile show first; use --expected-revision to reject a stale edit. Full Access does not automatically grant arbitrary execution or change Codex's native permissions."
+      "Unspecified settings are preserved. Run profile show first; use --expected-revision to reject a stale edit. Full Access does not automatically grant arbitrary execution."
   )
 
   @Argument(help: "Profile ID from profile list.") var id: String
@@ -708,7 +708,7 @@ struct PermissionsStatus: AsyncParsableCommand {
 struct PermissionApprovals: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "approvals",
-    abstract: "Review and resolve host approvals; does not change Codex native approvals.",
+    abstract: "Review and resolve host operation approvals.",
     subcommands: [List.self, Approve.self, Deny.self])
 
   struct List: AsyncParsableCommand {

@@ -92,43 +92,4 @@ final class CapabilityFixturePlanTests {
     #expect((plan.invocation(for: "mcp.requests.cancel")) == nil)
   }
 
-  @Test
-  func testCodexReadOnlyLifecycleSurfacesHaveBoundedFixtures() {
-    let plan = CapabilityFixturePlan(
-      workspaceID: "fixture",
-      accessibilityProcessID: 123
-    )
-    let supported = [
-      "codex.app.apps.list",
-      "codex.app.events.read",
-      "codex.app.methods.describe",
-      "codex.app.methods.list",
-      "codex.app.models.list",
-      "codex.app.requests.list",
-      "codex.app.skills.list",
-      "codex.app.status",
-      "codex.app.thread.list",
-      "codex.exec.list",
-    ]
-
-    #expect((supported.filter { plan.invocation(for: $0) == nil }) == ([]))
-  }
-
-  @Test
-  func testCodexThreadCleanupIsBoundToTheFixtureWorkspace() {
-    let plan = CapabilityFixturePlan(
-      workspaceID: "fixture",
-      repositoryWorkspaceID: "repository",
-      accessibilityProcessID: 123
-    )
-
-    let invocation = plan.codexThreadArchiveInvocation(threadID: "thread-123")
-
-    #expect(invocation.arguments["workspace_id"] == .string("fixture"))
-    #expect(invocation.arguments["method"] == .string("thread/archive"))
-    #expect(
-      invocation.arguments["params"]
-        == .object(["threadId": .string("thread-123")])
-    )
-  }
 }

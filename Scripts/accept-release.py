@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 from urllib.parse import unquote, urlparse
@@ -14,6 +13,62 @@ from release import ROOT, atomic_json, file_digest, inventory, source_identity
 
 def command(arguments, timeout=60):
     return subprocess.check_output(arguments, cwd=ROOT, timeout=timeout).decode()
+
+
+def inspect_installed_plugin(cli):
+    """Verify a selected packaged plugin through the host's read-only contract."""
+    snapshot = json.loads(command([str(cli), "plugins", "list"]))
+    state = snapshot["state"]
+    if snapshot.get("recovery_error"):
+        raise ValueError("Plugin storage requires recovery before acceptance")
+    selected = state["selected_installations"]
+    bundled = sorted(item["manifest"]["id"] for item in snapshot["bundled"]
+                     if item["manifest"]["id"] not in selected)
+    installed = sorted(item["plugin_id"] for item in state["installations"]
+                       if item["source"]["kind"] == "artifact"
+                       and selected.get(item["plugin_id"]) == item["id"])
+    candidates = bundled + installed
+    if not candidates:
+        raise ValueError("Acceptance requires a selected bundled or installed plugin package")
+    unavailable = []
+    for plugin_id in candidates:
+        try:
+            doctor = json.loads(command([str(cli), "plugins", "doctor", plugin_id]))
+        except subprocess.CalledProcessError as error:
+            if error.returncode != 1:
+                raise
+            doctor = json.loads(error.output)
+            if doctor.get("status") != "failed":
+                raise
+        if doctor["plugin_id"] != plugin_id or doctor["revision"] != state["revision"]:
+            raise ValueError("Plugin identity or host revision changed before acceptance")
+        if doctor["status"] == "passed":
+            break
+        if doctor["status"] not in ("failed", "unverified"):
+            raise ValueError("The plugin doctor returned an unknown status")
+        unavailable.append({"plugin_id": plugin_id, "status": doctor["status"], "checks": doctor["checks"]})
+    else:
+        raise ValueError("No installed plugin passed its host package checks: " + ", ".join(candidates))
+    source = doctor.get("source") or {}
+    if source.get("kind") not in ("bundled", "artifact"):
+        raise ValueError("The selected plugin is not a bundled or installed package")
+    location = urlparse(source["root"])
+    if location.scheme != "file" or location.netloc not in ("", "localhost"):
+        raise ValueError("Installed plugin root must be a local file URL")
+    plugin = Path(unquote(location.path)).resolve(strict=True)
+    if not plugin.is_dir():
+        raise ValueError("Installed plugin root is not a directory")
+    identity = inventory(plugin)
+    verified = json.loads(command([str(cli), "plugins", "doctor", plugin_id]))
+    current = json.loads(command([str(cli), "plugins", "list"]))
+    if (inventory(plugin) != identity or current != snapshot
+            or {key: value for key, value in verified.items() if key != "checked_at"}
+            != {key: value for key, value in doctor.items() if key != "checked_at"}):
+        raise ValueError("Installed plugin identity or host settings changed during acceptance")
+    return {"status": "passed", "plugin_id": plugin_id, "version": doctor["version"],
+            "installed_path": str(plugin), "files": identity, "source": source,
+            "scope": doctor["scope"], "checks": doctor["checks"],
+            "not_checked": doctor["not_checked"], "unavailable_plugins": unavailable}
 
 
 def accept(app, candidate_directory, work):
@@ -49,34 +104,8 @@ def accept(app, candidate_directory, work):
     result.check_returncode()
     subprocess.run([sys.executable, str(ROOT / "Scripts/verify-installed-workspaces.py"),
                     "--cli", str(cli), "--work", str(work)], check=True, timeout=120)
-    doctor = json.loads(command([str(cli), "plugins", "doctor", "codex"]))
-    if doctor["status"] != "passed" or doctor["source"]["kind"] != "artifact":
-        raise ValueError("Codex integration requires a healthy installed plugin artifact")
-    plugin = Path(unquote(urlparse(doctor["source"]["root"]).path)).resolve()
-    adapter = plugin / "bin/codex-mcp-adapter"
-    plugin_identity = inventory(plugin)
-    if command([str(adapter), "--version"]).strip() != doctor["version"]:
-        raise ValueError("Installed plugin runtime and manifest versions differ")
-    vendor = shutil.which("codex")
-    if not vendor:
-        print("Required action: make the vendor Codex executable available on PATH, then resume.")
-        return 75
-    plugin_log = work / "plugin-integration.log"
-    with plugin_log.open("wb") as stream:
-        subprocess.run([sys.executable, str(ROOT / "Scripts/verify-codex-gateway-flow.py"),
-                        str(cli), str(adapter), vendor,
-                        str(ROOT / "Tests/ComputerMCPTests/Fixtures/NativeCodex/ModelServer.py"),
-                        "--output-directory", str(work / "plugin-runtime")],
-                       stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=240)
-    if inventory(plugin) != plugin_identity:
-        raise ValueError("Installed plugin changed during acceptance")
     plugin_result = work / "plugin-integration.json"
-    atomic_json(plugin_result, {"status": "passed", "plugin_id": "codex", "version": doctor["version"],
-                               "installed_path": str(plugin), "files": plugin_identity,
-                               "archive_sha256": doctor["source"]["artifact_sha256"],
-                               "vendor_version": command([vendor, "--version"]).strip(),
-                               "vendor_sha256": file_digest(Path(vendor)), "log_sha256": file_digest(plugin_log),
-                               "model_backend": "fixed-loopback-fixture", "real_model_verified": False})
+    atomic_json(plugin_result, inspect_installed_plugin(cli))
     if inventory(app) != expected:
         raise ValueError("Installed artifact changed during acceptance")
     receipt = {"schema_version": 1, "status": "passed", "candidate": candidate["candidate"],

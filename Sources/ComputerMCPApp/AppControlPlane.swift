@@ -190,7 +190,6 @@ enum ProviderKind: String, Sendable {
   case builtin
   case cli
   case mcp
-  case codex
   case computerUse
   case external
 
@@ -200,7 +199,6 @@ enum ProviderKind: String, Sendable {
       case .builtin: "Builtin"
       case .cli: "CLI"
       case .mcp: "MCP"
-      case .codex: "Codex"
       case .computerUse: "Computer Use"
       case .external: "External"
       }

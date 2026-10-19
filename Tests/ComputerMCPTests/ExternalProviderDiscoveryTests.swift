@@ -202,7 +202,7 @@ final class ExternalProviderDiscoveryTests {
     let runner = DiscoveryCommandRunner()
     let discovery = ExternalProviderDiscovery(
       configuration: GatewayConfiguration(
-        codex: CodexConfigurationImport(enabled: true, executable: configured.path)),
+        cli: .init(commands: [.init(id: "codex", executable: configured.path)])),
       definitions: [codexDefinition], commandRunner: runner,
       environment: ["PATH": directory.path], commonSearchDirectories: [])
     let result = try #require(discovery.discover().first)
@@ -258,7 +258,7 @@ final class ExternalProviderDiscoveryTests {
     defer { try? FileManager.default.removeItem(at: directory) }
     let executable = try makeExecutable(named: "codex", in: directory)
     let configuration = GatewayConfiguration(
-      codex: CodexConfigurationImport(enabled: true, executable: executable.path)
+      cli: .init(commands: [.init(id: "codex", executable: executable.path)])
     )
     let runner = DiscoveryCommandRunner { call in
       #expect((call.arguments) == (["--version"]))

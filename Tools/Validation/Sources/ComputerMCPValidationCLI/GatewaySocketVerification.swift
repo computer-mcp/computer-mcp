@@ -290,19 +290,8 @@ private struct AppFullCatalogProbeReport: Encodable {
         switch auditEvent.decision {
         case .allowed: .passed
         case .denied: .expectedDenial
-        case .failed: .expectedFailure
+        case .failed: .failed
         }
-      guard
-        expectedOutcome != .expectedFailure
-          || ValidationReviewedOutcomePolicy.permitsExpectedFailure(
-            testCaseID: "catalog.dynamic_full_coverage",
-            toolName: tool.toolName
-          )
-      else {
-        throw ValidationError(
-          "Runtime observation contains an unreviewed expected failure for tool '\(tool.toolName)'."
-        )
-      }
       return ValidationObservation(
         id: "\(runID).\(tool.toolName)",
         testCaseID: "catalog.dynamic_full_coverage",
@@ -453,49 +442,15 @@ private struct AppFullCatalogProbeRunner {
   let inventoryProfile: CapabilityInventoryProfile?
   let fixtureReport: CapabilityFixtureReport?
   let runID: String?
-  private var codexThreadsToArchive: Set<String> = []
-  private let codexArchiveAttempts = 20
-
-  init(
-    session: GatewayClientSession,
-    socketConfiguration: GatewaySocketConfiguration,
-    database: GatewayDatabase,
-    socketPath: String,
-    databasePath: String,
-    fixturePlan: CapabilityFixturePlan,
-    inventoryProfile: CapabilityInventoryProfile?,
-    fixtureReport: CapabilityFixtureReport?,
-    runID: String?
-  ) {
-    self.session = session
-    self.socketConfiguration = socketConfiguration
-    self.database = database
-    self.socketPath = socketPath
-    self.databasePath = databasePath
-    self.fixturePlan = fixturePlan
-    self.inventoryProfile = inventoryProfile
-    self.fixtureReport = fixtureReport
-    self.runID = runID
-  }
 
   mutating func run() async throws -> AppFullCatalogProbeReport {
     let report: AppFullCatalogProbeReport
     do {
       report = try await runCatalog()
-    } catch let executionError {
-      let executionError = await session.disconnect(after: executionError)
-      do {
-        try await archiveValidationCodexThreads()
-      } catch let cleanupError {
-        throw ValidationError(
-          "The App catalog probe failed and Codex validation cleanup also failed. "
-            + "Probe: \(executionError) Cleanup: \(cleanupError)"
-        )
-      }
-      throw executionError
+    } catch {
+      throw await session.disconnect(after: error)
     }
     try await session.disconnect()
-    try await archiveValidationCodexThreads()
     return report
   }
 
@@ -538,12 +493,6 @@ private struct AppFullCatalogProbeRunner {
 
     var lifecycleResults = try await callComputerUseLifecycle(enabledTools: catalogSet)
     lifecycleResults.merge(await callExecutionLifecycle(enabledTools: catalogSet)) { current, _ in
-      current
-    }
-    lifecycleResults.merge(await callCodexAppLifecycle(enabledTools: catalogSet)) { current, _ in
-      current
-    }
-    lifecycleResults.merge(await callCodexExecLifecycle(enabledTools: catalogSet)) { current, _ in
       current
     }
 
@@ -608,8 +557,7 @@ private struct AppFullCatalogProbeRunner {
       case .direct:
         callResult = await call(
           tool,
-          invocation: invocation,
-          allowsReviewedUpstreamDirectoryChallenge: tool == "codex.app.apps.list"
+          invocation: invocation
         )
       case .committed:
         let committed = await callCommitted(tool, invocation: invocation)
@@ -679,8 +627,7 @@ private struct AppFullCatalogProbeRunner {
 
   private func call(
     _ tool: String,
-    invocation: CapabilityFixtureInvocation,
-    allowsReviewedUpstreamDirectoryChallenge: Bool = false
+    invocation: CapabilityFixtureInvocation
   ) async -> (
     result: AppFullCatalogProbeToolResult,
     report: GatewayCallReport?
@@ -688,16 +635,14 @@ private struct AppFullCatalogProbeRunner {
     await call(
       tool,
       invocation: invocation,
-      using: session,
-      allowsReviewedUpstreamDirectoryChallenge: allowsReviewedUpstreamDirectoryChallenge
+      using: session
     )
   }
 
   private func call(
     _ tool: String,
     invocation: CapabilityFixtureInvocation,
-    using targetSession: GatewayClientSession,
-    allowsReviewedUpstreamDirectoryChallenge: Bool = false
+    using targetSession: GatewayClientSession
   ) async -> (
     result: AppFullCatalogProbeToolResult,
     report: GatewayCallReport?
@@ -717,21 +662,9 @@ private struct AppFullCatalogProbeRunner {
         expectedMarker: invocation.expectedMarker
       )
       let resultData = try? sortedJSON(report.result)
-      let reviewedUpstreamDirectoryChallenge =
-        allowsReviewedUpstreamDirectoryChallenge
-        && isError
-        && structured
-        && ValidationReviewedOutcomePolicy.permitsUpstreamDirectoryChallenge(
-          testCaseID: "catalog.dynamic_full_coverage",
-          toolName: tool,
-          providerResult: encoded(report.result),
-          auditDecision: audit?.decision.rawValue,
-          auditErrorCode: audit?.errorCode
-        )
       let outputBytes = resultData?.count
       let status =
         (!isError && structured && semantic.passed && audit?.decision == .allowed)
-          || reviewedUpstreamDirectoryChallenge
         ? "passed"
         : "failed"
       return (
@@ -743,7 +676,7 @@ private struct AppFullCatalogProbeRunner {
           auditEventID: audit?.id,
           auditDecision: audit?.decision.rawValue,
           structuredContent: structured,
-          semanticValidated: semantic.passed || reviewedUpstreamDirectoryChallenge,
+          semanticValidated: semantic.passed,
           outputByteCount: outputBytes,
           resultDigest: resultData.map(digest),
           auditEvent: audit,
@@ -773,51 +706,6 @@ private struct AppFullCatalogProbeRunner {
           detail: stableSocketProbeError(error)
         ),
         nil
-      )
-    }
-  }
-
-  private func callExpectedProviderFailure(
-    _ tool: String,
-    invocation: CapabilityFixtureInvocation,
-    expectedMarker: String
-  ) async -> AppFullCatalogProbeToolResult {
-    do {
-      let report = try await session.call(
-        toolName: tool,
-        arguments: .object(invocation.arguments)
-      )
-      let gatewayRequestID = executionRequestID(from: report)
-      let audit = gatewayRequestID.flatMap(auditEvent(requestID:))
-      let isError = report.result.objectValue?["isError"]?.boolValue == true
-      let structured = report.result.objectValue?["structuredContent"] != nil
-      let markerMatched = encoded(report.result).contains(expectedMarker)
-      let resultData = try? sortedJSON(report.result)
-      let status =
-        isError && structured && markerMatched && audit?.decision == .failed
-        ? "passed"
-        : "failed"
-      return AppFullCatalogProbeToolResult(
-        toolName: tool,
-        status: status,
-        transportRequestID: report.requestID,
-        gatewayRequestID: gatewayRequestID,
-        auditEventID: audit?.id,
-        auditDecision: audit?.decision.rawValue,
-        structuredContent: structured,
-        semanticValidated: isError && markerMatched,
-        outputByteCount: resultData?.count,
-        resultDigest: resultData.map(digest),
-        auditEvent: audit,
-        detail: status == "passed"
-          ? nil
-          : providerErrorMessage(from: report)
-            ?? "The environment-gated provider call did not return the expected audited failure '\(expectedMarker)'."
-      )
-    } catch {
-      return lifecycleFailure(
-        tool: tool,
-        detail: stableSocketProbeError(error)
       )
     }
   }
@@ -985,197 +873,6 @@ private struct AppFullCatalogProbeRunner {
       target: cancelled.target,
       prepare: cancelled.prepare.status == "passed" ? cancelled.prepare : started.prepare,
       commit: cancelled.commit?.status == "passed" ? cancelled.commit : started.commit
-    )
-  }
-
-  private mutating func callCodexAppLifecycle(
-    enabledTools: Set<String>
-  ) async -> [String: AppFullCatalogProbeToolResult] {
-    let lifecycleTools: Set<String> = [
-      "codex.app.requests.respond",
-      "codex.app.review.start",
-      "codex.app.thread.fork",
-      "codex.app.thread.read",
-      "codex.app.thread.start",
-      "codex.app.turn.interrupt",
-      "codex.app.turn.start",
-    ]
-    let requiredTools = lifecycleTools.intersection(enabledTools)
-    guard !requiredTools.isEmpty else {
-      return [:]
-    }
-
-    var results: [String: AppFullCatalogProbeToolResult] = [:]
-    let workspaceID = fixturePlan.repositoryWorkspaceID ?? fixturePlan.workspaceID
-    let workspaceArgument: [String: JSONValue] = ["workspace_id": .string(workspaceID)]
-    let started = await call(
-      "codex.app.thread.start",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging([
-          "ephemeral": .bool(false)
-        ]) { current, _ in current },
-        expectedMarker: "thread"
-      )
-    )
-    results["codex.app.thread.start"] = started.result
-    guard started.result.status == "passed", let startedReport = started.report,
-      let threadID = structuredResult(from: startedReport)?.objectValue?["thread"]?
-        .objectValue?["id"]?.stringValue
-    else {
-      return completingLifecycleFailures(
-        results,
-        tools: requiredTools,
-        detail: "codex.app.thread.start did not return a workspace-bound thread id."
-      )
-    }
-    codexThreadsToArchive.insert(threadID)
-
-    results["codex.app.requests.respond"] = await callExpectedProviderFailure(
-      "codex.app.requests.respond",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging([
-          "request_id": .string("validation-no-active-request"),
-          "response": .object([:]),
-        ]) { current, _ in current }
-      ),
-      expectedMarker: "codex.app.request_unknown"
-    )
-
-    let turnStarted = await call(
-      "codex.app.turn.start",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging([
-          "thread_id": .string(threadID),
-          "prompt": .string(
-            "Reply with exactly CMCP_TURN_OK. Do not call tools and do not modify files."
-          ),
-          "model": .string("gpt-5.6-sol"),
-          "effort": .string("low"),
-        ]) { current, _ in current }
-      )
-    )
-    results["codex.app.turn.start"] = turnStarted.result
-
-    var completedRead: AppFullCatalogProbeToolResult?
-    if turnStarted.result.status == "passed", let report = turnStarted.report,
-      let turnID = structuredResult(from: report)?.objectValue?["turn"]?.objectValue?["id"]?
-        .stringValue
-    {
-      for _ in 0..<240 {
-        let read = await call(
-          "codex.app.thread.read",
-          invocation: CapabilityFixtureInvocation(
-            arguments: workspaceArgument.merging([
-              "thread_id": .string(threadID),
-              "include_turns": .bool(true),
-            ]) { current, _ in current },
-            expectedMarker: threadID
-          )
-        )
-        let turnStatus = read.report.flatMap { report in
-          structuredResult(from: report)?.objectValue?["thread"]?.objectValue?["turns"]?
-            .arrayValue?.first(where: {
-              $0.objectValue?["id"]?.stringValue == turnID
-            })?.objectValue?["status"]?.stringValue
-        }
-        if turnStatus == "completed" {
-          completedRead = read.result
-          break
-        }
-        if turnStatus == "failed" || turnStatus == "interrupted" {
-          break
-        }
-        try? await Task.sleep(for: .milliseconds(250))
-      }
-    }
-    results["codex.app.thread.read"] =
-      completedRead
-      ?? lifecycleFailure(
-        tool: "codex.app.thread.read",
-        detail: "The bounded Codex App turn did not complete before the read deadline."
-      )
-
-    let forked = await call(
-      "codex.app.thread.fork",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging([
-          "thread_id": .string(threadID),
-          "ephemeral": .bool(true),
-        ]) { current, _ in current },
-        expectedMarker: "thread"
-      )
-    )
-    results["codex.app.thread.fork"] = forked.result
-
-    let review = await call(
-      "codex.app.review.start",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArgument.merging([
-          "thread_id": .string(threadID),
-          "target": .object(["type": .string("uncommittedChanges")]),
-          "delivery": .string("inline"),
-        ]) { current, _ in current }
-      )
-    )
-    results["codex.app.review.start"] = review.result
-    if review.result.status == "passed", let report = review.report,
-      let reviewResult = structuredResult(from: report)?.objectValue,
-      let reviewThreadID = reviewResult["reviewThreadId"]?.stringValue
-    {
-      var activeReviewTurnID: String?
-      for _ in 0..<60 {
-        let read = await call(
-          "codex.app.thread.read",
-          invocation: CapabilityFixtureInvocation(
-            arguments: workspaceArgument.merging([
-              "thread_id": .string(reviewThreadID),
-              "include_turns": .bool(true),
-            ]) { current, _ in current },
-            expectedMarker: reviewThreadID
-          )
-        )
-        activeReviewTurnID = read.report.flatMap { report in
-          structuredResult(from: report)?.objectValue?["thread"]?.objectValue?["turns"]?
-            .arrayValue?.compactMap { $0.objectValue }.first(where: {
-              $0["status"]?.stringValue == "inProgress"
-            })?["id"]?.stringValue
-        }
-        if activeReviewTurnID != nil {
-          break
-        }
-        try? await Task.sleep(for: .milliseconds(250))
-      }
-      if let activeReviewTurnID {
-        let interrupted = await call(
-          "codex.app.turn.interrupt",
-          invocation: CapabilityFixtureInvocation(
-            arguments: workspaceArgument.merging([
-              "thread_id": .string(reviewThreadID),
-              "turn_id": .string(activeReviewTurnID),
-            ]) { current, _ in current }
-          )
-        )
-        results["codex.app.turn.interrupt"] = interrupted.result
-      } else {
-        results["codex.app.turn.interrupt"] = lifecycleFailure(
-          tool: "codex.app.turn.interrupt",
-          detail: "The review fixture did not expose its active outer turn before the deadline."
-        )
-      }
-      if reviewThreadID != threadID {
-        codexThreadsToArchive.insert(reviewThreadID)
-      }
-    } else {
-      results["codex.app.turn.interrupt"] = lifecycleFailure(
-        tool: "codex.app.turn.interrupt",
-        detail: "codex.app.review.start did not return an active review turn to interrupt."
-      )
-    }
-
-    return completingLifecycleFailures(
-      results,
-      tools: requiredTools,
-      detail: "The Codex App lifecycle fixture did not reach this capability."
     )
   }
 
@@ -1565,192 +1262,6 @@ private struct AppFullCatalogProbeRunner {
       return nil
     }
     return (x + width / 2, y + height / 2)
-  }
-
-  private mutating func callCodexExecLifecycle(
-    enabledTools: Set<String>
-  ) async -> [String: AppFullCatalogProbeToolResult] {
-    let lifecycleTools: Set<String> = [
-      "codex.exec.cancel",
-      "codex.exec.events",
-      "codex.exec.result",
-      "codex.exec.resume",
-      "codex.exec.start",
-    ]
-    let requiredTools = lifecycleTools.intersection(enabledTools)
-    guard !requiredTools.isEmpty else {
-      return [:]
-    }
-
-    var results: [String: AppFullCatalogProbeToolResult] = [:]
-    let workspaceArguments: [String: JSONValue] = [
-      "workspace_id": .string(fixturePlan.workspaceID)
-    ]
-    let started = await call(
-      "codex.exec.start",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArguments.merging([
-          "prompt": .string("Reply exactly CMCP VALIDATION EXEC. Do not modify files.")
-        ]) { current, _ in current },
-        expectedMarker: "running"
-      )
-    )
-    results["codex.exec.start"] = started.result
-    guard started.result.status == "passed", let startedReport = started.report,
-      let sessionID = structuredResult(from: startedReport)?.objectValue?["session_id"]?
-        .stringValue
-    else {
-      return completingLifecycleFailures(
-        results,
-        tools: requiredTools,
-        detail: "codex.exec.start did not return a running session id."
-      )
-    }
-
-    let events = await call(
-      "codex.exec.events",
-      invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArguments.merging([
-          "session_id": .string(sessionID),
-          "after_cursor": .number(0),
-          "max_results": .number(100),
-        ]) { current, _ in current }
-      )
-    )
-    results["codex.exec.events"] = events.result
-
-    var upstreamSessionID = events.report.flatMap {
-      firstStringValue(named: "thread_id", in: structuredResult(from: $0) ?? .null)
-    }
-    var terminal = false
-    for _ in 0..<240 {
-      let listed = await call(
-        "codex.exec.list",
-        invocation: CapabilityFixtureInvocation(arguments: workspaceArguments)
-      )
-      if let report = listed.report,
-        let row = objectValue(
-          containing: "session_id",
-          equalTo: sessionID,
-          in: structuredResult(from: report)
-        )
-      {
-        upstreamSessionID = row["upstream_session_id"]?.stringValue ?? upstreamSessionID
-        if let state = row["state"]?.stringValue,
-          ["completed", "failed", "cancelled"].contains(state)
-        {
-          terminal = true
-          break
-        }
-      }
-      try? await Task.sleep(for: .milliseconds(250))
-    }
-
-    if terminal {
-      let result = await call(
-        "codex.exec.result",
-        invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging(["session_id": .string(sessionID)]) {
-            current, _ in current
-          },
-          expectedMarker: sessionID
-        )
-      )
-      results["codex.exec.result"] = result.result
-      if upstreamSessionID == nil, let report = result.report {
-        upstreamSessionID =
-          structuredResult(from: report)?.objectValue?["upstream_session_id"]?
-          .stringValue
-      }
-    } else {
-      results["codex.exec.result"] = lifecycleFailure(
-        tool: "codex.exec.result",
-        detail: "The bounded Codex Exec start session did not reach a terminal state."
-      )
-    }
-
-    if let upstreamSessionID {
-      let resumed = await call(
-        "codex.exec.resume",
-        invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
-            "upstream_session_id": .string(upstreamSessionID),
-            "prompt": .string("Wait before replying. Do not modify files."),
-          ]) { current, _ in current },
-          expectedMarker: "running"
-        )
-      )
-      results["codex.exec.resume"] = resumed.result
-      if resumed.result.status == "passed", let report = resumed.report,
-        let resumedSessionID = structuredResult(from: report)?.objectValue?["session_id"]?
-          .stringValue
-      {
-        let cancelled = await call(
-          "codex.exec.cancel",
-          invocation: CapabilityFixtureInvocation(
-            arguments: workspaceArguments.merging([
-              "session_id": .string(resumedSessionID)
-            ]) { current, _ in current },
-            expectedMarker: "cancelled"
-          )
-        )
-        results["codex.exec.cancel"] = cancelled.result
-      }
-    }
-
-    if let upstreamSessionID {
-      codexThreadsToArchive.insert(upstreamSessionID)
-    }
-
-    return completingLifecycleFailures(
-      results,
-      tools: requiredTools,
-      detail: "The Codex Exec lifecycle fixture did not reach this capability."
-    )
-  }
-
-  private mutating func archiveValidationCodexThreads() async throws {
-    guard !codexThreadsToArchive.isEmpty else {
-      return
-    }
-    let cleanupSession = try await GatewayClientSession.connectSocket(
-      configuration: socketConfiguration
-    )
-    var cleanupError: ValidationError?
-    for threadID in codexThreadsToArchive.sorted() {
-      var archived = false
-      var lastDetail: String?
-      for _ in 0..<codexArchiveAttempts {
-        let result = await call(
-          "codex.app.methods.call",
-          invocation: fixturePlan.codexThreadArchiveInvocation(threadID: threadID),
-          using: cleanupSession
-        ).result
-        let disposition = CodexThreadArchiveCleanupDisposition.classify(
-          status: result.status,
-          detail: result.detail,
-          threadID: threadID
-        )
-        if disposition != .failed {
-          archived = true
-          break
-        }
-        lastDetail = result.detail
-        try? await Task.sleep(for: .milliseconds(250))
-      }
-      guard archived else {
-        cleanupError = ValidationError(
-          "Codex validation cleanup could not archive thread '\(threadID)': "
-            + (lastDetail ?? "unknown failure")
-        )
-        break
-      }
-      codexThreadsToArchive.remove(threadID)
-    }
-    if let cleanupError {
-      throw await cleanupSession.disconnect(after: cleanupError)
-    }
-    try await cleanupSession.disconnect()
   }
 
   private func completingLifecycleFailures(

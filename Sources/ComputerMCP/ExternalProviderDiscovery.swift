@@ -568,11 +568,6 @@ internal struct ExternalProviderDiscovery: @unchecked Sendable {
     var providers: [String: [ExternalProviderLaunchConfig]] = [:]
     for definition in definitions {
       var launches: [ExternalProviderLaunchConfig] = []
-      if definition.kind == .codex, let codex = configuration.codex, codex.enabled {
-        launches.append(
-          ExternalProviderLaunchConfig(executable: codex.executable)
-        )
-      }
       for server in configuration.mcp.servers where server.enabled {
         guard let command = server.command,
           matches(

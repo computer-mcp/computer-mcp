@@ -180,7 +180,10 @@ python3 Scripts/release.py run --run RELEASE_RUN_ID --profile acceptance
 ```
 
 They check native permissions, navigation, workspace operations and installed
-plugin fixtures on that Mac. Cloud release reports do not claim these results.
+plugin package identity, compatibility, dependencies and files on that Mac.
+Package checks preserve host settings and do not claim vendor runtime or
+end-to-end acceptance; those belong to each plugin. Cloud release reports do
+not claim these results.
 A checker-only correction can use `resume --reuse-candidate --profile acceptance`
 after its exact permitted source difference is reviewed. TCC decisions remain
 native human actions; elapsed time never counts as authorization.

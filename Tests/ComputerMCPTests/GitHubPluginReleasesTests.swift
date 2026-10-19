@@ -14,7 +14,7 @@ struct GitHubPluginReleasesTests {
     var artifact = pluginArtifactFixture(manifest: manifest)
     if fault != "omitted" {
       artifact.compatibility = try PluginPlatformCompatibility(
-        platforms: [fault == "forged" ? "windows" : "macos"], architectures: ["arm64"])
+        platforms: ["macos"], architectures: [fault == "forged" ? "x86_64" : "arm64"])
     }
     if fault == "correct" {
       try await GitHubPluginReleases(http: http).revalidate(artifact)

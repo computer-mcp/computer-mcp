@@ -5,12 +5,11 @@ import Testing
 
 struct PluginExecutablePathsTests {
   @Test
-  func nativeEntryPointsRetainOneDeclarationAcrossPlatformArchives() throws {
+  func nativeEntryPointsRoundTripAndRequireADeclaredPlatform() throws {
     let paths = try PluginExecutablePaths([
-      "macos": "bin/adapter", "windows": "bin/adapter.exe",
+      "macos": "bin/adapter"
     ])
     #expect(try paths.path(for: "macos") == "bin/adapter")
-    #expect(try paths.path(for: "windows") == "bin/adapter.exe")
     #expect(try paths.path(for: PluginPlatformCompatibility.currentPlatform).hasPrefix("bin/"))
     #expect(
       try JSONDecoder().decode(PluginExecutablePaths.self, from: JSONEncoder().encode(paths))
@@ -25,15 +24,11 @@ struct PluginExecutablePathsTests {
     #"{"linux":"bin/adapter"}"#,
     #"{"MacOS":"bin/adapter"}"#,
     #"{"macos":"../adapter"}"#,
-    #"{"windows":"C:/adapter.exe"}"#,
-    #"{"windows":"bin/adapter.exe:stream"}"#,
-    #"{"windows":"bin/NUL.exe"}"#,
-    #"{"windows":"bin/COM¹.exe"}"#,
-    #"{"windows":"bin/.. /adapter.exe"}"#,
-    #"{"windows":"bin./adapter.exe"}"#,
-    #"{"windows":"bin/adapter?.exe"}"#,
-    #"{"windows":"bin//adapter.exe"}"#,
-    #"{"windows":"bin/adapter.exe","macos":false}"#,
+    #"{"windows":"bin/adapter.exe"}"#,
+    #"{"macos":"/adapter"}"#,
+    #"{"macos":"bin//adapter"}"#,
+    #"{"macos":"bin/./adapter"}"#,
+    #"{"macos":false}"#,
   ])
   func invalidPathsCannotSelectAliasesOrEscapePackageRoots(json: String) {
     #expect(throws: (any Error).self) {
@@ -42,10 +37,10 @@ struct PluginExecutablePathsTests {
   }
 
   @Test
-  func platformGrammarDoesNotChangeLegacyMacOSNames() throws {
+  func platformPathsPreserveMacOSNames() throws {
     let paths = try PluginExecutablePaths(["macos": "bin/name:variant"])
     #expect(try paths.path(for: "macos") == "bin/name:variant")
     #expect(
-      try PluginExecutablePaths(["windows": "bin/运行.exe"]).path(for: "windows") == "bin/运行.exe")
+      try PluginExecutablePaths(["macos": "bin/运行"]).path(for: "macos") == "bin/运行")
   }
 }

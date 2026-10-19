@@ -674,54 +674,6 @@
       "risk_level": "critical"
     },
     {
-      "id": "codex.native_permissions_and_host_boundary",
-      "category": "security",
-      "transports": [
-        "openai_secure_mcp_tunnel"
-      ],
-      "profiles": [
-        "chatgpt-operate"
-      ],
-      "prerequisites": [
-        "The independent Codex plugin uses isolated App Server and Exec state with a local model fixture."
-      ],
-      "steps": [
-        {
-          "id": "1",
-          "instruction": "Verify native Full Access inheritance and explicit native permission overrides on an authorized Codex tool, then revoke the host tool grant and repeat the invocation."
-        }
-      ],
-      "expected_results": [
-        "Authorized calls preserve native permission configuration and overrides; after host revocation the same tool is rejected before execution without silently lowering Codex permissions."
-      ],
-      "evidence_requirements": [
-        {
-          "kind": "transport",
-          "correlation_key": "tunnel_instance_id",
-          "description": "Secure Tunnel instance."
-        },
-        {
-          "kind": "request",
-          "correlation_key": "request_id",
-          "description": "Authorized native requests and the host-denied request identifiers."
-        },
-        {
-          "kind": "audit",
-          "correlation_key": "audit_event_id",
-          "description": "Correlated host authorization and denial audit events."
-        },
-        {
-          "kind": "result",
-          "correlation_key": "provider_state_digest",
-          "description": "Independent provider lifecycle state digest."
-        }
-      ],
-      "cleanup_steps": [
-        "Restore only disposable Codex fixture state."
-      ],
-      "risk_level": "critical"
-    },
-    {
       "id": "audit.sensitive_data_redacted",
       "category": "security",
       "transports": [
@@ -886,7 +838,7 @@
       "steps": [
         {
           "id": "1",
-          "instruction": "From the maintained External Consumer page, discover resources/prompts/tools and perform representative read, write, provider, Codex, Process, and Computer Use calls."
+          "instruction": "From the maintained External Consumer page, discover resources/prompts/tools and perform representative read, write, provider, Process, and Computer Use calls."
         }
       ],
       "expected_results": [

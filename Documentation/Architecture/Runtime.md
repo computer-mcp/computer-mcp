@@ -146,11 +146,6 @@ OpenAI Tunnel definitions persist only transport identity and policy fields.
 They may include a credential-free HTTP proxy URL; when absent, the runtime
 resolves the active fixed macOS HTTPS/HTTP proxy at launch. Proxy credentials
 remain outside the product configuration contract.
-The independent Codex adapter's App Server and Exec lifecycles map the active
-fixed macOS HTTP, HTTPS, and SOCKS proxies into their child process
-environments, while preserving an explicitly inherited proxy environment and
-direct loopback access. This derived environment is never persisted or logged,
-and Computer MCP does not evaluate proxy auto-configuration scripts.
 At launch, the App injects the absolute path of its signed embedded CLI into
 the Control Plane's runtime view; that derived bundle path is never written to
 the manifest. Provisioning, Doctor, App actions, and CLI actions therefore use
@@ -221,9 +216,9 @@ establishes their signing identity, publisher provenance or runtime compatibilit
 - Computer Use: native macOS observation/action service with non-prompting TCC
   preflight, main-thread AX action dispatch, host-process self-target denial,
   and post-action verification.
-- Codex: an independent standard MCP adapter package owns App Server, Exec,
-  domain persistence and `swift-codex`. Gateway registration and
-routing use the same downstream MCP plane as other providers.
+- Plugins: MCP contributions use the same downstream registration and routing
+  contracts. Runtime-specific guidance belongs to each plugin, including the
+  [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
 Each runtime keeps an in-process work ledger distinct from authorization and
 durable execution receipts. An invocation owns its lifetime through its return,
@@ -379,14 +374,8 @@ row to remain present. Current persisted restrictions are reapplied to callbacks
 `MCPBoundHostServices` owns the atomic derived-workspace registration ledger
 and projects bounded diagnostics. Its private namespace permits only
 invocation inspection, workspace registration, verified removal, and diagnostic reads for matching
-live invocations. The independent Codex adapter
-implements its host interfaces through this endpoint while retaining separate
-App Server and Exec lifecycles. Imported embedded Codex configuration
-requires the reviewed [configuration migration](../Reference/CodexMigration.md)
-before runtime creation. The optional import record preserves the old format
-for offline export; the adapter owns the resulting execution settings.
-Applied Codex configuration is reported by the adapter, while host operation
-tickets and workspace grants remain in the Gateway Database.
+live invocations. Plugins declare their semantic actions in tool metadata;
+host operation tickets and workspace grants remain in the Gateway Database.
 
 See [Scoped host services](../Reference/HostServices.md) for configuration,
 wire surface, scope checks, bounds and recovery behavior.
@@ -457,107 +446,6 @@ registration. Receipt inspection never signals another process or replays a
 tool call. Plugin installation ownership and downstream execution ownership
 are separate: an installation recovery operation cannot clear process receipts.
 
-## Codex App Server Ownership And Teardown
-
-Codex App Server ownership follows the gateway connection rather than a
-machine-wide singleton:
-
-```text
-gateway socket or HTTP session
-  -> GatewayRuntime (caller + profile + transport generation)
-    -> one provider router per accessible registered workspace
-      -> ordinary owned MCP connection to the Codex adapter
-        -> adapter-owned lazy App Server runtime
-          -> one current JSONL/stdio connection generation
-            -> adapter-owned App Server process group
-```
-
-The adapter's domain runtime has a stable `runtime_id` for its lifetime. Each started connection
-has a separate generation id and records the registered workspace, caller,
-profile, socket connection, Tunnel instance/profile, App Server PID,
-supervisor PID, parent PID, process group, timestamps, exit status, signal, and
-termination escalation. Concurrent first requests await the same startup; they
-do not create parallel generations for one runtime. A timed-out connection is
-retired and reaped before a read-only request may make one fresh retry.
-
-Each runtime consumes App Server notifications and server requests for its
-current connection. It tracks threads known to that workspace as loaded,
-subscribed, active, idle, release-requested, released, externally claimable,
-stopped, stale-receipt, or inconsistent when the available protocol evidence
-supports that conclusion. Active turn, pending approval, and pending user-input
-state are recorded separately. Reconnection creates a new connection
-generation; it does not transfer authority over an earlier generation.
-
-Closing an MCP connection shuts down its `GatewayRuntime`, which shuts down
-every workspace MCP connection. The adapter's shutdown cancels the notification and request
-consumers, releases each subscribed thread with a bounded official
-`thread/unsubscribe`, interrupts still-pending approval records, and closes the
-App Server transport. The transport then:
-
-1. closes stdin so App Server can observe EOF, persist state, release writer
-   resources, and exit;
-2. waits for the configured graceful interval;
-3. sends `SIGTERM` to the exact owned App Server process group when required;
-4. waits again, then sends `SIGKILL` only if the group is still alive;
-5. waits for and records process reaping.
-
-The adapter's private supervisor watches its owner PID and applies the same
-bounded termination to the owned process group if the owner dies abruptly.
-Signals are never selected by executable name or a machine-wide process scan;
-Codex Desktop, IDE, CLI, and other user-owned App Servers are outside this
-authority. Normal socket closure, abrupt disconnect, Tunnel replacement,
-service stop, request timeout, and parent death therefore converge on the same
-bounded cleanup contract.
-
-The configured App Server request timeout is an end-to-end budget for a normal
-call. It starts before connection startup and covers workspace validation, the
-reviewed RPC, and at most one fresh-generation read-only retry. `app/list` has a
-separate configured budget because Codex may emit a multi-megabyte directory
-snapshot before its bounded page response; it uses one generation so a restart
-cannot repeat that snapshot. A request timeout is a recoverable request result,
-not a terminal runtime shutdown reason. Runtime lifecycle, connection state,
-process state, current request state, last request failure, and terminal
-shutdown reason are persisted independently. An actually stopped runtime has a
-terminal reason; a live running runtime does not. Current request state is
-derived from an active-request count, so one completed concurrent request cannot
-report the runtime idle while another request is still running.
-
-Connection retirement still has separately bounded EOF, TERM, and KILL
-intervals. Concurrent close paths share one retirement operation, so neither
-back-pressured stdin nor duplicate close requests multiply the deadline. A
-fresh read-only retry may begin only after the timed-out connection generation
-has been retired and reaped.
-
-### Thread handoff and bounded supervision
-
-`codex.app.thread.release` is a high-level transaction, not a synonym for one
-successful `thread/unsubscribe` response. It serializes against thread/turn
-starts, operates on every matching owned runtime, applies the requested active
-turn policy, resolves or refuses pending interactive state, validates the
-official loaded set after unsubscription, reaps runtimes that have no other
-work, and performs a final ownership rescan. Only a final
-`released_persisted` classification returns success.
-
-Long-running supervision uses `codex.app.thread.recent`. It reads the newest
-Codex state database in read-only mode, verifies the persisted thread's
-canonical workspace and rollout root, scans only a bounded rollout tail, and
-returns bounded metadata, Goal state, active/recent turns, messages, items, and
-compact progress. Snapshot-bound cursors provide older pages without loading
-the complete history. Page I/O, Goal scan I/O, record count, output bytes, and
-elapsed scan budget are reported with the result; no Codex state is mutated.
-
-### Validation cleanup
-
-The plugin's isolated validation harness owns cleanup; it is not a host runtime
-service. Disposable real validation owns exact workspace, thread, runtime, process, and
-managed-worktree identities. Primary acceptance, turn finish,
-unsubscribe/release, runtime stop, process reap, worktree cleanup, and final
-diagnostics each have independent deadlines. A primary success remains a
-success when cleanup times out, with a structured cleanup warning naming the
-exact target and safe operator-reviewed action. Cleanup can stop only the receipted
-Computer MCP runtime/PID and cannot select a process or worktree by name or path
-heuristic.
-
 ## Policy And Results
 
 Every call is bound to `ExecutionContext` containing a verified authorization
@@ -571,7 +459,7 @@ model-authored confirmation flag is not approval.
 
 MCP tools advertise a title, input schema, output schema, standard annotations,
 and return the bounded JSON value as both compatible text and structured
-content. Codex and process event streams use monotonic cursors so output limits
+content. Process event streams use monotonic cursors so output limits
 do not destroy resume semantics.
 
 ## Standalone Runtime

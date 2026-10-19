@@ -83,8 +83,8 @@ independent result evidence. Local component tests and probes are auxiliary.
 
 ## Codex and Skills
 
-The independent Codex plugin adapts App Server and Exec through `swift-codex`.
-Codex retains its native configuration, execution permissions and approvals.
+For Codex runtime setup and operation, see the independent
+[Codex plugin](https://github.com/computer-mcp/plugin-codex).
 The default manifest's generic Codex CLI registration stores the absolute entry
 path discovered from `PATH` or a known installation location, preserving symbolic
 links across installer upgrades. Existing configured paths remain unchanged.

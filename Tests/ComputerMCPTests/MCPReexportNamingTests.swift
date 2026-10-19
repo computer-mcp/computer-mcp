@@ -138,18 +138,6 @@ struct MCPReexportNamingTests {
     }
   }
 
-  @Test
-  func nativeCodexRemovalHintAgreesWithItsHostAssignedDestructiveRisk() throws {
-    let entry = try #require(
-      CodexEmbeddedFixture.catalog().first {
-        $0.objectValue?["tool"]?.objectValue?["name"] == .string("codex.worktree.remove.perform")
-      })
-    #expect(
-      entry.objectValue?["tool"]?.objectValue?["annotations"]?.objectValue?["destructiveHint"]
-        == .bool(true))
-    #expect(entry.objectValue?["capability"]?.objectValue?["risk"] == .string("destructive"))
-  }
-
   private static func server(_ id: String, prefix: String) -> MCPServerConfig {
     .init(
       id: id, transport: .stdio, command: "/bin/cat", exposure: .reexport, prefix: prefix,

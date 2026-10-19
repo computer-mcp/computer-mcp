@@ -199,9 +199,7 @@ workspace ID. The host also accepts the exact `codex-worktree-<lowercase-UUID>`
 format for compatible Codex receipts. Neither prefix conveys authority:
 registration origin, principal, source, exact receipt digest and Git identity
 remain mandatory. Persisted identities are never renamed during registration
-or cleanup. Older Codex tools without action metadata retain the mappings for
-`codex.diagnostics.snapshot`, `codex.worktree.provision.perform` and
-`codex.worktree.remove.perform`; the same action and risk checks apply.
+or cleanup. Private actions require the tool’s explicit host-action metadata.
 
 ## Transport bounds
 

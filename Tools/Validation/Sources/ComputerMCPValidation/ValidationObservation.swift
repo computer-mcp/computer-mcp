@@ -331,16 +331,6 @@ public struct ValidationObservationCollector: Sendable {
         "independent postconditions must pass and contain non-Gateway SHA-256 digests"
       )
     }
-    if observation.expectedOutcome == .expectedFailure,
-      !ValidationReviewedOutcomePolicy.permitsExpectedFailure(
-        testCaseID: observation.testCaseID,
-        toolName: observation.toolName
-      )
-    {
-      throw ValidationObservationCollectorError.invalidObservation(
-        "expected_failure is limited to reviewed fail-closed lifecycle capabilities"
-      )
-    }
   }
 
   private func validate(
@@ -356,9 +346,6 @@ public struct ValidationObservationCollector: Sendable {
         audit.decision == .allowed && audit.errorCode == nil
       case .expectedDenial:
         audit.decision == .denied
-          && audit.errorCode?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-      case .expectedFailure:
-        audit.decision == .failed
           && audit.errorCode?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
       case .failed:
         false

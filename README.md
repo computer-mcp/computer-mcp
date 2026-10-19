@@ -29,8 +29,8 @@ integration.
   review host actions requiring approval locally.
 
 Computer MCP runs on macOS 14 or later and supports ChatGPT and other compatible
-MCP clients. Tools need installation and configuration. Codex requires its
-plugin and local Codex setup; advanced orchestration is experimental. Skills
+MCP clients. Tools need installation and configuration, as described in each
+plugin's documentation. Skills
 provide instructions and resources, while execution uses authorized tools.
 
 ## The 30-second model
@@ -83,10 +83,6 @@ release artifact to install, review its dependencies and tool exposure, then
 enable it. Installation starts disabled and grants no permissions. Bundled
 packages use the same lifecycle; external tools remain user/vendor-owned.
 
-Codex execution lives in its independent MCP adapter. Upgrading an embedded
-Codex configuration requires the explicit
-[configuration and offline state migration](Documentation/Reference/CodexMigration.md).
-Do not switch the backend currently performing the migration.
 Native Computer Use also depends on vendor caller authentication, not just
 macOS privacy grants; native AX tools remain available as fallback.
 
@@ -142,12 +138,9 @@ execution. Credentials stay in the signed App's macOS Data Protection Keychain;
 examples, diagnostics, logs, and audit rows keep only placeholders or redacted
 summaries.
 
-The optional Codex plugin follows Codex's own configuration and approval
-model, including native Full Access defaults and explicit overrides. The host
-decides who may invoke Codex. Calls from Codex back into Computer MCP tools
-still require the corresponding host capabilities and local confirmation.
-Selecting a workspace supplies an initial directory, not an OS sandbox for
-native Full Access.
+Plugin execution settings and runtime permissions are documented by each plugin.
+Callbacks into Computer MCP require the corresponding host capabilities and
+local confirmation.
 
 See [Security and Privacy](Documentation/Architecture/SecurityAndPrivacy.md) for
 the complete trust model and [SECURITY.md](SECURITY.md) for reporting a
@@ -162,33 +155,13 @@ vulnerability.
 | Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and native AX fallback | Availability still depends on the selected profile, workspace, dependency, and macOS permission |
 | Stable | Governed workspace and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
 | Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and Skills | Host grants remain separate; external dependencies are not installed automatically |
-| Experimental | Codex plugin App Server and Exec provider paths | Opt-in, disabled by default, and dependent on an installed authenticated Codex |
-| Experimental | Native Codex Goal passthrough, Computer MCP acceptance runs, deterministic thread handoff, bounded recent-thread supervision, and managed child worktrees | Official Goal state, Computer MCP acceptance, native Codex permissions, gateway capabilities, and external-client ownership have separate authorities |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
-
-Experimental does not mean unbounded: these paths use the same workspace,
-policy, approval, lifecycle, resource-limit, and audit boundaries as stable
-capabilities.
 
 ## ChatGPT orchestrates, Codex executes
 
-A representative workflow looks like this:
-
-1. ChatGPT calls Computer MCP to inspect a registered repository and gather
-   local context.
-2. Computer MCP binds the request to the ChatGPT profile and workspace; policy
-   decides which read, Git, CLI, and Codex capabilities are available.
-3. ChatGPT starts or steers a dedicated Codex task for that workspace.
-4. Codex requests a governed host mutation. Computer MCP records its approval
-   ticket when confirmation is required; the local user approves or denies it.
-5. Codex edits and commits through the governed path. Computer MCP correlates
-   the Codex request, approval, operation ticket, gateway invocation, Git
-   result, and audit receipt.
-6. A Computer MCP acceptance run stays active until its required build, test,
-   and clean-worktree evidence is explicitly accepted. A finished turn alone
-   does not complete the run.
-
-This is optional orchestration, not a claim that Computer MCP is Codex Remote.
+ChatGPT can inspect a registered workspace and delegate coding work through the
+[Codex plugin](https://github.com/computer-mcp/plugin-codex). The host governs tool access, workspace grants, approvals and
+audit. The plugin owns coding execution and its runtime lifecycle.
 
 ## Computer MCP, Dots and Codex Remote
 
@@ -205,20 +178,6 @@ service usage terms still apply. The
 [full comparison](https://computer-mcp.github.io/#comparison) covers
 interfaces, execution and authority, with official OpenAI sources checked on
 2026-10-01.
-
-The ownership modes remain explicit:
-
-- a quick Codex thread or turn;
-- a dedicated Computer MCP-owned Codex runtime;
-- an official persisted Codex Goal;
-- a separate Computer MCP acceptance run;
-- official Codex Remote;
-- an external Codex Desktop, IDE, or CLI session.
-
-Computer MCP can release or stop only runtimes it verifiably owns. It can
-deliberately try to resume a persisted thread, and it can explain a likely
-writer conflict, but it never claims authority to terminate another
-application's process or subscription.
 
 ## Quick start
 
@@ -284,33 +243,6 @@ Read the current architecture in [Gateway](Documentation/Architecture/Gateway.md
 [Capability Ownership](Documentation/Architecture/Ownership.md). Exhaustive
 commands and schemas belong in [Reference](Documentation/Reference/README.md).
 
-## Codex operations and diagnosis
-
-The optional Codex provider records owned runtime IDs, process groups,
-connection generations, loaded threads, active turns, approvals, shutdown
-reasons, and termination escalation. Durable ownership receipts allow a later
-Computer MCP generation to validate a thread's workspace before attempting a
-resume.
-
-Operator commands expose the same evidence without requiring direct process or
-open-file inspection:
-
-```sh
-computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id>
-computer-mcp codex diagnostics --workspace-id <workspace-id>
-computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id>
-computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id>
-```
-
-The diagnostic reports verified Computer MCP ownership separately from an
-inferred external conflict and offers only safe actions such as releasing an
-owned thread, stopping an exact owned runtime, reviewing stale receipts, or
-trying to reclaim a persisted thread. Handoff succeeds only after no owned
-runtime still claims the thread and another official client can immediately
-claim the persisted thread. Long-running supervision reads a bounded recent
-tail instead of loading the whole history. Codex's native permission settings
-remain visible in the adapter's configuration and runtime diagnostics.
-
 ## Current limitations
 
 - The signed product is macOS-only and requires macOS 14 or later.
@@ -318,15 +250,8 @@ remain visible in the adapter's configuration and runtime diagnostics.
   current account, administrator, network, and availability constraints.
 - Accessibility and Screen Recording must be granted to the installed signed
   App for capabilities that need them; other capabilities remain available.
-- The advanced Codex provider is opt-in and depends on the installed official
-  Codex version, authentication, and stable protocol support.
-- Computer MCP cannot inspect, unsubscribe, or terminate an external Codex
-  Desktop, IDE, CLI, or Remote connection it does not own.
-- Native Codex Full Access runs with the current user's operating-system
-  authority; it does not grant access to additional Computer MCP capabilities.
 - Computer MCP does not silently select a workspace when more than one eligible
-  workspace exists, does not implicitly push Git commits, and does not turn a
-  normal completed turn into accepted Goal completion.
+  workspace exists, does not implicitly push Git commits.
 - A development build or ad-hoc-signed App is not an official release and does
   not inherit the installed release's macOS privacy or Keychain identity.
 

@@ -5,24 +5,11 @@ import PackageDescription
 let subprocessDependency: Package.Dependency =
   .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0")
 
-#if os(Windows)
-  // Tests launch the fixture as a separate executable. Its entry point must
-  // remain outside the test runner's link dependencies.
-  let platformFixtures: [Target] = [
-    .executableTarget(
-      name: "PlatformProcessFixture",
-      dependencies: [.product(name: "Subprocess", package: "swift-subprocess")],
-      path: "Tests/PlatformProcessFixture")
-  ]
-#else
-  let platformFixtures: [Target] = []
-#endif
-
 let platformTargets: [Target] =
   [
     .target(name: "ComputerMCPPlatform"),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
-  ] + platformFixtures
+  ]
 
 #if os(macOS)
   let package = Package(
@@ -96,11 +83,8 @@ let platformTargets: [Target] =
       ),
     ]
   )
-#elseif os(Windows)
-  let package = Package(
-    name: "computer-mcp", dependencies: [subprocessDependency], targets: platformTargets)
 #elseif os(Linux)
   let package = Package(name: "computer-mcp", targets: [])
 #else
-  #error("Computer MCP supports package manifests on macOS, Windows and Linux.")
+  #error("Computer MCP supports package manifests on macOS and Linux.")
 #endif

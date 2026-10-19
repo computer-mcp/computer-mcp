@@ -21,9 +21,9 @@ does not establish publisher trust, artifact integrity, or user authorization.
 | `repository` | Optional HTTPS repository URL; a claim, not verified provenance |
 | `compatibility.minimum_host` | Inclusive minimum host release |
 | `compatibility.maximum_host` | Exclusive maximum host release |
-| `compatibility.platforms` | Nonempty unique subset of `macos` and `windows`; omitted means `macos` |
+| `compatibility.platforms` | Nonempty unique subset of the supported platforms (`macos`); omitted means `macos` |
 | `compatibility.architectures` | Optional unique subset of `arm64` and `x86_64`; omitted or empty permits both |
-| `compatibility.artifacts` | Optional named archive targets; required when declaring Windows |
+| `compatibility.artifacts` | Optional named archive targets |
 
 Package, dependency, and contribution IDs contain lowercase ASCII letters,
 digits, hyphens, or underscores, start with a letter or digit, and are at most
@@ -50,25 +50,20 @@ it does not choose another target. The installation record preserves the selecte
 name, and activation and diagnostics recheck its target. Bundled distribution
 checks the selected archive against every requested App architecture.
 
-The platform model accepts Windows metadata. The shipped App, gateway and package
-installation runtime remain macOS-only; platform metadata does not make a provider
-or external application available on Windows.
-
 ## Executables and External Dependencies
 
 An `executable` has exactly one of three fields:
 
 - `path`: a normalized package-relative path to a package-owned executable.
 - `platform_paths`: a map from each declared platform to its package-relative
-  executable, such as `{ macos = "bin/adapter", windows = "bin/adapter.exe" }`.
+  executable, such as `{ macos = "bin/adapter" }`.
 - `dependency`: the ID of a declared, user/vendor-owned external dependency.
 
 A `platform_paths` map covers exactly `compatibility.platforms` (default
-`macos`). Every value must be a normalized relative path; Windows values also
-reject drive/device names, alternate streams and ambiguous Win32 components.
+`macos`). Keys use the same supported platform set as compatibility declarations.
+Every value must be a normalized relative path.
 Package loading and executable inspection select the current host platform's
-path. A platform archive needs that selected executable, while the same manifest
-can name the other platforms' files without including them in this archive.
+path. An archive must contain that selected executable.
 A missing selected file is an error; the host never tries another platform or
 adds an executable suffix. CLI Tree helpers follow the same selection rule.
 Set `minimum_host` to a released host supporting this field before publishing
@@ -213,16 +208,16 @@ name = "Example Integration"
 version = "1.2.3"
 
 [compatibility]
-platforms = ["macos", "windows"]
-
-[[compatibility.artifacts]]
-name = "example-macos.zip"
 platforms = ["macos"]
-architectures = ["arm64", "x86_64"]
 
 [[compatibility.artifacts]]
-name = "example-windows.zip"
-platforms = ["windows"]
+name = "example-arm64.zip"
+platforms = ["macos"]
+architectures = ["arm64"]
+
+[[compatibility.artifacts]]
+name = "example-intel.zip"
+platforms = ["macos"]
 architectures = ["x86_64"]
 
 [[dependencies]]

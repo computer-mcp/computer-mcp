@@ -13,9 +13,6 @@ version are rejected.
 
 Secrets are never rendered by `config show` or included in `config export`.
 
-For offline export of embedded Codex execution settings into independently
-owned plugin inputs, see [Codex Migration](CodexMigration.md).
-
 ## Minimal manifest
 
 ```toml
@@ -319,73 +316,6 @@ to false and is rejected for HTTP registrations. It neither changes the tool
 selection nor grants local administration. The reserved descriptor cannot be
 supplied through registration environment overrides. See
 [Scoped host services](HostServices.md) for the callback and ownership contract.
-
-## Codex configuration import
-
-Codex execution is configured in the independent adapter's JSON file. The
-host accepts `[codex]` fields for lossless configuration migration. These fields
-do not configure a running plugin. Runtime creation rejects
-`enabled = true`: first export and review the adapter configuration and plugin
-settings with [config migrate-codex](CodexMigration.md). This does not start an
-executor or migrate a live database.
-
-The migration report places execution settings in `adapterConfiguration` and
-omits `[codex]` from `hostTOML`. Ordinary configuration import/export preserves
-an explicitly supplied `[codex]` section until this migration is requested;
-configurations without that section do not acquire one during export.
-
-The importable fields are:
-
-```toml
-[codex]
-enabled = false
-executable = "codex"
-app_server_enabled = true
-exec_enabled = true
-mcp_enabled = true
-experimental_api = true
-app_server_request_timeout_seconds = 30
-app_server_app_list_timeout_seconds = 120
-app_server_termination_grace_milliseconds = 1000
-app_server_kill_grace_milliseconds = 2000
-app_server_approval_timeout_seconds = 300
-app_server_auto_approve_workspace_writes = false
-sandbox = "workspace-write"
-approval_policy = "never"
-```
-
-In the adapter, App Server and Exec are separate `swift-codex` lifecycles. Callers receive
-host-authorized tool IDs. Codex execution settings follow native configuration
-unless a request supplies an explicit supported override. `app_server_request_timeout_seconds` bounds a normal
-complete App Server call, including connection startup, workspace validation,
-the reviewed RPC, and the single fresh-connection retry available to read-only
-calls. The first read-only attempt receives half of that budget; writes are
-never retried. `app_server_app_list_timeout_seconds` separately bounds
-`app/list`, whose first bounded page may follow a multi-megabyte upstream
-directory snapshot. That request uses one process generation because restarting
-mid-snapshot would repeat the same work. A deadline is recorded as a recoverable
-request failure, independently from runtime, connection, and process state. If
-the connection must be replaced, Computer MCP completes its separately bounded
-retirement before a read-only retry; cancellation cannot start a later
-generation after the request has resolved.
-
-`app_server_termination_grace_milliseconds` is the EOF and TERM grace interval
-(0–30000 ms). `app_server_kill_grace_milliseconds` is the final reaping wait
-after KILL (100–30000 ms). `app_server_approval_timeout_seconds` bounds a live
-approval request (1–3600 seconds). Automatic workspace-write approval is off by
-default; enabling it does not bypass caller, profile, workspace, path, risk, or
-capability policy.
-
-Codex App Server and Exec use the user's Codex configuration for omitted
-settings, including provider, MCP servers, Skills, hooks, authentication, and
-execution permissions. Native Full Access can be configured as the default or
-requested explicitly. The adapter preserves supported native sandbox and
-approval parameters; the host decides whether the caller can invoke the tool.
-
-The registered workspace supplies the initial working directory and execution
-ownership. It is not an operating-system restriction on native Full Access.
-Calls from Codex back into host tools are authorized independently against the
-current host profile, workspace, capability, and confirmation policy.
 
 ## Standalone HTTP
 

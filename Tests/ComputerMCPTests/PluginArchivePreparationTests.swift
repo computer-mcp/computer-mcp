@@ -7,7 +7,7 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginArchivePreparationTests {
-  @Test(arguments: ["mac.zip", "windows.zip", "unknown.zip", ""])
+  @Test(arguments: ["mac.zip", "intel.zip", "unknown.zip", ""])
   func archiveTargetMustPermitThisHostBeforeActivation(name: String) async throws {
     let fixture = try await PreparationFixture.make(manifest: PreparationFixture.platformManifest)
     defer { fixture.files.remove() }
@@ -241,7 +241,7 @@ struct PreparationFixture: Sendable {
 
   static let platformManifest =
     manifest
-    .replacingOccurrences(of: "architectures = ['arm64']", with: "platforms = ['macos', 'windows']")
+    .replacingOccurrences(of: "architectures = ['arm64']", with: "platforms = ['macos']")
     .replacingOccurrences(
       of: "[[mcp]]",
       with: """
@@ -250,8 +250,8 @@ struct PreparationFixture: Sendable {
         platforms = ['macos']
         architectures = ['arm64']
         [[compatibility.artifacts]]
-        name = 'windows.zip'
-        platforms = ['windows']
+        name = 'intel.zip'
+        platforms = ['macos']
         architectures = ['x86_64']
         [[mcp]]
         """)

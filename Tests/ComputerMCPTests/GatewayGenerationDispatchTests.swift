@@ -98,6 +98,58 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test
+  func httpReconnectRetainsOwnedPluginWorkUntilTheOriginStops() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(
+      version: 1, fullShell: true, callers: [.localMCP, .cloudflareTunnel])
+    let configuration = try await fixture.control.activeConfiguration()
+    let source = try await fixture.service.makeHTTPSessions(
+      profileID: .chatGPTOperate, trace: .init(transport: "http"))
+    let origin = GatewayHTTPRuntime(
+      configuration: configuration, source: .managed(source), host: "127.0.0.1", port: 0,
+      publicBaseURL: nil, accessToken: "fixture-credential")
+    try await origin.startListening()
+    let port = try #require(await origin.boundPort())
+    let endpoint = try #require(URL(string: "http://127.0.0.1:\(port)/mcp"))
+    let client = try await GatewayClientSession.connectHTTP(
+      endpoint: endpoint, accessToken: "fixture-credential")
+    var reconnected: GatewayClientSession?
+    do {
+      let original = try #require(await origin.controlSessions().first)
+      _ = try await origin.approveControlSession(
+        id: original.id, expectedRevision: original.revision)
+      let process = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("retained")])))
+      let owner = try #require(try await owners(client, kind: "mcpResource").first)
+      await client.disconnect()
+      #expect(await origin.controlSessions().isEmpty)
+      #expect(alive(process))
+      let next = try await GatewayClientSession.connectHTTP(
+        endpoint: endpoint, accessToken: "fixture-credential")
+      reconnected = next
+      let scope = try #require(await origin.controlSessions().first)
+      #expect(scope.id != original.id)
+      #expect(scope.principalID == original.principalID)
+      #expect(scope.fullAccessConsent == nil)
+      let retained = try await call(
+        next, owner: owner, tool: "fixture.inspect", arguments: ["handle": .string("retained")])
+      #expect(value(retained, "pid") == .integer(Int64(process)))
+      await next.disconnect()
+      #expect(alive(process))
+      await origin.stop()
+      try await wait { !alive(process) }
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await client.disconnect()
+      await reconnected?.disconnect()
+      await origin.stop()
+      throw error
+    }
+  }
+
+  @Test
   func managedHTTPPublicationPreservesOwnedWorkAndIndependentListenerConsent() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }

@@ -249,7 +249,7 @@ struct HomeView: View {
         }
 
         Text(
-          "The Codex consumer registration uses the App-owned bridge. Internal Codex providers are configured separately under Providers."
+          "The Codex consumer registration uses the App-owned bridge."
         )
         .font(.caption)
         .foregroundStyle(.secondary)

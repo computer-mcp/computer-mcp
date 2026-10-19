@@ -9,9 +9,7 @@ This directory contains detailed operational reference material.
 - [Config](Config.md): TOML source and policy configuration.
 - [Control Plane Capabilities](ControlPlaneCapabilities.md): shared App/CLI
   management inventory, ownership, and secret-input rules.
-- [Tools](Tools.md): complete gateway tool families and result contracts,
-  including deterministic Codex handoff, native execution permissions, bounded
-  recent-thread reads, and ownership reconciliation.
+- [Tools](Tools.md): complete gateway tool families and result contracts.
 - [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
 - [Scoped Host Services](HostServices.md): inherited MCP callbacks, approval
   ownership, derived registrations, diagnostics and recovery.
@@ -19,8 +17,6 @@ This directory contains detailed operational reference material.
   encoding, projected tools, output validation, and coverage.
 - [Plugin Packages](PluginPackages.md): immutable manifests, contribution
   sources, and package-directory validation boundaries.
-- [Codex Migration](CodexMigration.md): offline configuration export and controlled
-  transfer of domain state to the independent plugin.
 - [ChatGPT Web Runbook](ChatGPTWebRunbook.md): App-managed Secure MCP Tunnel setup.
 - [Cloudflare Runbook](CloudflareRunbook.md): named-tunnel onboarding,
   authentication, lifecycle, and verification.

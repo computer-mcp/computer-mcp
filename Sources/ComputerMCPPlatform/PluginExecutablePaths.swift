@@ -5,12 +5,9 @@ package struct PluginExecutablePaths: Codable, Equatable, Sendable {
   package var platforms: Set<String> { Set(paths.keys) }
 
   package init(_ paths: [String: String]) throws {
-    guard !paths.isEmpty, Set(paths.keys).isSubset(of: ["macos", "windows"]),
-      paths.allSatisfy({ platform, path in
-        Self.isNormalizedRelativePath(path)
-          && (platform != "windows"
-            || (WindowsFilePath.isValid(path) && !WindowsFilePath.isAbsolute(path)))
-      })
+    guard !paths.isEmpty,
+      Set(paths.keys).isSubset(of: PluginPlatformCompatibility.supportedPlatforms),
+      paths.values.allSatisfy(Self.isNormalizedRelativePath)
     else { throw ValidationError.invalidPaths }
     self.paths = paths
   }

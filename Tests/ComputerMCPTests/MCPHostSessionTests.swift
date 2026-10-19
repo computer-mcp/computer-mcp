@@ -133,6 +133,37 @@ struct MCPHostSessionTests {
   }
 
   @Test
+  func gitDryRunThroughHostCallbackPreservesTheIndexWithoutApproval() async throws {
+    let fixture = try HostFixture(git: true)
+    defer { fixture.remove() }
+    func git(_ arguments: [String]) throws -> String {
+      let result = try ProcessCommandRunner().run(
+        executable: "/usr/bin/git", arguments: arguments, workingDirectory: fixture.first,
+        environment: ["GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"],
+        timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
+      try #require(result.exitCode == 0, "\(result.stderr)")
+      return result.stdout
+    }
+    do {
+      _ = try git(["init", "--quiet"])
+      _ = try git(["add", "value.txt"])
+      let index = try Data(contentsOf: fixture.first.appendingPathComponent(".git/index"))
+      try "changed".write(
+        to: fixture.first.appendingPathComponent("value.txt"), atomically: true, encoding: .utf8)
+      let result = try await fixture.call(
+        "git.add", ["paths": .array([.string("value.txt")]), "dry_run": .bool(true)])
+      #expect(result.objectValue?["isError"] != .bool(true), "\(result)")
+      #expect(try Data(contentsOf: fixture.first.appendingPathComponent(".git/index")) == index)
+      #expect(try git(["show", ":value.txt"]) == "first")
+      #expect(try fixture.database.operationApprovals().isEmpty)
+      await fixture.runtime.shutdown()
+    } catch {
+      await fixture.runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test
   func destructiveCallsKeepSingleUseTicketsAndLinkedAuditReceipts() async throws {
     let fixture = try HostFixture()
     defer { fixture.remove() }
@@ -289,7 +320,10 @@ private final class HostFixture: Sendable {
   let context: ExecutionContext
   let registration: MCPServerConfig
 
-  init(observe: Bool = false, fileBacked: Bool = false, persistWorkspaces: Bool = true) throws {
+  init(
+    observe: Bool = false, fileBacked: Bool = false, persistWorkspaces: Bool = true,
+    git: Bool = false
+  ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "host-fixture-" + UUID().uuidString)
     first = root.appendingPathComponent("first")
@@ -311,11 +345,12 @@ private final class HostFixture: Sendable {
       for workspace in workspaces { try database.saveWorkspace(workspace) }
     }
     let profile: GatewayProfileID = observe ? .chatGPTObserve : .chatGPTOperate
-    let capabilities = [
-      "workspace.list", "workspace.describe", "policy.probe", "operations.prepare",
-      "operations.commit", "file.read", "file.replace_text", "mcp.tools.call", "alias.callback",
-      "loop.operation", "runtime.owners.call",
-    ]
+    let capabilities =
+      [
+        "workspace.list", "workspace.describe", "policy.probe", "operations.prepare",
+        "operations.commit", "file.read", "file.replace_text", "mcp.tools.call", "alias.callback",
+        "loop.operation", "runtime.owners.call",
+      ] + (git ? ["git.add"] : [])
     grant = ProfileGrant(
       id: profile, capabilityIDs: Set(capabilities), workspaceIDs: ["first", "second"],
       allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .workspaceOperations)
@@ -338,9 +373,10 @@ private final class HostFixture: Sendable {
             id: profile, capabilities: capabilities, workspaces: ["first", "second"],
             allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .workspaceOperations)
         ],
+        cli: .init(commands: git ? [.init(id: "git", executable: "/usr/bin/git")] : []),
         mcp: .init(servers: [registration]),
         tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],
-        builtin: .init(enabled: ["file.read", "file.replace_text"])),
+        builtin: .init(enabled: ["file.read", "file.replace_text"] + (git ? ["git.add"] : []))),
       context: context, database: database,
       registeredWorkspaces: persistWorkspaces ? workspaces : nil, mcpClient: downstream)
   }

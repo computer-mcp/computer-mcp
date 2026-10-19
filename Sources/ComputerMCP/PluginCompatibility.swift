@@ -39,11 +39,10 @@ package struct PluginCompatibility: Codable, Equatable, Sendable {
     }
     guard artifacts.count <= 100,
       Set(artifacts.map { $0.name.lowercased() }).count == artifacts.count,
-      artifacts.allSatisfy({ $0.target.isSubset(of: target) }),
-      platforms == ["macos"] || !artifacts.isEmpty
+      artifacts.allSatisfy({ $0.target.isSubset(of: target) })
     else {
       throw PluginManifestError.invalid(
-        "Artifact declarations must have unique names and targets within package compatibility; Windows packages require explicit artifacts."
+        "Artifact declarations must have unique names and targets within package compatibility."
       )
     }
   }

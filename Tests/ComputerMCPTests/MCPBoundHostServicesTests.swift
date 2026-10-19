@@ -115,6 +115,18 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
+  @Test(arguments: ["fixture.read", "codex.diagnostics.snapshot"])
+  func privateActionsRequireExplicitMetadata(method: String) async throws {
+    let fixture = try HostAuthorityFixture()
+    defer { fixture.remove() }
+    let result = try await fixture.during(method, ["limit": .integer(1)]) { service in
+      try await .encoded(
+        service.call(name: "host.diagnostics.snapshot", arguments: ["limit": .integer(1)]))
+    }
+    #expect(result.objectValue?["isError"] == .bool(true))
+    await fixture.close()
+  }
+
   @Test
   func concurrentIdenticalActionsNeverSelectAnArbitraryInvocation() async throws {
     let fixture = try HostAuthorityFixture()
@@ -278,7 +290,7 @@ struct MCPBoundHostServicesTests {
     } else {
       let args = arguments
       result = try await fixture.during(
-        attack == "wrong-method" ? "codex.app.thread.start" : "codex.diagnostics.snapshot",
+        attack == "wrong-method" ? "fixture.read" : "fixture.audit",
         ["limit": .number(1)]
       ) { service in
         try await .encoded(service.call(name: "host.diagnostics.snapshot", arguments: args))
@@ -295,12 +307,12 @@ struct MCPBoundHostServicesTests {
     for fails in [false, true] {
       if fails {
         await #expect(throws: (any Error).self) {
-          try await fixture.during("codex.diagnostics.snapshot") { _ in
+          try await fixture.during("fixture.audit") { _ in
             throw MCPHostServiceError.denied("Fixture failure")
           }
         }
       } else {
-        _ = try await fixture.during("codex.diagnostics.snapshot") { _ in .object([:]) }
+        _ = try await fixture.during("fixture.audit") { _ in .object([:]) }
       }
       let result = try await fixture.direct("host.diagnostics.snapshot", ["limit": .number(1)])
       #expect(result.objectValue?["isError"] == .bool(true))
@@ -392,7 +404,7 @@ struct MCPBoundHostServicesTests {
     for index in 0..<129 {
       let receipt = try fixture.worktreeReceipt()
       let result = try await fixture.during(
-        "codex.worktree.provision.perform",
+        "fixture.provision",
         [
           "plan_id": receipt["id"]!, "expected_revision": .number(1),
           "confirm_provision": .bool(true),
@@ -418,7 +430,7 @@ struct MCPBoundHostServicesTests {
       "plan_id": receipt["id"]!, "expected_revision": .number(1),
       "confirm_provision": .bool(true),
     ]
-    let registered = try await fixture.during("codex.worktree.provision.perform", args) { service in
+    let registered = try await fixture.during("fixture.provision", args) { service in
       let result = try await service.call(
         name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
       try #require(result.isError == false)
@@ -428,7 +440,7 @@ struct MCPBoundHostServicesTests {
     }
     #expect(registered.objectValue?["isError"] == .bool(false))
     if laterInvocation {
-      let replay = try await fixture.during("codex.worktree.provision.perform", args) { service in
+      let replay = try await fixture.during("fixture.provision", args) { service in
         try await .encoded(
           service.call(
             name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)]))
@@ -448,7 +460,7 @@ struct MCPBoundHostServicesTests {
     receipt["principal_id"] = principal == "missing" ? nil : .string(principal)
     let wireReceipt = receipt
     let result = try await fixture.during(
-      "codex.worktree.provision.perform",
+      "fixture.provision",
       [
         "plan_id": receipt["id"]!, "expected_revision": .number(1),
         "confirm_provision": .bool(true),
@@ -473,7 +485,7 @@ struct MCPBoundHostServicesTests {
     receipt["caller"] = .string("local-cli")
     let wireReceipt = receipt
     let result = try await fixture.during(
-      "codex.worktree.provision.perform",
+      "fixture.provision",
       [
         "plan_id": receipt["id"]!, "expected_revision": .number(1),
         "confirm_provision": .bool(true),
@@ -673,7 +685,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     }
     defer { peer.setHandler(nil) }
     var arguments: [String: JSONValue] = [
-      "server": .string("probe"), "tool": .string("codex.diagnostics.snapshot"),
+      "server": .string("probe"), "tool": .string("fixture.audit"),
       "arguments": .object(["limit": .number(1)]),
     ]
     if let workspaceID { arguments["workspace_id"] = .string(workspaceID) }
@@ -693,9 +705,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
 private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
   static let methods = [
     "fixture.read", "fixture.audit", "fixture.provision", "fixture.remove",
-    "codex.app.thread.start", "codex.app.turn.start", "codex.diagnostics.snapshot",
-    "codex.app.thread.release",
-    "codex.worktree.provision.perform",
+    "codex.diagnostics.snapshot",
   ]
   private let lock = NSLock()
   private var captured: MCPHostContext?

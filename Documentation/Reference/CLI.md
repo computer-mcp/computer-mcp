@@ -44,7 +44,6 @@ computer-mcp cli-tree validate <file> [--expected-version <expected-version>]
 computer-mcp cli-tree check <file> [--expected-version <expected-version>] --executable <executable> [--working-directory <working-directory>]
 computer-mcp config validate [--control-socket <control-socket>] [--config <config>] [--connect]
 computer-mcp config export [--control-socket <control-socket>] [--output <output>]
-computer-mcp config migrate-codex --config <config> --adapter-config <adapter-config> --state-directory <state-directory> [--known-plugin-mcp-server <known-plugin-mcp-server> ...]
 computer-mcp config import [--control-socket <control-socket>] --input <input> [--apply] [--expected-current-digest <expected-current-digest>]
 computer-mcp config history [--control-socket <control-socket>] [--limit <limit>]
 computer-mcp config rollback [--control-socket <control-socket>] <revision-id>
@@ -76,10 +75,6 @@ computer-mcp tunnel cloudflare stop [--control-socket <control-socket>] <id>
 computer-mcp tunnel cloudflare logs [--control-socket <control-socket>] <id>
 computer-mcp tunnel cloudflare save [--control-socket <control-socket>] <id> --tunnel-name <tunnel-name> --public-hostname <public-hostname> --gateway-profile <gateway-profile> [--local-port <local-port>] [--metrics-port <metrics-port>] [--cloudflared-path <cloudflared-path>] [--tunnel-token-stdin] [--regenerate-access-token]
 computer-mcp tunnel cloudflare remove [--control-socket <control-socket>] <id>
-computer-mcp codex diagnose-thread [--control-socket <control-socket>] <thread-id> --workspace-id <workspace-id> [--observed-error <observed-error>]
-computer-mcp codex diagnostics [--control-socket <control-socket>] --workspace-id <workspace-id> [--limit <limit>]
-computer-mcp codex release-thread [--control-socket <control-socket>] <thread-id> --workspace-id <workspace-id> [--interrupt-active-turn] [--force-owned-runtime]
-computer-mcp codex recent-thread [--control-socket <control-socket>] <thread-id> --workspace-id <workspace-id> [--before-cursor <before-cursor>] [--max-turns <max-turns>] [--max-messages <max-messages>] [--max-items <max-items>] [--max-bytes <max-bytes>] [--max-output-bytes <max-output-bytes>] [--max-elapsed-milliseconds <max-elapsed-milliseconds>]
 computer-mcp tools list [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools inspect <name> [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools call <name> [--arguments-json <arguments-json>] [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
@@ -333,7 +328,7 @@ executables and relative or empty PATH entries resolve in the selected launch
 directory. Executable and shebang-interpreter checks precede execution.
 
 When several registrations match a provider, discovery selects the first in
-this order: enabled Codex configuration, enabled MCP registrations, then CLI
+this order: enabled MCP registrations, then CLI
 registrations, preserving registration order. An unavailable selected launch
 is reported directly, not replaced by another installation. PATH and common
 installation locations are searched when no registration matches. A symlink's
@@ -366,59 +361,6 @@ computer-mcp install codex --config Examples/computer-mcp.toml --dry-run
 
 `--app` and `--config` are mutually exclusive and exactly one is required. A
 dry run prints the complete secret-free invocation without changing Codex.
-
-## Codex ownership diagnosis
-
-The App-owned diagnostic commands inspect Computer MCP evidence without a
-machine-wide process scan:
-
-```sh
-computer-mcp codex diagnose-thread <thread-id> --workspace-id <workspace-id> [--control-socket <control-socket>]
-computer-mcp codex diagnostics --workspace-id <workspace-id> [--control-socket <control-socket>]
-computer-mcp codex release-thread <thread-id> --workspace-id <workspace-id> [--control-socket <control-socket>]
-```
-
-`diagnose-thread` explains whether a live Computer MCP runtime has the thread
-loaded, subscribed, or active; whether it is known but released; or whether an
-external writer is only suspected. It returns exact safe follow-up tool calls,
-including inspecting or releasing the owned runtime and deliberately
-reclaiming an idle persisted thread. `--observed-error` may include the message
-shown by another official client; it is redacted and bounded before appearing
-in the result.
-
-`diagnostics` returns a redacted workspace snapshot covering live and persisted
-runtimes, process groups, thread and turn state, approvals, acceptance runs,
-worktree leases, recent tool/Git audit linkage, cleanup previews, and actionable
-findings. Neither command signals an external Codex process. Both require the
-running App control plane and a registered workspace id.
-
-`release-thread` performs the complete handoff transaction across every
-matching Computer MCP-owned runtime. Graceful mode refuses active turns and
-pending interactive requests. `--interrupt-active-turn` explicitly permits
-the target turn to be interrupted. `--force-owned-runtime` may stop only exact
-matching Computer MCP-owned runtimes when graceful unsubscription cannot
-establish the postcondition. Success requires `final_classification` to be
-`released_persisted`, `externally_claimable` to be true, and no Computer MCP
-writer ownership to remain. The persisted Goal is unchanged and a repeat is
-reported as already released.
-
-
-## Bounded recent thread reads
-
-Use `recent-thread` for supervision instead of a full historical
-`thread/read`:
-
-```sh
-computer-mcp codex recent-thread <thread-id> --workspace-id <workspace-id> \ [--control-socket <control-socket>]
-  --max-turns 10 --max-messages 50 --max-items 100 \
-  --max-bytes 262144 --max-output-bytes 524288 \
-  --max-elapsed-milliseconds 2000
-```
-
-The result includes a snapshot-bound `next_before_cursor`, `has_more`, Goal and
-active-turn state, recent progress, and exact I/O/output/latency bounds. Pass
-the cursor back with `--before-cursor` for an older bounded page. The command
-opens Codex persistence read-only and never loads the full history by default.
 
 ## Workspace registration repair
 
@@ -474,7 +416,7 @@ for an isolated owner-only App instance. Omitting it selects the production App.
 Confirmation policies are `risk-based`, `all-writes`, and `never`. Risk-based
 confirmation covers host-classified destructive actions, external writes, and
 arbitrary execution. Changing confirmation policy does not grant a capability.
-Codex keeps its native sandbox, Full Access, configuration, and approval model;
+Plugin runtime configuration and execution permissions remain plugin-owned;
 these controls govern Computer MCP-owned tools and access to registered tools.
 
 Advanced lists are comma-separated replacements. An empty value clears the
@@ -498,8 +440,7 @@ profile, workspace, arguments summary, expiry, and state. Approve or deny an exa
 ticket through the local App or management CLI. Approval permits the prepared
 operation to be committed once; it does not execute the operation itself.
 Changing arguments, target, authority, or using an expired ticket requires a new
-request. These are host operation approvals; Codex native approvals remain in
-the Codex adapter's native workflow.
+request. These approvals authorize only the exact host operation.
 
 The App presents the tool title captured when the request was prepared and its
 redacted arguments as individual fields. Technical details retain the capability

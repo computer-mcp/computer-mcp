@@ -70,7 +70,7 @@ private struct OperationApprovalsView: View {
       EmptyWorkspaceView(
         title: "No operation approvals",
         detail:
-          "Requests that need your approval appear here. Codex native approvals stay with Codex.",
+          "Requests that need your approval appear here.",
         systemImage: "checkmark.shield")
     case .loaded(let tickets):
       ScrollView {

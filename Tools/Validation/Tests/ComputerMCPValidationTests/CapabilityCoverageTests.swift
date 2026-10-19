@@ -9,7 +9,7 @@ struct CapabilityCoverageTests {
   func catalog() throws {
     let catalog = try ValidationTestCaseCatalog.bundled()
 
-    #expect(catalog.testCases.count == 22)
+    #expect(catalog.testCases.count == 21)
     #expect(catalog.validate().isEmpty)
     #expect(catalog.testCases.contains { $0.id == "connector.openai.round_trip" })
     #expect(catalog.testCases.contains { $0.id == "transport.cloudflare.quick_tunnel_isolated" })
@@ -21,11 +21,11 @@ struct CapabilityCoverageTests {
     let report = ProductionReadinessReportBuilder().build(inventory: emptyInventory())
 
     #expect(!report.isReady)
-    #expect(report.summary.testCaseCount == 22)
+    #expect(report.summary.testCaseCount == 21)
     #expect(report.summary.testCasePassedCount == 0)
-    #expect(report.summary.testCasePendingCount == 22)
+    #expect(report.summary.testCasePendingCount == 21)
     #expect(
-      report.issues.filter { $0.code == "test_case.correlation_incomplete" }.count == 22
+      report.issues.filter { $0.code == "test_case.correlation_incomplete" }.count == 21
     )
   }
 

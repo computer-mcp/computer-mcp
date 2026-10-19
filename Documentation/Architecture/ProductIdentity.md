@@ -45,7 +45,7 @@ implementation and tests; experimental behavior is labeled as experimental.
 
 ## Codex relationship
 
-Codex is optional. Its independent plugin supplies App Server and Exec
+Codex is optional. Its [independent plugin](https://github.com/computer-mcp/plugin-codex) supplies coding
 integration alongside other local capabilities. Codex can also be a client of
 Computer MCP. Neither relationship grants implicit authority to the other.
 The adapter owns its runtimes; it cannot stop an unrelated Desktop, IDE or CLI

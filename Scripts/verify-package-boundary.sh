@@ -35,9 +35,9 @@ if rg -n '^\s*public\b' "${LIBRARIES[@]}" --glob '*.swift'; then
   exit 1
 fi
 
-# Neutral targets build on Linux: no macOS framework imports, also inside #if, except the
-# platform C library selection the module graph declares, and no macOS paths. A test
-# target is neutral when the target it tests is.
+# Neutral targets build on Linux: no macOS framework imports, also inside #if, except a
+# platform C library selection between Darwin and Glibc or Musl, and no macOS paths. A
+# test target is neutral when the target it tests is.
 NEUTRAL=(${(f)"$(jq -r --argjson graph "$(<Scripts/module-graph.json)" '
   ($graph.macos_only) as $macos
   | .targets[]
@@ -51,20 +51,23 @@ spec = importlib.util.spec_from_file_location("graph", "Scripts/verify-module-gr
 graph = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(graph)
 rules = json.loads(pathlib.Path("Scripts/module-graph.json").read_text())
-found = False
+imports = paths = False
 for root in sys.argv[1:]:
     for path in sorted(pathlib.Path(root).rglob("*.swift")):
-        for name in sorted(graph.macos_imports(path.read_text(), rules)):
+        text = path.read_text()
+        for name in sorted(graph.macos_imports(text, rules)):
             print(f"{path}: imports {name}")
-            found = True
-sys.exit(1 if found else 0)
+            imports = True
+        for number, literal in graph.macos_paths(text, rules):
+            print(f"{path}:{number}: references {literal}")
+            paths = True
+if imports:
+    print("Package boundary gate failed: neutral targets must not import macOS frameworks.", file=sys.stderr)
+if paths:
+    print("Package boundary gate failed: neutral targets must not reference macOS system paths.", file=sys.stderr)
+sys.exit(1 if imports or paths else 0)
 PY
 then
-  echo "Package boundary gate failed: neutral targets must not import macOS frameworks." >&2
-  exit 1
-fi
-if rg -n '"/(usr/s?bin|System|Applications)/' "${NEUTRAL[@]}" --glob '*.swift'; then
-  echo "Package boundary gate failed: neutral targets must not reference macOS system paths." >&2
   exit 1
 fi
 

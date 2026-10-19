@@ -5,6 +5,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformPOSIX
 
 @Suite(.nativeIntegration)
 struct ExecutableInspectionTests {

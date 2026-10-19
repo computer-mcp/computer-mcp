@@ -10,6 +10,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformPOSIX
 
 @Suite(.nativeIntegration, .serialized)
 

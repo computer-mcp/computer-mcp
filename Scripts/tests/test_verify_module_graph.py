@@ -116,6 +116,8 @@ class PlanModeTests(unittest.TestCase):
         self.assertEqual(self.problems(**overrides), [])
         self.write("Low/Low.swift", "import Darwin\npackage struct LowValue {\n  let id: String\n}\n")
         self.assertIn("macOS import in neutral target: Low/Low.swift imports Darwin", self.problems(**overrides))
+        self.write("Low/Low.swift", "#if os(macOS)\nimport Darwin\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
+        self.assertIn("macOS import in neutral target: Low/Low.swift imports Darwin", self.problems(**overrides))
 
     def test_relocation_moves_a_file_of_an_extracted_target(self):
         self.write("Low/Native.swift", "import AppKit\npackage struct NativeValue {\n  let id: String\n}\n")
@@ -263,6 +265,13 @@ class TestAllocationTests(unittest.TestCase):
         (self.tests / "Nested/Fixtures").mkdir()
         (self.tests / "Nested/Fixtures/Helper.swift").write_text("struct Helper {}\n")
         self.assertIn("unallocated test: Nested/Fixtures/Helper.swift", self.check(self.allocations))
+
+
+class NeutralPathTests(unittest.TestCase):
+    def test_macos_locations_fail_and_standard_posix_paths_pass(self):
+        rules = {"macos_path_prefixes": ["/Applications/", "/usr/bin/"], "posix_paths": ["/usr/bin/env"]}
+        text = 'let a = "/usr/bin/env"\nlet b = "/usr/bin/git"\nlet c = "/Applications/X.app"\nlet d = "/bin/sh"\n'
+        self.assertEqual(module_graph.macos_paths(text, rules), [(2, "/usr/bin/git"), (3, "/Applications/X.app")])
 
 
 class PackageModeTests(unittest.TestCase):

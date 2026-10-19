@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 internal enum ExternalProviderKind: String, Codable, CaseIterable, Equatable, Sendable {

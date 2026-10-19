@@ -1,6 +1,11 @@
 import ComputerMCPPlatform
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 extension WorkspacePathResolver {
   package static func resolve(_ path: String, relativeTo workspaceURL: URL) throws -> URL {

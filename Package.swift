@@ -19,6 +19,7 @@ let neutralTargets: [Target] =
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]
     ),
     .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
+    .target(name: "ComputerMCPPlatformPOSIX", dependencies: ["ComputerMCPPlatform"]),
     .target(
       name: "ComputerMCPConfiguration",
       dependencies: [
@@ -31,6 +32,10 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
+    .testTarget(
+      name: "ComputerMCPPlatformPOSIXTests",
+      dependencies: ["ComputerMCPPlatform", "ComputerMCPPlatformPOSIX"]
+    ),
     .testTarget(
       name: "ComputerMCPConfigurationTests",
       dependencies: [
@@ -73,7 +78,9 @@ let neutralTargets: [Target] =
       .systemLibrary(name: "CSystemArchive"),
       .target(
         name: "ComputerMCPPlatformDarwin",
-        dependencies: ["CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform"]
+        dependencies: [
+          "CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        ]
       ),
       .target(
         name: "ComputerMCP",
@@ -82,6 +89,7 @@ let neutralTargets: [Target] =
           "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin",
+          "ComputerMCPPlatformPOSIX",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
@@ -125,7 +133,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCPTests",
         dependencies: [
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+          "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX", "ComputerMCPTestSupport",
         ],
         resources: [.copy("Fixtures")]
       ),

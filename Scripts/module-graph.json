@@ -139,6 +139,15 @@
   "conditional_macos_imports": [
     "Darwin"
   ],
+  "macos_path_prefixes": [
+    "/Applications/",
+    "/System/",
+    "/usr/bin/",
+    "/usr/sbin/"
+  ],
+  "posix_paths": [
+    "/usr/bin/env"
+  ],
   "executables": [
     "ComputerMCPApp",
     "computer-mcp"

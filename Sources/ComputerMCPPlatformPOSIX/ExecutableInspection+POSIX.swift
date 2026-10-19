@@ -1,6 +1,11 @@
 import ComputerMCPPlatform
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 extension ExecutableInspection {
   /// `environment` is the complete child environment, after host-owned overrides.

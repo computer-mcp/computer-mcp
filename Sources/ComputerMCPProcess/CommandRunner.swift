@@ -135,6 +135,7 @@ final class OutputCollector: @unchecked Sendable {
   private let endOfFile = DispatchSemaphore(value: 0)
   /// Accessed only on `queue`, apart from initialization and deinitialization.
   private var source: DispatchSourceRead?
+  /// End of file was read, or collection stopped.
   private var ended = false
   private var data = Data()
   private(set) var truncated = false
@@ -179,6 +180,7 @@ final class OutputCollector: @unchecked Sendable {
       source?.cancel()
       source = nil
     }
+    lock.withLock { ended = true }
   }
 
   /// Reads until the pipe would block or ends. Runs on `queue`.

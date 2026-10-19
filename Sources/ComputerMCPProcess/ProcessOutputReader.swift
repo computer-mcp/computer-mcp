@@ -8,13 +8,22 @@ import Foundation
 
 /// File descriptor access and callback/task ownership are serialized by lock. Nonblocking reads
 /// let shutdown drain a finite pipe without waiting on a descendant that retained stdout.
+///
+/// One read source watches the descriptor for the reader's lifetime. It is suspended while a
+/// chunk is consumed, and the descriptor is closed only by its cancel handler, after the
+/// source no longer monitors it.
 internal final class ProcessOutputReader: @unchecked Sendable {
   private let handle: FileHandle
   private let consume: @Sendable (Data) async throws -> Void
   private let onError: @Sendable (Error) async -> Void
   private let completion = AsyncStream<Void>.makeStream()
+  private let queue = DispatchQueue(label: "computer-mcp.process-output")
   private let lock = NSLock()
   private var stopped = false
+  private var source: DispatchSourceRead?
+  private var suspended = false
+  /// The read source was cancelled, or the descriptor closed without one.
+  private var finished = false
   private var consumptionTask: Task<Void, Never>?
 
   init(
@@ -31,8 +40,20 @@ internal final class ProcessOutputReader: @unchecked Sendable {
     }
   }
 
+  deinit {
+    if !finished { finishSourceLocked() }
+  }
+
   func start() {
-    arm()
+    lock.withLock {
+      guard !stopped, !finished, source == nil else { return }
+      let source = DispatchSource.makeReadSource(
+        fileDescriptor: handle.fileDescriptor, queue: queue)
+      source.setEventHandler { [weak self] in self?.consumeAvailableData() }
+      source.setCancelHandler { [handle] in try? handle.close() }
+      self.source = source
+      source.resume()
+    }
   }
 
   /// Wait for EOF, including writers inherited by descendants, and join the final consumer.
@@ -42,10 +63,9 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   }
 
   func stop(drainRemainingOutput: Bool) async {
-    let (task, stopping) = lock.withLock { () -> (Task<Void, Never>?, Bool) in
-      guard !stopped else { return (consumptionTask, false) }
+    let task = lock.withLock { () -> Task<Void, Never>? in
+      guard !stopped else { return consumptionTask }
       stopped = true
-      handle.readabilityHandler = nil
       if drainRemainingOutput {
         // A pipe holds fewer bytes than this budget. A concurrent writer cannot make drain infinite.
         var remaining = 1_048_576
@@ -61,39 +81,33 @@ internal final class ProcessOutputReader: @unchecked Sendable {
           }
         }
       }
+      finishSourceLocked()
       completion.continuation.finish()
-      return (consumptionTask, true)
+      return consumptionTask
     }
-    if stopping { closeAfterHandlers() }
     await task?.value
   }
 
-  private func arm() {
-    lock.withLock { armLocked() }
-  }
-
-  private func armLocked() {
-    guard !stopped else { return }
-    handle.readabilityHandler = { [weak self] handle in
-      self?.consumeAvailableData(from: handle)
+  private func resume() {
+    lock.withLock {
+      guard !stopped, suspended, let source else { return }
+      suspended = false
+      source.resume()
     }
   }
 
-  private func consumeAvailableData(from handle: FileHandle) {
+  private func consumeAvailableData() {
     lock.withLock {
-      guard !stopped else { return }
-      handle.readabilityHandler = nil
-      guard let data = readChunkLocked() else {
-        armLocked()
-        return
-      }
+      guard !stopped, let source else { return }
+      guard let data = readChunkLocked() else { return }
       guard !data.isEmpty else {
         stopped = true
-        // This handler is running on the readability source that closing waits for.
-        DispatchQueue.global(qos: .utility).async { self.closeAfterHandlers() }
+        finishSourceLocked()
         completion.continuation.finish()
         return
       }
+      source.suspend()
+      suspended = true
       enqueueLocked(data)
     }
   }
@@ -121,7 +135,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
       await previous?.value
       do {
         try await consume(data)
-        self?.arm()
+        self?.resume()
       } catch {
         await onError(error)
         self?.stopProducing()
@@ -130,20 +144,29 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   }
 
   private func stopProducing() {
-    let stopping = lock.withLock { () -> Bool in
-      guard !stopped else { return false }
+    lock.withLock {
+      guard !stopped else { return }
       stopped = true
-      handle.readabilityHandler = nil
+      finishSourceLocked()
       completion.continuation.finish()
-      return true
     }
-    if stopping { closeAfterHandlers() }
   }
 
-  /// Closing a handle can wait for a readability handler that is still running, and the
-  /// handler takes `lock`, so close only outside the lock and off the handler's queue.
-  private func closeAfterHandlers() {
-    try? handle.close()
+  /// Cancels the read source; its cancel handler closes the descriptor. A suspended source
+  /// delivers its cancellation only after it resumes. Without a source, closes directly.
+  private func finishSourceLocked() {
+    guard !finished else { return }
+    finished = true
+    guard let source else {
+      try? handle.close()
+      return
+    }
+    self.source = nil
+    if suspended {
+      suspended = false
+      source.resume()
+    }
+    source.cancel()
   }
 }
 

@@ -55,6 +55,34 @@ unavailable JSON contract. It never falls back to the production App. The
 isolated local-permission CLI acceptance test covers a running host's success
 path.
 
+## Builtin catalog snapshot
+
+`BuiltinToolCatalogSnapshotTests` compares the complete host-owned MCP catalog
+with `Tests/ComputerMCPTests/Fixtures/builtin-tool-catalog.json`. It enables every
+default builtin, skills, CLI/MCP gateway surfaces, processes and Full Shell,
+and includes runtime discovery, execution owners, operations, Computer Use and
+remote management. An isolated workspace, an in-memory database, empty plugin
+sources and a downstream stub keep discovery independent of installed tools,
+user directories and network access. No tool is executed.
+
+The snapshot records exported names, titles, descriptions, schemas, annotations,
+metadata and capability risk, workspace requirement, local-only and network
+flags. JSON keys are sorted; failures identify added, removed and changed tools
+and fields. Update it **only for intentional changes that receive review**:
+
+```sh
+COMPUTER_MCP_UPDATE_CATALOG_SNAPSHOT=1 /usr/bin/swift test \
+  --filter BuiltinToolCatalogSnapshotTests
+git diff -- Tests/ComputerMCPTests/Fixtures/builtin-tool-catalog.json
+/usr/bin/swift test --filter BuiltinToolCatalogSnapshotTests
+```
+
+`Scripts/module-graph.json` maps Swift sources relative to
+`Tests/ComputerMCPTests` to their planned `<owner>Tests` targets. This includes
+test support files; copied `Fixtures` resources are excluded. `python3
+Scripts/verify-module-graph.py plan` rejects missing or stale mappings and test
+targets whose owner does not appear in `layers`.
+
 ## Command hierarchy
 
 ```text

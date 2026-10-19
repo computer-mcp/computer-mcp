@@ -2130,6 +2130,14 @@ struct GatewayGenerationDispatchTests {
       let saved = try #require(try fixture.database.operationTicket(id: ticketID))
       #expect(saved.reviewSummary?.contains("execution_owner") == true)
       #expect(saved.state == .pendingApproval)
+      let otherPreparation = try await call(
+        client, owner: second, tool: "operations.prepare",
+        arguments: ["tool": .string("fixture.change"), "arguments": .object([:])])
+      let otherTicketID = try #require(
+        value(otherPreparation, "result")?.objectValue?["ticket_id"]?.stringValue)
+      let otherTicket = try #require(try fixture.database.operationTicket(id: otherTicketID))
+      #expect(otherTicket.inputDigest != saved.inputDigest)
+      #expect(otherTicket.reviewSummary != saved.reviewSummary)
       let arguments: [String: JSONValue] = [
         "tool": .string("fixture.change"), "arguments": .object([:]), "ticket_id": ticket,
       ]

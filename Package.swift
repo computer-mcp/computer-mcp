@@ -99,6 +99,8 @@ let platformTargets: [Target] =
 #elseif os(Windows)
   let package = Package(
     name: "computer-mcp", dependencies: [subprocessDependency], targets: platformTargets)
+#elseif os(Linux)
+  let package = Package(name: "computer-mcp", targets: [])
 #else
-  #error("Computer MCP builds its App on macOS and its platform core on Windows.")
+  #error("Computer MCP supports package manifests on macOS, Windows and Linux.")
 #endif

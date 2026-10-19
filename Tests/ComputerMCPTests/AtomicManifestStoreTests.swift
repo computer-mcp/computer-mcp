@@ -4,6 +4,7 @@ import GRDB
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite
 

@@ -17,7 +17,7 @@ package enum MCPHostServiceAction: String, Codable, Sendable {
 }
 
 extension MCPTool {
-  var hostServiceAction: MCPHostServiceAction? {
+  package var hostServiceAction: MCPHostServiceAction? {
     get throws {
       if let meta, meta.objectValue == nil {
         throw GatewayToolError.invalidArguments(
@@ -36,7 +36,12 @@ extension MCPTool {
 }
 
 /// One discovery observation supplies both risk and semantic effect.
-struct MCPToolAdmissionPolicy: Sendable {
-  let risk: CapabilityRisk
-  let hostServiceAction: MCPHostServiceAction?
+package struct MCPToolAdmissionPolicy: Sendable {
+  package let risk: CapabilityRisk
+  package let hostServiceAction: MCPHostServiceAction?
+
+  package init(risk: CapabilityRisk, hostServiceAction: MCPHostServiceAction?) {
+    self.risk = risk
+    self.hostServiceAction = hostServiceAction
+  }
 }

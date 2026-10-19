@@ -164,7 +164,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   }
 }
 
-package struct ExecutionContext: Codable, Equatable, Sendable {
+package struct ExecutionContext: Codable, Sendable {
   package var requestID: String
   package var caller: GatewayCallerKind
   package var profileID: GatewayProfileID
@@ -173,7 +173,7 @@ package struct ExecutionContext: Codable, Equatable, Sendable {
   /// Established by the host's authenticated admission path, never by tool arguments.
   package var trustedPrincipalID: String?
   /// In-process admission evidence. Encoding a context never conveys session authority.
-  var controlSession: GatewayControlSession? = nil
+  package var controlSession: (any GatewaySessionAuthority)? = nil
 
   private enum CodingKeys: String, CodingKey {
     case requestID, caller, profileID, workspaceID, transportTrace, trustedPrincipalID
@@ -198,6 +198,16 @@ package struct ExecutionContext: Codable, Equatable, Sendable {
     self.workspaceID = workspaceID
     self.transportTrace = transportTrace
     self.trustedPrincipalID = trustedPrincipalID
+  }
+}
+
+extension ExecutionContext: Equatable {
+  package static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.requestID == rhs.requestID && lhs.caller == rhs.caller
+      && lhs.profileID == rhs.profileID && lhs.workspaceID == rhs.workspaceID
+      && lhs.transportTrace == rhs.transportTrace
+      && lhs.trustedPrincipalID == rhs.trustedPrincipalID
+      && lhs.controlSession === rhs.controlSession
   }
 }
 

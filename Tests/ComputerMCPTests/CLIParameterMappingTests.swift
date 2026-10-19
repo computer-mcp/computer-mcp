@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIParameterMappingTests {

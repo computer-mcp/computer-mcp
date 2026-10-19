@@ -1,4 +1,3 @@
-import CoreFoundation
 import Foundation
 
 /// A small Codable representation for JSON values used by JSON-RPC payloads.
@@ -12,15 +11,16 @@ package enum JSONValue: Codable, Equatable, Sendable {
   case null
 
   /// Bridges Foundation numeric storage without Boolean coercion or floating-point rounding.
-  init(foundationNumber number: NSNumber) throws {
-    if CFGetTypeID(number) == CFBooleanGetTypeID() {
+  /// Boolean storage is its own `NSNumber` subclass in every Foundation implementation.
+  package init(foundationNumber number: NSNumber) throws {
+    if type(of: number) == type(of: NSNumber(value: true)) {
       self = .bool(number.boolValue)
     } else {
       self = try JSONDecoder().decode(Self.self, from: Data(number.stringValue.utf8))
     }
   }
 
-  static func integer(exactly value: some BinaryInteger) throws -> Self {
+  package static func integer(exactly value: some BinaryInteger) throws -> Self {
     guard let integer = Int64(exactly: value) else {
       throw EncodingError.invalidValue(
         value,
@@ -128,7 +128,7 @@ package enum JSONValue: Codable, Equatable, Sendable {
   }
 
   /// Compares numeric values without converting integer bounds through Double.
-  func numericComparison(to other: Self) -> ComparisonResult? {
+  package func numericComparison(to other: Self) -> ComparisonResult? {
     func compare<T: Comparable>(_ lhs: T, _ rhs: T) -> ComparisonResult {
       lhs == rhs ? .orderedSame : lhs < rhs ? .orderedAscending : .orderedDescending
     }

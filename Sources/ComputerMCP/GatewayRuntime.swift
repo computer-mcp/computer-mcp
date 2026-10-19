@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import CryptoKit
 import Darwin
 import Foundation
@@ -33,10 +34,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   ) async throws -> Value {
     let target = MCPContinuationTarget.current
     let owner = GatewayOwnerRouting.selection
-    let session = GatewayControlSession.current
+    let session = GatewaySessionScope.current
     return try await admission.perform {
       try GatewayOwnerRouting.$selection.withValue(owner) {
-        try GatewayControlSession.$current.withValue(session) {
+        try GatewaySessionScope.$current.withValue(session) {
           try MCPContinuationTarget.$current.withValue(target, operation: operation)
         }
       }
@@ -226,7 +227,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         }
         return MCPToolAccessPolicy(
           configuration: configuration,
-          grant: try GatewayControlSession.current?.apply(
+          grant: try GatewaySessionScope.current?.apply(
             to: persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
             context: effectiveContext)
             ?? (persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant),
@@ -412,7 +413,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       return []
     }
     let currentGrant = try currentHostGrant(context: bound)
-    return try GatewayControlSession.$current.withValue(bound.controlSession) {
+    return try GatewaySessionScope.$current.withValue(bound.controlSession) {
       try listTools(context: bound)
     }.filter { tool in
       guard let descriptor = try? descriptor(named: tool.name),
@@ -1167,7 +1168,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
-    return try GatewayControlSession.$current.withValue(context.controlSession) {
+    return try GatewaySessionScope.$current.withValue(context.controlSession) {
       try perform(
         name: name, arguments: arguments?.objectValue ?? [:], context: context,
         bypassOperationTicket: false, operationLinkage: nil)
@@ -1183,7 +1184,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
-    return try await GatewayControlSession.$current.withValue(context.controlSession) {
+    return try await GatewaySessionScope.$current.withValue(context.controlSession) {
       try await performAsync(
         name: name, arguments: arguments?.objectValue ?? [:], context: context,
         bypassOperationTicket: false, operationLinkage: nil)
@@ -1485,7 +1486,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message: "Operation tools cannot target themselves."
       )
     }
-    let session = context.controlSession?.snapshot
+    let session = context.controlSession
+    let sessionRevision = session?.revision
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
     let targetDescriptor = try invocationDescriptor(
       named: toolName, arguments: targetArguments, context: context)
@@ -1543,14 +1545,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       createdAt: now,
       expiresAt: now.addingTimeInterval(Double(ttlMilliseconds) / 1_000),
       authorizationRevision: currentGrant.authorizationRevision,
-      controlSessionID: session?.id, controlSessionRevision: session?.revision,
+      controlSessionID: session?.id, controlSessionRevision: sessionRevision,
       reviewSummary: try Self.operationReviewSummary(
         GatewayOwnerRouting.selection.map {
           ["execution_owner": $0.json, "arguments": .object(routed.arguments)]
         } ?? routed.arguments),
       reviewTitle: try listTools(context: routed.context).first { $0.name == toolName }?.title
     )
-    try context.controlSession?.requireRevision(session?.revision)
+    try context.controlSession?.requireRevision(sessionRevision)
     try database.saveOperationTicket(ticket)
     return PreparedOperation(
       ticketID: ticket.id,
@@ -2067,7 +2069,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func contextForCall() -> ExecutionContext {
     var callContext = context
     callContext.requestID = UUID().uuidString
-    if let session = GatewayControlSession.current { callContext.controlSession = session }
+    if let session = GatewaySessionScope.current { callContext.controlSession = session }
     if let trace = MCPRuntimeAdapter.requestTrace { callContext.transportTrace = trace }
     return callContext
   }

@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Resolves host grants against registration identity, before downstream discovery or execution.

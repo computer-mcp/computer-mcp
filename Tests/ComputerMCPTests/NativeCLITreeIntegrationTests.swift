@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 /// An explicit local dependency check, isolated from production App state and sockets.
 @Suite(

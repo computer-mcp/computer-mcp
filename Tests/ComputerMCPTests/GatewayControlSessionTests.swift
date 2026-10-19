@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct GatewayControlSessionTests {
   @Test
@@ -34,10 +35,10 @@ struct GatewayControlSessionTests {
       let first = makeSession()
       let second = makeSession()
       try first.limitAccess(to: .readOnly, expectedRevision: 0)
-      let firstTools = try await GatewayControlSession.$current.withValue(first) {
+      let firstTools = try await GatewaySessionScope.$current.withValue(first) {
         try await fixture.gateway.listToolsAsync()
       }
-      let secondTools = try await GatewayControlSession.$current.withValue(second) {
+      let secondTools = try await GatewaySessionScope.$current.withValue(second) {
         try await fixture.gateway.listToolsAsync()
       }
       #expect(firstTools.contains { $0.name == "file.read" })

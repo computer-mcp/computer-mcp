@@ -4,6 +4,7 @@ import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPBoundHostServicesTests {
@@ -16,7 +17,7 @@ struct MCPBoundHostServicesTests {
     let directory = try #require(fixture.peer.context?.tools)
     let retained = RetainedControlInvocation()
     do {
-      _ = try await GatewayControlSession.$current.withValue(session) {
+      _ = try await GatewaySessionScope.$current.withValue(session) {
         try await fixture.during("fixture.audit", ["limit": .integer(1)]) { _ in
           let invocation = try #require(
             directory.active(workspaceID: "scope", origin: "probe").first)
@@ -88,10 +89,10 @@ struct MCPBoundHostServicesTests {
     }
     let args = JSONValue.object(["workspace_id": .string("scope"), "limit": .integer(1)])
     do {
-      async let first = GatewayControlSession.$current.withValue(firstSession) {
+      async let first = GatewaySessionScope.$current.withValue(firstSession) {
         try await fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
       }
-      async let second = GatewayControlSession.$current.withValue(secondSession) {
+      async let second = GatewaySessionScope.$current.withValue(secondSession) {
         try await fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
       }
       let results = try await [first, second]

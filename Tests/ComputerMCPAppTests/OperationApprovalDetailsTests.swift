@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCPApp
+@testable import ComputerMCPCore
 
 struct OperationApprovalDetailsTests {
   @Test

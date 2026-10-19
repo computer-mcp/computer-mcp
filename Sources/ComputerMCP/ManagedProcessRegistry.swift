@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 internal struct ManagedProcessSnapshot: Codable, Equatable, Sendable {

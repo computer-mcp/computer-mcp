@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Local presentation delegates to the owner of the selected connection.

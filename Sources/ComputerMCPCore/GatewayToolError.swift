@@ -1,7 +1,7 @@
 import Foundation
 
 /// Errors thrown while validating or executing registered gateway tools.
-internal enum GatewayToolError: Error, LocalizedError, Equatable {
+package enum GatewayToolError: Error, LocalizedError, Equatable {
   case unknownTool(String)
   case unknownCLI(String)
   case unknownMCPServer(String)
@@ -9,7 +9,7 @@ internal enum GatewayToolError: Error, LocalizedError, Equatable {
   case disabled(String)
   case executionFailed(String)
 
-  internal var errorDescription: String? {
+  package var errorDescription: String? {
     switch self {
     case .unknownTool(let name):
       return "Unknown tool: \(name)"

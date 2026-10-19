@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Host-owned scope of a forwarded operation and any work retaining its acquisition.

@@ -104,7 +104,7 @@ package struct MCPTool: Equatable, Sendable {
     return .object(object)
   }
 
-  internal func prefixed(_ prefix: String, serverID: String) -> MCPTool {
+  package func prefixed(_ prefix: String, serverID: String) -> MCPTool {
     MCPTool(
       name: prefix.isEmpty ? name : "\(prefix).\(name)",
       title: title,
@@ -117,7 +117,7 @@ package struct MCPTool: Equatable, Sendable {
     )
   }
 
-  internal func withAnnotations(_ annotations: MCPToolAnnotations) -> MCPTool {
+  package func withAnnotations(_ annotations: MCPToolAnnotations) -> MCPTool {
     MCPTool(
       name: name,
       title: title,

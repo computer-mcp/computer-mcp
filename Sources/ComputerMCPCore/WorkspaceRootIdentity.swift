@@ -1,13 +1,13 @@
 import Foundation
 
 /// Identifies the physical folder admitted by a runtime, including replacement at the same path.
-struct WorkspaceRootIdentity: Hashable, Sendable {
+package struct WorkspaceRootIdentity: Hashable, Sendable {
   let path: String
   let device: UInt64
   let inode: UInt64
   let createdAt: Date?
 
-  init(_ root: URL) throws {
+  package init(_ root: URL) throws {
     path = root.standardizedFileURL.resolvingSymlinksInPath().path
     let attributes: [FileAttributeKey: Any]
     do {

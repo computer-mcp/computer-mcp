@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 internal struct OpenAITunnelInvocation: Codable, Equatable, Sendable {

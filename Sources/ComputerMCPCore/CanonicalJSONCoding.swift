@@ -6,8 +6,8 @@ import Foundation
 /// as `IDs` into `i_ds`. This codec preserves recognized initialisms so public
 /// keys remain stable and conventional, including `capability_ids`,
 /// `http_url`, and `mcp_request_id`.
-internal enum CanonicalJSONCoding {
-  internal static func encoder(
+package enum CanonicalJSONCoding {
+  package static func encoder(
     outputFormatting: JSONEncoder.OutputFormatting = []
   ) -> JSONEncoder {
     let encoder = JSONEncoder()
@@ -18,7 +18,7 @@ internal enum CanonicalJSONCoding {
     return encoder
   }
 
-  internal static func decoder() -> JSONDecoder {
+  package static func decoder() -> JSONDecoder {
     let decoder = JSONDecoder()
     decoder.keyDecodingStrategy = .custom { codingPath in
       AnyCodingKey(Self.swiftPropertyName(codingPath.last?.stringValue ?? ""))

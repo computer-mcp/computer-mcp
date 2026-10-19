@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// A fresh connection observation, not proof of tool execution or a caller profile's permissions.

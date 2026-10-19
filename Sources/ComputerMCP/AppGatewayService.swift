@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Darwin
 import Foundation
 
@@ -902,11 +903,12 @@ package actor AppGatewayService {
   ) async throws -> JSONValue {
     try requireAdmission(key: key, epoch: epoch)
     guard let contract = GatewayRemoteManagement.byName[name],
-      let session = context.controlSession, let record = controlSessionRecords[session.id],
-      record.key == key, record.session === session,
+      let authority = context.controlSession, let record = controlSessionRecords[authority.id],
+      record.key == key, record.session === authority,
       context.trustedPrincipalID == key.principalID,
       context.profileID == key.profileID, context.caller == key.caller
     else { throw GatewayRemoteManagement.denied("Use the verified connection's management scope.") }
+    let session = record.session
     let args = try contract.input.validate(.object(arguments))
     let snapshot = session.snapshot
     let authorization = GatewayManagementAuthorization(

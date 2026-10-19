@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
 struct GatewayHTTPClientControlTests {

@@ -1,6 +1,7 @@
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct HostApprovalRedactorTests {
   @Test(arguments: [

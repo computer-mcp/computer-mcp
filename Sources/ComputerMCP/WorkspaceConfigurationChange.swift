@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 enum WorkspaceHostChange: Sendable {

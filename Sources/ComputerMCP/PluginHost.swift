@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// The host resolves registrations using its launch environment, without changing PATH or installing dependencies.

@@ -3,6 +3,7 @@ import MCP
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.nativeIntegration)
 struct MCPHTTPClientTransportTests {

@@ -3,6 +3,7 @@ import Testing
 import os
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct OperationStateScopeTests {
   @Test(arguments: ["file.write", "archive.create"], ["direct", "alias", "generic"])

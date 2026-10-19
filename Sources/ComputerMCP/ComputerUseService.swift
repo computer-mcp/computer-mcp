@@ -1,5 +1,6 @@
 @preconcurrency import AppKit
 import ApplicationServices
+import ComputerMCPCore
 import CoreGraphics
 import Foundation
 import ImageIO

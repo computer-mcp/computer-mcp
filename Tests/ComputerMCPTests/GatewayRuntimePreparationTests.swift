@@ -3,6 +3,7 @@ import GRDB
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayRuntimePreparationTests {

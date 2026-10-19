@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 package protocol DownstreamMCPClient: Sendable {
@@ -73,13 +74,13 @@ extension DownstreamMCPClient {
     try Task.checkCancellation()
     let admission = MCPInvocationAdmission.current
     let target = MCPContinuationTarget.current
-    let session = GatewayControlSession.current
+    let session = GatewaySessionScope.current
     let result = try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         continuation.resume(
           with: Result {
             try MCPInvocationAdmission.$current.withValue(admission) {
-              try GatewayControlSession.$current.withValue(session) {
+              try GatewaySessionScope.$current.withValue(session) {
                 try MCPContinuationTarget.$current.withValue(target) {
                   try self.callTool(
                     server: server, name: name, arguments: arguments, requestID: requestID)

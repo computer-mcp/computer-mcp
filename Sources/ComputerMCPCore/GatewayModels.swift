@@ -1,4 +1,4 @@
-import CryptoKit
+import Crypto
 import Foundation
 
 package struct RegisteredWorkspace: Codable, Equatable, Sendable, Identifiable {

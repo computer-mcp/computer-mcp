@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCP
+import ComputerMCPCore
 import Foundation
 
 @MainActor
@@ -1305,7 +1306,7 @@ extension ComputerUsePermissionStatus {
   }
 }
 
-extension ComputerMCP.AuditDecision {
+extension ComputerMCPCore.AuditDecision {
   fileprivate var appDecision: AuditDecision {
     switch self {
     case .allowed: .allowed

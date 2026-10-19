@@ -3,6 +3,7 @@ import Testing
 import os
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct OperationProviderBindingTests {
   @Test(arguments: ProviderBindingChange.allCases)

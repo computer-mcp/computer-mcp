@@ -5,6 +5,7 @@ import Testing
 import os
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.nativeIntegration)
 struct GatewayToolCatalogTests {

@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 package struct AppControlPlaneRestartResult: Codable, Equatable, Sendable {

@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Only execution consumes argv/stdin. Diagnostics must not serialize this value.

@@ -1,4 +1,5 @@
 import AppKit
+import ComputerMCPCore
 import Foundation
 
 extension GatewayToolRegistry {

@@ -3,6 +3,7 @@ import Testing
 import os
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 struct MCPProfileGrantTests {
   @Test(arguments: [false, true], [false, true])

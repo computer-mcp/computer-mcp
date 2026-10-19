@@ -6,6 +6,7 @@ import PDFKit
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPCore
 
 @Suite(.nativeIntegration, .serialized)
 

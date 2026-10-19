@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPPlatform
 
 package typealias ExecutableInspection = ComputerMCPPlatform.ExecutableInspection

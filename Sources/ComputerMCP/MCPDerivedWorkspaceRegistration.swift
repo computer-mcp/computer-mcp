@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Durable host ownership of a plugin-derived registration, independent of domain databases.

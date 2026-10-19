@@ -5,8 +5,16 @@ import PackageDescription
 let subprocessDependency: Package.Dependency =
   .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0")
 
-let platformTargets: [Target] =
+let cryptoDependency: Package.Dependency =
+  .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2")
+
+// Platform-neutral targets; they build on macOS and on Linux.
+let neutralTargets: [Target] =
   [
+    .target(
+      name: "ComputerMCPCore",
+      dependencies: [.product(name: "Crypto", package: "swift-crypto")]
+    ),
     .target(name: "ComputerMCPPlatform"),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
   ]
@@ -33,18 +41,20 @@ let platformTargets: [Target] =
       .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
       .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
       subprocessDependency,
+      cryptoDependency,
       .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
       .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0"),
       .package(
         url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.1-computer-mcp.1"),
     ],
-    targets: platformTargets + [
+    targets: neutralTargets + [
       .systemLibrary(name: "CSystemArchive"),
       .target(
         name: "ComputerMCP",
         dependencies: [
           "CSystemArchive",
+          "ComputerMCPCore",
           "ComputerMCPPlatform",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
@@ -62,24 +72,25 @@ let platformTargets: [Target] =
         name: "computer-mcp",
         dependencies: [
           "ComputerMCP",
+          "ComputerMCPCore",
           .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]
       ),
       .executableTarget(
         name: "ComputerMCPApp",
-        dependencies: ["ComputerMCP"],
+        dependencies: ["ComputerMCP", "ComputerMCPCore"],
         resources: [
           .process("Resources")
         ]
       ),
       .testTarget(
         name: "ComputerMCPTests",
-        dependencies: ["ComputerMCP"],
+        dependencies: ["ComputerMCP", "ComputerMCPCore"],
         resources: [.copy("Fixtures")]
       ),
       .testTarget(
         name: "ComputerMCPAppTests",
-        dependencies: ["ComputerMCPApp", "ComputerMCP"]
+        dependencies: ["ComputerMCPApp", "ComputerMCP", "ComputerMCPCore"]
       ),
     ]
   )

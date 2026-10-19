@@ -1,6 +1,6 @@
 import Foundation
 
-enum HostApprovalRedactor {
+package enum HostApprovalRedactor {
   // Foundation regular expressions are immutable; compile the fixed policy once.
   private static let valuePatterns = [
     #"(?i)(authorization\s*:\s*bearer\s+)[^\s]+"#,
@@ -8,7 +8,7 @@ enum HostApprovalRedactor {
     #"(?i)(--(?:[a-z0-9_-]*(?:token|credential|password|secret|authorization)|api[_-]?key)(?:\s+|=))(?:"[^"]*"|'[^']*'|[^\s]+)"#,
   ].map { try! NSRegularExpression(pattern: $0) }
 
-  static func redact(_ value: JSONValue) -> JSONValue {
+  package static func redact(_ value: JSONValue) -> JSONValue {
     var remainingEntries = 10_000
     return redact(value, depth: 0, remainingEntries: &remainingEntries)
   }
@@ -69,7 +69,7 @@ enum HostApprovalRedactor {
     }
   }
 
-  static func redactString(
+  package static func redactString(
     _ value: String,
     maximumCharacters: Int = 8_192
   ) -> String {

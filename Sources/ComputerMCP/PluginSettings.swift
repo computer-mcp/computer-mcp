@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 /// Mutable host choices, independent of installed versions and immutable package declarations.

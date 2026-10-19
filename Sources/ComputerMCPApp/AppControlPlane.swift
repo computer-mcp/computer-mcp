@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPCore
 import Foundation
 
 enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {

@@ -1,3 +1,4 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
@@ -28,6 +29,10 @@ package final class GatewayDatabase: @unchecked Sendable {
 
   package init(inMemory: Void) throws {
     connection = try GatewayDatabaseConnection(inMemory: ())
+  }
+
+  package init(connection: GatewayDatabaseConnection) {
+    self.connection = connection
   }
 
   /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
@@ -640,6 +645,33 @@ package final class GatewayDatabase: @unchecked Sendable {
     }
   }
 
+  static func decodeDesiredOpenAITunnelConfigurationIDs(_ value: String) throws -> [String] {
+    guard let data = value.data(using: .utf8) else { return [] }
+    let identifiers = try JSONDecoder().decode([String].self, from: data)
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    return Array(Set(identifiers)).sorted()
+  }
+
+  static func decodeDesiredCloudflareProfileIDs(_ value: String) throws -> [String] {
+    guard let data = value.data(using: .utf8) else { return [] }
+    return try JSONDecoder().decode([String].self, from: data).sorted()
+  }
+
+  static func decodeGatewayTunnelRegistration(_ value: String) throws -> UUID {
+    guard let id = UUID(uuidString: value) else {
+      throw GatewayDatabaseError.invalidStoredValue("The gateway tunnel registration is invalid.")
+    }
+    return id
+  }
+
+  static func decodeActiveGatewayProfile(_ value: String) throws -> GatewayProfileID {
+    guard let profile = GatewayProfileID(rawValue: value) else {
+      throw GatewayDatabaseError.invalidStoredValue("The active gateway profile is invalid.")
+    }
+    return profile
+  }
+
   package func saveProfile(
     _ profile: ProfileGrant, updatedAt: Date = Date(), expectedRevision: Int64? = nil
   ) throws {
@@ -1015,6 +1047,46 @@ package final class GatewayDatabase: @unchecked Sendable {
         .limit(max(1, min(limit, 1_000)))
         .fetchAll(database)
         .map(\.value)
+    }
+  }
+
+  /// Checks imported workspaces, canonical roots, aliases, profiles, plugin state and
+  /// ownership, derived registrations, client trust and runtime-setting rows with their
+  /// decoders. Validates the desired tunnel lists, tunnel registration and active profile
+  /// with their readers' rules, and parses the latest activated configuration revision,
+  /// resolving relative paths against `configurationDirectory`.
+  package func verifyImportedState(configurationDirectory: URL) throws {
+    let state = try configurationState()
+    _ = try pluginOwnedDirectories()
+    _ = try clientTrusts()
+    let active = try writer.read { database in
+      _ = try WorkspaceCanonicalRootRecord.fetchAll(database)
+      for setting in try RuntimeSettingRecord.fetchAll(database) {
+        switch setting.key {
+        case "desired-running-openai-tunnels":
+          _ = try Self.decodeDesiredOpenAITunnelConfigurationIDs(setting.value)
+        case "desired-running-cloudflare-tunnels":
+          _ = try Self.decodeDesiredCloudflareProfileIDs(setting.value)
+        case "gateway-tunnel-registration":
+          _ = try Self.decodeGatewayTunnelRegistration(setting.value)
+        case "active-gateway-profile":
+          _ = try Self.decodeActiveGatewayProfile(setting.value)
+        default: break
+        }
+      }
+      for id in try String.fetchAll(
+        database, sql: "SELECT workspaceID FROM pluginDerivedWorkspaces")
+      {
+        _ = try Self.derivedRegistration(id: id, database: database)
+      }
+      return try ConfigurationRevisionRecord.filter(Column("activatedAt") != nil)
+        .order(Column("activatedAt").desc, Column("createdAt").desc, Column("id").desc)
+        .fetchOne(database)
+    }
+    if let active {
+      _ = try GatewayConfiguration.load(
+        text: active.manifest, baseURL: configurationDirectory,
+        knownPluginMCPServerIDs: state.plugins.knownMCPRegistrationIDs)
     }
   }
 

@@ -4,7 +4,17 @@ import Testing
 
 @testable import ComputerMCPPersistence
 
-struct GatewayDatabaseSchemaTests {
+final class GatewayDatabaseSchemaTests {
+  private let directory: URL
+  private var path: String { directory.appendingPathComponent("gateway.sqlite").path }
+
+  init() throws {
+    directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  }
+
+  deinit { try? FileManager.default.removeItem(at: directory) }
+
   @Test func newDatabaseMatchesTheSchemaBaseline() throws {
     let connection = try GatewayDatabaseConnection(inMemory: ())
     let url = try #require(
@@ -19,18 +29,13 @@ struct GatewayDatabaseSchemaTests {
   }
 
   @Test func reopeningAppliesNothing() throws {
-    let path = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString + ".sqlite").path
-    defer { try? FileManager.default.removeItem(atPath: path) }
     let first = try Self.schema(GatewayDatabaseConnection(path: path).writer)
     #expect(try Self.schema(GatewayDatabaseConnection(path: path).writer) == first)
   }
 
   @Test func databaseWithEarlierMigrationsIsRefusedUnchanged() throws {
-    let path = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString + ".sqlite").path
-    defer { try? FileManager.default.removeItem(atPath: path) }
     let earlier = try DatabaseQueue(path: path)
+    defer { try? earlier.close() }
     try earlier.write { database in
       try database.execute(
         sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
@@ -48,10 +53,8 @@ struct GatewayDatabaseSchemaTests {
   }
 
   @Test func populatedDatabaseWithoutALedgerIsRefusedUnchanged() throws {
-    let path = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString + ".sqlite").path
-    defer { try? FileManager.default.removeItem(atPath: path) }
     let unrelated = try DatabaseQueue(path: path)
+    defer { try? unrelated.close() }
     try unrelated.write { try $0.execute(sql: "CREATE TABLE notes (id TEXT PRIMARY KEY)") }
     let before = try Self.schema(unrelated)
     #expect(throws: UnsupportedDatabaseSchema(identifiers: [])) {

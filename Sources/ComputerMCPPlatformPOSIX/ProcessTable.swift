@@ -30,4 +30,41 @@ package enum ProcessTable {
         == UInt8(ascii: "Z")
     #endif
   }
+
+  /// The processes with an open descriptor for the file at `path`, including this process.
+  /// File identity, rather than the opened name, matches hard-link aliases on both platforms.
+  /// Only processes this user may inspect are visible.
+  package static func processesHoldingOpen(path: String) throws -> [Int32] {
+    #if canImport(Darwin)
+      let capacity = Int(max(proc_listallpids(nil, 0), 0)) + 64
+      var processIDs = [Int32](repeating: 0, count: capacity)
+      let bytes = processIDs.withUnsafeMutableBytes { buffer in
+        proc_listpidspath(
+          UInt32(PROC_ALL_PIDS), 0, path, UInt32(PROC_LISTPIDSPATH_EXCLUDE_EVTONLY),
+          buffer.baseAddress, Int32(buffer.count))
+      }
+      guard bytes >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+      return Array(processIDs.prefix(Int(bytes) / MemoryLayout<Int32>.stride)).sorted()
+    #else
+      var target = stat()
+      guard stat(path, &target) == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
+      let fileManager = FileManager.default
+      var holders: [Int32] = []
+      for entry in try fileManager.contentsOfDirectory(atPath: "/proc") {
+        guard let processID = Int32(entry),
+          let descriptors = try? fileManager.contentsOfDirectory(atPath: "/proc/\(entry)/fd")
+        else { continue }
+        if descriptors.contains(where: {
+          var opened = stat()
+          return stat("/proc/\(entry)/fd/\($0)", &opened) == 0
+            && opened.st_dev == target.st_dev && opened.st_ino == target.st_ino
+        }) {
+          holders.append(processID)
+        }
+      }
+      return holders.sorted()
+    #endif
+  }
 }

@@ -670,10 +670,9 @@ extension AppControlPlaneService {
   }
 
   package func desiredCloudflareProfileIDs() throws -> [String] {
-    guard let value = try database.runtimeSetting(key: "desired-running-cloudflare-tunnels"),
-      let data = value.data(using: .utf8)
+    guard let value = try database.runtimeSetting(key: "desired-running-cloudflare-tunnels")
     else { return [] }
-    return try JSONDecoder().decode([String].self, from: data).sorted()
+    return try GatewayDatabase.decodeDesiredCloudflareProfileIDs(value)
   }
 
   private func recordCloudflareLifecycle(

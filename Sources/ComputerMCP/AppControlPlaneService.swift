@@ -513,18 +513,17 @@ package actor AppControlPlaneService {
     else {
       return .chatGPTObserve
     }
-    guard let profile = GatewayProfileID(rawValue: rawValue) else {
+    do {
+      return try GatewayDatabase.decodeActiveGatewayProfile(rawValue)
+    } catch {
       throw AppControlPlaneServiceError.invalidStoredProfile(rawValue)
     }
-    return profile
   }
 
   package func gatewayTunnelPrincipalID() throws -> String {
     let key = "gateway-tunnel-registration"
     if let value = try database.runtimeSetting(key: key) {
-      guard let id = UUID(uuidString: value) else {
-        throw GatewayDatabaseError.invalidStoredValue("The gateway tunnel registration is invalid.")
-      }
+      let id = try GatewayDatabase.decodeGatewayTunnelRegistration(value)
       return "tunnel-bridge:\(id.uuidString.lowercased())"
     }
     let id = UUID().uuidString.lowercased()
@@ -1040,16 +1039,11 @@ package actor AppControlPlaneService {
   }
 
   package func desiredOpenAITunnelConfigurationIDs() throws -> [String] {
-    guard let value = try database.runtimeSetting(key: Self.desiredOpenAITunnelsSettingKey),
-      let data = value.data(using: .utf8)
-    else {
+    guard let value = try database.runtimeSetting(key: Self.desiredOpenAITunnelsSettingKey) else {
       return []
     }
     do {
-      let identifiers = try JSONDecoder().decode([String].self, from: data)
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-      return Array(Set(identifiers)).sorted()
+      return try GatewayDatabase.decodeDesiredOpenAITunnelConfigurationIDs(value)
     } catch {
       throw AppControlPlaneServiceError.invalidDesiredOpenAITunnelState
     }

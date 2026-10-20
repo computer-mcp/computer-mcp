@@ -490,7 +490,6 @@ internal struct DeliveryRepository: Sendable {
       let branchTip = try git.revision("refs/heads/\(journal.branch)", at: root)
     else { return }
     let expected = journal.commit ?? journal.base
-    let symbolicVerification = try git.supportsSymbolicRefVerification(at: main)
     guard let defaultTip = try git.revision("refs/heads/\(journal.defaultBranch)", at: root),
       let head = try git.revision("HEAD", at: main)
     else { throw DeliveryFailure(reason: .cleanupFailed, detail: "Main checkout has changed.") }
@@ -527,11 +526,14 @@ internal struct DeliveryRepository: Sendable {
       throw DeliveryFailure(
         reason: .cleanupFailed, detail: "Main checkout HEAD branch has changed.")
     }
-    var transaction = "start\nverify refs/heads/\(journal.defaultBranch) \(defaultTip)\n"
-    if symbolicVerification {
-      transaction += "option no-deref\nsymref-verify HEAD refs/heads/\(journal.defaultBranch)\n"
-    }
-    transaction += "delete refs/heads/\(journal.branch) \(expected)\nprepare\ncommit\n"
+    let transaction = """
+      start
+      verify refs/heads/\(journal.defaultBranch) \(defaultTip)
+      delete refs/heads/\(journal.branch) \(expected)
+      prepare
+      commit
+
+      """
     do {
       try git.run(["update-ref", "--stdin"], at: main, input: Data(transaction.utf8))
     } catch {

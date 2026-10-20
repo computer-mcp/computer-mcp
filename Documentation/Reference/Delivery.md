@@ -160,19 +160,16 @@ default branch; `cleanup_pending` with an undelivered commit also retains it.
 Branch deletion is limited to `merged` and `aborted`. Before an aborted deletion,
 the branch tip must be reachable from the current default tip. One
 `update-ref --stdin` transaction verifies the default ref's checked object ID
-and deletes the delivery branch with its expected value. With registered Git
-2.46 or later, the same transaction uses `option no-deref` and
-`symref-verify HEAD refs/heads/<default>` to verify the main checkout's symbolic
-`HEAD`. On older Git, the symbolic `HEAD` check runs immediately before the
-transaction; a change in that check-to-transaction interval remains a residual
-concurrency window. For live `merged`,
+and deletes the delivery branch with its expected value. On every Git version,
+the check that the main checkout's `HEAD` is still the symbolic ref
+`refs/heads/<default>` runs immediately before the transaction. A symbolic
+`HEAD` change in that check-to-transaction interval remains a residual concurrency
+window; the transaction atomically guards the default and delivery branch values.
+For live `merged`,
 both `HEAD` and the default tip must equal the delivery commit; recovery uses the
 default tip captured for its reachability check. Detected interference returns
 `cleanup_pending` / `cleanup_failed`, retains the branch and records diagnostic
 detail, including a changed main checkout.
-If Git's files backend rejects the combined symbolic and default-ref checks as
-duplicate `HEAD` updates, cleanup also returns `cleanup_pending`, retains the
-branch and records Git's rejection.
 
 The repository lock serializes delivery calls across App and CLI processes.
 Other Git writers, including users and other tools, do not take this lock.

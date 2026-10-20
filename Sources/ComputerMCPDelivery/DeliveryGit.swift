@@ -91,14 +91,4 @@ internal struct DeliveryGit: Sendable {
       .stdout.trimmingCharacters(in: .newlines)
   }
 
-  func supportsSymbolicRefVerification(at directory: URL) throws -> Bool {
-    let version =
-      try run(["--no-optional-locks", "--version"], at: directory).stdout
-      .split(separator: " ").dropFirst(2).first?.split(separator: ".") ?? []
-    guard version.count >= 2, let major = Int(version[0]), let minor = Int(version[1]) else {
-      throw DeliveryFailure(
-        reason: .gitFailed, detail: "Cannot identify the registered Git version.")
-    }
-    return major > 2 || (major == 2 && minor >= 46)
-  }
 }

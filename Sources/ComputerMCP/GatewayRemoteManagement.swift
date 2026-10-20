@@ -162,6 +162,7 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
   ]
 
   static let byName = Dictionary(uniqueKeysWithValues: contracts.map { ($0.input.name, $0) })
+  package static var toolNames: Set<String> { Set(contracts.map(\.input.name)) }
   static var definitions: [ToolDefinition] { contracts.map(\.definition) }
   static var readCapabilities: Set<String> {
     Set(contracts.filter { $0.risk == .readOnly }.map { $0.input.name })

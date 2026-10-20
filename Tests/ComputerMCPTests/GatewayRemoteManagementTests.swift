@@ -490,9 +490,16 @@ struct GatewayRemoteManagementTests {
 
 struct GatewayRemoteManagementAuthorityTests {
   @Test
-  func managementWithoutProviderFailsBeforeSynchronousDispatch() async throws {
+  func managementWithoutProviderFailsBeforeDispatch() async throws {
+    #expect(
+      MacOSPlatform.services.managementToolNames
+        == Set(GatewayRemoteManagement.definitions.map(\.tool.name)))
+    let root = try ScopedTemporaryDirectory()
     let runtime = try GatewayRuntime(
-      configuration: GatewayConfiguration(), registeredWorkspaces: [],
+      configuration: GatewayConfiguration(workspaceDirectory: root.url),
+      registeredWorkspaces: [
+        .init(id: "fixture", displayName: "Fixture", rootPath: root.url.path)
+      ],
       platform: MacOSPlatform.services,
       bundledPlugins: .load(directory: nil))
     for name in GatewayRemoteManagement.definitions.map(\.tool.name) {
@@ -501,6 +508,9 @@ struct GatewayRemoteManagementAuthorityTests {
       }
       #expect(throws: GatewayToolError.unknownTool(name)) {
         try runtime.callTool(name: name, arguments: .object([:]), context: .empty)
+      }
+      await #expect(throws: GatewayToolError.unknownTool(name)) {
+        try await runtime.callToolAsync(name: name, arguments: .object([:]), context: .empty)
       }
     }
     await runtime.shutdown()

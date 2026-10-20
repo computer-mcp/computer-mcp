@@ -314,8 +314,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let router = try GatewayProviderRouter(
         registry: registry,
         reservedToolNames: Set(
-          Self.coreDefinitions(databaseEnabled: true, management: remoteManagement).map(\.tool.name)
-        ),
+          Self.coreDefinitions(databaseEnabled: true, management: nil).map(\.tool.name)
+        ).union(platform.managementToolNames),
         retainsContinuation: { [ownedWork, workspaceID = workspace.id] reference in
           ownedWork.continuations.retainsContinuation(
             workspaceID: workspaceID, reference: reference)

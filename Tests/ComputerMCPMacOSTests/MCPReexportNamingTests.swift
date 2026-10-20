@@ -213,6 +213,25 @@ struct MCPReexportNamingTests {
     }
   }
 
+  @Test(arguments: ["profile", ""])
+  func managementNamesStayReservedWithoutProvider(prefix: String) async throws {
+    let root = try ScopedTemporaryDirectory()
+    let name = prefix.isEmpty ? "profile.show" : "show"
+    let configuration = GatewayConfiguration(
+      mcp: .init(servers: [Self.server("first", prefix: prefix)]),
+      workspaceDirectory: root.url)
+    await #expect(throws: GatewayProviderRouterError.duplicateTool("profile.show")) {
+      let runtime = try await GatewayRuntime.make(
+        configuration: configuration,
+        registeredWorkspaces: [
+          .init(id: "fixture", displayName: "Fixture", rootPath: root.url.path)
+        ],
+        platform: MacOSPlatform.services, mcpClient: ReexportNamingClient(["first": [name]]),
+        bundledPlugins: .load(directory: nil), remoteManagement: nil)
+      await runtime.shutdown()
+    }
+  }
+
   @Test
   func reservedCoreNameDuringRefreshDoesNotReplaceTheValidatedCatalog() async throws {
     let client = ReexportNamingClient(["first": ["available"]])

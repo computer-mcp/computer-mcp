@@ -259,6 +259,7 @@ private struct PreparationStateFixture: Sendable {
         pluginDirectories: MacOSPlatform.services.pluginDirectories,
         applications: MacOSPlatform.services.applications,
         toolProviders: MacOSPlatform.services.toolProviders,
+        managementToolNames: MacOSPlatform.services.managementToolNames,
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         gitExecutable: MacOSPlatform.services.gitExecutable,
         fileChanges: MacOSPlatform.services.fileChanges),

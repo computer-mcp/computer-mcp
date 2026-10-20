@@ -10,6 +10,28 @@ import Testing
   @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
   struct MCPHTTPResponseStreamTests {
     @Test
+    func cancelledOpenDoesNotCreateADataTask() async throws {
+      let session = Self.session()
+      MCPHTTPResponseStream.invalidateAndCancel(session)
+      let opening = Task {
+        withUnsafeCurrentTask { $0?.cancel() }
+        _ = try await MCPHTTPResponseStream.open(
+          for: URLRequest(url: URL(string: "http://127.0.0.1:1/")!), session: session)
+      }
+      await #expect(throws: CancellationError.self) { try await opening.value }
+    }
+
+    @Test
+    func invalidatedSessionRejectsANewExchange() async throws {
+      let session = Self.session()
+      MCPHTTPResponseStream.invalidateAndCancel(session)
+      await #expect(throws: (any Error).self) {
+        _ = try await MCPHTTPResponseStream.open(
+          for: URLRequest(url: URL(string: "http://127.0.0.1:1/")!), session: session)
+      }
+    }
+
+    @Test
     func stalledConsumerFailsAndCancelsNearTheQueueBound() async throws {
       try await HTTPStreamProcessFixture.withFixture { fixture in
         let session = Self.session()

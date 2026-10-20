@@ -7,6 +7,16 @@ import Foundation
 
 /// Opens headers before consuming the body, with each exchange owning its data task.
 enum MCPHTTPResponseStream {
+  static func invalidateAndCancel(_ session: URLSession) {
+    #if canImport(FoundationNetworking)
+      if let delegate = session.delegate as? MCPHTTPRedirectPolicy {
+        delegate.invalidateAndCancel(session)
+        return
+      }
+    #endif
+    session.invalidateAndCancel()
+  }
+
   #if canImport(FoundationNetworking)
     static let maximumQueuedBytes = 32 * 1_024 * 1_024
 
@@ -78,6 +88,7 @@ enum MCPHTTPResponseStream {
     static func open(for request: URLRequest, session: URLSession) async throws -> (
       Bytes, URLResponse
     ) {
+      try Task.checkCancellation()
       let (responses, response) = AsyncThrowingStream<URLResponse, any Error>.makeStream(
         bufferingPolicy: .bufferingOldest(1))
       let (chunks, body) = AsyncThrowingStream<Data, any Error>.makeStream()
@@ -85,9 +96,9 @@ enum MCPHTTPResponseStream {
       guard let delegate = session.delegate as? MCPHTTPRedirectPolicy else {
         throw MCPHTTPTransportError.invalidResponse
       }
-      let task = session.dataTask(with: request)
+      let task = try delegate.makeDataTask(
+        for: request, session: session, response: response, body: body, buffer: buffer)
       let identifier = task.taskIdentifier
-      delegate.register(identifier: identifier, response: response, body: body, buffer: buffer)
       body.onTermination = { [weak task, weak delegate] _ in
         task?.cancel()
         delegate?.finish(identifier: identifier, throwing: URLError(.cancelled))
@@ -132,32 +143,47 @@ final class MCPHTTPRedirectPolicy: NSObject, URLSessionDataDelegate, Sendable {
       let buffer: MCPHTTPResponseStream.Buffer
     }
 
-    // Registration and cancellation race with callbacks on URLSession's serial delegate queue.
-    private let exchanges = NIOLockedValueBox<[Int: Exchange]>([:])
+    private struct State: Sendable {
+      var exchanges: [Int: Exchange] = [:]
+      var invalidated = false
+    }
 
-    func register(
-      identifier: Int,
+    // Task creation and registration must finish before shutdown can invalidate the session.
+    private let state = NIOLockedValueBox(State())
+
+    func makeDataTask(
+      for request: URLRequest,
+      session: URLSession,
       response: AsyncThrowingStream<URLResponse, any Error>.Continuation,
       body: AsyncThrowingStream<Data, any Error>.Continuation,
       buffer: MCPHTTPResponseStream.Buffer
-    ) {
-      exchanges.withLockedValue {
-        $0[identifier] = Exchange(response: response, body: body, buffer: buffer)
+    ) throws -> URLSessionDataTask {
+      try state.withLockedValue {
+        guard !$0.invalidated else { throw URLError(.cancelled) }
+        try Task.checkCancellation()
+        let task = session.dataTask(with: request)
+        $0.exchanges[task.taskIdentifier] = Exchange(response: response, body: body, buffer: buffer)
+        return task
       }
+    }
+
+    func invalidateAndCancel(_ session: URLSession) {
+      state.withLockedValue { $0.invalidated = true }
+      session.invalidateAndCancel()
     }
 
     func urlSession(
       _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
       completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
     ) {
-      let exchange = exchanges.withLockedValue { $0[dataTask.taskIdentifier] }
+      let exchange = state.withLockedValue { $0.exchanges[dataTask.taskIdentifier] }
       exchange?.response.yield(response)
       exchange?.response.finish()
       completionHandler(.allow)
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-      guard let exchange = exchanges.withLockedValue({ $0[dataTask.taskIdentifier] }) else {
+      guard let exchange = state.withLockedValue({ $0.exchanges[dataTask.taskIdentifier] }) else {
         return
       }
       let exceeded = exchange.buffer.enqueue(data.count)
@@ -176,7 +202,7 @@ final class MCPHTTPRedirectPolicy: NSObject, URLSessionDataDelegate, Sendable {
     }
 
     func finish(identifier: Int, throwing error: (any Error)?) {
-      let exchange = exchanges.withLockedValue { $0.removeValue(forKey: identifier) }
+      let exchange = state.withLockedValue { $0.exchanges.removeValue(forKey: identifier) }
       exchange?.response.finish(throwing: error)
       exchange?.body.finish(throwing: error)
     }

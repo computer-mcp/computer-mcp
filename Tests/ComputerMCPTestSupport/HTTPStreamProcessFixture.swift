@@ -257,7 +257,10 @@ package struct HTTPStreamProcessFixture {
                                     self.close_connection = True
                                     return
                                 time.sleep(0.001)
-                    self.finish()
+                    if ordered:
+                        self.finish()
+                    else:
+                        self.keep_alive("bytes")
                 except (BrokenPipeError, ConnectionResetError, TimeoutError):
                     with lock:
                         with (root / "closed-streams").open("a") as file:

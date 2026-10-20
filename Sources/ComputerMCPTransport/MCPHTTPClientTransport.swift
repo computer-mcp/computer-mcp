@@ -122,7 +122,7 @@ package actor MCPHTTPClientTransport: Transport {
     // Concurrent disconnect callers join the same bounded cleanup and never duplicate DELETE.
     let task = Task { [worker] in
       await worker.endSession(context: context)
-      worker.session.invalidateAndCancel()
+      MCPHTTPResponseStream.invalidateAndCancel(worker.session)
       for exchange in exchanges { _ = await exchange.result }
       await events?.value
     }
@@ -187,14 +187,14 @@ package actor MCPHTTPClientTransport: Transport {
     connected = false
     eventTask?.cancel()
     for exchange in requestExchanges.values { exchange.task.cancel() }
-    worker.session.invalidateAndCancel()
+    MCPHTTPResponseStream.invalidateAndCancel(worker.session)
     continuation.finish(throwing: error)
   }
 
   deinit {
     eventTask?.cancel()
     for exchange in requestExchanges.values { exchange.task.cancel() }
-    worker.session.invalidateAndCancel()
+    MCPHTTPResponseStream.invalidateAndCancel(worker.session)
     continuation.finish()
   }
 }

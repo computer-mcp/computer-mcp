@@ -542,58 +542,43 @@ profiles, client trust, runtime settings, the latest activated configuration
 revision, plugin selections, settings and owned directories, and derived
 workspace registrations. Audit history, approvals, operation tickets and
 execution receipts are not carried over. The configuration file and Keychain
-items stay where they are.
+items stay where they are. `--database` selects a database other than the
+App's.
 
 Quit the App and stop every gateway, bridge and tunnel process first. The
-command refuses a database that any process has open, a concurrent import, a
-database that already uses the current schema, and a replacement whose backup
-name `<database>.before-import` is already occupied. Connections hold shared
-advisory locks on `<database>.lock`; the importer holds it exclusively from
-recovery through replacement. This lock file is created with mode 0600 and stays
-in place after use. Keep it in place so all openers coordinate on the same file.
-A process-table check also detects open databases from earlier versions that do
-not take this lock, including files opened through hard-link aliases.
+command refuses a database that any process has open, a database that already
+uses the current schema, and an existing `<database>.before-import`. Database
+connections share `<database>.lock` and the import holds it exclusively, so an
+import and an open connection exclude each other; earlier versions do not take
+this lock and are detected through the process table instead. Keep the lock
+file in place.
 
-Classification opens the existing database read-write without migrations, so
-SQLite can roll back a hot rollback journal. That rollback is the only change
-the command may make to the old database's contents. After classification, any
-remaining `<database>-journal`, `<database>-wal` or `<database>-shm` causes a
-refusal; these files are left for explicit recovery. This check also applies
-when the main database is missing. WAL and SHM files are also refused before
-opening, to keep SQLite from cleaning them up during classification.
-
-The command exclusively creates `<database>.import` with mode 0600, then writes
-complete exported rows, checks their counts and stored-record decoding,
-validates known runtime settings and parses the latest activated configuration
-through the same open connection. The target's exclusive lock covers staging;
-the command creates no `<database>.import.lock`. If the staged name or any of its
-sidecars already exists without a replacement record establishing ownership,
-the command refuses, names that path and leaves it in place. Staging cleanup
-removes only a file created by this import or identified by its replacement
-record. Every staged connection closes before the command atomically installs
-the staged database. The previous main file is kept as
+The import writes the exported rows into `<database>.import`, checks that every
+row arrived, that this version reads every imported record and that the
+activated configuration parses, and only then installs it. Opening the existing
+database lets SQLite finish rolling back an interrupted transaction; nothing
+else in it changes. The previous database is kept as
 `<database>.before-import`; to return to the earlier version, quit the App and
-move that file back.
+move that file back to the database name.
 
-A replacement record at `<database>.import-replacing` stores the previous and
-staged files' device and inode identities, with `previous: null` when the target
-was absent. The command first exclusively writes and syncs the complete JSON to
-`<database>.import-replacing.tmp`, publishes it with a hard link that cannot
-replace an existing record, removes the temporary name and syncs the directory
-before replacement. Recovery accepts an unpublished temporary record only when
-it decodes and identifies the staged file; an invalid or unrecognized temporary
-record is left in place with an error naming its path.
+While a replacement is underway, `<database>.import-replacing` records it and
+the database is not opened. Running the same command again rolls an interrupted
+replacement back and then imports.
 
-If replacement is interrupted, connections refuse to open the database until
-the next `state import` rolls it back and imports again. Before recovery changes
-any file, it checks open handles and all `-journal`, `-wal` and `-shm` sidecars at
-the database, backup and staged names. Any open file or sidecar stops recovery
-with an error naming the path and leaves the record and all files in place.
-Recovery restores the previous file, or removes only names with the recorded
-staged identity when the target was initially absent. Recovery can itself be
-resumed after an interruption. A file with an unexpected identity at the
-database, backup or staged path also stops recovery and leaves all files in
-place. `--database` selects a database other than the App's.
+The import never changes a file it did not create. When it refuses and names a
+file:
+
+- `<database>.import` or `<database>.import-replacing.tmp` without
+  `<database>.import-replacing`: an earlier import stopped before it changed the
+  database. Move the named file out of the directory and run the command again.
+- A file named in a refusal while `<database>.import-replacing` exists: the
+  record identifies the database and its backup, so the named file is not one
+  of them. Move it out of the directory and run the command again.
+- A missing database or `<database>.before-import` named by the record: restore
+  it before running the command again.
+- A `-journal`, `-wal` or `-shm` file: open the database once with the version
+  that created it so SQLite completes its recovery, quit that version, and run
+  the command again.
 
 ## `bridge`
 

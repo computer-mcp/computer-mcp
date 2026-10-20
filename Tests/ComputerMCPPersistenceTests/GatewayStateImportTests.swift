@@ -395,6 +395,22 @@ struct GatewayStateImportTests {
     #expect(directory.entries() == ["gateway.sqlite", "gateway.sqlite.lock"])
   }
 
+  @Test(arguments: ["database", "previous"])
+  func recoveryReportsAMissingRecordedFileWithoutChangingAnything(_ name: String) throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    try Self.interruptReplacement(in: directory, at: .stagedRenamed)
+    let missing = name == "database" ? directory.database : directory.previous
+    let kept = directory.url.deletingLastPathComponent().appendingPathComponent("kept")
+    try FileManager.default.moveItem(at: missing, to: kept)
+    let before = try directory.snapshot()
+
+    #expect(throws: GatewayStateImportError.missingFile(missing.path)) {
+      try GatewayStateImport.recover(.init(database: directory.database))
+    }
+    #expect(try directory.snapshot() == before)
+  }
+
   @Test func aConcurrentRetryCannotStartRecovery() throws {
     let directory = try TemporaryDirectory()
     try Self.makeEarlierDatabase(at: directory.database)

@@ -124,10 +124,12 @@ package enum GatewayStateImport {
     }
     if record.previous != nil {
       guard database != nil else {
-        throw GatewayStateImportError.unexpectedFile(paths.database.path)
+        throw GatewayStateImportError.missingFile(paths.database.path)
       }
       if database == record.staged, previous != record.previous {
-        throw GatewayStateImportError.unexpectedFile(paths.previous.path)
+        throw previous == nil
+          ? GatewayStateImportError.missingFile(paths.previous.path)
+          : GatewayStateImportError.unexpectedFile(paths.previous.path)
       }
     }
     if temporary != nil {
@@ -422,6 +424,7 @@ package enum GatewayStateImportError: Error, LocalizedError, Equatable {
   case previousDatabaseExists(String)
   case sidecarExists(String)
   case unexpectedFile(String)
+  case missingFile(String)
   case invalidReplacementRecord(String)
 
   package var errorDescription: String? {
@@ -438,13 +441,18 @@ package enum GatewayStateImportError: Error, LocalizedError, Equatable {
     case .previousDatabaseExists(let path):
       return "\(path) already exists. Move it elsewhere, then import again."
     case .sidecarExists(let path):
-      return
-        "SQLite sidecar \(path) still exists. Recover it before importing; it was left unchanged."
+      return "SQLite sidecar \(path) still exists, so nothing was changed. Open the database once "
+        + "with the Computer MCP version that created it so SQLite completes its recovery, quit "
+        + "that version, then import again."
     case .unexpectedFile(let path):
-      return
-        "The file at \(path) does not have the expected import identity; it was left unchanged."
+      return "The file at \(path) does not belong to this import, so nothing was changed. Move it "
+        + "out of the directory, then run the same import command again."
+    case .missingFile(let path):
+      return "The replacement record names \(path), which is missing, so nothing was changed. "
+        + "Restore that file before running the import again."
     case .invalidReplacementRecord(let path):
-      return "The import replacement record at \(path) is invalid; it was left unchanged."
+      return "The import replacement record at \(path) is not valid, so nothing was changed. "
+        + "See the State import section of the CLI reference before moving any file."
     }
   }
 }

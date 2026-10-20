@@ -54,8 +54,8 @@ package struct InterruptedStateImport: Error, LocalizedError, Equatable {
 
   package var errorDescription: String? {
     "A state import replacing the database at \(path) did not finish, so it was not opened. "
-      + "Run `computer-mcp state import <export-file>` again: it first rolls back the interrupted "
-      + "replacement."
+      + "Run the same `computer-mcp state import` command again, with the same `--database` "
+      + "option if it had one: it first rolls back the interrupted replacement."
   }
 }
 

@@ -168,7 +168,19 @@ final class MCPHTTPRedirectPolicy: NSObject, URLSessionDataDelegate, Sendable {
     }
 
     func invalidateAndCancel(_ session: URLSession) {
-      state.withLockedValue { $0.invalidated = true }
+      let exchanges = state.withLockedValue { state -> [Exchange]? in
+        guard !state.invalidated else { return nil }
+        state.invalidated = true
+        let exchanges = Array(state.exchanges.values)
+        state.exchanges.removeAll()
+        return exchanges
+      }
+      guard let exchanges else { return }
+      // Foundation can drop delegate callbacks while task protocol creation is pending.
+      for exchange in exchanges {
+        exchange.response.finish(throwing: URLError(.cancelled))
+        exchange.body.finish(throwing: URLError(.cancelled))
+      }
       session.invalidateAndCancel()
     }
 

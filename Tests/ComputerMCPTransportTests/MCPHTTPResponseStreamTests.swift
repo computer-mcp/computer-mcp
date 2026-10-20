@@ -32,6 +32,35 @@ import Testing
     }
 
     @Test
+    func invalidationCancelsOpensWaitingForCacheLookup() async throws {
+      let cache = DelayedURLCache()
+      let session = Self.session(cache: cache)
+      defer { MCPHTTPResponseStream.invalidateAndCancel(session) }
+      try await Self.withTimeout(.seconds(2)) {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+          for _ in 0..<2 {
+            group.addTask {
+              await #expect(throws: URLError(.cancelled)) {
+                _ = try await MCPHTTPResponseStream.open(
+                  for: URLRequest(url: URL(string: "http://127.0.0.1:1/")!), session: session)
+              }
+            }
+          }
+          var lookups = cache.lookups.makeAsyncIterator()
+          var replies: [DelayedURLCache.Reply] = []
+          defer {
+            for reply in replies { reply(nil) }
+          }
+          for _ in 0..<2 {
+            replies.append(try #require(await lookups.next()))
+          }
+          MCPHTTPResponseStream.invalidateAndCancel(session)
+          try await group.waitForAll()
+        }
+      }
+    }
+
+    @Test
     func stalledConsumerFailsAndCancelsNearTheQueueBound() async throws {
       try await HTTPStreamProcessFixture.withFixture { fixture in
         let session = Self.session()
@@ -84,8 +113,9 @@ import Testing
       }
     }
 
-    private static func session() -> URLSession {
+    private static func session(cache: URLCache? = nil) -> URLSession {
       let configuration = URLSessionConfiguration.ephemeral
+      if let cache { configuration.urlCache = cache }
       configuration.timeoutIntervalForRequest = 5
       configuration.timeoutIntervalForResource = 45
       return URLSession(
@@ -131,17 +161,37 @@ import Testing
     }
 
     private static func withTimeout<T: Sendable>(
+      _ timeout: Duration = .seconds(45),
       _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
       try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask(operation: operation)
         group.addTask {
-          try await Task.sleep(for: .seconds(45))
+          try await Task.sleep(for: timeout)
           throw HTTPStreamTestError.timeout
         }
         defer { group.cancelAll() }
         return try await group.next()!
       }
+    }
+  }
+
+  // Subclass state is immutable; AsyncStream synchronizes the cache callback handoff.
+  private final class DelayedURLCache: URLCache, @unchecked Sendable {
+    typealias Reply = @Sendable (CachedURLResponse?) -> Void
+
+    let lookups: AsyncStream<Reply>
+    private let pendingLookups: AsyncStream<Reply>.Continuation
+
+    init() {
+      (lookups, pendingLookups) = AsyncStream<Reply>.makeStream()
+      super.init(memoryCapacity: 1_024, diskCapacity: 0, diskPath: nil)
+    }
+
+    override func getCachedResponse(
+      for dataTask: URLSessionDataTask, completionHandler: @escaping Reply
+    ) {
+      pendingLookups.yield(completionHandler)
     }
   }
 #endif

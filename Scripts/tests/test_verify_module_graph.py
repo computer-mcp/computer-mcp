@@ -88,13 +88,49 @@ class PlanModeTests(unittest.TestCase):
                    "  func use() -> Int { fileType() }\n  static func fileType() -> Int { 2 }\n}\n")
         self.assertEqual(self.problems(), [])
 
+    def test_member_function_declaration_is_not_a_type_reference(self):
+        self.write("Shared/Low.swift", "package struct LowValue {\n"
+                   "  func HighService() -> Int { 0 }\n}\n")
+        self.assertEqual(self.problems(), [])
+
+    def test_member_function_references_are_not_type_references(self):
+        for expression in ("HighService()", "self.HighService()", "HighService",
+                           "consume(callback: HighService)", "{ () -> Int in HighService() }",
+                           "{ (value: Int) -> Int in consume(callback: HighService) }"):
+            with self.subTest(expression=expression):
+                self.write("Shared/Low.swift", "package struct LowValue {\n"
+                           "  func HighService() -> Int { 0 }\n"
+                           f"  func use() {{ _ = {expression} }}\n}}\n")
+                self.assertEqual(self.problems(), [])
+
     def test_member_function_does_not_hide_a_type_reference(self):
         for reference in ("HighService", "High.HighService"):
             with self.subTest(reference=reference):
+                method = "  func HighService() -> Int { 0 }\n"
+                owner = f"  let owner: {reference}?\n"
+                self.write("Shared/Low.swift", "package struct LowValue {\n" + method + owner + "}\n")
+                self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
+                self.write("Shared/Low.swift", "package struct LowValue {\n" + method + "}\n")
+                self.assertEqual(self.problems(), [])
+
+    def test_member_function_does_not_hide_type_syntax(self):
+        for declaration in ("let owner: [HighService]?", "let owner: (Int, HighService)?",
+                            "func use(_ owner: HighService) {}", "func use() -> HighService? { nil }",
+                            "typealias Owner = HighService", "func use(_ value: Any) { _ = value is HighService }",
+                            "let callback = { (owner: HighService) in owner }",
+                            "let callback = { (id: Int, owner: HighService) in owner }",
+                            "let callback = { () -> HighService? in nil }",
+                            "let id = 0, owner: HighService?", "@HighService var owner: Int"):
+            with self.subTest(declaration=declaration):
                 self.write("Shared/Low.swift", "package struct LowValue {\n"
                            "  func HighService() -> Int { 0 }\n"
-                           f"  let owner: {reference}?\n}}\n")
+                           f"  {declaration}\n}}\n")
                 self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
+
+    def test_member_function_does_not_hide_an_enum_payload_type(self):
+        self.write("Shared/Low.swift", "package enum LowValue {\n"
+                   "  func HighService() -> Int { 0 }\n  case owner(HighService)\n}\n")
+        self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
 
     def test_extension_sees_member_function_from_a_sibling_extension(self):
         self.write("Shared/High.swift", "package func fileType() -> Int { 1 }\n")
@@ -235,6 +271,27 @@ class PlanModeTests(unittest.TestCase):
         self.write("Shared/Low.swift", "package struct LowValue {\n  let owner: High.HighService?\n}\n")
         self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
         self.write("Shared/Low.swift", "package struct LowValue {\n  let owner: Other.HighService?\n}\n")
+        self.assertEqual(self.problems(), [])
+
+    def test_module_qualification_resolves_only_the_named_owner_with_duplicate_types(self):
+        self.write("Shared/Peer.swift", "package struct HighService {}\n")
+        for qualifier in ("Low", "High", "Peer"):
+            for separator in (".", " . ", ".\n    "):
+                with self.subTest(qualifier=qualifier, separator=separator):
+                    self.write("Shared/Low.swift", "package struct HighService {}\n"
+                               "package struct LowValue {\n"
+                               f"  let owner: {qualifier}{separator}HighService?\n}}\n")
+                    upward = [p.split(": ", 2)[1] for p in self.problems() if p.startswith("upward:")]
+                    self.assertEqual(upward, [] if qualifier == "Low" else [f"Low -> {qualifier}"])
+
+    def test_module_qualifier_is_not_itself_a_type_reference(self):
+        self.write("Shared/Peer.swift", "package struct High {}\n")
+        self.write("Shared/Low.swift", "package struct LowValue {\n  let owner: High.HighService?\n}\n")
+        upward = [p.split(": ", 2)[1] for p in self.problems() if p.startswith("upward:")]
+        self.assertEqual(upward, ["Low -> High"])
+
+    def test_module_qualification_does_not_fall_back_to_another_modules_declaration(self):
+        self.write("Shared/Low.swift", "package struct LowValue {\n  let owner: Peer.HighService?\n}\n")
         self.assertEqual(self.problems(), [])
 
     def test_unranked_source_directory_fails(self):

@@ -40,7 +40,7 @@ DECL = re.compile(r"^" + MODIFIERS + r"(struct|class|enum|actor|protocol|typeali
 EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z][\w.]*)")
 FREE = re.compile(r"^" + MODIFIERS + r"(?:func|let|var)\s+(\w+)")
 IMPORT = re.compile(r"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
-IDENTIFIER = re.compile(r"\b[A-Z]\w*\b")
+REFERENCE = re.compile(r"\b[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*")
 FUNC = re.compile(MODIFIERS + r"func\s")
 PRIVATE = re.compile(r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:private|fileprivate)\s")
 COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
@@ -120,6 +120,61 @@ def code_text(text):
 
 MEMBER = re.compile(r"[{}]|\b(struct|class|enum|actor|protocol|typealias|func)\s+([A-Za-z_]\w*)")
 SCOPE = re.compile(r"[{}]|\b(?:let|var)\s+([A-Za-z_]\w*)|(?<![.\w])([A-Za-z_]\w*)\b")
+TYPE_TOKEN = re.compile(r"\bfunc\s+([A-Za-z_]\w*)|->|==|[A-Za-z_]\w*|[^\s]")
+
+
+def type_contexts(text):
+    """Function declaration names and identifiers in lexical type syntax, by offset.
+
+    Annotations, signatures, aliases, generic arguments and casts require types;
+    expression names can instead resolve to a member function.
+    """
+    declarations, positions, groups = set(), set(), []
+    declaration, binding, in_type, previous = None, None, False, None
+    heads = {"let", "var", "typealias", "associatedtype", "struct", "class", "enum",
+             "actor", "protocol", "extension", "init", "subscript", "case"}
+    closing = {")": "(", "]": "[", ">": "<"}
+    for token in TYPE_TOKEN.finditer(text):
+        word = token.group(0)
+        if token.group(1):
+            declarations.add(token.start(1))
+            declaration, in_type = "func", False
+        elif word in heads:
+            declaration, in_type = word, word == "extension"
+            if word in {"let", "var"}:
+                binding = word
+        elif word in ("(", "[", "<"):
+            groups.append((word, in_type, declaration))
+            in_type |= word == "<" or declaration == "case"
+            if word == "(" and previous in {"{", "]"}:
+                end = skip_group(text, token.end())
+                if re.match(r"\s*(?:(?:async|throws|rethrows)\s*)*(?:->[^{}]*?)?\bin\b", text[end:]):
+                    declaration = "func"
+                    groups[-1] = (word, in_type, declaration)
+        elif word in closing:
+            if groups and groups[-1][0] == closing[word]:
+                _, in_type, declaration = groups.pop()
+        elif word == ",":
+            if groups:
+                opening, in_type, declaration = groups[-1]
+                in_type |= opening == "<" or declaration == "case"
+            else:
+                declaration, in_type = declaration if declaration == "case" else binding, False
+        elif word == ":":
+            in_type |= declaration is not None
+        elif word == "=":
+            in_type = declaration in {"typealias", "associatedtype"}
+            declaration = None
+        elif word in {"->", "as", "is", "where"}:
+            in_type = True
+        elif word in {"{", "}", ";", "in"}:
+            declaration, binding, in_type = None, None, False
+        elif in_type:
+            positions.add(token.start())
+        if previous == "@":
+            positions.add(token.start())
+        previous = word
+    return declarations, positions
 
 
 def member_names(text, path):
@@ -380,29 +435,35 @@ def plan(graph, sources, tests=None):
         path = (source, chunk.get("path", chunk["name"]))
         local_types = nested_types.get(path, set())
         local_functions = nested_functions.get(path, set())
-        references = set()
-        for match in IDENTIFIER.finditer(chunk["text"]):
-            name, start = match.group(0), match.start()
+        declarations, type_positions = type_contexts(chunk["text"])
+        references = collections.defaultdict(set)
+        for match in REFERENCE.finditer(chunk["text"]):
+            names, start = re.split(r"\s*\.\s*", match.group(0)), match.start()
+            if start in declarations or re.search(r"\.\s*$", chunk["text"][max(0, start - 80):start]):
+                continue
+            name, qualifier = names[0], None
+            if len(names) > 1 and name in modules:
+                qualifier, name = names[:2]
             if name not in types:
                 continue
-            if start > 0 and chunk["text"][start - 1] == ".":
-                qualifier = re.search(r"([A-Za-z_]\w*)\s*\.$", chunk["text"][max(0, start - 80):start])
-                if not qualifier or qualifier.group(1) not in modules:
-                    continue
-            elif name in local_types or source in types[name]:
+            if qualifier is None and (name in local_types or source in types[name]
+                                      or (name in local_functions and start not in type_positions)):
                 continue
-            references.add(name)
+            owners = types[name] if qualifier is None else types[name] & {qualifier}
+            references[(name, qualifier)].update(owners)
         if chunk["kind"] == "ext" and chunk["name"] in types:
-            references.add(chunk["name"])
-        references |= {n for n in free_references(chunk["text"], functions.keys() - local_types - local_functions)
-                       if source not in functions[n]}
-        for name in references:
+            references[(chunk["name"], None)].update(types[chunk["name"]])
+        for name in free_references(chunk["text"], functions.keys() - local_types - local_functions):
+            if source not in functions[name]:
+                references[(name, None)].update(functions[name])
+        for (name, qualifier), owners in references.items():
             if (chunk["name"], name) in cuts:
                 continue
-            for target in (types.get(name, set()) | functions.get(name, set())) - {source} - removed:
+            for target in owners - {source} - removed:
                 edges[source].add(target)
                 if len(evidence[(source, target)]) < 5:
-                    evidence[(source, target)].append(f'{chunk["file"]}:{chunk["name"]} -> {name}')
+                    reference = f"{qualifier}.{name}" if qualifier else name
+                    evidence[(source, target)].append(f'{chunk["file"]}:{chunk["name"]} -> {reference}')
     for source in sorted(edges):
         for target in sorted(edges[source]):
             for problem in rules.violations(source, target):

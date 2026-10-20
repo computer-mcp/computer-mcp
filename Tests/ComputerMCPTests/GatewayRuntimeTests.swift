@@ -738,6 +738,24 @@ final class GatewayRuntimeTests {
   }
 
   @Test
+  func testComputerUseArgumentFailureHasStableFailedAuditClassification() {
+    let error = ComputerUseGatewayProviderError.invalidArguments("Invalid pointer button.")
+
+    #expect(GatewayRuntime.auditDecision(for: error) == .failed)
+    #expect(GatewayRuntime.auditErrorCode(for: error) == "computer_use.invalid_arguments")
+  }
+
+  @Test
+  func testUnclassifiedErrorUsesDefaultAuditClassification() {
+    struct UnclassifiedError: AuditErrorClassifying {
+      var auditClassification: (decision: AuditDecision, code: String)? { nil }
+    }
+
+    #expect(GatewayRuntime.auditDecision(for: UnclassifiedError()) == .failed)
+    #expect(GatewayRuntime.auditErrorCode(for: UnclassifiedError()) == nil)
+  }
+
+  @Test
   func testSecurityValidationFailuresHaveStableDeniedAuditClassification() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

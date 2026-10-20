@@ -1,11 +1,18 @@
 import ComputerMCPCore
 import Foundation
 
-internal enum ComputerUseGatewayProviderError: Error, Equatable, Sendable {
+internal enum ComputerUseGatewayProviderError: AuditErrorClassifying, Equatable, Sendable {
   case unknownTool(String)
   case invalidArguments(String)
   case asyncToolRequired(String)
   case service(ComputerUseError)
+
+  internal var auditClassification: (decision: AuditDecision, code: String)? {
+    if case .service(.permissionRequired) = self {
+      return (.denied, code)
+    }
+    return (.failed, code)
+  }
 
   internal var code: String {
     switch self {

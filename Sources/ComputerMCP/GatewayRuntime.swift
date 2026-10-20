@@ -2823,10 +2823,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   static func auditDecision(for error: Error) -> AuditDecision {
-    if let computerUseError = error as? ComputerUseGatewayProviderError,
-      case .service(.permissionRequired) = computerUseError
-    {
-      return .denied
+    if let classification = (error as? any AuditErrorClassifying)?.auditClassification {
+      return classification.decision
     }
 
     guard case .invalidArguments(let message) = error as? GatewayToolError else {
@@ -2852,8 +2850,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       return "configuration.changed"
     }
 
-    if let computerUseError = error as? ComputerUseGatewayProviderError {
-      return computerUseError.code
+    if let classification = (error as? any AuditErrorClassifying)?.auditClassification {
+      return classification.code
     }
     guard let gatewayError = error as? GatewayToolError else {
       return nil

@@ -88,6 +88,11 @@ package enum AuditDecision: String, Codable, Sendable {
   case failed
 }
 
+package protocol AuditErrorClassifying: Error {
+  /// Nil leaves classification to the caller's existing audit rules.
+  var auditClassification: (decision: AuditDecision, code: String)? { get }
+}
+
 package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   package var id: String
   package var occurredAt: Date

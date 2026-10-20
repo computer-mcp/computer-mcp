@@ -56,6 +56,7 @@ struct CLITreeToolProvider: GatewayToolProvider {
   }
 
   func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    try Task.checkCancellation()
     let command = try command(named: invocation.name)
     let commandInvocation = try CLIArgumentEncoder.encode(
       invocation.arguments ?? .object([:]), command: command)

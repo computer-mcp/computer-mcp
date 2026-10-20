@@ -12,6 +12,29 @@ import Testing
 @Suite(.nativeIntegration, .serialized)
 final class ShellToolProviderTests {
   @Test
+  func alreadyCancelledSpawnDoesNotReachManagers() async {
+    let runner = RecordingCommandRunner()
+    let processes = FakeProcessManager()
+    let shells = RecordingShellManager()
+    let provider = ShellToolProvider(
+      environment: ToolEnvironment(
+        configuration: .fixture(policy: .init(shellEnabled: true)), commandRunner: runner,
+        processManager: processes, shellManager: shells))
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await provider.callToolAsync(
+        .init(
+          name: "shell.spawn", arguments: .object(["command": .string("echo hello")]),
+          context: .empty))
+    }
+
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(runner.calls.isEmpty)
+    #expect(processes.spawnedIDs.isEmpty)
+    #expect(shells.spawnCount == 0)
+  }
+
+  @Test
   func testProcessListReturnsGatewayManagedSessions() throws {
     let processManager = FakeProcessManager()
     processManager.snapshots = [
@@ -138,6 +161,50 @@ final class ShellToolProviderTests {
     return try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
   }
 
+}
+
+private final class RecordingShellManager: ShellManaging, @unchecked Sendable {
+  // The lock protects the count shared with the blocking provider executor.
+  private let lock = NSLock()
+  private var spawns = 0
+
+  var spawnCount: Int { lock.withLock { spawns } }
+
+  func spawn(
+    request: ShellLaunchRequest, defaultShell: String, defaultWorkingDirectory: URL,
+    timeoutMilliseconds: Int?, maxOutputBytes: Int, maxSessions: Int,
+    terminationGraceMilliseconds: Int
+  ) throws -> String {
+    lock.withLock { spawns += 1 }
+    return "session-1"
+  }
+
+  func run(
+    request: ShellLaunchRequest, defaultShell: String, defaultWorkingDirectory: URL,
+    standardInput: Data, timeoutMilliseconds: Int, maxOutputBytes: Int, maxSessions: Int,
+    terminationGraceMilliseconds: Int
+  ) throws -> ShellSessionSnapshot {
+    throw GatewayToolError.executionFailed("Unexpected shell manager call.")
+  }
+
+  func list(maxReadBytes: Int, encoding: ShellStreamEncoding) throws -> [ShellSessionSnapshot] {
+    throw GatewayToolError.executionFailed("Unexpected shell manager call.")
+  }
+
+  func read(
+    sessionID: String, stdoutCursor: Int64, stderrCursor: Int64, maxReadBytes: Int,
+    encoding: ShellStreamEncoding
+  ) throws -> ShellSessionSnapshot {
+    throw GatewayToolError.executionFailed("Unexpected shell manager call.")
+  }
+
+  func write(sessionID: String, data: Data, close: Bool) throws -> ShellWriteResult {
+    throw GatewayToolError.executionFailed("Unexpected shell manager call.")
+  }
+
+  func cancel(sessionID: String) throws -> ShellCancelResult {
+    throw GatewayToolError.executionFailed("Unexpected shell manager call.")
+  }
 }
 
 private final class FakeProcessManager: ProcessManaging, @unchecked Sendable {

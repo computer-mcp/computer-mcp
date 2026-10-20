@@ -30,6 +30,7 @@ internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
   }
 
   internal func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    try Task.checkCancellation()
     guard let definition = toolDefinitions.first(where: { $0.tool.name == invocation.name }) else {
       throw GatewayToolError.unknownTool(invocation.name)
     }

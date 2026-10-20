@@ -8,7 +8,8 @@ package protocol GatewayToolProvider: Sendable {
 
 extension GatewayToolProvider {
   package func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
-    try await GatewayProviderExecution.blocking.perform {
+    try Task.checkCancellation()
+    return try await GatewayProviderExecution.blocking.perform {
       try self.callTool(invocation)
     }
   }

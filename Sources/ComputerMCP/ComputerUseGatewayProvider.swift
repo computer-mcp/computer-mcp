@@ -67,6 +67,7 @@ package struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
   }
 
   package func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    try Task.checkCancellation()
     let name = invocation.name
     let arguments = invocation.arguments
     if name == "computer.screenshot" {

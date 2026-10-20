@@ -17,6 +17,20 @@ import Testing
 #endif
 
 struct CLITreeTests {
+  @Test
+  func alreadyCancelledCallPrecedesArgumentValidation() async throws {
+    let provider = Self.provider(Self.printCommand(), executable: "/usr/bin/printf")
+    let name = try #require(provider.definitions().first?.tool.name)
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await provider.callToolAsync(
+        .init(name: name, arguments: .object([:]), context: .empty))
+    }
+
+    await #expect(throws: CancellationError.self) { try await task.value }
+    await provider.execution.shutdown()
+  }
+
   @Test(arguments: [
     "", "hello world", "你好🙂", "a\"b'c", "$(touch should-not-exist)", "-42", "--", "a\nb",
   ])

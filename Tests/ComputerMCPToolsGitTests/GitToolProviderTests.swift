@@ -12,6 +12,27 @@ import Testing
 @Suite(.nativeIntegration, .serialized)
 final class GitToolProviderTests {
   @Test
+  func alreadyCancelledCommitDoesNotReachRunner() async {
+    let runner = RecordingCommandRunner()
+    let provider = GitToolProvider(
+      environment: ToolEnvironment(
+        configuration: .fixture(
+          cli: .init(commands: [.init(id: "git", executable: "/usr/bin/git")]),
+          builtin: .init(enabled: ["git.commit"])),
+        commandRunner: runner))
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await provider.callToolAsync(
+        .init(
+          name: "git.commit", arguments: .object(["message": .string("Update fixture")]),
+          context: .empty))
+    }
+
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(runner.calls.isEmpty)
+  }
+
+  @Test
   func testGitBuiltinsAreExposedOnlyWhenEnabled() throws {
     let disabled = GitToolProvider(environment: ToolEnvironment(configuration: .fixture()))
     #expect(!(try disabled.definitions().map(\.tool).map(\.name).contains("git.status")))

@@ -10,6 +10,20 @@ import Testing
 @Suite
 
 final class ComputerUseGatewayProviderTests {
+  @Test(arguments: ["computer.permissions", "computer.screenshot", "computer.accessibility.action"])
+  func alreadyCancelledCallDoesNotReachAdapter(name: String) async {
+    let adapter = ProviderComputerUseAdapter()
+    let provider = ComputerUseGatewayProvider(service: ComputerUseService(adapter: adapter))
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await provider.callToolAsync(
+        .init(name: name, arguments: .object([:]), context: .empty))
+    }
+
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(adapter.calls.isEmpty)
+  }
+
   @Test
   func testProviderExposesCompleteStableToolCatalog() throws {
     let provider = ComputerUseGatewayProvider(

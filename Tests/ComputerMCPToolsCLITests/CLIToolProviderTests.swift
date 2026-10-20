@@ -12,6 +12,24 @@ import Testing
 @Suite(.nativeIntegration, .serialized)
 final class CLIToolProviderTests {
   @Test
+  func alreadyCancelledExecDoesNotReachRunner() async {
+    let runner = RecordingCommandRunner()
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(configuration: .fixture(), commandRunner: runner))
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await provider.callToolAsync(
+        .init(
+          name: "cli.exec",
+          arguments: .object(["id": .string("echo"), "argv": .array([.string("hello")])]),
+          context: .empty))
+    }
+
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(runner.calls.isEmpty)
+  }
+
+  @Test
   func testNoAuthToolsAdvertiseNoAuthSecurityScheme() throws {
     let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
     let tool = try #require(try provider.definitions().map(\.tool).first { $0.name == "cli.list" })

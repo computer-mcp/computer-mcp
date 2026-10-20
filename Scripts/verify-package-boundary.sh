@@ -71,8 +71,9 @@ then
   exit 1
 fi
 
-if rg -n '^(@testable )?import ComputerMCP$' Tools/Validation; then
-  echo "Package boundary gate failed: Validation imports the production implementation module." >&2
+ROOT_MODULES=$(jq -r '[.targets[] | select(.type != "test") | .name | gsub("-"; "_")] | join("|")' <<<"$PACKAGE")
+if rg -n "^(@testable )?import (${ROOT_MODULES})([[:space:].]|$)" Tools/Validation; then
+  echo "Package boundary gate failed: Validation imports a production implementation module." >&2
   exit 1
 fi
 

@@ -3311,7 +3311,7 @@ final class GatewayToolRegistryTests {
         ),
       ])
     )
-    let registry = GatewayToolRegistry(configuration: config)
+    let registry = GatewayToolRegistry(configuration: config, mcpClient: FakeDownstreamMCPClient())
 
     let result = try registry.callTool(
       name: "mcp.servers.status", arguments: .object([:]), context: .empty)

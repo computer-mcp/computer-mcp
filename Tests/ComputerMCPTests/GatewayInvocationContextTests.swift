@@ -64,7 +64,8 @@ struct GatewayInvocationContextTests {
   }
 
   @Test(arguments: [false, true])
-  func directRegistryReexportDiscoveryKeepsLiveSessionAndRoute(asynchronous: Bool) async throws {
+  func directRegistryResolvesInHostScopeAndExecutesWithLiveSession(asynchronous: Bool) async throws
+  {
     let fixture = try InvocationFixture(reexportTools: true)
     let configuration = fixture.configuration
     let grant = configuration.profileGrant(for: .localAdmin)
@@ -81,7 +82,14 @@ struct GatewayInvocationContextTests {
       })
     let registry = GatewayToolRegistry(configuration: configuration, mcpClient: client)
     let route = InvocationRouteProbe()
-    let context = InvocationContext(session: fixture.session, continuation: route)
+    let admission = try #require(
+      InvocationAdmission(
+        descriptor: .init(
+          id: "fixture.inspect", risk: .readOnly,
+          mcpReference: .init(serverID: "fixture", toolName: "inspect")),
+        hostInvocationID: UUID()))
+    let context = InvocationContext(
+      admission: admission, session: fixture.session, continuation: route)
     let initialDiscoveries = fixture.client.discoveries.count
     func call(_ tool: String) async throws -> JSONValue {
       if asynchronous {
@@ -95,14 +103,21 @@ struct GatewayInvocationContextTests {
       try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
       _ = try await call("inspect")
       await #expect(throws: (any Error).self) { try await call("change") }
-      let discoveries = fixture.client.discoveries.dropFirst(initialDiscoveries)
-      #expect(!discoveries.isEmpty)
-      #expect(discoveries.allSatisfy { $0.session === fixture.session })
-      #expect(discoveries.allSatisfy { ($0.continuation as? InvocationRouteProbe) === route })
+      let discoveries = Array(fixture.client.discoveries.dropFirst(initialDiscoveries))
+      #expect(discoveries.count == 2)
+      let catalog = try #require(discoveries.first)
+      #expect(catalog.admission == nil && catalog.session == nil && catalog.continuation == nil)
+      let execution = try #require(discoveries.last)
+      #expect(execution.session === fixture.session)
+      #expect((execution.continuation as? InvocationRouteProbe) === route)
       fixture.session.end()
       await #expect(throws: (any Error).self) { try await call("inspect") }
       #expect(fixture.client.calls.count == 1)
-      #expect(fixture.client.calls.first?.session === fixture.session)
+      let observed = try #require(fixture.client.calls.first)
+      #expect(observed.session === fixture.session)
+      #expect((observed.continuation as? InvocationRouteProbe) === route)
+      #expect(observed.admission?.hostInvocationID == admission.hostInvocationID)
+      #expect(observed.admission?.reference == admission.reference)
       await registry.shutdown()
       await fixture.runtime.shutdown()
     } catch {
@@ -153,9 +168,9 @@ struct GatewayInvocationContextTests {
     }
   }
 
-  @Test(arguments: [false, true], [false, true])
-  func directRegistryDiscoversOnlyTheRequestedReexport(
-    asynchronous: Bool, selectedContinuation: Bool
+  @Test(arguments: ["sync", "async", "fallback", "async-fallback"], [false, true])
+  func directRegistryReusesTheHostCatalogWithCallerContext(
+    path: String, selectedContinuation: Bool
   ) async throws {
     let fixture = try InvocationFixture(reexportTools: true)
     var configuration = fixture.configuration
@@ -171,21 +186,41 @@ struct GatewayInvocationContextTests {
       session: fixture.session, continuation: selectedContinuation ? selected : nil)
     let initialDiscoveries = fixture.client.discoveries.count
     do {
+      _ = try registry.listTools(context: context)
+      #expect(
+        Array(fixture.client.discoveredServers.dropFirst(initialDiscoveries)) == [
+          "other", "fixture",
+        ])
+      #expect(
+        fixture.client.discoveries.dropFirst(initialDiscoveries).allSatisfy {
+          $0.admission == nil && $0.session == nil && $0.continuation == nil
+        })
+      let catalogDiscoveries = fixture.client.discoveries.count
       let result: JSONValue
-      if asynchronous {
+      switch path {
+      case "async":
         result = try await registry.callToolAsync(
           name: "fixture.inspect", arguments: .object([:]), context: context)
-      } else {
+      case "fallback":
+        result = try registry.callTool(
+          definition: .init(
+            name: "fixture.inspect", description: "Fixture", inputSchema: .object([:])),
+          arguments: .object([:]), context: context)
+      case "async-fallback":
+        result = try await registry.callToolAsync(
+          definition: .init(
+            name: "fixture.inspect", description: "Fixture", inputSchema: .object([:])),
+          arguments: .object([:]), context: context)
+      default:
         result = try registry.callTool(
           name: "fixture.inspect", arguments: .object([:]), context: context)
       }
       #expect(result.objectValue?["isError"] == .bool(false))
+      #expect(fixture.client.discoveries.count == catalogDiscoveries)
+      let observed = try #require(fixture.client.calls.first)
+      #expect(observed.session === fixture.session)
       #expect(
-        Array(fixture.client.discoveredServers.dropFirst(initialDiscoveries)) == ["fixture"])
-      let discovery = try #require(fixture.client.discoveries.last)
-      #expect(discovery.session === fixture.session)
-      #expect(
-        (discovery.continuation as? MCPContinuationTarget)?.connectionID
+        (observed.continuation as? MCPContinuationTarget)?.connectionID
           == (selectedContinuation ? selected.connectionID : nil))
       #expect(fixture.client.calls.count == 1)
       await registry.shutdown()

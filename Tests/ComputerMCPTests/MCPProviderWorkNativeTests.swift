@@ -181,8 +181,10 @@ struct MCPProviderWorkNativeTests {
     }
   }
 
-  @Test
-  func directRegistryReexportCannotStartAnUnavailableSelectedConnection() async throws {
+  @Test(arguments: [false, true])
+  func directRegistryRejectsAStaleContinuationWithoutDiscoveryOrReplacement(
+    asynchronous: Bool
+  ) async throws {
     try await withProvider { client, original, _ in
       var server = original
       server.exposure = .reexport
@@ -200,20 +202,34 @@ struct MCPProviderWorkNativeTests {
       let context = InvocationContext(continuation: selected)
       let blocking = BlockingOperationExecutor(label: "registry-selected-connection-test")
       do {
+        _ = try await blocking.perform { try registry.listTools(context: .empty) }
+        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let discoveries = try String(
+          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
         do {
-          _ = try await blocking.perform {
-            try registry.callTool(
+          if asynchronous {
+            _ = try await registry.callToolAsync(
               name: "fixture.inspect", arguments: .object([:]), context: context)
+          } else {
+            _ = try await blocking.perform {
+              try registry.callTool(
+                name: "fixture.inspect", arguments: .object([:]), context: context)
+            }
           }
-          Issue.record("Registry discovery accepted an unavailable selected connection.")
+          Issue.record("Registry execution accepted an unavailable selected connection.")
         } catch {
           #expect(error.localizedDescription.contains("mcp.continuation_unavailable"))
         }
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("starts").path))
+        #expect(starts == "started\n")
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+            == discoveries)
         #expect(
           try registry.mcpClient.connectionStatus(server: server, context: .empty).objectValue?[
             "state"]
-            == .string("not_started"))
+            == .string("connected"))
         await registry.shutdown()
       } catch {
         await registry.shutdown()
@@ -245,6 +261,8 @@ struct MCPProviderWorkNativeTests {
         configuration: .init(mcp: .init(servers: [other, server]), workspaceDirectory: root),
         mcpClient: client, hostContext: hostContext)
       do {
+        let blocking = BlockingOperationExecutor(label: "registry-reexport-test")
+        _ = try await blocking.perform { try registry.listTools(context: .empty) }
         let started = try await registry.mcpClient.callToolAsync(
           server: server, name: "start", arguments: .object([:]), requestID: nil, context: .empty)
         try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
@@ -252,12 +270,14 @@ struct MCPProviderWorkNativeTests {
         let target = try continuationTarget(work, server: server, arguments: arguments)
         let context = InvocationContext(continuation: target)
         let name = prefix.isEmpty ? "inspect" : "\(prefix).inspect"
+        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let discoveries = try String(
+          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
         let result: JSONValue
         if asynchronous {
           result = try await registry.callToolAsync(
             name: name, arguments: arguments, context: context)
         } else {
-          let blocking = BlockingOperationExecutor(label: "registry-reexport-test")
           result = try await blocking.perform {
             try registry.callTool(name: name, arguments: arguments, context: context)
           }
@@ -268,10 +288,13 @@ struct MCPProviderWorkNativeTests {
             == started.objectValue?["structuredContent"]?.objectValue?["pid"])
         #expect(
           try registry.mcpClient.connectionStatus(server: other, context: .empty).objectValue?[
-            "state"] == .string("not_started"))
+            "state"] == .string("connected"))
+        #expect(starts == "started\nstarted\n")
         #expect(
-          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
-            == "started\n")
+          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+            == discoveries)
         _ = try await registry.mcpClient.callToolAsync(
           server: server, name: "finish", arguments: .object([:]), requestID: nil, context: .empty)
         try await wait { work.snapshot.isEmpty }
@@ -466,6 +489,8 @@ struct MCPProviderWorkNativeTests {
         if method == "initialize":
             result = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "work-fixture", "version": "1"}}
         elif method == "tools/list":
+            with open(os.path.join(os.path.dirname(__file__), "discoveries"), "a") as marker:
+                marker.write("listed\n")
             result = {"tools": [{"name": name, "inputSchema": {"type": "object"}, "_meta": {"io.github.computer-mcp/work": {"format_version": 1, "uri": uri}}} for name in names]}
             for tool in result["tools"]:
                 if tool["name"] == "inspect":

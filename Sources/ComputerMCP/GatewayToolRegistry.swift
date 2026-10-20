@@ -11,9 +11,8 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   private static let calls = BlockingOperationExecutor(
     label: "computer-mcp.registry-calls", serial: false)
 
-  // Successful listings disambiguate native names and overlapping prefixes.
-  // Calls use the registration identity and revalidate its current catalog.
-  private let reexportReferences = NIOLockedValueBox([String: MCPToolReference]())
+  // Shared host-scope definitions survive failed listings. The lock also serializes discovery.
+  private let catalog = NIOLockedValueBox<[ToolDefinition]?>(nil)
 
   internal let configuration: GatewayConfiguration
 
@@ -99,6 +98,24 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   package func definitions(context: InvocationContext) throws -> [ToolDefinition] {
+    try catalogDefinitions(refresh: true)
+  }
+
+  private func catalogDefinitions(refresh: Bool) throws -> [ToolDefinition] {
+    try catalog.withLockedValue { catalog in
+      if !refresh, let catalog { return catalog }
+      let definitions = try discoverDefinitions()
+      catalog = definitions
+      return definitions
+    }
+  }
+
+  private func catalogTool(named name: String) throws -> MCPTool? {
+    try catalogDefinitions(refresh: false).first(where: { $0.tool.name == name })?.tool
+  }
+
+  private func discoverDefinitions() throws -> [ToolDefinition] {
+    let context = InvocationContext.empty
     var definitions = Self.gatewayDefinitions(
       shellEnabled: configuration.policy.shellEnabled,
       builtins: Set(configuration.builtin.enabled),
@@ -121,7 +138,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       try appendDefinition(try downstreamDefinition(for: tool), to: &definitions)
     }
 
-    var reexportReferences: [String: MCPToolReference] = [:]
     for server in configuration.mcp.servers where server.exposure.includesReexport {
       guard let prefix = server.prefix else {
         throw GatewayToolError.invalidArguments(
@@ -137,12 +153,8 @@ package final class GatewayToolRegistry: @unchecked Sendable {
           "Reexported tool name conflicts: \(conflict.tool.name)")
       }
       definitions.append(contentsOf: downstreamDefinitions)
-      for definition in downstreamDefinitions {
-        reexportReferences[definition.tool.name] = definition.tool.mcpReference
-      }
     }
 
-    self.reexportReferences.withLockedValue { $0 = reexportReferences }
     return definitions
   }
 
@@ -150,6 +162,9 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   package func callTool(name: String, arguments: JSONValue?, context: InvocationContext)
     throws -> JSONValue
   {
+    if let definition = try catalogTool(named: name), definition.mcpReference != nil {
+      return try callTool(definition: definition, arguments: arguments, context: context)
+    }
     let object = arguments?.objectValue ?? [:]
 
     switch name {
@@ -1116,39 +1131,8 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       return try textResult(gitCommit(arguments: object))
 
     default:
-      if let configuredTool = configuration.tools.first(where: { $0.name == name }) {
-        return try callConfiguredTool(configuredTool, arguments: object, context: context)
-      }
-      return try callTool(
-        definition: reexportedTool(named: name, context: context),
-        arguments: arguments, context: context)
-    }
-  }
-
-  private func reexportedTool(named name: String, context: InvocationContext) throws -> MCPTool {
-    let reference =
-      context.continuationTarget?.reference
-      ?? reexportReferences.withLockedValue { $0[name] }
-    let candidates = configuration.mcp.servers.filter { server in
-      guard server.exposure.includesReexport, let prefix = server.prefix else { return false }
-      if let reference {
-        return server.id == reference.serverID
-          && (prefix.isEmpty ? reference.toolName : "\(prefix).\(reference.toolName)") == name
-      }
-      return prefix.isEmpty || name.hasPrefix("\(prefix).")
-    }
-    guard candidates.count == 1, let candidate = candidates.first, let prefix = candidate.prefix
-    else {
       throw GatewayToolError.unknownTool(name)
     }
-    let server = try mcpServer(candidate.id, context: context)
-    guard
-      let definition = try permittedDownstreamTools(server: server, context: context)
-        .map({ $0.prefixed(prefix, serverID: server.id) }).first(where: { $0.name == name })
-    else {
-      throw GatewayToolError.unknownTool(name)
-    }
-    return try downstreamDefinition(for: definition).tool
   }
 
   private func toolDefinition(for tool: ToolConfig, downstream: MCPTool) throws -> MCPTool {
@@ -1171,33 +1155,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
         "Configured tool name conflicts: \(definition.tool.name)")
     }
     definitions.append(definition)
-  }
-
-  private func callConfiguredTool(
-    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext
-  )
-    throws -> JSONValue
-  {
-    switch tool.adapter {
-    case .mcp:
-      return try callConfiguredMCPTool(tool, arguments: object, context: context)
-    }
-  }
-
-  private func callConfiguredMCPTool(
-    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext
-  )
-    throws -> JSONValue
-  {
-    guard let downstreamTool = tool.tool else {
-      throw GatewayToolError.invalidArguments("MCP-backed tool '\(tool.name)' requires tool.")
-    }
-    let server = try mcpServer(tool.source, context: context)
-    try requireDownstreamToolAllowed(downstreamTool, server: server)
-    return try mcpClient.callTool(
-      server: server,
-      name: downstreamTool,
-      arguments: .object(object), context: context)
   }
 
   private func requireBuiltinEnabled(_ name: String) throws {
@@ -1258,8 +1215,17 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   internal func callToolAsync(
-    definition: MCPTool, arguments: JSONValue?, context: InvocationContext
+    definition tool: MCPTool, arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
+    try Task.checkCancellation()
+    let definition: MCPTool
+    if tool.mcpReference == nil {
+      definition = try await Self.calls.perform {
+        try self.catalogTool(named: tool.name) ?? tool
+      }
+    } else {
+      definition = tool
+    }
     try Task.checkCancellation()
     if let reference = definition.mcpReference {
       let server = try mcpServer(reference.serverID, context: context)

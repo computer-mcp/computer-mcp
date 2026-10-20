@@ -2485,6 +2485,7 @@ private struct GenerationFixture: Sendable {
       gatewayExecutablePath: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/computer-mcp").path,
+      launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: PlatformServices(
         workspaceGrants: bookmarkService,

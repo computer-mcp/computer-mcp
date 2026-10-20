@@ -3,7 +3,6 @@ import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPPersistence
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPToolsWorkspace
@@ -95,8 +94,7 @@ package actor AppControlPlaneService {
     openAITunnelSupervisor: OpenAITunnelSupervisor,
     gatewayExecutablePath: String = "computer-mcp",
     providerDiscovery: (any ControlPlaneProviderDiscovering)? = nil,
-    launchAtLoginController: any LaunchAtLoginControlling =
-      SMAppServiceLaunchAtLoginController(),
+    launchAtLoginController: any LaunchAtLoginControlling,
     computerUsePermissionReader: any ComputerUsePermissionReading,
     platform: PlatformServices,
     pluginCatalog: (any PluginCatalogBrowsing)? = nil,

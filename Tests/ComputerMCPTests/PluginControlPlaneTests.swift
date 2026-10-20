@@ -605,6 +605,7 @@ struct PluginControlFixture: Sendable {
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       gatewayExecutablePath: worker,
+      launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services, pluginReleases: releases,
       pluginDownload: download,

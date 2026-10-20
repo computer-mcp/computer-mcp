@@ -756,6 +756,7 @@ private final class CloudflareControlPlaneFixture {
       manifestStore: manifestStore,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
+      launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services
     )

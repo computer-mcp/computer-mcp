@@ -43,6 +43,7 @@ extension AppControlPlaneService {
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
       gatewayExecutablePath: gatewayExecutablePath,
+      launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: ComputerUseService(),
       platform: platform,
       bundledPlugins: bundledPlugins

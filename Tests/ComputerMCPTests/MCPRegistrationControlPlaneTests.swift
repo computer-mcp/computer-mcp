@@ -558,6 +558,7 @@ struct MCPRegistrationControlFixture: Sendable {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
+      launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services, bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)

@@ -35,6 +35,7 @@ struct GatewaySocketPrincipalLifecycleTests {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
+      launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
     let script = root.appendingPathComponent("fixture.py")

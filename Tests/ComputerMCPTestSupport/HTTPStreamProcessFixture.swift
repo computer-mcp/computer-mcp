@@ -241,6 +241,28 @@ package struct HTTPStreamProcessFixture {
         def do_GET(self):
             if not self.record():
                 return
+            if self.path in ("/bytes/stalled", "/bytes/ordered"):
+                self.begin("application/octet-stream")
+                self.connection.settimeout(5)
+                payload = bytes(range(256)) * 1024
+                ordered = self.path == "/bytes/ordered"
+                deadline = time.monotonic() + 40
+                try:
+                    for index in range(132 if ordered else 256):
+                        self.chunk(index.to_bytes(8, "big") + payload[8:])
+                        if ordered:
+                            receipt = root / "received-blocks"
+                            while not receipt.exists() or receipt.read_text() != str(index + 1):
+                                if time.monotonic() >= deadline:
+                                    self.close_connection = True
+                                    return
+                                time.sleep(0.001)
+                    self.finish()
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    with lock:
+                        with (root / "closed-streams").open("a") as file:
+                            file.write("bytes\n")
+                return
             cursor = self.headers.get("Last-Event-ID")
             self.begin("text/event-stream")
             if cursor and cursor.startswith("request-"):

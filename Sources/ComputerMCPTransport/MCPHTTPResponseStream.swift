@@ -8,16 +8,45 @@ import Foundation
 /// Opens headers before consuming the body, with each exchange owning its data task.
 enum MCPHTTPResponseStream {
   #if canImport(FoundationNetworking)
+    static let maximumQueuedBytes = 32 * 1_024 * 1_024
+
+    final class Buffer: Sendable {
+      private struct State: Sendable {
+        var queuedBytes = 0
+        var peakQueuedBytes = 0
+      }
+
+      private let state = NIOLockedValueBox(State())
+
+      var peakQueuedBytes: Int {
+        state.withLockedValue { $0.peakQueuedBytes }
+      }
+
+      func enqueue(_ count: Int) -> Bool {
+        state.withLockedValue {
+          $0.queuedBytes += count
+          $0.peakQueuedBytes = max($0.peakQueuedBytes, $0.queuedBytes)
+          return $0.queuedBytes > maximumQueuedBytes
+        }
+      }
+
+      func dequeue(_ count: Int) {
+        state.withLockedValue { $0.queuedBytes -= count }
+      }
+    }
+
     struct Bytes: AsyncSequence, Sendable {
       typealias Element = UInt8
 
       struct AsyncIterator: AsyncIteratorProtocol {
         var chunks: AsyncThrowingStream<Data, any Error>.Iterator
+        let buffer: Buffer
         private var chunk = Data()
         private var index = 0
 
-        init(chunks: AsyncThrowingStream<Data, any Error>.Iterator) {
+        init(chunks: AsyncThrowingStream<Data, any Error>.Iterator, buffer: Buffer) {
           self.chunks = chunks
+          self.buffer = buffer
         }
 
         mutating func next() async throws -> UInt8? {
@@ -27,6 +56,8 @@ enum MCPHTTPResponseStream {
               try Task.checkCancellation()
               return nil
             }
+            // The iterator owns the current chunk; only waiting chunks count toward the bound.
+            buffer.dequeue(next.count)
             chunk = next
             index = chunk.startIndex
           }
@@ -37,9 +68,10 @@ enum MCPHTTPResponseStream {
 
       let task: URLSessionDataTask
       let chunks: AsyncThrowingStream<Data, any Error>
+      let buffer: Buffer
 
       func makeAsyncIterator() -> AsyncIterator {
-        AsyncIterator(chunks: chunks.makeAsyncIterator())
+        AsyncIterator(chunks: chunks.makeAsyncIterator(), buffer: buffer)
       }
     }
 
@@ -49,12 +81,13 @@ enum MCPHTTPResponseStream {
       let (responses, response) = AsyncThrowingStream<URLResponse, any Error>.makeStream(
         bufferingPolicy: .bufferingOldest(1))
       let (chunks, body) = AsyncThrowingStream<Data, any Error>.makeStream()
+      let buffer = Buffer()
       guard let delegate = session.delegate as? MCPHTTPRedirectPolicy else {
         throw MCPHTTPTransportError.invalidResponse
       }
       let task = session.dataTask(with: request)
       let identifier = task.taskIdentifier
-      delegate.register(identifier: identifier, response: response, body: body)
+      delegate.register(identifier: identifier, response: response, body: body, buffer: buffer)
       body.onTermination = { [weak task, weak delegate] _ in
         task?.cancel()
         delegate?.finish(identifier: identifier, throwing: URLError(.cancelled))
@@ -68,7 +101,7 @@ enum MCPHTTPResponseStream {
             try Task.checkCancellation()
             throw MCPHTTPTransportError.invalidResponse
           }
-          return (Bytes(task: task, chunks: chunks), response)
+          return (Bytes(task: task, chunks: chunks, buffer: buffer), response)
         } catch {
           task.cancel()
           delegate.finish(identifier: identifier, throwing: error)
@@ -96,6 +129,7 @@ final class MCPHTTPRedirectPolicy: NSObject, URLSessionDataDelegate, Sendable {
     private struct Exchange: Sendable {
       let response: AsyncThrowingStream<URLResponse, any Error>.Continuation
       let body: AsyncThrowingStream<Data, any Error>.Continuation
+      let buffer: MCPHTTPResponseStream.Buffer
     }
 
     // Registration and cancellation race with callbacks on URLSession's serial delegate queue.
@@ -104,9 +138,12 @@ final class MCPHTTPRedirectPolicy: NSObject, URLSessionDataDelegate, Sendable {
     func register(
       identifier: Int,
       response: AsyncThrowingStream<URLResponse, any Error>.Continuation,
-      body: AsyncThrowingStream<Data, any Error>.Continuation
+      body: AsyncThrowingStream<Data, any Error>.Continuation,
+      buffer: MCPHTTPResponseStream.Buffer
     ) {
-      exchanges.withLockedValue { $0[identifier] = Exchange(response: response, body: body) }
+      exchanges.withLockedValue {
+        $0[identifier] = Exchange(response: response, body: body, buffer: buffer)
+      }
     }
 
     func urlSession(
@@ -120,7 +157,16 @@ final class MCPHTTPRedirectPolicy: NSObject, URLSessionDataDelegate, Sendable {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-      exchanges.withLockedValue { $0[dataTask.taskIdentifier] }?.body.yield(data)
+      guard let exchange = exchanges.withLockedValue({ $0[dataTask.taskIdentifier] }) else {
+        return
+      }
+      let exceeded = exchange.buffer.enqueue(data.count)
+      exchange.body.yield(data)
+      if exceeded {
+        // Finish before cancellation so its callback cannot replace the typed failure.
+        finish(identifier: dataTask.taskIdentifier, throwing: MCPHTTPTransportError.consumerTooSlow)
+        dataTask.cancel()
+      }
     }
 
     func urlSession(

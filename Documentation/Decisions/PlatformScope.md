@@ -60,3 +60,5 @@ product decision.
 - Plugin archives are extracted through an archive extractor interface whose
   only implementation uses the macOS system `libarchive`; the Linux build has no
   implementation until a Linux host is planned.
+- Streaming HTTP responses on Linux are bounded and fail when the consumer falls
+  more than 32 MiB behind, until a Linux host adopts a backpressured HTTP client.

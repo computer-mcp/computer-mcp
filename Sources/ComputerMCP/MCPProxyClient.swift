@@ -2,7 +2,6 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPTransport
 import Foundation
 import MCP
@@ -11,7 +10,7 @@ import MCP
 package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private let pool: MCPConnectionPool
   private let changes: GatewayToolChangeBroadcaster
-  private let secretStore: KeychainSecretStore?
+  private let secretStore: (any SecretStore)?
   private let processOwnershipRoot: URL?
   private let journal: MCPExecutionJournal
   private let calls = BlockingOperationExecutor(label: "computer-mcp.mcp-calls", serial: false)
@@ -20,7 +19,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
     environment: [String: String] = ProcessInfo.processInfo.environment,
     hostContext: (any MCPHostEnvironment)? = nil,
-    secretStore: KeychainSecretStore? = nil,
+    secretStore: (any SecretStore)? = nil,
     processOwnershipRoot: URL? = nil,
     executionDatabase: GatewayDatabase? = nil, executionScope: String? = nil
   ) {
@@ -507,14 +506,14 @@ private final class MCPConnectionPool: @unchecked Sendable {
   private let environment: [String: String]
   private let hostContext: MCPHostContext?
   private let hostContextError: GatewayToolError?
-  private let secretStore: KeychainSecretStore?
+  private let secretStore: (any SecretStore)?
   private let journal: MCPExecutionJournal
   private let toolsChanged: @Sendable () -> Void
 
   init(
     workingDirectory: URL, environment: [String: String],
     hostContext: MCPHostContext?, hostContextError: GatewayToolError?,
-    secretStore: KeychainSecretStore?, journal: MCPExecutionJournal,
+    secretStore: (any SecretStore)?, journal: MCPExecutionJournal,
     toolsChanged: @escaping @Sendable () -> Void
   ) {
     self.workingDirectory = workingDirectory
@@ -728,7 +727,7 @@ private actor MCPProxyConnection {
   init(
     server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
     hostContext: MCPHostContext?,
-    secretStore: KeychainSecretStore?, journal: MCPExecutionJournal,
+    secretStore: (any SecretStore)?, journal: MCPExecutionJournal,
     predecessor: Task<Bool, Never>? = nil,
     onTermination: @escaping @Sendable (MCPProxyConnection) -> Void,
     toolsChanged: @escaping @Sendable () -> Void
@@ -1541,7 +1540,7 @@ private actor MCPProxyConnection {
 
   private static func makeTransport(
     server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
-    hostContext: MCPHostContext?, secretStore: KeychainSecretStore?
+    hostContext: MCPHostContext?, secretStore: (any SecretStore)?
   ) throws -> any MCP.Transport {
     try server.authentication?.validate(endpoint: server.url, transport: server.transport)
     switch server.transport {

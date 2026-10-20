@@ -205,12 +205,10 @@
   "cuts": [
     "AppControlPlaneService->KeychainSecretStore",
     "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
-    "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
-    "MCPConnectionPool->KeychainSecretStore",
-    "MCPProxyClient->KeychainSecretStore",
-    "MCPProxyConnection->KeychainSecretStore"
+    "AppControlPlaneServiceDirectories->AppDistributionEnvironment"
   ],
   "tests": {
+    "MCPProxySecretStoreTests.swift": "ComputerMCPGatewayTests",
     "ControlErrorClassificationTests.swift": "ComputerMCPTests",
     "AppControlPlaneServiceTests.swift": "ComputerMCPControlPlaneTests",
     "AppControlSocketTests.swift": "ComputerMCPControlPlaneTests",

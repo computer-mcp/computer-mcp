@@ -6,16 +6,16 @@ import Testing
 @Suite
 
 final class CapabilityFixturePlanTests {
-  @Test
-  func testObserveProfileHasBoundedFixtureArgumentsForEveryTool() throws {
+  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve])
+  func testObserveProfileHasBoundedFixtureArgumentsForEveryTool(profile: GatewayProfileID) throws {
     let manifestURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("computer-mcp-observe-\(UUID().uuidString).toml")
     defer { try? FileManager.default.removeItem(at: manifestURL) }
     try ValidationDefaultManifest.write(to: manifestURL)
     let observeCapabilities = try ValidationToolInventoryContract.load(
       configurationURL: manifestURL,
-      caller: .secureTunnel,
-      profileID: .chatGPTObserve
+      caller: profile == .chatGPTObserve ? .secureTunnel : .cloudflareTunnel,
+      profileID: profile
     ).tools.map(\.name)
     let plan = CapabilityFixturePlan(
       workspaceID: "fixture",
@@ -32,6 +32,8 @@ final class CapabilityFixturePlanTests {
     }
 
     #expect(!observeCapabilities.isEmpty)
+    #expect(observeCapabilities.contains("delivery.scopes.list"))
+    #expect(!observeCapabilities.contains("delivery.apply"))
     #expect((unsupported) == ([]))
     #expect(
       plan.invocation(for: "workspace.executable_files")?.arguments["include_hidden"]

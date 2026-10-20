@@ -122,7 +122,8 @@ above them and supplied by the composition root:
 | `SecretStore` | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |
 | Workspace grant store | `Platform` | `WorkspaceBookmarkService` in gateway and control plane |
 | Login item controller | `Platform` | the `SMAppService` controller in the control plane |
-| Distribution environment | `Platform` | the App distribution environment in control-plane storage |
+| Distribution identity and environment | `Platform` | Foundation values for signed App metadata, namespace selection and control-plane storage directories |
+| Default manifest | supplied by `MacOS` | the macOS configuration extension; the neutral control-plane service receives the manifest as a constructor argument |
 | `GatewayToolProvider` and `ComputerUsePermissionReading` | `Core`, `Platform` | the composition root registers the Computer Use provider and injects its service for control-plane permission snapshots |
 | Archive extractor | `Platform` | the `libarchive`-based extractor, which moves to `PlatformDarwin`; archive limits, errors, staging directories and directory identity become `Platform` values |
 | Directory identity capture and private staging | `Platform` | descriptor-anchored private directory creation/recovery, identity capture/matching and exclusive rename; implemented in `PlatformDarwin`, including birth time and volume UUID |

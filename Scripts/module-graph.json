@@ -117,7 +117,8 @@
     "ComputerMCPToolsSystemDarwinTests",
     "ComputerMCPPluginsDarwinTests",
     "ComputerMCPMacOSTests",
-    "ComputerMCPGatewayDarwinTests"
+    "ComputerMCPGatewayDarwinTests",
+    "ComputerMCPControlPlaneDarwinTests"
   ],
   "macos_imports": [
     "AVFoundation",
@@ -167,55 +168,12 @@
   ],
   "residual": "ComputerMCP",
   "removed": [],
-  "types": {
-    "ChatGPTProfileAuditor": "ComputerMCPControlPlane",
-    "ComputerMCPProductContracts": "ComputerMCPControlPlane",
-    "ControlToolContract": "ComputerMCPControlPlane",
-    "ManifestFileTransaction": "ComputerMCPControlPlane",
-    "ManifestRecoveryRecord": "ComputerMCPControlPlane"
-  },
-  "extensions": {
-    "CloudflareTunnel.swift:AppControlPlaneService": "ComputerMCPControlPlane"
-  },
-  "files": {
-    "^GatewayRemoteManagement": "ComputerMCPControlPlane",
-    "^MCPRegistration": "ComputerMCPControlPlane",
-    "^DefaultGatewayConfiguration\\+macOS": "ComputerMCPMacOS",
-    "^ManifestFile": "ComputerMCPControlPlane",
-    "^(MCPTool(Risk|AccessPolicy)|ComputerMCPProductContracts)": "ComputerMCPCore",
-    "^(ChatGPTProfileAuditor|CloudflareTunnel)": "ComputerMCPControlPlane",
-    "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane"
-  },
-  "cuts": [
-    "AppControlPlaneService->KeychainSecretStore",
-    "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
-    "AppControlPlaneServiceDirectories->AppDistributionEnvironment"
-  ],
+  "types": {},
+  "extensions": {},
+  "files": {},
+  "cuts": [],
   "tests": {
-    "ControlErrorClassificationTests.swift": "ComputerMCPTests",
-    "AppControlPlaneServiceTests.swift": "ComputerMCPTests",
-    "AppControlSocketTests.swift": "ComputerMCPTests",
-    "AppFileLoggerTests.swift": "ComputerMCPTests",
-    "AtomicManifestStoreTests.swift": "ComputerMCPTests",
     "BuiltinToolCatalogSnapshotTests.swift": "ComputerMCPTests",
-    "CloudflareTunnelTests.swift": "ComputerMCPTests",
-    "DefaultGatewayConfigurationTests.swift": "ComputerMCPTests",
-    "EmbeddedCLIInstallerTests.swift": "ComputerMCPTests",
-    "GatewayGenerationDispatchTests.swift": "ComputerMCPTests",
-    "GatewayHTTPClientControlTests.swift": "ComputerMCPTests",
-    "GatewayRemoteManagementTests.swift": "ComputerMCPTests",
-    "GatewaySocketPrincipalLifecycleTests.swift": "ComputerMCPTests",
-    "KeychainSecretStore+Testing.swift": "ComputerMCPTests",
-    "LocalPermissionCLIAcceptanceTests.swift": "ComputerMCPTests",
-    "MCPHTTPAuthenticationTests.swift": "ComputerMCPTests",
-    "MCPRegistrationControlPlaneTests.swift": "ComputerMCPTests",
-    "MCPRegistrationManagementTests.swift": "ComputerMCPTests",
-    "MCPWorkspaceTests.swift": "ComputerMCPTests",
-    "PluginControlPlaneTests.swift": "ComputerMCPTests",
-    "ProcessAndOpenAITunnelTests.swift": "ComputerMCPTests",
-    "ProductReadinessTests.swift": "ComputerMCPTests",
-    "StandaloneToolCommandTests.swift": "ComputerMCPTests",
-    "VerificationScriptDependencyTests.swift": "ComputerMCPTests",
-    "CombinedPluginWorkflowTests.swift": "ComputerMCPTests"
+    "VerificationScriptDependencyTests.swift": "ComputerMCPTests"
   }
 }

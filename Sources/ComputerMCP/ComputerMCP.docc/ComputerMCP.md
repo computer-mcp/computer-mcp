@@ -54,13 +54,13 @@ Cloudflare HTTP origin and audits gateway profiles.
 - `OpenAITunnelStatus`
 - `OpenAITunnelDoctorReport`
 - `OpenAITunnelLogPage`
-- ``ChatGPTProfileAuditor``
+- `ChatGPTProfileAuditor`
 - `ChatGPTProfileAudit`
 - `ChatGPTProfileAuditError`
 - `OpenAITunnelLauncherError`
 
 ### Reverse Codex Integration
 
-- ``CodexMCPInstaller``
-- ``CodexMCPInstallInvocation``
-- ``CodexMCPInstallerError``
+- `CodexMCPInstaller`
+- `CodexMCPInstallInvocation`
+- `CodexMCPInstallerError`

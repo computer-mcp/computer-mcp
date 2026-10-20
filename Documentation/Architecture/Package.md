@@ -26,7 +26,7 @@ targets, and CI builds and tests them there.
 | swift-system | `FilePath` for process launches where the System framework is unavailable |
 | GRDB | Transactional App metadata and redacted audit; system SQLite on Linux |
 | swift-log | Runtime logging integration |
-| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins` and `ComputerMCPGateway` targets on macOS and Linux |
+| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway` and `ComputerMCPControlPlane` targets on macOS and Linux |
 | macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
 
 `CSystemArchive` is an internal system-library module with the minimal C ABI
@@ -45,7 +45,7 @@ package product and does not install or bundle vendor binaries.
 | --- | --- |
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors, audit error classification and the session authority interface |
-| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, workspace opening and native system readings |
+| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for distribution identity and environment, secrets, workspaces, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
@@ -67,8 +67,9 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPGateway/` | Platform-neutral runtime, provider routing, admission, approvals, receipts, continuations, host services, HTTP adapter, domain stores, owned work and audit; injected management and client-control contracts |
-| `Sources/ComputerMCP/` | Transitional target for App and CLI control-plane administration, client control, remote management, tunnel administration and macOS default configuration; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
-| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, Computer Use permission readings, the Git executable, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
+| `Sources/ComputerMCPControlPlane/` | Platform-neutral App and CLI administration, client control, remote management, manifest transactions, plugin and tunnel administration, product readiness and client registration |
+| `Sources/ComputerMCP/` | Internal DocC catalog; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
+| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, Computer Use permission readings, the Git executable, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, the secret store, login item controller, default manifest and live App services |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
@@ -100,7 +101,20 @@ executable through `PlatformServices`.
 `ComputerMCPGatewayTests` covers neutral gateway behavior. `ComputerMCPMacOSTests`
 covers the macOS composition root and assembled runtimes, including the CLI crash
 recovery driver. `ComputerMCPGatewayDarwinTests` covers macOS artifact-provenance
-scripts. Tests requiring control-plane declarations stay in `ComputerMCPTests`.
+scripts. `ComputerMCPControlPlaneTests` covers neutral control-plane behavior;
+`ComputerMCPControlPlaneDarwinTests` covers native control sockets and Computer Use
+control-error integration. Control-plane tests assembled through the macOS
+composition root run in `ComputerMCPMacOSTests`. `ComputerMCPTests` retains the
+builtin catalog snapshot and verification-script dependency checks, with their
+fixtures.
+
+`ComputerMCPControlPlane` depends on the gateway and lower neutral targets.
+Its service accepts Platform's `SecretStore`, login item controller and Computer
+Use permission reader, plus the default manifest supplied by `ComputerMCPMacOS`.
+Value reads pass `.allow` and presence checks pass `.fail` explicitly to preserve
+the Keychain interaction contract. Distribution identity and environment are
+Foundation values in `ComputerMCPPlatform`. Cloudflare access tokens use
+`SystemRandomNumberGenerator`, and control-plane SHA-256 uses Swift Crypto.
 
 `ComputerMCPToolKit` owns shared argument/result helpers, `WorkspaceScope` path
 checks and file metadata, and `RegisteredCommands` resolution and execution with
@@ -182,8 +196,8 @@ requested.
 `ComputerMCPPluginsTests` runs neutral catalog, HTTP, manifest and package tests on
 macOS and Linux. `ComputerMCPPluginsDarwinTests` covers native archive handling,
 application lookup and current macOS package activation/compatibility. Plugin tests
-that exercise macOS runtime assembly run in `ComputerMCPMacOSTests`; tests that
-also require the control plane remain in `ComputerMCPTests`.
+that exercise macOS runtime assembly and control-plane workflows run in
+`ComputerMCPMacOSTests`.
 Their shared fixtures in `ComputerMCPTestSupport` use injected directory services
 and application lookup substitutes.
 

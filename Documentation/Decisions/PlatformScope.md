@@ -78,3 +78,6 @@ product decision.
   bridge fails when more than 32 MiB of response bytes wait in its own queue.
   The triggering callback can overshoot by one chunk. Foundation buffers
   redirect bodies internally on both platforms, outside this queue bound.
+- Manifest recovery-record publication uses an atomic exclusive rename on macOS.
+  The Linux branch reports `AtomicManifestStoreError.posix` with `ENOSYS` when
+  publishing a recovery record.

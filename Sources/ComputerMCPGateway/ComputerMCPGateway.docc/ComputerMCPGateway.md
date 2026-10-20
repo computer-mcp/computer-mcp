@@ -1,12 +1,13 @@
-# ``ComputerMCP``
+# ``ComputerMCPGateway``
 
 Build a deterministic, profile-bound MCP gateway for macOS.
 
 ## Overview
 
-`ComputerMCP` is the internal implementation module shared by `Computer
-MCP.app` and the embedded `computer-mcp` CLI. It is not a supported external
-Swift SDK. The module provides:
+`ComputerMCPGateway` is the internal gateway runtime used by `Computer MCP.app`
+and the embedded `computer-mcp` CLI. It is not a supported external Swift SDK.
+Other internal targets supply execution, administration, transport, and platform
+services. Together they provide:
 
 - MCP Swift SDK server and client integration;
 - a private current-user Unix socket and stdio bridge;
@@ -35,17 +36,19 @@ process spawning, and Full Shell remain off by default; only
 
 ### Gateway Runtime
 
-- `GatewayToolRegistry`
-- `MCPRuntimeAdapter`
+- ``GatewayToolRegistry``
+- ``MCPRuntimeAdapter``
 
 ### MCP and OpenAI Secure MCP Tunnel
 
 `ComputerMCPTunnels` owns tunnel launch planning, supervision, transport values
-and the `HTTPOriginLifecycle` contract. The control plane constructs the
-Cloudflare HTTP origin and audits gateway profiles.
+and the `HTTPOriginLifecycle` contract. `ComputerMCPControlPlane` constructs the
+Cloudflare HTTP origin and audits gateway profiles. `DownstreamMCPClient` belongs
+to `ComputerMCPDownstream`; its gateway implementation is ``MCPProxyClient``.
+`ChatGPTProfileAuditor` belongs to `ComputerMCPControlPlane`.
 
-- `DownstreamMCPClient`
-- `MCPProxyClient`
+The following types belong to `ComputerMCPTunnels`:
+
 - `OpenAITunnelLauncher`
 - `OpenAITunnelInvocation`
 - `OpenAITunnelPlan`
@@ -54,12 +57,13 @@ Cloudflare HTTP origin and audits gateway profiles.
 - `OpenAITunnelStatus`
 - `OpenAITunnelDoctorReport`
 - `OpenAITunnelLogPage`
-- `ChatGPTProfileAuditor`
 - `ChatGPTProfileAudit`
 - `ChatGPTProfileAuditError`
 - `OpenAITunnelLauncherError`
 
 ### Reverse Codex Integration
+
+`ComputerMCPControlPlane` owns the independent adapter's installation workflow:
 
 - `CodexMCPInstaller`
 - `CodexMCPInstallInvocation`

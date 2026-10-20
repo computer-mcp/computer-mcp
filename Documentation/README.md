@@ -1,7 +1,7 @@
 # Documentation
 
 This tree holds repository-level documentation. Target-level API documentation
-lives with the Swift target in `Sources/ComputerMCP/ComputerMCP.docc/`.
+lives with the Swift target in `Sources/ComputerMCPGateway/ComputerMCPGateway.docc/`.
 
 ## Reading Map
 

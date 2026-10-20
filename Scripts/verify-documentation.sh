@@ -7,7 +7,7 @@ TEMP_PARENT=${TEMP_PARENT%/}
 TEMP_ROOT=$(mktemp -d "$TEMP_PARENT/computer-mcp-docc.XXXXXX")
 ALL_SYMBOLS="$TEMP_ROOT/all-symbols"
 MODULE_SYMBOLS="$TEMP_ROOT/module-symbols"
-ARCHIVE_PATH="$TEMP_ROOT/ComputerMCP.doccarchive"
+ARCHIVE_PATH="$TEMP_ROOT/ComputerMCPGateway.doccarchive"
 BUILD_LOG="$TEMP_ROOT/swift-build.log"
 DOC_VERSION=$(/usr/libexec/PlistBuddy \
   -c 'Print :CFBundleShortVersionString' \
@@ -31,7 +31,7 @@ fail() {
 
 if ! /usr/bin/swift build \
   --package-path "$ROOT_DIR" \
-  --target ComputerMCP \
+  --target ComputerMCPGateway \
   -Xswiftc -emit-symbol-graph \
   -Xswiftc -emit-symbol-graph-dir \
   -Xswiftc "$ALL_SYMBOLS" \
@@ -39,27 +39,27 @@ if ! /usr/bin/swift build \
   -Xswiftc internal >"$BUILD_LOG" 2>&1
 then
   /usr/bin/tail -n 200 "$BUILD_LOG" >&2
-  fail "SwiftPM could not emit the ComputerMCP symbol graph."
+  fail "SwiftPM could not emit the ComputerMCPGateway symbol graph."
 fi
 
 while IFS= read -r -d '' graph; do
   /bin/cp "$graph" "$MODULE_SYMBOLS/"
 done < <(/usr/bin/find "$ALL_SYMBOLS" -type f \
-  \( -name 'ComputerMCP.symbols.json' -o -name 'ComputerMCP@*.symbols.json' \) -print0)
+  \( -name 'ComputerMCPGateway.symbols.json' -o -name 'ComputerMCPGateway@*.symbols.json' \) -print0)
 
-[[ -f "$MODULE_SYMBOLS/ComputerMCP.symbols.json" ]] \
-  || fail "ComputerMCP.symbols.json was not emitted."
+[[ -f "$MODULE_SYMBOLS/ComputerMCPGateway.symbols.json" ]] \
+  || fail "ComputerMCPGateway.symbols.json was not emitted."
 
 xcrun docc convert \
-  "$ROOT_DIR/Sources/ComputerMCP/ComputerMCP.docc" \
+  "$ROOT_DIR/Sources/ComputerMCPGateway/ComputerMCPGateway.docc" \
   --additional-symbol-graph-dir "$MODULE_SYMBOLS" \
-  --fallback-display-name "ComputerMCP" \
+  --fallback-display-name "ComputerMCPGateway" \
   --fallback-bundle-identifier "com.showxu.computer-mcp.documentation" \
   --fallback-bundle-version "$DOC_VERSION" \
   --output-path "$ARCHIVE_PATH" \
   --warnings-as-errors
 
-[[ -f "$ARCHIVE_PATH/data/documentation/computermcp.json" ]] \
-  || fail "DocC did not produce the ComputerMCP root page."
+[[ -f "$ARCHIVE_PATH/data/documentation/computermcpgateway.json" ]] \
+  || fail "DocC did not produce the ComputerMCPGateway root page."
 
-echo "ComputerMCP DocC warning gate passed."
+echo "ComputerMCPGateway DocC warning gate passed."

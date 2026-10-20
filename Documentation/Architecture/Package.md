@@ -68,7 +68,6 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPGateway/` | Platform-neutral runtime, provider routing, admission, approvals, receipts, continuations, host services, HTTP adapter, domain stores, owned work and audit; injected management and client-control contracts |
 | `Sources/ComputerMCPControlPlane/` | Platform-neutral App and CLI administration, client control, remote management, manifest transactions, plugin and tunnel administration, product readiness and client registration |
-| `Sources/ComputerMCP/` | Internal DocC catalog; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, Computer Use permission readings, the Git executable, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, the secret store, login item controller, default manifest and live App services |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
@@ -77,7 +76,7 @@ package product and does not install or bundle vendor binaries.
 | `Tests/` | Swift Testing component, policy, transport, App, and provider tests; an extracted target's tests are in `Tests/<Target>Tests/`, the shared target's in `Tests/ComputerMCPTests/` |
 | `Tests/ComputerMCPTestSupport/` | Neutral helpers shared by test targets; package checks reject any non-test target that depends on it |
 | `Tools/Validation/` | Independent Test Case catalog, probes, fixtures, evidence correlation, and reports |
-| `Sources/ComputerMCP/ComputerMCP.docc/` | Internal target documentation |
+| `Sources/ComputerMCPGateway/ComputerMCPGateway.docc/` | Internal target documentation |
 | `Examples/` | Standalone development and dogfood manifests |
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
 

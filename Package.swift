@@ -253,7 +253,8 @@ let neutralTargets: [Target] =
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
-      ]
+      ],
+      exclude: ["ComputerMCPGateway.docc"]
     ),
     .testTarget(
       name: "ComputerMCPGatewayTests",
@@ -443,8 +444,7 @@ let neutralTargets: [Target] =
       ),
       .target(
         name: "ComputerMCP",
-        dependencies: ["ComputerMCPControlPlane"],
-        exclude: ["ComputerMCP.docc"]
+        dependencies: ["ComputerMCPControlPlane"]
       ),
       .executableTarget(
         name: "computer-mcp",

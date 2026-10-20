@@ -5057,7 +5057,7 @@
     "capability" : {
       "localOnly" : false,
       "risk" : "destructive",
-      "usesNetwork" : false,
+      "usesNetwork" : true,
       "workspaceRequirement" : "required"
     },
     "description" : "Download an absolute HTTP or HTTPS URL to a workspace-contained file using fixed /usr/bin/curl argv. This defaults to dry-run, writes through a deterministic temp file, rejects credentials in URLs, sends no custom headers/cookies/request body, and requires confirm_download=true when dry_run is false.",

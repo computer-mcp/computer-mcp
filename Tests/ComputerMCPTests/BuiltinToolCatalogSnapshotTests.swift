@@ -9,6 +9,24 @@ import Testing
 
 struct BuiltinToolCatalogSnapshotTests {
   @Test
+  func builtinDefinitionsDeclareMatchingCapabilityIDs() {
+    let definitions = GatewayToolRegistry.gatewayDefinitions(
+      shellEnabled: true,
+      builtins: Set(DefaultGatewayConfiguration.enabledBuiltinCapabilities),
+      skillsEnabled: true,
+      hasCLIProviders: true,
+      hasMCPProviders: true,
+      toolMeta: nil)
+
+    #expect(definitions.count == 239)
+    #expect(Set(definitions.map(\.tool.name)).count == definitions.count)
+    for definition in definitions {
+      #expect(definition.capability.id == definition.tool.name)
+      #expect(definition.tool.mcpReference == nil)
+    }
+  }
+
+  @Test
   func completeHostCatalogMatchesReviewedSnapshot() async throws {
     let workspace = try ScopedTemporaryDirectory()
     let configuration = GatewayConfiguration(

@@ -228,7 +228,6 @@
     "ControlToolResponse->AppControlPlaneServiceError",
     "DownstreamMCPClient->MCPContinuationTarget",
     "DownstreamMCPClient->MCPHostContext",
-    "GatewayCapabilityCatalog->GatewayRemoteManagement",
     "GatewayHTTPApp->AppControlPlaneServiceError",
     "GatewayRuntime->ComputerUseGatewayProviderError",
     "GatewayRuntime->GatewayRemoteManagement",

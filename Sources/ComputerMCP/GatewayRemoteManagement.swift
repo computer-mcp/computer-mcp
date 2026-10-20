@@ -14,18 +14,16 @@ package struct GatewayRemoteManagement: Sendable {
     var network = false
     var destructive = false
 
-    var tool: MCPTool {
-      MCPTool(
-        name: input.name, description: summary, inputSchema: input.inputSchema,
-        annotations: .init(
-          readOnlyHint: input.readOnly, destructiveHint: destructive,
-          idempotentHint: input.readOnly, openWorldHint: network))
-    }
-
-    var descriptor: CapabilityDescriptor {
-      CapabilityDescriptor(
-        id: input.name, risk: risk, workspaceRequirement: .none,
-        localOnly: false, usesNetwork: network)
+    var definition: ToolDefinition {
+      ToolDefinition(
+        tool: MCPTool(
+          name: input.name, description: summary, inputSchema: input.inputSchema,
+          annotations: .init(
+            readOnlyHint: input.readOnly, destructiveHint: destructive,
+            idempotentHint: input.readOnly, openWorldHint: network)),
+        capability: CapabilityDescriptor(
+          id: input.name, risk: risk, workspaceRequirement: .none,
+          localOnly: false, usesNetwork: network))
     }
   }
 
@@ -151,7 +149,7 @@ package struct GatewayRemoteManagement: Sendable {
   ]
 
   static let byName = Dictionary(uniqueKeysWithValues: contracts.map { ($0.input.name, $0) })
-  static var tools: [MCPTool] { contracts.map(\.tool) }
+  static var definitions: [ToolDefinition] { contracts.map(\.definition) }
   static var readCapabilities: Set<String> {
     Set(contracts.filter { $0.risk == .readOnly }.map { $0.input.name })
   }

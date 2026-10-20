@@ -17,7 +17,8 @@ struct GatewayToolCatalogSnapshot: Sendable {
     var tools: [MCPTool] = []
     var routes: [String: Route] = [:]
     for provider in providers {
-      for tool in try provider.listTools() {
+      for definition in try provider.definitions() {
+        let tool = definition.tool
         guard !tool.name.isEmpty, !tool.name.contains("\0"), tool.inputSchema.objectValue != nil,
           tool.outputSchema == nil || tool.outputSchema?.objectValue != nil
         else { throw GatewayProviderRouterError.invalidToolDefinition(tool.name) }
@@ -26,7 +27,7 @@ struct GatewayToolCatalogSnapshot: Sendable {
         }
         tools.append(tool)
         routes[tool.name] = Route(
-          tool: tool, capability: try provider.capability(for: tool), provider: provider)
+          tool: tool, capability: definition.capability, provider: provider)
       }
     }
     self.tools = tools

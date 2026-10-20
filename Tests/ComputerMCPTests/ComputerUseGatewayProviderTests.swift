@@ -16,7 +16,7 @@ final class ComputerUseGatewayProviderTests {
       service: ComputerUseService(adapter: ProviderComputerUseAdapter())
     )
 
-    let tools = try provider.listTools()
+    let tools = try provider.definitions().map(\.tool)
 
     #expect(
       (Set(tools.map(\.name)))
@@ -46,7 +46,7 @@ final class ComputerUseGatewayProviderTests {
 
   @Test
   func testSkillsToolCountMatchesTheFullCatalog() {
-    let tools = GatewayToolRegistry.gatewayTools(
+    let tools = GatewayToolRegistry.gatewayDefinitions(
       shellEnabled: true,
       builtins: Set(DefaultGatewayConfiguration.enabledBuiltinCapabilities),
       skillsEnabled: true,
@@ -54,7 +54,7 @@ final class ComputerUseGatewayProviderTests {
       hasMCPProviders: true,
       toolMeta: nil
     )
-    let skills = tools.filter { $0.name.hasPrefix("skills.") }
+    let skills = tools.filter { $0.tool.name.hasPrefix("skills.") }
     #expect(!skills.isEmpty)
     #expect(GatewayToolCounts.skills == skills.count)
   }
@@ -64,9 +64,9 @@ final class ComputerUseGatewayProviderTests {
     let provider = ComputerUseGatewayProvider(
       service: ComputerUseService(adapter: ProviderComputerUseAdapter())
     )
-    let tools = try provider.listTools()
+    let definitions = try provider.definitions()
     let descriptors = Dictionary(
-      uniqueKeysWithValues: tools.map { ($0.name, provider.capability(for: $0)) }
+      uniqueKeysWithValues: definitions.map { ($0.tool.name, $0.capability) }
     )
 
     #expect(descriptors.values.allSatisfy { $0.workspaceRequirement == .none })

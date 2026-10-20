@@ -626,9 +626,8 @@ private actor CatalogCleanupGate {
 private struct CatalogSingleToolFixture: GatewayToolProvider {
   let id = "fixture"
   let tool: MCPTool
-  func listTools() throws -> [MCPTool] { [tool] }
-  func capability(for tool: MCPTool) -> CapabilityDescriptor {
-    .init(id: tool.name, risk: .externalWrite)
+  func definitions() throws -> [ToolDefinition] {
+    [.init(tool: tool, capability: .init(id: tool.name, risk: .externalWrite))]
   }
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue { .null }
 }
@@ -649,19 +648,20 @@ private struct CatalogProviderFixture: GatewayToolProvider {
   let revision: Int
   var risk: CapabilityRisk = .readOnly
 
-  func listTools() throws -> [MCPTool] {
+  func definitions() throws -> [ToolDefinition] {
     names.map {
-      .init(
-        name: $0, description: "revision \(revision)",
-        inputSchema: .object([
-          "type": .string("object"),
-          "properties": .object([
-            "revision": .object(["type": .string("integer"), "const": .number(Double(revision))])
-          ]),
-        ]))
+      ToolDefinition(
+        tool: MCPTool(
+          name: $0, description: "revision \(revision)",
+          inputSchema: .object([
+            "type": .string("object"),
+            "properties": .object([
+              "revision": .object(["type": .string("integer"), "const": .number(Double(revision))])
+            ]),
+          ])),
+        capability: .init(id: $0, risk: risk))
     }
   }
-  func capability(for tool: MCPTool) -> CapabilityDescriptor { .init(id: tool.name, risk: risk) }
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
     .number(Double(revision))
   }
@@ -683,7 +683,7 @@ private final class MutableCatalogClient: DownstreamMCPClient, Sendable {
   func toolChanges() -> AsyncStream<Void> { changes.stream() }
   func shutdown() async { changes.finish() }
   func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    try state.withLockedValue { try $0.listTools() }
+    try state.withLockedValue { try $0.definitions().map(\.tool) }
   }
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
     .null

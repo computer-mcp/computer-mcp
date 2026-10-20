@@ -16,31 +16,30 @@ struct CLITreeToolProvider: GatewayToolProvider {
 
   var id: String { "cli-tree:\(registration.id)" }
 
-  func listTools() throws -> [MCPTool] {
+  func definitions() throws -> [ToolDefinition] {
     tree.commands.filter(\.executable).map { command in
-      MCPTool(
-        name: toolName(command), title: ([registration.id] + command.path).joined(separator: " "),
-        description: command.description, inputSchema: command.inputSchema,
-        outputSchema: resultSchema(command),
-        meta: .object([
-          "cli": .object([
-            "registration": .string(registration.id), "command": .string(command.id),
-            "path": .array(command.path.map(JSONValue.string)),
-            "source": .string(tree.source), "executable_version": .string(tree.executableVersion),
-            "coverage": .string(tree.coverage.rawValue),
-            "omissions": .array(tree.omissions.map(JSONValue.string)),
-            "executable_check_count": .integer(Int64(tree.executableChecks.count)),
-            "compatibility": .string(
-              tree.executableChecks.isEmpty ? "not_declared" : "required_before_call"),
-          ])
-        ]))
+      let name = toolName(command)
+      // Publisher risk hints do not change the host Full Shell boundary for CLI execution.
+      return ToolDefinition(
+        tool: MCPTool(
+          name: name, title: ([registration.id] + command.path).joined(separator: " "),
+          description: command.description, inputSchema: command.inputSchema,
+          outputSchema: resultSchema(command),
+          meta: .object([
+            "cli": .object([
+              "registration": .string(registration.id), "command": .string(command.id),
+              "path": .array(command.path.map(JSONValue.string)),
+              "source": .string(tree.source), "executable_version": .string(tree.executableVersion),
+              "coverage": .string(tree.coverage.rawValue),
+              "omissions": .array(tree.omissions.map(JSONValue.string)),
+              "executable_check_count": .integer(Int64(tree.executableChecks.count)),
+              "compatibility": .string(
+                tree.executableChecks.isEmpty ? "not_declared" : "required_before_call"),
+            ])
+          ])),
+        capability: CapabilityDescriptor(
+          id: name, risk: .fullShell, workspaceRequirement: .required))
     }
-  }
-
-  func capability(for tool: MCPTool) -> CapabilityDescriptor {
-    // A tree is publisher input. Execution keeps the same host Full Shell boundary
-    // as registered cli.exec, independently of a publisher's risk hint.
-    CapabilityDescriptor(id: tool.name, risk: .fullShell, workspaceRequirement: .required)
   }
 
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {

@@ -199,7 +199,7 @@ package struct DarwinMediaInspector: MediaInspector {
     if let string = value as? String {
       if string.utf8.count > 4_096 {
         truncated = true
-        return .string(metadataStringPreview(string, maxBytes: 4_096))
+        return .string(utf8Preview(string, maxBytes: 4_096).text)
       }
       return .string(string)
     }
@@ -495,7 +495,7 @@ package struct DarwinMediaInspector: MediaInspector {
     if let string = value as? String {
       if string.utf8.count > 4_096 {
         truncated = true
-        return .string(metadataStringPreview(string, maxBytes: 4_096))
+        return .string(utf8Preview(string, maxBytes: 4_096).text)
       }
       return .string(string)
     }
@@ -781,25 +781,4 @@ private final class AsyncMediaLoadResultBox<T>: @unchecked Sendable {
       result
     }
   }
-}
-
-private func metadataStringPreview(_ value: String, maxBytes: Int) -> String {
-  let data = Data(value.utf8)
-  guard data.count > maxBytes else {
-    return value
-  }
-
-  var index = value.startIndex
-  var byteCount = 0
-  while index < value.endIndex {
-    let next = value.index(after: index)
-    let characterByteCount = value[index..<next].utf8.count
-    guard byteCount + characterByteCount <= maxBytes else {
-      break
-    }
-    byteCount += characterByteCount
-    index = next
-  }
-
-  return String(value[..<index])
 }

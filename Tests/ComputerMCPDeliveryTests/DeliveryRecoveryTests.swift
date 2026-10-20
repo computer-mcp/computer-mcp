@@ -203,6 +203,93 @@ struct DeliveryRecoveryTests {
   }
 
   @Test
+  func defaultBranchResetBeforeDeletionRetainsUndeliveredCommit() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let base = try fixture.git(["rev-parse", "HEAD"])
+      let io = DeliveryIO(beforeBranchDeletion: { branch, checkedCommit in
+        #expect(branch == "docs/entry")
+        #expect(try fixture.git(["rev-parse", "main"]) == checkedCommit)
+        try fixture.git(["reset", "--hard", base])
+      })
+      let result = try fixture.apply(provider: fixture.provider(io: io))
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["reason"] == .string("cleanup_failed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.git(["rev-parse", "main"]) == base)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+      #expect(try fixture.git(["show", "docs/entry:notes/log.md"]) == "beta\nstable")
+      #expect(try fixture.journals().first?.phase == .cleanupPending)
+      try fixture.assertClean(retained: true)
+
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      let recovered = try #require(fixture.journals().first)
+      #expect(recovered.state == .committed && recovered.phase == .finished)
+      #expect(recovered.reason == .interrupted && !recovered.merged)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test
+  func recoveryCleansCommitReachableFromAdvancedDefault() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .afterMerge)
+      try fixture.git(["commit", "--allow-empty", "-m", "test: advance landed default"])
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      let recovered = try #require(fixture.journals().first)
+      #expect(recovered.state == .merged && recovered.phase == .finished && recovered.merged)
+      #expect(recovered.commit == journal.commit)
+      try fixture.assertClean()
+    }
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func recoveryPrunesMissingAndEmptyRegisteredWorktree(empty: Bool, committed: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: committed ? .afterCommit : .beforeCommit)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      try FileManager.default.removeItem(at: worktree)
+      if empty {
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+      }
+      #expect(try fixture.git(["worktree", "list", "--porcelain"]).contains(worktree.path))
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      let recovered = try #require(fixture.journals().first)
+      #expect(recovered.phase == .finished)
+      #expect(recovered.state == (committed ? .committed : .aborted))
+      #expect(!FileManager.default.fileExists(atPath: worktree.path))
+      #expect(try !fixture.git(["worktree", "list", "--porcelain"]).contains(worktree.path))
+      try fixture.assertClean(retained: committed)
+    }
+  }
+
+  @Test
+  func lockedMissingWorktreeStaysPendingUntilRegistrationCanBePruned() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .afterCommit)
+      try fixture.git(["worktree", "lock", journal.worktree])
+      try FileManager.default.removeItem(at: URL(fileURLWithPath: journal.worktree))
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      let pending = try #require(fixture.journals().first)
+      #expect(pending.state == .cleanupPending && pending.phase == .cleanupPending)
+      #expect(pending.reason == .cleanupFailed)
+      #expect(try fixture.git(["worktree", "list", "--porcelain"]).contains(journal.worktree))
+      #expect(try fixture.git(["rev-parse", journal.branch]) == journal.commit)
+      try fixture.git(["worktree", "unlock", journal.worktree])
+      try repository.withLock { try repository.recover() }
+      #expect(try fixture.journals().first?.state == .committed)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test
   func applyRecoversBeforeItsOwnPreflight() async throws {
     try await deliveryTest {
 

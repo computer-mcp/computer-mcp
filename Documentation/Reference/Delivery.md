@@ -116,21 +116,33 @@ checking status does not refresh or write the main checkout's index. The isolate
 worktree starts at the current default-branch commit. Sparse mode uses non-cone,
 exact-path sparse checkout.
 
-Land first attempts `merge --ff-only --no-squash --no-edit` in the main checkout.
-A zero exit status counts as landed only when that checkout's `HEAD` equals the
-delivery commit, including on the retry. If the default branch
-has advanced, delivery rebases its worktree. Before retrying once, it verifies
-that the rebased diff against the new baseline changes exactly the requested
-paths and that every path remains in scope. A mismatch retains the rebased commit
-and branch with `rebase_scope_changed`. A failed rebase is aborted and the saved
-commit retained. Commit-only mode keeps the branch without
-landing. Cleanup removes the worktree; it deletes the branch only when no delivery
-commit exists or that commit is reachable from the default branch. An undelivered
-commit's branch is always preserved.
-Branch deletion uses `update-ref -d refs/heads/<branch> <checked_commit>` after
-the reachability check. If another Git process advances the branch before the
-deletion, cleanup fails with `cleanup_pending` / `cleanup_failed`, preserving the
-branch and its new commits for recovery.
+After recording the commit, delivery checks its actual paths with
+`diff --no-renames --name-only <baseline> <commit>`. The changed paths must be
+exactly the requested paths, all within scope. A hook that stages another file
+therefore returns `committed` / `scope_changed`, retains the branch and stops
+before landing.
+
+Land attempts `merge --ff-only --no-squash --no-edit <verified_commit>` in the main
+checkout, using the immutable commit ID on both attempts. Live delivery reports
+`merged` only when that checkout's `HEAD` equals the delivery commit, including
+after a command failure, timeout or exception. A post-merge hook that creates a
+descendant leaves the result `committed` with its branch retained. If the default
+branch has advanced and prevents fast-forwarding, delivery rebases its worktree.
+Before retrying once, it checks the rebased diff against the new baseline with
+the same exact-path rule. A mismatch, including an empty diff when the default
+branch already contains the patch, retains the commit and branch with
+`scope_changed`. A failed rebase is aborted and the saved commit retained.
+Commit-only mode keeps the branch without landing.
+
+Cleanup removes the worktree. `committed` always retains its branch, even when
+the commit is reachable from the default branch; `cleanup_pending` with an
+undelivered commit also retains it. Branch deletion is limited to `merged` and
+`aborted` and uses one `update-ref --stdin` transaction with an expected delivery
+branch value. For `merged`, the transaction also verifies the default branch's
+checked commit ID: the delivery commit for live landing, or the tip used to
+verify reachability during recovery. If another Git process changes either ref,
+the transaction fails with `cleanup_pending` / `cleanup_failed`, preserving the
+branch and its commits for recovery.
 
 Journals live at `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`.
 Schema 1 records `operation_id`, `workspace`, `scope`, `repository`,
@@ -162,7 +174,11 @@ worktree, recovery requires its path in `worktree list --porcelain`, a regular
 repository's common Git directory, and an exact `rev-parse --show-toplevel`
 match. An unrecognized empty directory is removed; a nonempty directory is
 retained with `cleanup_pending` / `worktree_unrecognized` and its path in the
-journal. Recovery aborts an in-progress rebase only in a verified worktree and
+journal. If the directory is missing but its registration remains, recovery runs
+`worktree prune --expire=now` from the verified repository root and confirms that
+the registration is gone. This also applies after removing an unrecognized empty
+directory. A remaining registration, including a locked one, keeps the operation
+`cleanup_pending`. Recovery aborts an in-progress rebase only in a verified worktree and
 reconciles actual refs, including a commit created before its journal
 update. No commit means cleanup and `aborted`; a commit reachable from the default
 branch means cleanup and `merged`; an unmerged commit means worktree removal,
@@ -188,9 +204,9 @@ Error IDs prefix these codes with `delivery.`:
 | `busy` | Repository lock wait exceeded 60 seconds |
 | `git_failed` | Git launch, timeout or command failure |
 | `commit_only` | Commit retained under commit-only mode |
-| `not_fast_forward` | Fast-forward retry failed or a successful merge did not leave HEAD at the delivery commit |
+| `not_fast_forward` | Fast-forward attempt did not leave HEAD at the delivery commit |
 | `rebase_conflict` | Rebase failed and was aborted to the saved commit |
-| `rebase_scope_changed` | Rebased diff no longer changes exactly the requested in-scope paths; branch retained |
+| `scope_changed` | Committed or rebased diff does not change exactly the requested in-scope paths; branch retained |
 | `worktree_unrecognized` | Recorded worktree is not the repository's registered worktree; nonempty directory retained for inspection |
 | `journal_failed` | Journal could not be persisted; an existing commit remains on its branch |
 | `interrupted` | Recovery classified an interrupted operation |

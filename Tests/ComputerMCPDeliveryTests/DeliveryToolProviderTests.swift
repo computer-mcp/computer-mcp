@@ -376,6 +376,143 @@ struct DeliveryToolProviderTests {
     }
   }
 
+  @Test(arguments: [DeliveryScope.Mode.land, .commitOnly])
+  func hookStagedPathsRetainCommitWithoutLanding(mode: DeliveryScope.Mode) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let head = try fixture.git(["rev-parse", "HEAD"])
+      try fixture.hook(
+        "pre-commit", body: "printf 'hook change\\n' > outside.txt\ngit add -- outside.txt")
+      var scope = fixture.scope
+      scope.mode = mode
+      let result = try fixture.apply(provider: fixture.provider(scope: scope))
+      #expect(result["state"] == .string("committed"))
+      #expect(result["reason"] == .string("scope_changed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == head)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+      #expect(try fixture.git(["show", "docs/entry:outside.txt"]) == "hook change")
+      #expect(try fixture.read("outside.txt") == "untouched\n")
+      #expect(try fixture.journals().first?.reason == .scopeChanged)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test
+  func alreadyAppliedPatchRetainsBranchAfterEmptyRebase() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let main = quote(fixture.root.path)
+      let clean =
+        "env -i PATH=\(quote(systemUtilityPath)) HOME=\(quote(fixture.temporary.url.path)) \(quote(fixture.executable)) -C \(main) -c core.hooksPath=/dev/null"
+      try fixture.hook(
+        "post-commit",
+        body: """
+          printf 'beta\\nstable\\n' > \(main)/notes/log.md
+          \(clean) commit -am 'test: independently apply the same patch'
+          rm \(main)/.git/hooks/post-commit
+          """)
+      let result = try fixture.apply()
+      #expect(result["state"] == .string("committed"))
+      #expect(result["reason"] == .string("scope_changed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == result["commit"]?.stringValue)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+      let journal = try #require(fixture.journals().first)
+      #expect(journal.state == .committed && !journal.merged && journal.phase == .finished)
+      #expect(journal.reason == .scopeChanged)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func branchAdvancementBeforeMergeLandsVerifiedCommit(rebased: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      if rebased { try fixture.advanceDuringCommit() }
+      let git = quote(fixture.executable)
+      let provider = try fixture.provider(
+        wrappingGit: """
+          if test "$1" = merge; then
+            for verified do :; done
+            if \(git) merge-base --is-ancestor main "$verified"; then
+              advanced=$(\(git) commit-tree "$verified^{tree}" -p "$verified" -m 'test: advance delivery branch') || exit
+              \(git) update-ref refs/heads/docs/entry "$advanced" "$verified" || exit
+              printf '%s' "$verified" > .git/verified-commit
+              printf '%s' "$advanced" > .git/advanced-commit
+            fi
+          fi
+          """)
+      let result = try fixture.apply(provider: provider)
+      let verified = try fixture.read(".git/verified-commit")
+      let advanced = try fixture.read(".git/advanced-commit")
+      #expect(result["commit"] == .string(verified))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == verified)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == advanced)
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["reason"] == .string("cleanup_failed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.journals().first?.merged == true)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test(arguments: [false, true], ["hook_failure", "command_failure", "timeout"])
+  func postMergeDescendantRetainsBranch(rebased: Bool, outcome: String) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      if rebased { try fixture.advanceDuringCommit() }
+      let clean =
+        "env -i PATH=\(quote(systemUtilityPath)) HOME=\(quote(fixture.temporary.url.path)) \(quote(fixture.executable)) -C \(quote(fixture.root.path)) -c core.hooksPath=/dev/null"
+      try fixture.hook(
+        "post-merge",
+        body: """
+          \(clean) commit --allow-empty -m 'test: post-merge descendant'
+          \(outcome == "timeout" ? "sleep 5" : "exit 7")
+          """)
+      let provider = try fixture.provider(
+        wrappingGit: outcome == "command_failure"
+          ? """
+          if test "$1" = merge; then
+            \(quote(fixture.executable)) "$@" || exit $?
+            exit 79
+          fi
+          """ : "", timeout: outcome == "timeout" ? 1500 : nil)
+      let result = try fixture.apply(provider: provider)
+      #expect(result["state"] == .string("committed"), "\(result)")
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(
+        result["reason"] == .string(outcome == "hook_failure" ? "not_fast_forward" : "git_failed"))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) != result["commit"]?.stringValue)
+      #expect(try fixture.git(["rev-parse", "HEAD^"]) == result["commit"]?.stringValue)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+      #expect(try fixture.journals().first?.merged == false)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test(arguments: [false, true], ["accepted_failure", "exception", "timeout"])
+  func exactHeadAfterMergeFailureCountsAsMerged(rebased: Bool, outcome: String) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      if rebased { try fixture.advanceDuringCommit() }
+      let ending = outcome == "timeout" ? "sleep 5" : "exit \(outcome == "exception" ? 79 : 1)"
+      let provider = try fixture.provider(
+        wrappingGit: """
+          if test "$1" = merge; then
+            \(quote(fixture.executable)) "$@" || exit $?
+            \(ending)
+          fi
+          """, timeout: outcome == "timeout" ? 1500 : nil)
+      let result = try fixture.apply(provider: provider)
+      #expect(result["state"] == .string("merged"), "\(result)")
+      #expect(result["reason"] == nil && result["branch"] == nil)
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == result["commit"]?.stringValue)
+      #expect(try fixture.journals().first?.merged == true)
+      try fixture.assertClean()
+    }
+  }
+
   @Test
   func secondFastForwardFailureRetainsRebasedCommit() async throws {
     try await deliveryTest {
@@ -407,12 +544,12 @@ struct DeliveryToolProviderTests {
           """)
       let result = try fixture.apply()
       #expect(result["state"] == .string("committed"))
-      #expect(result["reason"] == .string("rebase_scope_changed"))
+      #expect(result["reason"] == .string("scope_changed"))
       #expect(result["branch"] == .string("docs/entry"))
       #expect(try fixture.read(path) == "alpha\nstable\n")
       #expect(try fixture.git(["show", "docs/entry:\(path)"]) == "beta\nstable")
       #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
-      #expect(try fixture.journals().first?.reason == .rebaseScopeChanged)
+      #expect(try fixture.journals().first?.reason == .scopeChanged)
       try fixture.assertClean(retained: true)
     }
   }

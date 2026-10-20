@@ -50,11 +50,13 @@ extension DeliveryRepository {
           return (finish(&journal), nil)
         }
         try cancellation.check()
-        if scope.mode == .commitOnly {
-          journal.state = .committed
-          journal.reason = .commitOnly
-        } else {
-          try land(&journal, worktree: worktree, paths: request.paths)
+        if try verifyPaths(&journal, base: base, paths: request.paths) {
+          if scope.mode == .commitOnly {
+            journal.state = .committed
+            journal.reason = .commitOnly
+          } else {
+            try land(&journal, worktree: worktree, paths: request.paths)
+          }
         }
       } catch {
         failure =
@@ -64,13 +66,14 @@ extension DeliveryRepository {
         // A hook, timeout or failed journal write can leave a commit despite a failed command.
         do {
           try abortRebase(at: worktree)
-          if let commit = try git.revision("refs/heads/\(request.branch)", at: root), commit != base
+          if journal.commit == nil,
+            let commit = try git.revision("refs/heads/\(request.branch)", at: root), commit != base
           {
             journal.commit = commit
           }
           journal.merged =
             try journal.commit.map {
-              try git.isAncestor($0, of: "refs/heads/\(scope.defaultBranch)", at: root)
+              try git.revision("HEAD", at: main) == $0
             } ?? false
         } catch {
           journal.phase = .cleanupPending
@@ -92,28 +95,28 @@ extension DeliveryRepository {
   private func land(_ journal: inout DeliveryJournal, worktree: URL, paths: [String]) throws {
     try cancellation.check()
     try requireMainBranch(scope.defaultBranch)
+    let original = journal.commit!
     let merge = try git.run(
-      ["merge", "--ff-only", "--no-squash", "--no-edit", "refs/heads/\(journal.branch)"], at: main,
+      ["merge", "--ff-only", "--no-squash", "--no-edit", original], at: main,
       accepting: [0, 1, 128])
-    if merge.exitCode == 0, try git.revision("HEAD", at: main) == journal.commit {
+    if try git.revision("HEAD", at: main) == original {
       journal.merged = true
       journal.state = .merged
       return
     }
+    journal.state = .committed
+    journal.reason = .notFastForward
+    guard merge.exitCode != 0 else { return }
     guard let currentDefault = try git.revision("refs/heads/\(scope.defaultBranch)", at: root),
       currentDefault != journal.base
     else {
-      if merge.exitCode == 0 {
-        journal.state = .committed
-        journal.reason = .notFastForward
-        return
-      }
       throw DeliveryFailure(
         reason: .gitFailed, detail: "Fast-forward merge failed.", exitCode: merge.exitCode,
         stderr: merge.stderr)
     }
+    // A post-merge hook may have advanced HEAD after the delivery commit landed.
+    guard try !git.isAncestor(original, of: currentDefault, at: root) else { return }
     try cancellation.check()
-    let original = journal.commit!
     let rebase = try git.run(
       ["rebase", currentDefault], at: worktree, accepting: [0, 1, 128])
     if rebase.exitCode != 0 {
@@ -132,26 +135,31 @@ extension DeliveryRepository {
       journal.reason = .journalFailed
       return
     }
+    guard try verifyPaths(&journal, base: currentDefault, paths: paths) else { return }
+    try cancellation.check()
+    try requireMainBranch(scope.defaultBranch)
+    try git.run(
+      ["merge", "--ff-only", "--no-squash", "--no-edit", journal.commit!], at: main,
+      accepting: [0, 1, 128])
+    journal.merged = try git.revision("HEAD", at: main) == journal.commit
+    journal.state = journal.merged ? .merged : .committed
+    journal.reason = journal.merged ? nil : .notFastForward
+  }
+
+  private func verifyPaths(_ journal: inout DeliveryJournal, base: String, paths: [String]) throws
+    -> Bool
+  {
     let changedPaths = try git.run(
-      [
-        "--no-optional-locks", "diff", "--no-renames", "--name-only", "-z", currentDefault,
-        journal.commit!,
-      ], at: worktree
+      ["--no-optional-locks", "diff", "--no-renames", "--name-only", "-z", base, journal.commit!],
+      at: root
     ).stdout.split(separator: "\0").map(String.init)
     guard Set(changedPaths) == Set(paths), changedPaths.allSatisfy({ scope.contains(path: $0) })
     else {
       journal.state = .committed
-      journal.reason = .rebaseScopeChanged
-      return
+      journal.reason = .scopeChanged
+      return false
     }
-    try cancellation.check()
-    try requireMainBranch(scope.defaultBranch)
-    let retry = try git.run(
-      ["merge", "--ff-only", "--no-squash", "--no-edit", "refs/heads/\(journal.branch)"], at: main,
-      accepting: [0, 1, 128])
-    journal.merged = try retry.exitCode == 0 && git.revision("HEAD", at: main) == journal.commit
-    journal.state = journal.merged ? .merged : .committed
-    journal.reason = journal.merged ? nil : .notFastForward
+    return true
   }
 
   private func edit(_ request: DeliveryRequest, in worktree: URL) throws -> [DeliveryFile] {

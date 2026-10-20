@@ -80,17 +80,25 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 预检要求路径合法、worktree 根被忽略、主检出目标文件没有未提交改动、分支可用，
 且提交说明合法。预检与恢复的所有 Git 检查均带 `--no-optional-locks`，不会刷新或
 写入主检出的索引。land 模式要求主检出处于默认分支。隔离 worktree 从默认分支当前
-提交开始；稀疏模式使用精确路径的非 cone 检出。首先尝试主检出
-`merge --ff-only --no-squash --no-edit`；首次与重试均须退出码为零且主检出的 `HEAD`
-恰好等于交付提交，才报告已合并。
-默认分支前进时在隔离 worktree 中 rebase，核对新提交相对新基线的改动路径集合恰好
-等于本次请求且仍在范围内，才重试一次；不符则以 `rebase_scope_changed` 保留提交与
-分支。冲突时中止 rebase 并保留
-原提交。commit-only 只提交并保留分支。清理删除 worktree；没有交付提交或提交已从
-默认分支可达时才删除分支。未落地提交的分支始终保留。
-删除使用 `update-ref -d refs/heads/<分支> <已核对的提交号>`；核对可达性后若其他
-Git 进程推进分支，删除失败并返回 `cleanup_pending` / `cleanup_failed`，保留分支
-与新提交，等待恢复。
+提交开始；稀疏模式使用精确路径的非 cone 检出。记录提交号后，先通过
+`diff --no-renames --name-only <基线> <提交>` 核对实际改动路径集合恰好等于本次请求，
+且全部在范围内。提交钩子另外暂存文件时返回 `committed` / `scope_changed`，保留分支，
+停止合并。
+
+land 在主检出尝试 `merge --ff-only --no-squash --no-edit <已核对的提交号>`，首次与重试
+都使用不可变的提交号。实时交付只有在主检出的 `HEAD` 恰好等于交付提交时才报告
+`merged`，命令失败、超时或抛出异常时也按同一规则核对。合并后钩子产生后继提交时，
+结果为 `committed` 并保留分支。默认分支前进导致无法快进时，在隔离 worktree 中
+rebase，按同样规则核对新提交相对新基线的改动路径，才重试一次；不符则以
+`scope_changed` 保留提交与分支，包括默认分支已含相同补丁而产生空 diff 的情况。
+冲突时中止 rebase 并保留原提交。commit-only 只提交并保留分支。
+
+清理删除 worktree。`committed` 始终保留分支，即使提交已从默认分支可达；
+`cleanup_pending` 中有未落地提交时也保留分支。只有 `merged` 与 `aborted` 可删除分支，
+使用一个 `update-ref --stdin` 事务，以交付分支的预期提交号删除；`merged` 还在同一事务
+中验证默认分支等于已核对的提交号：实时合并时为交付提交，恢复时为核对可达性所用的
+默认分支顶端。其他 Git 进程改动任一 ref 时，事务失败，返回 `cleanup_pending` /
+`cleanup_failed`，保留分支与提交，等待恢复。
 
 日志为 `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`，schema 1
 记录操作 ID、工作区、范围、仓库、默认分支、交付分支、worktree 路径、基线 `base`、
@@ -114,7 +122,9 @@ provider 构造时在后台恢复已配置仓库，关闭时取消并等待后�
 后、预检前也先恢复。在记录目录内运行 Git 前，核对 worktree 登记路径、指向该仓库
 公共 Git 目录下对应元数据的 `.git` 文件，以及 `rev-parse --show-toplevel` 返回的
 根路径。未识别的空目录删除；非空目录保留，以 `cleanup_pending` /
-`worktree_unrecognized` 记录，日志保留目录路径。仅在已核对的 worktree 内中止
+`worktree_unrecognized` 记录，日志保留目录路径。目录已不存在但登记仍在时，从已核对的
+仓库根运行 `worktree prune --expire=now`，再确认登记已消失；删除未识别的空目录后也做
+同样处理。登记仍在（包括登记已上锁）则保持 `cleanup_pending`。仅在已核对的 worktree 内中止
 进行中的 rebase，再按实际 Git 状态分类，包括提交
 已生成但尚未写入日志的情况：无提交则清理为 `aborted`；提交从默认分支可达则清理
 为 `merged`；未合并提交只删除 worktree，保留分支并归类为 `committed` /
@@ -124,6 +134,6 @@ provider 构造时在后台恢复已配置仓库，关闭时取消并等待后�
 `match_missing`、`match_ambiguous`、`file_exists`、`file_missing`、`not_text`、
 `main_checkout_dirty`、`main_checkout_branch`、`worktree_root_not_ignored`、
 `branch_exists`、`message_invalid`、`busy`、`git_failed`、`commit_only`、
-`not_fast_forward`、`rebase_conflict`、`rebase_scope_changed`、`journal_failed`、`interrupted`、
+`not_fast_forward`、`rebase_conflict`、`scope_changed`、`journal_failed`、`interrupted`、
 `worktree_unrecognized`、`cleanup_failed`。错误 ID 加 `delivery.` 前缀。完整字段和逐项原因释义见
 [英文参考](../Delivery.md)。

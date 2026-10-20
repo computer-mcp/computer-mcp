@@ -59,6 +59,18 @@ final class DeliveryFixture: @unchecked Sendable {
     DeliveryToolProvider(environment: tools(scope: scope), io: io, startsRecovery: false)
   }
 
+  func provider(wrappingGit body: String, timeout: Int? = nil) throws -> DeliveryToolProvider {
+    let wrapper = temporary.url.appendingPathComponent("git-wrapper")
+    let script = "#!\(try testExecutable("sh"))\n" + body + "\nexec \(quote(executable)) \"$@\"\n"
+    try Data(script.utf8).write(to: wrapper)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+    var configuration = tools(timeout: timeout).configuration
+    configuration.cli.commands[0].executable = wrapper.path
+    return DeliveryToolProvider(
+      environment: .init(configuration: configuration, environment: environment),
+      io: .init(), startsRecovery: false)
+  }
+
   func request(
     path: String = "notes/log.md", old: String = "alpha", new: String = "beta",
     slug: String = "entry", message: String = "docs: record entry"

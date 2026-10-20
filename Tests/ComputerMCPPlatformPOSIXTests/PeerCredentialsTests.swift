@@ -15,10 +15,11 @@ struct PeerCredentialsTests {
   @Test
   func socketPairReportsTheEffectiveUserAtBothEnds() throws {
     var descriptors: [Int32] = [-1, -1]
-    #if canImport(Darwin)
-      let type = SOCK_STREAM
-    #else
+    // Glibc imports the socket type as an enum; Darwin and Musl import an integer.
+    #if canImport(Glibc)
       let type = Int32(SOCK_STREAM.rawValue)
+    #else
+      let type = SOCK_STREAM
     #endif
     try #require(socketpair(AF_UNIX, type, 0, &descriptors) == 0)
     defer { for descriptor in descriptors { close(descriptor) } }

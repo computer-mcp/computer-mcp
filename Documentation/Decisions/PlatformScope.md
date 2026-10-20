@@ -67,6 +67,13 @@ product decision.
   descriptor inheritance and plugin HTTP requests (catalog fetches and archive
   downloads) also have only macOS implementations. Plugin HTTP requests fail with
   `networkUnavailable` on Linux before sending a request.
+- The owned-process primitive passes inherited descriptors only through Darwin
+  spawn file actions. On Linux it rejects configurations that need them, so
+  connected stdio MCP transports, which inherit their ownership lock, do not start
+  there yet. Its supervisor runs under `/bin/sh` on macOS and `/bin/bash` on
+  Linux, where `/bin/sh` may lack job control without a terminal.
+- Extended attributes are read only through Darwin calls. On Linux, approvals
+  that bind extended-attribute state fail with `operations.state_unavailable`.
 - Until a Linux host adopts a backpressured HTTP client, the Linux streaming
   bridge fails when more than 32 MiB of response bytes wait in its own queue.
   The triggering callback can overshoot by one chunk. Foundation buffers

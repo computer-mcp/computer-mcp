@@ -206,7 +206,6 @@
     "AppControlPlaneService->KeychainSecretStore",
     "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
     "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
-    "GatewayHTTPApp->AppControlPlaneServiceError",
     "MCPConnectionPool->KeychainSecretStore",
     "MCPProxyClient->KeychainSecretStore",
     "MCPProxyConnection->KeychainSecretStore"

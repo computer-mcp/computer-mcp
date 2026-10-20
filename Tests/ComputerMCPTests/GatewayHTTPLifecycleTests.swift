@@ -9,6 +9,16 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayHTTPLifecycleTests {
   @Test
+  func fullShellPreconditionPrecedesSessionLookup() async throws {
+    let runtime = GatewayHTTPRuntime(
+      configuration: .init(), registry: HTTPLifecycleRegistry(pauseDiscovery: false),
+      host: "127.0.0.1", port: 0, publicBaseURL: nil)
+    await #expect(throws: GatewayControlError.fullShellManifestDisabled) {
+      try await runtime.approveControlSession(id: "missing", expectedRevision: 0)
+    }
+  }
+
+  @Test
   func stopJoinsSessionDiscoveryBeforeShuttingDownTheRegistry() async throws {
     let root = URL(fileURLWithPath: "/tmp/cm-http-life-" + UUID().uuidString.prefix(8))
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

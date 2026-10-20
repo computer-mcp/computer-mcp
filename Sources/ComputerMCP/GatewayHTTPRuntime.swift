@@ -613,7 +613,7 @@ package actor GatewayHTTPApp {
     expectedRevision: Int64, expectedTrustRevision: Int64, approver: GatewayCallerKind = .localApp
   ) throws -> GatewayControlSessionSnapshot {
     guard configuration.policy.shellEnabled else {
-      throw AppControlPlaneServiceError.fullShellManifestDisabled
+      throw GatewayControlError.fullShellManifestDisabled
     }
     return try controlSession(id: id).approveFullAccess(
       lifetime: lifetime, expectedRevision: expectedRevision,

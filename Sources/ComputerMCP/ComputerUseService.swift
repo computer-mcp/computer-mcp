@@ -575,7 +575,7 @@ internal protocol ComputerUseAdapter: Sendable {
   func frontmostApplication() -> ComputerUseApplicationObservation?
 }
 
-internal struct ComputerUseService: Sendable {
+package struct ComputerUseService: ComputerUsePermissionReading {
   internal static let minimumScreenshotDimension = 64
   internal static let maximumScreenshotDimension = 4_096
   internal static let minimumScreenshotBytes = 32 * 1_024
@@ -589,7 +589,7 @@ internal struct ComputerUseService: Sendable {
   private let adapter: any ComputerUseAdapter
   private let sleep: @Sendable (TimeInterval) -> Void
 
-  internal init() {
+  package init() {
     self.init(adapter: MacOSComputerUseAdapter())
   }
 
@@ -608,7 +608,7 @@ internal struct ComputerUseService: Sendable {
     self.sleep = sleep
   }
 
-  internal func permissionSnapshot() -> ComputerUsePermissionSnapshot {
+  package func permissionSnapshot() -> ComputerUsePermissionSnapshot {
     ComputerUsePermissionSnapshot(
       accessibility: adapter.permissionStatus(.accessibility),
       screenRecording: adapter.permissionStatus(.screenRecording)

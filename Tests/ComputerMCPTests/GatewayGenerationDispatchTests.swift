@@ -2484,6 +2484,7 @@ private struct GenerationFixture: Sendable {
       gatewayExecutablePath: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/computer-mcp").path,
+      computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: PlatformServices(
         workspaceGrants: bookmarkService,
         pluginDirectories: MacOSPlatform.services.pluginDirectories,

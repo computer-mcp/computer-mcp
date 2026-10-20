@@ -603,7 +603,9 @@ struct PluginControlFixture: Sendable {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
-      gatewayExecutablePath: worker, platform: MacOSPlatform.services, pluginReleases: releases,
+      gatewayExecutablePath: worker,
+      computerUsePermissionReader: FixedComputerUsePermissionReader(),
+      platform: MacOSPlatform.services, pluginReleases: releases,
       pluginDownload: download,
       bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)

@@ -21,6 +21,20 @@ import Testing
 @Suite(.nativeIntegration, .serialized)
 
 final class AppControlPlaneServiceTests {
+  @Test(arguments: [
+    ComputerUsePermissionSnapshot(accessibility: .granted, screenRecording: .notGranted),
+    ComputerUsePermissionSnapshot(accessibility: .notGranted, screenRecording: .granted),
+  ])
+  func computerUsePermissionsReadsInjectedSnapshot(snapshot: ComputerUsePermissionSnapshot)
+    async throws
+  {
+    let fixture = try AppControlPlaneServiceFixture(
+      computerUsePermissionReader: FixedComputerUsePermissionReader(snapshot: snapshot))
+    defer { fixture.cleanup() }
+
+    #expect(await fixture.controlPlane.computerUsePermissions() == snapshot)
+  }
+
   @Test
   func clientControlCommandsShareAppAuthorityAndPublishShellWithoutRestarting() async throws {
     let fixture = try AppControlPlaneServiceFixture()
@@ -2732,6 +2746,8 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
   init(
     keychainAdapter: (any KeychainAdapter)? = nil,
     launchAtLoginController: any LaunchAtLoginControlling = MemoryLaunchAtLoginController(),
+    computerUsePermissionReader: any ComputerUsePermissionReading =
+      FixedComputerUsePermissionReader(),
     gatewayExecutablePath: String = "computer-mcp",
     pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     providerDiscovery: any ControlPlaneProviderDiscovering = TestProviderDiscovery()
@@ -2771,6 +2787,7 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       gatewayExecutablePath: gatewayExecutablePath,
       providerDiscovery: providerDiscovery,
       launchAtLoginController: launchAtLoginController,
+      computerUsePermissionReader: computerUsePermissionReader,
       platform: MacOSPlatform.services, pluginCatalog: pluginCatalog
     )
   }

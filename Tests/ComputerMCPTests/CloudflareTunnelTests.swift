@@ -754,7 +754,9 @@ private final class CloudflareControlPlaneFixture {
       database: database,
       manifestStore: manifestStore,
       secretStore: secretStore,
-      openAITunnelSupervisor: openAITunnelSupervisor, platform: MacOSPlatform.services
+      openAITunnelSupervisor: openAITunnelSupervisor,
+      computerUsePermissionReader: FixedComputerUsePermissionReader(),
+      platform: MacOSPlatform.services
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,

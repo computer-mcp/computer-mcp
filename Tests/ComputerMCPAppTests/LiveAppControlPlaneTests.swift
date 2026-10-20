@@ -547,7 +547,9 @@ private final class AppControlPlaneFixture {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
-      launchAtLoginController: AppTestLaunchAtLoginController(), platform: MacOSPlatform.services
+      launchAtLoginController: AppTestLaunchAtLoginController(),
+      computerUsePermissionReader: FixedComputerUsePermissionReader(),
+      platform: MacOSPlatform.services
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,

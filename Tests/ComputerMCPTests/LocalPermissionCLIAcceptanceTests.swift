@@ -337,6 +337,7 @@ private struct PermissionCLIFixture: Sendable {
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       launchAtLoginController: PermissionCLILaunchAtLoginFake(),
+      computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
     gatewaySocket = root.appendingPathComponent("gateway.sock")
     controlSocketURL = root.appendingPathComponent("control.sock")

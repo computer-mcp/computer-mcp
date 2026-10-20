@@ -557,6 +557,7 @@ struct MCPRegistrationControlFixture: Sendable {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
+      computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services, bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
     socket = ControlSocketService(

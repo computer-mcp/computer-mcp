@@ -65,6 +65,7 @@ package actor AppControlPlaneService {
   private let openAITunnelSupervisor: OpenAITunnelSupervisor
   private let providerDiscovery: any ControlPlaneProviderDiscovering
   private let launchAtLoginController: any LaunchAtLoginControlling
+  private let computerUsePermissionReader: any ComputerUsePermissionReading
   private let launchAtLoginOperations = BlockingOperationExecutor(
     label: "com.showxu.computer-mcp.launch-at-login",
     serial: false
@@ -95,6 +96,7 @@ package actor AppControlPlaneService {
     providerDiscovery: (any ControlPlaneProviderDiscovering)? = nil,
     launchAtLoginController: any LaunchAtLoginControlling =
       SMAppServiceLaunchAtLoginController(),
+    computerUsePermissionReader: any ComputerUsePermissionReading,
     platform: PlatformServices,
     pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
@@ -112,6 +114,7 @@ package actor AppControlPlaneService {
       ?? AppControlPlaneProviderDiscovery(
         executableSearchDirectories: platform.executableSearchDirectories)
     self.launchAtLoginController = launchAtLoginController
+    self.computerUsePermissionReader = computerUsePermissionReader
     self.platform = platform
     self.pluginCatalog =
       pluginCatalog
@@ -666,7 +669,7 @@ package actor AppControlPlaneService {
   }
 
   package func computerUsePermissions() -> ComputerUsePermissionSnapshot {
-    ComputerUseService().permissionSnapshot()
+    computerUsePermissionReader.permissionSnapshot()
   }
 
   package func operationApprovals(limit: Int = 100) throws -> [OperationTicket] {

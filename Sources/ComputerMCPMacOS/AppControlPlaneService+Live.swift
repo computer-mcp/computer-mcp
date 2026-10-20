@@ -41,6 +41,7 @@ extension AppControlPlaneService {
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
       gatewayExecutablePath: gatewayExecutablePath,
+      computerUsePermissionReader: ComputerUseService(),
       platform: platform,
       bundledPlugins: bundledPlugins
     )

@@ -34,6 +34,7 @@ struct GatewaySocketPrincipalLifecycleTests {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
+      computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
     let script = root.appendingPathComponent("fixture.py")
     try Data(Self.server.utf8).write(to: script)

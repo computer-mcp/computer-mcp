@@ -26,7 +26,7 @@ targets, and CI builds and tests them there.
 | swift-system | `FilePath` for process launches where the System framework is unavailable |
 | GRDB | Transactional App metadata and redacted audit; system SQLite on Linux |
 | swift-log | Runtime logging integration |
-| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI` and `ComputerMCPPlugins` targets on macOS and Linux |
+| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins` and `ComputerMCPGateway` targets on macOS and Linux |
 | macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
 
 `CSystemArchive` is an internal system-library module with the minimal C ABI
@@ -66,8 +66,9 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPComputerUse/` | macOS Computer Use provider, observation and action service, native Accessibility and screen capture adapter, and permission readings |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
-| `Sources/ComputerMCP/` | Shared target for the gateway, providers, persistence, tunnel administration, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
-| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, Computer Use permission readings, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
+| `Sources/ComputerMCPGateway/` | Platform-neutral runtime, provider routing, admission, approvals, receipts, continuations, host services, HTTP adapter, domain stores, owned work and audit; injected management and client-control contracts |
+| `Sources/ComputerMCP/` | Transitional target for App and CLI control-plane administration, client control, remote management, tunnel administration and macOS default configuration; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
+| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, Computer Use permission readings, the Git executable, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
@@ -85,6 +86,21 @@ composition root creates the shared `ToolEnvironment`, scopes the downstream cli
 and assembles the domain providers in catalog order. The router publishes definitions,
 capabilities and provider ownership together, preserving its validated generation
 when discovery fails.
+
+`ComputerMCPGateway` builds on macOS and Linux without Darwin service implementations.
+`GatewayManagementProvider` supplies the control plane's management definitions,
+read capabilities and asynchronous dispatch. `GatewayClientControlProvider` supplies
+local HTTP client-control contracts and validated calls for the admitted generation.
+The control plane implements these with `GatewayRemoteManagement` and
+`GatewayHTTPClientControl`, which dispatches through `GatewayClientControl.http`.
+Proxy clients accept Platform's `SecretStore`; MCP HTTP authentication keeps its
+explicit noninteractive `.fail` reads. Bound host services receive their Git
+executable through `PlatformServices`.
+
+`ComputerMCPGatewayTests` covers neutral gateway behavior. `ComputerMCPMacOSTests`
+covers the macOS composition root and assembled runtimes, including the CLI crash
+recovery driver. `ComputerMCPGatewayDarwinTests` covers macOS artifact-provenance
+scripts. Tests requiring control-plane declarations stay in `ComputerMCPTests`.
 
 `ComputerMCPToolKit` owns shared argument/result helpers, `WorkspaceScope` path
 checks and file metadata, and `RegisteredCommands` resolution and execution with
@@ -114,7 +130,7 @@ The live control-plane factory injects the service into `AppControlPlaneService`
 for non-prompting permission snapshots. The App reads tool counts directly from
 `SkillsToolProvider` and `ComputerUseGatewayProvider`.
 `ComputerMCPComputerUseTests` covers the service and provider on macOS; audit
-integration with `GatewayRuntime` remains in `ComputerMCPTests`.
+integration with `GatewayRuntime` runs in `ComputerMCPMacOSTests`.
 
 `StructuredToolProvider` owns the shared Markdown and structured parsing operations
 used by Skills. `MediaInspector` returns neutral, bounded metadata and PDF text;
@@ -148,7 +164,7 @@ frameworks and their native fixtures on macOS.
 
 `ComputerMCPPlugins` owns `PluginStateStore`, which reads plugin snapshots, commits
 validated revisions and maintains the local directory ownership ledger.
-`GatewayPluginStateStore` in the shared target binds those commits to the expected
+`GatewayPluginStateStore` in `ComputerMCPGateway` binds those commits to the expected
 gateway configuration and optional runtime publication; `GatewayDatabase` retains
 its transactions and configuration snapshot. The store validates the next snapshot
 and the host's preflight checks before handing it to that adapter.
@@ -166,7 +182,8 @@ requested.
 `ComputerMCPPluginsTests` runs neutral catalog, HTTP, manifest and package tests on
 macOS and Linux. `ComputerMCPPluginsDarwinTests` covers native archive handling,
 application lookup and current macOS package activation/compatibility. Plugin tests
-that also exercise the gateway database or runtime remain in `ComputerMCPTests`.
+that exercise macOS runtime assembly run in `ComputerMCPMacOSTests`; tests that
+also require the control plane remain in `ComputerMCPTests`.
 Their shared fixtures in `ComputerMCPTestSupport` use injected directory services
 and application lookup substitutes.
 

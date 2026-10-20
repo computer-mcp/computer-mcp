@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import CryptoKit

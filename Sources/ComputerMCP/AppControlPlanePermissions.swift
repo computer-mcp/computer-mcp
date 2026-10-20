@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPPersistence
 import ComputerMCPPlugins
 import Foundation

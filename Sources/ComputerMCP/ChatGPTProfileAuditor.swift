@@ -1,4 +1,5 @@
 import ComputerMCPConfiguration
+import ComputerMCPGateway
 import ComputerMCPTunnels
 
 internal struct ChatGPTProfileAuditor: Sendable {

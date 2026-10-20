@@ -10,6 +10,7 @@ import Testing
 @testable import ComputerMCPApp
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins

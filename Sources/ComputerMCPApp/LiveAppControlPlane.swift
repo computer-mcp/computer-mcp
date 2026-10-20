@@ -2,6 +2,7 @@ import AppKit
 import ComputerMCP
 import ComputerMCPComputerUse
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPMacOS
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin

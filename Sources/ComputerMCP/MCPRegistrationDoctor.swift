@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
+import ComputerMCPGateway
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins

@@ -1,4 +1,4 @@
-import ComputerMCP
+import ComputerMCPGateway
 import ComputerMCPPlatformDarwin
 import ComputerMCPProcess
 

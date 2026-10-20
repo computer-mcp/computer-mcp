@@ -18,6 +18,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPGateway
 
 struct BuiltinToolCatalogSnapshotTests {
   @Test(arguments: [(false, true), (true, true), (false, false), (true, false)])

@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPGateway
 import Foundation
 import Testing
 

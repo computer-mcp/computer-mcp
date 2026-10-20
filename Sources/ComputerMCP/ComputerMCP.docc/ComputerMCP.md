@@ -35,8 +35,8 @@ process spawning, and Full Shell remain off by default; only
 
 ### Gateway Runtime
 
-- ``GatewayToolRegistry``
-- ``MCPRuntimeAdapter``
+- `GatewayToolRegistry`
+- `MCPRuntimeAdapter`
 
 ### MCP and OpenAI Secure MCP Tunnel
 
@@ -45,7 +45,7 @@ and the `HTTPOriginLifecycle` contract. The control plane constructs the
 Cloudflare HTTP origin and audits gateway profiles.
 
 - `DownstreamMCPClient`
-- ``MCPProxyClient``
+- `MCPProxyClient`
 - `OpenAITunnelLauncher`
 - `OpenAITunnelInvocation`
 - `OpenAITunnelPlan`

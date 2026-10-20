@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPGateway
 import CryptoKit
 import Darwin
 import Foundation

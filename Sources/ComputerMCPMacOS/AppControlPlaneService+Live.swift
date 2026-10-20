@@ -1,5 +1,6 @@
 import ComputerMCP
 import ComputerMCPComputerUse
+import ComputerMCPGateway
 import ComputerMCPPersistence
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlugins

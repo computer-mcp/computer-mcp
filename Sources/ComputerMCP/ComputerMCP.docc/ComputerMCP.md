@@ -40,7 +40,7 @@ process spawning, and Full Shell remain off by default; only
 
 ### MCP and OpenAI Secure MCP Tunnel
 
-- ``DownstreamMCPClient``
+- `DownstreamMCPClient`
 - ``MCPProxyClient``
 - ``OpenAITunnelLauncher``
 - ``OpenAITunnelInvocation``

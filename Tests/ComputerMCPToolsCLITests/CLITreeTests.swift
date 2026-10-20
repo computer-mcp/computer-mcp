@@ -19,7 +19,7 @@ import Testing
 struct CLITreeTests {
   @Test
   func alreadyCancelledCallPrecedesArgumentValidation() async throws {
-    let provider = Self.provider(Self.printCommand(), executable: "/usr/bin/printf")
+    let provider = Self.provider(Self.printCommand(), executable: "/fixture/bin/printf")
     let name = try #require(provider.definitions().first?.tool.name)
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }

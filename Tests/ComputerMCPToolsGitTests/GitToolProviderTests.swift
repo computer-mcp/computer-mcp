@@ -17,7 +17,7 @@ final class GitToolProviderTests {
     let provider = GitToolProvider(
       environment: ToolEnvironment(
         configuration: .fixture(
-          cli: .init(commands: [.init(id: "git", executable: "/usr/bin/git")]),
+          cli: .init(commands: [.init(id: "git", executable: "/fixture/bin/git")]),
           builtin: .init(enabled: ["git.commit"])),
         commandRunner: runner))
     let task = Task {

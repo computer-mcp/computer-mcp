@@ -11,7 +11,7 @@ package enum PluginDependencyResolver {
   }
 
   package static func applicationURL(bundleIdentifier: String) -> URL? {
-    switch ApplicationBundleLookup.locate(bundleIdentifier: bundleIdentifier) {
+    switch ApplicationBundleLookup().locate(bundleIdentifier: bundleIdentifier) {
     case .found(let url): url
     case .notFound: nil
     }

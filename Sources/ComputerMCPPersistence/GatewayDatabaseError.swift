@@ -58,3 +58,12 @@ package struct InterruptedStateImport: Error, LocalizedError, Equatable {
       + "database."
   }
 }
+
+/// An importer holds the exclusive lock for the database at `path`.
+package struct StateImportInProgress: Error, LocalizedError, Equatable {
+  package let path: String
+
+  package var errorDescription: String? {
+    "A state import is in progress at \(path), so the database was not opened. Try again after it finishes."
+  }
+}

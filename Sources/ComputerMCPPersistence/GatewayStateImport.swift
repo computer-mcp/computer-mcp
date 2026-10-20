@@ -13,7 +13,7 @@ import GRDB
 ///
 /// The export (schema 1) holds complete rows of the preserved tables. The rows are written
 /// unchanged into a staged database next to the target, counted and verified, and only then
-/// put in place; the previous database and its sidecars are kept as `<database>.before-import`.
+/// put in place; the previous database is kept as `<database>.before-import`.
 /// While the replacement is underway a `<database>.import-replacing` record exists, the
 /// database is not opened, and the next import first restores the previous database.
 package enum GatewayStateImport {
@@ -39,14 +39,24 @@ package enum GatewayStateImport {
     exportFile: URL, database: URL, verify: (URL) throws -> Void
   ) throws -> Report {
     let paths = Paths(database: database.standardizedFileURL)
+    let lock: FileLock
+    do {
+      lock = try FileLock(path: paths.lock.path, mode: .exclusive)
+    } catch FileLockError.held {
+      throw GatewayStateImportError.databaseInUse(
+        processIDs: (try? ProcessTable.processesHoldingOpen(path: paths.lock.path)) ?? [])
+    }
+    defer { lock.release() }
     let restored = try recover(paths)
     let tables = try ExportedTables(data: Data(contentsOf: exportFile))
     try requireUnused(paths)
-    let replacesExisting = try classifyExisting(paths)
-    if replacesExisting,
-      let suffix = ([""] + Paths.sidecars).first(where: { paths.exists(paths.previous, $0) })
-    {
-      throw GatewayStateImportError.previousDatabaseExists(paths.previous.path + suffix)
+    // SQLite may clean up WAL files when a read-write connection closes. This database
+    // uses rollback journals, so preserve any WAL/SHM for explicit recovery before opening.
+    try requireNoSidecars(paths, suffixes: ["-wal", "-shm"])
+    let previous = try classifyExisting(paths)
+    try requireNoSidecars(paths)
+    if previous != nil, try FileIdentity.read(paths.previous) != nil {
+      throw GatewayStateImportError.previousDatabaseExists(paths.previous.path)
     }
     let counts: [TableCount]
     do {
@@ -59,18 +69,24 @@ package enum GatewayStateImport {
       try FileManager.default.setAttributes(
         [.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: paths.staged.path)
       try requireUnused(paths)
+      try requireNoSidecars(paths)
     } catch {
       try? paths.removeStaged()
       throw error
     }
-    if replacesExisting {
-      try replace(paths)
+    if let previous {
+      try replace(paths, previous: previous)
     } else {
-      try FileManager.default.moveItem(at: paths.staged, to: paths.database)
+      guard link(paths.staged.path, paths.database.path) == 0 else {
+        if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(paths.database.path) }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
       try syncDirectory(paths.directory)
+      try remove(paths.staged, in: paths.directory)
     }
+    try paths.removeStaged()
     return Report(
-      rowCounts: counts, previousDatabase: replacesExisting ? paths.previous : nil,
+      rowCounts: counts, previousDatabase: previous != nil ? paths.previous : nil,
       restoredInterruptedImport: restored)
   }
 
@@ -78,71 +94,95 @@ package enum GatewayStateImport {
   /// next import restores the previous database.
   package static func isReplacing(_ database: URL) -> Bool {
     let paths = Paths(database: database.standardizedFileURL)
-    return FileManager.default.fileExists(atPath: paths.replacing.path)
+    return (try? FileIdentity.read(paths.replacing)) != nil
   }
 
-  /// Rolls back an interrupted replacement. Each step can run again after an interruption.
+  /// Rolls back an interrupted replacement while the caller holds the exclusive lock.
+  /// Validate every name before changing any of them; each mutation is durable before the
+  /// next one, so recovery can resume after any of its own steps.
   @discardableResult
   static func recover(_ paths: Paths) throws -> Bool {
-    guard FileManager.default.fileExists(atPath: paths.replacing.path) else { return false }
-    if FileManager.default.fileExists(atPath: paths.previous.path) {
-      // The previous database's file moves aside after its sidecars and before the staged
-      // database moves in, so what is at the database path is the staged import.
-      for suffix in [""] + Paths.sidecars where paths.exists(paths.database, suffix) {
-        try FileManager.default.removeItem(atPath: paths.database.path + suffix)
+    guard try FileIdentity.read(paths.replacing) != nil else { return false }
+    let record = try JSONDecoder().decode(
+      ReplacementRecord.self, from: Data(contentsOf: paths.replacing))
+    let database = try FileIdentity.read(paths.database)
+    let previous = try FileIdentity.read(paths.previous)
+    let staged = try FileIdentity.read(paths.staged)
+    if let database, database != record.previous && database != record.staged {
+      throw GatewayStateImportError.unexpectedFile(paths.database.path)
+    }
+    if let previous, previous != record.previous {
+      throw GatewayStateImportError.unexpectedFile(paths.previous.path)
+    }
+    if let staged, staged != record.staged {
+      throw GatewayStateImportError.unexpectedFile(paths.staged.path)
+    }
+    guard database != nil else {
+      throw GatewayStateImportError.unexpectedFile(paths.database.path)
+    }
+    if database == record.staged {
+      guard previous == record.previous else {
+        throw GatewayStateImportError.unexpectedFile(paths.previous.path)
       }
-      try FileManager.default.moveItem(at: paths.previous, to: paths.database)
+      try rename(paths.previous, to: paths.database)
+      try syncDirectory(paths.directory)
+    } else if previous == record.previous {
+      try remove(paths.previous, in: paths.directory)
     }
-    for suffix in Paths.sidecars where paths.exists(paths.previous, suffix) {
-      try FileManager.default.moveItem(
-        atPath: paths.previous.path + suffix, toPath: paths.database.path + suffix)
-    }
-    try paths.removeStaged()
-    try syncDirectory(paths.directory)
-    try FileManager.default.removeItem(at: paths.replacing)
-    try syncDirectory(paths.directory)
+    if staged == record.staged { try remove(paths.staged, in: paths.directory) }
+    try remove(paths.replacing, in: paths.directory)
     return true
   }
 
-  /// Moving never overwrites: a file that appears at a destination fails the move, and the
-  /// replacement rolls back.
-  private static func replace(_ paths: Paths) throws {
-    try createRecord(paths.replacing)
+  private static func replace(_ paths: Paths, previous: FileIdentity) throws {
+    let record = ReplacementRecord(
+      previous: previous, staged: try FileIdentity.require(paths.staged))
+    try createRecord(record, at: paths.replacing)
+    try syncDirectory(paths.directory)
     do {
-      try syncDirectory(paths.directory)
-      for suffix in Paths.sidecars + [""] where paths.exists(paths.database, suffix) {
-        try FileManager.default.moveItem(
-          atPath: paths.database.path + suffix, toPath: paths.previous.path + suffix)
+      guard link(paths.database.path, paths.previous.path) == 0 else {
+        if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(paths.previous.path) }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
       }
-      try FileManager.default.moveItem(at: paths.staged, to: paths.database)
+      try syncDirectory(paths.directory)
+      guard try FileIdentity.read(paths.database) == record.previous else {
+        throw GatewayStateImportError.unexpectedFile(paths.database.path)
+      }
+      try rename(paths.staged, to: paths.database)
       try syncDirectory(paths.directory)
     } catch {
-      _ = try? recover(paths)
+      try recover(paths)
       throw error
     }
-    try FileManager.default.removeItem(at: paths.replacing)
-    try syncDirectory(paths.directory)
+    try remove(paths.replacing, in: paths.directory)
   }
 
-  /// Whether a database exists to replace. A database with this version's schema is never
-  /// replaced. The database is read without writing to it.
-  private static func classifyExisting(_ paths: Paths) throws -> Bool {
-    guard FileManager.default.fileExists(atPath: paths.database.path) else { return false }
-    var configuration = Configuration()
-    configuration.readonly = true
-    let current = try DatabaseQueue(path: paths.database.path, configuration: configuration)
-      .read { database in
-        do {
-          try GatewayDatabaseConnection.checkSchema(database)
-        } catch is UnsupportedDatabaseSchema {
-          return false
-        }
-        return try database.tableExists("grdb_migrations")
+  /// A plain read-write opener lets SQLite roll back a hot journal. That rollback is the
+  /// only change classification may make to the previous database; no migrations run.
+  private static func classifyExisting(_ paths: Paths) throws -> FileIdentity? {
+    guard let identity = try FileIdentity.read(paths.database) else { return nil }
+    let current = try DatabaseQueue(path: paths.database.path).read { database in
+      do {
+        try GatewayDatabaseConnection.checkSchema(database)
+      } catch is UnsupportedDatabaseSchema {
+        return false
       }
+      return try database.tableExists("grdb_migrations")
+    }
     guard !current else {
       throw GatewayStateImportError.databaseAlreadyCurrent(paths.database.path)
     }
-    return true
+    return identity
+  }
+
+  private static func requireNoSidecars(_ paths: Paths, suffixes: [String] = Paths.sidecars) throws
+  {
+    for suffix in suffixes {
+      let url = URL(fileURLWithPath: paths.database.path + suffix)
+      if try FileIdentity.read(url) != nil {
+        throw GatewayStateImportError.sidecarExists(url.path)
+      }
+    }
   }
 
   private static func requireUnused(_ paths: Paths) throws {
@@ -162,8 +202,9 @@ package enum GatewayStateImport {
         let columns = Set(try database.columns(in: table).map(\.name))
         for row in rows {
           let names = row.keys.sorted()
-          guard Set(names).isSubset(of: columns) else {
-            throw GatewayStateImportError.invalidExport("\(table) has a column this schema lacks")
+          guard Set(names) == columns else {
+            throw GatewayStateImportError.invalidExport(
+              "\(table) must contain exactly this schema's columns")
           }
           let values = try names.map {
             try row[$0]!.databaseValue(table: table, column: $0, row: row)
@@ -185,11 +226,61 @@ package enum GatewayStateImport {
     }
   }
 
-  private static func createRecord(_ url: URL) throws {
-    let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+  struct FileIdentity: Codable, Equatable {
+    let device: UInt64
+    let inode: UInt64
+
+    static func read(_ url: URL) throws -> Self? {
+      var status = stat()
+      guard lstat(url.path, &status) == 0 else {
+        if errno == ENOENT { return nil }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
+      return Self(device: UInt64(truncatingIfNeeded: status.st_dev), inode: UInt64(status.st_ino))
+    }
+
+    static func require(_ url: URL) throws -> Self {
+      guard let identity = try read(url) else {
+        throw GatewayStateImportError.unexpectedFile(url.path)
+      }
+      return identity
+    }
+  }
+
+  struct ReplacementRecord: Codable {
+    let previous: FileIdentity
+    let staged: FileIdentity
+  }
+
+  private static func createRecord(_ record: ReplacementRecord, at url: URL) throws {
+    let data = try JSONEncoder().encode(record)
+    let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
     guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     defer { close(descriptor) }
+    try data.withUnsafeBytes { bytes in
+      var offset = 0
+      while offset < bytes.count {
+        let count = write(descriptor, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+        if count < 0 && errno == EINTR { continue }
+        guard count > 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        offset += count
+      }
+    }
     guard fsync(descriptor) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  }
+
+  private static func rename(_ source: URL, to destination: URL) throws {
+    #if canImport(Darwin)
+      let result = Darwin.rename(source.path, destination.path)
+    #else
+      let result = Glibc.rename(source.path, destination.path)
+    #endif
+    guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  }
+
+  private static func remove(_ url: URL, in directory: URL) throws {
+    guard unlink(url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    try syncDirectory(directory)
   }
 
   private static func syncDirectory(_ url: URL) throws {
@@ -205,6 +296,7 @@ package enum GatewayStateImport {
 
     let database: URL
     var directory: URL { database.deletingLastPathComponent() }
+    var lock: URL { sibling(".lock") }
     var staged: URL { sibling(".import") }
     var previous: URL { sibling(".before-import") }
     var replacing: URL { sibling(".import-replacing") }
@@ -214,7 +306,7 @@ package enum GatewayStateImport {
     }
 
     func removeStaged() throws {
-      for suffix in [""] + Self.sidecars where exists(staged, suffix) {
+      for suffix in [""] + Self.sidecars + [".lock"] where exists(staged, suffix) {
         try FileManager.default.removeItem(atPath: staged.path + suffix)
       }
     }
@@ -230,6 +322,8 @@ package enum GatewayStateImportError: Error, LocalizedError, Equatable {
   case databaseInUse(processIDs: [Int32])
   case databaseAlreadyCurrent(String)
   case previousDatabaseExists(String)
+  case sidecarExists(String)
+  case unexpectedFile(String)
   case stagedDatabaseStillOpen
 
   package var errorDescription: String? {
@@ -237,13 +331,20 @@ package enum GatewayStateImportError: Error, LocalizedError, Equatable {
     case .invalidExport(let reason):
       return "The state export cannot be imported: \(reason)."
     case .databaseInUse(let processIDs):
-      return "The database is open in process "
-        + processIDs.map(String.init).joined(separator: ", ")
+      return "The database is in use"
+        + (processIDs.isEmpty
+          ? "" : " by process " + processIDs.map(String.init).joined(separator: ", "))
         + ". Quit Computer MCP and stop its gateway, bridge and tunnel processes, then import again."
     case .databaseAlreadyCurrent(let path):
       return "The database at \(path) already uses this version's schema; nothing was imported."
     case .previousDatabaseExists(let path):
       return "\(path) already exists. Move it elsewhere, then import again."
+    case .sidecarExists(let path):
+      return
+        "SQLite sidecar \(path) still exists. Recover it before importing; it was left unchanged."
+    case .unexpectedFile(let path):
+      return
+        "The file at \(path) does not have the expected import identity; it was left unchanged."
     case .stagedDatabaseStillOpen:
       return "The staged database was still open after verification; nothing was replaced."
     }
@@ -304,6 +405,7 @@ private enum ExportValue: Codable, Equatable {
   case null
   case bool(Bool)
   case integer(Int64)
+  case unsignedInteger(UInt64)
   case real(Double)
   case string(String)
   case array([ExportValue])
@@ -322,6 +424,8 @@ private enum ExportValue: Codable, Equatable {
       self = .bool(value)
     } else if let value = try? container.decode(Int64.self) {
       self = .integer(value)
+    } else if let value = try? container.decode(UInt64.self) {
+      self = .unsignedInteger(value)
     } else if let value = try? container.decode(Double.self) {
       self = .real(value)
     } else if let value = try? container.decode(String.self) {
@@ -339,6 +443,7 @@ private enum ExportValue: Codable, Equatable {
     case .null: try container.encodeNil()
     case .bool(let value): try container.encode(value)
     case .integer(let value): try container.encode(value)
+    case .unsignedInteger(let value): try container.encode(value)
     case .real(let value): try container.encode(value)
     case .string(let value): try container.encode(value)
     case .array(let value): try container.encode(value)
@@ -357,6 +462,15 @@ private enum ExportValue: Codable, Equatable {
       || (table == "runtimeSettings" && column == "value"
         && Self.jsonRuntimeSettings.contains(where: { row["key"] == .string($0) }))
     if self == .null { return .null }
+    if case .object(let value) = self,
+      value.count == 2 && value["encoding"] == .string("base64")
+    {
+      guard case .string(let encoded)? = value["data"], let data = Data(base64Encoded: encoded)
+      else {
+        throw GatewayStateImportError.invalidExport("\(table).\(column) holds an invalid BLOB")
+      }
+      return data.databaseValue
+    }
     if isJSON {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -366,11 +480,6 @@ private enum ExportValue: Codable, Equatable {
     case .integer(let value): return value.databaseValue
     case .real(let value): return value.databaseValue
     case .string(let value): return value.databaseValue
-    case .object(let value)
-    where value.count == 2 && value["encoding"] == .string("base64"):
-      guard case .string(let encoded)? = value["data"], let data = Data(base64Encoded: encoded)
-      else { break }
-      return data.databaseValue
     default: break
     }
     throw GatewayStateImportError.invalidExport("\(table).\(column) holds an unsupported value")

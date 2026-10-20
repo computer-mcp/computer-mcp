@@ -20,6 +20,11 @@ struct GatewayStateImportVerificationTests {
     profile.workspaceIDs = ["W1"]
     try source.saveProfile(profile)
     try source.saveRuntimeSetting(key: "desired-running-openai-tunnels", value: #"["chatgpt"]"#)
+    try source.saveRuntimeSetting(
+      key: "desired-running-cloudflare-tunnels", value: #"["cloudflare"]"#)
+    try source.saveRuntimeSetting(
+      key: "gateway-tunnel-registration", value: "65A88D6F-49FC-4C88-984B-99E7DA08377C")
+    try source.saveRuntimeSetting(key: "active-gateway-profile", value: "custom-profile")
     try source.saveConfigurationRevision(
       ConfigurationRevision(
         digest: "fixture", manifest: DefaultGatewayConfiguration.manifest, activatedAt: Date()))
@@ -66,8 +71,83 @@ struct GatewayStateImportVerificationTests {
     }
     #expect(
       try FileManager.default.contentsOfDirectory(atPath: root.path).sorted() == [
-        "export.json", "gateway.sqlite", "source.sqlite",
+        "export.json", "gateway.sqlite", "gateway.sqlite.lock", "source.sqlite",
+        "source.sqlite.lock",
       ])
+  }
+
+  @Test(arguments: [
+    "runtimeSettingDate", "canonicalRootDate", "openaiList", "cloudflareList", "tunnelRegistration",
+    "activeProfile",
+  ])
+  func invalidImportedRecordsFailVerificationAndPreserveTheEarlierDatabase(_ defect: String) throws
+  {
+    let root = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sourceURL = root.appendingPathComponent("source.sqlite")
+    let source = try GatewayDatabase(path: sourceURL.path)
+    try source.saveWorkspace(
+      RegisteredWorkspace(id: "W1", displayName: "Project", rootPath: root.path))
+    try source.saveRuntimeSetting(key: "unknown-setting", value: "opaque")
+    try DatabaseQueue(path: sourceURL.path).write { database in
+      switch defect {
+      case "runtimeSettingDate":
+        try database.execute(sql: "UPDATE runtimeSettings SET updatedAt = 'invalid'")
+      case "canonicalRootDate":
+        try database.execute(sql: "UPDATE workspaceCanonicalRoots SET createdAt = 'invalid'")
+      default:
+        let key: String
+        let value: String
+        switch defect {
+        case "openaiList": (key, value) = ("desired-running-openai-tunnels", "[1]")
+        case "cloudflareList": (key, value) = ("desired-running-cloudflare-tunnels", "[1]")
+        case "tunnelRegistration": (key, value) = ("gateway-tunnel-registration", "invalid")
+        default: (key, value) = ("active-gateway-profile", "invalid profile")
+        }
+        try database.execute(
+          sql: "INSERT INTO runtimeSettings VALUES (?, ?, ?)", arguments: [key, value, Date()])
+      }
+    }
+    let export = try Self.export(sourceURL, to: root)
+    let target = root.appendingPathComponent("gateway.sqlite")
+    try DatabaseQueue(path: target.path).write {
+      try $0.execute(sql: "CREATE TABLE earlier (id TEXT)")
+      try $0.execute(sql: "INSERT INTO earlier VALUES ('committed')")
+    }
+    let before = try Data(contentsOf: target)
+    var verificationFailed = false
+
+    #expect(throws: (any Error).self) {
+      try GatewayStateImport.run(exportFile: export, database: target) { staged in
+        let imported = try GatewayDatabase(path: staged.path)
+        do {
+          try imported.verifyImportedState(configurationDirectory: root)
+        } catch {
+          verificationFailed = true
+          throw error
+        }
+      }
+    }
+    #expect(verificationFailed)
+    #expect(try Data(contentsOf: target) == before)
+    #expect(!FileManager.default.fileExists(atPath: target.path + ".before-import"))
+  }
+
+  @Test func sharedRuntimeSettingDecodersKeepTheReadersRules() throws {
+    #expect(
+      try GatewayDatabase.decodeDesiredOpenAITunnelConfigurationIDs(#"[" b ","a","a",""]"#)
+        == ["a", "b"])
+    #expect(
+      try GatewayDatabase.decodeDesiredCloudflareProfileIDs(#"[" b ","a","a",""]"#) == [
+        "", " b ", "a", "a",
+      ])
+    #expect(
+      try GatewayDatabase.decodeActiveGatewayProfile("custom-profile").rawValue
+        == "custom-profile")
+    #expect(
+      try GatewayDatabase.decodeGatewayTunnelRegistration(
+        "65A88D6F-49FC-4C88-984B-99E7DA08377C")
+        == UUID(uuidString: "65A88D6F-49FC-4C88-984B-99E7DA08377C"))
   }
 
   private static func temporaryDirectory() throws -> URL {

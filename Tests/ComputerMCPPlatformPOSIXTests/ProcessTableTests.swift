@@ -14,23 +14,25 @@ struct ProcessTableTests {
     let handle = try FileHandle(forReadingFrom: url)
     let child = Process()
     child.executableURL = URL(fileURLWithPath: "/bin/sh")
-    child.arguments = ["-c", #"exec 3<"$0"; exec sleep 30"#, url.path]
+    child.arguments = ["-c", #"exec 3<"$0"; printf 'ready\n'; read -r command || :"#, url.path]
+    let input = Pipe()
+    let output = Pipe()
+    child.standardInput = input
+    child.standardOutput = output
     try child.run()
+    try input.fileHandleForReading.close()
+    try output.fileHandleForWriting.close()
     defer {
       if child.isRunning { child.terminate() }
       child.waitUntilExit()
     }
     let expected = [ProcessInfo.processInfo.processIdentifier, child.processIdentifier].sorted()
-    var holders: [Int32] = []
-    // The child opens the file after it starts.
-    for _ in 0..<200 where holders != expected {
-      holders = try ProcessTable.processesHoldingOpen(path: url.path)
-      if holders != expected { Thread.sleep(forTimeInterval: 0.025) }
-    }
-    #expect(holders == expected)
+    #expect(output.fileHandleForReading.readData(ofLength: 6) == Data("ready\n".utf8))
+    #expect(try ProcessTable.processesHoldingOpen(path: url.path) == expected)
 
     try handle.close()
-    child.terminate()
+    #expect(try ProcessTable.processesHoldingOpen(path: url.path) == [child.processIdentifier])
+    try input.fileHandleForWriting.close()
     child.waitUntilExit()
     #expect(try ProcessTable.processesHoldingOpen(path: url.path).isEmpty)
   }

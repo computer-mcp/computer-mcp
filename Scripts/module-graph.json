@@ -206,13 +206,13 @@
     "AppControlPlaneService->KeychainSecretStore",
     "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
     "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
-    "ControlToolResponse->AppControlPlaneServiceError",
     "GatewayHTTPApp->AppControlPlaneServiceError",
     "MCPConnectionPool->KeychainSecretStore",
     "MCPProxyClient->KeychainSecretStore",
     "MCPProxyConnection->KeychainSecretStore"
   ],
   "tests": {
+    "ControlErrorClassificationTests.swift": "ComputerMCPTests",
     "AppControlPlaneServiceTests.swift": "ComputerMCPControlPlaneTests",
     "AppControlSocketTests.swift": "ComputerMCPControlPlaneTests",
     "AppFileLoggerTests.swift": "ComputerMCPControlPlaneTests",

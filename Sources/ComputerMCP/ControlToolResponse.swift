@@ -97,8 +97,8 @@ enum ControlToolResponse {
         }
       return (.failed, "plugin.\(code)")
     }
-    if case .localAdminCannotBeSocketProfile = error as? AppControlPlaneServiceError {
-      return (.denied, "policy.local_admin_remote")
+    if let classification = (error as? any AuditErrorClassifying)?.auditClassification {
+      return classification
     }
     if case .invalid(let message) = error as? ConfigurationError,
       message.contains("local-admin")

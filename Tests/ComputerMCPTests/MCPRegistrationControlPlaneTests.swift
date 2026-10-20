@@ -2,6 +2,7 @@ import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
+import ComputerMCPTunnels
 import Darwin
 import Foundation
 import MCP
@@ -550,7 +551,9 @@ struct MCPRegistrationControlFixture: Sendable {
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
+      ),
       platform: MacOSPlatform.services, bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
     socket = ControlSocketService(

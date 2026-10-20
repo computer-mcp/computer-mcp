@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPTunnels
 import Foundation
 
 package enum ProductJourney: String, Codable, CaseIterable, Sendable {

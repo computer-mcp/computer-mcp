@@ -7,6 +7,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPProcess
+@testable import ComputerMCPTunnels
 
 @Suite(.nativeIntegration, .serialized)
 

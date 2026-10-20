@@ -1,8 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
-import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import Foundation
 
@@ -347,7 +345,7 @@ internal final class SubprocessOpenAITunnelProcessManager: OpenAITunnelProcessMa
 }
 
 package actor OpenAITunnelSupervisor {
-  private let secretStore: KeychainSecretStore
+  private let secretStore: any SecretStore
   private let resolver: any OpenAITunnelClientResolving
   private let planBuilder: any OpenAITunnelPlanBuilding
   private let proxyResolver: any OpenAITunnelHTTPProxyResolving
@@ -359,11 +357,11 @@ package actor OpenAITunnelSupervisor {
   private var startupTokens: [String: UUID] = [:]
 
   package init(
-    secretStore: KeychainSecretStore,
+    secretStore: any SecretStore,
     executableSearchDirectories: [String],
     resolver: (any OpenAITunnelClientResolving)? = nil,
     planBuilder: any OpenAITunnelPlanBuilding = OpenAITunnelPlanBuilder(),
-    proxyResolver: any OpenAITunnelHTTPProxyResolving = SystemOpenAITunnelHTTPProxyResolver(),
+    proxyResolver: any OpenAITunnelHTTPProxyResolving,
     commandRunner: any CommandRunning = ProcessCommandRunner(),
     processManager: any OpenAITunnelProcessManaging = SubprocessOpenAITunnelProcessManager(),
     maxOutputBytes: Int = 1_048_576,
@@ -381,16 +379,16 @@ package actor OpenAITunnelSupervisor {
     self.startupStabilityMilliseconds = max(0, startupStabilityMilliseconds)
   }
 
-  internal func status(profileID: String) -> OpenAITunnelStatus {
+  package func status(profileID: String) -> OpenAITunnelStatus {
     refreshStatus(profileID: profileID)
   }
 
-  internal func statusesSnapshot() -> [OpenAITunnelStatus] {
+  package func statusesSnapshot() -> [OpenAITunnelStatus] {
     statuses.keys.map(refreshStatus(profileID:)).sorted { $0.profileID < $1.profileID }
   }
 
   @discardableResult
-  internal func provision(
+  package func provision(
     _ profile: OpenAITunnelConfiguration,
     configuration: GatewayConfiguration,
     force: Bool = false
@@ -424,7 +422,7 @@ package actor OpenAITunnelSupervisor {
     )
   }
 
-  internal func doctor(
+  package func doctor(
     _ profile: OpenAITunnelConfiguration,
     configuration: GatewayConfiguration
   ) async throws -> OpenAITunnelDoctorReport {
@@ -452,7 +450,7 @@ package actor OpenAITunnelSupervisor {
   }
 
   @discardableResult
-  internal func start(
+  package func start(
     _ profile: OpenAITunnelConfiguration,
     configuration: GatewayConfiguration,
     authenticationUI: KeychainAuthenticationUI = .allow
@@ -573,7 +571,7 @@ package actor OpenAITunnelSupervisor {
   }
 
   @discardableResult
-  internal func reconnect(
+  package func reconnect(
     _ profile: OpenAITunnelConfiguration,
     configuration: GatewayConfiguration,
     authenticationUI: KeychainAuthenticationUI = .allow
@@ -587,7 +585,7 @@ package actor OpenAITunnelSupervisor {
   }
 
   @discardableResult
-  internal func stop(profileID: String) throws -> OpenAITunnelStatus {
+  package func stop(profileID: String) throws -> OpenAITunnelStatus {
     startupTokens[profileID] = nil
     guard let current = statuses[profileID], let sessionID = current.sessionID else {
       let stopped = OpenAITunnelStatus(profileID: profileID, state: .stopped)
@@ -607,7 +605,7 @@ package actor OpenAITunnelSupervisor {
     return stopped
   }
 
-  internal func logs(
+  package func logs(
     profileID: String,
     stdoutCursor: Int64 = 0,
     stderrCursor: Int64 = 0,

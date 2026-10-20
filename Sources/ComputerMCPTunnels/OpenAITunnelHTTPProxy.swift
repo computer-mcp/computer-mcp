@@ -1,25 +1,14 @@
 import Foundation
 
-#if canImport(SystemConfiguration)
-  import SystemConfiguration
-#endif
-
 package protocol OpenAITunnelHTTPProxyResolving: Sendable {
   func systemHTTPProxy() -> String?
 }
 
-internal struct SystemOpenAITunnelHTTPProxyResolver: OpenAITunnelHTTPProxyResolving {
-  internal func systemHTTPProxy() -> String? {
-    let settings = SystemNetworkProxySettings.current()
-    return settings.httpsProxy ?? settings.httpProxy
-  }
-}
-
-internal struct SystemNetworkProxySettings: Equatable, Sendable {
-  internal var httpProxy: String?
-  internal var httpsProxy: String?
-  internal var socksProxy: String?
-  internal var bypassHosts: [String]
+package struct SystemNetworkProxySettings: Equatable, Sendable {
+  package var httpProxy: String?
+  package var httpsProxy: String?
+  package var socksProxy: String?
+  package var bypassHosts: [String]
 
   internal init(
     httpProxy: String? = nil,
@@ -33,18 +22,7 @@ internal struct SystemNetworkProxySettings: Equatable, Sendable {
     self.bypassHosts = bypassHosts
   }
 
-  internal static func current() -> Self {
-    #if canImport(SystemConfiguration)
-      guard let settings = SCDynamicStoreCopyProxies(nil) as? [String: Any] else {
-        return Self()
-      }
-      return resolved(from: settings)
-    #else
-      return Self()
-    #endif
-  }
-
-  internal static func resolved(from settings: [String: Any]) -> Self {
+  package static func resolved(from settings: [String: Any]) -> Self {
     Self(
       httpProxy: proxyURL(
         settings: settings,

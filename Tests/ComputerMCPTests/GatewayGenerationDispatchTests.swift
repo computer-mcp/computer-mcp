@@ -1,6 +1,7 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
+import ComputerMCPTunnels
 import CryptoKit
 import Darwin
 import Foundation
@@ -2473,7 +2474,9 @@ private struct GenerationFixture: Sendable {
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
+      ),
       gatewayExecutablePath: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/computer-mcp").path,

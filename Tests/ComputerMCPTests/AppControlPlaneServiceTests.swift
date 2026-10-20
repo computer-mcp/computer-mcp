@@ -1,6 +1,7 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
+import ComputerMCPTunnels
 import CryptoKit
 import Darwin
 import Foundation
@@ -2755,6 +2756,7 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: OpenAITunnelCommandRunner(),
       processManager: TestOpenAITunnelProcessManager()
     )

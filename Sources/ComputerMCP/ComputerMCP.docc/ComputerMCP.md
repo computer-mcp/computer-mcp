@@ -40,20 +40,24 @@ process spawning, and Full Shell remain off by default; only
 
 ### MCP and OpenAI Secure MCP Tunnel
 
+`ComputerMCPTunnels` owns tunnel launch planning, supervision, transport values
+and the `HTTPOriginLifecycle` contract. The control plane constructs the
+Cloudflare HTTP origin and audits gateway profiles.
+
 - `DownstreamMCPClient`
 - ``MCPProxyClient``
-- ``OpenAITunnelLauncher``
-- ``OpenAITunnelInvocation``
-- ``OpenAITunnelPlan``
-- ``OpenAITunnelConfiguration``
-- ``OpenAITunnelSupervisor``
-- ``OpenAITunnelStatus``
-- ``OpenAITunnelDoctorReport``
-- ``OpenAITunnelLogPage``
+- `OpenAITunnelLauncher`
+- `OpenAITunnelInvocation`
+- `OpenAITunnelPlan`
+- `OpenAITunnelConfiguration`
+- `OpenAITunnelSupervisor`
+- `OpenAITunnelStatus`
+- `OpenAITunnelDoctorReport`
+- `OpenAITunnelLogPage`
 - ``ChatGPTProfileAuditor``
-- ``ChatGPTProfileAudit``
-- ``ChatGPTProfileAuditError``
-- ``OpenAITunnelLauncherError``
+- `ChatGPTProfileAudit`
+- `ChatGPTProfileAuditError`
+- `OpenAITunnelLauncherError`
 
 ### Reverse Codex Integration
 

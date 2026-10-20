@@ -100,8 +100,25 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPTunnels",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        "ComputerMCPProcess",
+      ]
+    ),
+    .testTarget(
+      name: "ComputerMCPTunnelsTests",
+      dependencies: [
+        "ComputerMCPTunnels", "ComputerMCPCore", "ComputerMCPConfiguration",
+        "ComputerMCPPlatform", "ComputerMCPProcess", "ComputerMCPTestSupport",
+      ]
+    ),
+    .target(
       name: "ComputerMCPTestSupport",
-      dependencies: ["ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPProcess"],
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPProcess",
+        "ComputerMCPConfiguration", "ComputerMCPTunnels",
+      ],
       path: "Tests/ComputerMCPTestSupport"),
     .testTarget(
       name: "ComputerMCPTransportTests",
@@ -193,6 +210,7 @@ let neutralTargets: [Target] =
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
+          "ComputerMCPTunnels",
         ]
       ),
       .target(
@@ -208,6 +226,7 @@ let neutralTargets: [Target] =
           "ComputerMCPProcess",
           "ComputerMCPToolKit",
           "ComputerMCPTransport",
+          "ComputerMCPTunnels",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
@@ -231,6 +250,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatform",
           "ComputerMCPProcess",
           "ComputerMCPTransport",
+          "ComputerMCPTunnels",
           .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]
       ),
@@ -242,6 +262,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
+          "ComputerMCPTunnels",
         ],
         resources: [
           .process("Resources")
@@ -264,6 +285,7 @@ let neutralTargets: [Target] =
           "ComputerMCPProcess",
           "ComputerMCPToolKit",
           "ComputerMCPTransport",
+          "ComputerMCPTunnels",
           "ComputerMCPTestSupport",
           .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         ],
@@ -276,6 +298,7 @@ let neutralTargets: [Target] =
           "ComputerMCPCore",
           "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
+          "ComputerMCPTunnels",
           "ComputerMCPTestSupport",
         ]
       ),

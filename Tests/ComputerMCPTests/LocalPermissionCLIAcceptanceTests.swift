@@ -1,5 +1,6 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPTunnels
 import Foundation
 import Testing
 
@@ -329,7 +330,9 @@ private struct PermissionCLIFixture: Sendable {
       directories: directories, database: database, manifestStore: manifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
+      ),
       launchAtLoginController: PermissionCLILaunchAtLoginFake(),
       platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
     gatewaySocket = root.appendingPathComponent("gateway.sock")

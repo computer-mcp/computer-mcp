@@ -1,6 +1,7 @@
 import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPTunnels
 import Foundation
 
 package struct AppControlPlaneRestartResult: Codable, Equatable, Sendable {

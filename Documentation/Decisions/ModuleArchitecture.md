@@ -112,10 +112,11 @@ above them and supplied by the composition root:
 | CLI invocation layer | `ToolsCLI` | CLI checks inside bounded process execution |
 | Owned work tracking | `Process` | `GatewayOwnedWork` in shell sessions |
 | `MCPProcessOwnershipError` | `Downstream` | plugin store errors in process ownership; directory identity itself is a `Platform` value |
-| HTTP origin lifecycle | `Tunnels` | `GatewayHTTPRuntime` in Cloudflare runtime state |
+| `HTTPOriginLifecycle` | `Tunnels` | `GatewayHTTPRuntime` in Cloudflare runtime state |
+| `OpenAITunnelHTTPProxyResolving` | `Tunnels` | system proxy lookup in tunnel supervision; `PlatformDarwin` reads system settings and `MacOS` supplies the conformance that parses them in `Tunnels` |
 | Control error classification | `Gateway` | control-plane error types in the HTTP adapter and control responses |
 | Client control | `Gateway` | `GatewayClientControl` in the HTTP client registry |
-| Secret store | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |
+| `SecretStore` | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |
 | Workspace grant store | `Platform` | `WorkspaceBookmarkService` in gateway and control plane |
 | Login item controller | `Platform` | the `SMAppService` controller in the control plane |
 | Distribution environment | `Platform` | the App distribution environment in control-plane storage |

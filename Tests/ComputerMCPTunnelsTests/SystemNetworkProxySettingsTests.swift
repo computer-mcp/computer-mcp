@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPTunnels
 
 struct SystemNetworkProxySettingsTests {
   @Test

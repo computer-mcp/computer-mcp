@@ -138,6 +138,28 @@ package struct ShellStreamRead: Codable, Equatable, Sendable {
     case text
     case base64
   }
+
+  package init(
+    requestedCursor: Int64,
+    startCursor: Int64,
+    nextCursor: Int64,
+    endCursor: Int64,
+    missedBytes: Bool,
+    truncated: Bool,
+    encoding: ShellStreamEncoding,
+    text: String?,
+    base64: String?
+  ) {
+    self.requestedCursor = requestedCursor
+    self.startCursor = startCursor
+    self.nextCursor = nextCursor
+    self.endCursor = endCursor
+    self.missedBytes = missedBytes
+    self.truncated = truncated
+    self.encoding = encoding
+    self.text = text
+    self.base64 = base64
+  }
 }
 
 package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
@@ -173,6 +195,36 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
 
   package var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])
+  }
+
+  package init(
+    sessionID: String,
+    processID: Int32?,
+    isRunning: Bool,
+    exitCode: Int32?,
+    signal: Int32?,
+    timedOut: Bool,
+    cancelled: Bool,
+    startedAt: Date,
+    finishedAt: Date?,
+    launchError: String?,
+    streamErrors: [String],
+    stdout: ShellStreamRead,
+    stderr: ShellStreamRead
+  ) {
+    self.sessionID = sessionID
+    self.processID = processID
+    self.isRunning = isRunning
+    self.exitCode = exitCode
+    self.signal = signal
+    self.timedOut = timedOut
+    self.cancelled = cancelled
+    self.startedAt = startedAt
+    self.finishedAt = finishedAt
+    self.launchError = launchError
+    self.streamErrors = streamErrors
+    self.stdout = stdout
+    self.stderr = stderr
   }
 }
 

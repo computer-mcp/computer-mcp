@@ -5,6 +5,7 @@ import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPProcess
 import ComputerMCPTransport
+import ComputerMCPTunnels
 import Foundation
 import MCP
 

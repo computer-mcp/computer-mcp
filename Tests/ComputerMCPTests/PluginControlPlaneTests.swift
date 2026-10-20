@@ -1,6 +1,7 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
+import ComputerMCPTunnels
 import CryptoKit
 import Foundation
 import MCP
@@ -588,7 +589,9 @@ struct PluginControlFixture: Sendable {
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
+      ),
       gatewayExecutablePath: worker, platform: MacOSPlatform.services, pluginReleases: releases,
       pluginDownload: download,
       bundledPlugins: bundled)

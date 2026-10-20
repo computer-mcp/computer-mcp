@@ -1,6 +1,7 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
+import ComputerMCPTunnels
 import Darwin
 import Foundation
 import Testing
@@ -540,7 +541,9 @@ private final class AppControlPlaneFixture {
       secretStore: secretStore,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secretStore,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
+      ),
       launchAtLoginController: AppTestLaunchAtLoginController(), platform: MacOSPlatform.services
     )
     gatewayService = AppGatewayService(

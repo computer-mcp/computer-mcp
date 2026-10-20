@@ -6,6 +6,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 

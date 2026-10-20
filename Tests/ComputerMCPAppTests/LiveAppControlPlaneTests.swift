@@ -12,6 +12,7 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlugins
 
 @MainActor
 @Suite(.serialized)
@@ -456,7 +457,8 @@ final class LiveAppControlPlaneTests {
       let database = try GatewayDatabase(path: directories.database.path)
       let identity: PluginDirectoryIdentity
       do {
-        let storage = try PluginInstallationStorage(at: directories.plugins)
+        let storage = try PluginInstallationStorage(
+          at: directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
         defer { storage.finishTransaction() }
         identity = try storage.createInstallation()
         try database.recordPluginDirectory(
@@ -526,8 +528,9 @@ private final class AppControlPlaneFixture {
     let database = try GatewayDatabase(path: directories.database.path)
     let manifestStore = try AtomicManifestStore(
       manifestURL: directories.manifest,
-      database: database
-    )
+      database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: MacOSPlatform.services.applications))
     _ = try manifestStore.activate(manifest: DefaultGatewayConfiguration.manifest)
     let secretStore = try KeychainSecretStore(
       service: "com.showxu.computer-mcp.tests.\(UUID().uuidString)",

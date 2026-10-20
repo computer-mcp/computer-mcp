@@ -1,17 +1,20 @@
+import ComputerMCPPlatformDarwin
 import ComputerMCPTestSupport
 import CryptoKit
 import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlugins
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginArchivePreparationTests {
   @Test(arguments: ["mac.zip", "intel.zip", "unknown.zip", ""])
   func archiveTargetMustPermitThisHostBeforeActivation(name: String) async throws {
-    let fixture = try await PreparationFixture.make(manifest: PreparationFixture.platformManifest)
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(),
+      manifest: PreparationFixture.platformManifest)
     defer { fixture.files.remove() }
     if name == "mac.zip" {
       _ = try await fixture.preparation.withPreparedPackage(
@@ -33,7 +36,8 @@ struct PluginArchivePreparationTests {
 
   @Test(arguments: ["tar", "tar.gz", "zip", "zip-stored"])
   func realWorkerPreparesCombinedPackageAndReclaimsItsScope(format: String) async throws {
-    let fixture = try await PreparationFixture.make(format: format)
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), format: format)
     defer { fixture.files.remove() }
     var before = rlimit()
     try #require(getrlimit(RLIMIT_CPU, &before) == 0)
@@ -67,7 +71,8 @@ struct PluginArchivePreparationTests {
   ])
   func validationFailuresDoNotReachActivationOrKeepPartialPackages(failure: String) async throws {
     let manifest = failure == "manifest" ? "invalid manifest" : PreparationFixture.manifest
-    let fixture = try await PreparationFixture.make(manifest: manifest)
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), manifest: manifest)
     defer { fixture.files.remove() }
     if failure == "archive" { try Data("invalid archive".utf8).write(to: fixture.archive) }
     let digest =
@@ -95,7 +100,8 @@ struct PluginArchivePreparationTests {
 
   @Test
   func failedActivationCleansStagingAndPreservesUnrelatedFiles() async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let sibling = fixture.staging.appendingPathComponent("user-owned")
     try Data("keep".utf8).write(to: sibling)
@@ -108,7 +114,8 @@ struct PluginArchivePreparationTests {
 
   @Test
   func workerReceivesOnlyExplicitEnvironmentReadOnlyInputAndPrivateCWD() async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("report.json")
     let input = open(fixture.archive.path, O_RDONLY)
@@ -156,7 +163,8 @@ struct PluginArchivePreparationTests {
     "invalid-json", "oversized-output", "nonzero", "unknown-field", "wrong-hash", "negative-size",
   ])
   func rejectsInvalidWorkerReceipts(failure: String) async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let worker = try await fixture.stub(
       """
@@ -180,7 +188,8 @@ struct PluginArchivePreparationTests {
 
   @Test(arguments: [false, true])
   func timeoutAndCancellationReapTheWorkerBeforeCleanup(cancel: Bool) async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("pid")
     let worker = try await fixture.stub(
@@ -213,143 +222,5 @@ struct PluginArchivePreparationTests {
     errno = 0
     #expect(kill(pid, 0) == -1 && errno == ESRCH)
     #expect(try fixture.stagingContents().isEmpty)
-  }
-}
-
-struct PreparationFixture: Sendable {
-  let files: ArchiveFixture
-  let archive: URL
-  let digest: String
-  let staging: URL
-
-  static let manifest = """
-    id = 'combined'
-    name = 'Combined'
-    version = '1.2.3'
-    [compatibility]
-    minimum_host = '0.1.0'
-    architectures = ['arm64']
-    [[mcp]]
-    id = 'native'
-    transport = 'stdio'
-    executable = { path = 'helper' }
-    [[cli]]
-    id = 'commands'
-    executable = { path = 'helper' }
-    [[skills]]
-    id = 'guide'
-    path = 'skills'
-    """
-
-  static let platformManifest =
-    manifest
-    .replacingOccurrences(of: "architectures = ['arm64']", with: "platforms = ['macos']")
-    .replacingOccurrences(
-      of: "[[mcp]]",
-      with: """
-        [[compatibility.artifacts]]
-        name = 'mac.zip'
-        platforms = ['macos']
-        architectures = ['arm64']
-        [[compatibility.artifacts]]
-        name = 'intel.zip'
-        platforms = ['macos']
-        architectures = ['x86_64']
-        [[mcp]]
-        """)
-
-  static func make(manifest: String = Self.manifest, format: String = "tar") async throws -> Self {
-    try await blockingFixtureIO { try Self(manifest: manifest, format: format) }
-  }
-
-  private init(manifest: String, format: String) throws {
-    files = try ArchiveFixture()
-    archive = try files.archive(
-      [
-        .init(name: PluginManifest.filename, content: manifest),
-        .init(name: "helper", content: "#!/bin/sh\ntouch executed\n", mode: 0o755),
-        .init(name: "skills/SKILL.md", content: "# Fixture"),
-      ], format: format)
-    digest = SHA256.hash(data: try Data(contentsOf: archive)).map { String(format: "%02x", $0) }
-      .joined()
-    staging = files.root.appendingPathComponent("jobs")
-    try FileManager.default.createDirectory(
-      at: staging, withIntermediateDirectories: false,
-      attributes: [.posixPermissions: 0o700])
-  }
-
-  var preparation: PluginArchivePreparation {
-    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent()
-    return PluginArchivePreparation(
-      workerExecutable: repository.appendingPathComponent(".build/debug/computer-mcp"),
-      stagingParent: staging)
-  }
-
-  func prepare<Result: Sendable>(
-    worker: URL? = nil, timeout: Duration = .seconds(60),
-    operation: @Sendable (PluginPackage, PluginArchiveReceipt) async throws -> Result
-  ) async throws -> Result {
-    var preparation = preparation
-    if let worker {
-      preparation = PluginArchivePreparation(workerExecutable: worker, stagingParent: staging)
-    }
-    preparation.timeout = timeout
-    return try await preparation.withPreparedPackage(
-      archive: archive, expectedSHA256: digest, pluginID: "combined",
-      version: PluginVersion("1.2.3"),
-      hostVersion: PluginVersion("1.0.0"), architecture: "arm64", operation: operation)
-  }
-
-  func currentDigest() throws -> String {
-    SHA256.hash(data: try Data(contentsOf: archive)).map { String(format: "%02x", $0) }.joined()
-  }
-
-  func stagingContents() throws -> [String] {
-    try FileManager.default.contentsOfDirectory(atPath: staging.path).sorted()
-  }
-
-  func literal(_ value: String) throws -> String {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = .withoutEscapingSlashes
-    return String(decoding: try encoder.encode(value), as: UTF8.self)
-  }
-
-  func stub(_ script: String) async throws -> URL {
-    try await blockingFixtureIO { try writeStub(script) }
-  }
-
-  private func writeStub(_ script: String) throws -> URL {
-    // Bypass Apple's /usr/bin Python launcher, which injects Xcode toolchain
-    // environment variables before executing the actual interpreter.
-    let lookup = Process()
-    let output = Pipe()
-    lookup.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-    lookup.arguments = ["--find", "python3"]
-    lookup.standardOutput = output
-    lookup.standardError = FileHandle.nullDevice
-    try lookup.run()
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    lookup.waitUntilExit()
-    try #require(lookup.terminationStatus == 0)
-    let interpreter = String(decoding: data, as: UTF8.self).trimmingCharacters(
-      in: .whitespacesAndNewlines)
-    try #require(interpreter.hasPrefix("/") && !interpreter.contains("\n"))
-    let executable = files.root.appendingPathComponent("worker")
-    try Data(("#!\(interpreter)\n" + script + "\n").utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-    return executable
-  }
-}
-
-/// Foundation Process waits used to manufacture fixtures must not occupy Swift
-/// cooperative executor threads while unrelated cancellation timers need them.
-private func blockingFixtureIO<Result: Sendable>(
-  _ operation: @escaping @Sendable () throws -> Result
-) async throws -> Result {
-  try await withCheckedThrowingContinuation { continuation in
-    DispatchQueue.global().async {
-      continuation.resume(with: Swift.Result { try operation() })
-    }
   }
 }

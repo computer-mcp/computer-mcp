@@ -1,9 +1,10 @@
-import CryptoKit
+import ComputerMCPTestSupport
+import Crypto
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 
 @Suite(.timeLimit(.minutes(1)))
 struct StaticPluginCatalogTests {
@@ -90,9 +91,12 @@ struct StaticPluginCatalogTests {
     let release = try #require(document.releases.first)
     #expect(release.name == "工具 Plugin")
     #expect(release.dependencies.first?.commands == ["python3"])
-    #expect(release.matches(host: try PluginVersion("2.0.0"), architecture: "arm64"))
-    #expect(!release.matches(host: try PluginVersion("3.0.0"), architecture: "arm64"))
-    #expect(!release.matches(host: try PluginVersion("2.0.0"), architecture: "x86_64"))
+    #expect(
+      release.matches(host: try PluginVersion("2.0.0"), architecture: "arm64", platform: "macos"))
+    #expect(
+      !release.matches(host: try PluginVersion("3.0.0"), architecture: "arm64", platform: "macos"))
+    #expect(
+      !release.matches(host: try PluginVersion("2.0.0"), architecture: "x86_64", platform: "macos"))
     let exact = try staticCatalogData { root in
       var values = root["releases"]!.arrayValue!
       var release = values[0].objectValue!
@@ -173,7 +177,8 @@ struct StaticPluginCatalogTests {
   func cachedFiltersPagesAndExactReleaseSelectionMakeOneRequest() async throws {
     let http = StaticCatalogHTTPFake([.success(try staticCatalogResponse())])
     let catalog = StaticPluginCatalog(http: http)
-    let filter = StaticPluginCatalog.Filter(host: try PluginVersion("2.0.0"), architecture: "arm64")
+    let filter = StaticPluginCatalog.Filter(
+      host: try PluginVersion("2.0.0"), architecture: "arm64", platform: "macos")
     let first = try await catalog.search(
       query: "工具", kind: .mcp, page: 1, refresh: false, filter: filter)
     #expect(first.entries.map(\.pluginID) == ["example"] && first.catalog?.stale == false)
@@ -234,7 +239,8 @@ struct StaticPluginCatalogTests {
     }
     let http = StaticCatalogHTTPFake([.success(staticCatalogResponse(data))])
     let catalog = StaticPluginCatalog(http: http)
-    let filter = StaticPluginCatalog.Filter(host: try PluginVersion("2.0.0"), architecture: "arm64")
+    let filter = StaticPluginCatalog.Filter(
+      host: try PluginVersion("2.0.0"), architecture: "arm64", platform: "macos")
     let first = try await catalog.search(
       query: "", kind: .mcp, page: 1, refresh: false, filter: filter)
     let second = try await catalog.search(
@@ -271,7 +277,7 @@ struct StaticPluginCatalogTests {
       let catalog = StaticPluginCatalog(
         http: StaticCatalogHTTPFake([.success(staticCatalogResponse(data))]))
       let filter = StaticPluginCatalog.Filter(
-        host: try PluginVersion("2.0.0"), architecture: "x86_64")
+        host: try PluginVersion("2.0.0"), architecture: "x86_64", platform: "macos")
       let search = try await catalog.search(
         query: "", kind: nil, page: 1, refresh: false, filter: filter)
       #expect(search.entries.isEmpty)
@@ -492,47 +498,6 @@ private func staticCatalogRelease(_ root: [String: JSONValue], version: String) 
     "https://github.com/computer-mcp/plugin-example/releases/download/v\(version)/example.zip")
   release["assets"] = .array([.object(asset)])
   return release
-}
-
-func staticCatalogFixture() throws -> Data {
-  let url = try #require(
-    Bundle.module.url(
-      forResource: "plugin-catalog-v1", withExtension: "json", subdirectory: "Fixtures"))
-  return try Data(contentsOf: url)
-}
-
-func staticCatalogData(_ edit: (inout [String: JSONValue]) -> Void) throws -> Data {
-  var root = try #require(
-    JSONDecoder().decode(JSONValue.self, from: staticCatalogFixture()).objectValue)
-  edit(&root)
-  let content = root.filter { !["generation", "revision", "generated_at"].contains($0.key) }
-  let digest = SHA256.hash(data: try StaticPluginCatalogDocument.canonical(.object(content)))
-    .map { String(format: "%02x", $0) }.joined()
-  root["revision"] = .string(digest)
-  return try StaticPluginCatalogDocument.canonical(.object(root))
-}
-
-func staticCatalogResponse(_ data: Data) -> PluginCatalogHTTPResponse {
-  .init(
-    status: 200, headers: ["content-type": "application/json", "etag": "\"fixture-v1\""], body: data
-  )
-}
-
-func staticCatalogResponse() throws -> PluginCatalogHTTPResponse {
-  staticCatalogResponse(try staticCatalogFixture())
-}
-
-actor StaticCatalogHTTPFake: StaticPluginCatalogFetching {
-  var replies: [Result<PluginCatalogHTTPResponse, PluginCatalogError>]
-  private(set) var validators: [StaticPluginCatalogValidators] = []
-  init(_ replies: [Result<PluginCatalogHTTPResponse, PluginCatalogError>]) {
-    self.replies = replies
-  }
-  func fetch(validators: StaticPluginCatalogValidators) async throws -> PluginCatalogHTTPResponse {
-    self.validators.append(validators)
-    guard !replies.isEmpty else { throw PluginCatalogError.networkUnavailable }
-    return try replies.removeFirst().get()
-  }
 }
 
 private actor GatedStaticCatalogHTTP: StaticPluginCatalogFetching {

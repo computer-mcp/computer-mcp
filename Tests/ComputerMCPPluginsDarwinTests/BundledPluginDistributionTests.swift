@@ -1,10 +1,12 @@
+import ComputerMCPPlatformDarwin
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlugins
 
 @Suite(.timeLimit(.minutes(1)))
 struct BundledPluginDistributionTests {
@@ -16,7 +18,8 @@ struct BundledPluginDistributionTests {
     let artifacts = try await BundledPluginDistribution.prepare(
       index: Self.repository.appendingPathComponent("Resources/PluginArchives/index.json"),
       destination: output, workerExecutable: Self.worker,
-      hostVersion: PluginVersion(ComputerMCPCLI.version), architectures: ["arm64", "x86_64"])
+      hostVersion: PluginVersion(ComputerMCPCLI.version), architectures: ["arm64", "x86_64"],
+      directoryFactory: DarwinPluginArchiveDirectoryFactory())
     #expect(artifacts.map(\.id) == ["computer-use"])
     let inventory = BundledPlugins.load(directory: output)
     #expect(inventory.issues.isEmpty)
@@ -24,7 +27,9 @@ struct BundledPluginDistributionTests {
     #expect(package.manifest.mcp.first?.executable?.dependency == "computer-use-client")
     #expect(package.manifest.mcp.first?.args == ["mcp"])
     #expect(package.manifest.skills.first?.path == "skills")
-    let snapshot = try PluginHostSnapshot(state: PluginStoreSnapshot(), bundled: inventory)
+    let snapshot = try PluginHostSnapshot(
+      state: PluginStoreSnapshot(), bundled: inventory,
+      applications: ApplicationBundleLookup())
     #expect(snapshot.state == PluginStoreSnapshot())
     #expect(!snapshot.settings(for: "computer-use").enabled)
     #expect(snapshot.contributions.isEmpty)
@@ -52,7 +57,8 @@ struct BundledPluginDistributionTests {
 
   @Test
   func combinedPackagePreservesExecutableBitsWithoutRunningHelpers() async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
     let output = fixture.files.root.appendingPathComponent("Plugins")
@@ -72,7 +78,8 @@ struct BundledPluginDistributionTests {
     "linked-archive", "empty", "too-many",
   ])
   func invalidInputNeverLeavesAPartialDistribution(failure: String) async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let output = fixture.files.root.appendingPathComponent("Plugins")
     let sentinel = fixture.files.root.appendingPathComponent("keep")
@@ -110,7 +117,8 @@ struct BundledPluginDistributionTests {
 
   @Test(arguments: [false, true])
   func existingOutputAndLinksAreNeverOverwritten(link: Bool) async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
     let output = fixture.files.root.appendingPathComponent("Plugins")
@@ -129,7 +137,8 @@ struct BundledPluginDistributionTests {
 
   @Test
   func laterFailureReclaimsEarlierPackagesWithoutTouchingSourceArchives() async throws {
-    let fixture = try await PreparationFixture.make()
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
     var entries = try JSONDecoder().decode(
@@ -161,7 +170,8 @@ struct BundledPluginDistributionTests {
   {
     try await BundledPluginDistribution.prepare(
       index: index, destination: output, workerExecutable: worker,
-      hostVersion: PluginVersion("1.0.0"), architectures: architectures)
+      hostVersion: PluginVersion("1.0.0"), architectures: architectures,
+      directoryFactory: DarwinPluginArchiveDirectoryFactory())
   }
 
   private static func index(_ fixture: PreparationFixture) throws -> URL {

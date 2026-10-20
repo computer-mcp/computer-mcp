@@ -1,9 +1,11 @@
+import ComputerMCPPlatformDarwin
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlugins
 
 struct PluginArchiveSnapshotTests {
   private let abcDigest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -17,7 +19,8 @@ struct PluginArchiveSnapshotTests {
     let input = open(source.path, O_RDONLY | O_CLOEXEC)
     defer { close(input) }
     let result = try PluginArchiveSnapshot.withVerifiedCopy(
-      from: input, inNewDirectory: fixture.output, expectedSHA256: abcDigest
+      from: input, inNewDirectory: fixture.output, expectedSHA256: abcDigest,
+      directoryFactory: DarwinPluginArchiveDirectoryFactory()
     ) { copy in
       try Data("modified original".utf8).write(to: source)
       #expect(copy.sha256 == abcDigest)
@@ -40,7 +43,8 @@ struct PluginArchiveSnapshotTests {
     defer { fixture.remove() }
     #expect(throws: PluginArchiveError.invalidInput) {
       try PluginArchiveSnapshot.withVerifiedCopy(
-        from: -1, inNewDirectory: fixture.output, expectedSHA256: digest
+        from: -1, inNewDirectory: fixture.output, expectedSHA256: digest,
+        directoryFactory: DarwinPluginArchiveDirectoryFactory()
       ) { _ in Issue.record("Invalid digest reached the consumer") }
     }
     #expect(!FileManager.default.fileExists(atPath: fixture.output.path))
@@ -57,13 +61,15 @@ struct PluginArchiveSnapshotTests {
     #expect(throws: PluginArchiveError.checksumMismatch) {
       try PluginArchiveSnapshot.withVerifiedCopy(
         from: input, inNewDirectory: fixture.output,
-        expectedSHA256: String(repeating: "0", count: 64)
+        expectedSHA256: String(repeating: "0", count: 64),
+        directoryFactory: DarwinPluginArchiveDirectoryFactory()
       ) { _ in Issue.record("Unverified copy reached the consumer") }
     }
     #expect(!FileManager.default.fileExists(atPath: fixture.output.path))
     #expect(throws: PluginArchiveError.invalidArchive) {
       try PluginArchiveSnapshot.withVerifiedCopy(
-        from: input, inNewDirectory: fixture.output, expectedSHA256: abcDigest
+        from: input, inNewDirectory: fixture.output, expectedSHA256: abcDigest,
+        directoryFactory: DarwinPluginArchiveDirectoryFactory()
       ) { _ in throw PluginArchiveError.invalidArchive }
     }
     #expect(!FileManager.default.fileExists(atPath: fixture.output.path))
@@ -86,6 +92,7 @@ struct PluginArchiveSnapshotTests {
           checks += 1
           if checks == 3 { throw CancellationError() }
         },
+        directoryFactory: DarwinPluginArchiveDirectoryFactory(),
         body: { _ in Issue.record("Cancelled copy reached the consumer") })
     }
     #expect(checks == 3)
@@ -105,6 +112,7 @@ struct PluginArchiveSnapshotTests {
             try writer.write(contentsOf: Data([1]))
           }
         },
+        directoryFactory: DarwinPluginArchiveDirectoryFactory(),
         body: { _ in Issue.record("Oversized copy reached the consumer") })
     }
     #expect(!FileManager.default.fileExists(atPath: fixture.output.path))
@@ -122,7 +130,8 @@ struct PluginArchiveSnapshotTests {
       defer { close(input) }
       #expect(throws: PluginArchiveError.invalidInput) {
         try PluginArchiveSnapshot.withVerifiedCopy(
-          from: input, inNewDirectory: fixture.output, expectedSHA256: abcDigest
+          from: input, inNewDirectory: fixture.output, expectedSHA256: abcDigest,
+          directoryFactory: DarwinPluginArchiveDirectoryFactory()
         ) { _ in Issue.record("Invalid input reached the consumer") }
       }
     }

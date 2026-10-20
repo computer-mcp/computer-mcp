@@ -1,8 +1,10 @@
+import ComputerMCPPlatformDarwin
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 
 struct PluginApplicationLocatorTests {
   @Test
@@ -18,7 +20,8 @@ struct PluginApplicationLocatorTests {
     let plugin = try PluginPackage.load(at: fixture.plugin.root)
     #expect(plugin.manifest.dependencies.first?.commands.isEmpty == true)
     let bindings = PluginStore.dependencyBindings(
-      for: plugin, settings: fixture.settings, searchDirectories: [])
+      for: plugin, settings: fixture.settings, searchDirectories: [],
+      applications: ApplicationBundleLookup())
     let executable = try #require(bindings["vendor"])
     let application = executable.deletingLastPathComponent().deletingLastPathComponent()
       .deletingLastPathComponent()
@@ -27,7 +30,7 @@ struct PluginApplicationLocatorTests {
       pluginID: plugin.manifest.id,
       state: .init(settings: [plugin.manifest.id: fixture.settings]),
       bundled: .init(packages: [plugin], issues: []), hostVersion: PluginVersion("1.0.0"),
-      architecture: "arm64", environment: [:])
+      architecture: "arm64", environment: [:], applications: ApplicationBundleLookup())
     #expect(report.dependencies.first?.resolutionSource == "application_bundle")
     #expect(report.dependencies.first?.executable == executable.path)
     #expect(report.status == .passed)
@@ -245,7 +248,8 @@ private struct ApplicationLocatorFixture {
     try PluginDoctorReport.inspect(
       pluginID: plugin.manifest.id, state: .init(settings: [plugin.manifest.id: settings]),
       bundled: .init(packages: [plugin], issues: []), hostVersion: PluginVersion("1.0.0"),
-      architecture: "arm64", environment: [:], applicationURL: { _ in application })
+      architecture: "arm64", environment: [:],
+      applications: TestApplicationBundleLocator { _ in application })
   }
 
   func cleanup() { try? FileManager.default.removeItem(at: root) }

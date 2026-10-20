@@ -1,4 +1,5 @@
 import AppKit
+import ComputerMCPMacOS
 import Foundation
 import QuartzCore
 import SwiftUI
@@ -6,6 +7,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPApp
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 @Suite
@@ -126,7 +128,9 @@ struct PluginManagementModelTests {
     )
     let bundled = BundledPlugins.load(directory: root)
     #expect(bundled.issues.isEmpty && bundled.packages.count == 1)
-    let host = try PluginHostSnapshot(state: PluginStoreSnapshot(), bundled: bundled)
+    let host = try PluginHostSnapshot(
+      state: PluginStoreSnapshot(), bundled: bundled,
+      applications: MacOSPlatform.services.applications)
     let service = PluginManagementFake(current: host)
     let model = PluginManagementModel(controlPlane: service)
     await model.reload()
@@ -167,7 +171,7 @@ struct PluginManagementModelTests {
       current: try PluginHostSnapshot(
         state: PluginStoreSnapshot(),
         issues: [.init(pluginID: "orphan", message: "Pending recovery")],
-        recoveryError: "Store busy"))
+        recoveryError: "Store busy", applications: MacOSPlatform.services.applications))
     let model = PluginManagementModel(controlPlane: service)
     await model.reload()
     #expect(model.pluginIDs == ["orphan"])
@@ -296,7 +300,8 @@ struct PluginManagementModelTests {
         registeredAt: Date(timeIntervalSince1970: 0))
     ]
     state.selectedInstallations = ["sample": "fixture"]
-    let host = try PluginHostSnapshot(state: state)
+    let host = try PluginHostSnapshot(
+      state: state, applications: MacOSPlatform.services.applications)
     let service = PluginManagementFake(current: host)
     let model = PluginManagementModel(controlPlane: service)
     await model.reload()
@@ -421,7 +426,8 @@ private final class PluginManagementFake: PluginManaging {
     if case .enabled(let id, let enabled) = change { state.settings[id]?.enabled = enabled }
     if case .settings(let id, let settings) = change { state.settings[id] = settings }
     if case .recover = change {} else { state.revision += 1 }
-    current = try PluginHostSnapshot(state: state, issues: resultIssues)
+    current = try PluginHostSnapshot(
+      state: state, issues: resultIssues, applications: MacOSPlatform.services.applications)
     return current
   }
 }
@@ -432,5 +438,5 @@ private func snapshot(revision: Int64 = 0, settings: PluginSettings = PluginSett
   var state = PluginStoreSnapshot()
   state.revision = revision
   state.settings = ["sample": settings]
-  return try PluginHostSnapshot(state: state)
+  return try PluginHostSnapshot(state: state, applications: MacOSPlatform.services.applications)
 }

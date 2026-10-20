@@ -9,6 +9,7 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPersistence
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlugins
 
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayRuntimePreparationTests {
@@ -255,6 +256,8 @@ private struct PreparationStateFixture: Sendable {
       platform: PlatformServices(
         workspaceGrants: WorkspaceBookmarkService(
           adapter: adapter, now: { Date(timeIntervalSince1970: 2000) }),
+        pluginDirectories: MacOSPlatform.services.pluginDirectories,
+        applications: MacOSPlatform.services.applications,
         toolProviders: MacOSPlatform.services.toolProviders,
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         fileChanges: MacOSPlatform.services.fileChanges),

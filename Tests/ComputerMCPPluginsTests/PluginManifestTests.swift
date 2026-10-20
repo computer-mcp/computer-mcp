@@ -1,8 +1,9 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 
 struct PluginManifestTests {
   @Test
@@ -23,7 +24,7 @@ struct PluginManifestTests {
 
   @Test
   func declarativePackageCombinesAllThreeContributionsWithoutCodeOrGrants() throws {
-    let manifest = try PluginManifest.parse(Self.combined)
+    let manifest = try PluginManifest.parse(PluginManifestFixture.combined)
     #expect(manifest.id == "test-package")
     #expect(manifest.mcp.map(\.id) == ["native"])
     #expect(manifest.cli.map(\.id) == ["commands"])
@@ -41,7 +42,7 @@ struct PluginManifestTests {
   ])
   func packageCannotDeclareHostAuthorityOrAnotherRuntime(field: String) {
     #expect(throws: (any Error).self) {
-      try PluginManifest.parse(field + "\n" + Self.combined)
+      try PluginManifest.parse(field + "\n" + PluginManifestFixture.combined)
     }
   }
 
@@ -51,7 +52,7 @@ struct PluginManifestTests {
   func mcpContributionRejectsHostSelectionSecretsAndCopiedSchemas(field: String) {
     #expect(throws: (any Error).self) {
       try PluginManifest.parse(
-        Self.header
+        PluginManifestFixture.header
           + "\n[[mcp]]\nid = 'remote'\ntransport = 'http'\nurl = 'https://example.test/mcp'\n"
           + field)
     }
@@ -71,26 +72,28 @@ struct PluginManifestTests {
   ])
   func duplicateIdentityIsRejectedAcrossContributionKinds(extra: String) {
     #expect(throws: PluginManifestError.self) {
-      try PluginManifest.parse(Self.combined + "\n" + extra)
+      try PluginManifest.parse(PluginManifestFixture.combined + "\n" + extra)
     }
   }
 
   @Test
   func missingDependenciesEmptyPackagesAndUnknownNestedFieldsAreRejected() {
-    #expect(throws: PluginManifestError.self) { try PluginManifest.parse(Self.header) }
+    #expect(throws: PluginManifestError.self) {
+      try PluginManifest.parse(PluginManifestFixture.header)
+    }
     #expect(throws: PluginManifestError.self) {
       try PluginManifest.parse(
-        Self.combined.replacingOccurrences(
+        PluginManifestFixture.combined.replacingOccurrences(
           of: "dependency = 'vendor'", with: "dependency = 'missing'"))
     }
     #expect(throws: PluginManifestError.self) {
       try PluginManifest.parse(
-        Self.combined.replacingOccurrences(
+        PluginManifestFixture.combined.replacingOccurrences(
           of: "dependency = 'vendor'", with: "dependency = 'vendor', grant = 'admin'"))
     }
     #expect(throws: PluginManifestError.self) {
       try PluginManifest.parse(
-        Self.combined.replacingOccurrences(
+        PluginManifestFixture.combined.replacingOccurrences(
           of: "dependency = 'vendor'", with: "dependency = 'vendor', path = 'bin/helper'"))
     }
   }
@@ -102,14 +105,14 @@ struct PluginManifestTests {
   func invalidHTTPProcessMixesAndCredentialURLsAreRejected(fields: String) {
     #expect(throws: PluginManifestError.self) {
       try PluginManifest.parse(
-        Self.header + "\n[[mcp]]\nid = 'remote'\ntransport = 'http'\n" + fields)
+        PluginManifestFixture.header + "\n[[mcp]]\nid = 'remote'\ntransport = 'http'\n" + fields)
     }
   }
 
   @Test
   func compatibilityUsesReleasePrecedenceAndExclusiveUpperBound() throws {
     let manifest = try PluginManifest.parse(
-      Self.header + """
+      PluginManifestFixture.header + """
 
         [compatibility]
         minimum_host = '1.2.0'
@@ -120,10 +123,18 @@ struct PluginManifestTests {
         path = 'skills'
         """)
     let compatibility = try #require(manifest.compatibility)
-    #expect(try compatibility.permits(host: PluginVersion("1.2.0+build.2"), architecture: "arm64"))
-    #expect(try !compatibility.permits(host: PluginVersion("1.2.0-alpha"), architecture: "arm64"))
-    #expect(try !compatibility.permits(host: PluginVersion("2.0.0"), architecture: "arm64"))
-    #expect(try !compatibility.permits(host: PluginVersion("1.3.0"), architecture: "x86_64"))
+    #expect(
+      try compatibility.permits(
+        host: PluginVersion("1.2.0+build.2"), architecture: "arm64", platform: "macos"))
+    #expect(
+      try !compatibility.permits(
+        host: PluginVersion("1.2.0-alpha"), architecture: "arm64", platform: "macos"))
+    #expect(
+      try !compatibility.permits(
+        host: PluginVersion("2.0.0"), architecture: "arm64", platform: "macos"))
+    #expect(
+      try !compatibility.permits(
+        host: PluginVersion("1.3.0"), architecture: "x86_64", platform: "macos"))
   }
 
   @Test(arguments: [
@@ -151,7 +162,7 @@ struct PluginManifestTests {
   @Test
   func legacyCompatibilityPreservesItsEncodedIdentityAndMacOSDefault() throws {
     let manifest = try PluginManifest.parse(
-      Self.header + """
+      PluginManifestFixture.header + """
         [compatibility]
         architectures = ['x86_64', 'arm64']
         [[skills]]
@@ -170,30 +181,6 @@ struct PluginManifestTests {
         host: PluginVersion("1.2.3"), architecture: "arm64", platform: "windows"))
   }
 
-  @Test
-  func namedArtifactsConstrainTheReleaseWidePlatformRange() throws {
-    let manifest = try PluginManifest.parse(Self.platformArtifacts)
-    let compatibility = try #require(manifest.compatibility)
-    #expect(compatibility.artifactTarget(named: "mac.zip")?.platforms == ["macos"])
-    #expect(compatibility.artifactTarget(named: "intel.zip")?.architectures == ["x86_64"])
-    #expect(compatibility.artifactTarget(named: "renamed.zip") == nil)
-    #expect(compatibility.artifactTarget(named: nil) == nil)
-    let root = URL(fileURLWithPath: "/fixture")
-    let mac = PluginSource(kind: .artifact, root: root, artifactName: "mac.zip")
-    let intel = PluginSource(kind: .artifact, root: root, artifactName: "intel.zip")
-    #expect(
-      try mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64"))
-    #expect(
-      try !mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64"))
-    #expect(
-      try intel.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64")
-    )
-    #expect(
-      try !PluginSource(kind: .artifact, root: root).permits(
-        manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64"))
-    #expect(try JSONDecoder().decode(PluginSource.self, from: JSONEncoder().encode(mac)) == mac)
-  }
-
   @Test(arguments: [
     "duplicate", "unknown-platform", "outside-parent", "invalid-name", "extra",
   ])
@@ -201,17 +188,19 @@ struct PluginManifestTests {
     let changed: String
     switch fault {
     case "duplicate":
-      changed = Self.platformArtifacts.replacingOccurrences(of: "intel.zip", with: "MAC.zip")
+      changed = PluginManifestFixture.platformArtifacts.replacingOccurrences(
+        of: "intel.zip", with: "MAC.zip")
     case "unknown-platform":
-      changed = Self.platformArtifacts.replacingOccurrences(of: "macos", with: "linux")
+      changed = PluginManifestFixture.platformArtifacts.replacingOccurrences(
+        of: "macos", with: "linux")
     case "outside-parent":
-      changed = Self.platformArtifacts.replacingOccurrences(
+      changed = PluginManifestFixture.platformArtifacts.replacingOccurrences(
         of: "[compatibility]", with: "[compatibility]\narchitectures = ['arm64']")
     case "invalid-name":
-      changed = Self.platformArtifacts.replacingOccurrences(
+      changed = PluginManifestFixture.platformArtifacts.replacingOccurrences(
         of: "intel.zip", with: "../intel.zip")
     default:
-      changed = Self.platformArtifacts.replacingOccurrences(
+      changed = PluginManifestFixture.platformArtifacts.replacingOccurrences(
         of: "name = 'mac.zip'", with: "name = 'mac.zip'\nextra = true")
     }
     #expect(throws: (any Error).self) { try PluginManifest.parse(changed) }
@@ -219,7 +208,7 @@ struct PluginManifestTests {
 
   @Test(arguments: ["windows", "linux"])
   func unsupportedManifestPlatformsAreRejected(platform: String) {
-    let text = Self.platformArtifacts.replacingOccurrences(
+    let text = PluginManifestFixture.platformArtifacts.replacingOccurrences(
       of: "platforms = ['macos']", with: "platforms = ['\(platform)']")
     #expect(throws: PluginManifestError.self) { try PluginManifest.parse(text) }
   }
@@ -232,7 +221,7 @@ struct PluginManifestTests {
     #expect(
       try JSONValue.encoded(PluginExecutable(dependency: "vendor"))
         == .object(["dependency": .string("vendor")]))
-    let manifest = try PluginManifest.parse(Self.platformExecutables)
+    let manifest = try PluginManifest.parse(PluginManifestFixture.platformExecutables)
     let executable = try #require(manifest.mcp[0].executable)
     #expect(try executable.packagePath(for: "macos") == "helper")
     #expect(throws: PluginManifestError.self) { try executable.packagePath(for: "windows") }
@@ -249,69 +238,19 @@ struct PluginManifestTests {
     "platform_paths = {}",
   ])
   func platformExecutableRejectsUnsupportedPlatformsAndMixedOwnership(fields: String) {
-    let text = Self.platformExecutables.replacingOccurrences(
+    let text = PluginManifestFixture.platformExecutables.replacingOccurrences(
       of: "platform_paths = { macos = 'helper' }", with: fields)
     #expect(throws: (any Error).self) { try PluginManifest.parse(text) }
   }
 
-  static let platformExecutables =
-    platformArtifacts + """
-
-      [[mcp]]
-      id = 'native'
-      transport = 'stdio'
-      executable = { platform_paths = { macos = 'helper' } }
-      [[cli]]
-      id = 'commands'
-      executable = { platform_paths = { macos = 'helper' } }
-      tree = { kind = 'helper', helper = { platform_paths = { macos = 'helper' } }, args = ['schema'] }
-      """
-
-  static let platformArtifacts =
-    header + """
-      [compatibility]
-      platforms = ['macos']
-      [[compatibility.artifacts]]
-      name = 'mac.zip'
-      platforms = ['macos']
-      architectures = ['arm64']
-      [[compatibility.artifacts]]
-      name = 'intel.zip'
-      platforms = ['macos']
-      architectures = ['x86_64']
-      [[skills]]
-      id = 'guide'
-      path = 'skills'
-      """
-
-  static let header = "id = 'test-package'\nname = 'Test package'\nversion = '1.2.3'\n"
-  static let combined =
-    header + """
-      [[dependencies]]
-      id = 'vendor'
-      commands = ['vendor-cli']
-      instructions = 'Install the vendor CLI separately.'
-      [[mcp]]
-      id = 'native'
-      transport = 'stdio'
-      executable = { dependency = 'vendor' }
-      args = ['mcp']
-      [[cli]]
-      id = 'commands'
-      executable = { dependency = 'vendor' }
-      tree = { kind = 'introspection', args = ['schema', '--json'] }
-      [[skills]]
-      id = 'guidance'
-      path = 'skills'
-      """
 }
 
 struct PluginPackageTests {
   @Test
   func loadingDeclarativePackageDoesNotRequireSwiftOrExecuteAnything() throws {
-    let root = try fixture()
+    let root = try pluginPackageFixture()
     defer { try? FileManager.default.removeItem(at: root) }
-    try PluginManifestTests.combined.write(
+    try PluginManifestFixture.combined.write(
       to: root.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8)
     let package = try PluginPackage.load(at: root)
     #expect(package.manifest.skills.count == 1)
@@ -322,12 +261,12 @@ struct PluginPackageTests {
 
   @Test
   func ownedHelperIsInspectedButNeverExecuted() throws {
-    let root = try fixture()
+    let root = try pluginPackageFixture()
     defer { try? FileManager.default.removeItem(at: root) }
     let helper = root.appendingPathComponent("helper")
     try "#!/bin/sh\ntouch executed\n".write(to: helper, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
-    let text = PluginManifestTests.combined.replacingOccurrences(
+    let text = PluginManifestFixture.combined.replacingOccurrences(
       of: "dependency = 'vendor'", with: "path = 'helper'")
     try text.write(
       to: root.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8)
@@ -338,36 +277,8 @@ struct PluginPackageTests {
   }
 
   @Test
-  func packageLoadingAndInspectionUseTheSamePlatformEntryPoint() throws {
-    let root = try fixture()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let helper = root.appendingPathComponent("helper")
-    try "#!/bin/sh\ntouch executed\n".write(to: helper, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
-    try PluginManifestTests.platformExecutables.write(
-      to: root.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8)
-    let package = try PluginPackage.load(at: root)
-    let executables =
-      package.manifest.mcp.compactMap(\.executable)
-      + package.manifest.cli.map(\.executable) + package.manifest.cli.compactMap { $0.tree?.helper }
-    #expect(executables.count == 3)
-    for executable in executables {
-      let inspected = try #require(
-        try PluginResolver.inspectExecutable(
-          executable, package: package,
-          dependencyExecutables: [:], workingDirectory: root, environment: [:]))
-      #expect(inspected.path == helper.path)
-      #expect(inspected.status == .passed)
-    }
-    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("helper.exe").path))
-    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("executed").path))
-    try FileManager.default.moveItem(at: helper, to: root.appendingPathComponent("helper.exe"))
-    #expect(throws: (any Error).self) { try PluginPackage.load(at: root) }
-  }
-
-  @Test
   func invalidUTF8AndOversizedManifestsFailBeforeParsing() throws {
-    let root = try fixture()
+    let root = try pluginPackageFixture()
     defer { try? FileManager.default.removeItem(at: root) }
     let manifest = root.appendingPathComponent(PluginManifest.filename)
     try Data([0xff]).write(to: manifest)
@@ -382,11 +293,4 @@ struct PluginPackageTests {
     )
   }
 
-  private func fixture() throws -> URL {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "plugin-package-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(
-      at: root.appendingPathComponent("skills"), withIntermediateDirectories: true)
-    return root
-  }
 }

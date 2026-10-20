@@ -316,7 +316,10 @@ private struct PermissionCLIFixture: Sendable {
         "operations.prepare", "operations.commit", "workspace.list", "file.read", "file.write",
       ],
       workspaces: ["fixture"], allowedCallers: [.localMCP], mode: .readOnly)
-    let manifest = try AtomicManifestStore(manifestURL: directories.manifest, database: database)
+    let manifest = try AtomicManifestStore(
+      manifestURL: directories.manifest, database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: MacOSPlatform.services.applications))
     _ = try manifest.activate(
       manifest: GatewayConfiguration(
         runtime: .init(caller: .localMCP, profileID: .chatGPTOperate), profiles: [profile],

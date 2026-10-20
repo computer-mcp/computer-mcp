@@ -1,8 +1,10 @@
+import ComputerMCPPlatformDarwin
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 
 struct PluginDoctorTests {
   @Test
@@ -27,7 +29,7 @@ struct PluginDoctorTests {
     #expect(report.dependencies[0].executable == "/bin/echo")
     let resolution = try PluginStore.resolve(
       snapshot: state, bundled: [fixture.plugin], hostVersion: PluginVersion("1.0.0"),
-      architecture: "arm64")
+      architecture: "arm64", applications: ApplicationBundleLookup())
     #expect(resolution.plugins.isEmpty)
     #expect(state == fixture.state(enabled: false, executable: "/bin/echo"))
     #expect(
@@ -79,7 +81,8 @@ struct PluginDoctorTests {
     let report = try PluginDoctorReport.inspect(
       pluginID: "sample", state: fixture.state(enabled: false, executable: "/bin/echo"),
       bundled: .init(packages: [try PluginPackage.load(at: fixture.root)], issues: []),
-      hostVersion: PluginVersion("1.0.0"), architecture: "arm64", environment: [:])
+      hostVersion: PluginVersion("1.0.0"), architecture: "arm64", environment: [:],
+      applications: ApplicationBundleLookup())
     let encoded = try JSONEncoder().encode(report)
     #expect(report.status == .passed && report.checks.count == 70)
     #expect(report.dependencies.first?.declaration.instructions == instructions)
@@ -121,7 +124,8 @@ struct PluginDoctorTests {
       })
     let resolution = try PluginStore.resolve(
       snapshot: state, bundled: [fixture.plugin], hostVersion: PluginVersion("1.0.0"),
-      architecture: "arm64", environment: ["PATH": "."])
+      architecture: "arm64", environment: ["PATH": "."],
+      applications: ApplicationBundleLookup())
     #expect(resolution.plugins.first?.diagnostics.isEmpty == true)
   }
 
@@ -169,7 +173,8 @@ struct PluginDoctorTests {
     #expect(throws: GatewayToolError.self) {
       try PluginDoctorReport.inspect(
         pluginID: "unknown", state: .init(), bundled: fixture.bundled,
-        hostVersion: PluginVersion("1.0.0"), architecture: "arm64")
+        hostVersion: PluginVersion("1.0.0"), architecture: "arm64",
+        applications: ApplicationBundleLookup())
     }
   }
 
@@ -250,7 +255,7 @@ private struct PluginDoctorFixture {
       pluginID: "sample", state: state, bundled: bundled, hostVersion: PluginVersion("1.0.0"),
       architecture: "arm64",
       environment: environment ?? ["PATH": root.path, "TOKEN": "host-secret-value"],
-      workingDirectory: root)
+      workingDirectory: root, applications: ApplicationBundleLookup())
   }
   func cleanup() { try? FileManager.default.removeItem(at: root) }
 }

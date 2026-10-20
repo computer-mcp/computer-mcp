@@ -1,9 +1,10 @@
-import CryptoKit
+import ComputerMCPTestSupport
+import Crypto
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 
 @Suite(.timeLimit(.minutes(1)))
 struct GitHubPluginSourceTests {

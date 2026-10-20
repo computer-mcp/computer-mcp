@@ -1,10 +1,12 @@
 import AppKit
+import ComputerMCPMacOS
 import Foundation
 import SwiftUI
 import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPApp
+@testable import ComputerMCPPlugins
 
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
@@ -144,7 +146,8 @@ struct PluginCatalogModelTests {
 private final class PluginCatalogFake: PluginManaging {
   func doctorPlugin(id: String) async throws -> PluginDoctorReport { throw CancellationError() }
   func fetchPlugins() async throws -> PluginHostSnapshot {
-    try PluginHostSnapshot(state: PluginStoreSnapshot())
+    try PluginHostSnapshot(
+      state: PluginStoreSnapshot(), applications: MacOSPlatform.services.applications)
   }
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot

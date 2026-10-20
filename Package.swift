@@ -198,6 +198,14 @@ let neutralTargets: [Target] =
           name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
       ]
     ),
+    .testTarget(
+      name: "ComputerMCPPluginsTests",
+      dependencies: [
+        "ComputerMCPPlugins", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        "ComputerMCPTestSupport", .product(name: "Crypto", package: "swift-crypto"),
+      ],
+      resources: [.copy("Fixtures")]
+    ),
     .target(
       name: "ComputerMCPTransport",
       dependencies: [
@@ -248,9 +256,10 @@ let neutralTargets: [Target] =
       name: "ComputerMCPTestSupport",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPProcess",
-        "ComputerMCPConfiguration", "ComputerMCPTunnels",
+        "ComputerMCPConfiguration", "ComputerMCPTunnels", "ComputerMCPPlugins",
+        .product(name: "Crypto", package: "swift-crypto"),
       ],
-      path: "Tests/ComputerMCPTestSupport"),
+      path: "Tests/ComputerMCPTestSupport", resources: [.copy("Fixtures")]),
     .testTarget(
       name: "ComputerMCPTransportTests",
       dependencies: [
@@ -454,6 +463,16 @@ let neutralTargets: [Target] =
           "ComputerMCPToolKit", "ComputerMCPCore",
           "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ]),
+      .testTarget(
+        name: "ComputerMCPPluginsDarwinTests",
+        dependencies: [
+          "ComputerMCPPlugins", "ComputerMCPCore", "ComputerMCPConfiguration",
+          "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin", "ComputerMCPProcess", "ComputerMCPTransport",
+          "ComputerMCPTestSupport",
+          .product(name: "MCP", package: "swift-sdk"),
+        ]
+      ),
       .testTarget(
         name: "ComputerMCPTests",
         dependencies: [

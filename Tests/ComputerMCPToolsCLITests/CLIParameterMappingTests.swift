@@ -2,8 +2,8 @@ import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPToolsCLI
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIParameterMappingTests {
@@ -28,7 +28,7 @@ struct CLIParameterMappingTests {
           value: "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))"),
         .init(kind: .option, parameter: "values", flag: "--value", style: style),
       ], stdout: .json, outputSchema: CLITreeTests.strings)
-    let provider = CLITreeTests.provider(command, executable: "/usr/bin/python3")
+    let provider = CLITreeTests.provider(command, executable: "python3")
     let tool = try #require(provider.definitions().first?.tool.name)
     let values: JSONValue = .array([
       .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
@@ -52,7 +52,7 @@ struct CLIParameterMappingTests {
         .init(kind: .literal, value: "import json,sys; print(json.dumps(int(sys.argv[1])))"),
         .init(kind: .positional, parameter: "value"),
       ], stdout: .json, outputSchema: schema)
-    let provider = CLITreeTests.provider(command, executable: "/usr/bin/python3")
+    let provider = CLITreeTests.provider(command, executable: "python3")
     let tool = try #require(provider.definitions().first?.tool.name)
     let result = try await provider.callToolAsync(
       .init(

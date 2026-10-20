@@ -7,6 +7,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPProcess
+@testable import ComputerMCPToolsCLI
 
 /// An explicit local dependency check, isolated from production App state and sockets.
 @Suite(

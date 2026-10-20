@@ -1,9 +1,9 @@
-import CryptoKit
+import Crypto
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPToolsCLI
 
 @Suite(.timeLimit(.minutes(1)))
 struct CLITreeValidationTests {
@@ -128,7 +128,7 @@ struct CLITreeValidationTests {
         == "checked\nchecked\n")
     let drift = await CLITreeValidation.check(
       data: try fixture(checks: [.init(args: ["actual"], stdout: "different")]),
-      executable: "/usr/bin/printf", workingDirectory: root)
+      executable: "printf", workingDirectory: root)
     #expect(!drift.valid && !drift.checkedExecutable && drift.executableCheckCount == 0)
     #expect(drift.diagnostics.first?.code == "clitree.check.mismatch")
     #expect(drift.diagnostics.first?.path == "/executable_checks/0")

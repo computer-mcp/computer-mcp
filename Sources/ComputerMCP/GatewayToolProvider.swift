@@ -54,7 +54,6 @@ internal enum GatewayToolDomain: String, CaseIterable, Sendable {
   case configured
 
   fileprivate static func classify(_ name: String) -> GatewayToolDomain {
-    if name.hasPrefix("cli.") { return .cli }
     if name.hasPrefix("process.") { return .process }
     if name.hasPrefix("shell.") { return .shell }
     if name.hasPrefix("mcp.") { return .mcp }
@@ -151,13 +150,9 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     changes.finish()
   }
 
-  internal convenience init(registry: GatewayToolRegistry) throws {
-    try self.init(registry: registry, additionalProviders: [])
-  }
-
   internal convenience init(
     registry: GatewayToolRegistry,
-    additionalProviders: [any GatewayToolProvider],
+    additionalProviders: @escaping @Sendable () throws -> [any GatewayToolProvider] = { [] },
     reservedToolNames: Set<String> = [],
     retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false }
   ) throws {
@@ -173,7 +168,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
             guard !definitions.isEmpty else { return nil }
             return GatewayDomainToolProvider(
               id: domain.rawValue, registry: registry, definitions: definitions)
-          } + (try registry.cliTreeProviders()) + additionalProviders
+          } + (try additionalProviders())
         // Provider IDs define the host catalog order; extra providers retain their source order.
         let order = Dictionary(
           uniqueKeysWithValues: GatewayToolDomain.allCases.enumerated().map {

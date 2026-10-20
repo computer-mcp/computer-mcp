@@ -1,14 +1,20 @@
-import ComputerMCPMacOS
-import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformPOSIX
 @testable import ComputerMCPProcess
+@testable import ComputerMCPToolsCLI
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 struct CLITreeTests {
   @Test(arguments: [
@@ -135,65 +141,6 @@ struct CLITreeTests {
     }
   }
 
-  @Test
-  func realCLIThroughFileCatalogAndRefresh() async throws {
-    let fixture = try CLITreeFixture()
-    defer { fixture.cleanup() }
-    try fixture.write(Self.tree(Self.printCommand()))
-    var configuration = GatewayConfiguration()
-    configuration.workspaceDirectory = fixture.root
-    configuration.cli.commands = [
-      .init(
-        id: "printf", executable: "/usr/bin/printf", allowAnyArgs: false,
-        tree: .init(kind: .file, path: fixture.treeURL.path))
-    ]
-    let registry = GatewayToolRegistry(configuration: configuration)
-    let router = try GatewayProviderRouter(registry: registry)
-    let tool = try #require(router.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
-    #expect(tool.name.count <= 128)
-    #expect(try router.capability(named: tool.name, context: .empty).risk == .fullShell)
-    let result = try await router.callToolAsync(
-      name: tool.name,
-      arguments: .object([
-        "values": .array([.string("你好 world"), .string("'\"$HOME"), .string("-42"), .string("")])
-      ]), context: .empty)
-    #expect(
-      Self.output(result)?["stdout"]?.objectValue?["data"] == .string("你好 world\n'\"$HOME\n-42\n\n")
-    )
-    #expect(result.objectValue?["isError"] == .bool(false))
-    #expect(Self.output(result)?["arguments"] == nil)
-    #expect(throws: GatewayToolError.self) {
-      try registry.callTool(
-        name: "cli.exec", arguments: .object(["id": .string("printf"), "argv": .array([])]),
-        context: .empty)
-    }
-    #expect(throws: GatewayToolError.self) {
-      try registry.callTool(
-        name: "cli.help",
-        arguments: .object(["id": .string("printf"), "path": .array([.string("--anything")])]),
-        context: .empty)
-    }
-    let help = try registry.callTool(
-      name: "cli.help", arguments: .object(["id": .string("printf")]), context: .empty)
-    #expect(Self.output(help)?["executed"] == .bool(false))
-    let events = router.toolChanges(context: .empty)
-    var next = Self.printCommand()
-    next.parameters = [.init(name: "values", schema: Self.strings)]
-    try fixture.write(Self.tree(next))
-    try await router.refreshTools(context: .empty)
-    #expect(
-      try router.listTools(context: .empty).first { $0.name == tool.name }?.inputSchema
-        != tool.inputSchema)
-    try Data("invalid".utf8).write(to: fixture.treeURL)
-    await #expect(throws: (any Error).self) { try await router.refreshTools(context: .empty) }
-    #expect(router.lastRefreshError != nil)
-    #expect(try router.listTools(context: .empty).contains { $0.name == tool.name })
-    await router.shutdown()
-    var iterator = events.makeAsyncIterator()
-    #expect(await iterator.next() != nil)
-    #expect(await iterator.next() == nil)
-  }
-
   @Test(arguments: [CLITreeSource.Kind.introspection, .helper])
   func validatedExportersUseTheSameTreeContract(_ kind: CLITreeSource.Kind) async throws {
     let fixture = try CLITreeFixture()
@@ -286,82 +233,6 @@ struct CLITreeTests {
   }
 
   @Test
-  func pluginAndDirectRegistrationUseTheSamePolicyAndExecution() async throws {
-    let fixture = try CLITreeFixture()
-    defer { fixture.cleanup() }
-    try fixture.write(Self.tree(Self.printCommand()))
-    let manifest = """
-      id = 'tree-test'
-      name = 'Tree test'
-      version = '1.0.0'
-      [[dependencies]]
-      id = 'printf'
-      commands = ['printf']
-      instructions = 'Use the system printf.'
-      [[cli]]
-      id = 'print'
-      executable = { dependency = 'printf' }
-      tree = { kind = 'file', path = 'tree.json' }
-      """
-    try manifest.write(
-      to: fixture.root.appendingPathComponent(PluginManifest.filename), atomically: true,
-      encoding: .utf8)
-    let package = try PluginPackage.load(at: fixture.root)
-    let plugin = try PluginResolver.resolve(
-      package: package, source: .init(kind: .development, root: package.root),
-      settings: .init(enabled: true, cli: ["print": .init(registrationID: "printf")]),
-      dependencyExecutables: ["printf": URL(fileURLWithPath: "/usr/bin/printf")],
-      hostVersion: PluginVersion("1.0.29"), architecture: "arm64")
-    #expect(plugin.cliCommands.first?.tree?.packageRoot == package.root)
-    let workspaces = [
-      RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-    ]
-    let configuration = GatewayConfiguration(
-      runtime: .init(caller: .localCLI, profileID: .localAdmin),
-      // This fixture compares registration routes without a persistence or approval service.
-      profiles: [
-        .init(
-          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
-          allowedCallers: [.localCLI], fullShellEnabled: true,
-          mode: .localFullAccess, confirmationPolicy: .never)
-      ])
-    let runtime = try GatewayRuntime(
-      configuration: configuration, registeredWorkspaces: workspaces,
-      platform: MacOSPlatform.services, plugins: [plugin])
-    let tool = try #require(runtime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
-    let result = try await runtime.callToolAsync(
-      name: tool.name, arguments: .object(["values": .array([.string("plugin value")])]),
-      context: .empty)
-    #expect(Self.output(result)?["stdout"]?.objectValue?["data"] == .string("plugin value\n"))
-    await runtime.shutdown()
-
-    var direct = configuration
-    direct.cli.commands = [
-      .init(
-        id: "printf", executable: "/usr/bin/printf", allowAnyArgs: false,
-        tree: .init(kind: .file, path: fixture.treeURL.path))
-    ]
-    let directRuntime = try GatewayRuntime(
-      configuration: direct, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
-      plugins: [])
-    let directTool = try #require(
-      directRuntime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
-    #expect(directTool == tool)
-    await directRuntime.shutdown()
-    let observeContext = ExecutionContext(caller: .secureTunnel, profileID: .chatGPTObserve)
-    let observe = try GatewayRuntime(
-      configuration: direct, context: observeContext, registeredWorkspaces: workspaces,
-      platform: MacOSPlatform.services, plugins: [])
-    #expect(try !observe.listTools(context: .empty).contains { $0.name == tool.name })
-    await #expect(throws: (any Error).self) {
-      try await observe.callToolAsync(
-        name: tool.name, arguments: .object(["values": .array([.string("denied")])]),
-        context: .empty)
-    }
-    await observe.shutdown()
-  }
-
-  @Test
   func processContextAndTimeoutAreObservable() async throws {
     let fixture = try CLITreeFixture()
     defer { fixture.cleanup() }
@@ -408,7 +279,7 @@ struct CLITreeTests {
       Data(contentsOf: repo.appendingPathComponent("Examples/printf-cli-tree.json")))
     #expect(tree.coverage == .partial)
     let command = try #require(tree.commands.first)
-    let provider = Self.provider(command, executable: "/usr/bin/printf")
+    let provider = Self.provider(command, executable: "printf")
     let name = try #require(provider.definitions().first?.tool.name)
     let response = try await provider.callToolAsync(
       .init(

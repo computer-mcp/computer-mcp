@@ -5,6 +5,7 @@ import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPToolKit
+import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
@@ -17,18 +18,24 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
     shellManager: any ShellManaging,
     mcpClient: any DownstreamMCPClient,
     hostContext: MCPHostContext
-  ) -> (registry: GatewayToolRegistry, additionalProviders: [any GatewayToolProvider]) {
+  ) -> (
+    registry: GatewayToolRegistry,
+    additionalProviders: @Sendable () throws -> [any GatewayToolProvider]
+  ) {
     let environment = ToolEnvironment(
       configuration: configuration, commandRunner: commandRunner,
       processManager: processManager, shellManager: shellManager)
+    let cli = CLIToolProvider(environment: environment)
+    let providers: [any GatewayToolProvider] = [
+      GitToolProvider(environment: environment), cli,
+    ]
+    let computerUse = ComputerUseGatewayProvider()
     return (
       registry: GatewayToolRegistry(
         toolEnvironment: environment,
         mcpClient: mcpClient,
         hostContext: hostContext),
-      additionalProviders: [
-        GitToolProvider(environment: environment), ComputerUseGatewayProvider(),
-      ]
+      additionalProviders: { providers + (try cli.treeProviders()) + [computerUse] }
     )
   }
 }

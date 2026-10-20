@@ -2,6 +2,7 @@ import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
 import Foundation
 import Testing
@@ -25,6 +26,7 @@ struct BuiltinToolCatalogSnapshotTests {
       configuration: .fixture(
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities)))
     definitions += try GitToolProvider(environment: environment).definitions()
+    definitions += try CLIToolProvider(environment: environment).definitions()
 
     #expect(definitions.count == 239)
     #expect(Set(definitions.map(\.tool.name)).count == definitions.count)

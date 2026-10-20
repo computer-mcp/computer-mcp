@@ -13,5 +13,8 @@ package protocol GatewayToolProviderFactory: Sendable {
     shellManager: any ShellManaging,
     mcpClient: any DownstreamMCPClient,
     hostContext: MCPHostContext
-  ) -> (registry: GatewayToolRegistry, additionalProviders: [any GatewayToolProvider])
+  ) -> (
+    registry: GatewayToolRegistry,
+    additionalProviders: @Sendable () throws -> [any GatewayToolProvider]
+  )
 }

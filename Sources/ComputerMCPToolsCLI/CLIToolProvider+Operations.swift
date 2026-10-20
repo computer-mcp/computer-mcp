@@ -5,16 +5,16 @@ import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
 import Foundation
 
-extension GatewayToolRegistry {
+extension CLIToolProvider {
   internal func requireCLIProviders() throws {
-    guard !configuration.cli.commands.isEmpty else {
+    guard !environment.configuration.cli.commands.isEmpty else {
       throw GatewayToolError.disabled("CLI gateway tools require at least one configured provider.")
     }
   }
 
   internal func cliList() -> JSONValue {
     .array(
-      configuration.cli.commands.map { command in
+      environment.configuration.cli.commands.map { command in
         .object([
           "id": .string(command.id),
           "executable": .string(command.executable),
@@ -39,7 +39,7 @@ extension GatewayToolRegistry {
     if let id {
       commands = [try registeredCLICommand(id)]
     } else {
-      commands = configuration.cli.commands
+      commands = environment.configuration.cli.commands
     }
 
     return .object([
@@ -61,8 +61,8 @@ extension GatewayToolRegistry {
         )
       }
       let tree = try source.load(
-        command: command, workspace: configuration.workspaceDirectory,
-        execution: registeredCommands.execution)
+        command: command, workspace: environment.configuration.workspaceDirectory,
+        execution: environment.registeredCommands.execution)
       guard let node = tree.commands.first(where: { $0.path == path }) else {
         throw GatewayToolError.invalidArguments("The path is not in the declared CLI tree.")
       }
@@ -80,7 +80,7 @@ extension GatewayToolRegistry {
       helpArgv.append("--help")
     }
 
-    let result = try registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runRegisteredCLI(
       command: command,
       args: helpArgv,
       timeout: optionalInt("timeout_ms", in: object),
@@ -106,7 +106,7 @@ extension GatewayToolRegistry {
     let id = try requiredString("id", in: object)
     let args = try requiredStringArray("argv", in: object)
     let command = try registeredCLICommand(id)
-    return try registeredCommands.runRegisteredCLI(
+    return try environment.registeredCommands.runRegisteredCLI(
       command: command,
       args: args,
       timeout: optionalInt("timeout_ms", in: object),
@@ -116,7 +116,7 @@ extension GatewayToolRegistry {
   }
 
   private func registeredCLICommand(_ id: String) throws -> CLICommandConfig {
-    guard let command = configuration.cli.commands.first(where: { $0.id == id }) else {
+    guard let command = environment.configuration.cli.commands.first(where: { $0.id == id }) else {
       throw GatewayToolError.unknownCLI(id)
     }
     return command
@@ -138,7 +138,8 @@ extension GatewayToolRegistry {
   }
 
   private func cliExecutableStatus(_ command: CLICommandConfig) -> JSONValue {
-    let resolved = registeredCommands.resolveExecutable(command.executable, command: command)
+    let resolved = environment.registeredCommands.resolveExecutable(
+      command.executable, command: command)
     return .object([
       "id": .string(command.id),
       "executable": .string(command.executable),
@@ -147,7 +148,7 @@ extension GatewayToolRegistry {
       "resolved_path": resolved.path.map(JSONValue.string) ?? .null,
       "resolution_source": .string(resolved.source),
       "resolution": executableResolutionJSON(resolved),
-      "cwd": command.resolvedWorkingDirectory(base: configuration.workspaceDirectory)
+      "cwd": command.resolvedWorkingDirectory(base: environment.configuration.workspaceDirectory)
         .map { .string($0.standardizedFileURL.path) } ?? .null,
       "risk": .string(command.risk ?? "unspecified"),
       "has_interface": .bool(command.interface != nil),

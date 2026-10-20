@@ -3,6 +3,12 @@ import ComputerMCPToolKit
 import Foundation
 
 extension GatewayToolRegistry {
+  internal func requireCLIProviders() throws {
+    guard !configuration.cli.commands.isEmpty else {
+      throw GatewayToolError.disabled("CLI gateway tools require at least one configured provider.")
+    }
+  }
+
   internal func spawnProcess(arguments object: [String: JSONValue]) throws -> JSONValue {
     guard object["args"] == nil else {
       throw GatewayToolError.invalidArguments("Unknown argument 'args'; use 'argv'.")

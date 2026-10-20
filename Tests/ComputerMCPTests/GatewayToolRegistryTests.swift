@@ -2,6 +2,7 @@ import AppKit
 import ComputerMCPDownstream
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
 import CoreText
 import Darwin
@@ -66,7 +67,10 @@ final class GatewayToolRegistryTests {
   @Test
   func testGatewayToolsExposeCLIAndMCPTools() throws {
     let registry = GatewayToolRegistry(configuration: .fixture())
-    let names = try registry.listTools(context: .empty).map(\.name)
+    let names = try
+      (registry.listTools(context: .empty)
+      + CLIToolProvider(environment: ToolEnvironment(configuration: .fixture())).definitions().map(
+        \.tool)).map(\.name)
 
     #expect(names.contains("cli.list"))
     #expect(names.contains("cli.describe"))
@@ -101,7 +105,8 @@ final class GatewayToolRegistryTests {
     #expect((tools.first?.annotations?.readOnlyHint) == (true))
     #expect((tools.first?.annotations?.destructiveHint) == (false))
     expectThrows(
-      try registry.callTool(name: "cli.list", arguments: .object([:]), context: .empty)
+      try CLIToolProvider(environment: ToolEnvironment(configuration: config)).callTool(
+        .init(name: "cli.list", arguments: .object([:]), context: .empty))
     ) { error in
       #expect(error.localizedDescription.contains("at least one configured provider"))
     }
@@ -123,12 +128,16 @@ final class GatewayToolRegistryTests {
       try registry.listTools(context: .empty)
       + GitToolProvider(environment: ToolEnvironment(configuration: config)).definitions().map(
         \.tool)
-    let cliList = try #require(tools.first { $0.name == "cli.list" })
-    let cliExec = try #require(tools.first { $0.name == "cli.exec" })
-    let systemTime = try #require(tools.first { $0.name == "system.time" })
-    let fileWrite = try #require(tools.first { $0.name == "file.write" })
-    let fileMkdir = try #require(tools.first { $0.name == "file.mkdir" })
-    let gitCommit = try #require(tools.first { $0.name == "git.commit" })
+    let catalogTools =
+      tools
+      + (try CLIToolProvider(environment: ToolEnvironment(configuration: config)).definitions().map(
+        \.tool))
+    let cliList = try #require(catalogTools.first { $0.name == "cli.list" })
+    let cliExec = try #require(catalogTools.first { $0.name == "cli.exec" })
+    let systemTime = try #require(catalogTools.first { $0.name == "system.time" })
+    let fileWrite = try #require(catalogTools.first { $0.name == "file.write" })
+    let fileMkdir = try #require(catalogTools.first { $0.name == "file.mkdir" })
+    let gitCommit = try #require(catalogTools.first { $0.name == "git.commit" })
 
     #expect((cliList.annotations?.readOnlyHint) == (true))
     #expect((cliList.annotations?.destructiveHint) == (false))
@@ -167,116 +176,6 @@ final class GatewayToolRegistryTests {
   }
 
   @Test
-  func testNoAuthToolsAdvertiseNoAuthSecurityScheme() throws {
-    let registry = GatewayToolRegistry(configuration: .fixture())
-    let tool = try #require(try registry.listTools(context: .empty).first { $0.name == "cli.list" })
-
-    #expect(
-      (tool.meta?.objectValue?["securitySchemes"])
-        == (.array([.object(["type": .string("noauth")])])))
-    #expect(
-      (tool.json.objectValue?["_meta"]?.objectValue?["securitySchemes"])
-        == (.array([.object(["type": .string("noauth")])])))
-  }
-
-  @Test
-  func testBearerProtectedToolsDoNotAdvertiseNoAuthSecurityScheme() throws {
-    let config = GatewayConfiguration.fixture(
-      server: ServerConfig(
-        http: HTTPServerConfig(
-          publicBaseURL: "https://gateway.example.com",
-          accessTokenEnv: "COMPUTER_MCP_TOKEN"
-        ))
-    )
-    let registry = GatewayToolRegistry(configuration: config)
-    let tool = try #require(try registry.listTools(context: .empty).first { $0.name == "cli.list" })
-
-    #expect((tool.meta) == nil)
-  }
-
-  @Test
-  func testCLIListIncludesInterfaceAvailability() throws {
-    let config = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(commands: [
-        CLICommandConfig(
-          id: "echo",
-          executable: "/bin/echo",
-          interface: CLIInterfaceConfig(formatFlag: "--format", defaultFormat: "json")
-        )
-      ])
-    )
-    let registry = GatewayToolRegistry(configuration: config)
-
-    let result = try registry.callTool(name: "cli.list", arguments: .object([:]), context: .empty)
-    let payload = try decodeTextPayload(result)
-
-    #expect((payload.arrayValue?.first?.objectValue?["id"]) == (.string("echo")))
-    #expect((payload.arrayValue?.first?.objectValue?["has_interface"]) == (.bool(true)))
-  }
-
-  @Test
-  func testCLIDescribeReturnsProviderInterface() throws {
-    let config = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(commands: [
-        CLICommandConfig(
-          id: "echo",
-          executable: "/bin/echo",
-          cwd: "workspace",
-          risk: "read-only",
-          discovery: ["help"],
-          interface: CLIInterfaceConfig(formatFlag: "--format", defaultFormat: "json")
-        )
-      ])
-    )
-    let registry = GatewayToolRegistry(configuration: config)
-
-    let result = try registry.callTool(
-      name: "cli.describe",
-      arguments: .object(["id": .string("echo")]), context: .empty
-    )
-    let payload = try decodeTextPayload(result)
-
-    #expect((payload.objectValue?["id"]) == (.string("echo")))
-    #expect((payload.objectValue?["cwd"]) == (.string("workspace")))
-    #expect((payload.objectValue?["has_interface"]) == (.bool(true)))
-    #expect(
-      (payload.objectValue?["interface"]?.objectValue?["format_flag"]) == (.string("--format")))
-  }
-
-  @Test
-  func testCLIStatusReportsExecutableResolution() throws {
-    let directory = try temporaryDirectory()
-    let executable = directory.appendingPathComponent("tool")
-    try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-
-    let config = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(commands: [
-        CLICommandConfig(id: "tool", executable: executable.path),
-        CLICommandConfig(id: "missing", executable: "definitely-missing-computer-mcp-test"),
-      ])
-    )
-    let registry = GatewayToolRegistry(configuration: config)
-
-    let result = try registry.callTool(
-      name: "cli.status",
-      arguments: .object(["id": .string("tool")]), context: .empty
-    )
-    let payload = try decodeTextPayload(result)
-    let command = try #require(payload.objectValue?["commands"]?.arrayValue?.first?.objectValue)
-
-    #expect((command["id"]) == (.string("tool")))
-    #expect((command["exists"]) == (.bool(true)))
-    #expect((command["is_executable"]) == (.bool(true)))
-    #expect((command["resolved_path"]) == (.string(executable.path)))
-
-    let allResult = try registry.callTool(
-      name: "cli.status", arguments: .object([:]), context: .empty)
-    let allPayload = try decodeTextPayload(allResult)
-    #expect((allPayload.objectValue?["commands"]?.arrayValue?.count) == (2))
-  }
-
-  @Test
   func testStatusUsesProviderEnvironmentForScriptInterpretersWithoutStartingThem() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -300,7 +199,9 @@ final class GatewayToolRegistryTests {
       ]))
     let registry = GatewayToolRegistry(configuration: config, environment: ["PATH": "/bin"])
     let cli = try decodeTextPayload(
-      registry.callTool(name: "cli.status", arguments: .object([:]), context: .empty))
+      CLIToolProvider(
+        environment: ToolEnvironment(configuration: config, environment: ["PATH": "/bin"])
+      ).callTool(.init(name: "cli.status", arguments: .object([:]), context: .empty)))
     let commands = try #require(cli.objectValue?["commands"]?.arrayValue)
     #expect(
       commands[0].objectValue?["resolution"]?.objectValue?["status"]
@@ -319,101 +220,6 @@ final class GatewayToolRegistryTests {
     #expect(
       !FileManager.default.fileExists(
         atPath: directory.appendingPathComponent("should-not-run").path))
-  }
-
-  @Test
-  func testCLIStatusRejectsUnknownID() {
-    let registry = GatewayToolRegistry(configuration: .fixture())
-
-    expectThrows(
-      try registry.callTool(
-        name: "cli.status",
-        arguments: .object(["id": .string("missing")]), context: .empty
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("Unknown CLI command id"))
-    }
-  }
-
-  @Test
-  func testCLIHelpReturnsRawHelpAndExecContext() throws {
-    let runner = RecordingCommandRunner()
-    let config = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(commands: [
-        CLICommandConfig(
-          id: "echo",
-          executable: "/bin/echo",
-          interface: CLIInterfaceConfig(formatFlag: "--format", defaultFormat: "json")
-        )
-      ])
-    )
-    let registry = GatewayToolRegistry(configuration: config, commandRunner: runner)
-
-    let result = try registry.callTool(
-      name: "cli.help",
-      arguments: .object([
-        "id": .string("echo"),
-        "path": .array([.string("sub")]),
-      ]), context: .empty
-    )
-    let payload = try decodeTextPayload(result)
-
-    #expect((runner.calls.first?.arguments) == (["sub", "--help"]))
-    #expect((payload.objectValue?["path"]) == (.array([.string("sub")])))
-    #expect((payload.objectValue?["help_argv"]) == (.array([.string("sub"), .string("--help")])))
-    #expect((payload.objectValue?["exec_context"]?.objectValue?["tool"]) == (.string("cli.exec")))
-    #expect(
-      (payload.objectValue?["exec_context"]?.objectValue?["argv_prefix"])
-        == (.array([.string("sub")])))
-    #expect(
-      (payload.objectValue?["interface"]?.objectValue?["format_flag"]) == (.string("--format")))
-    #expect((payload.objectValue?["stdout"]) == (.string("ok")))
-    #expect((payload.objectValue?["stderr"]) == (.string("")))
-    #expect((payload.objectValue?["exit_code"]) == (.number(0)))
-  }
-
-  @Test
-  func testCLIExecUsesRegisteredExecutable() throws {
-    let runner = RecordingCommandRunner()
-    let registry = GatewayToolRegistry(configuration: .fixture(), commandRunner: runner)
-
-    let result = try registry.callTool(
-      name: "cli.exec",
-      arguments: .object([
-        "id": .string("echo"),
-        "argv": .array([.string("hello")]),
-      ]), context: .empty
-    )
-    let payload = try decodeTextPayload(result)
-
-    #expect((runner.calls.first?.executable) == ("/bin/echo"))
-    #expect((runner.calls.first?.arguments) == (["hello"]))
-    #expect((payload.objectValue?["stdout"]) == (.string("ok")))
-  }
-
-  @Test
-  func testCLIExecSchemaRequiresArgv() throws {
-    let registry = GatewayToolRegistry(configuration: .fixture())
-    let tools = try registry.listTools(context: .empty)
-
-    let cliExec = try #require(tools.first { $0.name == "cli.exec" })
-
-    #expect(
-      (cliExec.inputSchema.objectValue?["required"]) == (.array([.string("id"), .string("argv")])))
-  }
-
-  @Test
-  func testCLIExecRejectsMissingArgv() {
-    let registry = GatewayToolRegistry(configuration: .fixture())
-
-    expectThrows(
-      try registry.callTool(
-        name: "cli.exec",
-        arguments: .object(["id": .string("echo")]), context: .empty
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("Missing required array argument: argv"))
-    }
   }
 
   @Test
@@ -2528,46 +2334,6 @@ final class GatewayToolRegistryTests {
     #expect((process["process_id"]) == (.string("proc-1")))
     #expect((process["is_running"]) == (.bool(true)))
     #expect((process["stdout"]) == (.string("ready\n")))
-  }
-
-  @Test
-  func testCLIExecRejectsUnknownID() {
-    let registry = GatewayToolRegistry(configuration: .fixture())
-
-    expectThrows(
-      try registry.callTool(
-        name: "cli.exec",
-        arguments: .object([
-          "id": .string("missing"),
-          "argv": .array([.string("--version")]),
-        ]), context: .empty
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("Unknown CLI command id"))
-    }
-  }
-
-  @Test
-  func testCLIExecRejectsCommandThatDisallowsArbitraryArgs() {
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(
-        cli: CLISectionConfig(commands: [
-          CLICommandConfig(id: "echo", executable: "/bin/echo", allowAnyArgs: false)
-        ])
-      )
-    )
-
-    expectThrows(
-      try registry.callTool(
-        name: "cli.exec",
-        arguments: .object([
-          "id": .string("echo"),
-          "argv": .array([.string("hello")]),
-        ]), context: .empty
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("does not allow arbitrary args"))
-    }
   }
 
   @Test

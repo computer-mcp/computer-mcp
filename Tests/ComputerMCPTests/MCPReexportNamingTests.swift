@@ -263,7 +263,7 @@ struct MCPReexportNamingTests {
       configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")])),
       mcpClient: client)
     let router = try GatewayProviderRouter(
-      registry: registry, additionalProviders: [], reservedToolNames: ["workspace.list"])
+      registry: registry, additionalProviders: { [] }, reservedToolNames: ["workspace.list"])
     do {
       client.replace("first", names: ["workspace.list"])
       await #expect(throws: GatewayProviderRouterError.duplicateTool("workspace.list")) {

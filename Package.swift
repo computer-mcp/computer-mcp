@@ -78,6 +78,20 @@ let neutralTargets: [Target] =
         "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPToolsCLI",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
+        "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        .product(name: "Crypto", package: "swift-crypto"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsCLITests",
+      dependencies: [
+        "ComputerMCPToolsCLI", "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration",
+        "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+        "ComputerMCPTestSupport", .product(name: "Crypto", package: "swift-crypto"),
+      ]),
+    .target(
       name: "ComputerMCPTransport",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -216,6 +230,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCPMacOS",
         dependencies: [
+          "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
@@ -254,6 +269,7 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "computer-mcp",
         dependencies: [
+          "ComputerMCPToolsCLI",
           "ComputerMCP",
           "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
@@ -289,6 +305,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPTests",
         dependencies: [
+          "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",

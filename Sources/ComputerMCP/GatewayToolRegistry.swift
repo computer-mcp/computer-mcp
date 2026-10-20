@@ -75,22 +75,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   internal var hasCLITrees: Bool { configuration.cli.commands.contains { $0.tree != nil } }
 
-  internal func cliTreeProviders() throws -> [any GatewayToolProvider] {
-    try configuration.cli.commands.compactMap { command in
-      guard let source = command.tree else { return nil }
-      var command = command
-      command.env = environment.merging(command.env) { _, value in value }
-      let tree = try source.load(
-        command: command, workspace: configuration.workspaceDirectory,
-        execution: registeredCommands.execution)
-      return CLITreeToolProvider(
-        registration: command, tree: tree, workspace: configuration.workspaceDirectory,
-        execution: registeredCommands.execution,
-        timeoutMilliseconds: command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs,
-        maxOutputBytes: configuration.policy.maxOutputBytes)
-    }
-  }
-
   package func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
     mcpClient.toolChanges()
   }
@@ -177,26 +161,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     let object = arguments?.objectValue ?? [:]
 
     switch name {
-    case "cli.list":
-      try requireCLIProviders()
-      return try textResult(cliList())
-
-    case "cli.describe":
-      try requireCLIProviders()
-      return try textResult(cliDescribe(arguments: object))
-
-    case "cli.status":
-      try requireCLIProviders()
-      return try textResult(cliStatus(arguments: object))
-
-    case "cli.help":
-      try requireCLIProviders()
-      return try textResult(runCLIHelp(arguments: object))
-
-    case "cli.exec":
-      try requireCLIProviders()
-      return try textResult(runCLIExec(arguments: object))
-
     case "mcp.servers.list":
       try requireMCPProviders()
       return try textResult(mcpServerList(context: context))

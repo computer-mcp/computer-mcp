@@ -1,7 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPProcess
-import CryptoKit
+import Crypto
 import Foundation
 
 /// Each instance is one immutable catalog generation. The router replaces definitions,

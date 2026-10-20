@@ -24,14 +24,19 @@ struct PreparedManifestChange: Sendable {
   let persisted: GatewayDatabase.ConfigurationState
 }
 
-internal protocol ManifestConfigurationLoading: Sendable {
+package protocol ManifestConfigurationLoading: Sendable {
   func load(path: String) throws -> GatewayConfiguration
 }
 
-internal struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading {
+package struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading {
   var database: GatewayDatabase? = nil
   var bundledPlugins: BundledPlugins = .current
-  internal func load(path: String) throws -> GatewayConfiguration {
+
+  package init(database: GatewayDatabase? = nil, bundledPlugins: BundledPlugins = .current) {
+    self.database = database
+    self.bundledPlugins = bundledPlugins
+  }
+  package func load(path: String) throws -> GatewayConfiguration {
     let state = try (database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
     let configuration = try GatewayConfiguration.load(
@@ -44,7 +49,7 @@ internal struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading
   }
 }
 
-internal final class AtomicManifestStore: @unchecked Sendable {
+package final class AtomicManifestStore: @unchecked Sendable {
   internal let manifestURL: URL
 
   private let database: GatewayDatabase
@@ -62,7 +67,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
     ManifestFileTransaction(manifestURL: manifestURL, database: database, fileManager: fileManager)
   }
 
-  internal init(
+  package init(
     manifestURL: URL,
     database: GatewayDatabase,
     loader: (any ManifestConfigurationLoading)? = nil,
@@ -105,7 +110,7 @@ internal final class AtomicManifestStore: @unchecked Sendable {
   }
 
   @discardableResult
-  internal func activate(manifest: String, expectedDigest: String? = nil) throws
+  package func activate(manifest: String, expectedDigest: String? = nil) throws
     -> ConfigurationRevision
   {
     try write(manifest: manifest, reason: .activated, expectedDigest: expectedDigest)

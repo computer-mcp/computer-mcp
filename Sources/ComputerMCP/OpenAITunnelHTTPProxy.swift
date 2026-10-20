@@ -4,7 +4,7 @@ import Foundation
   import SystemConfiguration
 #endif
 
-internal protocol OpenAITunnelHTTPProxyResolving: Sendable {
+package protocol OpenAITunnelHTTPProxyResolving: Sendable {
   func systemHTTPProxy() -> String?
 }
 

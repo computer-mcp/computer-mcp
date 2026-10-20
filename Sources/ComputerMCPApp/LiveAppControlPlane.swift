@@ -1,6 +1,7 @@
 import AppKit
 import ComputerMCP
 import ComputerMCPCore
+import ComputerMCPMacOS
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPProcess

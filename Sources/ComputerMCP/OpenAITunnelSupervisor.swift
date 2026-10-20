@@ -201,7 +201,7 @@ package struct OpenAITunnelLogPage: Codable, Equatable, Sendable {
   }
 }
 
-internal protocol OpenAITunnelClientResolving: Sendable {
+package protocol OpenAITunnelClientResolving: Sendable {
   func resolve(
     requestedPath: String?,
     configuration: GatewayConfiguration
@@ -211,13 +211,16 @@ internal protocol OpenAITunnelClientResolving: Sendable {
 internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
   private let commandRunner: any CommandRunning
   private let environment: [String: String]
+  private let executableSearchDirectories: [String]
 
   internal init(
+    executableSearchDirectories: [String],
     commandRunner: any CommandRunning = ManagedCommandRunner(),
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
     self.commandRunner = commandRunner
     self.environment = environment
+    self.executableSearchDirectories = executableSearchDirectories
   }
 
   internal func resolve(
@@ -238,7 +241,7 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
       definitions: ExternalProviderDefinition.defaults.filter { $0.kind == .tunnelClient },
       commandRunner: commandRunner,
       environment: environment,
-      systemSearchDirectories: ExternalProviderDiscovery.macOSSearchDirectories
+      systemSearchDirectories: executableSearchDirectories
     )
     guard let result = try discovery.discover().first,
       let path = result.resolvedPath,
@@ -250,7 +253,7 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
   }
 }
 
-internal protocol OpenAITunnelPlanBuilding: Sendable {
+package protocol OpenAITunnelPlanBuilding: Sendable {
   func plan(profile: OpenAITunnelConfiguration, tunnelClientPath: String, force: Bool) throws
     -> OpenAITunnelPlan
 }
@@ -276,7 +279,7 @@ internal struct OpenAITunnelPlanBuilder: OpenAITunnelPlanBuilding {
   }
 }
 
-internal protocol OpenAITunnelProcessManaging: Sendable {
+package protocol OpenAITunnelProcessManaging: Sendable {
   func spawn(
     executable: String,
     arguments: [String],
@@ -343,7 +346,7 @@ internal final class SubprocessOpenAITunnelProcessManager: OpenAITunnelProcessMa
   }
 }
 
-internal actor OpenAITunnelSupervisor {
+package actor OpenAITunnelSupervisor {
   private let secretStore: KeychainSecretStore
   private let resolver: any OpenAITunnelClientResolving
   private let planBuilder: any OpenAITunnelPlanBuilding
@@ -355,9 +358,10 @@ internal actor OpenAITunnelSupervisor {
   private var statuses: [String: OpenAITunnelStatus] = [:]
   private var startupTokens: [String: UUID] = [:]
 
-  internal init(
+  package init(
     secretStore: KeychainSecretStore,
-    resolver: any OpenAITunnelClientResolving = OpenAITunnelClientResolver(),
+    executableSearchDirectories: [String],
+    resolver: (any OpenAITunnelClientResolving)? = nil,
     planBuilder: any OpenAITunnelPlanBuilding = OpenAITunnelPlanBuilder(),
     proxyResolver: any OpenAITunnelHTTPProxyResolving = SystemOpenAITunnelHTTPProxyResolver(),
     commandRunner: any CommandRunning = ProcessCommandRunner(),
@@ -366,7 +370,9 @@ internal actor OpenAITunnelSupervisor {
     startupStabilityMilliseconds: Int = 500
   ) {
     self.secretStore = secretStore
-    self.resolver = resolver
+    self.resolver =
+      resolver
+      ?? OpenAITunnelClientResolver(executableSearchDirectories: executableSearchDirectories)
     self.planBuilder = planBuilder
     self.proxyResolver = proxyResolver
     self.commandRunner = commandRunner

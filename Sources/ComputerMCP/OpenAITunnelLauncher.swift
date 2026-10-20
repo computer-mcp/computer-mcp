@@ -17,7 +17,7 @@ internal struct OpenAITunnelInvocation: Codable, Equatable, Sendable {
 
 }
 
-internal struct OpenAITunnelPlan: Codable, Equatable, Sendable {
+package struct OpenAITunnelPlan: Codable, Equatable, Sendable {
   internal var initInvocation: OpenAITunnelInvocation?
   internal var doctorInvocation: OpenAITunnelInvocation
   internal var runInvocation: OpenAITunnelInvocation

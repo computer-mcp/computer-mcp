@@ -130,7 +130,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCPMacOS",
         dependencies: [
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
+          "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
         ]
       ),
       .target(

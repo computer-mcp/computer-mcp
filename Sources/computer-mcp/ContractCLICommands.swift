@@ -2,6 +2,7 @@ import ArgumentParser
 import ComputerMCP
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPMacOS
 import Foundation
 
 enum BridgeClientIdentity: String, ExpressibleByArgument {
@@ -66,7 +67,8 @@ struct ToolsInventory: AsyncParsableCommand {
     let runtime = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,
-      database: GatewayDatabase(inMemory: ())
+      database: GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services
     )
     do {
       let tools = try runtime.listTools().sorted { $0.name < $1.name }
@@ -246,7 +248,9 @@ struct ProvidersDiscover: ParsableCommand {
   var config: String
 
   func run() throws {
-    printJSON(try ComputerMCPProductContracts.providers(configPath: config))
+    printJSON(
+      try ComputerMCPProductContracts.providers(
+        configPath: config, platform: MacOSPlatform.services))
   }
 }
 

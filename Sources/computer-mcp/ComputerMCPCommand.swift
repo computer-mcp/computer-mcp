@@ -2,6 +2,7 @@ import ArgumentParser
 import ComputerMCP
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPMacOS
 import ComputerMCPPlatform
 import Foundation
 
@@ -96,7 +97,8 @@ struct ServeStdio: AsyncParsableCommand {
     let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,
-      database: database
+      database: database,
+      platform: MacOSPlatform.services
     )
     try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: registry)
   }
@@ -134,7 +136,8 @@ struct ServeHTTP: AsyncParsableCommand {
         workspaceID: runtime.workspaceID,
         transportTrace: GatewayTransportTrace(transport: "streamable_http")
       ),
-      database: database
+      database: database,
+      platform: MacOSPlatform.services
     )
     try await MCPRuntimeAdapter.runHTTPGateway(
       configuration: gateway,
@@ -339,7 +342,8 @@ private func withStandaloneToolSurface(
       profileID: options.profile,
       workspaceID: options.workspaceID
     ),
-    database: GatewayDatabase(inMemory: ())
+    database: GatewayDatabase(inMemory: ()),
+    platform: MacOSPlatform.services
   )
   do {
     let result = try await operation(GatewayMCPToolSurface(registry: registry))

@@ -47,9 +47,9 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login and process inspection |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
-| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution and process-table queries |
+| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries and shared/exclusive advisory file locks |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
-| `Sources/ComputerMCPPersistence/` | Platform-neutral database connection, initial schema, migration-ledger check, stored records and the state import from installations created before 0.1.0 |
+| `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, archive extraction and staging |
 | `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |

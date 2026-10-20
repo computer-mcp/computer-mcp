@@ -18,8 +18,10 @@ struct StateImport: ParsableCommand {
     abstract: "Import the state exported from an installation created before 0.1.0.",
     discussion: """
       Quit the App and stop every gateway, bridge and tunnel process first: the import \
-      refuses a database that any process has open. The previous database is kept as \
-      <database>.before-import. An interrupted import is rolled back by the next run.
+      refuses a database that any process has open, a concurrent import and any remaining \
+      SQLite sidecars after hot-journal recovery. Connections and imports coordinate through \
+      <database>.lock. The previous database is kept as <database>.before-import. An \
+      interrupted import is rolled back by the next run.
       """
   )
 

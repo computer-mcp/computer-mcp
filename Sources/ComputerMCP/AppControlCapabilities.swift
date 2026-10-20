@@ -1,3 +1,4 @@
+import ComputerMCPProcess
 import Foundation
 
 package enum AppControlSurface: String, Codable, Sendable {

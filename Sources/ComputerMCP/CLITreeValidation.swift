@@ -1,3 +1,4 @@
+import ComputerMCPProcess
 import Foundation
 
 package struct CLITreeDiagnostic: Codable, Equatable, Sendable {

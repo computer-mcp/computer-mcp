@@ -1,27 +1,34 @@
+import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
-import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPProcess
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct ManagedCommandRunnerTests {
   @Test
   func closesInputAndUsesOnlyTheCompleteEnvironment() async throws {
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
+      // A shell adds nothing to its environment, unlike interpreter launchers.
       try ManagedCommandRunner().run(
-        executable: "/usr/bin/python3",
+        executable: "/bin/sh",
         arguments: [
           "-c",
-          "import os,sys; assert sys.stdin.read() == ''; assert 'HOME' not in os.environ; print(os.environ['PROBE_VALUE'])",
+          #"if IFS= read -r line; then exit 3; fi; [ -z "${HOME+x}" ] || exit 4; printf '%s\n' "$PROBE_VALUE""#,
         ],
         workingDirectory: FileManager.default.temporaryDirectory,
         environment: ["PATH": "/usr/bin:/bin", "PROBE_VALUE": "isolated"],
         timeoutMilliseconds: 2000, maxOutputBytes: 1024)
     }
-    #expect(result.exitCode == 0 && !result.timedOut)
+    #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
     #expect(result.stdout == "isolated\n")
   }
 
@@ -30,20 +37,21 @@ struct ManagedCommandRunnerTests {
     let runner = ManagedCommandRunner()
     let bytes = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try runner.runData(
-        executable: "/usr/bin/python3",
-        arguments: ["-c", "import os; os.write(1, bytes([0,255,128,10])); os.write(2, b'error')"],
+        executable: "/bin/sh", arguments: ["-c", #"printf '\000\377\200\n'; printf error >&2"#],
         workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
         timeoutMilliseconds: 2000, maxOutputBytes: 1024)
     }
+    #expect(!bytes.timedOut)
     #expect(bytes.stdout == Data([0, 255, 128, 10]))
     #expect(bytes.stderr == Data("error".utf8))
     let truncated = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try runner.run(
-        executable: "/usr/bin/python3", arguments: ["-c", "import os; os.write(1,b'x'*8192)"],
+        executable: "/bin/sh", arguments: ["-c", "printf '%8192s' '' | tr ' ' x"],
         workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
         timeoutMilliseconds: 2000, maxOutputBytes: 64)
     }
-    #expect(truncated.stdout.utf8.count == 64 && truncated.stdoutTruncated)
+    #expect(!truncated.timedOut)
+    #expect(truncated.stdout == String(repeating: "x", count: 64) && truncated.stdoutTruncated)
     #expect(!truncated.stderrTruncated)
   }
 
@@ -53,17 +61,17 @@ struct ManagedCommandRunnerTests {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let receipt = root.appendingPathComponent("pids")
+    // Both shells ignore SIGTERM; only the group kill after the grace period ends them.
     let source = #"""
-      import os, pathlib, signal, subprocess, sys, time
-      signal.signal(signal.SIGTERM, signal.SIG_IGN)
-      child = subprocess.Popen([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"])
-      pathlib.Path(sys.argv[1]).write_text(str(os.getpid()) + "\n" + str(child.pid))
-      time.sleep(30)
+      trap '' TERM
+      sh -c 'trap "" TERM; sleep 30' &
+      printf '%s\n%s\n' "$$" "$!" > "$0"
+      sleep 30
       """#
     let started = ContinuousClock.now
     let result = try await BlockingOperationExecutor(label: "managed-probe-test").perform {
       try ManagedCommandRunner().run(
-        executable: "/usr/bin/python3", arguments: ["-c", source, receipt.path],
+        executable: "/bin/sh", arguments: ["-c", source, receipt.path],
         workingDirectory: root, environment: ["PATH": "/usr/bin:/bin"],
         timeoutMilliseconds: 1000, maxOutputBytes: 1024)
     }
@@ -88,10 +96,10 @@ struct ManagedCommandRunnerTests {
         configuredProviders: [
           "probe": [
             .init(
-              executable: "/usr/bin/python3",
+              executable: "/bin/sh",
               arguments: [
                 "-c",
-                "import os,sys; assert 'HOME' not in os.environ; assert sys.stdin.read() == ''; print('probe 1.2.3')",
+                #"[ -z "${HOME+x}" ] || exit 4; if IFS= read -r line || [ -n "$line" ]; then exit 3; fi; echo 'probe 1.2.3'"#,
               ])
           ]
         ],
@@ -103,5 +111,6 @@ struct ManagedCommandRunnerTests {
     #expect(result.first?.diagnostics.isEmpty == true)
   }
 
-  private static func exited(_ pid: Int32) -> Bool { kill(pid, 0) == -1 && errno == ESRCH }
+  /// A killed process whose new parent never reaps it remains a zombie; it has still exited.
+  private static func exited(_ pid: Int32) -> Bool { ProcessTable.hasExited(pid) }
 }

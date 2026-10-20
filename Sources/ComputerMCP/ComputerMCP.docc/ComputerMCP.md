@@ -38,14 +38,6 @@ process spawning, and Full Shell remain off by default; only
 - ``GatewayToolRegistry``
 - ``MCPRuntimeAdapter``
 
-### Execution
-
-- ``ProcessCommandRunner``
-- ``ProcessManaging``
-- ``ManagedProcessRegistry``
-- ``ManagedProcessSnapshot``
-- ``ManagedProcessCancelResult``
-
 ### MCP and OpenAI Secure MCP Tunnel
 
 - ``DownstreamMCPClient``

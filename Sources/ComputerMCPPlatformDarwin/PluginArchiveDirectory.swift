@@ -1,4 +1,5 @@
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import Darwin
 import Foundation
 

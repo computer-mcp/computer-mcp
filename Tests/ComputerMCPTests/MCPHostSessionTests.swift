@@ -8,6 +8,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHostSessionTests {

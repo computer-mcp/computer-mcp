@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 package enum PluginCheckStatus: String, Codable, Sendable {

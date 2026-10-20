@@ -104,6 +104,11 @@ class PlanModeTests(unittest.TestCase):
             self.assertIn("macOS import in neutral target: Low/Low.swift imports AppKit",
                           self.problems(), line)
 
+    def test_import_text_inside_a_string_literal_is_not_an_import(self):
+        self.write("Low/Low.swift", 'let script = """\n  import AppKit\n  """\npackage struct LowValue {\n  let id: String\n}\n')
+        (self.sources / "Shared/Low.swift").unlink()
+        self.assertEqual(self.problems(), [])
+
     def test_conditional_macos_framework_import_fails(self):
         self.write("Low/Low.swift", "#if canImport(AppKit)\nimport AppKit\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
         (self.sources / "Shared/Low.swift").unlink()
@@ -115,6 +120,8 @@ class PlanModeTests(unittest.TestCase):
         self.write("Low/Low.swift", "#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
         self.assertEqual(self.problems(**overrides), [])
         self.write("Low/Low.swift", "import Darwin\npackage struct LowValue {\n  let id: String\n}\n")
+        self.assertIn("macOS import in neutral target: Low/Low.swift imports Darwin", self.problems(**overrides))
+        self.write("Low/Low.swift", "#if os(macOS)\nimport Darwin\n#endif\npackage struct LowValue {\n  let id: String\n}\n")
         self.assertIn("macOS import in neutral target: Low/Low.swift imports Darwin", self.problems(**overrides))
 
     def test_relocation_moves_a_file_of_an_extracted_target(self):
@@ -263,6 +270,15 @@ class TestAllocationTests(unittest.TestCase):
         (self.tests / "Nested/Fixtures").mkdir()
         (self.tests / "Nested/Fixtures/Helper.swift").write_text("struct Helper {}\n")
         self.assertIn("unallocated test: Nested/Fixtures/Helper.swift", self.check(self.allocations))
+
+
+class NeutralPathTests(unittest.TestCase):
+    def test_macos_locations_fail_and_standard_posix_paths_pass(self):
+        rules = {"macos_path_prefixes": ["/Applications/", "/usr/bin/"], "posix_paths": ["/usr/bin/env"]}
+        text = 'let a = "/usr/bin/env"\nlet b = "/usr/bin/git"\nlet c = "/Applications/X.app"\nlet d = "/bin/sh"\n'
+        self.assertEqual(module_graph.macos_paths(text, rules), [(2, "/usr/bin/git"), (3, "/Applications/X.app")])
+        interpolated = 'let e = "/Applications/\\(name).app"\n'
+        self.assertEqual(module_graph.macos_paths(interpolated, rules), [(1, "/Applications/\\(name).app")])
 
 
 class PackageModeTests(unittest.TestCase):

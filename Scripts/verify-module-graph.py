@@ -11,7 +11,8 @@ Modes:
            are allocated by the planned rules. Fail on cycles, dependencies the layer
            rules do not permit, neutral targets that reference macOS-only targets, and
            macOS imports in extracted neutral targets, also inside #if blocks; only the
-           modules in conditional_macos_imports may appear there, and only inside #if.
+           modules in conditional_macos_imports may appear there, and only in an #if
+           chain that also imports Glibc or Musl.
            Every residual Swift test source must be allocated to a test target whose
            owner is in layers.
   package  Read `swift package dump-package` and apply the same layer, permission and
@@ -155,29 +156,55 @@ def free_references(text, functions):
     return found
 
 
+LINUX_C_LIBRARIES = {"Glibc", "Musl"}
+
+
 def imports(text):
-    """Imported modules, each paired with whether the import is inside an #if block."""
-    found, depth = set(), 0
-    for line in COMMENT.sub(" ", text).splitlines():
+    """Imported modules, each paired with whether its innermost #if chain also imports a
+    Linux C library, which makes the chain a platform C library selection."""
+    found, chains = [], []
+    for line in code_text(text).splitlines():
         stripped = line.strip()
         if stripped.startswith("#if"):
-            depth += 1
+            chains.append({"imports": [], "selects": False})
         elif stripped.startswith("#endif"):
-            depth = max(0, depth - 1)
+            if chains:
+                chain = chains.pop()
+                for index in chain["imports"]:
+                    found[index] = (found[index][0], chain["selects"])
         else:
             match = IMPORT.match(line)
             if match:
-                found.add((match.group(1), depth > 0))
+                found.append((match.group(1), False))
+                if chains:
+                    chains[-1]["imports"].append(len(found) - 1)
+                    chains[-1]["selects"] |= match.group(1) in LINUX_C_LIBRARIES
+    return set(found)
+
+
+STRING_LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
+
+
+def macos_paths(text, graph):
+    """(line, literal) for string literals that name a macOS system location. Standard
+    POSIX paths listed in posix_paths are not macOS locations."""
+    prefixes = tuple(graph.get("macos_path_prefixes", []))
+    allowed = set(graph.get("posix_paths", []))
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        for literal in STRING_LITERAL.findall(line):
+            if literal.startswith(prefixes) and literal not in allowed:
+                found.append((number, literal))
     return found
 
 
 def macos_imports(text, graph):
     """macOS modules a neutral source imports. A module in conditional_macos_imports is
-    permitted inside #if, where it selects the platform's C library."""
+    permitted only where an #if chain selects between it and a Linux C library."""
     macos = set(graph.get("macos_imports", []))
     conditional = set(graph.get("conditional_macos_imports", []))
-    return {name for name, guarded in imports(text)
-            if name in macos and not (guarded and name in conditional)}
+    return {name for name, selects in imports(text)
+            if name in macos and not (selects and name in conditional)}
 
 
 def chunks(path, directory):

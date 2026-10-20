@@ -11,6 +11,13 @@ let cryptoDependency: Package.Dependency =
 let tomlDependency: Package.Dependency =
   .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0")
 
+let nioDependency: Package.Dependency =
+  .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0")
+
+// FilePath comes from the System framework on Apple platforms and from swift-system elsewhere.
+let systemDependency: Package.Dependency =
+  .package(url: "https://github.com/apple/swift-system.git", from: "1.7.2")
+
 // Platform-neutral targets; they build on macOS and on Linux.
 let neutralTargets: [Target] =
   [
@@ -19,10 +26,22 @@ let neutralTargets: [Target] =
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]
     ),
     .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
+    .target(name: "ComputerMCPPlatformPOSIX", dependencies: ["ComputerMCPPlatform"]),
     .target(
       name: "ComputerMCPConfiguration",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPPlatform", .product(name: "TOML", package: "swift-toml"),
+      ]
+    ),
+    .target(
+      name: "ComputerMCPProcess",
+      dependencies: [
+        "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX",
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        .product(name: "Subprocess", package: "swift-subprocess"),
+        .product(
+          name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
       ]
     ),
     .target(
@@ -31,6 +50,17 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
+    .testTarget(
+      name: "ComputerMCPPlatformPOSIXTests",
+      dependencies: ["ComputerMCPPlatform", "ComputerMCPPlatformPOSIX"]
+    ),
+    .testTarget(
+      name: "ComputerMCPProcessTests",
+      dependencies: [
+        "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTestSupport",
+      ]
+    ),
     .testTarget(
       name: "ComputerMCPConfigurationTests",
       dependencies: [
@@ -60,12 +90,13 @@ let neutralTargets: [Target] =
     dependencies: [
       .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.0"),
       .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
-      .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
+      nioDependency,
       subprocessDependency,
       cryptoDependency,
       .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
       tomlDependency,
+      systemDependency,
       .package(
         url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.1-computer-mcp.1"),
     ],
@@ -73,7 +104,9 @@ let neutralTargets: [Target] =
       .systemLibrary(name: "CSystemArchive"),
       .target(
         name: "ComputerMCPPlatformDarwin",
-        dependencies: ["CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform"]
+        dependencies: [
+          "CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        ]
       ),
       .target(
         name: "ComputerMCP",
@@ -82,6 +115,8 @@ let neutralTargets: [Target] =
           "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin",
+          "ComputerMCPPlatformPOSIX",
+          "ComputerMCPProcess",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
@@ -101,6 +136,7 @@ let neutralTargets: [Target] =
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
+          "ComputerMCPProcess",
           .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]
       ),
@@ -108,7 +144,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCPApp",
         dependencies: [
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin",
+          "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
         ],
         resources: [
           .process("Resources")
@@ -125,7 +161,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPTests",
         dependencies: [
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+          "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+          "ComputerMCPTestSupport",
         ],
         resources: [.copy("Fixtures")]
       ),
@@ -133,7 +170,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPAppTests",
         dependencies: [
           "ComputerMCPApp", "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore",
-          "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+          "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
+          "ComputerMCPTestSupport",
         ]
       ),
     ]
@@ -141,7 +179,9 @@ let neutralTargets: [Target] =
 #elseif os(Linux)
   let package = Package(
     name: "computer-mcp",
-    dependencies: [cryptoDependency, tomlDependency],
+    dependencies: [
+      cryptoDependency, nioDependency, subprocessDependency, systemDependency, tomlDependency,
+    ],
     targets: neutralTargets
   )
 #else

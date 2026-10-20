@@ -2,6 +2,8 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import CryptoKit
 import Darwin
 import Foundation

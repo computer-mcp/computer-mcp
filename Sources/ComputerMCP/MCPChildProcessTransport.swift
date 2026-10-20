@@ -1,6 +1,8 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import Foundation
 import Logging
 import MCP

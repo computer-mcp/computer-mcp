@@ -1,9 +1,9 @@
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPProcess
 
 @Suite
 
@@ -199,7 +199,7 @@ final class ExternalProviderDiscoveryTests {
     let directory = try makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let configured = try makeExecutable(named: "configured-codex", in: directory)
-    try "#!/usr/bin/env missing-runtime\n".write(to: configured, atomically: true, encoding: .utf8)
+    try "#!/usr/bin/env missing-runtime\n".write(to: configured, atomically: false, encoding: .utf8)
     _ = try makeExecutable(named: "codex", in: directory)
     let runner = DiscoveryCommandRunner()
     let discovery = ExternalProviderDiscovery(
@@ -447,9 +447,10 @@ final class ExternalProviderDiscoveryTests {
     \(source == "mcp" ? "[ \"$1\" = serve ] || exit 15; shift" : "")
     [ "$1" = --version ] && [ "$#" = 1 ] || exit 16
     /bin/cat version.txt
-    """.appending("\n").write(to: executable, atomically: true, encoding: .utf8)
+    """.appending("\n").write(to: executable, atomically: false, encoding: .utf8)
     let interpreter = try makeExecutable(named: "fixture-runtime", in: bin)
-    try "#!/bin/sh\nexec /bin/sh \"$@\"\n".write(to: interpreter, atomically: true, encoding: .utf8)
+    try "#!/bin/sh\nexec /bin/sh \"$@\"\n".write(
+      to: interpreter, atomically: false, encoding: .utf8)
     try Data("fixture 7.2\n".utf8).write(to: cwd.appendingPathComponent("version.txt"))
     let overrides = ["PATH": "bin", "PROVIDER_SECRET": "fixture-secret", "EMPTY": ""]
     var configuration = GatewayConfiguration(workspaceDirectory: root)
@@ -594,6 +595,8 @@ final class ExternalProviderDiscoveryTests {
     return directory.resolvingSymlinksInPath()
   }
 
+  /// Rewrite the result in place (`atomically: false`): an atomic write replaces the file,
+  /// which drops the executable mode in swift-corelibs-foundation.
   private func makeExecutable(named name: String, in directory: URL) throws -> URL {
     let url = directory.appendingPathComponent(name)
     try "#!/bin/sh\nexit 0\n".write(to: url, atomically: true, encoding: .utf8)

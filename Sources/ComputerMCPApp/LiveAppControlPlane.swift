@@ -3,6 +3,7 @@ import ComputerMCP
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPProcess
 import Foundation
 
 @MainActor

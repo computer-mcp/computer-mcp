@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 internal struct OpenAITunnelInvocation: Codable, Equatable, Sendable {

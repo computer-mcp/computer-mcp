@@ -6,6 +6,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPApp
+@testable import ComputerMCPProcess
 
 @Suite
 struct PluginSettingsDraftTests {

@@ -1,13 +1,19 @@
 import ComputerMCPTestSupport
-import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformPOSIX
+@testable import ComputerMCPProcess
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 @Suite(.nativeIntegration)
-struct ExecutableInspectionTests {
+struct ExecutableLaunchInspectionTests {
   @Test
   func unreadableHeadersAndUnsupportedEncodingsDoNotAssertLaunchFailure() throws {
     let unreadable = ExecutableInspection(

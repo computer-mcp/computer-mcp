@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import Foundation
 
 /// App-owned management is injected into each admitted generation; the normal

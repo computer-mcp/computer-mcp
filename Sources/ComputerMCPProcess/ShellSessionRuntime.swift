@@ -1,11 +1,22 @@
 import ComputerMCPCore
-import Darwin
+import ComputerMCPPlatformPOSIX
 import Foundation
+import NIOConcurrencyHelpers
 import Subprocess
-import System
-import os
 
-internal enum ShellLaunchMode: String, Codable, Sendable {
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
+#if canImport(System)
+  @preconcurrency import System
+#else
+  import SystemPackage
+#endif
+
+package enum ShellLaunchMode: String, Codable, Sendable {
   case shell
   case argv
 }
@@ -15,7 +26,7 @@ package enum ShellStreamEncoding: String, Codable, Sendable {
   case base64
 }
 
-internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
+package struct ShellLaunchRequest: Codable, Equatable, Sendable {
   internal var mode: ShellLaunchMode
   internal var command: String?
   internal var executable: String?
@@ -25,7 +36,7 @@ internal struct ShellLaunchRequest: Codable, Equatable, Sendable {
   internal var environment: [String: String]
   internal var inheritsEnvironment: Bool?
 
-  internal init(
+  package init(
     mode: ShellLaunchMode = .shell,
     command: String? = nil,
     executable: String? = nil,
@@ -160,12 +171,12 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
     case stderr
   }
 
-  internal var json: JSONValue {
+  package var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])
   }
 }
 
-internal struct ShellWriteResult: Codable, Equatable, Sendable {
+package struct ShellWriteResult: Codable, Equatable, Sendable {
   internal var sessionID: String
   internal var bytesWritten: Int
   internal var inputClosed: Bool
@@ -176,12 +187,12 @@ internal struct ShellWriteResult: Codable, Equatable, Sendable {
     case inputClosed = "input_closed"
   }
 
-  internal var json: JSONValue {
+  package var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])
   }
 }
 
-internal struct ShellCancelResult: Codable, Equatable, Sendable {
+package struct ShellCancelResult: Codable, Equatable, Sendable {
   internal var sessionID: String
   internal var cancellationRequested: Bool
   internal var isRunning: Bool
@@ -192,12 +203,12 @@ internal struct ShellCancelResult: Codable, Equatable, Sendable {
     case isRunning = "is_running"
   }
 
-  internal var json: JSONValue {
+  package var json: JSONValue {
     (try? JSONValue.encoded(self)) ?? .object([:])
   }
 }
 
-internal protocol ShellManaging: Sendable {
+package protocol ShellManaging: Sendable {
   func run(
     request: ShellLaunchRequest,
     defaultShell: String,
@@ -243,13 +254,13 @@ extension ShellManaging {
 
 /// Listener-owned output storage. Possessing this store never grants tool authorization.
 package final class GatewayTerminalSessions: @unchecked Sendable {
-  internal enum Scope: Hashable, Sendable {
+  package enum Scope: Hashable, Sendable {
     case isolated(UUID)
     case workspace(
       principal: String, profile: GatewayProfileID, caller: GatewayCallerKind,
       workspace: String, registeredAt: Date?, root: WorkspaceRootIdentity)
 
-    static func workspace(
+    package static func workspace(
       context: ExecutionContext, workspace: RegisteredWorkspace, root: WorkspaceRootIdentity,
       registered: Bool = true
     ) -> Scope {
@@ -354,7 +365,7 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
   }
 }
 
-internal final class SubprocessShellRuntime: ShellManaging, Sendable {
+package final class SubprocessShellRuntime: ShellManaging, Sendable {
   private struct ExecutionOwner {
     let session: ShellSession
     let task: Task<Void, Never>
@@ -365,14 +376,14 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
     var shutdown: Task<Void, Never>?
   }
 
-  private let executionState = OSAllocatedUnfairLock(initialState: ExecutionState())
+  private let executionState = NIOLockedValueBox(ExecutionState())
   private let sessions: GatewayTerminalSessions
   private let scope: GatewayTerminalSessions.Scope
-  private let ownedWork: GatewayOwnedWork?
+  private let ownedWork: (any OwnedWorkTracking)?
   private let workspaceID: String?
 
-  internal init(
-    ownedWork: GatewayOwnedWork? = nil, workspaceID: String? = nil,
+  package init(
+    ownedWork: (any OwnedWorkTracking)? = nil, workspaceID: String? = nil,
     sessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     scope: GatewayTerminalSessions.Scope = .isolated(UUID())
   ) {
@@ -382,7 +393,7 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
     self.scope = scope
   }
 
-  internal func run(
+  package func run(
     request: ShellLaunchRequest,
     defaultShell: String,
     defaultWorkingDirectory: URL,
@@ -436,7 +447,7 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
     )
   }
 
-  internal func spawn(
+  package func spawn(
     request: ShellLaunchRequest,
     defaultShell: String,
     defaultWorkingDirectory: URL,
@@ -487,16 +498,16 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
       terminationGraceMilliseconds: terminationGraceMilliseconds
     )
 
-    try executionState.withLock { state in
+    try executionState.withLockedValue { state in
       guard state.shutdown == nil else { throw ShellRuntimeError.stopped }
       try sessions.insert(
         session, scope: scope, maxSessions: maxSessions, isRegisteredProcess: isRegisteredProcess)
-      let ownership = ownedWork?.retain(.shell, workspaceID: workspaceID, resourceID: session.id)
+      let ownership = ownedWork?.retainShell(workspaceID: workspaceID, sessionID: session.id)
       let task = Task.detached(priority: .userInitiated) { [sessions, weak self] in
         defer {
           ownership?.finish()
           sessions.prune()
-          _ = self?.executionState.withLock { $0.running.removeValue(forKey: session.id) }
+          _ = self?.executionState.withLockedValue { $0.running.removeValue(forKey: session.id) }
         }
         await Self.launch(resolved, session: session)
       }
@@ -522,8 +533,8 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
   }
 
   /// Execution membership belongs to this launcher; result storage may be shared by other generations.
-  internal func shutdown() async {
-    let task = executionState.withLock { state -> Task<Void, Never> in
+  package func shutdown() async {
+    let task = executionState.withLockedValue { state -> Task<Void, Never> in
       if let task = state.shutdown { return task }
       let running = Array(state.running.values)
       let task = Task {
@@ -536,7 +547,7 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
     await task.value
   }
 
-  internal func list(
+  package func list(
     maxReadBytes: Int = 0,
     encoding: ShellStreamEncoding = .utf8
   ) throws -> [ShellSessionSnapshot] {
@@ -550,7 +561,7 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
     }
   }
 
-  internal func read(
+  package func read(
     sessionID: String,
     stdoutCursor: Int64,
     stderrCursor: Int64,
@@ -570,11 +581,11 @@ internal final class SubprocessShellRuntime: ShellManaging, Sendable {
     )
   }
 
-  internal func write(sessionID: String, data: Data, close: Bool) throws -> ShellWriteResult {
+  package func write(sessionID: String, data: Data, close: Bool) throws -> ShellWriteResult {
     try requireSession(sessionID).write(data: data, close: close)
   }
 
-  internal func cancel(sessionID: String) throws -> ShellCancelResult {
+  package func cancel(sessionID: String) throws -> ShellCancelResult {
     let session = try requireSession(sessionID)
     let requested = session.cancel()
     return ShellCancelResult(
@@ -967,20 +978,7 @@ private final class ShellSession: @unchecked Sendable {
   }
 
   private static func processHasExited(_ processID: Int32) -> Bool {
-    var info = proc_bsdinfo()
-    let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
-    errno = 0
-    let actualSize = proc_pidinfo(
-      processID,
-      PROC_PIDTBSDINFO,
-      0,
-      &info,
-      expectedSize
-    )
-    if actualSize == expectedSize {
-      return info.pbi_status == SZOMB
-    }
-    return actualSize <= 0 && errno == ESRCH
+    ProcessTable.hasExited(processID)
   }
 
   private func requestTermination(_ execution: Execution?) {

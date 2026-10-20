@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 package enum IntegrationKind: String, Codable, Hashable, Sendable { case mcp, cli, skills }

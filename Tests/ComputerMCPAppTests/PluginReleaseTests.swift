@@ -5,6 +5,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPApp
+@testable import ComputerMCPProcess
 
 @MainActor
 @Suite(.timeLimit(.minutes(1)))

@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 /// Owns configured source definitions, gateway tool schemas, and dispatch.

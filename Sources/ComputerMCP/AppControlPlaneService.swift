@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPProcess
 import Foundation
 import MCP
 
@@ -21,7 +22,8 @@ internal struct AppControlPlaneProviderDiscovery: ControlPlaneProviderDiscoverin
   {
     try ExternalProviderDiscovery(
       configuration: configuration,
-      commandRunner: commandRunner
+      commandRunner: commandRunner,
+      systemSearchDirectories: ExternalProviderDiscovery.macOSSearchDirectories
     ).discover()
   }
 }

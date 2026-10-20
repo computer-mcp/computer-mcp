@@ -1,6 +1,13 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 extension CommandResult {
   package var json: JSONValue {
@@ -117,24 +124,36 @@ func configure(process: Process, executable: String, arguments: [String]) {
   }
 }
 
+/// Collects one output pipe, up to `limit` bytes. One read source watches the read end;
+/// reads are nonblocking and drain the pipe, and the source's cancel handler closes the
+/// descriptor once the source no longer monitors it.
 final class OutputCollector: @unchecked Sendable {
   let pipe = Pipe()
   private let limit: Int
   private let lock = NSLock()
+  private let queue = DispatchQueue(label: "computer-mcp.command-output")
   private let endOfFile = DispatchSemaphore(value: 0)
+  /// Accessed only on `queue`, apart from initialization and deinitialization.
+  private var source: DispatchSourceRead?
+  /// End of file was read, or collection stopped.
+  private var ended = false
   private var data = Data()
   private(set) var truncated = false
 
   init(limit: Int) {
     self.limit = limit
-    pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-      let chunk = handle.availableData
-      guard !chunk.isEmpty else {
-        self?.endOfFile.signal()
-        return
-      }
-      self?.append(chunk)
-    }
+    let handle = pipe.fileHandleForReading
+    let flags = fcntl(handle.fileDescriptor, F_GETFL)
+    if flags >= 0 { _ = fcntl(handle.fileDescriptor, F_SETFL, flags | O_NONBLOCK) }
+    let source = DispatchSource.makeReadSource(fileDescriptor: handle.fileDescriptor, queue: queue)
+    source.setEventHandler { [weak self] in self?.drain() }
+    source.setCancelHandler { try? handle.close() }
+    self.source = source
+    source.resume()
+  }
+
+  deinit {
+    source?.cancel()
   }
 
   var stringValue: String {
@@ -149,16 +168,38 @@ final class OutputCollector: @unchecked Sendable {
     return data
   }
 
+  /// Stops collecting. When the process has exited, waits briefly for end of file, so every
+  /// earlier read has appended its bytes before the result snapshot is created, then reads
+  /// what remains. Later calls return at once.
   func stop(processHasExited: Bool) {
-    if processHasExited {
-      // Process termination can race the final readability callback. Waiting for
-      // EOF ensures every earlier callback has appended its bytes before the
-      // result snapshot is created.
+    if processHasExited, !lock.withLock({ ended }) {
       _ = endOfFile.wait(timeout: .now() + .seconds(2))
     }
-    pipe.fileHandleForReading.readabilityHandler = nil
-    if processHasExited {
-      append(pipe.fileHandleForReading.readDataToEndOfFile())
+    queue.sync {
+      if processHasExited { drain() }
+      source?.cancel()
+      source = nil
+    }
+    lock.withLock { ended = true }
+  }
+
+  /// Reads until the pipe would block or ends. Runs on `queue`.
+  private func drain() {
+    guard let source else { return }
+    var bytes = [UInt8](repeating: 0, count: 65_536)
+    while true {
+      let count = read(pipe.fileHandleForReading.fileDescriptor, &bytes, bytes.count)
+      if count > 0 {
+        append(Data(bytes.prefix(count)))
+        continue
+      }
+      if count < 0, errno == EINTR { continue }
+      if count < 0, errno == EAGAIN || errno == EWOULDBLOCK { return }
+      lock.withLock { ended = true }
+      endOfFile.signal()
+      source.cancel()
+      self.source = nil
+      return
     }
   }
 

@@ -7,6 +7,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPConnectionLifecycleTests {

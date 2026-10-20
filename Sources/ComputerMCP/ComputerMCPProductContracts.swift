@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 /// Stable, executable-facing artifacts used by the CLI product boundary.
@@ -40,7 +41,10 @@ package enum ComputerMCPProductContracts {
   package static func providers(configPath: String) throws -> JSONValue {
     let configurationURL = URL(fileURLWithPath: configPath).standardizedFileURL
     let gateway = try GatewayConfiguration.load(path: configurationURL.path)
-    let providers = try ExternalProviderDiscovery(configuration: gateway).discover().sorted {
+    let providers = try ExternalProviderDiscovery(
+      configuration: gateway,
+      systemSearchDirectories: ExternalProviderDiscovery.macOSSearchDirectories
+    ).discover().sorted {
       $0.providerID < $1.providerID
     }
     return .object([

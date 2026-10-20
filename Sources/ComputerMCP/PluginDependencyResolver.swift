@@ -1,5 +1,6 @@
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 /// Locates user-owned programs without launching applications or changing their installations.

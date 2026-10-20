@@ -1,4 +1,5 @@
 import ComputerMCPConfiguration
+import ComputerMCPProcess
 import Foundation
 
 extension CLITreeSource {

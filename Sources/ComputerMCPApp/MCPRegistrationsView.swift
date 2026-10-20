@@ -1,5 +1,6 @@
 import ComputerMCP
 import ComputerMCPConfiguration
+import ComputerMCPProcess
 import SwiftUI
 
 struct MCPRegistrationsView: View {

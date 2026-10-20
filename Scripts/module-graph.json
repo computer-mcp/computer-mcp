@@ -139,6 +139,15 @@
   "conditional_macos_imports": [
     "Darwin"
   ],
+  "macos_path_prefixes": [
+    "/Applications/",
+    "/System/",
+    "/usr/bin/",
+    "/usr/sbin/"
+  ],
+  "posix_paths": [
+    "/usr/bin/env"
+  ],
   "executables": [
     "ComputerMCPApp",
     "computer-mcp"
@@ -149,7 +158,6 @@
   "residual": "ComputerMCP",
   "removed": [],
   "types": {
-    "CLIProcessExecution": "ComputerMCPProcess",
     "ChatGPTProfileAuditor": "ComputerMCPControlPlane",
     "ComputerMCPProductContracts": "ComputerMCPControlPlane",
     "ControlToolContract": "ComputerMCPControlPlane",
@@ -177,14 +185,13 @@
   },
   "files": {
     "^GatewayRemoteManagement": "ComputerMCPControlPlane",
-    "^ExternalProviderDiscovery": "ComputerMCPProcess",
+    "^ExternalProviderDiscovery\\+macOS": "ComputerMCPMacOS",
     "^MCPToolCatalogNotifier": "ComputerMCPGateway",
     "^(MCPProxyClient|MCPContinuationDirectory|MCPProviderContinuation|MCPCallCancellation)": "ComputerMCPGateway",
     "^MCPProviderWork": "ComputerMCPGateway",
     "^GatewayToolRegistry\\+MCP": "ComputerMCPToolsMCP",
     "^GatewayHTTPRuntime": "ComputerMCPGateway",
     "^MCPChildProcessTransport": "ComputerMCPDownstream",
-    "^ShellSessionRuntime": "ComputerMCPProcess",
     "^ComputerUse": "ComputerMCPComputerUse",
     "^GatewayToolRegistry\\+Skills": "ComputerMCPToolsSkills",
     "^GatewayToolRegistry\\+Git": "ComputerMCPToolsGit",
@@ -199,7 +206,6 @@
     "^GatewayToolRegistry\\+MCP|^(DownstreamMCPClient|MCPProxyClient|MCPToolCatalog|MCPValueBridge|MCPProvider|MCPContinuation|MCPCallCancellation|MCPDerivedWorkspace|MCPProcessOwnership|AuthorizedMCPClient)": "ComputerMCPDownstream",
     "^MCPRuntimeAdapter": "ComputerMCPGateway",
     "^(GatewaySocket|GatewayHTTPRuntime|MCP(ChildProcess|HTTPClient|HTTPEventSubscription|Inherited|InitializeNormalization)|MCPSSEDecoder|MCPHTTPAuthentication)": "ComputerMCPTransport",
-    "^(CommandRunner|ManagedCommandRunner|ManagedLineProcess|ManagedProcessRegistry|ProcessOutputReader|ExecutableInspection)": "ComputerMCPProcess",
     "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
     "^(OpenAITunnel|CloudflareTunnel)": "ComputerMCPTunnels",
     "^GatewayDatabase": "ComputerMCPPersistence",
@@ -218,10 +224,6 @@
     "AuthorizedMCPClient->MCPContinuationTarget",
     "AuthorizedMCPClient->MCPHostContext",
     "BundledPluginDistribution->PluginArchiveDirectory",
-    "CLIProcessExecution->CLIExecutableCheck",
-    "CLIProcessExecution->CLIInvocation",
-    "CLIProcessExecution->CLIProcessCall",
-    "CLIProcessExecution->CLITreeError",
     "CLITreeSource->PluginPackageFiles",
     "CLITreeValidation->PluginPackageFiles",
     "CloudflareRuntimeState->GatewayHTTPRuntime",
@@ -255,8 +257,7 @@
     "PluginInstallationStorage->PluginArchiveDirectory",
     "PluginStore->GatewayDatabase",
     "PluginStore->PluginArchiveDirectory",
-    "PreparedWorkspaceChange->GatewayDatabase",
-    "SubprocessShellRuntime->GatewayOwnedWork"
+    "PreparedWorkspaceChange->GatewayDatabase"
   ],
   "tests": {
     "AppControlPlaneServiceTests.swift": "ComputerMCPControlPlaneTests",
@@ -278,8 +279,6 @@
     "ComputerUseServiceTests.swift": "ComputerMCPComputerUseTests",
     "DefaultGatewayConfigurationTests.swift": "ComputerMCPMacOSTests",
     "EmbeddedCLIInstallerTests.swift": "ComputerMCPControlPlaneTests",
-    "ExecutableInspectionTests.swift": "ComputerMCPPlatformDarwinTests",
-    "ExternalProviderDiscoveryTests.swift": "ComputerMCPProcessTests",
     "GatewayConstructionTests.swift": "ComputerMCPGatewayTests",
     "GatewayControlSessionTests.swift": "ComputerMCPGatewayTests",
     "GatewayDatabaseTests.swift": "ComputerMCPGatewayTests",
@@ -343,7 +342,6 @@
     "MCPUpstreamCancellationTests.swift": "ComputerMCPGatewayTests",
     "MCPValueBridgeTests.swift": "ComputerMCPDownstreamTests",
     "MCPWorkspaceTests.swift": "ComputerMCPGatewayTests",
-    "ManagedCommandRunnerTests.swift": "ComputerMCPProcessTests",
     "NativeCLITreeIntegrationTests.swift": "ComputerMCPGatewayTests",
     "OpenAITunnelSupervisorTests.swift": "ComputerMCPTunnelsTests",
     "OperationApprovalPreviewTests.swift": "ComputerMCPGatewayTests",
@@ -366,7 +364,6 @@
     "StandaloneToolCommandTests.swift": "ComputerMCPControlPlaneTests",
     "StaticPluginCatalogHTTPTests.swift": "ComputerMCPPluginsTests",
     "StaticPluginCatalogTests.swift": "ComputerMCPPluginsTests",
-    "SubprocessProcessRegistryTests.swift": "ComputerMCPProcessTests",
     "SystemNetworkProxySettingsTests.swift": "ComputerMCPTunnelsTests",
     "TestFixtures.swift": "ComputerMCPGatewayTests",
     "VerificationScriptDependencyTests.swift": "ComputerMCPControlPlaneTests",

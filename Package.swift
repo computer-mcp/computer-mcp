@@ -11,6 +11,9 @@ let cryptoDependency: Package.Dependency =
 let tomlDependency: Package.Dependency =
   .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0")
 
+let yamsDependency: Package.Dependency =
+  .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0")
+
 let grdbDependency: Package.Dependency =
   .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0")
 
@@ -67,6 +70,20 @@ let neutralTargets: [Target] =
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
       ]
     ),
+    .target(
+      name: "ComputerMCPToolsStructured",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        .product(name: "TOML", package: "swift-toml"),
+        .product(name: "Yams", package: "Yams"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsStructuredTests",
+      dependencies: [
+        "ComputerMCPToolsStructured", "ComputerMCPToolKit", "ComputerMCPCore",
+        "ComputerMCPConfiguration",
+        "ComputerMCPPlatform", "ComputerMCPTestSupport",
+      ]),
     .target(
       name: "ComputerMCPToolsGit",
       dependencies: [
@@ -229,7 +246,7 @@ let neutralTargets: [Target] =
       subprocessDependency,
       cryptoDependency,
       grdbDependency,
-      .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
+      yamsDependency,
       tomlDependency,
       systemDependency,
       mcpDependency,
@@ -248,6 +265,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsShell",
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
+          "ComputerMCPToolsStructured",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
@@ -258,6 +276,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCP",
         dependencies: [
+          "ComputerMCPToolsStructured",
           "ComputerMCPDownstream",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
@@ -319,11 +338,18 @@ let neutralTargets: [Target] =
         ]
       ),
       .testTarget(
+        name: "ComputerMCPToolsStructuredDarwinTests",
+        dependencies: [
+          "ComputerMCPToolsStructured", "ComputerMCPToolKit", "ComputerMCPCore",
+          "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+        ]),
+      .testTarget(
         name: "ComputerMCPTests",
         dependencies: [
           "ComputerMCPToolsShell",
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
+          "ComputerMCPToolsStructured",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",
@@ -355,7 +381,7 @@ let neutralTargets: [Target] =
     name: "computer-mcp",
     dependencies: [
       cryptoDependency, grdbDependency, nioDependency, subprocessDependency, systemDependency,
-      tomlDependency, loggingDependency, mcpDependency,
+      tomlDependency, yamsDependency, loggingDependency, mcpDependency,
     ],
     targets: neutralTargets
   )

@@ -4,7 +4,11 @@ import Foundation
 import TOML
 import Yams
 
-extension GatewayToolRegistry {
+#if canImport(FoundationXML)
+  import FoundationXML
+#endif
+
+extension StructuredToolProvider {
   internal func readJSON(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
     let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
@@ -1014,12 +1018,11 @@ extension GatewayToolRegistry {
       LIMIT \(maxEntries + 1);
       """
 
-    let result = try commandRunner.run(
-      executable: "/usr/bin/sqlite3",
-      arguments: ["-batch", "-readonly", "-json", url.path, sql],
-      workingDirectory: configuration.workspaceDirectory,
-      environment: [:],
-      timeoutMilliseconds: timeout,
+    let result = try environment.registeredCommands.runRegisteredCLI(
+      command: environment.registeredCommands.sqliteCLICommand(),
+      args: ["-batch", "-readonly", "-json", url.path, sql],
+      timeout: timeout,
+      requireArbitraryArgs: false,
       maxOutputBytes: maxOutputBytes
     )
 
@@ -1113,12 +1116,11 @@ extension GatewayToolRegistry {
       executableSQL = readonlyQuery.sql
     }
 
-    let result = try commandRunner.run(
-      executable: "/usr/bin/sqlite3",
-      arguments: ["-batch", "-readonly", "-json", url.path, executableSQL],
-      workingDirectory: configuration.workspaceDirectory,
-      environment: [:],
-      timeoutMilliseconds: timeout,
+    let result = try environment.registeredCommands.runRegisteredCLI(
+      command: environment.registeredCommands.sqliteCLICommand(),
+      args: ["-batch", "-readonly", "-json", url.path, executableSQL],
+      timeout: timeout,
+      requireArbitraryArgs: false,
       maxOutputBytes: maxOutputBytes
     )
 
@@ -1759,7 +1761,7 @@ extension GatewayToolRegistry {
     }
   }
 
-  internal func parseStructuredValue(
+  package func parseStructuredValue(
     data: Data,
     format: String,
     path: String,
@@ -2064,9 +2066,14 @@ private struct DynamicCodingKey: CodingKey {
   }
 }
 
-internal struct StructuredDocument {
-  var value: JSONValue
-  var metadata: JSONValue
+package struct StructuredDocument {
+  package var value: JSONValue
+  package var metadata: JSONValue
+
+  package init(value: JSONValue, metadata: JSONValue) {
+    self.value = value
+    self.metadata = metadata
+  }
 }
 
 private struct StructuredSelection {

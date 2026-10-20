@@ -1,10 +1,14 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPToolKit
+import ComputerMCPToolsStructured
 import Foundation
-import Yams
 
 extension GatewayToolRegistry {
+  private var structured: StructuredToolProvider {
+    StructuredToolProvider(environment: ToolEnvironment(configuration: configuration))
+  }
+
   internal func requireSkillsEnabled() throws {
     guard configuration.skills.enabled else {
       throw GatewayToolError.disabled("skills tools are disabled by configuration.")
@@ -292,7 +296,7 @@ extension GatewayToolRegistry {
       throw GatewayToolError.invalidArguments(
         "max_bytes must be less than or equal to skills.max_bytes_per_skill.")
     }
-    let formats = try markdownFrontmatterFormats(requestedFormat)
+    let formats = try structured.markdownFrontmatterFormats(requestedFormat)
 
     let skill = try resolveSkill(name: name, rootID: rootID)
     let file = try resolveSkillFilePath(skill: skill, relativePath: relativePath)
@@ -311,7 +315,7 @@ extension GatewayToolRegistry {
     }
     let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     guard let firstLine = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines),
-      let opening = markdownFrontmatterOpening(firstLine, allowedFormats: formats)
+      let opening = structured.markdownFrontmatterOpening(firstLine, allowedFormats: formats)
     else {
       return skillFrontmatterPayload(
         skill: skill,
@@ -341,7 +345,7 @@ extension GatewayToolRegistry {
     }
 
     let closingIndex = lines.dropFirst().enumerated().first { _, line in
-      markdownFrontmatterClosing(
+      structured.markdownFrontmatterClosing(
         line.trimmingCharacters(in: .whitespacesAndNewlines),
         format: opening.format
       )
@@ -387,7 +391,7 @@ extension GatewayToolRegistry {
       parseError = decoded.parseError
     } else {
       do {
-        parsedDocument = try parseStructuredValue(
+        parsedDocument = try structured.parseStructuredValue(
           data: rawData,
           format: opening.format,
           path: relativePath,
@@ -918,7 +922,7 @@ extension GatewayToolRegistry {
 
     for (index, line) in lines.enumerated() {
       let trimmed = line.trimmingCharacters(in: .whitespaces)
-      if markdownFenceToggleLine(trimmed) {
+      if structured.markdownFenceToggleLine(trimmed) {
         insideFence.toggle()
         continue
       }
@@ -1075,7 +1079,7 @@ extension GatewayToolRegistry {
         "Skill Markdown file is not valid UTF-8: \(relativePath)")
     }
 
-    let tables = markdownTablesInContent(text, includeCodeBlocks: includeCodeBlocks)
+    let tables = structured.markdownTablesInContent(text, includeCodeBlocks: includeCodeBlocks)
     let returnedTables = Array(tables.prefix(maxTables))
     let tableResultTruncated = tables.count > returnedTables.count
     let rowTruncatedCount = returnedTables.filter { $0.rows.count > maxRowsPerTable }.count
@@ -1148,7 +1152,7 @@ extension GatewayToolRegistry {
         "Skill Markdown file is not valid UTF-8: \(relativePath)")
     }
 
-    let links = markdownLinksInContent(
+    let links = structured.markdownLinksInContent(
       text,
       sourceURL: file,
       includeImages: includeImages,
@@ -1156,7 +1160,7 @@ extension GatewayToolRegistry {
       includeAutolinks: includeAutolinks,
       includeCodeBlocks: includeCodeBlocks
     )
-    let definitions = markdownReferenceDefinitions(links)
+    let definitions = structured.markdownReferenceDefinitions(links)
     let returnedLinks = Array(links.prefix(maxLinks))
     let resultTruncated = links.count > returnedLinks.count
     let skillLinks = returnedLinks.map {
@@ -1237,7 +1241,7 @@ extension GatewayToolRegistry {
     guard link.kind == "reference_link" || link.kind == "reference_image" else {
       return nil
     }
-    let key = markdownReferenceKey(link.referenceLabel ?? link.label ?? "")
+    let key = structured.markdownReferenceKey(link.referenceLabel ?? link.label ?? "")
     return definitions[key]?.destination
   }
 
@@ -1248,7 +1252,7 @@ extension GatewayToolRegistry {
     skill: SkillInfo,
     definitions: [String: MarkdownLinkInfo]
   ) -> JSONValue {
-    let key = markdownReferenceKey(link.referenceLabel ?? link.label ?? "")
+    let key = structured.markdownReferenceKey(link.referenceLabel ?? link.label ?? "")
     let definition = definitions[key]
     let resolvedDestination = skillMarkdownResolvedDestination(link: link, definitions: definitions)
     let resolvedViaReferenceDefinition =
@@ -1354,7 +1358,7 @@ extension GatewayToolRegistry {
         "Skill Markdown file is not valid UTF-8: \(relativePath)")
     }
 
-    let links = markdownLinksInContent(
+    let links = structured.markdownLinksInContent(
       content,
       sourceURL: file,
       includeImages: includeImages,
@@ -1362,7 +1366,7 @@ extension GatewayToolRegistry {
       includeAutolinks: includeAutolinks,
       includeCodeBlocks: includeCodeBlocks
     )
-    let definitions = markdownReferenceDefinitions(links)
+    let definitions = structured.markdownReferenceDefinitions(links)
     let linksToCheck = links.filter {
       includeReferenceDefinitions || $0.kind != "reference_definition"
     }
@@ -1468,7 +1472,7 @@ extension GatewayToolRegistry {
     var referenceDefinitionLine: Int?
 
     if resolvedDestination == nil, link.kind == "reference_link" || link.kind == "reference_image" {
-      let key = markdownReferenceKey(link.referenceLabel ?? link.label ?? "")
+      let key = structured.markdownReferenceKey(link.referenceLabel ?? link.label ?? "")
       if let definition = definitions[key] {
         resolvedDestination = definition.destination
         resolvedViaReferenceDefinition = true
@@ -1669,7 +1673,7 @@ extension GatewayToolRegistry {
 
     let scan: MarkdownAnchorScanResult
     do {
-      scan = try markdownAnchorScan(url: targetURL, maxBytes: maxTargetBytes)
+      scan = try structured.markdownAnchorScan(url: targetURL, maxBytes: maxTargetBytes)
     } catch {
       return SkillMarkdownLinkCheckResult(
         link: link,
@@ -1688,7 +1692,7 @@ extension GatewayToolRegistry {
       )
     }
 
-    let normalizedFragment = markdownAnchorKey(fragment)
+    let normalizedFragment = structured.markdownAnchorKey(fragment)
     let fragmentFound = scan.anchors.contains(normalizedFragment)
     if fragmentFound {
       return SkillMarkdownLinkCheckResult(
@@ -1770,11 +1774,11 @@ extension GatewayToolRegistry {
         targetInsideSkill: true
       )
     }
-    if let scheme = markdownDestinationScheme(normalized) {
+    if let scheme = structured.markdownDestinationScheme(normalized) {
       return SkillMarkdownLinkTargetInfo(kind: scheme == "mailto" ? "email" : "url", scheme: scheme)
     }
 
-    let split = markdownDestinationPathAndFragment(normalized)
+    let split = structured.markdownDestinationPathAndFragment(normalized)
     let targetURL: URL
     let kind: String
     if split.path.hasPrefix("/") {
@@ -2735,7 +2739,7 @@ extension GatewayToolRegistry {
 
   private func decodeSkillFrontmatterYAML(_ raw: String) -> DecodedSkillFrontmatter {
     do {
-      let document = try parseStructuredValue(
+      let document = try structured.parseStructuredValue(
         data: Data(raw.utf8),
         format: "yaml",
         path: "SKILL.md",

@@ -9,6 +9,7 @@ import ComputerMCPToolKit
 import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
 import ComputerMCPToolsShell
+import ComputerMCPToolsStructured
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
   package init() {}
@@ -27,11 +28,12 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
     let environment = ToolEnvironment(
       configuration: configuration, commandRunner: commandRunner,
       processManager: processManager, shellManager: shellManager,
-      mediaInspector: DarwinMediaInspector())
+      mediaInspector: DarwinMediaInspector(),
+      sqliteCommand: .init(id: "sqlite3", executable: "/usr/bin/sqlite3"))
     let cli = CLIToolProvider(environment: environment)
     let providers: [any GatewayToolProvider] = [
       GitToolProvider(environment: environment), cli, ProcessToolProvider(environment: environment),
-      ShellToolProvider(environment: environment),
+      ShellToolProvider(environment: environment), StructuredToolProvider(environment: environment),
     ]
     let computerUse = ComputerUseGatewayProvider()
     return (

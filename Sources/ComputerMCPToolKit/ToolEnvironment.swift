@@ -21,7 +21,8 @@ package struct ToolEnvironment: Sendable {
     processManager: any ProcessManaging = ManagedProcessRegistry(),
     shellManager: any ShellManaging = SubprocessShellRuntime(),
     environment: [String: String] = ProcessInfo.processInfo.environment,
-    mediaInspector: (any MediaInspector)? = nil
+    mediaInspector: (any MediaInspector)? = nil,
+    sqliteCommand: CLICommandConfig? = nil
   ) {
     self.configuration = configuration
     let toolMeta: JSONValue? =
@@ -31,7 +32,8 @@ package struct ToolEnvironment: Sendable {
     let commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
     self.commandRunner = commandRunner
     self.registeredCommands = RegisteredCommands(
-      configuration: configuration, commandRunner: commandRunner, environment: environment)
+      configuration: configuration, commandRunner: commandRunner, environment: environment,
+      sqliteCommand: sqliteCommand)
     self.environment = environment
     self.processManager = processManager
     self.shellManager = shellManager

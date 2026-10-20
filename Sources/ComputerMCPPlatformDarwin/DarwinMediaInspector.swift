@@ -214,6 +214,7 @@ package struct DarwinMediaInspector: MediaInspector {
       }
       return .object([
         "type": .string("data"),
+        "size_bytes": .integer(Int64(data.count)),
         "base64_prefix": .string(Data(bounded).base64EncodedString()),
         "truncated": .bool(data.count > maxBytes),
       ])

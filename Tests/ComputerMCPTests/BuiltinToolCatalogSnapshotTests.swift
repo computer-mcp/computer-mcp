@@ -6,6 +6,7 @@ import ComputerMCPToolKit
 import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
 import ComputerMCPToolsShell
+import ComputerMCPToolsStructured
 import Foundation
 import Testing
 
@@ -58,6 +59,7 @@ struct BuiltinToolCatalogSnapshotTests {
       configuration: .fixture(
         policy: .init(shellEnabled: true),
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities)))
+    definitions += try StructuredToolProvider(environment: environment).definitions()
     definitions += try GitToolProvider(environment: environment).definitions()
     definitions += try CLIToolProvider(environment: environment).definitions()
     definitions += try ProcessToolProvider(environment: environment).definitions()

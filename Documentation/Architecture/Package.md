@@ -52,6 +52,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |
 | `Sources/ComputerMCPTunnels/` | Platform-neutral OpenAI tunnel launch planning and supervision, Cloudflare runtime values, the HTTP origin lifecycle contract and system proxy settings parsing |
+| `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction and staging, and system network proxy lookup |
@@ -70,15 +71,16 @@ package product and does not install or bundle vendor binaries.
 
 `GatewayToolRegistry` retains configuration, runtime ownership and tool dispatch.
 Its domain extensions contain the CLI, MCP, process, shell, skills,
-workspace, file, structured-data, Git and platform implementations. The catalog
+workspace, file, structured-data and platform implementations. The catalog
 extension owns tool schemas and annotations. `ComputerMCPToolKit` owns shared
 argument/result helpers, `WorkspaceScope` path checks and file metadata, and
 `RegisteredCommands` resolution and execution with its CLI process lifecycle.
 `ToolEnvironment` shares a workspace's configuration, scope, command execution,
 environment and process/shell runtimes across providers; the host owns shutdown.
 `MCPTool` and `DownstreamMCPClient` own their definitions
-and client contract. Domain providers route through this registry and share its
-runtime lifecycle.
+and client contract. `GitToolProvider` owns Git definitions and dispatch using the shared tool
+environment. The composition root registers it alongside the remaining registry
+providers, which retain the shared runtime lifecycle.
 
 The release scripts assemble the SwiftPM App executable and embedded CLI into a
 standard `.app`, sign both code objects, and package the bundle in a DMG. The

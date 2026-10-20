@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 

@@ -5,6 +5,7 @@ import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPToolKit
+import ComputerMCPToolsGit
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
   package init() {}
@@ -25,7 +26,9 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
         toolEnvironment: environment,
         mcpClient: mcpClient,
         hostContext: hostContext),
-      additionalProviders: [ComputerUseGatewayProvider()]
+      additionalProviders: [
+        GitToolProvider(environment: environment), ComputerUseGatewayProvider(),
+      ]
     )
   }
 }

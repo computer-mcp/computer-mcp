@@ -1,4 +1,5 @@
 import ComputerMCPDownstream
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 

@@ -189,7 +189,6 @@
     "^GatewayHTTPRuntime": "ComputerMCPGateway",
     "^ComputerUse": "ComputerMCPComputerUse",
     "^GatewayToolRegistry\\+Skills": "ComputerMCPToolsSkills",
-    "^GatewayToolRegistry\\+Git": "ComputerMCPToolsGit",
     "^GatewayToolRegistry\\+(System|Network|MacOS)": "ComputerMCPToolsSystem",
     "^GatewayToolRegistry\\+(StructuredData|Markdown|Media)": "ComputerMCPToolsStructured",
     "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
@@ -330,7 +329,6 @@
     "StandaloneToolCommandTests.swift": "ComputerMCPControlPlaneTests",
     "StaticPluginCatalogHTTPTests.swift": "ComputerMCPPluginsTests",
     "StaticPluginCatalogTests.swift": "ComputerMCPPluginsTests",
-    "TestFixtures.swift": "ComputerMCPGatewayTests",
     "VerificationScriptDependencyTests.swift": "ComputerMCPControlPlaneTests",
     "WorkspaceRepairTests.swift": "ComputerMCPGatewayTests"
   }

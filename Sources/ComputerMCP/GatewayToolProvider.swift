@@ -69,7 +69,6 @@ internal enum GatewayToolDomain: String, CaseIterable, Sendable {
     {
       return .structured
     }
-    if name.hasPrefix("git.") { return .git }
     if name.hasPrefix("system.") || name.hasPrefix("logs.") || name.hasPrefix("service.")
       || name.hasPrefix("env.")
     {
@@ -166,11 +165,25 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
       source: {
         // The host catalog is built independently of any caller invocation.
         let definitions = try registry.definitions(context: .empty)
-        return GatewayToolDomain.allCases.map { domain in
-          GatewayDomainToolProvider(
-            id: domain.rawValue, registry: registry,
-            definitions: definitions.filter { GatewayToolDomain.classify($0.tool.name) == domain })
-        } + (try registry.cliTreeProviders()) + additionalProviders
+        let providers =
+          GatewayToolDomain.allCases.compactMap { domain -> (any GatewayToolProvider)? in
+            let definitions = definitions.filter {
+              GatewayToolDomain.classify($0.tool.name) == domain
+            }
+            guard !definitions.isEmpty else { return nil }
+            return GatewayDomainToolProvider(
+              id: domain.rawValue, registry: registry, definitions: definitions)
+          } + (try registry.cliTreeProviders()) + additionalProviders
+        // Provider IDs define the host catalog order; extra providers retain their source order.
+        let order = Dictionary(
+          uniqueKeysWithValues: GatewayToolDomain.allCases.enumerated().map {
+            ($0.element.rawValue, $0.offset)
+          })
+        return providers.enumerated().sorted {
+          let left = order[$0.element.id] ?? order.count
+          let right = order[$1.element.id] ?? order.count
+          return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
       },
       invalidations: registry.toolChanges(context: .empty),
       refreshInterval: registry.hasReexportedMCPServers || registry.hasCLITrees

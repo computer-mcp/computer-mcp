@@ -1,6 +1,8 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPToolsGit
 import Foundation
 import Testing
 
@@ -10,14 +12,19 @@ import Testing
 
 struct BuiltinToolCatalogSnapshotTests {
   @Test
-  func builtinDefinitionsDeclareMatchingCapabilityIDs() {
-    let definitions = GatewayToolRegistry.gatewayDefinitions(
+  func builtinDefinitionsDeclareMatchingCapabilityIDs() throws {
+    var definitions = GatewayToolRegistry.gatewayDefinitions(
       shellEnabled: true,
       builtins: Set(DefaultGatewayConfiguration.enabledBuiltinCapabilities),
       skillsEnabled: true,
       hasCLIProviders: true,
       hasMCPProviders: true,
       toolMeta: nil)
+
+    let environment = ToolEnvironment(
+      configuration: .fixture(
+        builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities)))
+    definitions += try GitToolProvider(environment: environment).definitions()
 
     #expect(definitions.count == 239)
     #expect(Set(definitions.map(\.tool.name)).count == definitions.count)

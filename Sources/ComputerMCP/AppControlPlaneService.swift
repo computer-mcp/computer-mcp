@@ -62,7 +62,7 @@ package actor AppControlPlaneService {
 
   let database: GatewayDatabase
   let manifestStore: AtomicManifestStore
-  let secretStore: KeychainSecretStore
+  let secretStore: any SecretStore
   private let openAITunnelSupervisor: OpenAITunnelSupervisor
   private let providerDiscovery: any ControlPlaneProviderDiscovering
   private let launchAtLoginController: any LaunchAtLoginControlling
@@ -91,7 +91,7 @@ package actor AppControlPlaneService {
     directories: AppControlPlaneServiceDirectories,
     database: GatewayDatabase,
     manifestStore: AtomicManifestStore,
-    secretStore: KeychainSecretStore,
+    secretStore: any SecretStore,
     openAITunnelSupervisor: OpenAITunnelSupervisor,
     gatewayExecutablePath: String = "computer-mcp",
     providerDiscovery: (any ControlPlaneProviderDiscovering)? = nil,
@@ -1168,11 +1168,11 @@ package actor AppControlPlaneService {
   private static let desiredOpenAITunnelsSettingKey = "desired-running-openai-tunnels"
 
   func keychainContainsSecret(_ reference: SecretReference) async throws -> Bool {
-    try await secretStore.containsAsynchronously(reference)
+    try await secretStore.containsAsynchronously(reference, authenticationUI: .fail)
   }
 
   func keychainSecretValue(for reference: SecretReference) async throws -> String? {
-    try await secretStore.valueAsynchronously(for: reference)
+    try await secretStore.valueAsynchronously(for: reference, authenticationUI: .allow)
   }
 
   func setKeychainSecret(_ value: String, for reference: SecretReference) async throws {

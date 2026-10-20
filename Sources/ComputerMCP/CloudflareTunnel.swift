@@ -7,7 +7,6 @@ import ComputerMCPTunnels
 import CryptoKit
 import Darwin
 import Foundation
-import Security
 
 extension AppControlPlaneService {
   package func cloudflareTunnelConfigurations() throws -> [CloudflareTunnelConfiguration] {
@@ -69,7 +68,7 @@ extension AppControlPlaneService {
     }
     let generatedAccessToken =
       regenerateAccessToken || existingAccessToken == nil
-      ? try Self.secureRandomToken() : nil
+      ? Self.secureRandomToken() : nil
     do {
       if let tunnelToken {
         try await setKeychainSecret(tunnelToken, for: profile.tunnelTokenReference)
@@ -523,11 +522,9 @@ extension AppControlPlaneService {
     cloudflareRuntimes[profileID] = current
   }
 
-  private static func secureRandomToken() throws -> String {
-    var bytes = [UInt8](repeating: 0, count: 32)
-    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-      throw CloudflareTunnelError.processLaunchFailed("secure random generation failed")
-    }
+  private static func secureRandomToken() -> String {
+    var generator = SystemRandomNumberGenerator()
+    let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
     return Data(bytes).base64EncodedString()
   }
 

@@ -173,7 +173,19 @@
   "files": {},
   "cuts": [],
   "tests": {
-    "BuiltinToolCatalogSnapshotTests.swift": "ComputerMCPTests",
-    "VerificationScriptDependencyTests.swift": "ComputerMCPTests"
+    "BuiltinToolCatalogSnapshotTests.swift": "ComputerMCPMacOSTests",
+    "VerificationScriptDependencyTests.swift": "ComputerMCPMacOSTests",
+    "ClientAccessTests.swift": "ComputerMCPAppTests",
+    "ComputerMCPAppModelTests.swift": "ComputerMCPAppTests",
+    "LiveAppControlPlaneTests.swift": "ComputerMCPAppTests",
+    "MCPRegistrationModelTests.swift": "ComputerMCPAppTests",
+    "OperationApprovalDetailsTests.swift": "ComputerMCPAppTests",
+    "PermissionCoachWindowTests.swift": "ComputerMCPAppTests",
+    "PluginCatalogModelTests.swift": "ComputerMCPAppTests",
+    "PluginDoctorModelTests.swift": "ComputerMCPAppTests",
+    "PluginManagementTests.swift": "ComputerMCPAppTests",
+    "PluginReleaseTests.swift": "ComputerMCPAppTests",
+    "ProfilePermissionsTests.swift": "ComputerMCPAppTests",
+    "WorkspaceOpenPanelTests.swift": "ComputerMCPAppTests"
   }
 }

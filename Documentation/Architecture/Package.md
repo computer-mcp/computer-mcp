@@ -73,7 +73,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
 | `Resources/ComputerMCPApp/` | Bundle metadata, entitlements and the imported App icon document |
-| `Tests/` | Swift Testing component, policy, transport, App, and provider tests; an extracted target's tests are in `Tests/<Target>Tests/`, the shared target's in `Tests/ComputerMCPTests/` |
+| `Tests/` | Swift Testing component, policy, transport, App, and provider tests in `Tests/<Target>Tests/` |
 | `Tests/ComputerMCPTestSupport/` | Neutral helpers shared by test targets; package checks reject any non-test target that depends on it |
 | `Tools/Validation/` | Independent Test Case catalog, probes, fixtures, evidence correlation, and reports |
 | `Sources/ComputerMCPGateway/ComputerMCPGateway.docc/` | Internal target documentation |
@@ -103,9 +103,8 @@ recovery driver. `ComputerMCPGatewayDarwinTests` covers macOS artifact-provenanc
 scripts. `ComputerMCPControlPlaneTests` covers neutral control-plane behavior;
 `ComputerMCPControlPlaneDarwinTests` covers native control sockets and Computer Use
 control-error integration. Control-plane tests assembled through the macOS
-composition root run in `ComputerMCPMacOSTests`. `ComputerMCPTests` retains the
-builtin catalog snapshot and verification-script dependency checks, with their
-fixtures.
+composition root, the builtin catalog snapshot and verification-script dependency
+checks run in `ComputerMCPMacOSTests`, alongside their fixtures.
 
 `ComputerMCPControlPlane` depends on the gateway and lower neutral targets.
 Its service accepts Platform's `SecretStore`, login item controller and Computer

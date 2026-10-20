@@ -270,6 +270,54 @@ struct DeliveryToolProviderTests {
   }
 
   @Test(arguments: [false, true])
+  func squashMergeOptionsStillFastForward(rebased: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      try fixture.git(["config", "branch.main.mergeOptions", "--squash --no-commit"])
+      try fixture.git(["config", "merge.ff", "false"])
+      if rebased { try fixture.advanceDuringCommit() }
+      let result = try fixture.apply()
+      #expect(result["state"] == .string("merged"))
+      #expect(result["branch"] == nil && result["reason"] == nil)
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == result["commit"]?.stringValue)
+      #expect(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+      #expect(try fixture.read("notes/log.md") == "beta\nstable\n")
+      #expect(try fixture.journals().first?.merged == true)
+      try fixture.assertClean()
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func successfulMergeWithoutHeadAdvancementRetainsBranch(rebased: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      if rebased { try fixture.advanceDuringCommit() }
+      let wrapper = fixture.temporary.url.appendingPathComponent("git-wrapper")
+      let script = """
+        #!\(try testExecutable("sh"))
+        if test "$1" = merge; then exit 0; fi
+        exec \(quote(fixture.executable)) "$@"
+        """
+      try Data(script.utf8).write(to: wrapper)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+      var configuration = fixture.tools().configuration
+      configuration.cli.commands[0].executable = wrapper.path
+      let provider = DeliveryToolProvider(
+        environment: .init(configuration: configuration, environment: fixture.environment),
+        io: .init(), startsRecovery: false)
+      let result = try fixture.apply(provider: provider)
+      #expect(result["state"] == .string("committed"))
+      #expect(result["reason"] == .string("not_fast_forward"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) != result["commit"]?.stringValue)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+      #expect(try fixture.read("notes/log.md") == "alpha\nstable\n")
+      #expect(try fixture.journals().first?.merged == false)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test(arguments: [false, true])
   func rebaseAfterDefaultAdvances(conflict: Bool) async throws {
     try await deliveryTest {
 

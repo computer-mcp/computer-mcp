@@ -93,8 +93,9 @@ extension DeliveryRepository {
     try cancellation.check()
     try requireMainBranch(scope.defaultBranch)
     let merge = try git.run(
-      ["merge", "--ff-only", "refs/heads/\(journal.branch)"], at: main, accepting: [0, 1, 128])
-    if merge.exitCode == 0 {
+      ["merge", "--ff-only", "--no-squash", "--no-edit", "refs/heads/\(journal.branch)"], at: main,
+      accepting: [0, 1, 128])
+    if merge.exitCode == 0, try git.revision("HEAD", at: main) == journal.commit {
       journal.merged = true
       journal.state = .merged
       return
@@ -102,6 +103,11 @@ extension DeliveryRepository {
     guard let currentDefault = try git.revision("refs/heads/\(scope.defaultBranch)", at: root),
       currentDefault != journal.base
     else {
+      if merge.exitCode == 0 {
+        journal.state = .committed
+        journal.reason = .notFastForward
+        return
+      }
       throw DeliveryFailure(
         reason: .gitFailed, detail: "Fast-forward merge failed.", exitCode: merge.exitCode,
         stderr: merge.stderr)
@@ -138,8 +144,9 @@ extension DeliveryRepository {
     try cancellation.check()
     try requireMainBranch(scope.defaultBranch)
     let retry = try git.run(
-      ["merge", "--ff-only", "refs/heads/\(journal.branch)"], at: main, accepting: [0, 1, 128])
-    journal.merged = retry.exitCode == 0
+      ["merge", "--ff-only", "--no-squash", "--no-edit", "refs/heads/\(journal.branch)"], at: main,
+      accepting: [0, 1, 128])
+    journal.merged = try retry.exitCode == 0 && git.revision("HEAD", at: main) == journal.commit
     journal.state = journal.merged ? .merged : .committed
     journal.reason = journal.merged ? nil : .notFastForward
   }

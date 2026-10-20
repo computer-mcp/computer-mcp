@@ -111,7 +111,9 @@ mode also requires the main checkout to be on the default branch. The isolated
 worktree starts at the current default-branch commit. Sparse mode uses non-cone,
 exact-path sparse checkout.
 
-Land first attempts `merge --ff-only` in the main checkout. If the default branch
+Land first attempts `merge --ff-only --no-squash --no-edit` in the main checkout.
+A zero exit status counts as landed only when that checkout's `HEAD` equals the
+delivery commit, including on the retry. If the default branch
 has advanced, delivery rebases its worktree. Before retrying once, it verifies
 that the rebased diff against the new baseline changes exactly the requested
 paths and that every path remains in scope. A mismatch retains the rebased commit
@@ -178,7 +180,7 @@ Error IDs prefix these codes with `delivery.`:
 | `busy` | Repository lock wait exceeded 60 seconds |
 | `git_failed` | Git launch, timeout or command failure |
 | `commit_only` | Commit retained under commit-only mode |
-| `not_fast_forward` | Second fast-forward attempt failed |
+| `not_fast_forward` | Fast-forward retry failed or a successful merge did not leave HEAD at the delivery commit |
 | `rebase_conflict` | Rebase failed and was aborted to the saved commit |
 | `rebase_scope_changed` | Rebased diff no longer changes exactly the requested in-scope paths; branch retained |
 | `worktree_unrecognized` | Recorded worktree is not the repository's registered worktree; nonempty directory retained for inspection |

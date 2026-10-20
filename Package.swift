@@ -442,16 +442,12 @@ let neutralTargets: [Target] =
           "ComputerMCPTunnels", "ComputerMCPToolKit",
         ]
       ),
-      .target(
-        name: "ComputerMCP",
-        dependencies: ["ComputerMCPControlPlane"]
-      ),
       .executableTarget(
         name: "computer-mcp",
         dependencies: [
           "ComputerMCPPlugins", "ComputerMCPPlatformDarwin",
           "ComputerMCPToolsCLI",
-          "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway",
+          "ComputerMCPControlPlane", "ComputerMCPGateway",
           "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
@@ -469,7 +465,7 @@ let neutralTargets: [Target] =
           "ComputerMCPComputerUse",
           "ComputerMCPToolsSkills",
           "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPMacOS",
+          "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
@@ -590,7 +586,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsSystem",
           "ComputerMCPToolsMCP",
           "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPMacOS",
+          "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
@@ -608,7 +604,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCPAppTests",
         dependencies: [
           "ComputerMCPPlugins",
-          "ComputerMCPApp", "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway",
+          "ComputerMCPApp", "ComputerMCPControlPlane", "ComputerMCPGateway",
           "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",

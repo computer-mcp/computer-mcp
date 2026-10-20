@@ -101,22 +101,20 @@ struct MCPProviderWorkNativeTests {
       }
       let current = NIOLockedValueBox(policy(true))
       let authorized = AuthorizedMCPClient(
-        base: client, policy: policy(true), policyProvider: { current.withLockedValue { $0 } })
+        base: client, policy: policy(true), policyProvider: { _ in current.withLockedValue { $0 } })
       // The policy's selected tools do not change the already-connected transport config.
-      let result = try await MCPContinuationTarget.$current.withValue(target) {
-        try await authorized.callToolAsync(
-          server: server, name: "inspect", arguments: arguments, requestID: nil)
-      }
+      let result = try await authorized.callToolAsync(
+        server: server, name: "inspect", arguments: arguments, requestID: nil,
+        context: .init(continuation: target))
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["pid"] == started.objectValue?["pid"]
       )
       let revoked = policy(false)
       current.withLockedValue { $0 = revoked }
       await #expect(throws: GatewayToolError.self) {
-        try await MCPContinuationTarget.$current.withValue(target) {
-          try await authorized.callToolAsync(
-            server: server, name: "inspect", arguments: arguments, requestID: nil)
-        }
+        try await authorized.callToolAsync(
+          server: server, name: "inspect", arguments: arguments, requestID: nil,
+          context: .init(continuation: target))
       }
       _ = try await call(client, server, "finish")
       try await wait { work.snapshot.isEmpty }
@@ -126,20 +124,54 @@ struct MCPProviderWorkNativeTests {
       #expect(target.connectionID == next.connectionID && target.instanceID == next.instanceID)
       #expect(target.resources != next.resources)
       await #expect(throws: GatewayToolError.self) {
-        try await MCPContinuationTarget.$current.withValue(target) {
-          try await client.callToolAsync(
-            server: server, name: "inspect", arguments: arguments, requestID: nil)
-        }
-      }
-      let inspected = try await MCPContinuationTarget.$current.withValue(next) {
         try await client.callToolAsync(
-          server: server, name: "inspect", arguments: arguments, requestID: nil)
+          server: server, name: "inspect", arguments: arguments, requestID: nil,
+          context: .init(continuation: target))
       }
+      let inspected = try await client.callToolAsync(
+        server: server, name: "inspect", arguments: arguments, requestID: nil,
+        context: .init(continuation: next))
       #expect(
         inspected.objectValue?["structuredContent"]?.objectValue?["call_count"] == .integer(5))
       #expect(
         inspected.objectValue?["structuredContent"]?.objectValue?["pid"]
           == started.objectValue?["pid"])
+      _ = try await call(client, server, "finish")
+      try await wait { work.snapshot.isEmpty }
+    }
+  }
+
+  @Test(arguments: ["status", "events", "requests", "cancel"])
+  func existingConnectionRevalidatesSelectedOwnerInsideDetachedBridge(operation: String)
+    async throws
+  {
+    try await withProvider { client, server, work in
+      let started = try await call(client, server, "start")
+      try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
+      var selected = try continuationTarget(
+        work, server: server, arguments: .object(["handle": .integer(9_007_199_254_740_993)]))
+      selected.selectedOwnershipID = UUID()
+      let context = InvocationContext(continuation: selected)
+      let blocking = BlockingOperationExecutor(label: "selected-owner-test")
+      do {
+        _ = try await blocking.perform {
+          switch operation {
+          case "status": return try client.connectionStatus(server: server, context: context)
+          case "events":
+            return try client.readEvents(
+              server: server, afterCursor: 0, maxResults: 10, context: context)
+          case "requests": return try client.activeRequests(server: server, context: context)
+          default:
+            return try client.cancelRequest(
+              server: server, requestID: "unknown", reason: nil, context: context)
+          }
+        }
+        Issue.record("A nonexistent selected owner reached an existing connection operation.")
+      } catch {
+        #expect(error.localizedDescription.contains("mcp.continuation_unavailable"))
+      }
+      let inspected = try await call(client, server, "inspect")
+      #expect(inspected.objectValue?["pid"] == started.objectValue?["pid"])
       _ = try await call(client, server, "finish")
       try await wait { work.snapshot.isEmpty }
     }
@@ -158,26 +190,22 @@ struct MCPProviderWorkNativeTests {
       let changed = replacement
       await #expect(throws: GatewayToolError.self) {
         try await blocking.perform {
-          try MCPContinuationTarget.$current.withValue(target) {
-            try client.listTools(server: changed)
-          }
+          try client.listTools(server: changed, context: .init(continuation: target))
         }
       }
       let unchanged = try await call(client, server, "inspect")
       #expect(unchanged.objectValue?["pid"] == started.objectValue?["pid"])
       try await withProvider { other, otherServer, _ in
         await #expect(throws: GatewayToolError.self) {
-          try await MCPContinuationTarget.$current.withValue(target) {
-            try await other.callToolAsync(
-              server: otherServer, name: "inspect", arguments: arguments, requestID: nil)
-          }
+          try await other.callToolAsync(
+            server: otherServer, name: "inspect", arguments: arguments, requestID: nil,
+            context: .init(continuation: target))
         }
         await #expect(throws: GatewayToolError.self) {
           try await blocking.perform {
-            try MCPContinuationTarget.$current.withValue(target) {
-              try other.startToolCall(
-                server: otherServer, name: "inspect", arguments: arguments, requestID: "detached")
-            }
+            try other.startToolCall(
+              server: otherServer, name: "inspect", arguments: arguments, requestID: "detached",
+              context: .init(continuation: target))
           }
         }
         let script = try #require(otherServer.args.first)
@@ -290,7 +318,8 @@ struct MCPProviderWorkNativeTests {
   {
     let result = try await client.callToolAsync(
       server: server, name: name,
-      arguments: .object(["acquired_by": .string("caller-forged")]), requestID: nil)
+      arguments: .object(["acquired_by": .string("caller-forged")]), requestID: nil, context: .empty
+    )
     return result.objectValue?["structuredContent"] ?? .null
   }
 

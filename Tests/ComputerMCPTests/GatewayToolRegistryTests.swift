@@ -22273,19 +22273,21 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
   var events: JSONValue = .object(["events": .array([])])
   var activeRequestPayload: JSONValue = .object(["requests": .array([])])
 
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     tools
   }
 
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    try callTool(server: server, name: name, arguments: arguments, requestID: nil)
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
+    try callTool(server: server, name: name, arguments: arguments, requestID: nil, context: context)
   }
 
   func callTool(
     server: MCPServerConfig,
     name: String,
     arguments: JSONValue,
-    requestID: String?
+    requestID: String?, context: InvocationContext
   ) throws -> JSONValue {
     calls.append(
       Call(server: server.id, tool: name, arguments: arguments, requestID: requestID)
@@ -22300,7 +22302,7 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
     server: MCPServerConfig,
     name: String,
     arguments: JSONValue,
-    requestID: String
+    requestID: String, context: InvocationContext
   ) throws -> JSONValue {
     startedCalls.append(
       Call(server: server.id, tool: name, arguments: arguments, requestID: requestID)
@@ -22314,7 +22316,9 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
     ])
   }
 
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  {
     resourceListCursors.append(cursor)
     return .object([
       "resources": .array(resources),
@@ -22322,7 +22326,9 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
     ])
   }
 
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  {
     resourceTemplateListCursors.append(cursor)
     return .object([
       "resourceTemplates": .array(resourceTemplates),
@@ -22330,14 +22336,18 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
     ])
   }
 
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue {
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  {
     resourceReadURIs.append(uri)
     return .object([
       "contents": .array(resourceContents[uri] ?? [])
     ])
   }
 
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  {
     promptListCursors.append(cursor)
     return .object([
       "prompts": .array(prompts),
@@ -22348,7 +22358,7 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
   func getPrompt(
     server: MCPServerConfig,
     name: String,
-    arguments: [String: String]?
+    arguments: [String: String]?, context: InvocationContext
   ) throws -> JSONValue {
     promptGetCalls.append(PromptGetCall(name: name, arguments: arguments))
     return promptResults[name]
@@ -22358,7 +22368,7 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
       ])
   }
 
-  func connectionStatus(server: MCPServerConfig) throws -> JSONValue {
+  func connectionStatus(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
     .object([
       "state": .string("connected"),
       "persistent_session": .bool(true),
@@ -22368,20 +22378,20 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
   func readEvents(
     server: MCPServerConfig,
     afterCursor: Int,
-    maxResults: Int
+    maxResults: Int, context: InvocationContext
   ) throws -> JSONValue {
     eventReads.append(EventRead(afterCursor: afterCursor, maxResults: maxResults))
     return events
   }
 
-  func activeRequests(server: MCPServerConfig) throws -> JSONValue {
+  func activeRequests(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
     activeRequestPayload
   }
 
   func cancelRequest(
     server: MCPServerConfig,
     requestID: String,
-    reason: String?
+    reason: String?, context: InvocationContext
   ) throws -> JSONValue {
     cancellations.append(Cancellation(requestID: requestID, reason: reason))
     return .object([

@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -14,17 +15,20 @@ struct MCPEventCursorTests {
     defer { fixture.remove() }
     let client = MCPProxyClient(workingDirectory: fixture.root)
     do {
-      let initial = try client.readEvents(server: fixture.server, afterCursor: 0, maxResults: 10)
+      let initial = try client.readEvents(
+        server: fixture.server, afterCursor: 0, maxResults: 10, context: .empty)
       #expect(initial.objectValue?["cursor_state"] == .string("not_started"))
       #expect(initial.objectValue?["session_id"] == .null)
       #expect(initial.objectValue?["missed_events"] == .null)
       #expect(initial.objectValue?["events"] == .array([]))
       #expect(throws: (any Error).self) {
-        try client.readEvents(server: fixture.server, afterCursor: 1, maxResults: 10)
+        try client.readEvents(
+          server: fixture.server, afterCursor: 1, maxResults: 10, context: .empty)
       }
       #expect(throws: (any Error).self) {
         try client.readEvents(
-          server: fixture.server, afterCursor: 0, maxResults: 10, sessionID: "old-session")
+          server: fixture.server, afterCursor: 0, maxResults: 10, sessionID: "old-session",
+          context: .empty)
       }
       #expect(!FileManager.default.fileExists(atPath: fixture.starts.path))
       await client.shutdown()
@@ -44,15 +48,18 @@ struct MCPEventCursorTests {
       // Responses drain each burst below the transport queue bound before sending more events.
       for _ in 0..<100 {
         _ = try await calls.perform {
-          try client.callTool(server: fixture.server, name: "stream", arguments: .object([:]))
+          try client.callTool(
+            server: fixture.server, name: "stream", arguments: .object([:]), context: .empty)
         }
       }
       let clock = ContinuousClock()
       let deadline = clock.now.advanced(by: .seconds(5))
-      var page = try client.readEvents(server: fixture.server, afterCursor: 0, maxResults: 7)
+      var page = try client.readEvents(
+        server: fixture.server, afterCursor: 0, maxResults: 7, context: .empty)
       while page.objectValue?["latest_event_cursor"]?.intValue ?? 0 < 701, clock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
-        page = try client.readEvents(server: fixture.server, afterCursor: 0, maxResults: 7)
+        page = try client.readEvents(
+          server: fixture.server, afterCursor: 0, maxResults: 7, context: .empty)
       }
       let object = try #require(page.objectValue)
       let sessionID = try #require(object["session_id"]?.stringValue)
@@ -66,27 +73,30 @@ struct MCPEventCursorTests {
       #expect(object["has_more"] == .bool(true))
       let next = try #require(object["next_cursor"]?.intValue)
       let verified = try client.readEvents(
-        server: fixture.server, afterCursor: next, maxResults: 500, sessionID: sessionID)
+        server: fixture.server, afterCursor: next, maxResults: 500, sessionID: sessionID,
+        context: .empty)
       #expect(verified.objectValue?["session_verified"] == .bool(true))
       #expect(verified.objectValue?["events"]?.arrayValue?.count == 500)
       #expect(verified.objectValue?["missed_events"] == .number(0))
       let tail = try client.readEvents(
         server: fixture.server,
         afterCursor: try #require(verified.objectValue?["next_cursor"]?.intValue),
-        maxResults: 500, sessionID: sessionID)
+        maxResults: 500, sessionID: sessionID, context: .empty)
       #expect(tail.objectValue?["has_more"] == .bool(false))
       #expect(tail.objectValue?["events"]?.arrayValue?.count == 5)
       let unbound = try client.readEvents(
-        server: fixture.server, afterCursor: latest, maxResults: 1)
+        server: fixture.server, afterCursor: latest, maxResults: 1, context: .empty)
       #expect(unbound.objectValue?["cursor_state"] == .string("unbound"))
       #expect(unbound.objectValue?["session_verified"] == .bool(false))
       #expect(throws: (any Error).self) {
         try client.readEvents(
-          server: fixture.server, afterCursor: Int.max, maxResults: 1, sessionID: sessionID)
+          server: fixture.server, afterCursor: Int.max, maxResults: 1, sessionID: sessionID,
+          context: .empty)
       }
       #expect(throws: (any Error).self) {
         try client.readEvents(
-          server: fixture.server, afterCursor: latest, maxResults: 501, sessionID: sessionID)
+          server: fixture.server, afterCursor: latest, maxResults: 501, sessionID: sessionID,
+          context: .empty)
       }
       #expect(try String(contentsOf: fixture.starts, encoding: .utf8) == "started\n")
       await client.shutdown()
@@ -103,17 +113,19 @@ struct MCPEventCursorTests {
     let first = MCPProxyClient(workingDirectory: fixture.root)
     let replacement = MCPProxyClient(workingDirectory: fixture.root)
     do {
-      _ = try first.listTools(server: fixture.server)
-      let original = try first.readEvents(server: fixture.server, afterCursor: 0, maxResults: 10)
+      _ = try first.listTools(server: fixture.server, context: .empty)
+      let original = try first.readEvents(
+        server: fixture.server, afterCursor: 0, maxResults: 10, context: .empty)
       let oldSession = try #require(original.objectValue?["session_id"]?.stringValue)
       let cursor = try #require(original.objectValue?["next_cursor"]?.intValue)
       await first.shutdown()
       #expect(throws: (any Error).self) {
         try replacement.readEvents(
-          server: fixture.server, afterCursor: cursor, maxResults: 10, sessionID: oldSession)
+          server: fixture.server, afterCursor: cursor, maxResults: 10, sessionID: oldSession,
+          context: .empty)
       }
       #expect(try String(contentsOf: fixture.starts, encoding: .utf8) == "started\n")
-      _ = try replacement.listTools(server: fixture.server)
+      _ = try replacement.listTools(server: fixture.server, context: .empty)
       let authorized: any DownstreamMCPClient = AuthorizedMCPClient(
         base: replacement,
         policy: .init(
@@ -123,10 +135,11 @@ struct MCPEventCursorTests {
           derivesObserveGrant: false))
       #expect(throws: (any Error).self) {
         try authorized.readEvents(
-          server: fixture.server, afterCursor: cursor, maxResults: 10, sessionID: oldSession)
+          server: fixture.server, afterCursor: cursor, maxResults: 10, sessionID: oldSession,
+          context: .empty)
       }
       let current = try authorized.readEvents(
-        server: fixture.server, afterCursor: 0, maxResults: 10, sessionID: nil)
+        server: fixture.server, afterCursor: 0, maxResults: 10, sessionID: nil, context: .empty)
       #expect(current.objectValue?["session_id"]?.stringValue != oldSession)
       #expect(try String(contentsOf: fixture.starts, encoding: .utf8) == "started\nstarted\n")
       await replacement.shutdown()

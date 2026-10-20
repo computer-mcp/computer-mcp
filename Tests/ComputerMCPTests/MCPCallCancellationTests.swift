@@ -78,12 +78,13 @@ struct MCPCallCancellationTests {
       await gate.wait()
       return try await client.callToolAsync(
         server: .init(id: "not-started", transport: .stdio, command: "/fixture/not-installed"),
-        name: "wait", arguments: .object([:]), requestID: nil)
+        name: "wait", arguments: .object([:]), requestID: nil, context: .empty)
     }
     task.cancel()
     await gate.release()
     await #expect(throws: CancellationError.self) { _ = try await task.value }
-    let status = try client.connectionStatus(server: .init(id: "not-started", transport: .stdio))
+    let status = try client.connectionStatus(
+      server: .init(id: "not-started", transport: .stdio), context: .empty)
     #expect(status.objectValue?["state"] == .string("not_started"))
     await client.shutdown()
   }

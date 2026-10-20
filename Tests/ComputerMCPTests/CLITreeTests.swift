@@ -216,7 +216,8 @@ struct CLITreeTests {
     let name = try #require(provider.definitions().first?.tool.name)
     let bytes = Data([0, 255, 13, 10, 192, 128])
     let result = try await provider.callToolAsync(
-      name: name, arguments: .object(["input": .string(bytes.base64EncodedString())]))
+      .init(
+        name: name, arguments: .object(["input": .string(bytes.base64EncodedString())])))
     #expect(Self.output(result)?["stdout"]?.objectValue?["encoding"] == .string("base64"))
     #expect(
       Self.output(result)?["stdout"]?.objectValue?["data"] == .string(bytes.base64EncodedString()))
@@ -238,7 +239,8 @@ struct CLITreeTests {
     let provider = Self.provider(command, executable: "/bin/cat")
     let name = try #require(provider.definitions().first?.tool.name)
     let result = try await provider.callToolAsync(
-      name: name, arguments: .object(["input": .string(text)]))
+      .init(
+        name: name, arguments: .object(["input": .string(text)])))
     #expect(result.objectValue?["isError"] == .bool(fails))
     #expect(Self.output(result)?["stdout"]?.objectValue?["data"] == .string(text))
     await provider.execution.shutdown()
@@ -401,7 +403,8 @@ struct CLITreeTests {
     let provider = Self.provider(command, executable: "/usr/bin/printf")
     let name = try #require(provider.definitions().first?.tool.name)
     let response = try await provider.callToolAsync(
-      name: name, arguments: .object(["values": .array([.string("example works")])]))
+      .init(
+        name: name, arguments: .object(["values": .array([.string("example works")])])))
     #expect(Self.output(response)?["stdout"]?.objectValue?["data"] == .string("example works\n"))
     await provider.execution.shutdown()
   }

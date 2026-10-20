@@ -137,14 +137,16 @@ struct MCPRiskFloorTests {
     let base = RiskCatalogClient(risk: .string("read-only"))
     base.suspendDiscovery()
     let client = AuthorizedMCPClient(
-      base: base, policy: policy(tools: true), policyProvider: { current.withLockedValue { $0 } })
+      base: base, policy: policy(tools: true),
+      policyProvider: { _ in current.withLockedValue { $0 } })
     let receipt = try client.readRequest(
-      server: server, requestID: "pending", offset: 0, maxBytes: 1024)
+      server: server, requestID: "pending", offset: 0, maxBytes: 1024, context: .empty)
     #expect(receipt.objectValue?["tool"] == .string("inspect"))
     let revoked = policy(tools: false)
     current.withLockedValue { $0 = revoked }
     do {
-      _ = try client.readRequest(server: server, requestID: "pending", offset: 0, maxBytes: 1024)
+      _ = try client.readRequest(
+        server: server, requestID: "pending", offset: 0, maxBytes: 1024, context: .empty)
       Issue.record("A revoked tool grant must deny its execution receipt.")
     } catch {
       #expect(error.localizedDescription.contains("policy.capability_denied"))
@@ -418,7 +420,7 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
   ) -> any DownstreamMCPClient {
     workingDirectory.path == scopedHighRisk ? RiskCatalogClient(risk: .string("full-shell")) : self
   }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     try state.withLockedValue { state in
       guard !state.discoverySuspended else {
         throw GatewayToolError.executionFailed("Provider is waiting for an active operation.")
@@ -442,25 +444,43 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
       ]
     }
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     state.withLockedValue { $0.calls += 1 }
     return .object(["content": .array([]), "isError": .bool(false)])
   }
-  func startToolCall(server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String)
+  func startToolCall(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String,
+    context: InvocationContext
+  )
     throws -> JSONValue
   {
-    try callTool(server: server, name: name, arguments: arguments)
+    try callTool(server: server, name: name, arguments: arguments, context: context)
   }
-  func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int) throws
+  func readRequest(
+    server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int,
+    context: InvocationContext
+  ) throws
     -> JSONValue
   {
     .object(["tool": .string("inspect"), "state": .string("running")])
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

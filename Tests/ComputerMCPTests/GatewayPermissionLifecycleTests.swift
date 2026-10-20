@@ -195,13 +195,15 @@ struct GatewayPermissionLifecycleTests {
     let reconnected = MCPProxyClient(hostContext: context(principal: "verified-first"))
     do {
       let result = try first.readRequest(
-        server: server, requestID: "owned", offset: 0, maxBytes: 4096)
+        server: server, requestID: "owned", offset: 0, maxBytes: 4096, context: .empty)
       #expect(result.objectValue?["state"] == .string("succeeded"))
       #expect(
-        try reconnected.readRequest(server: server, requestID: "owned", offset: 0, maxBytes: 4096)
+        try reconnected.readRequest(
+          server: server, requestID: "owned", offset: 0, maxBytes: 4096, context: .empty)
           == result)
       #expect(throws: (any Error).self) {
-        try second.readRequest(server: server, requestID: "owned", offset: 0, maxBytes: 4096)
+        try second.readRequest(
+          server: server, requestID: "owned", offset: 0, maxBytes: 4096, context: .empty)
       }
       await first.shutdown()
       await second.shutdown()

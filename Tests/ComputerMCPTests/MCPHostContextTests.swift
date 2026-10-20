@@ -29,7 +29,7 @@ struct MCPHostContextTests {
       id: "owned", transport: .stdio, command: "/usr/bin/touch", args: [marker.path])
     let message = try await BlockingOperationExecutor(label: "ownership-proxy-test").perform {
       do {
-        _ = try scoped.listTools(server: server)
+        _ = try scoped.listTools(server: server, context: .empty)
         return "unexpected success"
       } catch { return String(describing: error) }
     }

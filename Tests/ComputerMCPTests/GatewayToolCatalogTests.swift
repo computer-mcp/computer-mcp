@@ -629,13 +629,15 @@ private struct CatalogSingleToolFixture: GatewayToolProvider {
   func definitions() throws -> [ToolDefinition] {
     [.init(tool: tool, capability: .init(id: tool.name, risk: .externalWrite))]
   }
-  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue { .null }
+  func callTool(_ invocation: ToolInvocation) throws -> JSONValue { .null }
 }
 
 private final class CatalogSourceFixture: Sendable {
   private let state = NIOLockedValueBox(CatalogProviderFixture(names: ["sample"], revision: 1))
 
-  func providers() -> [any GatewayToolProvider] { [state.withLockedValue { $0 }] }
+  func providers() -> [any GatewayToolProvider] {
+    [state.withLockedValue { $0 }]
+  }
 
   func replace(names: [String], revision: Int, risk: CapabilityRisk = .readOnly) {
     state.withLockedValue { $0 = .init(names: names, revision: revision, risk: risk) }
@@ -662,7 +664,7 @@ private struct CatalogProviderFixture: GatewayToolProvider {
         capability: .init(id: $0, risk: risk))
     }
   }
-  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+  func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
     .number(Double(revision))
   }
 }
@@ -682,17 +684,29 @@ private final class MutableCatalogClient: DownstreamMCPClient, Sendable {
   }
   func toolChanges() -> AsyncStream<Void> { changes.stream() }
   func shutdown() async { changes.finish() }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     try state.withLockedValue { try $0.definitions().map(\.tool) }
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     .null
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }
@@ -757,7 +771,7 @@ private actor AsyncCatalogGateway: GatewayAsyncToolServing {
   private var generation: Int64 = 1
   private var waiter: CheckedContinuation<Void, Never>?
 
-  func listToolsAsync() async throws -> [MCPTool] {
+  func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
     [
       MCPTool(
         name: "read", description: "generation \(generation)",
@@ -765,7 +779,9 @@ private actor AsyncCatalogGateway: GatewayAsyncToolServing {
     ]
   }
 
-  func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+  func callToolAsync(name: String, arguments: JSONValue?, context: InvocationContext) async throws
+    -> JSONValue
+  {
     let admitted = generation
     if arguments?.objectValue?["wait"] == .bool(true) {
       entered.send()
@@ -780,7 +796,7 @@ private actor AsyncCatalogGateway: GatewayAsyncToolServing {
     ])
   }
 
-  nonisolated func toolChanges() -> AsyncStream<Void> { changes.stream() }
+  nonisolated func toolChanges(context: InvocationContext) -> AsyncStream<Void> { changes.stream() }
   func replace() {
     generation += 1
     changes.send()

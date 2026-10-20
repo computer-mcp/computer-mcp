@@ -37,12 +37,8 @@ struct GatewayControlSessionTests {
       let first = makeSession()
       let second = makeSession()
       try first.limitAccess(to: .readOnly, expectedRevision: 0)
-      let firstTools = try await GatewaySessionScope.$current.withValue(first) {
-        try await fixture.gateway.listToolsAsync()
-      }
-      let secondTools = try await GatewaySessionScope.$current.withValue(second) {
-        try await fixture.gateway.listToolsAsync()
-      }
+      let firstTools = try await fixture.gateway.listToolsAsync(context: .init(session: first))
+      let secondTools = try await fixture.gateway.listToolsAsync(context: .init(session: second))
       #expect(firstTools.contains { $0.name == "file.read" })
       #expect(!firstTools.contains { $0.name == "file.write" })
       #expect(secondTools.contains { $0.name == "file.write" })

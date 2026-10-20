@@ -52,8 +52,9 @@ struct MCPRegistrationManagementTests {
       exposure: .reexport, prefix: "manual", allowAnyTool: true, enabled: false)
     let client = MCPProxyClient()
     #expect(
-      try client.connectionStatus(server: server).objectValue?["state"] == .string("disabled"))
-    #expect(throws: (any Error).self) { try client.listTools(server: server) }
+      try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
+        == .string("disabled"))
+    #expect(throws: (any Error).self) { try client.listTools(server: server, context: .empty) }
     let registry = GatewayToolRegistry(
       configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)

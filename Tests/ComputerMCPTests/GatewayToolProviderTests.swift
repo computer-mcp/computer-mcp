@@ -89,23 +89,20 @@ final class GatewayToolProviderTests {
         workspaceID: "ws", reference: reference, connectionID: UUID(), instanceID: UUID(),
         resources: [:])
     }
-    try MCPContinuationTarget.$current.withValue(target(reference)) {
-      let result = try router.callTool(name: "fixture.inspect", arguments: nil)
-      #expect(result == .string("original owner"))
-    }
-    MCPContinuationTarget.$current.withValue(target(.init(serverID: "other", toolName: "inspect")))
-    {
-      #expect(throws: GatewayToolError.self) {
-        try router.callTool(name: "fixture.inspect", arguments: nil)
-      }
+    let result = try router.callTool(
+      name: "fixture.inspect", arguments: nil, context: .init(continuation: target(reference)))
+    #expect(result == .string("original owner"))
+    #expect(throws: GatewayToolError.self) {
+      try router.callTool(
+        name: "fixture.inspect", arguments: nil,
+        context: .init(continuation: target(.init(serverID: "other", toolName: "inspect"))))
     }
     visibility.withLockedValue { $0.owned = false }
     try await router.refreshTools()
     #expect(router.continuationReference(named: "fixture.inspect") == nil)
-    MCPContinuationTarget.$current.withValue(target(reference)) {
-      #expect(throws: GatewayToolError.self) {
-        try router.callTool(name: "fixture.inspect", arguments: nil)
-      }
+    #expect(throws: GatewayToolError.self) {
+      try router.callTool(
+        name: "fixture.inspect", arguments: nil, context: .init(continuation: target(reference)))
     }
     await router.shutdown()
   }
@@ -157,9 +154,9 @@ private struct TestGatewayToolProvider: GatewayToolProvider {
     ]
   }
 
-  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    guard name == tool.name else {
-      throw GatewayToolError.unknownTool(name)
+  func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    guard invocation.name == tool.name else {
+      throw GatewayToolError.unknownTool(invocation.name)
     }
     return result
   }

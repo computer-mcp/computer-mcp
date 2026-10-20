@@ -19,7 +19,7 @@ struct MCPReexportNamingTests {
       configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
     let exposed = prefix.isEmpty ? "codex.app.status" : "namespace.codex.app.status"
     let tool = try #require(registry.listTools().first { $0.name == exposed })
-    let original = try #require(client.listTools(server: server).first)
+    let original = try #require(client.listTools(server: server, context: .empty).first)
     #expect(tool.inputSchema == original.inputSchema && tool.outputSchema == original.outputSchema)
     #expect(tool.title == original.title && tool.annotations == original.annotations)
     #expect(tool.mcpReference == .init(serverID: "first", toolName: "codex.app.status"))
@@ -43,7 +43,8 @@ struct MCPReexportNamingTests {
     #expect(!policy.allows(.init(serverID: "first", toolName: "ungranted")))
     let client = AuthorizedMCPClient(
       base: ReexportNamingClient(["first": ["codex.app.status", "ungranted"]]), policy: policy)
-    #expect(try client.listTools(server: server).map(\.name) == ["codex.app.status"])
+    #expect(
+      try client.listTools(server: server, context: .empty).map(\.name) == ["codex.app.status"])
   }
 
   @Test
@@ -156,7 +157,7 @@ private final class ReexportNamingClient: DownstreamMCPClient, @unchecked Sendab
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     lock.withLock { names[server.id] ?? [] }.map {
       .init(
         name: $0, title: "Original", description: "Native tool",
@@ -164,14 +165,26 @@ private final class ReexportNamingClient: DownstreamMCPClient, @unchecked Sendab
         outputSchema: .object(["type": .string("object")]), annotations: .init(readOnlyHint: true))
     }
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     .string(server.id + ":" + name)
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

@@ -95,10 +95,10 @@ struct MCPProfileGrantTests {
     let client = AuthorizedMCPClient(
       base: ProfileCatalogClient(names: ["inspect", "future"]), policy: policy)
     #expect(
-      try client.listTools(server: configuration.mcp.servers[0]).map(\.name) == [
+      try client.listTools(server: configuration.mcp.servers[0], context: .empty).map(\.name) == [
         "inspect", "future",
       ])
-    #expect(try client.listTools(server: configuration.mcp.servers[1]).isEmpty)
+    #expect(try client.listTools(server: configuration.mcp.servers[1], context: .empty).isEmpty)
     #expect(grant.capabilityIDs.isEmpty)
     #expect(policy.allows(.init(serverID: "alpha", toolName: "another_future_tool")))
     #expect(!policy.allows(.init(serverID: "beta", toolName: "another_future_tool")))
@@ -231,10 +231,11 @@ struct MCPProfileGrantTests {
         configuration: configuration,
         grant: Self.grant(capabilities: ["mcp.tools.list", "mcp.tools.find", "mcp.tools.describe"]),
         derivesObserveGrant: false))
-    #expect(try client.listTools(server: configuration.mcp.servers[0]).isEmpty)
+    #expect(try client.listTools(server: configuration.mcp.servers[0], context: .empty).isEmpty)
     #expect(throws: (any Error).self) {
       try client.callTool(
-        server: configuration.mcp.servers[0], name: "inspect", arguments: .object([:]))
+        server: configuration.mcp.servers[0], name: "inspect", arguments: .object([:]),
+        context: .empty)
     }
   }
 
@@ -264,10 +265,14 @@ struct MCPProfileGrantTests {
           id: profile, capabilityIDs: [], allowedCallers: [], mcpServerIDs: ["alpha"],
           mode: .readOnly),
         derivesObserveGrant: false))
-    #expect(try client.listTools(server: configuration.mcp.servers[0]).map(\.name) == ["inspect"])
+    #expect(
+      try client.listTools(server: configuration.mcp.servers[0], context: .empty).map(\.name) == [
+        "inspect"
+      ])
     #expect(throws: (any Error).self) {
       try client.callTool(
-        server: configuration.mcp.servers[0], name: "future", arguments: .object([:]))
+        server: configuration.mcp.servers[0], name: "future", arguments: .object([:]),
+        context: .empty)
     }
   }
 
@@ -401,17 +406,18 @@ struct MCPProfileGrantTests {
         configuration: configuration, grant: Self.grant(servers: ["alpha"]),
         derivesObserveGrant: false))
     #expect(
-      try groupClient.readResource(server: alpha, uri: "fixture://one") == .string("fixture://one"))
+      try groupClient.readResource(server: alpha, uri: "fixture://one", context: .empty)
+        == .string("fixture://one"))
     let toolClient = AuthorizedMCPClient(
       base: ProfileCatalogClient(),
       policy: .init(
         configuration: configuration, grant: Self.grant(capabilities: ["alpha_alias.inspect"]),
         derivesObserveGrant: false))
     #expect(throws: (any Error).self) {
-      try toolClient.readResource(server: alpha, uri: "fixture://one")
+      try toolClient.readResource(server: alpha, uri: "fixture://one", context: .empty)
     }
     #expect(throws: (any Error).self) {
-      try toolClient.readEvents(server: alpha, afterCursor: 0, maxResults: 1)
+      try toolClient.readEvents(server: alpha, afterCursor: 0, maxResults: 1, context: .empty)
     }
     let resourceClient = AuthorizedMCPClient(
       base: ProfileCatalogClient(),
@@ -420,10 +426,10 @@ struct MCPProfileGrantTests {
         grant: Self.grant(capabilities: ["mcp.resources.read", "mcp.events.read"]),
         derivesObserveGrant: false))
     #expect(
-      try resourceClient.readResource(server: alpha, uri: "fixture://one")
+      try resourceClient.readResource(server: alpha, uri: "fixture://one", context: .empty)
         == .string("fixture://one"))
-    _ = try resourceClient.readEvents(server: alpha, afterCursor: 0, maxResults: 1)
-    #expect(try resourceClient.listTools(server: alpha).isEmpty)
+    _ = try resourceClient.readEvents(server: alpha, afterCursor: 0, maxResults: 1, context: .empty)
+    #expect(try resourceClient.listTools(server: alpha, context: .empty).isEmpty)
   }
 
   private static func configuration() -> GatewayConfiguration {
@@ -489,7 +495,7 @@ private struct ProfileCatalogClient: DownstreamMCPClient {
 
   init(names: [String] = ["inspect", "future"]) { self.names = names }
 
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     names.map {
       MCPTool(
         name: $0, description: $0 == "future" ? "secret description" : "Inspect fixture",
@@ -497,7 +503,9 @@ private struct ProfileCatalogClient: DownstreamMCPClient {
     }
   }
 
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     calls.withLockedValue { $0.append(server.id) }
     return .object([
       "content": .array([
@@ -506,11 +514,21 @@ private struct ProfileCatalogClient: DownstreamMCPClient {
     ])
   }
 
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .string(uri) }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .string(uri) }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }
@@ -536,7 +554,7 @@ private final class ReplacedProfileCatalogClient: DownstreamMCPClient, Sendable 
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
 
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     state.withLockedValue { state in
       guard state.server == server.id else { return [] }
       return [
@@ -550,7 +568,9 @@ private final class ReplacedProfileCatalogClient: DownstreamMCPClient, Sendable 
     }
   }
 
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     try state.withLockedValue { state in
       state.calledServers.append(server.id)
       guard state.server == server.id else { throw GatewayToolError.unknownTool(name) }
@@ -560,11 +580,21 @@ private final class ReplacedProfileCatalogClient: DownstreamMCPClient, Sendable 
     }
   }
 
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

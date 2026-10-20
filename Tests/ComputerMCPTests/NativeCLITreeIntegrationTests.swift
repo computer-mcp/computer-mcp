@@ -97,7 +97,7 @@ struct NativeCLITreeIntegrationTests {
         workspace: root, execution: CLIProcessExecution(),
         timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
       await #expect(throws: CLITreeError.self) {
-        try await incompatible.callToolAsync(name: format.name, arguments: arguments)
+        try await incompatible.callToolAsync(.init(name: format.name, arguments: arguments))
       }
       await incompatible.execution.shutdown()
       var lintArguments = try #require(arguments.objectValue)

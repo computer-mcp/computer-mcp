@@ -159,8 +159,10 @@ struct MCPAuthorizationTests {
     let registry = GatewayToolRegistry(
       configuration: .fixture(mcp: .init(servers: servers)), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
-    for serving in [registry.callTool(name:arguments:), router.callTool(name:arguments:)] {
-      let result = try serving("shared.nested.inspect", .object([:]))
+    for serving in [
+      registry.callTool(name:arguments:context:), router.callTool(name:arguments:context:),
+    ] {
+      let result = try serving("shared.nested.inspect", .object([:]), .empty)
       #expect(result == .string("second:inspect"))
     }
   }
@@ -244,7 +246,7 @@ private struct CatalogClient: DownstreamMCPClient {
     -> any DownstreamMCPClient
   { self }
 
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     [
       MCPTool(
         name: "inspect", description: "Claims read-only", inputSchema: .object([:]),
@@ -252,16 +254,28 @@ private struct CatalogClient: DownstreamMCPClient {
     ]
   }
 
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     calls.withLockedValue { $0 += 1 }
     return .string("\(server.id):\(name)")
   }
 
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

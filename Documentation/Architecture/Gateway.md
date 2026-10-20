@@ -60,6 +60,24 @@ The execution sequence is:
 Unknown tools, workspaces and providers fail closed. Domain adapters validate
 their own protocol methods inside the scope delegated by the host.
 
+Each provider call receives a `ToolInvocation` with an explicit
+`InvocationContext`: host admission, the live control session and the selected
+continuation route. Call-scoped downstream discovery, execution and observation
+receive the same context. Shared catalog refresh uses the empty context so one
+session cannot narrow another session’s catalog. Gateway constructs `InvocationAdmission` after authorization for
+MCP tools; builtin tools carry nil admission. Blocking executor hops pass the
+context as an argument. Downstream authorization reads the live session at the
+time of each check, including after restriction or revocation.
+
+Gateway interprets the continuation route as an `MCPContinuationTarget`. Exact
+continuations select their existing connection and fail if its identity or work
+acquisition changed; they cannot start a replacement. The proxy captures the
+selected route before detached execution and revalidates the selected owner
+there. Started-call observers and host invocation request/work leases retain
+their own lifetimes after the RPC returns. Host callbacks recover live authority
+from retained invocations. Execution-owner routing and request tracing remain
+Gateway-owned state.
+
 Profile permission updates apply to subsequent discovery and calls without
 restarting unrelated transports. A profile change invalidates its outstanding
 approvals. Existing sessions retain their verified principal and profile;

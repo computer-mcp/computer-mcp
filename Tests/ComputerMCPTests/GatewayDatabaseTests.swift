@@ -6,6 +6,7 @@ import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPPersistence
 
 @Suite
 
@@ -278,36 +279,6 @@ final class GatewayDatabaseTests {
   func testInMemoryTestDatabaseHasNoProductionFilePath() throws {
     let database = try GatewayDatabase(inMemory: ())
     #expect(database.fileURL == nil)
-  }
-
-  @Test
-  func testMCPGrantMigrationPreservesExistingProfileAuthority() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let path = root.appendingPathComponent("gateway.sqlite").path
-    let original = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["mcp.tools.call"], workspaceIDs: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .workspaceOperations,
-      confirmationPolicy: .allWrites)
-    try GatewayDatabase(path: path).saveProfile(original)
-    // Recreate the stored shape immediately preceding the registration-grant migration.
-    let previous = try DatabaseQueue(path: path)
-    try previous.write { database in
-      try database.execute(sql: "ALTER TABLE profiles DROP COLUMN mcpServerIDsJSON")
-      try database.execute(
-        sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-        arguments: ["profile-mcp-server-grants"])
-    }
-    try previous.close()
-    let migrated = try GatewayDatabase(path: path)
-    #expect(try migrated.profiles() == [original])
-    var granted = original
-    granted.mcpServerIDs = ["fixture-mcp"]
-    try migrated.saveProfile(granted)
-    granted.authorizationRevision = original.authorizationRevision + 1
-    #expect(try migrated.profiles() == [granted])
-    #expect(try GatewayDatabase(path: path).profiles() == [granted])
   }
 
   @Test

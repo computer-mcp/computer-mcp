@@ -11,6 +11,9 @@ let cryptoDependency: Package.Dependency =
 let tomlDependency: Package.Dependency =
   .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0")
 
+let grdbDependency: Package.Dependency =
+  .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0")
+
 let nioDependency: Package.Dependency =
   .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0")
 
@@ -34,6 +37,10 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPPersistence",
+      dependencies: ["ComputerMCPCore", .product(name: "GRDB", package: "GRDB.swift")]
+    ),
+    .target(
       name: "ComputerMCPProcess",
       dependencies: [
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
@@ -53,6 +60,13 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPPlatformPOSIXTests",
       dependencies: ["ComputerMCPPlatform", "ComputerMCPPlatformPOSIX"]
+    ),
+    .testTarget(
+      name: "ComputerMCPPersistenceTests",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPPersistence", .product(name: "GRDB", package: "GRDB.swift"),
+      ],
+      resources: [.copy("Fixtures")]
     ),
     .testTarget(
       name: "ComputerMCPProcessTests",
@@ -93,7 +107,7 @@ let neutralTargets: [Target] =
       nioDependency,
       subprocessDependency,
       cryptoDependency,
-      .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
+      grdbDependency,
       .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
       tomlDependency,
       systemDependency,
@@ -113,6 +127,7 @@ let neutralTargets: [Target] =
         dependencies: [
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
+          "ComputerMCPPersistence",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin",
           "ComputerMCPPlatformPOSIX",
@@ -161,7 +176,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPTests",
         dependencies: [
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+          "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",
+          "ComputerMCPProcess",
           "ComputerMCPTestSupport",
         ],
         resources: [.copy("Fixtures")]
@@ -180,7 +196,8 @@ let neutralTargets: [Target] =
   let package = Package(
     name: "computer-mcp",
     dependencies: [
-      cryptoDependency, nioDependency, subprocessDependency, systemDependency, tomlDependency,
+      cryptoDependency, grdbDependency, nioDependency, subprocessDependency, systemDependency,
+      tomlDependency,
     ],
     targets: neutralTargets
   )

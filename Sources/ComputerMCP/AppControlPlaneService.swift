@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPProcess

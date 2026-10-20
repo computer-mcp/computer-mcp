@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPersistence
 import ComputerMCPProcess
 import Darwin
 import Foundation

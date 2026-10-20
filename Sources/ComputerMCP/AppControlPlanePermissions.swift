@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPersistence
 import Foundation
 
 package struct ProfilePermissionCapability: Equatable, Sendable, Identifiable {

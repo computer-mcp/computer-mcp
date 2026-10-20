@@ -38,22 +38,26 @@ extension ComputerUseGatewayProviderError: LocalizedError {
   }
 }
 
-internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
-  internal let id = "computer-use"
+package struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
+  package let id = "computer-use"
 
   private let service: ComputerUseService
   private let tools: [MCPTool]
 
-  internal init(service: ComputerUseService = ComputerUseService()) {
+  package init() {
+    self.init(service: ComputerUseService())
+  }
+
+  internal init(service: ComputerUseService) {
     self.service = service
     self.tools = Self.makeTools()
   }
 
-  internal func listTools() throws -> [MCPTool] {
+  package func listTools() throws -> [MCPTool] {
     tools
   }
 
-  internal func capability(for tool: MCPTool) -> CapabilityDescriptor {
+  package func capability(for tool: MCPTool) -> CapabilityDescriptor {
     let readOnly = Self.readOnlyTools.contains(tool.name)
     return CapabilityDescriptor(
       id: tool.name,
@@ -65,14 +69,14 @@ internal struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
     )
   }
 
-  internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+  package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
     guard name != "computer.screenshot" && name != "computer.accessibility.action" else {
       throw ComputerUseGatewayProviderError.asyncToolRequired(name)
     }
     return try executeSync(name: name, arguments: arguments)
   }
 
-  internal func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+  package func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
     if name == "computer.screenshot" {
       do {
         let input = try decode(ScreenshotArguments.self, arguments)

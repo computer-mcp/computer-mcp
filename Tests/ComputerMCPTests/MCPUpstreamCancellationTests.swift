@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -37,7 +38,8 @@ struct MCPUpstreamCancellationTests {
       RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path)
     ]
     let native = try await GatewayRuntime.make(
-      configuration: configuration, registeredWorkspaces: workspaces)
+      configuration: configuration, registeredWorkspaces: workspaces,
+      platform: MacOSPlatform.services)
     let origin =
       overHTTP
       ? GatewayHTTPRuntime(
@@ -59,7 +61,8 @@ struct MCPUpstreamCancellationTests {
           .init(name: "wait_alias", adapter: .mcp, source: "native", tool: downstreamWait)
         ]
         runtime = try await GatewayRuntime.make(
-          configuration: configuration, registeredWorkspaces: workspaces)
+          configuration: configuration, registeredWorkspaces: workspaces,
+          platform: MacOSPlatform.services)
       } else {
         downstreamWait = "wait"
         runtime = native

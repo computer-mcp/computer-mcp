@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Logging
@@ -424,7 +425,7 @@ struct GatewayToolCatalogTests {
         configuration: nativeConfiguration,
         registeredWorkspaces: [
           .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-        ])
+        ], platform: MacOSPlatform.services)
     }
     let origin =
       downstreamHTTP
@@ -449,7 +450,7 @@ struct GatewayToolCatalogTests {
             configuration: proxyConfiguration,
             registeredWorkspaces: [
               .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-            ])
+            ], platform: MacOSPlatform.services)
         }
       } else {
         runtime = nativeRuntime

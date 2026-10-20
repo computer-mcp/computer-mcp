@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import Testing
 
@@ -97,7 +98,8 @@ struct GatewayWorkspaceAvailabilityTests {
     await #expect(throws: GatewayRuntimeError.duplicateWorkspaceID("duplicate")) {
       try await GatewayRuntime.make(
         configuration: GatewayConfiguration(workspaceDirectory: root),
-        registeredWorkspaces: [workspace, workspace], bundledPlugins: .load(directory: nil))
+        registeredWorkspaces: [workspace, workspace], platform: MacOSPlatform.services,
+        bundledPlugins: .load(directory: nil))
     }
   }
 
@@ -109,7 +111,8 @@ struct GatewayWorkspaceAvailabilityTests {
       configuration: GatewayConfiguration(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         builtin: .init(enabled: ["file.read"]), workspaceDirectory: root),
-      registeredWorkspaces: workspaces(root: root), bundledPlugins: .load(directory: nil))
+      registeredWorkspaces: workspaces(root: root), platform: MacOSPlatform.services,
+      bundledPlugins: .load(directory: nil))
     #expect(try gateway.listTools().contains { $0.name == "file.read" })
     await gateway.shutdown()
   }
@@ -130,7 +133,8 @@ struct GatewayWorkspaceAvailabilityTests {
             allowedCallers: [caller])
         ],
         builtin: .init(enabled: ["file.read"]), workspaceDirectory: root),
-      registeredWorkspaces: workspaces, bundledPlugins: .load(directory: nil))
+      registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
+      bundledPlugins: .load(directory: nil))
   }
 
   private func workspaces(root: URL) -> [RegisteredWorkspace] {

@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import Testing
 
@@ -111,7 +112,7 @@ struct MCPReexportNamingTests {
       _ = try GatewayRuntime(
         configuration: configuration,
         registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-        mcpClient: ReexportNamingClient(["first": [name]]))
+        platform: MacOSPlatform.services, mcpClient: ReexportNamingClient(["first": [name]]))
     }
   }
 

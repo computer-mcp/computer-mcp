@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
@@ -583,8 +584,12 @@ struct PluginControlFixture: Sendable {
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifestStore,
-      secretStore: secrets, openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secrets),
-      gatewayExecutablePath: worker, pluginReleases: releases, pluginDownload: download,
+      secretStore: secrets,
+      openAITunnelSupervisor: OpenAITunnelSupervisor(
+        secretStore: secrets,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+      gatewayExecutablePath: worker, platform: MacOSPlatform.services, pluginReleases: releases,
+      pluginDownload: download,
       bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
     socket = ControlSocketService(

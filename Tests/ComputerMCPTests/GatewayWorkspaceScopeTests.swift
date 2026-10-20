@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import Testing
 
@@ -31,7 +32,11 @@ struct GatewayWorkspaceScopeTests {
       configuration: GatewayConfiguration(
         builtin: .init(enabled: ["file.read"]), workspaceDirectory: root),
       database: persisted ? database : nil, registeredWorkspaces: persisted ? nil : [workspace],
-      bookmarkService: WorkspaceBookmarkService(adapter: adapter),
+      platform: PlatformServices(
+        workspaceGrants: WorkspaceBookmarkService(adapter: adapter),
+        toolProviders: MacOSPlatform.services.toolProviders,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        fileChanges: MacOSPlatform.services.fileChanges),
       bundledPlugins: .load(directory: nil))
     do {
       let arguments: JSONValue = .object([
@@ -115,7 +120,12 @@ struct GatewayWorkspaceScopeTests {
     let runtime = try await GatewayRuntime.make(
       configuration: GatewayConfiguration(
         builtin: .init(enabled: ["file.read"]), workspaceDirectory: root),
-      database: database, bookmarkService: WorkspaceBookmarkService(adapter: adapter),
+      database: database,
+      platform: PlatformServices(
+        workspaceGrants: WorkspaceBookmarkService(adapter: adapter),
+        toolProviders: MacOSPlatform.services.toolProviders,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        fileChanges: MacOSPlatform.services.fileChanges),
       bundledPlugins: .load(directory: nil))
     do {
       var workspace = try #require(try database.workspace(id: "project"))

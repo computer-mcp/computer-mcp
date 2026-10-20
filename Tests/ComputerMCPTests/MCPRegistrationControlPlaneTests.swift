@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -544,8 +545,11 @@ struct MCPRegistrationControlFixture: Sendable {
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
       directories: directories, database: database, manifestStore: store,
-      secretStore: secrets, openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secrets),
-      bundledPlugins: bundled)
+      secretStore: secrets,
+      openAITunnelSupervisor: OpenAITunnelSupervisor(
+        secretStore: secrets,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+      platform: MacOSPlatform.services, bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
     socket = ControlSocketService(
       controlPlane: host, gatewayService: gateway, socketURL: directories.controlSocket)

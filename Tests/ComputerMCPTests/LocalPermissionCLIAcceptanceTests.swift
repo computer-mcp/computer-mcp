@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -326,9 +327,11 @@ private struct PermissionCLIFixture: Sendable {
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let control = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifest, secretStore: secrets,
-      openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secrets),
+      openAITunnelSupervisor: OpenAITunnelSupervisor(
+        secretStore: secrets,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
       launchAtLoginController: PermissionCLILaunchAtLoginFake(),
-      bundledPlugins: .init(packages: [], issues: []))
+      platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
     gatewaySocket = root.appendingPathComponent("gateway.sock")
     controlSocketURL = root.appendingPathComponent("control.sock")
     gatewayService = AppGatewayService(

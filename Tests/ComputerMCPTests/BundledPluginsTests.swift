@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Darwin
 import Foundation
 import Testing
@@ -137,7 +138,7 @@ struct BundledPluginsTests {
     #expect(try reopened.pluginStoreSnapshot() == restored)
     let runtime = try GatewayRuntime(
       configuration: GatewayConfiguration(workspaceDirectory: files.root), database: reopened,
-      bundledPlugins: bundled)
+      platform: MacOSPlatform.services, bundledPlugins: bundled)
     #expect(runtime.pluginOrigins.count == 3 && runtime.pluginIssues.isEmpty)
     await runtime.shutdown()
     let disabled = try await store.setEnabled(false, for: "test-package", expectedRevision: 3)

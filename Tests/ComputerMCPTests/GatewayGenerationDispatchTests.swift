@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import CryptoKit
 import Darwin
@@ -2419,11 +2420,18 @@ private struct GenerationFixture: Sendable {
     control = AppControlPlaneService(
       directories: directories, database: database,
       manifestStore: try AtomicManifestStore(manifestURL: directories.manifest, database: database),
-      secretStore: secrets, openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secrets),
+      secretStore: secrets,
+      openAITunnelSupervisor: OpenAITunnelSupervisor(
+        secretStore: secrets,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
       gatewayExecutablePath: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/computer-mcp").path,
-      bookmarkService: bookmarkService, bundledPlugins: .init(packages: [], issues: []))
+      platform: PlatformServices(
+        workspaceGrants: bookmarkService, toolProviders: MacOSPlatform.services.toolProviders,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        fileChanges: MacOSPlatform.services.fileChanges),
+      bundledPlugins: .init(packages: [], issues: []))
     service = AppGatewayService(
       controlPlane: control,
       socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))

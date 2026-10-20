@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import GRDB
 import Testing
@@ -299,7 +300,7 @@ private struct ConsentFixture {
       registeredWorkspaces: [
         .init(id: "fixture", displayName: "Fixture", rootPath: workspace.path)
       ],
-      requiresControlSession: true)
+      platform: MacOSPlatform.services, requiresControlSession: true)
   }
 
   func session(principal: String = "verified-client", database: GatewayDatabase? = nil)

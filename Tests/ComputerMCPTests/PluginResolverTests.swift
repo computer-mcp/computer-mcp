@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -448,7 +449,7 @@ struct PluginResolverTests {
       registeredWorkspaces: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
-      mcpClient: CompositionCatalogClient(), plugins: [plugin])
+      platform: MacOSPlatform.services, mcpClient: CompositionCatalogClient(), plugins: [plugin])
     do {
       let tools = try runtime.listTools().map(\.name)
       #expect(tools.contains("package.inspect"))

@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import Testing
 
@@ -128,7 +129,7 @@ final class DefaultGatewayConfigurationTests {
         profileID: .chatGPTObserve,
         workspaceID: workspace.id
       ),
-      registeredWorkspaces: [workspace]
+      registeredWorkspaces: [workspace], platform: MacOSPlatform.services
     )
     let observeTools = try observeGateway.listTools()
     #expect(
@@ -148,7 +149,7 @@ final class DefaultGatewayConfigurationTests {
         profileID: .chatGPTOperate,
         workspaceID: workspace.id
       ),
-      registeredWorkspaces: [workspace]
+      registeredWorkspaces: [workspace], platform: MacOSPlatform.services
     )
     let operateNames = Set(try operateGateway.listTools().map(\.name))
     #expect(operateNames.isSuperset(of: Set(observeTools.map(\.name))))
@@ -181,7 +182,7 @@ final class DefaultGatewayConfigurationTests {
 
     let localGateway = try GatewayRuntime(
       configuration: localAdmin,
-      database: GatewayDatabase(inMemory: ())
+      database: GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services
     )
     let localNames = Set(try localGateway.listTools().map(\.name))
     #expect(localNames.contains("cli.exec"))

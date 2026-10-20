@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
@@ -24,7 +25,8 @@ struct MCPProviderWorkNativeTests {
         configuration: GatewayConfiguration(mcp: .init(servers: [server])),
         context: .init(caller: .localCLI, profileID: .localAdmin),
         registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-        plugins: [], bundledPlugins: .init(packages: [], issues: []))
+        platform: MacOSPlatform.services, plugins: [],
+        bundledPlugins: .init(packages: [], issues: []))
       do {
         _ = try await runtime.callToolAsync(name: "fixture.start", arguments: .object([:]))
         try await wait { runtime.ownedWork.snapshot.contains { $0.kind == .mcpResource } }

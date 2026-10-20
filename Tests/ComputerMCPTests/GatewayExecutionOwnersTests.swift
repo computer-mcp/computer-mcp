@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import Testing
 
@@ -58,7 +59,8 @@ struct GatewayExecutionOwnersTests {
         runtimes.append(
           try await GatewayRuntime.make(
             configuration: configuration, context: context, database: database,
-            registeredWorkspaces: [workspace], bundledPlugins: .init(packages: [], issues: [])))
+            registeredWorkspaces: [workspace], platform: MacOSPlatform.services,
+            bundledPlugins: .init(packages: [], issues: [])))
       }
       let current = try #require(runtimes.first)
       var expected = Set<UUID>()

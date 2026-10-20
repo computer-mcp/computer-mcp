@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -739,6 +740,7 @@ private final class CloudflareControlPlaneFixture {
     )
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: OpenAITunnelCommandRunner(),
@@ -749,7 +751,7 @@ private final class CloudflareControlPlaneFixture {
       database: database,
       manifestStore: manifestStore,
       secretStore: secretStore,
-      openAITunnelSupervisor: openAITunnelSupervisor
+      openAITunnelSupervisor: openAITunnelSupervisor, platform: MacOSPlatform.services
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,

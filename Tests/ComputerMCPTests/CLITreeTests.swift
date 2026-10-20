@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Darwin
 import Foundation
 import Testing
@@ -318,7 +319,8 @@ struct CLITreeTests {
           mode: .localFullAccess, confirmationPolicy: .never)
       ])
     let runtime = try GatewayRuntime(
-      configuration: configuration, registeredWorkspaces: workspaces, plugins: [plugin])
+      configuration: configuration, registeredWorkspaces: workspaces,
+      platform: MacOSPlatform.services, plugins: [plugin])
     let tool = try #require(runtime.listTools().first { $0.name.hasPrefix("cli_") })
     let result = try await runtime.callToolAsync(
       name: tool.name, arguments: .object(["values": .array([.string("plugin value")])]))
@@ -332,13 +334,15 @@ struct CLITreeTests {
         tree: .init(kind: .file, path: fixture.treeURL.path))
     ]
     let directRuntime = try GatewayRuntime(
-      configuration: direct, registeredWorkspaces: workspaces, plugins: [])
+      configuration: direct, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
+      plugins: [])
     let directTool = try #require(directRuntime.listTools().first { $0.name.hasPrefix("cli_") })
     #expect(directTool == tool)
     await directRuntime.shutdown()
     let observeContext = ExecutionContext(caller: .secureTunnel, profileID: .chatGPTObserve)
     let observe = try GatewayRuntime(
-      configuration: direct, context: observeContext, registeredWorkspaces: workspaces, plugins: [])
+      configuration: direct, context: observeContext, registeredWorkspaces: workspaces,
+      platform: MacOSPlatform.services, plugins: [])
     #expect(try !observe.listTools().contains { $0.name == tool.name })
     await #expect(throws: (any Error).self) {
       try await observe.callToolAsync(

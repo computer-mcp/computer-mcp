@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -138,6 +139,7 @@ struct PluginStoreInstallationTests {
           try await GatewayRuntime.prepare(
             configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
             context: context, database: database, state: state,
+            platform: MacOSPlatform.services,
             bundledPlugins: BundledPlugins(packages: [], issues: []), artifactStorage: storage))
       }
       #expect(candidates.allSatisfy { $0.runtime.pluginOrigins.count == 1 })
@@ -177,7 +179,8 @@ struct PluginStoreInstallationTests {
     let plugins = try resolved ? PluginHost.resolve(proposed, bundled: bundled).plugins : nil
     let runtime = try await GatewayRuntime.make(
       configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
-      database: database, plugins: plugins, pluginState: proposed, bundledPlugins: bundled)
+      database: database, platform: MacOSPlatform.services, plugins: plugins, pluginState: proposed,
+      bundledPlugins: bundled)
     var authenticated: GatewayRuntime?
     do {
       #expect(runtime.pluginOrigins.count == 1)
@@ -218,7 +221,8 @@ struct PluginStoreInstallationTests {
     await #expect(throws: GatewayRuntimeError.duplicateWorkspaceID("duplicate")) {
       try await GatewayRuntime.make(
         configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
-        database: database, registeredWorkspaces: [workspace, workspace], pluginState: proposed,
+        database: database, registeredWorkspaces: [workspace, workspace],
+        platform: MacOSPlatform.services, pluginState: proposed,
         bundledPlugins: BundledPlugins(packages: [], issues: []))
     }
     #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)

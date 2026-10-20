@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Darwin
 import Foundation
 import Testing
@@ -254,7 +255,8 @@ private struct PermissionFixture {
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-first"),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      platform: MacOSPlatform.services)
   }
 
   func prepare() throws -> String {

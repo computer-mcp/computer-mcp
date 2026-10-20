@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Darwin
 import Foundation
 import Testing
@@ -221,7 +222,8 @@ struct GatewayTerminalSessionsTests {
     try database.saveProfile(configuration.profiles[0].grant)
     let old = try await GatewayRuntime.make(
       configuration: configuration, context: context, database: database,
-      registeredWorkspaces: [workspace], bundledPlugins: BundledPlugins(packages: [], issues: []),
+      registeredWorkspaces: [workspace], platform: MacOSPlatform.services,
+      bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     let spawned = try await old.callToolAsync(
       name: "shell.spawn",
@@ -234,7 +236,8 @@ struct GatewayTerminalSessionsTests {
     configuration.policy.maxOutputBytes = 128
     let current = try await GatewayRuntime.make(
       configuration: configuration, context: context, database: database,
-      registeredWorkspaces: [workspace], bundledPlugins: BundledPlugins(packages: [], issues: []),
+      registeredWorkspaces: [workspace], platform: MacOSPlatform.services,
+      bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     do {
       #expect(old.beginRetirementIfDrained() == nil)
@@ -282,7 +285,8 @@ struct GatewayTerminalSessionsTests {
           confirmationPolicy: .never)
       ], workspaceDirectory: root)
     let first = try await GatewayRuntime.make(
-      configuration: configuration, bundledPlugins: BundledPlugins(packages: [], issues: []),
+      configuration: configuration, platform: MacOSPlatform.services,
+      bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     let completed = try await first.callToolAsync(
       name: "shell.run", arguments: .object(["command": .string("printf manifest-result")]))
@@ -291,7 +295,8 @@ struct GatewayTerminalSessionsTests {
         .objectValue?["session_id"]?.stringValue)
     await first.shutdown()
     let next = try await GatewayRuntime.make(
-      configuration: configuration, bundledPlugins: BundledPlugins(packages: [], issues: []),
+      configuration: configuration, platform: MacOSPlatform.services,
+      bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     do {
       let result = try await next.callToolAsync(
@@ -322,7 +327,8 @@ struct GatewayTerminalSessionsTests {
       ], workspaceDirectory: root)
     func make() async throws -> GatewayRuntime {
       try await GatewayRuntime.make(
-        configuration: configuration, bundledPlugins: BundledPlugins(packages: [], issues: []),
+        configuration: configuration, platform: MacOSPlatform.services,
+        bundledPlugins: BundledPlugins(packages: [], issues: []),
         terminalSessions: storage)
     }
     func spawn(_ gateway: GatewayRuntime) async throws -> (id: String, pid: Int32) {

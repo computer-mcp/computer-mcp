@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
@@ -23,7 +24,7 @@ struct MCPAuthorizationTests {
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
         mcp: .init(servers: [server])), database: database,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      mcpClient: client)
+      platform: MacOSPlatform.services, mcpClient: client)
     let arguments: JSONValue = .object([
       "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
     ])
@@ -78,7 +79,7 @@ struct MCPAuthorizationTests {
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         mcp: .init(servers: [server])),
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      mcpClient: CatalogClient())
+      platform: MacOSPlatform.services, mcpClient: CatalogClient())
     #expect(try runtime.listTools().contains { $0.name == "remote.inspect" } == hostReadOnly)
     if !hostReadOnly {
       #expect(throws: (any Error).self) {

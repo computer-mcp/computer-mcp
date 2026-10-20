@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import CryptoKit
 import Foundation
 import Testing
@@ -57,7 +58,8 @@ struct NativeCLITreeIntegrationTests {
           confirmationPolicy: .never)
       ])
     let runtime = try GatewayRuntime(
-      configuration: configuration, registeredWorkspaces: workspaces, plugins: [plugin])
+      configuration: configuration, registeredWorkspaces: workspaces,
+      platform: MacOSPlatform.services, plugins: [plugin])
     do {
       let tools = try runtime.listTools().filter { $0.name.hasPrefix("cli_") }
       #expect(tools.count == 5)
@@ -68,7 +70,8 @@ struct NativeCLITreeIntegrationTests {
           tree: .init(kind: .file, path: treeURL.path))
       ]
       let directRuntime = try GatewayRuntime(
-        configuration: direct, registeredWorkspaces: workspaces, plugins: [])
+        configuration: direct, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
+        plugins: [])
       let directTools = try directRuntime.listTools().filter { $0.name.hasPrefix("cli_") }
       #expect(directTools == tools)
       await directRuntime.shutdown()
@@ -118,7 +121,7 @@ struct NativeCLITreeIntegrationTests {
       }
       let observe = try GatewayRuntime(
         configuration: direct, context: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
-        registeredWorkspaces: workspaces, plugins: [])
+        registeredWorkspaces: workspaces, platform: MacOSPlatform.services, plugins: [])
       #expect(try !observe.listTools().contains { $0.name == format.name })
       await #expect(throws: (any Error).self) {
         try await observe.callToolAsync(name: format.name, arguments: arguments)

@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
@@ -575,7 +576,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         caller: .secureTunnel, profileID: .chatGPTOperate,
         transportTrace: .init(transport: "gateway_socket", socketConnectionID: "connection"),
         trustedPrincipalID: "fixture-principal"),
-      database: database, registeredWorkspaces: workspaces, mcpClient: peer,
+      database: database, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
+      mcpClient: peer,
       requiresControlSession: requiresControlSession)
     let captured = try #require(peer.context)
     if worktrees {

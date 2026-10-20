@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import Testing
 
@@ -163,7 +164,7 @@ private struct Fixture {
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-client"),
       database: database,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      requiresControlSession: true)
+      platform: MacOSPlatform.services, requiresControlSession: true)
   }
 
   func content() throws -> String {

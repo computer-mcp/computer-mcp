@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import GRDB
 import Testing
@@ -127,7 +128,7 @@ private struct AuditPrincipalFixture {
     try GatewayRuntime(
       configuration: .init(), context: context, database: database,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      plugins: [])
+      platform: MacOSPlatform.services, plugins: [])
   }
 
   func inspect(_ runtime: GatewayRuntime, context: ExecutionContext, requestID: String) throws {

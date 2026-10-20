@@ -6,6 +6,11 @@ import ComputerMCPTransport
 import Crypto
 import Foundation
 
+package protocol ControlErrorClassifying: Error {
+  /// Nil leaves classification to the control response's default rules.
+  var controlAuditClassification: (decision: AuditDecision, code: String)? { get }
+}
+
 package enum ControlToolResponse {
   package static func encodedPayload<T: Encodable>(_ value: T) throws -> JSONValue {
     try JSONDecoder().decode(
@@ -97,7 +102,7 @@ package enum ControlToolResponse {
         }
       return (.failed, "plugin.\(code)")
     }
-    if let classification = (error as? any AuditErrorClassifying)?.auditClassification {
+    if let classification = (error as? any ControlErrorClassifying)?.controlAuditClassification {
       return classification
     }
     if case .invalid(let message) = error as? ConfigurationError,

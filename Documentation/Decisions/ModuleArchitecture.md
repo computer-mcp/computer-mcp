@@ -114,9 +114,10 @@ above them and supplied by the composition root:
 | `MCPProcessOwnershipError` | `Downstream` | plugin store errors in process ownership; directory identity itself is a `Platform` value |
 | `HTTPOriginLifecycle` | `Tunnels` | `GatewayHTTPRuntime` in Cloudflare runtime state |
 | `OpenAITunnelHTTPProxyResolving` | `Tunnels` | system proxy lookup in tunnel supervision; `PlatformDarwin` reads system settings and `MacOS` supplies the conformance that parses them in `Tunnels` |
-| `AuditErrorClassifying` | `Core` | concrete Computer Use and control-plane error checks in gateway audit classification; errors supply an optional audit decision and code |
+| `AuditErrorClassifying` | `Core` | concrete Computer Use error checks in gateway runtime audit classification; errors supply an optional audit decision and code |
+| `ControlErrorClassifying` | `Gateway` | concrete control-plane error checks in control responses; errors supply an optional audit decision and code |
 | `GatewayControlError` | `Gateway` | the HTTP Full Shell approval precondition, with localized messages and the existing audit and control-response defaults |
-| `GatewayManagementProvider` | `Gateway` | control-plane management definitions, read capabilities, name lookup and asynchronous dispatch |
+| `GatewayManagementProvider` | `Gateway` | control-plane management definitions, read capabilities, name lookup and asynchronous dispatch; `PlatformServices` reserves contract names independently of provider availability |
 | `GatewayClientControlProvider` | `Gateway` | control-plane client-control contracts, argument validation and HTTP generation dispatch |
 | `SecretStore` | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |
 | Workspace grant store | `Platform` | `WorkspaceBookmarkService` in gateway and control plane |

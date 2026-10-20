@@ -1189,7 +1189,7 @@ package struct OpenAITunnelAPIKeyCheckpoint: Sendable {
   fileprivate let value: String?
 }
 
-package enum AppControlPlaneServiceError: AuditErrorClassifying, LocalizedError, Equatable {
+package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedError, Equatable {
   case invalidDirectory(String)
   case symbolicLinkDirectory(String)
   case directoryOwnedByAnotherUser(String)
@@ -1207,7 +1207,7 @@ package enum AppControlPlaneServiceError: AuditErrorClassifying, LocalizedError,
   case invalidDesiredOpenAITunnelState
   case gatewayInputsChanged
 
-  package var auditClassification: (decision: AuditDecision, code: String)? {
+  package var controlAuditClassification: (decision: AuditDecision, code: String)? {
     guard case .localAdminCannotBeSocketProfile = self else { return nil }
     return (.denied, "policy.local_admin_remote")
   }

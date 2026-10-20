@@ -1,4 +1,4 @@
-import ComputerMCPPlatformDarwin
+import ComputerMCPPlatform
 import Darwin
 import Foundation
 
@@ -27,7 +27,7 @@ package struct AppControlPlaneServiceDirectories: Codable, Equatable, Sendable {
   }
 
   package static func standard(
-    environment: AppDistributionEnvironment = .production,
+    environment: AppDistributionEnvironment,
     fileManager: FileManager = .default
   ) throws
     -> AppControlPlaneServiceDirectories

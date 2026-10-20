@@ -186,7 +186,8 @@ package actor AppControlPlaneServiceClient {
 
   package static func live() throws -> AppControlPlaneServiceClient {
     AppControlPlaneServiceClient(
-      socketURL: try AppControlPlaneServiceDirectories.standard().controlSocket)
+      socketURL: try AppControlPlaneServiceDirectories.standard(environment: .production)
+        .controlSocket)
   }
 
   package func call(

@@ -313,7 +313,10 @@ let neutralTargets: [Target] =
     ),
     .testTarget(
       name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
-    .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
+    .testTarget(
+      name: "ComputerMCPPlatformTests",
+      dependencies: ["ComputerMCPPlatform", "ComputerMCPTestSupport"]
+    ),
     .testTarget(
       name: "ComputerMCPToolKitTests",
       dependencies: [

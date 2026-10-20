@@ -2,7 +2,7 @@ import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlatform
 
 @Suite
 final class AppDistributionEnvironmentTests {
@@ -36,7 +36,7 @@ final class AppDistributionEnvironmentTests {
     let identity = try AppDistributionIdentity.bundled(
       infoDictionary: [
         AppDistributionEnvironment.infoPlistKey: "production",
-        kCFBundleIdentifierKey as String: "com.showxu.computer-mcp",
+        "CFBundleIdentifier": "com.showxu.computer-mcp",
         AppDistributionIdentity.teamIdentifierInfoPlistKey: "A7JC3DY3PU",
       ]
     )
@@ -52,7 +52,7 @@ final class AppDistributionEnvironmentTests {
       try AppDistributionIdentity.bundled(
         infoDictionary: [
           AppDistributionEnvironment.infoPlistKey: "development",
-          kCFBundleIdentifierKey as String: "com.showxu.computer-mcp",
+          "CFBundleIdentifier": "com.showxu.computer-mcp",
           AppDistributionIdentity.teamIdentifierInfoPlistKey: "A7JC3DY3PU",
         ]
       )
@@ -73,7 +73,7 @@ final class AppDistributionEnvironmentTests {
       try AppDistributionIdentity.bundled(
         infoDictionary: [
           AppDistributionEnvironment.infoPlistKey: "production",
-          kCFBundleIdentifierKey as String: "com.showxu.computer-mcp",
+          "CFBundleIdentifier": "com.showxu.computer-mcp",
           AppDistributionIdentity.teamIdentifierInfoPlistKey: "adhoc",
         ]
       )

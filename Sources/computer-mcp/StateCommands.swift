@@ -36,7 +36,7 @@ struct StateImport: ParsableCommand {
   func run() throws {
     let databaseURL =
       try database.map { URL(fileURLWithPath: $0).standardizedFileURL }
-      ?? AppControlPlaneServiceDirectories.standard().database
+      ?? AppControlPlaneServiceDirectories.standard(environment: .production).database
     // The App keeps its manifest in Configuration/ next to the database.
     let configurationDirectory = databaseURL.deletingLastPathComponent()
       .appendingPathComponent("Configuration", isDirectory: true)

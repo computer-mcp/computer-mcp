@@ -81,7 +81,7 @@ package struct AppDistributionIdentity: Equatable, Sendable {
     else {
       throw AppDistributionIdentityError.invalidEnvironment
     }
-    guard let bundleIdentifier = infoDictionary[kCFBundleIdentifierKey as String] as? String else {
+    guard let bundleIdentifier = infoDictionary["CFBundleIdentifier"] as? String else {
       throw AppDistributionIdentityError.missingBundleIdentifier
     }
     guard

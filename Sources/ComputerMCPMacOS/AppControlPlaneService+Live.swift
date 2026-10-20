@@ -14,7 +14,7 @@ extension AppControlPlaneService {
     keychainService: String,
     keychainAccessGroup: String
   ) throws -> AppControlPlaneService {
-    let resolvedDirectories = try directories ?? .standard()
+    let resolvedDirectories = try directories ?? .standard(environment: .production)
     try resolvedDirectories.prepare()
     let database = try GatewayDatabase(path: resolvedDirectories.database.path)
     try resolvedDirectories.secureDatabaseFiles()

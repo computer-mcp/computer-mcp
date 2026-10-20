@@ -1,8 +1,18 @@
 import ComputerMCPCore
 import ComputerMCPGateway
 import CryptoKit
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+
+  // Glibc also exports a struct named flock; bind the function by its C symbol.
+  @_silgen_name("flock") private func flock(_ descriptor: Int32, _ operation: Int32) -> Int32
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// SQLite decides whether a synchronized file replacement committed. The journal
 /// retains both possible file states until that decision can be recovered.
@@ -58,12 +68,17 @@ struct ManifestFileTransaction {
     let temporary = recoveryURL.appendingPathExtension(UUID().uuidString)
     defer { try? fileManager.removeItem(at: temporary) }
     try Self.writeAndSynchronize(JSONEncoder().encode(record), to: temporary)
-    guard
-      renameatx_np(AT_FDCWD, temporary.path, AT_FDCWD, recoveryURL.path, UInt32(RENAME_EXCL)) == 0
-    else {
+    #if canImport(Darwin)
+      guard
+        renameatx_np(AT_FDCWD, temporary.path, AT_FDCWD, recoveryURL.path, UInt32(RENAME_EXCL)) == 0
+      else {
+        throw AtomicManifestStoreError.posix(
+          operation: "publish manifest recovery record", code: errno)
+      }
+    #elseif canImport(Glibc) || canImport(Musl)
       throw AtomicManifestStoreError.posix(
-        operation: "publish manifest recovery record", code: errno)
-    }
+        operation: "publish manifest recovery record", code: ENOSYS)
+    #endif
     var committed: GatewayDatabase.ConfigurationState?
     do {
       try Self.synchronizeDirectory(manifestURL.deletingLastPathComponent())
@@ -164,7 +179,7 @@ struct ManifestFileTransaction {
       guard let baseAddress = rawBuffer.baseAddress else { return }
       var offset = 0
       while offset < rawBuffer.count {
-        let written = Darwin.write(
+        let written = write(
           descriptor, baseAddress.advanced(by: offset), rawBuffer.count - offset)
         if written < 0, errno == EINTR { continue }
         if written <= 0 {

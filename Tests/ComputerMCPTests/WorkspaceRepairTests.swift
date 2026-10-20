@@ -1,3 +1,4 @@
+import ComputerMCPToolsWorkspace
 import Foundation
 import Testing
 

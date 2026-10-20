@@ -4,6 +4,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
+import ComputerMCPToolsWorkspace
 import ComputerMCPTransport
 import Darwin
 import Foundation

@@ -2,7 +2,7 @@ import ComputerMCPCore
 import ComputerMCPToolKit
 import Foundation
 
-extension GatewayToolRegistry {
+extension WorkspaceToolProvider {
   internal func workspaceInfo() throws -> JSONValue {
     .object([
       "server": .object([
@@ -2444,17 +2444,12 @@ extension GatewayToolRegistry {
     let application = try optionalString("application", in: object)
     let timeout = optionalInt("timeout_ms", in: object) ?? 10_000
     let url = try workspaceScope.resolvedWorkspaceURL(path)
-    var args: [String] = []
-    if let application {
-      args.append(contentsOf: ["-a", application])
+    guard let opener = environment.workspaceOpener else {
+      throw GatewayToolError.disabled("Workspace opening is unavailable on this platform.")
     }
-    args.append(url.path)
-
-    return try commandRunner.run(
-      executable: "/usr/bin/open",
-      arguments: args,
+    return try opener.open(
+      url, application: application,
       workingDirectory: configuration.workspaceDirectory,
-      environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: configuration.policy.maxOutputBytes
     ).json
@@ -2465,11 +2460,12 @@ extension GatewayToolRegistry {
     let timeout = optionalInt("timeout_ms", in: object) ?? 10_000
     let url = try workspaceScope.resolvedWorkspaceURL(path)
 
-    return try commandRunner.run(
-      executable: "/usr/bin/open",
-      arguments: ["-R", url.path],
+    guard let opener = environment.workspaceOpener else {
+      throw GatewayToolError.disabled("Workspace opening is unavailable on this platform.")
+    }
+    return try opener.reveal(
+      url,
       workingDirectory: configuration.workspaceDirectory,
-      environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: configuration.policy.maxOutputBytes
     ).json

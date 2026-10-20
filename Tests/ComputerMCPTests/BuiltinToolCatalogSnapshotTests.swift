@@ -9,6 +9,7 @@ import ComputerMCPToolsGit
 import ComputerMCPToolsShell
 import ComputerMCPToolsSkills
 import ComputerMCPToolsStructured
+import ComputerMCPToolsWorkspace
 import Foundation
 import Testing
 
@@ -61,6 +62,7 @@ struct BuiltinToolCatalogSnapshotTests {
         policy: .init(shellEnabled: true),
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
         skills: .init(enabled: true)))
+    definitions += try WorkspaceToolProvider(environment: environment).definitions()
     definitions += try FilesToolProvider(environment: environment).definitions()
     definitions += try SkillsToolProvider(environment: environment).definitions()
     definitions += try StructuredToolProvider(environment: environment).definitions()

@@ -1,5 +1,7 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPToolsFiles
 import Foundation
 import Testing
 
@@ -291,7 +293,9 @@ final class ProcessAndOpenAITunnelTests {
     expectThrows(
       try ChatGPTProfileAuditor().audit(
         configuration: configuration,
-        registry: GatewayToolRegistry(configuration: configuration),
+        registry: GatewayProviderRouter(providers: [
+          FilesToolProvider(environment: ToolEnvironment(configuration: configuration))
+        ]),
         allowWriteTools: false
       )
     ) { error in
@@ -309,7 +313,9 @@ final class ProcessAndOpenAITunnelTests {
 
     let audit = try ChatGPTProfileAuditor().audit(
       configuration: configuration,
-      registry: GatewayToolRegistry(configuration: configuration),
+      registry: GatewayProviderRouter(providers: [
+        FilesToolProvider(environment: ToolEnvironment(configuration: configuration))
+      ]),
       allowWriteTools: true
     )
 

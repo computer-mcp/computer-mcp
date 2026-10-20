@@ -55,6 +55,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsCLI/` | Platform-neutral CLI provider, CLI tree catalogs, validation, parameter mapping and executable compatibility checks |
 | `Sources/ComputerMCPToolsShell/` | Platform-neutral shell and managed-process providers with explicit definitions, annotations, descriptors and workspace runtime dispatch |
 | `Sources/ComputerMCPToolsSkills/` | Platform-neutral skill package provider with explicit definitions, bounded inventory and reads, and Markdown/structured parsing through the Structured domain |
+| `Sources/ComputerMCPToolsWorkspace/` | Platform-neutral workspace provider with explicit definitions, bounded inventories, configuration-change values, deduplication values and injected desktop opening |
 | `Sources/ComputerMCPToolsFiles/` | Platform-neutral file and archive provider with explicit definitions, scoped filesystem operations, injected commands, extended attributes and Trash |
 | `Sources/ComputerMCPToolsStructured/` | Platform-neutral Markdown and structured-data provider with explicit definitions, bounded parsing helpers, registered SQLite commands and injected media inspection |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
@@ -75,7 +76,7 @@ package product and does not install or bundle vendor binaries.
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
 
 `GatewayToolRegistry` retains configuration, runtime ownership and tool dispatch.
-Its domain extensions contain the MCP, workspace and platform
+Its domain extensions contain the MCP and platform
 implementations. Its catalog extension owns the definitions and annotations
 for those domains. `ComputerMCPToolKit` owns shared
 argument/result helpers, `WorkspaceScope` path checks and file metadata, and
@@ -85,9 +86,9 @@ environment, process/shell runtimes and injected platform services across provid
 host owns shutdown.
 `MCPTool` and `DownstreamMCPClient` own their definitions
 and client contract. `GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`,
-`ProcessToolProvider`, `StructuredToolProvider`, `SkillsToolProvider` and `FilesToolProvider`
-own their definitions and dispatch using the shared tool environment. The composition root
-registers them alongside the remaining registry providers, which
+`ProcessToolProvider`, `StructuredToolProvider`, `SkillsToolProvider`, `FilesToolProvider` and
+`WorkspaceToolProvider` own their definitions and dispatch using the shared tool environment.
+The composition root registers them alongside the remaining registry providers, which
 retain the shared runtime lifecycle. Each
 catalog refresh loads CLI tree providers from the CLI module and publishes them
 with their validated immutable definitions.
@@ -103,6 +104,14 @@ fixed command paths through `RegisteredCommands`; file hashing uses the existing
 Swift Crypto dependency. `ExtendedAttributes` and `FileTrashing` operate on scoped
 paths, with their native implementations in `ComputerMCPPlatformDarwin`.
 `ComputerMCPToolsFilesDarwinTests` exercises the native extended attributes and Trash.
+
+`WorkspaceToolProvider` owns workspace inventory and uses the shared path and command
+helpers with the Files dependency. `WorkspaceOpener` isolates desktop open/reveal;
+`DarwinWorkspaceOpener` retains the bounded command execution contract.
+`ComputerMCPToolsWorkspaceDarwinTests` verifies its fixed native argv. Workspace
+configuration changes and deduplication values belong to the Workspace domain;
+prepared changes carry opaque host snapshots, while the gateway database owns
+SQL transactions and commit validation.
 
 The neutral domain test targets are included on macOS and Linux; `ComputerMCPToolsStructuredDarwinTests` exercises the real media
 frameworks and their native fixtures on macOS.

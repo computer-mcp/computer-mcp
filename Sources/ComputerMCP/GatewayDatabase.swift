@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPToolsWorkspace
 import CryptoKit
 import Foundation
 import GRDB
@@ -52,14 +53,14 @@ package final class GatewayDatabase: @unchecked Sendable {
   func prepareWorkspaceChange(
     _ mutation: WorkspaceConfigurationMutation, expected: ConfigurationState,
     resolvedProfiles: [ProfileGrant] = []
-  ) throws -> PreparedWorkspaceChange {
+  ) throws -> PreparedWorkspaceChange<ConfigurationState> {
     let timestamp = Date()
     let receiptID = UUID().uuidString
     return try writer.write { database in
       guard try Self.configurationState(in: database) == expected else {
         throw GatewayDatabaseError.configurationChanged
       }
-      var prepared: PreparedWorkspaceChange?
+      var prepared: PreparedWorkspaceChange<ConfigurationState>?
       try database.inSavepoint {
         let result = try Self.applyWorkspaceChange(
           mutation, expected: expected, resolvedProfiles: resolvedProfiles,
@@ -77,7 +78,8 @@ package final class GatewayDatabase: @unchecked Sendable {
   }
 
   func saveWorkspaceChange(
-    _ prepared: PreparedWorkspaceChange, resolution: GatewayConfigurationResolution,
+    _ prepared: PreparedWorkspaceChange<ConfigurationState>,
+    resolution: GatewayConfigurationResolution,
     authorization: GatewayManagementAuthorization? = nil
   ) throws -> ConfigurationState {
     let committed = try writer.write { database in
@@ -1628,10 +1630,6 @@ extension GatewayDatabase {
 
 extension GatewayClientTrust: FetchableRecord, PersistableRecord {
   package static let databaseTableName = "clientControlTrust"
-}
-
-private struct WorkspaceDeduplicationDigestInput: Codable {
-  var groups: [WorkspaceDeduplicationGroup]
 }
 
 private enum OperationTicketBeginOutcome {

@@ -81,6 +81,24 @@ struct DeliveryRecoveryTests {
     }
   }
 
+  @Test(arguments: [".git", ".git/computer-mcp"])
+  func journalParentSyncFailurePreventsGitMutation(path: String) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let head = try fixture.git(["rev-parse", "HEAD"])
+      let io = DeliveryIO(beforeDirectorySync: { directory in
+        if directory.path == fixture.root.appendingPathComponent(path).path {
+          throw POSIXError(.EIO)
+        }
+      })
+      let result = try fixture.apply(provider: fixture.provider(io: io))
+      #expect(result["state"] == .string("aborted"))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == head)
+      #expect(try fixture.journals().isEmpty)
+      try fixture.assertClean()
+    }
+  }
+
   @Test(arguments: [false, true])
   func cleanupFailureBeforeAndAfterCommitRetries(committed: Bool) async throws {
     try await deliveryTest {

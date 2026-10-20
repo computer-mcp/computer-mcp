@@ -93,6 +93,8 @@ Git 进程推进分支，删除失败并返回 `cleanup_pending` / `cleanup_fail
 记录操作 ID、工作区、范围、仓库、默认分支、交付分支、worktree 路径、基线 `base`、
 `phase`、可选 `commit`、`merged`、可选终态与原因以及文件片段。写入顺序为同目录
 临时文件、文件 fsync、改名、目录 fsync。
+首次创建 `computer-mcp` 与 `delivery` 目录时，在改动 Git 状态前还会同步每个新建
+目录的父目录，包括先于日志写入创建的锁目录。
 
 | 阶段 | 含义 |
 | --- | --- |

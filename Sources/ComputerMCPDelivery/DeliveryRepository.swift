@@ -57,7 +57,7 @@ internal struct DeliveryRepository: Sendable {
 
   func withLock<T>(_ action: () throws -> T) throws -> T {
     let directory = common.appendingPathComponent("computer-mcp", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try io.prepareDirectory(directory)
     let deadline = ContinuousClock.now.advanced(by: .seconds(60))
     while true {
       try cancellation.check()

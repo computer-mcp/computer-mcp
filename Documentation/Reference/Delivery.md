@@ -132,6 +132,9 @@ Schema 1 records `operation_id`, `workspace`, `scope`, `repository`,
 `default_branch`, `branch`, `worktree`, baseline `base`, `phase`, optional `commit`,
 `merged`, optional terminal `state` and `reason`, and `files`. Each write uses a
 same-directory temporary file, file fsync, rename and directory fsync.
+Creating the `computer-mcp` and `delivery` directories also fsyncs each directory's
+parent before execution can mutate Git state, including when the lock directory
+is created before journal writing.
 
 | Phase | Durable meaning |
 | --- | --- |

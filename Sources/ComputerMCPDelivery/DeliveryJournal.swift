@@ -52,10 +52,36 @@ internal struct DeliveryIO: Sendable {
   var beforeBranchDeletion: @Sendable (_ branch: String, _ checkedCommit: String) throws -> Void = {
     _, _ in
   }
+  var beforeDirectorySync: @Sendable (URL) throws -> Void = { _ in }
+
+  func prepareDirectory(_ directory: URL) throws {
+    let parent = directory.deletingLastPathComponent()
+    if !FileManager.default.fileExists(atPath: parent.path) {
+      try prepareDirectory(parent)
+    }
+    if mkdir(directory.path, 0o755) != 0 {
+      let code = errno
+      var isDirectory: ObjCBool = false
+      guard code == EEXIST,
+        FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
+        isDirectory.boolValue
+      else { throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO) }
+    }
+    // Sync even an existing entry: another process may have just created it before locking.
+    try synchronizeDirectory(parent)
+  }
+
+  private func synchronizeDirectory(_ directory: URL) throws {
+    try beforeDirectorySync(directory)
+    let descriptor = open(directory.path, O_RDONLY | O_CLOEXEC)
+    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    defer { close(descriptor) }
+    guard fsync(descriptor) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+  }
 
   func write(_ journal: DeliveryJournal, to directory: URL) throws {
     try beforeJournalWrite(journal)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try prepareDirectory(directory)
     let target = directory.appendingPathComponent("\(journal.operationID).json")
     let temporary = directory.appendingPathComponent(".\(journal.operationID).tmp")
     let descriptor = open(
@@ -73,9 +99,6 @@ internal struct DeliveryIO: Sendable {
     guard rename(temporary.path, target.path) == 0 else {
       throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
-    let parent = open(directory.path, O_RDONLY | O_CLOEXEC)
-    guard parent >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-    defer { close(parent) }
-    guard fsync(parent) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    try synchronizeDirectory(directory)
   }
 }

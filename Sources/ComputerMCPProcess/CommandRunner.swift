@@ -124,9 +124,8 @@ func configure(process: Process, executable: String, arguments: [String]) {
   }
 }
 
-/// Collects one output pipe, up to `limit` bytes. One read source watches the read end;
-/// reads are nonblocking and drain the pipe, and the source's cancel handler closes the
-/// descriptor once the source no longer monitors it.
+/// Collects one output pipe, up to `limit` bytes. Nonblocking reads drain the pipe;
+/// the source's cancel handler owns descriptor cleanup after monitoring ends.
 final class OutputCollector: @unchecked Sendable {
   let pipe = Pipe()
   private let limit: Int
@@ -134,7 +133,7 @@ final class OutputCollector: @unchecked Sendable {
   private let queue = DispatchQueue(label: "computer-mcp.command-output")
   private let endOfFile = DispatchSemaphore(value: 0)
   /// Accessed only on `queue`, apart from initialization and deinitialization.
-  private var source: DispatchSourceRead?
+  private var source: ProcessOutputSource?
   /// End of file was read, or collection stopped.
   private var ended = false
   private var data = Data()
@@ -145,9 +144,7 @@ final class OutputCollector: @unchecked Sendable {
     let handle = pipe.fileHandleForReading
     let flags = fcntl(handle.fileDescriptor, F_GETFL)
     if flags >= 0 { _ = fcntl(handle.fileDescriptor, F_SETFL, flags | O_NONBLOCK) }
-    let source = DispatchSource.makeReadSource(fileDescriptor: handle.fileDescriptor, queue: queue)
-    source.setEventHandler { [weak self] in self?.drain() }
-    source.setCancelHandler { try? handle.close() }
+    let source = ProcessOutputSource(handle: handle, queue: queue) { [weak self] in self?.drain() }
     self.source = source
     source.resume()
   }

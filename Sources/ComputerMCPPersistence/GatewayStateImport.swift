@@ -392,7 +392,7 @@ package enum GatewayStateImport {
   }
 
   private static func sync(_ url: URL) throws {
-    let descriptor = open(url.path, O_RDONLY)
+    let descriptor = open(url.path, O_RDONLY | O_CLOEXEC)
     guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     defer { close(descriptor) }
     guard fsync(descriptor) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }

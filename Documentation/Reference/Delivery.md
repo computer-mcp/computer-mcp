@@ -120,6 +120,10 @@ commit retained. Commit-only mode keeps the branch without
 landing. Cleanup removes the worktree; it deletes the branch only when no delivery
 commit exists or that commit is reachable from the default branch. An undelivered
 commit's branch is always preserved.
+Branch deletion uses `update-ref -d refs/heads/<branch> <checked_commit>` after
+the reachability check. If another Git process advances the branch before the
+deletion, cleanup fails with `cleanup_pending` / `cleanup_failed`, preserving the
+branch and its new commits for recovery.
 
 Journals live at `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`.
 Schema 1 records `operation_id`, `workspace`, `scope`, `repository`,

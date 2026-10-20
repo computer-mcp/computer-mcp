@@ -293,7 +293,8 @@ internal struct DeliveryRepository: Sendable {
         try (commit == journal.base && journal.commit == nil)
         || git.isAncestor(commit, of: "refs/heads/\(journal.defaultBranch)", at: root)
       if removable {
-        try git.run(["branch", "-D", "--", journal.branch], at: root)
+        try io.beforeBranchDeletion(journal.branch, commit)
+        try git.run(["update-ref", "-d", "refs/heads/\(journal.branch)", commit], at: root)
       }
     }
   }

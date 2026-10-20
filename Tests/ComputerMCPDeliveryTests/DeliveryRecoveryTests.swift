@@ -124,6 +124,47 @@ struct DeliveryRecoveryTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func branchAdvancementAfterDeletionCheckRetainsNewCommit(merged: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let io = DeliveryIO(beforeBranchDeletion: { branch, checkedCommit in
+        #expect(branch == "docs/entry")
+        #expect(try fixture.git(["rev-parse", "main"]) == checkedCommit)
+        let advanced = try fixture.git([
+          "commit-tree", "\(checkedCommit)^{tree}", "-p", checkedCommit,
+          "-m", "test: external branch advancement",
+        ])
+        try fixture.git(["update-ref", "refs/heads/\(branch)", advanced, checkedCommit])
+        try fixture.write(".git/advanced-commit", advanced)
+      })
+      let result = try fixture.apply(
+        fixture.request(old: merged ? "alpha" : "absent"), provider: fixture.provider(io: io))
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["reason"] == .string("cleanup_failed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      let advanced = try fixture.read(".git/advanced-commit")
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == advanced)
+      try fixture.git(["cat-file", "-e", "\(advanced)^{commit}"])
+      let repository = try fixture.repository()
+      #expect(try !repository.git.isAncestor(advanced, of: "main", at: fixture.root))
+      let pending = try #require(fixture.journals().first)
+      #expect(pending.phase == .cleanupPending)
+      #expect(pending.merged == merged)
+      #expect((pending.commit != nil) == merged)
+      try fixture.assertClean(retained: true)
+
+      try repository.withLock { try repository.recover() }
+      let recovered = try #require(fixture.journals().first)
+      #expect(recovered.phase == .finished)
+      #expect(recovered.state == .committed)
+      #expect(recovered.reason == .interrupted)
+      #expect(recovered.commit == advanced)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == advanced)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
   @Test
   func cleanupKeepsRetryingWhileFailurePersists() async throws {
     try await deliveryTest {

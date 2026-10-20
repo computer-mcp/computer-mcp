@@ -83,6 +83,9 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 分支。冲突时中止 rebase 并保留
 原提交。commit-only 只提交并保留分支。清理删除 worktree；没有交付提交或提交已从
 默认分支可达时才删除分支。未落地提交的分支始终保留。
+删除使用 `update-ref -d refs/heads/<分支> <已核对的提交号>`；核对可达性后若其他
+Git 进程推进分支，删除失败并返回 `cleanup_pending` / `cleanup_failed`，保留分支
+与新提交，等待恢复。
 
 日志为 `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`，schema 1
 记录操作 ID、工作区、范围、仓库、默认分支、交付分支、worktree 路径、基线 `base`、

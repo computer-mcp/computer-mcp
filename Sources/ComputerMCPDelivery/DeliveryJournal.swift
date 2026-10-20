@@ -45,10 +45,13 @@ internal struct DeliveryJournal: Codable, Sendable {
   }
 }
 
-/// Fault injection is limited to durable writes and cleanup boundaries.
+/// Fault injection is limited to durable writes and cleanup mutation boundaries.
 internal struct DeliveryIO: Sendable {
   var beforeJournalWrite: @Sendable (DeliveryJournal) throws -> Void = { _ in }
   var beforeCleanup: @Sendable (DeliveryJournal) throws -> Void = { _ in }
+  var beforeBranchDeletion: @Sendable (_ branch: String, _ checkedCommit: String) throws -> Void = {
+    _, _ in
+  }
 
   func write(_ journal: DeliveryJournal, to directory: URL) throws {
     try beforeJournalWrite(journal)

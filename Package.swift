@@ -71,6 +71,18 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPToolsFiles",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        .product(name: "Crypto", package: "swift-crypto"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsFilesTests",
+      dependencies: [
+        "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
+        "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPTestSupport",
+      ]),
+    .target(
       name: "ComputerMCPToolsStructured",
       dependencies: [
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -280,6 +292,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsGit",
           "ComputerMCPToolsStructured",
           "ComputerMCPToolsSkills",
+          "ComputerMCPToolsFiles",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
@@ -291,6 +304,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCP",
         dependencies: [
           "ComputerMCPToolsSkills",
+          "ComputerMCPToolsFiles",
           "ComputerMCPDownstream",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
@@ -351,6 +365,12 @@ let neutralTargets: [Target] =
         ]
       ),
       .testTarget(
+        name: "ComputerMCPToolsFilesDarwinTests",
+        dependencies: [
+          "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
+          "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+        ]),
+      .testTarget(
         name: "ComputerMCPToolsStructuredDarwinTests",
         dependencies: [
           "ComputerMCPToolsStructured",
@@ -365,6 +385,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsGit",
           "ComputerMCPToolsStructured",
           "ComputerMCPToolsSkills",
+          "ComputerMCPToolsFiles",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",

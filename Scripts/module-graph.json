@@ -110,7 +110,8 @@
     "ComputerMCPMacOS",
     "ComputerMCPApp",
     "computer-mcp",
-    "ComputerMCPToolsStructuredDarwinTests"
+    "ComputerMCPToolsStructuredDarwinTests",
+    "ComputerMCPToolsFilesDarwinTests"
   ],
   "macos_imports": [
     "AVFoundation",
@@ -191,7 +192,6 @@
     "^GatewayHTTPRuntime": "ComputerMCPGateway",
     "^ComputerUse": "ComputerMCPComputerUse",
     "^GatewayToolRegistry\\+(System|Network|MacOS)": "ComputerMCPToolsSystem",
-    "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
     "^GatewayToolRegistry\\+(Workspace|WorkspaceInventory)\\.swift|^Workspace(Deduplication|ConfigurationChange)": "ComputerMCPToolsWorkspace",
     "^MCPRegistration": "ComputerMCPControlPlane",
     "^MCPRuntimeAdapter": "ComputerMCPGateway",

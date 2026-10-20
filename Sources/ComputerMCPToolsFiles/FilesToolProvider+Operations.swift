@@ -1,12 +1,10 @@
-import AppKit
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPToolKit
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
 
-extension GatewayToolRegistry {
+extension FilesToolProvider {
   internal func fileExists(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
     let url = try workspaceScope.resolvedWorkspaceURL(path)
@@ -222,7 +220,7 @@ extension GatewayToolRegistry {
     }
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/file",
+      executable: try registeredCommands.builtinExecutable("file"),
       arguments: ["-b", "--mime", url.path],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -270,7 +268,7 @@ extension GatewayToolRegistry {
     }
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/wc",
+      executable: try registeredCommands.builtinExecutable("wc"),
       arguments: ["-l", "-w", "-c", url.path],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -305,7 +303,7 @@ extension GatewayToolRegistry {
     let url = try workspaceScope.resolvedWorkspaceURL(path)
     let info = try workspaceScope.fileInfo(url: url)
     let result = try commandRunner.run(
-      executable: "/usr/bin/du",
+      executable: try registeredCommands.builtinExecutable("du"),
       arguments: ["-sk", url.path],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -1080,12 +1078,15 @@ extension GatewayToolRegistry {
 
     let url = try workspaceScope.resolvedWorkspaceURL(path)
     let info = try workspaceScope.fileInfo(url: url)
-    let names = try extendedAttributeNames(url: url).sorted {
+    guard let xattrs = environment.extendedAttributes else {
+      throw GatewayToolError.disabled("Extended attributes are unavailable on this platform.")
+    }
+    let names = try xattrs.names(at: url).sorted {
       $0.localizedStandardCompare($1) == .orderedAscending
     }
 
     let attributes = try names.map { name -> JSONValue in
-      let size = try extendedAttributeSize(url: url, name: name)
+      let size = try xattrs.size(of: name, at: url)
       var object: [String: JSONValue] = [
         "name": .string(name),
         "size_bytes": .integer(Int64(size)),
@@ -1099,9 +1100,9 @@ extension GatewayToolRegistry {
           object["value_utf8"] = .null
           object["value_omitted_reason"] = .string("attribute exceeds max_value_bytes")
         } else {
-          let value = try extendedAttributeValue(
-            url: url,
-            name: name,
+          let value = try xattrs.value(
+            of: name,
+            at: url,
             size: size,
             maxBytes: maxValueBytes
           )
@@ -1134,7 +1135,10 @@ extension GatewayToolRegistry {
 
     let url = try workspaceScope.resolvedWorkspaceURL(path)
     let info = try workspaceScope.fileInfo(url: url)
-    let namesBefore = try extendedAttributeNames(url: url).sorted {
+    guard let xattrs = environment.extendedAttributes else {
+      throw GatewayToolError.disabled("Extended attributes are unavailable on this platform.")
+    }
+    let namesBefore = try xattrs.names(at: url).sorted {
       $0.localizedStandardCompare($1) == .orderedAscending
     }
     guard namesBefore.contains(name) else {
@@ -1142,9 +1146,9 @@ extension GatewayToolRegistry {
     }
 
     if !dryRun {
-      try removeExtendedAttribute(url: url, name: name)
+      try xattrs.remove(name, at: url)
     }
-    let namesAfter = try extendedAttributeNames(url: url).sorted {
+    let namesAfter = try xattrs.names(at: url).sorted {
       $0.localizedStandardCompare($1) == .orderedAscending
     }
     let wouldNamesAfter = namesBefore.filter { $0 != name }
@@ -1183,7 +1187,7 @@ extension GatewayToolRegistry {
     let arguments = ["-plist", "-", url.path]
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/mdls",
+      executable: try registeredCommands.builtinExecutable("mdls"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -1338,7 +1342,7 @@ extension GatewayToolRegistry {
     }
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/diff",
+      executable: try registeredCommands.builtinExecutable("diff"),
       arguments: ["-U", "\(contextLines)", source.path, target.path],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -1843,7 +1847,7 @@ extension GatewayToolRegistry {
         try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
       }
       let commandResult = try commandRunner.run(
-        executable: "/usr/bin/curl",
+        executable: try registeredCommands.builtinExecutable("curl"),
         arguments: arguments,
         workingDirectory: configuration.workspaceDirectory,
         environment: [:],
@@ -2824,9 +2828,12 @@ extension GatewayToolRegistry {
       throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
     }
 
-    var resultingURL: NSURL?
+    var resultingURL: URL?
     if !dryRun {
-      try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+      guard let trasher = environment.fileTrasher else {
+        throw GatewayToolError.disabled("Trash is unavailable on this platform.")
+      }
+      resultingURL = try trasher.trashItem(at: url)
     }
     return .object([
       "operation": .string("file.trash"),
@@ -2835,7 +2842,7 @@ extension GatewayToolRegistry {
       "dry_run": .bool(dryRun),
       "trashed": .bool(!dryRun),
       "would_trash": .bool(true),
-      "trashed_path": resultingURL.map { .string($0.path ?? "") } ?? .null,
+      "trashed_path": resultingURL.map { .string($0.path) } ?? .null,
     ])
   }
 
@@ -3638,121 +3645,6 @@ extension GatewayToolRegistry {
     }
     payload["result"] = dryRun ? .null : try workspaceScope.fileInfo(url: destination).json
     return .object(payload)
-  }
-
-  private func extendedAttributeNames(url: URL) throws -> [String] {
-    let size = url.withUnsafeFileSystemRepresentation { pathPointer -> Int in
-      guard let pathPointer else {
-        errno = EINVAL
-        return -1
-      }
-      return listxattr(pathPointer, nil, 0, 0)
-    }
-    guard size >= 0 else {
-      throw extendedAttributeError("listxattr", url: url, errno: errno)
-    }
-    guard size > 0 else {
-      return []
-    }
-
-    var buffer = [CChar](repeating: 0, count: size)
-    let bytesRead = url.withUnsafeFileSystemRepresentation { pathPointer -> Int in
-      guard let pathPointer else {
-        errno = EINVAL
-        return -1
-      }
-      return buffer.withUnsafeMutableBufferPointer { pointer in
-        listxattr(pathPointer, pointer.baseAddress, pointer.count, 0)
-      }
-    }
-    guard bytesRead >= 0 else {
-      throw extendedAttributeError("listxattr", url: url, errno: errno)
-    }
-
-    var names: [String] = []
-    var start = 0
-    for index in 0..<bytesRead where buffer[index] == 0 {
-      if index > start {
-        names.append(
-          String(
-            decoding: buffer[start..<index].map { UInt8(bitPattern: $0) },
-            as: UTF8.self
-          ))
-      }
-      start = index + 1
-    }
-    return names
-  }
-
-  private func extendedAttributeSize(url: URL, name: String) throws -> Int {
-    let size = url.withUnsafeFileSystemRepresentation { pathPointer -> Int in
-      guard let pathPointer else {
-        errno = EINVAL
-        return -1
-      }
-      return name.withCString { namePointer in
-        getxattr(pathPointer, namePointer, nil, 0, 0, 0)
-      }
-    }
-    guard size >= 0 else {
-      throw extendedAttributeError("getxattr", url: url, errno: errno)
-    }
-    return size
-  }
-
-  private func extendedAttributeValue(
-    url: URL,
-    name: String,
-    size: Int,
-    maxBytes: Int
-  ) throws -> Data {
-    let bytesToRead = min(size, maxBytes)
-    guard bytesToRead > 0 else {
-      return Data()
-    }
-
-    var data = Data(count: bytesToRead)
-    let bytesRead = data.withUnsafeMutableBytes { rawBuffer -> Int in
-      url.withUnsafeFileSystemRepresentation { pathPointer -> Int in
-        guard let pathPointer else {
-          errno = EINVAL
-          return -1
-        }
-        return name.withCString { namePointer in
-          getxattr(pathPointer, namePointer, rawBuffer.baseAddress, bytesToRead, 0, 0)
-        }
-      }
-    }
-    guard bytesRead >= 0 else {
-      throw extendedAttributeError("getxattr", url: url, errno: errno)
-    }
-    if bytesRead < data.count {
-      data.removeSubrange(bytesRead..<data.count)
-    }
-    return data
-  }
-
-  internal func removeExtendedAttribute(url: URL, name: String) throws {
-    let result = url.withUnsafeFileSystemRepresentation { pathPointer -> Int32 in
-      guard let pathPointer else {
-        errno = EINVAL
-        return -1
-      }
-      return name.withCString { namePointer in
-        removexattr(pathPointer, namePointer, 0)
-      }
-    }
-    guard result == 0 else {
-      throw extendedAttributeError("removexattr", url: url, errno: errno)
-    }
-  }
-
-  private func extendedAttributeError(_ operation: String, url: URL, errno error: Int32)
-    -> GatewayToolError
-  {
-    GatewayToolError.executionFailed(
-      "\(operation) failed for \(url.path): \(String(cString: strerror(error)))"
-    )
   }
 
   private func metadataPayload(from result: CommandResult) -> MetadataPayload {

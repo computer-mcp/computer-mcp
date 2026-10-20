@@ -1,7 +1,7 @@
 import ComputerMCPTestSupport
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -235,8 +235,8 @@ struct MCPAuthorizationTests {
 }
 
 private struct CatalogClient: DownstreamMCPClient {
-  private let calls = OSAllocatedUnfairLock(initialState: 0)
-  var callCount: Int { calls.withLock { $0 } }
+  private let calls = NIOLockedValueBox(0)
+  var callCount: Int { calls.withLockedValue { $0 } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   )
@@ -252,7 +252,7 @@ private struct CatalogClient: DownstreamMCPClient {
   }
 
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    calls.withLock { $0 += 1 }
+    calls.withLockedValue { $0 += 1 }
     return .string("\(server.id):\(name)")
   }
 

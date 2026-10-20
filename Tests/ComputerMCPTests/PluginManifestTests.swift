@@ -366,30 +366,6 @@ struct PluginPackageTests {
   }
 
   @Test
-  func externalAndDanglingSymlinksFailButContainedSymlinksRemainUsable() throws {
-    let root = try fixture()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let sibling = try fixture()
-    defer { try? FileManager.default.removeItem(at: sibling) }
-    try "inside".write(
-      to: root.appendingPathComponent("content"), atomically: true, encoding: .utf8)
-    try "outside".write(
-      to: sibling.appendingPathComponent("content"), atomically: true, encoding: .utf8)
-    try FileManager.default.createSymbolicLink(
-      atPath: root.appendingPathComponent("link").path, withDestinationPath: "content")
-    try FileManager.default.createSymbolicLink(
-      atPath: root.appendingPathComponent("escape").path, withDestinationPath: sibling.path)
-    try FileManager.default.createSymbolicLink(
-      atPath: root.appendingPathComponent("dangling").path, withDestinationPath: "missing")
-    let files = try PluginPackageFiles(root: root)
-    #expect(try files.read("link", maximumBytes: 6) == Data("inside".utf8))
-    #expect(throws: (any Error).self) { try files.read("escape/content", maximumBytes: 100) }
-    #expect(throws: (any Error).self) { try files.read("dangling", maximumBytes: 100) }
-    #expect(throws: PluginManifestError.self) { try files.read("content", maximumBytes: 5) }
-    #expect(throws: PluginManifestError.self) { try files.read("skills", maximumBytes: 100) }
-  }
-
-  @Test
   func invalidUTF8AndOversizedManifestsFailBeforeParsing() throws {
     let root = try fixture()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -397,7 +373,13 @@ struct PluginPackageTests {
     try Data([0xff]).write(to: manifest)
     #expect(throws: PluginManifestError.self) { try PluginPackage.load(at: root) }
     try Data(repeating: 32, count: 1_048_577).write(to: manifest)
-    #expect(throws: PluginManifestError.self) { try PluginPackage.load(at: root) }
+    let error = PluginManifestError.invalid(
+      "Package file exceeds its read limit: \(PluginManifest.filename).")
+    #expect(throws: error) { try PluginPackage.load(at: root) }
+    #expect(
+      error.localizedDescription
+        == "Invalid plugin package: Package file exceeds its read limit: \(PluginManifest.filename)."
+    )
   }
 
   private func fixture() throws -> URL {

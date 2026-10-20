@@ -1,6 +1,6 @@
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
@@ -11,18 +11,18 @@ struct GatewayOwnedWorkTests {
   func idleRetirementIsAtomicWithInvocationAdmission() throws {
     for _ in 0..<100 {
       let work = GatewayOwnedWork()
-      let outcomes = OSAllocatedUnfairLock(
-        initialState: (admitted: Optional<GatewayOwnedWork.Lease>.none, retired: false))
+      let outcomes = NIOLockedValueBox(
+        (admitted: Optional<GatewayOwnedWork.Lease>.none, retired: false))
       DispatchQueue.concurrentPerform(iterations: 2) { index in
         if index == 0 {
           let lease = try? work.admitInvocation(workspaceID: "ws", resourceID: "call")
-          outcomes.withLock { $0.admitted = lease }
+          outcomes.withLockedValue { $0.admitted = lease }
         } else {
           let retired = work.closeAdmissionIfDrained()
-          outcomes.withLock { $0.retired = retired }
+          outcomes.withLockedValue { $0.retired = retired }
         }
       }
-      let result = outcomes.withLock { $0 }
+      let result = outcomes.withLockedValue { $0 }
       #expect((result.admitted != nil) != result.retired)
       result.admitted?.finish()
       #expect(work.closeAdmissionIfDrained())

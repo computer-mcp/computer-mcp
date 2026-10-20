@@ -100,7 +100,7 @@ above them and supplied by the composition root:
 | Continuation route | `Core` | `MCPContinuationTarget` reads in downstream clients |
 | Host invocation context and host session factory | `Downstream` | `MCPHostContext` and `MCPHostSession` in downstream clients and child transports |
 | Domain stores | each owner | direct `GatewayDatabase` use by plugins, workspaces, receipts and the HTTP adapter |
-| Package file reader | `Platform` | `PluginPackageFiles` in CLI tree loading and validation |
+| Package file reader | `PlatformPOSIX` | package file access in CLI tree loading and validation |
 | CLI tree source value | `Configuration` | `CLITreeSource` stored in command configuration |
 | CLI invocation layer | `ToolsCLI` | CLI checks inside bounded process execution |
 | Owned work tracking | `Process` | `GatewayOwnedWork` in shell sessions |

@@ -171,7 +171,6 @@
     "MCPInvocationAdmission": "ComputerMCPDownstream",
     "MCPRuntimeAdapter": "ComputerMCPGateway",
     "MCPToolAccessPolicy": "ComputerMCPDownstream",
-    "ManifestFileMonitor": "ComputerMCPControlPlane",
     "ManifestFileTransaction": "ComputerMCPControlPlane",
     "ManifestRecoveryRecord": "ComputerMCPControlPlane",
     "StructuredPathSegment": "ComputerMCPToolKit",
@@ -216,6 +215,7 @@
     "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway"
   },
   "cuts": [
+    "AppGatewayService->DirectoryEventFileChangeMonitor",
     "AppControlPlaneService->ComputerUseService",
     "AppControlPlaneService->KeychainSecretStore",
     "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
@@ -224,8 +224,6 @@
     "AuthorizedMCPClient->MCPContinuationTarget",
     "AuthorizedMCPClient->MCPHostContext",
     "BundledPluginDistribution->PluginArchiveDirectory",
-    "CLITreeSource->PluginPackageFiles",
-    "CLITreeValidation->PluginPackageFiles",
     "CloudflareRuntimeState->GatewayHTTPRuntime",
     "ControlToolResponse->AppControlPlaneServiceError",
     "DownstreamMCPClient->MCPContinuationTarget",

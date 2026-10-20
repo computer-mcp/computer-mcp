@@ -1,7 +1,7 @@
 import ComputerMCPTestSupport
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -161,8 +161,8 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
     let session: (any GatewaySessionAuthority)?
     let correlationID: UUID?
   }
-  private let observations = OSAllocatedUnfairLock(initialState: [Observation]())
-  var calls: [Observation] { observations.withLock { $0 } }
+  private let observations = NIOLockedValueBox([Observation]())
+  var calls: [Observation] { observations.withLockedValue { $0 } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
@@ -173,7 +173,7 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
   }
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
     let admission = MCPInvocationAdmission.current
-    observations.withLock {
+    observations.withLockedValue {
       $0.append(
         .init(
           admission: admission, session: GatewaySessionScope.current,

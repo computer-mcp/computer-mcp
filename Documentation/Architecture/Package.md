@@ -21,7 +21,7 @@ targets, and CI builds and tests them there.
 | `computer-mcp/swift-sdk` compatibility fork | MCP server/client protocol, exact integer wire values, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
 | ArgumentParser | CLI parsing |
 | swift-toml and Yams | TOML config and Skill YAML frontmatter |
-| SwiftNIO | HTTP and Unix-socket transport adapters; the lock primitive of the neutral process target |
+| SwiftNIO | HTTP and Unix-socket transport adapters; shared lock primitives through `NIOConcurrencyHelpers` |
 | swift-subprocess | Process, Shell, and streaming lifecycle |
 | swift-system | `FilePath` for process launches where the System framework is unavailable |
 | GRDB | Transactional App metadata and redacted audit; system SQLite on Linux |
@@ -45,12 +45,12 @@ package product and does not install or bundle vendor binaries.
 | --- | --- |
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
-| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login and process inspection |
+| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login, file change monitoring and process inspection |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
-| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries and shared/exclusive advisory file locks |
+| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
-| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, archive extraction and staging |
+| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction and staging |
 | `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |

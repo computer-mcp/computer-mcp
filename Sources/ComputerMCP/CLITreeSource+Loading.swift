@@ -1,4 +1,5 @@
 import ComputerMCPConfiguration
+import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import Foundation
 
@@ -18,10 +19,10 @@ extension CLITreeSource {
         guard url.path.hasPrefix(packageRoot.path + "/") else {
           throw CLITreeError.invalid("Tree source is outside its owning package.")
         }
-        data = try PluginPackageFiles(root: packageRoot)
+        data = try PackageFiles(root: packageRoot)
           .read(String(url.path.dropFirst(packageRoot.path.count + 1)), maximumBytes: 4_194_304)
       } else {
-        data = try PluginPackageFiles(root: url.deletingLastPathComponent())
+        data = try PackageFiles(root: url.deletingLastPathComponent())
           .read(url.lastPathComponent, maximumBytes: 4_194_304)
       }
     case .introspection, .helper:

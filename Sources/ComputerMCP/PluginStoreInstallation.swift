@@ -1,5 +1,6 @@
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPPlatformPOSIX
 import CryptoKit
 import Darwin
 import Foundation
@@ -52,8 +53,13 @@ extension PluginStore {
         return directory.url.appendingPathComponent("staging/download")
       },
       verifyPackage: { package in
-        let bytes = try PluginPackageFiles(root: package.root).read(
-          PluginManifest.filename, maximumBytes: 1_048_576)
+        let bytes: Data
+        do {
+          bytes = try PackageFiles(root: package.root).read(
+            PluginManifest.filename, maximumBytes: 1_048_576)
+        } catch PackageFileError.invalid(let reason) {
+          throw PluginManifestError.invalid(reason)
+        }
         guard
           SHA256.hash(data: bytes).map({ String(format: "%02x", $0) }).joined()
             == artifact.declaration.manifestSHA256

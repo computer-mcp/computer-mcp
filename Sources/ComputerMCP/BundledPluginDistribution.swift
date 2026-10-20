@@ -1,5 +1,6 @@
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPPlatformPOSIX
 import Darwin
 import Foundation
 
@@ -21,8 +22,14 @@ package enum BundledPluginDistribution {
     guard !architectures.isEmpty, Set(architectures).count == architectures.count,
       architectures.allSatisfy({ ["arm64", "x86_64"].contains($0) })
     else { throw PluginArchiveError.invalidInput }
-    let inputs = try PluginPackageFiles(root: index.deletingLastPathComponent())
-    let artifacts = try readIndex(inputs.read(index.lastPathComponent, maximumBytes: 1_048_576))
+    let inputs: PackageFiles
+    let artifacts: [BundledPluginArtifact]
+    do {
+      inputs = try PackageFiles(root: index.deletingLastPathComponent())
+      artifacts = try readIndex(inputs.read(index.lastPathComponent, maximumBytes: 1_048_576))
+    } catch PackageFileError.invalid(let reason) {
+      throw PluginManifestError.invalid(reason)
+    }
     try Task.checkCancellation()
     let output = try PluginArchiveDirectory(at: destination)
     let outputDescriptor = output.descriptor

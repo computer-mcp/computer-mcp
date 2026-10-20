@@ -51,17 +51,13 @@ extension DeliveryRepository {
             reason: .gitFailed, detail: "Delivery target index entries have changed.")
         }
         try worktreeGit.run(["add", "--"] + request.paths, at: worktree)
-        journal.staged = try Dictionary(
-          uniqueKeysWithValues: request.paths.map { path in
-            (
-              path,
-              try worktreeGit.run(
-                ["--no-optional-locks", "ls-files", "--stage", "-z", "--", path], at: worktree
-              ).stdout
-            )
-          })
+        journal.staged = try stagedEntries(journal, git: worktreeGit)
         try io.write(journal, to: journals)
         try cancellation.check()
+        _ = try stagedEntries(journal, git: worktreeGit)
+        guard try worktreeGit.revision("HEAD", at: worktree) == base else {
+          throw DeliveryFailure(reason: .gitFailed, detail: "Delivery worktree HEAD has changed.")
+        }
         try worktreeGit.run(["commit", "-m", request.message], at: worktree)
         guard let commit = try worktreeGit.revision("HEAD", at: worktree), commit != base else {
           throw DeliveryFailure(reason: .gitFailed, detail: "Git did not create a delivery commit.")
@@ -106,6 +102,7 @@ extension DeliveryRepository {
           journal.reason =
             (error as? DeliveryFailure)?.reason == .worktreeUnrecognized
             ? .worktreeUnrecognized : .cleanupFailed
+          journal.message = boundedDeliveryText(error.localizedDescription)
           try? io.write(journal, to: journals)
           return (journal.result, nil)
         }
@@ -158,8 +155,19 @@ extension DeliveryRepository {
     }
     let worktree = URL(fileURLWithPath: journal.worktree)
     let original = journal.commit!
+    guard rebaseDirectory(journal) == nil else {
+      throw DeliveryFailure(reason: .cleanupFailed, detail: "An unowned rebase is in progress.")
+    }
+    journal.rebase = .init(original: original, onto: base)
+    try io.write(journal, to: journals)
     var failure: DeliveryFailure?
     do {
+      guard rebaseDirectory(journal) == nil,
+        try pinned.revision("HEAD", at: worktree) == original
+      else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed, detail: "Delivery worktree changed before rebase.")
+      }
       let result = try pinned.run(["rebase", base], at: worktree, accepting: [0, 1, 128])
       if result.exitCode != 0 {
         failure = DeliveryFailure(
@@ -179,6 +187,7 @@ extension DeliveryRepository {
         throw DeliveryFailure(
           reason: .gitFailed, detail: "Rebase abort did not restore the saved commit.")
       }
+      journal.rebase = nil
       journal.reason = .rebaseConflict
       return false
     }
@@ -187,6 +196,7 @@ extension DeliveryRepository {
       throw DeliveryFailure(reason: .gitFailed, detail: "Delivery branch disappeared after rebase.")
     }
     journal.commit = actual
+    journal.rebase = nil
     let valid = try verifyPaths(&journal, base: base, paths: paths)
     if valid, let failure { journal.reason = failure.reason }
     do { try io.write(journal, to: journals) } catch {
@@ -218,7 +228,8 @@ extension DeliveryRepository {
     let worktree = URL(fileURLWithPath: journal.worktree)
     struct EditedFile {
       var content: String
-      var created: Bool
+      var original: Data?
+      var index: String
       var ranges: [Range<Int>]
     }
     var expected: [String: EditedFile] = [:]
@@ -227,19 +238,31 @@ extension DeliveryRepository {
       let url = try Self.checkedPath(edit.path, inside: worktree)
       switch edit.change {
       case .create(let content):
-        guard !FileManager.default.fileExists(atPath: url.path) else {
+        guard expected[edit.path] == nil, !FileManager.default.fileExists(atPath: url.path) else {
           throw DeliveryFailure(reason: .fileExists, detail: "File already exists: \(edit.path)")
         }
-        try FileManager.default.createDirectory(
-          at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        expected[edit.path] = EditedFile(content: content, created: true, ranges: [])
+        let index = try pinned.run(
+          ["--no-optional-locks", "ls-files", "--stage", "-z", "--", edit.path], at: worktree
+        ).stdout
+        expected[edit.path] = EditedFile(content: content, original: nil, index: index, ranges: [])
       case .replace(let old, let new):
-        guard FileManager.default.fileExists(atPath: url.path) else {
-          throw DeliveryFailure(reason: .fileMissing, detail: "File does not exist: \(edit.path)")
+        var file: EditedFile
+        if let previous = expected[edit.path] {
+          file = previous
+        } else {
+          guard FileManager.default.fileExists(atPath: url.path) else {
+            throw DeliveryFailure(reason: .fileMissing, detail: "File does not exist: \(edit.path)")
+          }
+          let original = try Data(contentsOf: url)
+          guard let content = String(data: original, encoding: .utf8) else {
+            throw DeliveryFailure(reason: .notText, detail: "File is not UTF-8 text: \(edit.path)")
+          }
+          let index = try pinned.run(
+            ["--no-optional-locks", "ls-files", "--stage", "-z", "--", edit.path], at: worktree
+          ).stdout
+          file = EditedFile(content: content, original: original, index: index, ranges: [])
         }
-        guard let content = String(data: try Data(contentsOf: url), encoding: .utf8) else {
-          throw DeliveryFailure(reason: .notText, detail: "File is not UTF-8 text: \(edit.path)")
-        }
+        let content = file.content
         guard let range = content.range(of: old, options: .literal) else {
           throw DeliveryFailure(
             reason: .matchMissing, detail: "Replacement text was not found: \(edit.path)")
@@ -254,8 +277,7 @@ extension DeliveryRepository {
         let start = content[..<range.lowerBound].filter { $0 == "\n" }.count
         let oldLines = old.filter { $0 == "\n" }.count
         let newLines = new.filter { $0 == "\n" }.count
-        let previous = expected[edit.path]
-        var ranges = (previous?.ranges ?? []).map { previous -> Range<Int> in
+        var ranges = file.ranges.map { previous -> Range<Int> in
           let lower =
             previous.lowerBound > start
             ? max(start, previous.lowerBound + newLines - oldLines) : previous.lowerBound
@@ -265,25 +287,28 @@ extension DeliveryRepository {
           return lower..<upper
         }
         ranges.append(start..<(start + newLines + 1))
-        expected[edit.path] = EditedFile(
-          content: content.replacingCharacters(in: range, with: new),
-          created: previous?.created ?? false, ranges: ranges)
+        file.content = content.replacingCharacters(in: range, with: new)
+        file.ranges = ranges
+        expected[edit.path] = file
       }
-      let written = Data(expected[edit.path]!.content.utf8)
-      var changes = journal.changes ?? []
-      if let index = changes.firstIndex(where: { $0.path == edit.path }) {
-        changes[index].written = written
-      } else {
-        let index = try pinned.run(
-          ["--no-optional-locks", "ls-files", "--stage", "-z", "--", edit.path], at: worktree
-        ).stdout
-        changes.append(
-          .init(
-            path: edit.path, original: try? Data(contentsOf: url), written: written, index: index))
+    }
+    journal.changes = try request.paths.map { path in
+      let file = expected[path]!
+      let written = Data(file.content.utf8)
+      return .init(
+        path: path, original: file.original, written: written, index: file.index,
+        originalDigest: try file.original.map { try pinned.blobID($0, at: worktree) },
+        finalDigest: try pinned.blobID(written, at: worktree))
+    }
+    try io.write(journal, to: journals)
+    for change in journal.changes! {
+      try cancellation.check()
+      let url = try Self.checkedPath(change.path, inside: worktree)
+      if change.original == nil {
+        try FileManager.default.createDirectory(
+          at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       }
-      journal.changes = changes
-      try io.write(journal, to: journals)
-      try written.write(to: url)
+      try io.writeFile(change, to: url)
     }
     return try request.paths.map { path in
       let url = try Self.checkedPath(path, inside: worktree)
@@ -294,7 +319,7 @@ extension DeliveryRepository {
       }
       let lines = file.content.components(separatedBy: "\n")
       let ranges =
-        file.created
+        file.original == nil
         ? [0..<min(20, lines.count)]
         : file.ranges.map {
           max(0, $0.lowerBound - 3)..<min(lines.count, $0.upperBound + 3)
@@ -310,5 +335,33 @@ extension DeliveryRepository {
       return DeliveryFile(
         path: path, snippets: merged.map { boundedDeliveryText(lines[$0].joined(separator: "\n")) })
     }
+  }
+
+  private func stagedEntries(_ journal: DeliveryJournal, git pinned: DeliveryGit) throws
+    -> [String: String]
+  {
+    let changes = journal.changes ?? []
+    let entries = try pinned.run(
+      ["--no-optional-locks", "ls-files", "--stage", "-z", "--"] + changes.map(\.path),
+      at: URL(fileURLWithPath: journal.worktree)
+    ).stdout.split(separator: "\0")
+    var staged: [String: String] = [:]
+    for entry in entries {
+      let fields = entry.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+      let metadata = fields[0].split(separator: " ")
+      guard fields.count == 2, metadata.count == 3, metadata[2] == "0",
+        let change = changes.first(where: { $0.path == fields[1] }),
+        String(metadata[1]) == change.finalDigest, staged[change.path] == nil
+      else {
+        throw DeliveryFailure(
+          reason: .gitFailed, detail: "Delivery target index blobs have changed.")
+      }
+      staged[change.path] = String(entry) + "\0"
+    }
+    guard staged.count == changes.count else {
+      throw DeliveryFailure(
+        reason: .gitFailed, detail: "Delivery target index entries are missing.")
+    }
+    return staged
   }
 }

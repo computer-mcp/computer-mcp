@@ -61,7 +61,11 @@ perf test build ci chore revert`，可带 `(scope)`、`!` 与正文。换行符�
 `edits` 为 1–64 项，按序应用。每项提供相对仓库根的 `path`，以及二选一的
 `replace {old,new}` 或 `create {content}`。路径必须在范围内，使用正斜杠，不能
 包含 `..`、`.git`、绝对路径或符号链接。替换要求已有 UTF-8 文件且非空 `old`
-恰好出现一次；新建要求文件不存在，会创建缺少的父目录。每项内容最多 1 MiB（`old` 与 `new` 合计，或 `create.content`）。同一文件的后项作用于前项结果。编辑后回读验证，再只暂存指定路径并提交。
+恰好出现一次；新建要求文件不存在，会创建缺少的父目录。每项内容最多 1 MiB（`old` 与 `new` 合计，或 `create.content`）。同一文件的后项作用于前项结果。
+全部编辑先在内存中计算，每个文件从原始字节到最终内容只写一次。替换前紧挨着回读并
+确认仍为原始字节；新建使用独占创建，保留此时已出现的文件。编辑后回读验证，再只暂存
+指定路径。提交前紧挨着核对这些路径的索引 blob 恰好为最终内容的 Git 对象号，且
+worktree 的 `HEAD` 仍是原基线。
 
 结果通过可读 JSON 和 `structuredContent.result` 返回：`state` 为 `aborted`、
 `merged`、`committed` 或 `cleanup_pending`；有提交时包含 `commit`，分支保留时
@@ -95,21 +99,26 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 
 每次 rebase 后都按同样规则核对新提交相对新基线的改动路径；不符则以
 `committed` / `scope_changed` 保留分支，包括默认分支已含相同补丁而产生空 diff 的
-情况。失败且仍在进行的 rebase 会中止到保存的原提交。rebase 命令报错或超时但已无
+情况。发起 rebase 前，日志记录原提交与目标提交。失败且仍在进行的 rebase 只有其
+`orig-head` 与 `onto` 均与记录相同时才中止到保存的原提交；否则保留为
+`cleanup_pending`。rebase 命令报错或超时但已无
 进行中的 rebase 时，以交付分支实际顶端重新核对并记录提交号，命令失败后不再尝试合并。
 commit-only 只提交并保留分支。
 
 清理使用不带 `--force` 的 `worktree remove`，检查已跟踪、未跟踪和被忽略的改动。
-`aborted` 先按持久化的撤销记录，只恢复仍与本次写入一致的文件，只撤销本次记录的
+`aborted` 先按持久化的撤销记录，识别仍为本次原始或最终字节的文件，只撤销本次记录的
 暂存条目；其他改动使删除失败，留在 worktree 中。`committed` 始终保留分支，即使提交
 已从默认分支可达；`cleanup_pending` 中有未落地提交时也保留分支。只有 `merged` 与
 `aborted` 可删除分支。中止清理删除前，交付分支顶端必须可从当前默认分支顶端到达。
-删除使用一个 `update-ref --stdin` 事务，验证主检出的 `HEAD` 与默认分支仍等于刚核对
-的值，再以预期值删除交付分支。`HEAD` 指向默认分支时，验证 `HEAD` 会同时验证并锁住
-其默认分支引用；其他 `HEAD` 目标需要另外验证默认分支。事务前紧挨着核对 `HEAD` 的
-分支或分离状态。实时 `merged` 要求 `HEAD` 与默认分支均等于交付提交；恢复使用核对
+删除使用一个 `update-ref --stdin` 事务，验证默认分支引用的对象号仍等于刚核对的值，
+再以预期值删除交付分支。已注册 Git 为 2.46 或以后版本时，同一事务内使用
+`option no-deref` 与 `symref-verify HEAD refs/heads/<默认分支>` 原子核对主检出的
+符号 `HEAD`。较早 Git 在事务前紧挨着核对符号 `HEAD`，核对与事务之间的变化仍属于
+剩余并发窗口。实时 `merged` 要求 `HEAD` 与默认分支均等于交付提交；恢复使用核对
 可达性时保存的默认分支顶端。检测到干扰则以 `cleanup_pending` / `cleanup_failed`
 保留分支并记录诊断详情，包括主检出已变化的情况。
+若 Git 的 files 后端将符号 `HEAD` 与默认引用的组合核对拒绝为重复 `HEAD` 更新，清理
+同样以 `cleanup_pending` 保留分支，并记录 Git 的拒绝原因。
 
 仓库锁在 App 与 CLI 进程之间串行交付调用。用户和其他工具等外部 Git 写入者不受
 此锁约束。对它们的保证是：不丢失已提交的工作（本次交付和此前已有的工作仍能从某个
@@ -123,8 +132,10 @@ commit-only 只提交并保留分支。
 记录操作 ID、工作区、范围、仓库、默认分支、交付分支、worktree 路径、基线 `base`、
 `phase`、可选 `commit`、`merged`、可选终态、原因、`message` 以及文件片段。
 创建 worktree 后立即记录 `worktree_identity`：公共 Git 目录下的管理目录 `directory`
-与其中 `gitdir` 文件的原始内容。可选 `changes` 在每次编辑前保存原文件与写入字节和
-原索引条目，`staged` 保存暂存后的索引条目。写入顺序为同目录临时文件、文件 fsync、改名、目录 fsync。
+与其中 `gitdir` 文件的原始内容。可选 `changes` 在文件写入前保存原始与最终（`written`）
+字节、其 Git blob 对象号（`originalDigest`、`finalDigest`）和原索引条目；新文件没有
+原始字节与摘要。`staged` 保存暂存后已核对的索引条目。可选 `rebase` 在发起前保存
+`original` 与 `onto` 提交号。日志写入顺序为同目录临时文件、文件 fsync、改名、目录 fsync。
 首次创建 `computer-mcp` 与 `delivery` 目录时，在改动 Git 状态前还会同步每个新建
 目录的父目录，包括先于日志写入创建的锁目录。
 
@@ -147,10 +158,12 @@ rebase 期间使用保存的 `head-name` 确认中止将恢复的分支。确认
 Git 命令（包括核对命令）都显式传入 `--git-dir` 与 `--work-tree`，`.git` 消失也不会
 让 Git 转而发现外层的主检出。原 worktree 被移走或原路径出现替代 worktree 时不通过
 所有权核对。未识别的空目录删除；非空目录保留，以 `cleanup_pending` /
-`worktree_unrecognized` 记录，日志保留目录路径。目录已不存在但登记仍在时，从已核对的
-仓库根运行 `worktree prune --expire=now`，再确认登记已消失；删除未识别的空目录后也做
-同样处理。登记仍在（包括登记已上锁）则保持 `cleanup_pending`。仅在已核对的 worktree 内中止
-进行中的 rebase，再按实际 Git 状态分类，包括提交
+`worktree_unrecognized` 记录，日志保留目录路径。工作目录已不存在时，仅删除本次记录的
+管理目录：先核对 `gitdir` 内容与记录完全一致、反向路径仍指向该缺失目录，且登记未上锁。
+删除未识别的空目录后也按此处理。不相关的 worktree 登记保留。所有权或锁检查失败则
+保持 `cleanup_pending`。仅在已核对的 worktree 内，且日志表明本次发起了该 rebase、
+当前 `orig-head` 与 `onto` 均与记录相同时，才中止进行中的 rebase；不属于本次操作的
+rebase 及其索引与工作文件保留为 `cleanup_pending`。再按实际 Git 状态分类，包括提交
 已生成但尚未写入日志的情况：无提交则清理为 `aborted`；提交从默认分支可达则清理
 为 `merged`；未合并提交只删除 worktree，保留分支并归类为 `committed` /
 `interrupted`。清理仍失败则保持 `cleanup_pending`，等待下次重试。

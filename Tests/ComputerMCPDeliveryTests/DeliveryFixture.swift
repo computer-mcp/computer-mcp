@@ -59,7 +59,9 @@ final class DeliveryFixture: @unchecked Sendable {
     DeliveryToolProvider(environment: tools(scope: scope), io: io, startsRecovery: false)
   }
 
-  func provider(wrappingGit body: String, timeout: Int? = nil) throws -> DeliveryToolProvider {
+  func provider(wrappingGit body: String, timeout: Int? = nil, io: DeliveryIO = .init()) throws
+    -> DeliveryToolProvider
+  {
     let wrapper = temporary.url.appendingPathComponent("git-wrapper")
     let script = "#!\(try testExecutable("sh"))\n" + body + "\nexec \(quote(executable)) \"$@\"\n"
     try Data(script.utf8).write(to: wrapper)
@@ -68,7 +70,7 @@ final class DeliveryFixture: @unchecked Sendable {
     configuration.cli.commands[0].executable = wrapper.path
     return DeliveryToolProvider(
       environment: .init(configuration: configuration, environment: environment),
-      io: .init(), startsRecovery: false)
+      io: io, startsRecovery: false)
   }
 
   func request(

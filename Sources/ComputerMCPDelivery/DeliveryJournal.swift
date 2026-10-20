@@ -18,6 +18,14 @@ internal struct DeliveryJournal: Codable, Sendable {
     var original: Data?
     var written: Data
     var index: String
+    // Git blob IDs digest the exact bytes using the repository's object format.
+    var originalDigest: String?
+    var finalDigest: String?
+  }
+
+  struct Rebase: Codable, Sendable {
+    var original: String
+    var onto: String
   }
 
   enum Phase: String, Codable, Sendable {
@@ -38,6 +46,7 @@ internal struct DeliveryJournal: Codable, Sendable {
   // Each undo record is durable before its file is written. Index entries are saved after staging.
   var changes: [Change]?
   var staged: [String: String]?
+  var rebase: Rebase?
   var phase: Phase = .started
   var commit: String?
   var merged = false
@@ -52,7 +61,7 @@ internal struct DeliveryJournal: Codable, Sendable {
     case defaultBranch = "default_branch"
     case worktreeIdentity = "worktree_identity"
     case workspace, scope, repository, branch, worktree, base, phase, commit, merged, state, reason,
-      files, changes, staged, message
+      files, changes, staged, rebase, message
   }
 
   var result: DeliveryResult {
@@ -73,6 +82,29 @@ internal struct DeliveryIO: Sendable {
   var beforeDirectorySync: @Sendable (URL) throws -> Void = { _ in }
   var beforeMergeCheck: @Sendable (DeliveryJournal) throws -> Void = { _ in }
   var afterWorktreeVerification: @Sendable (DeliveryJournal) throws -> Void = { _ in }
+  var beforeFileWrite: @Sendable (DeliveryJournal.Change, URL) throws -> Void = { _, _ in }
+
+  func writeFile(_ change: DeliveryJournal.Change, to path: URL) throws {
+    try beforeFileWrite(change, path)
+    if let original = change.original {
+      guard try Data(contentsOf: path) == original else {
+        throw DeliveryFailure(
+          reason: .gitFailed, detail: "Delivery target changed before writing: \(change.path)")
+      }
+      try change.written.write(to: path)
+    } else {
+      let descriptor = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o644)
+      guard descriptor >= 0 else {
+        if errno == EEXIST {
+          throw DeliveryFailure(reason: .fileExists, detail: "File already exists: \(change.path)")
+        }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
+      let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+      defer { try? handle.close() }
+      try handle.write(contentsOf: change.written)
+    }
+  }
 
   func prepareDirectory(_ directory: URL) throws {
     let parent = directory.deletingLastPathComponent()

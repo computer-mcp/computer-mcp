@@ -193,6 +193,94 @@ struct DeliveryConcurrencyTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func registeredGitVersionSelectsDeletionTransaction(legacy: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let transaction = fixture.temporary.url.appendingPathComponent("deletion-transaction")
+      let symbolicVerification = try fixture.repository().git.supportsSymbolicRefVerification(
+        at: fixture.root)
+      let provider = try fixture.provider(
+        wrappingGit: """
+          for argument do
+            if test "$argument" = --version && test \(legacy ? "1" : "0") = 1; then
+              printf 'git version 2.45.4\\n'
+              exit 0
+            fi
+          done
+          if test "$1" = update-ref && test "$2" = --stdin; then
+            cat > \(quote(transaction.path))
+            exec \(quote(fixture.executable)) "$@" < \(quote(transaction.path))
+          fi
+          """)
+      let result = try fixture.apply(provider: provider)
+      #expect(result["state"] == .string("merged"))
+      let commands = try String(contentsOf: transaction, encoding: .utf8)
+      #expect(
+        commands.contains("verify refs/heads/main \(try #require(result["commit"]?.stringValue))\n")
+      )
+      #expect(
+        commands.contains("option no-deref\nsymref-verify HEAD refs/heads/main\n")
+          == (!legacy && symbolicVerification))
+      try fixture.assertClean()
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func legacyGitChecksSymbolicHeadImmediatelyBeforeTransaction(detached: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let io = DeliveryIO(beforeBranchDeletion: { _, commit in
+        try fixture.git(
+          detached ? ["checkout", "--detach", commit] : ["switch", "-c", "other", commit])
+      })
+      let provider = try fixture.provider(
+        wrappingGit: """
+          for argument do
+            if test "$argument" = --version; then
+              printf 'git version 2.45.4\\n'
+              exit 0
+            fi
+          done
+          """, io: io)
+      let result = try fixture.apply(provider: provider)
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["message"]?.stringValue?.contains("Main checkout HEAD") == true)
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func symbolicHeadChangeAtTransactionUsesAvailableAtomicVerification(detached: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let symbolicVerification = try fixture.repository().git.supportsSymbolicRefVerification(
+        at: fixture.root)
+      let transaction = fixture.temporary.url.appendingPathComponent("deletion-transaction")
+      let switchHead = detached ? "checkout --detach" : "switch -c other"
+      let provider = try fixture.provider(
+        wrappingGit: """
+          if test "$1" = update-ref && test "$2" = --stdin; then
+            cat > \(quote(transaction.path))
+            \(quote(fixture.executable)) \(switchHead) main >/dev/null 2>&1 || exit $?
+            exec \(quote(fixture.executable)) "$@" < \(quote(transaction.path))
+          fi
+          """)
+      let result = try fixture.apply(provider: provider)
+      // Older Git has no atomic symbolic check across the final check/transaction interval.
+      #expect(result["state"] == .string(symbolicVerification ? "cleanup_pending" : "merged"))
+      #expect(result["branch"] == (symbolicVerification ? .string("docs/entry") : nil))
+      if symbolicVerification {
+        #expect(result["message"]?.stringValue?.contains("Main checkout HEAD") == true)
+        #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+        #expect(try fixture.journals().first?.phase == .cleanupPending)
+      }
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == result["commit"]?.stringValue)
+      #expect(try fixture.git(["rev-parse", "main"]) == result["commit"]?.stringValue)
+    }
+  }
+
   @Test(arguments: ["tracked", "staged", "untracked", "ignored", "replaced", "created"])
   func abortedCleanupUndoesOnlyOwnedEdits(otherChange: String) async throws {
     try await deliveryTest {

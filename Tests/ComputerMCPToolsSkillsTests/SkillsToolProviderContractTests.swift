@@ -21,6 +21,19 @@ struct SkillsToolProviderContractTests {
   }
 
   @Test
+  func listsToolsInCatalogOrder() throws {
+    let provider = SkillsToolProvider(
+      environment: ToolEnvironment(configuration: .fixture(skills: .init(enabled: true))))
+    #expect(
+      try provider.definitions().map(\.tool.name) == [
+        "skills.roots", "skills.list", "skills.describe", "skills.validate", "skills.frontmatter",
+        "skills.read", "skills.files", "skills.read_file", "skills.read_files",
+        "skills.read_package", "skills.outline", "skills.section", "skills.tables",
+        "skills.links", "skills.link_check", "skills.search", "skills.search_files",
+      ])
+  }
+
+  @Test
   func asynchronousFrontmatterUsesSharedParsingOutsideWorkspace() async throws {
     let root = try ScopedTemporaryDirectory()
     let workspace = try ScopedTemporaryDirectory()

@@ -153,6 +153,50 @@ struct GatewayInvocationContextTests {
     }
   }
 
+  @Test(arguments: [false, true], [false, true])
+  func directRegistryDiscoversOnlyTheRequestedReexport(
+    asynchronous: Bool, selectedContinuation: Bool
+  ) async throws {
+    let fixture = try InvocationFixture(reexportTools: true)
+    var configuration = fixture.configuration
+    var other = fixture.server
+    other.id = "other"
+    other.prefix = "other"
+    configuration.mcp.servers.insert(other, at: 0)
+    let registry = GatewayToolRegistry(configuration: configuration, mcpClient: fixture.client)
+    let selected = MCPContinuationTarget(
+      workspaceID: "fixture", reference: .init(serverID: fixture.server.id, toolName: "inspect"),
+      connectionID: UUID(), instanceID: UUID(), resources: [:])
+    let context = InvocationContext(
+      session: fixture.session, continuation: selectedContinuation ? selected : nil)
+    let initialDiscoveries = fixture.client.discoveries.count
+    do {
+      let result: JSONValue
+      if asynchronous {
+        result = try await registry.callToolAsync(
+          name: "fixture.inspect", arguments: .object([:]), context: context)
+      } else {
+        result = try registry.callTool(
+          name: "fixture.inspect", arguments: .object([:]), context: context)
+      }
+      #expect(result.objectValue?["isError"] == .bool(false))
+      #expect(
+        Array(fixture.client.discoveredServers.dropFirst(initialDiscoveries)) == ["fixture"])
+      let discovery = try #require(fixture.client.discoveries.last)
+      #expect(discovery.session === fixture.session)
+      #expect(
+        (discovery.continuation as? MCPContinuationTarget)?.connectionID
+          == (selectedContinuation ? selected.connectionID : nil))
+      #expect(fixture.client.calls.count == 1)
+      await registry.shutdown()
+      await fixture.runtime.shutdown()
+    } catch {
+      await registry.shutdown()
+      await fixture.runtime.shutdown()
+      throw error
+    }
+  }
+
   @Test(arguments: ["provider", "downstream"])
   func explicitContextSurvivesDetachedAndDefaultBlockingBridges(path: String) async throws {
     let client = InvocationClientSpy()
@@ -413,15 +457,16 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
     let correlationID: UUID?
     let continuation: (any ContinuationRoute)?
   }
-  private let catalogs = NIOLockedValueBox([InvocationContext]())
-  var discoveries: [InvocationContext] { catalogs.withLockedValue { $0 } }
+  private let catalogs = NIOLockedValueBox([(serverID: String, context: InvocationContext)]())
+  var discoveries: [InvocationContext] { catalogs.withLockedValue { $0.map(\.context) } }
+  var discoveredServers: [String] { catalogs.withLockedValue { $0.map(\.serverID) } }
   private let observations = NIOLockedValueBox([Observation]())
   var calls: [Observation] { observations.withLockedValue { $0 } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    catalogs.withLockedValue { $0.append(context) }
+    catalogs.withLockedValue { $0.append((server.id, context)) }
     return ["inspect", "change"].map {
       MCPTool(name: $0, description: "Fixture", inputSchema: .object(["type": .string("object")]))
     }

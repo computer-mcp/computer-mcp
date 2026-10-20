@@ -4,11 +4,16 @@ import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPToolKit
 import Foundation
+import NIOConcurrencyHelpers
 
 /// Owns configured source definitions, gateway tool schemas, and dispatch.
 package final class GatewayToolRegistry: @unchecked Sendable {
   private static let calls = BlockingOperationExecutor(
     label: "computer-mcp.registry-calls", serial: false)
+
+  // Successful listings disambiguate native names and overlapping prefixes.
+  // Calls use the registration identity and revalidate its current catalog.
+  private let reexportReferences = NIOLockedValueBox([String: MCPToolReference]())
 
   internal let configuration: GatewayConfiguration
 
@@ -116,6 +121,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       try appendDefinition(try downstreamDefinition(for: tool), to: &definitions)
     }
 
+    var reexportReferences: [String: MCPToolReference] = [:]
     for server in configuration.mcp.servers where server.exposure.includesReexport {
       guard let prefix = server.prefix else {
         throw GatewayToolError.invalidArguments(
@@ -131,8 +137,12 @@ package final class GatewayToolRegistry: @unchecked Sendable {
           "Reexported tool name conflicts: \(conflict.tool.name)")
       }
       definitions.append(contentsOf: downstreamDefinitions)
+      for definition in downstreamDefinitions {
+        reexportReferences[definition.tool.name] = definition.tool.mcpReference
+      }
     }
 
+    self.reexportReferences.withLockedValue { $0 = reexportReferences }
     return definitions
   }
 
@@ -1109,18 +1119,36 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       if let configuredTool = configuration.tools.first(where: { $0.name == name }) {
         return try callConfiguredTool(configuredTool, arguments: object, context: context)
       }
-      guard configuration.mcp.servers.contains(where: { $0.exposure.includesReexport }) else {
-        throw GatewayToolError.unknownTool(name)
+      return try callTool(
+        definition: reexportedTool(named: name, context: context),
+        arguments: arguments, context: context)
+    }
+  }
+
+  private func reexportedTool(named name: String, context: InvocationContext) throws -> MCPTool {
+    let reference =
+      context.continuationTarget?.reference
+      ?? reexportReferences.withLockedValue { $0[name] }
+    let candidates = configuration.mcp.servers.filter { server in
+      guard server.exposure.includesReexport, let prefix = server.prefix else { return false }
+      if let reference {
+        return server.id == reference.serverID
+          && (prefix.isEmpty ? reference.toolName : "\(prefix).\(reference.toolName)") == name
       }
-      // Membership and routing come from the validated discovered definition,
-      // including explicitly preserved native names, not a prefix guess.
-      if let definition = try listTools(context: context).first(where: { $0.name == name }),
-        definition.mcpReference != nil
-      {
-        return try callTool(definition: definition, arguments: arguments, context: context)
-      }
+      return prefix.isEmpty || name.hasPrefix("\(prefix).")
+    }
+    guard candidates.count == 1, let candidate = candidates.first, let prefix = candidate.prefix
+    else {
       throw GatewayToolError.unknownTool(name)
     }
+    let server = try mcpServer(candidate.id, context: context)
+    guard
+      let definition = try permittedDownstreamTools(server: server, context: context)
+        .map({ $0.prefixed(prefix, serverID: server.id) }).first(where: { $0.name == name })
+    else {
+      throw GatewayToolError.unknownTool(name)
+    }
+    return try downstreamDefinition(for: definition).tool
   }
 
   private func toolDefinition(for tool: ToolConfig, downstream: MCPTool) throws -> MCPTool {

@@ -222,6 +222,67 @@ struct MCPProviderWorkNativeTests {
     }
   }
 
+  @Test(arguments: [false, true], ["fixture", ""])
+  func directRegistrySelectedReexportDoesNotStartAnotherRegistration(
+    asynchronous: Bool, prefix: String
+  ) async throws {
+    try await withProvider { client, original, work in
+      var server = original
+      server.exposure = .reexport
+      server.prefix = prefix
+      server.allowedTools = ["start", "inspect", "finish"]
+      server.toolRisks = ["start": .readOnly, "inspect": .readOnly, "finish": .readOnly]
+      var other = server
+      other.id = "other"
+      other.prefix = "other"
+      let script = try #require(server.args.first)
+      let root = URL(fileURLWithPath: script).deletingLastPathComponent()
+      var hostContext = MCPHostContext(
+        runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
+        workspaceID: "fixture", rootURL: root, readOnly: false)
+      hostContext.ownedWork = work
+      let registry = GatewayToolRegistry(
+        configuration: .init(mcp: .init(servers: [other, server]), workspaceDirectory: root),
+        mcpClient: client, hostContext: hostContext)
+      do {
+        let started = try await registry.mcpClient.callToolAsync(
+          server: server, name: "start", arguments: .object([:]), requestID: nil, context: .empty)
+        try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
+        let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
+        let target = try continuationTarget(work, server: server, arguments: arguments)
+        let context = InvocationContext(continuation: target)
+        let name = prefix.isEmpty ? "inspect" : "\(prefix).inspect"
+        let result: JSONValue
+        if asynchronous {
+          result = try await registry.callToolAsync(
+            name: name, arguments: arguments, context: context)
+        } else {
+          let blocking = BlockingOperationExecutor(label: "registry-reexport-test")
+          result = try await blocking.perform {
+            try registry.callTool(name: name, arguments: arguments, context: context)
+          }
+        }
+        #expect(result.objectValue?["isError"] != .bool(true))
+        #expect(
+          result.objectValue?["structuredContent"]?.objectValue?["pid"]
+            == started.objectValue?["structuredContent"]?.objectValue?["pid"])
+        #expect(
+          try registry.mcpClient.connectionStatus(server: other, context: .empty).objectValue?[
+            "state"] == .string("not_started"))
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+            == "started\n")
+        _ = try await registry.mcpClient.callToolAsync(
+          server: server, name: "finish", arguments: .object([:]), requestID: nil, context: .empty)
+        try await wait { work.snapshot.isEmpty }
+        await registry.shutdown()
+      } catch {
+        await registry.shutdown()
+        throw error
+      }
+    }
+  }
+
   @Test
   func missingSelectedConnectionCannotStartOrReplaceAProvider() async throws {
     try await withProvider { client, server, work in

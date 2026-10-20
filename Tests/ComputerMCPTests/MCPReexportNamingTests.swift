@@ -8,6 +8,31 @@ import Testing
 
 struct MCPReexportNamingTests {
   @Test(arguments: ["", "namespace"])
+  func directCallsUseValidatedRegistrationReferences(prefix: String) throws {
+    let firstName = prefix.isEmpty ? "left" : "child.read"
+    let secondPrefix = prefix.isEmpty ? "" : "\(prefix).child"
+    let client = ReexportNamingClient(["first": [firstName], "second": ["right"]])
+    let registry = GatewayToolRegistry(
+      configuration: .fixture(
+        mcp: .init(servers: [
+          Self.server("second", prefix: secondPrefix), Self.server("first", prefix: prefix),
+        ])),
+      mcpClient: client)
+    let exposed = prefix.isEmpty ? firstName : "\(prefix).\(firstName)"
+    #expect(try registry.listTools(context: .empty).contains { $0.name == exposed })
+    let initialDiscoveries = client.discoveredServers.count
+    #expect(
+      try registry.callTool(name: exposed, arguments: .object([:]), context: .empty)
+        == .string("first:\(firstName)"))
+    #expect(Array(client.discoveredServers.dropFirst(initialDiscoveries)) == ["first"])
+    client.replace("first", names: [])
+    #expect(throws: GatewayToolError.unknownTool(exposed)) {
+      try registry.callTool(name: exposed, arguments: .object([:]), context: .empty)
+    }
+    #expect(Array(client.discoveredServers.dropFirst(initialDiscoveries)) == ["first", "first"])
+  }
+
+  @Test(arguments: ["", "namespace"])
   func explicitPrefixPreservesSchemaAndRegistrationIdentity(prefix: String) throws {
     let client = ReexportNamingClient(["first": ["codex.app.status"]])
     let server = Self.server("first", prefix: prefix)
@@ -158,13 +183,19 @@ struct MCPReexportNamingTests {
 private final class ReexportNamingClient: DownstreamMCPClient, @unchecked Sendable {
   private let lock = NSLock()
   private var names: [String: [String]]
+  private var discoveries: [String] = []
+  var discoveredServers: [String] { lock.withLock { discoveries } }
   init(_ names: [String: [String]]) { self.names = names }
   func replace(_ id: String, names: [String]) { lock.withLock { self.names[id] = names } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    lock.withLock { names[server.id] ?? [] }.map {
+    let names = lock.withLock {
+      discoveries.append(server.id)
+      return self.names[server.id] ?? []
+    }
+    return names.map {
       .init(
         name: $0, title: "Original", description: "Native tool",
         inputSchema: .object(["type": .string("object")]),

@@ -24,7 +24,7 @@ package final class PluginInstallationStorage: Sendable {
   private let descriptor: Int32
   private let parent: Int32
   private let device: dev_t
-  private let inode: UInt64
+  private let inode: ino_t
   private let closed = NIOLockedValueBox(false)
 
   private let directoryFactory: any PluginArchiveDirectoryFactory

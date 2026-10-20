@@ -176,7 +176,7 @@ extension SystemToolProvider {
   internal func systemLoad() throws -> JSONValue {
     var loads = [Double](repeating: 0, count: 3)
     let sampleCount = loads.withUnsafeMutableBufferPointer { buffer in
-      getloadavg(buffer.baseAddress, Int32(buffer.count))
+      getloadavg(buffer.baseAddress!, Int32(buffer.count))
     }
     guard sampleCount >= 0 else {
       throw GatewayToolError.executionFailed("getloadavg failed.")

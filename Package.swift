@@ -385,6 +385,12 @@ let neutralTargets: [Target] =
         ]
       ),
       .testTarget(
+        name: "ComputerMCPMacOSTests",
+        dependencies: [
+          "ComputerMCPMacOS", "ComputerMCPToolKit", "ComputerMCPCore",
+          "ComputerMCPConfiguration", "ComputerMCPTestSupport",
+        ]),
+      .testTarget(
         name: "ComputerMCPPlatformDarwinTests",
         dependencies: [
           "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",

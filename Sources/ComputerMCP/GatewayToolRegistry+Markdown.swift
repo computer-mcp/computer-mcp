@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPToolKit
 import Foundation
 import TOML
 import Yams
@@ -59,8 +60,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxRowsPerTable, name: "max_rows_per_table", upperBound: 100_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -266,8 +267,8 @@ extension GatewayToolRegistry {
       try validateBoundedPositive(level, name: "level", upperBound: 6)
     }
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -420,8 +421,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
     let formats = try markdownFrontmatterFormats(requestedFormat)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -743,8 +744,8 @@ extension GatewayToolRegistry {
     includeCodeBlocks: Bool,
     maxBytes: Int
   ) throws -> MarkdownLinkInventory {
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -1545,12 +1546,13 @@ extension GatewayToolRegistry {
         .standardizedFileURL
       kind = "relative_path"
     }
-    let contained = isWorkspaceContained(targetURL)
+    let contained = workspaceScope.isWorkspaceContained(targetURL)
     return MarkdownLinkTargetInfo(
       kind: kind,
       fragment: split.fragment,
       targetPath: targetURL.path,
-      targetWorkspaceRelativePath: contained ? workspaceRelativePath(targetURL) : nil,
+      targetWorkspaceRelativePath: contained
+        ? workspaceScope.workspaceRelativePath(targetURL) : nil,
       targetWorkspaceContained: contained
     )
   }

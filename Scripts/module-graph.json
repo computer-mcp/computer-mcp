@@ -162,12 +162,10 @@
     "ComputerMCPProductContracts": "ComputerMCPControlPlane",
     "ControlToolContract": "ComputerMCPControlPlane",
     "ControlToolResponse": "ComputerMCPGateway",
-    "FileNameMatchMode": "ComputerMCPToolKit",
     "GatewayDatabase": "ComputerMCPGateway",
     "GatewayManagementAuthorization": "ComputerMCPGateway",
     "GatewayToolCounts": "ComputerMCPGateway",
     "GatewayToolProviderFactory": "ComputerMCPGateway",
-    "HTTPCheckOutput": "ComputerMCPToolKit",
     "HTTPClientControlRegistry": "ComputerMCPGateway",
     "MCPInvocationAdmission": "ComputerMCPDownstream",
     "MCPRuntimeAdapter": "ComputerMCPGateway",
@@ -175,7 +173,6 @@
     "ManifestFileTransaction": "ComputerMCPControlPlane",
     "ManifestRecoveryRecord": "ComputerMCPControlPlane",
     "PlatformServices": "ComputerMCPGateway",
-    "StructuredPathSegment": "ComputerMCPToolKit",
     "WorkspaceDeduplicationDigestInput": "ComputerMCPToolsWorkspace"
   },
   "extensions": {
@@ -200,7 +197,6 @@
     "^GatewayToolRegistry\\+(StructuredData|Markdown|Media)": "ComputerMCPToolsStructured",
     "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
     "^GatewayToolRegistry\\+(Workspace|WorkspaceInventory)\\.swift|^Workspace(Deduplication|ConfigurationChange)": "ComputerMCPToolsWorkspace",
-    "^GatewayToolRegistry\\+(Arguments|WorkspacePaths)": "ComputerMCPToolKit",
     "^GatewayToolRegistry\\+(Shell|Process)": "ComputerMCPToolsShell",
     "^GatewayToolRegistry\\+CLI|^CLI(Tree|ArgumentEncoder|ValueValidation|Executable|ProcessExecution)": "ComputerMCPToolsCLI",
     "^MCPRegistration": "ComputerMCPControlPlane",

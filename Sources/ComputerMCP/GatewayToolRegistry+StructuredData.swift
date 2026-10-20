@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPToolKit
 import Foundation
 import TOML
 import Yams
@@ -9,8 +10,8 @@ extension GatewayToolRegistry {
     let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -56,8 +57,8 @@ extension GatewayToolRegistry {
     try validateBoundedNonNegative(maxErrors, name: "max_errors", upperBound: 100_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -215,7 +216,7 @@ extension GatewayToolRegistry {
       throw GatewayToolError.invalidArguments("Encoded JSON exceeds max_bytes.")
     }
 
-    let url = try resolvedWorkspaceURL(path)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -258,7 +259,7 @@ extension GatewayToolRegistry {
     var payload: [String: JSONValue] = [
       "operation": .string("json.write"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceRelativePath(url)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
       "dry_run": .bool(dryRun),
       "confirm_write": .bool(confirmWrite),
       "overwrite": .bool(overwrite),
@@ -295,8 +296,8 @@ extension GatewayToolRegistry {
     let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -347,8 +348,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxDocuments, name: "max_documents", upperBound: 1_000)
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -444,8 +445,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
     try validateBoundedPositive(maxTextBytes, name: "max_text_bytes", upperBound: 1_048_576)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -509,8 +510,8 @@ extension GatewayToolRegistry {
     let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -557,8 +558,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxDocuments, name: "max_documents", upperBound: 1_000)
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -644,7 +645,7 @@ extension GatewayToolRegistry {
       throw GatewayToolError.invalidArguments("Encoded property list exceeds max_bytes.")
     }
 
-    let url = try resolvedWorkspaceURL(path)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -687,7 +688,7 @@ extension GatewayToolRegistry {
     var payload: [String: JSONValue] = [
       "operation": .string("plist.write"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceRelativePath(url)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
       "format": .string(formatName),
       "dry_run": .bool(dryRun),
       "confirm_write": .bool(confirmWrite),
@@ -723,8 +724,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxColumns, name: "max_columns", upperBound: 10_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -982,8 +983,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -1091,8 +1092,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -2060,20 +2061,6 @@ private struct DynamicCodingKey: CodingKey {
   init?(intValue: Int) {
     stringValue = "\(intValue)"
     self.intValue = intValue
-  }
-}
-
-internal enum StructuredPathSegment {
-  case key(String)
-  case index(Int)
-
-  var json: JSONValue {
-    switch self {
-    case .key(let key):
-      return .string(key)
-    case .index(let index):
-      return .integer(Int64(index))
-    }
   }
 }
 

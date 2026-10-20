@@ -55,11 +55,25 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPToolKit",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+      ]
+    ),
+    .target(
       name: "ComputerMCPTestSupport", dependencies: ["ComputerMCPPlatform"],
       path: "Tests/ComputerMCPTestSupport"),
     .testTarget(
       name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
     .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
+    .testTarget(
+      name: "ComputerMCPToolKitTests",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTestSupport",
+      ]
+    ),
     .testTarget(
       name: "ComputerMCPPlatformPOSIXTests",
       dependencies: ["ComputerMCPPlatform", "ComputerMCPPlatformPOSIX"]
@@ -143,6 +157,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatformDarwin",
           "ComputerMCPPlatformPOSIX",
           "ComputerMCPProcess",
+          "ComputerMCPToolKit",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
@@ -193,6 +208,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",
           "ComputerMCPProcess",
+          "ComputerMCPToolKit",
           "ComputerMCPTestSupport",
           .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         ],

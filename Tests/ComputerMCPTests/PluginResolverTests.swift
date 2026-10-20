@@ -1,5 +1,6 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import Foundation
 import Testing
 
@@ -51,17 +52,17 @@ struct PluginResolverTests {
     #expect(inspection.interpreters.last?.source == "host_binding")
     let registration = try #require(plugin.cliCommands.first)
     #expect(registration.executable == script)
-    let registry = GatewayToolRegistry(
+    let commands = RegisteredCommands(
       configuration: .init(cli: .init(commands: [registration]), workspaceDirectory: fixture.root),
-      environment: environment)
+      commandRunner: ProcessCommandRunner(environment: environment), environment: environment)
     do {
-      let result = try registry.runRegisteredCLI(
+      let result = try commands.runRegisteredCLI(
         command: registration, args: ["cli argument", ""], timeout: 2_000,
         requireArbitraryArgs: true)
       #expect(result.exitCode == 0 && result.stdout == "cli argument\n\n")
-      await registry.shutdown()
+      await commands.execution.shutdown()
     } catch {
-      await registry.shutdown()
+      await commands.execution.shutdown()
       throw error
     }
     #expect(state.settings[fixture.package.manifest.id] == settings)

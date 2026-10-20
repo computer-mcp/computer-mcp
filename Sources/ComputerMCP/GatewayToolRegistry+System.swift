@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPToolKit
 import Darwin
 import Foundation
 
@@ -541,7 +542,7 @@ extension GatewayToolRegistry {
     let allMatches = try optionalBool("all_matches", in: object) ?? false
     try validateExecutableLookupName(executable)
 
-    let paths = pathExecutables(executable, allMatches: allMatches)
+    let paths = pathExecutables(executable, allMatches: allMatches, environment: environment)
 
     return .object([
       "operation": .string("system.which"),
@@ -551,7 +552,7 @@ extension GatewayToolRegistry {
       "paths": .array(paths.map(JSONValue.string)),
       "match_count": .integer(Int64(paths.count)),
       "all_matches": .bool(allMatches),
-      "path_entry_count": .integer(Int64(pathSearchDirectories().count)),
+      "path_entry_count": .integer(Int64(pathSearchDirectories(environment: environment).count)),
     ])
   }
 
@@ -560,7 +561,7 @@ extension GatewayToolRegistry {
     let maxEntries = optionalInt("max_entries", in: object) ?? 200
     try validateBoundedPositive(maxEntries, name: "max_entries", upperBound: 1_000)
 
-    let directories = pathSearchDirectories()
+    let directories = pathSearchDirectories(environment: environment)
     let hasProcessPath = environment["PATH"] != nil
     var entries: [JSONValue] = []
     var omittedCount = 0
@@ -1062,95 +1063,4 @@ extension GatewayToolRegistry {
     return fields.contains { $0.contains(query) }
   }
 
-  internal func volumeResourceKeys() -> [URLResourceKey] {
-    [
-      .nameKey,
-      .volumeURLKey,
-      .volumeNameKey,
-      .volumeLocalizedNameKey,
-      .volumeUUIDStringKey,
-      .volumeTotalCapacityKey,
-      .volumeAvailableCapacityKey,
-      .volumeAvailableCapacityForImportantUsageKey,
-      .volumeAvailableCapacityForOpportunisticUsageKey,
-      .volumeIsLocalKey,
-      .volumeIsInternalKey,
-      .volumeIsEjectableKey,
-      .volumeIsRemovableKey,
-      .volumeIsReadOnlyKey,
-      .volumeSupportsCasePreservedNamesKey,
-      .volumeSupportsCaseSensitiveNamesKey,
-      .volumeSupportsCompressionKey,
-      .volumeSupportsFileCloningKey,
-      .volumeSupportsHardLinksKey,
-      .volumeSupportsJournalingKey,
-      .volumeSupportsPersistentIDsKey,
-      .volumeSupportsSparseFilesKey,
-      .volumeSupportsSymbolicLinksKey,
-      .volumeSupportsVolumeSizesKey,
-    ]
-  }
-
-  internal func volumeInfo(url: URL, keys: Set<URLResourceKey>) -> JSONValue {
-    let values = try? url.resourceValues(forKeys: keys)
-    let name =
-      values?.volumeLocalizedName ?? values?.volumeName ?? values?.name ?? url.lastPathComponent
-    return .object([
-      "path": .string(url.path),
-      "name": .string(name),
-      "localized_name": values?.volumeLocalizedName.map(JSONValue.string) ?? .null,
-      "volume_name": values?.volumeName.map(JSONValue.string) ?? .null,
-      "uuid": values?.volumeUUIDString.map(JSONValue.string) ?? .null,
-      "total_capacity_bytes": values?.volumeTotalCapacity.map { .integer(Int64($0)) } ?? .null,
-      "available_capacity_bytes": values?.volumeAvailableCapacity.map { .integer(Int64($0)) }
-        ?? .null,
-      "available_capacity_for_important_usage_bytes": values?
-        .volumeAvailableCapacityForImportantUsage.map { .integer(Int64($0)) } ?? .null,
-      "available_capacity_for_opportunistic_usage_bytes": values?
-        .volumeAvailableCapacityForOpportunisticUsage.map { .integer(Int64($0)) } ?? .null,
-      "is_local": values?.volumeIsLocal.map(JSONValue.bool) ?? .null,
-      "is_internal": values?.volumeIsInternal.map(JSONValue.bool) ?? .null,
-      "is_ejectable": values?.volumeIsEjectable.map(JSONValue.bool) ?? .null,
-      "is_removable": values?.volumeIsRemovable.map(JSONValue.bool) ?? .null,
-      "is_read_only": values?.volumeIsReadOnly.map(JSONValue.bool) ?? .null,
-      "supports_case_preserved_names": values?.volumeSupportsCasePreservedNames
-        .map(JSONValue.bool) ?? .null,
-      "supports_case_sensitive_names": values?.volumeSupportsCaseSensitiveNames
-        .map(JSONValue.bool) ?? .null,
-      "supports_compression": values?.volumeSupportsCompression.map(JSONValue.bool) ?? .null,
-      "supports_file_cloning": values?.volumeSupportsFileCloning.map(JSONValue.bool) ?? .null,
-      "supports_hard_links": values?.volumeSupportsHardLinks.map(JSONValue.bool) ?? .null,
-      "supports_journaling": values?.volumeSupportsJournaling.map(JSONValue.bool) ?? .null,
-      "supports_persistent_ids": values?.volumeSupportsPersistentIDs.map(JSONValue.bool) ?? .null,
-      "supports_sparse_files": values?.volumeSupportsSparseFiles.map(JSONValue.bool) ?? .null,
-      "supports_symbolic_links": values?.volumeSupportsSymbolicLinks.map(JSONValue.bool) ?? .null,
-      "supports_volume_sizes": values?.volumeSupportsVolumeSizes.map(JSONValue.bool) ?? .null,
-    ])
-  }
-
-  internal func environmentEntry(
-    key: String,
-    owner: String,
-    purpose: String,
-    valueOrigin: String,
-    processEnvironment: [String: String],
-    declaredKeys: inout Set<String>
-  ) -> JSONValue {
-    declaredKeys.insert(key)
-    return .object([
-      "key": .string(key),
-      "owner": .string(owner),
-      "purpose": .string(purpose),
-      "value_origin": .string(valueOrigin),
-      "process_environment_present": .bool(processEnvironment[key] != nil),
-      "value_redacted": .bool(true),
-    ])
-  }
-
-  internal func httpAuthMode() -> String {
-    if configuration.server.http.accessTokenEnv != nil {
-      return "bearer"
-    }
-    return "none"
-  }
 }

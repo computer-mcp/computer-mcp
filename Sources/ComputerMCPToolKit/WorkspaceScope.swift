@@ -1,14 +1,24 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import Foundation
 
-extension GatewayToolRegistry {
-  internal func resolvedWorkspaceURL(_ path: String) throws -> URL {
+/// Resolves tool paths against a configured workspace and projects its file metadata.
+package struct WorkspaceScope: Sendable {
+  package let workspaceDirectory: URL
+  package let toolMeta: JSONValue?
+
+  package init(configuration: GatewayConfiguration, toolMeta: JSONValue?) {
+    self.workspaceDirectory = configuration.workspaceDirectory
+    self.toolMeta = toolMeta
+  }
+
+  package func resolvedWorkspaceURL(_ path: String) throws -> URL {
     do {
       return try WorkspacePathResolver.resolve(
         path,
-        relativeTo: configuration.workspaceDirectory
+        relativeTo: workspaceDirectory
       )
     } catch {
       throw GatewayToolError.invalidArguments(
@@ -16,8 +26,8 @@ extension GatewayToolRegistry {
     }
   }
 
-  internal func lexicalWorkspaceURL(_ path: String) throws -> URL {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
+  package func lexicalWorkspaceURL(_ path: String) throws -> URL {
+    let base = workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
     let target =
       path.hasPrefix("/")
       ? URL(fileURLWithPath: path)
@@ -32,7 +42,7 @@ extension GatewayToolRegistry {
     return standardized
   }
 
-  internal func workspaceInstructionScopeURL(
+  package func workspaceInstructionScopeURL(
     targetURL: URL,
     originalPath: String = ".",
     pathIsDirectory: Bool?,
@@ -52,8 +62,8 @@ extension GatewayToolRegistry {
     return treatAsDirectory ? targetURL : targetURL.deletingLastPathComponent()
   }
 
-  internal func workspaceInstructionScopeDirectories(scopeURL: URL) -> [URL] {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
+  package func workspaceInstructionScopeDirectories(scopeURL: URL) -> [URL] {
+    let base = workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
     let basePath = base.path
     let basePrefix = basePath.hasSuffix("/") ? basePath : "\(basePath)/"
     let scope = scopeURL.standardizedFileURL
@@ -75,8 +85,8 @@ extension GatewayToolRegistry {
     return directories.reversed()
   }
 
-  internal func resolvedWorkspaceURLPreservingFinalSymlink(_ path: String) throws -> URL {
-    let lexicalBase = WorkspacePathResolver.lexicallyNormalized(configuration.workspaceDirectory)
+  package func resolvedWorkspaceURLPreservingFinalSymlink(_ path: String) throws -> URL {
+    let lexicalBase = WorkspacePathResolver.lexicallyNormalized(workspaceDirectory)
     let canonicalBase: URL
     let base: URL
     do {
@@ -116,15 +126,15 @@ extension GatewayToolRegistry {
     return parent.appendingPathComponent(standardized.lastPathComponent)
   }
 
-  internal func isWorkspaceContained(_ url: URL) -> Bool {
+  package func isWorkspaceContained(_ url: URL) -> Bool {
     (try? WorkspacePathResolver.resolve(
       url.path,
-      relativeTo: configuration.workspaceDirectory
+      relativeTo: workspaceDirectory
     )) != nil
   }
 
-  internal func workspaceRelativePath(_ url: URL) -> String {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+  package func workspaceRelativePath(_ url: URL) -> String {
+    let base = workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath().path
     let path = url.standardizedFileURL.resolvingSymlinksInPath().path
     if path == base {
       return "."
@@ -136,8 +146,8 @@ extension GatewayToolRegistry {
     return path
   }
 
-  internal func workspaceRelativePathPreservingSymlinks(_ url: URL) -> String {
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+  package func workspaceRelativePathPreservingSymlinks(_ url: URL) -> String {
+    let base = workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath().path
     let path = url.standardizedFileURL.path
     if path == base {
       return "."
@@ -149,19 +159,33 @@ extension GatewayToolRegistry {
     return path
   }
 
-  internal func relativePath(fromDirectoryPath rootPath: String, to url: URL) -> String {
-    let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-    let prefix = rootPath.hasSuffix("/") ? rootPath : "\(rootPath)/"
-    guard path.hasPrefix(prefix) else {
-      return url.lastPathComponent
+  package func workspaceURL(forRelativeDirectory path: String) -> URL {
+    if path.isEmpty || path == "." {
+      return workspaceDirectory
     }
-    return String(path.dropFirst(prefix.count))
+    return workspaceDirectory.appendingPathComponent(path, isDirectory: true)
   }
 
-  internal func workspaceURL(forRelativeDirectory path: String) -> URL {
-    if path.isEmpty || path == "." {
-      return configuration.workspaceDirectory
-    }
-    return configuration.workspaceDirectory.appendingPathComponent(path, isDirectory: true)
+  package func fileInfo(url: URL) throws -> FileInfo {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    let type = fileType(attributes[.type])
+    let symlinkDestination = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+    let relativePath =
+      symlinkDestination == nil
+      ? workspaceRelativePath(url) : workspaceRelativePathPreservingSymlinks(url)
+
+    return FileInfo(
+      path: url.path,
+      workspaceRelativePath: relativePath,
+      type: symlinkDestination == nil ? type : "symlink",
+      size: (attributes[.size] as? NSNumber)?.int64Value,
+      createdAt: attributes[.creationDate] as? Date,
+      modifiedAt: attributes[.modificationDate] as? Date,
+      isReadable: FileManager.default.isReadableFile(atPath: url.path),
+      isWritable: FileManager.default.isWritableFile(atPath: url.path),
+      isExecutable: FileManager.default.isExecutableFile(atPath: url.path),
+      isSymlink: symlinkDestination != nil,
+      symlinkDestination: symlinkDestination
+    )
   }
 }

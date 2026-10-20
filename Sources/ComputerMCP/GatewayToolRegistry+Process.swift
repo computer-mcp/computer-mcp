@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPToolKit
 import Foundation
 
 extension GatewayToolRegistry {
@@ -18,7 +19,7 @@ extension GatewayToolRegistry {
       throw GatewayToolError.invalidArguments("Missing required 'argv'.")
     }
     let args = try optionalStringArray("argv", in: object)
-    let invocation = try resolveCLIInvocation(command)
+    let invocation = try registeredCommands.resolveCLIInvocation(command)
     let processID = try processManager.spawn(
       executable: invocation.executable,
       arguments: invocation.arguments + args,

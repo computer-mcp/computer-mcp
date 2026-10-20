@@ -37,10 +37,10 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MODIFIERS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:package|public|internal|private|fileprivate|final|indirect|nonisolated|open|static)\s+)*"
 DECL = re.compile(r"^" + MODIFIERS + r"(struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
-EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z][\w.]*)")
+EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)")
 FREE = re.compile(r"^" + MODIFIERS + r"(?:func|let|var)\s+(\w+)")
 IMPORT = re.compile(r"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
-IDENTIFIER = re.compile(r"\b[A-Z]\w*\b")
+REFERENCE = re.compile(r"\b[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*")
 FUNC = re.compile(MODIFIERS + r"func\s")
 PRIVATE = re.compile(r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:private|fileprivate)\s")
 COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
@@ -118,12 +118,82 @@ def code_text(text):
     return "".join(out)
 
 
-MEMBER = re.compile(r"[{}]|\b(?:struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
+MEMBER = re.compile(r"[{}]|\b(struct|class|enum|actor|protocol|typealias|func)\s+([A-Za-z_]\w*)")
 SCOPE = re.compile(r"[{}]|\b(?:let|var)\s+([A-Za-z_]\w*)|(?<![.\w])([A-Za-z_]\w*)\b")
+TYPE_TOKEN = re.compile(r"\bfunc\s+([A-Za-z_]\w*)|->|==|[A-Za-z_]\w*|[^\s]")
 
 
-def member_types(text, path, index):
-    """Record the types declared directly inside each type body, keyed by dotted type path."""
+def closure_signature(text, index):
+    """Whether the parenthesized group starting before index is a closure's parameters."""
+    index = skip_group(text, index)
+    while match := re.match(r"\s*(async|throws|rethrows)\b", text[index:]):
+        index += match.end()
+        if match.group(1) == "throws":
+            typed = re.match(r"\s*\(", text[index:])
+            if typed:
+                index = skip_group(text, index + typed.end())
+    return re.match(r"\s*(?:->[^{}]*?)?\bin\b", text[index:]) is not None
+
+
+def type_contexts(text):
+    """Function declaration names and identifiers in lexical type syntax, by offset.
+
+    Annotations, signatures, aliases, generic arguments and casts require types;
+    expression names can instead resolve to a member function.
+    """
+    declarations, positions, groups = set(), set(), []
+    declaration, binding, in_type, previous = None, None, False, None
+    heads = {"let", "var", "typealias", "associatedtype", "struct", "class", "enum",
+             "actor", "protocol", "extension", "init", "subscript", "case"}
+    closing = {")": "(", "]": "[", ">": "<"}
+    for token in TYPE_TOKEN.finditer(text):
+        word = token.group(0)
+        if token.group(1):
+            declarations.add(token.start(1))
+            declaration, in_type = "func", False
+        elif word in heads:
+            declaration, in_type = word, word == "extension"
+            if word in {"let", "var"}:
+                binding = word
+        elif word in ("(", "[", "<"):
+            groups.append((word, in_type, declaration))
+            in_type |= word == "<" or declaration == "case" or (word == "(" and previous == "throws")
+            if word == "(" and previous in {"{", "]"}:
+                if closure_signature(text, token.end()):
+                    declaration = "func"
+                    groups[-1] = (word, in_type, declaration)
+        elif word in closing:
+            if groups and groups[-1][0] == closing[word]:
+                _, in_type, declaration = groups.pop()
+        elif word == ",":
+            if groups:
+                opening, in_type, declaration = groups[-1]
+                in_type |= opening == "<" or declaration == "case"
+            else:
+                declaration = declaration if declaration in {"case", "where"} else binding
+                in_type = declaration == "where"
+        elif word == ":":
+            in_type |= declaration is not None
+        elif word == "=":
+            in_type = declaration in {"typealias", "associatedtype"}
+            declaration = None
+        elif word == "where":
+            declaration, in_type = "where", True
+        elif word in {"->", "as", "is"}:
+            in_type = True
+        elif word in {"{", "}", ";", "in"}:
+            declaration, binding, in_type = None, None, False
+        elif in_type:
+            positions.add(token.start())
+        if previous == "@":
+            positions.add(token.start())
+        previous = word
+    return declarations, positions
+
+
+def member_names(text, path):
+    """Record direct member types and functions, keyed by dotted declaration path."""
+    types, functions = collections.defaultdict(set), collections.defaultdict(set)
     # The first body opened in a chunk belongs to the chunk's own declaration or extension.
     stack, pending, depth = [path], path, 0
     for token in MEMBER.finditer(text):
@@ -135,9 +205,12 @@ def member_types(text, path, index):
             depth -= 1
             stack = stack[:depth + 1]
         else:
+            kind, name = token.groups()
             if depth >= 1:
-                index[stack[depth]].add(token.group(1))
-            pending = f"{stack[depth]}.{token.group(1)}" if depth >= 1 else path
+                index = functions if kind == "func" else types
+                index[stack[depth]].add(name)
+            pending = f"{stack[depth]}.{name}" if depth >= 1 else path
+    return types, functions
 
 
 def free_references(text, functions):
@@ -219,7 +292,7 @@ def chunks(path, directory):
             if decl:
                 current = {"kind": "decl", "name": decl.group(2), "lines": [line]}
             elif ext:
-                current = {"kind": "ext", "name": ext.group(1).split(".")[0], "path": ext.group(1), "lines": [line]}
+                current = {"kind": "ext", "name": ext.group(1).split(".")[0].strip(), "lines": [line]}
             else:
                 current = {"kind": "free", "name": free.group(1), "lines": [line]}
         elif current is not None:
@@ -230,10 +303,18 @@ def chunks(path, directory):
         out.append(current)
     for chunk in out:
         chunk["text"] = code_text("\n".join(chunk.pop("lines")))
+        if chunk["kind"] == "ext":
+            chunk["path"] = re.sub(r"\s+", "", EXT.match(chunk["text"]).group(1))
         chunk["file"] = path.name
         chunk["directory"] = directory
         chunk["source"] = text
     return out
+
+
+def type_reference(path, modules):
+    """Top-level type name and optional module qualifier of a dotted reference."""
+    names = re.split(r"\s*\.\s*", path)
+    return (names[1], names[0]) if len(names) > 1 and names[0] in modules else (names[0], None)
 
 
 class Rules:
@@ -350,15 +431,16 @@ def plan(graph, sources, tests=None):
     # Executable targets cannot be imported, so their declarations never own a reference.
     executables = set(graph.get("executables", []))
     types, functions = collections.defaultdict(set), collections.defaultdict(set)
-    nested = collections.defaultdict(set)
+    nested_types, nested_functions = collections.defaultdict(set), collections.defaultdict(set)
     for chunk, target in zip(all_chunks, targets):
         if target is None:
             continue
         if chunk["kind"] in ("decl", "ext"):
-            members = collections.defaultdict(set)
-            member_types(chunk["text"], chunk.get("path", chunk["name"]), members)
+            members, methods = member_names(chunk["text"], chunk.get("path", chunk["name"]))
             for path, names in members.items():
-                nested[(target, path)].update(names)
+                nested_types[(target, path)].update(names)
+            for path, names in methods.items():
+                nested_functions[(target, path)].update(names)
         if target in executables:
             continue
         if chunk["kind"] == "decl":
@@ -370,29 +452,42 @@ def plan(graph, sources, tests=None):
     for chunk, source in zip(all_chunks, targets):
         if source is None or source in removed:
             continue
-        # Names declared in this declaration, or nested in the type an extension extends,
-        # resolve locally; other unqualified or module-qualified names resolve to owners.
-        local = nested.get((source, chunk.get("path", chunk["name"])), set())
-        references = set()
-        for match in IDENTIFIER.finditer(chunk["text"]):
-            name, start = match.group(0), match.start()
-            if name not in types or name in local or source in types[name]:
+        # Only unqualified references can be shadowed by members of this declaration
+        # or the type an extension extends.
+        path = (source, chunk.get("path", chunk["name"]))
+        local_types = nested_types.get(path, set())
+        local_functions = nested_functions.get(path, set())
+        declarations, type_positions = type_contexts(chunk["text"])
+        references = collections.defaultdict(set)
+        for match in REFERENCE.finditer(chunk["text"]):
+            start = match.start()
+            if start in declarations or re.search(r"\.\s*$", chunk["text"][max(0, start - 80):start]):
                 continue
-            if start > 0 and chunk["text"][start - 1] == ".":
-                qualifier = re.search(r"([A-Za-z_]\w*)\s*\.$", chunk["text"][max(0, start - 80):start])
-                if not qualifier or qualifier.group(1) not in modules:
-                    continue
-            references.add(name)
-        if chunk["kind"] == "ext" and chunk["name"] in types:
-            references.add(chunk["name"])
-        references |= {n for n in free_references(chunk["text"], functions) if source not in functions[n]}
-        for name in references:
+            name, qualifier = type_reference(match.group(0), modules)
+            if name not in types:
+                continue
+            if qualifier is None and (name in local_types or source in types[name]
+                                      or (name in local_functions and start not in type_positions)):
+                continue
+            owners = types[name] if qualifier is None else types[name] & {qualifier}
+            references[(name, qualifier)].update(owners)
+        if chunk["kind"] == "ext":
+            name, qualifier = type_reference(chunk["path"], modules)
+            owners = types.get(name, set())
+            if qualifier is not None:
+                owners = owners & {qualifier}
+            references[(name, qualifier)].update(owners)
+        for name in free_references(chunk["text"], functions.keys() - local_types - local_functions):
+            if source not in functions[name]:
+                references[(name, None)].update(functions[name])
+        for (name, qualifier), owners in references.items():
             if (chunk["name"], name) in cuts:
                 continue
-            for target in (types.get(name, set()) | functions.get(name, set())) - {source} - removed:
+            for target in owners - {source} - removed:
                 edges[source].add(target)
                 if len(evidence[(source, target)]) < 5:
-                    evidence[(source, target)].append(f'{chunk["file"]}:{chunk["name"]} -> {name}')
+                    reference = f"{qualifier}.{name}" if qualifier else name
+                    evidence[(source, target)].append(f'{chunk["file"]}:{chunk["name"]} -> {reference}')
     for source in sorted(edges):
         for target in sorted(edges[source]):
             for problem in rules.violations(source, target):

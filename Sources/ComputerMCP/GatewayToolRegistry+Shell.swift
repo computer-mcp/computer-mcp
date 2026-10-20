@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPProcess
+import ComputerMCPToolKit
 import Foundation
 
 extension GatewayToolRegistry {

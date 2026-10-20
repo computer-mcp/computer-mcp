@@ -2,11 +2,14 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import ComputerMCPToolKit
 import Foundation
 
 /// Owns configured source definitions, gateway tool schemas, and dispatch.
 package final class GatewayToolRegistry: @unchecked Sendable {
   internal let configuration: GatewayConfiguration
+
+  internal let workspaceScope: WorkspaceScope
 
   internal let commandRunner: CommandRunning
 
@@ -18,9 +21,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   internal let environment: [String: String]
 
-  internal let encoder: JSONEncoder
-
-  internal let cliExecution: CLIProcessExecution
+  internal let registeredCommands: RegisteredCommands
 
   package init(
     configuration: GatewayConfiguration,
@@ -36,17 +37,20 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     enabledConfiguration.mcp.servers.removeAll { !$0.enabled }
     enabledConfiguration.tools.removeAll { disabledMCPIDs.contains($0.source) }
     self.configuration = enabledConfiguration
-    self.cliExecution = CLIProcessExecution(
-      maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
-    self.commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
+    let toolMeta: JSONValue? =
+      enabledConfiguration.server.http.accessTokenEnv == nil
+      ? .object(["securitySchemes": .array([.object(["type": .string("noauth")])])]) : nil
+    self.workspaceScope = WorkspaceScope(configuration: enabledConfiguration, toolMeta: toolMeta)
+    let commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
+    self.commandRunner = commandRunner
+    self.registeredCommands = RegisteredCommands(
+      configuration: enabledConfiguration, commandRunner: commandRunner, environment: environment)
     self.processManager = processManager
     self.shellManager = shellManager
     self.mcpClient = mcpClient.makeScopedClient(
       workingDirectory: configuration.workspaceDirectory, environment: environment,
       hostContext: hostContext)
     self.environment = environment
-    self.encoder = JSONEncoder()
-    self.encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
   }
 
   internal var hasReexportedMCPServers: Bool {
@@ -61,10 +65,11 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       var command = command
       command.env = environment.merging(command.env) { _, value in value }
       let tree = try source.load(
-        command: command, workspace: configuration.workspaceDirectory, execution: cliExecution)
+        command: command, workspace: configuration.workspaceDirectory,
+        execution: registeredCommands.execution)
       return CLITreeToolProvider(
         registration: command, tree: tree, workspace: configuration.workspaceDirectory,
-        execution: cliExecution,
+        execution: registeredCommands.execution,
         timeoutMilliseconds: command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs,
         maxOutputBytes: configuration.policy.maxOutputBytes)
     }
@@ -74,7 +79,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   package func shutdown() async {
     await shellManager.shutdown()
-    await cliExecution.shutdown()
+    await registeredCommands.execution.shutdown()
     await mcpClient.shutdown()
   }
 
@@ -90,7 +95,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       skillsEnabled: configuration.skills.enabled,
       hasCLIProviders: !configuration.cli.commands.isEmpty,
       hasMCPProviders: !configuration.mcp.servers.isEmpty,
-      toolMeta: toolMeta()
+      toolMeta: workspaceScope.toolMeta
     )
 
     for configuredTool in configuration.tools {
@@ -1244,13 +1249,5 @@ package final class GatewayToolRegistry: @unchecked Sendable {
           })
       }
     }
-  }
-
-  internal func toolMeta() -> JSONValue? {
-    if configuration.server.http.accessTokenEnv == nil {
-      return .object(["securitySchemes": .array([.object(["type": .string("noauth")])])])
-    }
-
-    return nil
   }
 }

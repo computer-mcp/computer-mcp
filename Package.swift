@@ -292,6 +292,13 @@ let neutralTargets: [Target] =
         .product(name: "MCP", package: "swift-sdk"),
       ]
     ),
+    .testTarget(
+      name: "ComputerMCPControlPlaneTests",
+      dependencies: [
+        "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPCore",
+        "ComputerMCPPlatform", "ComputerMCPTunnels", "ComputerMCPTestSupport",
+      ]
+    ),
     .target(
       name: "ComputerMCPTunnels",
       dependencies: [
@@ -478,6 +485,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCPMacOSTests",
         dependencies: [
           "ComputerMCPComputerUse",
+          "ComputerMCPControlPlane",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPDownstream",
@@ -492,16 +500,27 @@ let neutralTargets: [Target] =
           "ComputerMCPTestSupport",
           "ComputerMCPToolKit",
           "ComputerMCPToolsCLI",
+          "ComputerMCPToolsFiles",
+          "ComputerMCPToolsSystem",
           "ComputerMCPToolsGit",
           "ComputerMCPToolsMCP",
           "ComputerMCPToolsShell",
           "ComputerMCPToolsWorkspace",
           "ComputerMCPTransport",
+          "ComputerMCPTunnels",
+          .product(name: "Crypto", package: "swift-crypto"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         ],
         resources: [.copy("Fixtures")]
+      ),
+      .testTarget(
+        name: "ComputerMCPControlPlaneDarwinTests",
+        dependencies: [
+          "ComputerMCPControlPlane", "ComputerMCPComputerUse", "ComputerMCPGateway",
+          "ComputerMCPCore", "ComputerMCPTransport", "ComputerMCPTestSupport",
+        ]
       ),
       .testTarget(
         name: "ComputerMCPGatewayDarwinTests",

@@ -1,6 +1,5 @@
 import Testing
 
-@testable import ComputerMCPComputerUse
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
@@ -34,15 +33,5 @@ struct ControlErrorClassificationTests {
     #expect(AppControlPlaneServiceError.fullShellManifestDisabled.controlAuditClassification == nil)
     #expect(
       AppControlPlaneServiceError.unknownWorkspace("missing").controlAuditClassification == nil)
-  }
-
-  @Test(arguments: [
-    ComputerUseGatewayProviderError.invalidArguments("Invalid pointer button."),
-    .service(.permissionRequired(.accessibility)),
-  ])
-  func computerUseErrorsUseControlDefaults(error: ComputerUseGatewayProviderError) {
-    let disposition = ControlToolResponse.auditDisposition(for: error)
-    #expect(disposition.decision == .failed)
-    #expect(disposition.code == "control.operation_failed")
   }
 }

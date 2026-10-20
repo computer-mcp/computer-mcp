@@ -1,6 +1,6 @@
 import ComputerMCPCore
 import Foundation
-import os
+import NIOConcurrencyHelpers
 
 internal struct GatewayCapabilityCatalog: Sendable {
   internal func descriptor(for tool: MCPTool) -> CapabilityDescriptor {
@@ -152,7 +152,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     var lastRefreshError: String?
   }
 
-  private let state: OSAllocatedUnfairLock<State>
+  private let state: NIOLockedValueBox<State>
   private let source: @Sendable () throws -> [any GatewayToolProvider]
   private let reservedToolNames: Set<String>
   private let shutdownSource: @Sendable () async -> Void
@@ -179,8 +179,8 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     self.shutdownSource = shutdownSource
     self.mcpPolicyResolver = mcpPolicyResolver
     self.retainsContinuation = retainsContinuation
-    self.state = OSAllocatedUnfairLock(
-      initialState: State(
+    self.state = NIOLockedValueBox(
+      State(
         snapshot: try .init(providers: source(), reservedToolNames: reservedToolNames)))
     if let invalidations {
       let monitor = Task { [weak self] in
@@ -190,7 +190,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
           try? await self?.refreshTools()
         }
       }
-      state.withLock { $0.monitors.append(monitor) }
+      state.withLockedValue { $0.monitors.append(monitor) }
     }
     if let refreshInterval {
       let monitor = Task { [weak self] in
@@ -200,12 +200,12 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
           try? await self.refreshTools()
         }
       }
-      state.withLock { $0.monitors.append(monitor) }
+      state.withLockedValue { $0.monitors.append(monitor) }
     }
   }
 
   deinit {
-    for monitor in state.withLock({ $0.monitors }) { monitor.cancel() }
+    for monitor in state.withLockedValue({ $0.monitors }) { monitor.cancel() }
     changes.finish()
   }
 
@@ -239,7 +239,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   }
 
   internal func listTools() throws -> [MCPTool] {
-    try state.withLock { state in
+    try state.withLockedValue { state in
       guard !state.stopped else { throw GatewayProviderRouterError.stopped }
       return state.snapshot.tools
     }
@@ -251,7 +251,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
 
   /// A private locator survives catalog hiding while native work still owns its binding.
   internal func continuationReference(named name: String) -> MCPToolReference? {
-    state.withLock { state in
+    state.withLockedValue { state in
       guard !state.stopped else { return nil }
       return state.snapshot.routes[name]?.capability.mcpReference
         ?? state.retainedContinuations[name]?.capability.mcpReference
@@ -288,7 +288,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private func route(named name: String, expectedCapability: CapabilityDescriptor? = nil) throws
     -> GatewayToolCatalogSnapshot.Route
   {
-    try state.withLock { state in
+    try state.withLockedValue { state in
       guard !state.stopped else { throw GatewayProviderRouterError.stopped }
       let route: GatewayToolCatalogSnapshot.Route?
       if let target = MCPContinuationTarget.current,
@@ -311,7 +311,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
 
   internal func toolChanges() -> AsyncStream<Void> { changes.stream() }
 
-  internal var lastRefreshError: String? { state.withLock { $0.lastRefreshError } }
+  internal var lastRefreshError: String? { state.withLockedValue { $0.lastRefreshError } }
 
   internal func refreshTools() async throws {
     try await refreshCoordinator.run { [self] in
@@ -329,7 +329,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
           }
         }
         try Task.checkCancellation()
-        let changed = try state.withLock { state in
+        let changed = try state.withLockedValue { state in
           guard !state.stopped else { throw GatewayProviderRouterError.stopped }
           let changed = !state.snapshot.hasSameSurface(as: snapshot)
           let previous = state.retainedContinuations.merging(state.snapshot.routes) { _, new in new
@@ -346,14 +346,14 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
         }
         if changed { changes.send() }
       } catch {
-        state.withLock { $0.lastRefreshError = error.localizedDescription }
+        state.withLockedValue { $0.lastRefreshError = error.localizedDescription }
         throw error
       }
     }
   }
 
   internal func shutdown() async {
-    let task = state.withLock { state -> Task<Void, Never> in
+    let task = state.withLockedValue { state -> Task<Void, Never> in
       if let task = state.shutdownTask { return task }
       state.stopped = true
       let monitors = state.monitors

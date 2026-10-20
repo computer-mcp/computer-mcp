@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import Foundation
 
@@ -208,7 +209,7 @@ package enum CLITreeValidation {
 
   private static func read(_ file: URL) throws -> Data {
     let url = file.standardizedFileURL
-    return try PluginPackageFiles(root: url.deletingLastPathComponent()).read(
+    return try PackageFiles(root: url.deletingLastPathComponent()).read(
       url.lastPathComponent, maximumBytes: 4_194_304)
   }
 

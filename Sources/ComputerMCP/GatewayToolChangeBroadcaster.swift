@@ -1,5 +1,5 @@
 import Foundation
-import os
+import NIOConcurrencyHelpers
 
 /// Each subscriber owns a bounded invalidation stream; coalescing never drops a catalog delta.
 final class GatewayToolChangeBroadcaster: Sendable {
@@ -8,15 +8,15 @@ final class GatewayToolChangeBroadcaster: Sendable {
     var closed = false
   }
 
-  private let state = OSAllocatedUnfairLock(initialState: State())
+  private let state = NIOLockedValueBox(State())
 
   func stream() -> AsyncStream<Void> {
     let id = UUID()
     let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     continuation.onTermination = { [weak self] _ in
-      _ = self?.state.withLock { $0.subscribers.removeValue(forKey: id) }
+      _ = self?.state.withLockedValue { $0.subscribers.removeValue(forKey: id) }
     }
-    let closed = state.withLock { state in
+    let closed = state.withLockedValue { state in
       if state.closed { return true }
       state.subscribers[id] = continuation
       return false
@@ -26,12 +26,12 @@ final class GatewayToolChangeBroadcaster: Sendable {
   }
 
   func send() {
-    let subscribers = state.withLock { Array($0.subscribers.values) }
+    let subscribers = state.withLockedValue { Array($0.subscribers.values) }
     for subscriber in subscribers { subscriber.yield(()) }
   }
 
   func finish() {
-    let subscribers = state.withLock { state in
+    let subscribers = state.withLockedValue { state in
       state.closed = true
       let subscribers = Array(state.subscribers.values)
       state.subscribers.removeAll()

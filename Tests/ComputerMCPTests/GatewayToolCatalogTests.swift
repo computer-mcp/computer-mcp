@@ -2,8 +2,8 @@ import ComputerMCPTestSupport
 import Foundation
 import Logging
 import MCP
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -182,7 +182,7 @@ struct GatewayToolCatalogTests {
     let startedEvents = started.stream()
     let cancelled = GatewayToolChangeBroadcaster()
     let cancelledEvents = cancelled.stream()
-    let completed = OSAllocatedUnfairLock(initialState: false)
+    let completed = NIOLockedValueBox(false)
     let cleanup = CatalogCleanupGate()
     let task = Task {
       try await coordinator.run {
@@ -198,14 +198,14 @@ struct GatewayToolCatalogTests {
     #expect(try await Self.nextEvent(startedEvents))
     let stopping = Task {
       await coordinator.stop()
-      completed.withLock { $0 = true }
+      completed.withLockedValue { $0 = true }
     }
     #expect(try await Self.nextEvent(cancelledEvents))
-    #expect(!completed.withLock { $0 })
+    #expect(!completed.withLockedValue { $0 })
     await cleanup.release()
     await stopping.value
     await #expect(throws: CancellationError.self) { try await task.value }
-    #expect(completed.withLock { $0 })
+    #expect(completed.withLockedValue { $0 })
   }
 
   @Test(arguments: ["inputSchema", "outputSchema", "annotations", "description"])
@@ -213,9 +213,9 @@ struct GatewayToolCatalogTests {
     let initial = MCPTool(
       name: "sample", description: "unchanged", inputSchema: .object(["type": .string("object")]),
       outputSchema: nil)
-    let current = OSAllocatedUnfairLock(initialState: initial)
+    let current = NIOLockedValueBox(initial)
     let router = try GatewayProviderRouter(source: {
-      [CatalogSingleToolFixture(tool: current.withLock { $0 })]
+      [CatalogSingleToolFixture(tool: current.withLockedValue { $0 })]
     })
     let events = router.toolChanges()
     let replacement = MCPTool(
@@ -226,7 +226,7 @@ struct GatewayToolCatalogTests {
         : initial.inputSchema,
       outputSchema: field == "outputSchema" ? .object(["type": .string("object")]) : nil,
       annotations: field == "annotations" ? .init(readOnlyHint: true) : nil)
-    current.withLock { $0 = replacement }
+    current.withLockedValue { $0 = replacement }
     try await router.refreshTools()
     #expect(try await Self.nextEvent(events))
     #expect(try router.listTools() == [replacement])
@@ -284,7 +284,7 @@ struct GatewayToolCatalogTests {
   @Test
   func invalidationDuringDiscoveryGetsAnotherCompletePass() async throws {
     let source = CatalogSourceFixture()
-    let pauseNext = OSAllocatedUnfairLock(initialState: false)
+    let pauseNext = NIOLockedValueBox(false)
     let entered = GatewayToolChangeBroadcaster()
     let enteredEvents = entered.stream()
     let resume = DispatchSemaphore(value: 0)
@@ -292,7 +292,7 @@ struct GatewayToolCatalogTests {
     let router = try GatewayProviderRouter(
       source: {
         let snapshot = source.providers()
-        let pause = pauseNext.withLock { value in
+        let pause = pauseNext.withLockedValue { value in
           let pause = value
           value = false
           return pause
@@ -305,7 +305,7 @@ struct GatewayToolCatalogTests {
       }, invalidations: invalidations.stream())
     let changes = router.toolChanges()
     source.replace(names: ["intermediate"], revision: 2)
-    pauseNext.withLock { $0 = true }
+    pauseNext.withLockedValue { $0 = true }
     invalidations.send()
     do {
       #expect(try await Self.nextEvent(enteredEvents))
@@ -633,13 +633,12 @@ private struct CatalogSingleToolFixture: GatewayToolProvider {
 }
 
 private final class CatalogSourceFixture: Sendable {
-  private let state = OSAllocatedUnfairLock(
-    initialState: CatalogProviderFixture(names: ["sample"], revision: 1))
+  private let state = NIOLockedValueBox(CatalogProviderFixture(names: ["sample"], revision: 1))
 
-  func providers() -> [any GatewayToolProvider] { [state.withLock { $0 }] }
+  func providers() -> [any GatewayToolProvider] { [state.withLockedValue { $0 }] }
 
   func replace(names: [String], revision: Int, risk: CapabilityRisk = .readOnly) {
-    state.withLock { $0 = .init(names: names, revision: revision, risk: risk) }
+    state.withLockedValue { $0 = .init(names: names, revision: revision, risk: risk) }
   }
 }
 
@@ -674,17 +673,16 @@ private final class MutableCatalogClient: DownstreamMCPClient, Sendable {
     -> any DownstreamMCPClient
   { self }
 
-  private let state = OSAllocatedUnfairLock(
-    initialState: CatalogProviderFixture(names: ["sample"], revision: 1))
+  private let state = NIOLockedValueBox(CatalogProviderFixture(names: ["sample"], revision: 1))
   private let changes = GatewayToolChangeBroadcaster()
   func replace(names: [String], revision: Int) {
-    state.withLock { $0 = .init(names: names, revision: revision) }
+    state.withLockedValue { $0 = .init(names: names, revision: revision) }
     changes.send()
   }
   func toolChanges() -> AsyncStream<Void> { changes.stream() }
   func shutdown() async { changes.finish() }
   func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    try state.withLock { try $0.listTools() }
+    try state.withLockedValue { try $0.listTools() }
   }
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
     .null

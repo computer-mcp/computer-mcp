@@ -1,6 +1,9 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPersistence
+import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
+import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import Darwin
 import Foundation
@@ -49,7 +52,7 @@ package actor AppGatewayService {
   }
 
   private struct ManifestAttempt: Equatable {
-    let fingerprint: ManifestFileMonitor.Fingerprint?
+    let fingerprint: FileFingerprint?
   }
 
   private struct RuntimeKey: Hashable {
@@ -134,7 +137,7 @@ package actor AppGatewayService {
   private var runtimeObservers: [UUID: [Task<Void, Never>]] = [:]
   private var catalogChanges: [RuntimeKey: GatewayToolChangeBroadcaster] = [:]
   private var manifestObserver: Task<Void, Never>?
-  private var manifestMonitor: ManifestFileMonitor?
+  private var manifestMonitor: (any FileChangeMonitor)?
   private var manifestReloadObserver: Task<Void, Never>?
   private var manifestReloadError: String?
   private var lastManifestAttempt: ManifestAttempt?
@@ -1171,7 +1174,7 @@ package actor AppGatewayService {
     guard !Task.isCancelled, epoch == manifestEpoch else { return false }
     guard !lifecycleInProgress else { return true }
     let attempt = ManifestAttempt(
-      fingerprint: ManifestFileMonitor.fingerprint(controlPlane.directories.manifest))
+      fingerprint: FileFingerprint.current(of: controlPlane.directories.manifest))
     guard attempt != lastManifestAttempt else { return false }
     do {
       guard let input = try controlPlane.manifestStore.externalInput() else {
@@ -1180,7 +1183,7 @@ package actor AppGatewayService {
         return false
       }
       guard
-        attempt.fingerprint == ManifestFileMonitor.fingerprint(controlPlane.directories.manifest)
+        attempt.fingerprint == FileFingerprint.current(of: controlPlane.directories.manifest)
       else { return true }
       try await withConfigurationChange {
         _ = try await publishManifest(
@@ -1207,7 +1210,13 @@ package actor AppGatewayService {
 
   private func startManifestMonitoring() async throws {
     guard manifestMonitor == nil else { return }
-    let monitor = try ManifestFileMonitor(manifestURL: controlPlane.directories.manifest)
+    let monitor: any FileChangeMonitor
+    do {
+      monitor = try DirectoryEventFileChangeMonitor(fileURL: controlPlane.directories.manifest)
+    } catch let error as POSIXError {
+      throw AtomicManifestStoreError.posix(
+        operation: "watch manifest directory", code: Int32(error.code.rawValue))
+    }
     manifestMonitor = monitor
     let epoch = UUID()
     manifestEpoch = epoch

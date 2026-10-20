@@ -1,7 +1,7 @@
 import ComputerMCPCore
 import ComputerMCPProcess
 import Foundation
-import os
+import NIOConcurrencyHelpers
 
 /// Runtime-local ownership, separate from durable execution outcome and authorization.
 final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
@@ -29,11 +29,11 @@ final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
     var admitsInvocations = true
   }
 
-  private let state = OSAllocatedUnfairLock(initialState: State())
+  private let state = NIOLockedValueBox(State())
   private let changes = GatewayToolChangeBroadcaster()
   let continuations = MCPContinuationDirectory()
 
-  var snapshot: [Record] { state.withLock { Array($0.records.values) } }
+  var snapshot: [Record] { state.withLockedValue { Array($0.records.values) } }
   func updates() -> AsyncStream<Void> { changes.stream() }
 
   func retainShell(workspaceID: String?, sessionID: String) -> any OwnedWorkLease {
@@ -47,7 +47,7 @@ final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
     let record = Record(
       id: UUID(), kind: kind, workspaceID: workspaceID, registrationID: registrationID,
       connectionID: connectionID, resourceID: resourceID)
-    state.withLock { $0.records[record.id] = record }
+    state.withLockedValue { $0.records[record.id] = record }
     changes.send()
     return Lease(owner: self, id: record.id)
   }
@@ -57,7 +57,7 @@ final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
     let record = Record(
       id: UUID(), kind: .invocation, workspaceID: workspaceID, registrationID: nil,
       connectionID: nil, resourceID: resourceID)
-    try state.withLock { state in
+    try state.withLockedValue { state in
       guard state.admitsInvocations else {
         throw GatewayToolError.disabled(
           "[runtime.retired] This runtime no longer admits invocations.")
@@ -69,21 +69,21 @@ final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
   }
 
   func closeAdmissionIfDrained() -> Bool {
-    state.withLock { state in
+    state.withLockedValue { state in
       guard state.records.isEmpty else { return false }
       state.admitsInvocations = false
       return true
     }
   }
 
-  func closeAdmission() { state.withLock { $0.admitsInvocations = false } }
+  func closeAdmission() { state.withLockedValue { $0.admitsInvocations = false } }
 
   private func finish(_ id: UUID) {
-    if state.withLock({ $0.records.removeValue(forKey: id) != nil }) { changes.send() }
+    if state.withLockedValue({ $0.records.removeValue(forKey: id) != nil }) { changes.send() }
   }
 
   private func setUncertain(_ id: UUID, _ uncertain: Bool) {
-    let changed = state.withLock { state in
+    let changed = state.withLockedValue { state in
       guard let record = state.records[id], record.uncertain != uncertain else { return false }
       state.records[id]?.uncertain = uncertain
       return true

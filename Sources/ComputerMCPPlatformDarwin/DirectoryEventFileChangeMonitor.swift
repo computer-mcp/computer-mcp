@@ -1,33 +1,24 @@
+import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import Darwin
 import Foundation
 
-/// Directory watching survives atomic file replacement. Unrelated staging writes
-/// do not trigger repeated discovery of the same rejected manifest.
-final class ManifestFileMonitor: @unchecked Sendable {
-  struct Fingerprint: Equatable, Sendable {
-    let device: Int64
-    let inode: UInt64
-    let size: Int64
-    let modifiedSeconds: Int64
-    let modifiedNanoseconds: Int64
-    let changedSeconds: Int64
-    let changedNanoseconds: Int64
-  }
-
-  let changes: AsyncStream<Void>
+/// Directory watching survives atomic file replacement; unchanged fingerprints suppress events.
+package final class DirectoryEventFileChangeMonitor: FileChangeMonitor, @unchecked Sendable {
+  package let changes: AsyncStream<Void>
   private let source: DispatchSourceFileSystemObject
   private let timer: DispatchSourceTimer
   private let continuation: AsyncStream<Void>.Continuation
   private let stopped: Task<Void, Never>
-  private let manifestURL: URL
+  private let fileURL: URL
   private let lock = NSLock()
-  private var fingerprint: Fingerprint?
+  private var fingerprint: FileFingerprint?
 
-  init(manifestURL: URL) throws {
-    self.manifestURL = manifestURL
-    let descriptor = open(manifestURL.deletingLastPathComponent().path, O_EVTONLY | O_CLOEXEC)
+  package init(fileURL: URL) throws {
+    self.fileURL = fileURL
+    let descriptor = open(fileURL.deletingLastPathComponent().path, O_EVTONLY | O_CLOEXEC)
     guard descriptor >= 0 else {
-      throw AtomicManifestStoreError.posix(operation: "watch manifest directory", code: errno)
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
     let (changes, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     self.changes = changes
@@ -37,8 +28,8 @@ final class ManifestFileMonitor: @unchecked Sendable {
     let cleanup = DispatchGroup()
     cleanup.enter()
     cleanup.enter()
-    let queue = DispatchQueue(label: "com.showxu.computer-mcp.manifest-watch", qos: .utility)
-    fingerprint = Self.fingerprint(manifestURL)
+    let queue = DispatchQueue(label: "com.showxu.computer-mcp.file-watch", qos: .utility)
+    fingerprint = FileFingerprint.current(of: fileURL)
     source = DispatchSource.makeFileSystemObjectSource(
       fileDescriptor: descriptor, eventMask: [.write, .rename, .delete],
       queue: queue)
@@ -49,7 +40,7 @@ final class ManifestFileMonitor: @unchecked Sendable {
       cleanup.leave()
     }
     // Directory events do not cover every in-place file write or replaced parent.
-    // This fallback reads metadata only; discovery still runs only on a changed file.
+    // This fallback reads metadata only; notifications still require a changed fingerprint.
     timer.schedule(
       deadline: .now() + .seconds(1), repeating: .seconds(1), leeway: .milliseconds(250))
     timer.setEventHandler { [weak self] in self?.check() }
@@ -69,30 +60,19 @@ final class ManifestFileMonitor: @unchecked Sendable {
     timer.cancel()
   }
 
-  func close() async {
+  package func close() async {
     source.cancel()
     timer.cancel()
     await stopped.value
   }
 
   private func check() {
-    let current = Self.fingerprint(manifestURL)
+    let current = FileFingerprint.current(of: fileURL)
     let changed = lock.withLock {
       guard current != fingerprint else { return false }
       fingerprint = current
       return true
     }
     if changed { continuation.yield(()) }
-  }
-
-  static func fingerprint(_ url: URL) -> Fingerprint? {
-    var value = stat()
-    guard stat(url.path, &value) == 0 else { return nil }
-    return Fingerprint(
-      device: Int64(value.st_dev), inode: UInt64(value.st_ino), size: Int64(value.st_size),
-      modifiedSeconds: Int64(value.st_mtimespec.tv_sec),
-      modifiedNanoseconds: Int64(value.st_mtimespec.tv_nsec),
-      changedSeconds: Int64(value.st_ctimespec.tv_sec),
-      changedNanoseconds: Int64(value.st_ctimespec.tv_nsec))
   }
 }

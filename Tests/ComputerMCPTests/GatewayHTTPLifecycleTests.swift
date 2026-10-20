@@ -1,6 +1,6 @@
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -118,7 +118,7 @@ private final class HTTPLifecycleRegistry: GatewayToolServing, Sendable {
     var shutdownCount = 0
     var shutdownDuringDiscovery = false
   }
-  private let state = OSAllocatedUnfairLock(initialState: State())
+  private let state = NIOLockedValueBox(State())
   private let pauseDiscovery: Bool
   private let discoveryGate = DispatchSemaphore(value: 0)
   private let shutdownGate = HTTPShutdownGate()
@@ -126,13 +126,13 @@ private final class HTTPLifecycleRegistry: GatewayToolServing, Sendable {
   let shutdownEntered = GatewayToolChangeBroadcaster()
 
   init(pauseDiscovery: Bool) { self.pauseDiscovery = pauseDiscovery }
-  var shutdownCount: Int { state.withLock { $0.shutdownCount } }
-  var shutdownDuringDiscovery: Bool { state.withLock { $0.shutdownDuringDiscovery } }
+  var shutdownCount: Int { state.withLockedValue { $0.shutdownCount } }
+  var shutdownDuringDiscovery: Bool { state.withLockedValue { $0.shutdownDuringDiscovery } }
 
   func listTools() throws -> [MCPTool] {
     if pauseDiscovery {
-      state.withLock { $0.discovering = true }
-      defer { state.withLock { $0.discovering = false } }
+      state.withLockedValue { $0.discovering = true }
+      defer { state.withLockedValue { $0.discovering = false } }
       discoveryEntered.send()
       guard discoveryGate.wait(timeout: .now() + 5) == .success else {
         throw HTTPLifecycleError.timeout
@@ -144,7 +144,7 @@ private final class HTTPLifecycleRegistry: GatewayToolServing, Sendable {
   func releaseDiscovery() { discoveryGate.signal() }
   func releaseShutdown() async { await shutdownGate.release() }
   func shutdown() async {
-    state.withLock {
+    state.withLockedValue {
       $0.shutdownCount += 1
       $0.shutdownDuringDiscovery = $0.shutdownDuringDiscovery || $0.discovering
     }

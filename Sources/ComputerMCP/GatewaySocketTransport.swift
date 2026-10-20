@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import Darwin
 import Foundation
 import Logging
@@ -481,12 +482,12 @@ enum GatewaySocketSecurity {
     let peerUserID = try channel.pipeline.syncOperations.withUnsafeTransportIfAvailable(
       of: NIOBSDSocket.Handle.self
     ) { descriptor in
-      var effectiveUserID: uid_t = 0
-      var effectiveGroupID: gid_t = 0
-      guard getpeereid(descriptor, &effectiveUserID, &effectiveGroupID) == 0 else {
-        throw GatewaySocketError.ioError(operation: "getpeereid", code: errno)
+      do {
+        return try PeerCredentials.effectiveUserID(ofSocket: descriptor)
+      } catch let error as POSIXError {
+        throw GatewaySocketError.ioError(
+          operation: "peer credentials", code: Int32(error.code.rawValue))
       }
-      return effectiveUserID
     }
 
     guard let peerUserID else {

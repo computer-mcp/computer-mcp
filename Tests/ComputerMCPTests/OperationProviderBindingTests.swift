@@ -1,6 +1,6 @@
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -184,8 +184,8 @@ private struct ProviderBindingFixture {
 }
 
 private final class ProviderBindingClient: DownstreamMCPClient, Sendable {
-  private let recordedCalls = OSAllocatedUnfairLock(initialState: [String]())
-  var calls: [String] { recordedCalls.withLock { $0 } }
+  private let recordedCalls = NIOLockedValueBox([String]())
+  var calls: [String] { recordedCalls.withLockedValue { $0 } }
 
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
@@ -201,7 +201,7 @@ private final class ProviderBindingClient: DownstreamMCPClient, Sendable {
   }
 
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    recordedCalls.withLock { $0.append("\(server.id):\(name)") }
+    recordedCalls.withLockedValue { $0.append("\(server.id):\(name)") }
     return .object([
       "content": .array([.object(["type": .string("text"), "text": .string("changed")])]),
       "isError": .bool(false),

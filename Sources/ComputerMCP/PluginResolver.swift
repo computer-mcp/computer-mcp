@@ -209,7 +209,11 @@ package enum PluginResolver {
       let choice = settings.skills[contribution.id] ?? PluginSkillSettings()
       guard choice.enabled else { continue }
       let id = try registrationID(contribution.id, override: choice.registrationID)
-      try PluginPackageFiles(root: plugin.root).validate(contribution.path, kind: .directory)
+      do {
+        try PackageFiles(root: plugin.root).validate(contribution.path, kind: .directory)
+      } catch PackageFileError.invalid(let reason) {
+        throw PluginManifestError.invalid(reason)
+      }
       let root = try WorkspacePathResolver.resolve(contribution.path, relativeTo: plugin.root)
       skills.append(SkillRootConfig(id: id, path: root.path, description: contribution.description))
       try record(contribution.id, kind: .skills, id: id)
@@ -251,7 +255,11 @@ package enum PluginResolver {
   ) throws -> ExecutableInvocation? {
     let command: String?
     if let relative = try reference.packagePath() {
-      try PluginPackageFiles(root: plugin.root).validate(relative, kind: .executable)
+      do {
+        try PackageFiles(root: plugin.root).validate(relative, kind: .executable)
+      } catch PackageFileError.invalid(let reason) {
+        throw PluginManifestError.invalid(reason)
+      }
       command = try WorkspacePathResolver.resolve(relative, relativeTo: plugin.root).path
     } else if let id = reference.dependency {
       command = dependencyExecutables[id].flatMap { $0.isFileURL ? $0.path : nil }

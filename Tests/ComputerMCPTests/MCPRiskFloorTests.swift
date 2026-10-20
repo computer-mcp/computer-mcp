@@ -1,6 +1,6 @@
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -132,16 +132,16 @@ struct MCPRiskFloorTests {
           allowedCallers: [.secureTunnel], mode: .workspaceOperations),
         derivesObserveGrant: false)
     }
-    let current = OSAllocatedUnfairLock(initialState: policy(tools: true))
+    let current = NIOLockedValueBox(policy(tools: true))
     let base = RiskCatalogClient(risk: .string("read-only"))
     base.suspendDiscovery()
     let client = AuthorizedMCPClient(
-      base: base, policy: policy(tools: true), policyProvider: { current.withLock { $0 } })
+      base: base, policy: policy(tools: true), policyProvider: { current.withLockedValue { $0 } })
     let receipt = try client.readRequest(
       server: server, requestID: "pending", offset: 0, maxBytes: 1024)
     #expect(receipt.objectValue?["tool"] == .string("inspect"))
     let revoked = policy(tools: false)
-    current.withLock { $0 = revoked }
+    current.withLockedValue { $0 = revoked }
     do {
       _ = try client.readRequest(server: server, requestID: "pending", offset: 0, maxBytes: 1024)
       Issue.record("A revoked tool grant must deny its execution receipt.")
@@ -398,27 +398,27 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
     var action: JSONValue?
     var nextAction: JSONValue?
   }
-  private let state: OSAllocatedUnfairLock<State>
+  private let state: NIOLockedValueBox<State>
   private let scopedHighRisk: String?
   init(risk: JSONValue, scopedHighRisk: String? = nil) {
-    state = .init(initialState: State(risk: risk))
+    state = .init(State(risk: risk))
     self.scopedHighRisk = scopedHighRisk
   }
-  var calls: Int { state.withLock { $0.calls } }
-  func setRisk(_ risk: JSONValue) { state.withLock { $0.risk = risk } }
-  func setAction(_ action: JSONValue) { state.withLock { $0.action = action } }
+  var calls: Int { state.withLockedValue { $0.calls } }
+  func setRisk(_ risk: JSONValue) { state.withLockedValue { $0.risk = risk } }
+  func setAction(_ action: JSONValue) { state.withLockedValue { $0.action = action } }
   func changeActionAfterNextDiscovery(_ action: JSONValue) {
-    state.withLock { $0.nextAction = action }
+    state.withLockedValue { $0.nextAction = action }
   }
-  func raiseAfterNextDiscovery() { state.withLock { $0.raiseAfterDiscovery = true } }
-  func suspendDiscovery() { state.withLock { $0.discoverySuspended = true } }
+  func raiseAfterNextDiscovery() { state.withLockedValue { $0.raiseAfterDiscovery = true } }
+  func suspendDiscovery() { state.withLockedValue { $0.discoverySuspended = true } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient {
     workingDirectory.path == scopedHighRisk ? RiskCatalogClient(risk: .string("full-shell")) : self
   }
   func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    try state.withLock { state in
+    try state.withLockedValue { state in
       guard !state.discoverySuspended else {
         throw GatewayToolError.executionFailed("Provider is waiting for an active operation.")
       }
@@ -442,7 +442,7 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
     }
   }
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    state.withLock { $0.calls += 1 }
+    state.withLockedValue { $0.calls += 1 }
     return .object(["content": .array([]), "isError": .bool(false)])
   }
   func startToolCall(server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String)

@@ -1,3 +1,5 @@
+import ComputerMCPPlatformDarwin
+import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
@@ -39,7 +41,7 @@ final class AtomicManifestStoreTests {
     let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
     let text = Self.manifest(name: "external")
     try Data(text.utf8).write(to: fixture.manifestURL, options: .atomic)
-    let before = try #require(ManifestFileMonitor.fingerprint(fixture.manifestURL))
+    let before = try #require(FileFingerprint.current(of: fixture.manifestURL))
     let input = try #require(try fixture.store.externalInput())
     let prepared = try fixture.store.prepare(
       manifest: input.manifest, reason: .externalReload, expectedDigest: input.digest)
@@ -56,7 +58,7 @@ final class AtomicManifestStoreTests {
           """)
     }
     #expect(throws: DatabaseError.self) { try fixture.store.commit(prepared) }
-    #expect(ManifestFileMonitor.fingerprint(fixture.manifestURL) == before)
+    #expect(FileFingerprint.current(of: fixture.manifestURL) == before)
     #expect(try Data(contentsOf: fixture.manifestURL) == Data(text.utf8))
     #expect(try fixture.store.activeConfiguration().server.name == "original")
     #expect(try fixture.store.history().map(\.id) == [original.id])
@@ -367,7 +369,7 @@ final class AtomicManifestStoreTests {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
     _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
-    let monitor = try ManifestFileMonitor(manifestURL: fixture.manifestURL)
+    let monitor = try DirectoryEventFileChangeMonitor(fileURL: fixture.manifestURL)
     var invalidations = monitor.changes.makeAsyncIterator()
     _ = await invalidations.next()
     let stream = fixture.store.changes()

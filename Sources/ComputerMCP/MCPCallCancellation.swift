@@ -1,5 +1,5 @@
 import Foundation
-import os
+import NIOConcurrencyHelpers
 
 /// One awaited call owns its cancellation, including cancellation before SDK dispatch returns.
 /// The installed action captures the native request identity, never a reusable gateway selector.
@@ -10,7 +10,7 @@ final class MCPCallCancellation: Sendable {
     var action: (@Sendable () async -> Void)?
     var delivery: Task<Void, Never>?
   }
-  private let state = OSAllocatedUnfairLock(initialState: State())
+  private let state = NIOLockedValueBox(State())
   private let deliveryTimeout: Duration
 
   init(deliveryTimeout: Duration = .seconds(30)) {
@@ -18,7 +18,7 @@ final class MCPCallCancellation: Sendable {
   }
 
   func checkCancellation() throws {
-    if state.withLock({ $0.cancelled }) { throw CancellationError() }
+    if state.withLockedValue({ $0.cancelled }) { throw CancellationError() }
   }
 
   func install(
@@ -43,7 +43,7 @@ final class MCPCallCancellation: Sendable {
         await group.waitForAll()
       }
     }
-    state.withLock {
+    state.withLockedValue {
       guard !$0.finished else { return }
       if $0.cancelled {
         $0.delivery = Task { await action() }
@@ -54,7 +54,7 @@ final class MCPCallCancellation: Sendable {
   }
 
   func cancel() {
-    state.withLock {
+    state.withLockedValue {
       guard !$0.finished, !$0.cancelled else { return }
       $0.cancelled = true
       if let action = $0.action {
@@ -65,7 +65,7 @@ final class MCPCallCancellation: Sendable {
   }
 
   func finish() async {
-    let delivery = state.withLock {
+    let delivery = state.withLockedValue {
       $0.finished = true
       $0.action = nil
       return $0.delivery

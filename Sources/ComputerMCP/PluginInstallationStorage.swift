@@ -3,7 +3,7 @@ import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
 import Darwin
 import Foundation
-import os
+import NIOConcurrencyHelpers
 
 /// Serializes filesystem transactions across store instances and host restarts.
 /// A worker inherits the same open lock reference; closing the host reference
@@ -15,7 +15,7 @@ final class PluginInstallationStorage: Sendable {
   private let parent: Int32
   private let device: Int32
   private let inode: UInt64
-  private let closed = OSAllocatedUnfairLock(initialState: false)
+  private let closed = NIOLockedValueBox(false)
 
   init(at requestedURL: URL) throws {
     guard requestedURL.isFileURL, requestedURL.path.hasPrefix("/"),
@@ -104,7 +104,7 @@ final class PluginInstallationStorage: Sendable {
   }
 
   private func close(unlock: Bool) {
-    closed.withLock { closed in
+    closed.withLockedValue { closed in
       guard !closed else { return }
       closed = true
       if unlock { flock(lockDescriptor, LOCK_UN) }
@@ -117,7 +117,7 @@ final class PluginInstallationStorage: Sendable {
   private func withOpenStorage<Result: Sendable>(_ operation: @Sendable () throws -> Result) throws
     -> Result
   {
-    try closed.withLock { closed in
+    try closed.withLockedValue { closed in
       guard !closed else { throw PluginArchiveError.fileSystemFailure }
       return try operation()
     }

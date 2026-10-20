@@ -1,7 +1,7 @@
 import ComputerMCPTestSupport
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -97,9 +97,9 @@ struct MCPProviderWorkNativeTests {
             allowedCallers: [.secureTunnel], mode: .workspaceOperations),
           derivesObserveGrant: false)
       }
-      let current = OSAllocatedUnfairLock(initialState: policy(true))
+      let current = NIOLockedValueBox(policy(true))
       let authorized = AuthorizedMCPClient(
-        base: client, policy: policy(true), policyProvider: { current.withLock { $0 } })
+        base: client, policy: policy(true), policyProvider: { current.withLockedValue { $0 } })
       // The policy's selected tools do not change the already-connected transport config.
       let result = try await MCPContinuationTarget.$current.withValue(target) {
         try await authorized.callToolAsync(
@@ -109,7 +109,7 @@ struct MCPProviderWorkNativeTests {
         result.objectValue?["structuredContent"]?.objectValue?["pid"] == started.objectValue?["pid"]
       )
       let revoked = policy(false)
-      current.withLock { $0 = revoked }
+      current.withLockedValue { $0 = revoked }
       await #expect(throws: GatewayToolError.self) {
         try await MCPContinuationTarget.$current.withValue(target) {
           try await authorized.callToolAsync(

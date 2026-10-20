@@ -2,7 +2,7 @@ import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import Darwin
 import Foundation
-import os
+import NIOConcurrencyHelpers
 
 /// Pins an owned installation independently of its current selection in the store.
 /// Acquisition and deletion both hold the installation transaction lock, so a
@@ -10,7 +10,7 @@ import os
 final class PluginArtifactLease: Sendable {
   let identity: PluginDirectoryIdentity
   private let descriptor: Int32
-  private let closed = OSAllocatedUnfairLock(initialState: false)
+  private let closed = NIOLockedValueBox(false)
 
   init(directory: PluginArchiveDirectory, exclusive: Bool) throws {
     let descriptor = openat(
@@ -44,7 +44,7 @@ final class PluginArtifactLease: Sendable {
   /// process receipts. End its lock explicitly so incidental fork-before-exec
   /// copies cannot extend a finished runtime's lease.
   func close() {
-    closed.withLock { closed in
+    closed.withLockedValue { closed in
       guard !closed else { return }
       closed = true
       flock(descriptor, LOCK_UN)

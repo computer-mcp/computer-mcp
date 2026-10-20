@@ -1,6 +1,6 @@
 import ComputerMCPCore
 import Foundation
-import os
+import NIOConcurrencyHelpers
 
 /// Runtime-owned observations survive loss of the connection that reported them.
 final class MCPContinuationDirectory: Sendable {
@@ -29,7 +29,7 @@ final class MCPContinuationDirectory: Sendable {
     var pendingConnections: Set<UUID> = []
   }
 
-  private let entries = OSAllocatedUnfairLock(initialState: [UUID: Entry]())
+  private let entries = NIOLockedValueBox([UUID: Entry]())
 
   /// Callers combine only observations from one principal/profile routing scope.
   static func uniqueOwner(in observations: [Lookup]) throws -> Set<Match>? {
@@ -53,7 +53,7 @@ final class MCPContinuationDirectory: Sendable {
   }
 
   func update(connectionID: UUID, entry: Entry) {
-    entries.withLock { entries in
+    entries.withLockedValue { entries in
       if !entry.connected && entry.resources.isEmpty && !entry.observationPending {
         entries.removeValue(forKey: connectionID)
       } else {
@@ -63,7 +63,7 @@ final class MCPContinuationDirectory: Sendable {
   }
 
   func retainsContinuation(workspaceID: String?, reference: MCPToolReference) -> Bool {
-    entries.withLock { entries in
+    entries.withLockedValue { entries in
       entries.values.contains {
         $0.workspaceID == workspaceID && $0.registrationID == reference.serverID
           && $0.declarations[reference.toolName] != nil
@@ -72,13 +72,13 @@ final class MCPContinuationDirectory: Sendable {
     }
   }
 
-  func entry(connectionID: UUID) -> Entry? { entries.withLock { $0[connectionID] } }
+  func entry(connectionID: UUID) -> Entry? { entries.withLockedValue { $0[connectionID] } }
 
   /// A match is a locator, not call admission. Pending observations cannot prove absence.
   func lookup(
     workspaceID: String?, registrationID: String, tool: String, arguments: JSONValue
   ) throws -> Lookup {
-    let snapshot = entries.withLock { $0 }
+    let snapshot = entries.withLockedValue { $0 }
     var result = Lookup()
     for (connectionID, entry) in snapshot
     where entry.workspaceID == workspaceID && entry.registrationID == registrationID {

@@ -1,6 +1,6 @@
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -190,8 +190,8 @@ struct OperationStateScopeTests {
 }
 
 private final class StateScopeMCPClient: DownstreamMCPClient, Sendable {
-  private let calls = OSAllocatedUnfairLock(initialState: 0)
-  var callCount: Int { calls.withLock { $0 } }
+  private let calls = NIOLockedValueBox(0)
+  var callCount: Int { calls.withLockedValue { $0 } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
@@ -203,7 +203,7 @@ private final class StateScopeMCPClient: DownstreamMCPClient, Sendable {
     }
   }
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    calls.withLock { $0 += 1 }
+    calls.withLockedValue { $0 += 1 }
     return .object(["content": .array([]), "isError": .bool(false)])
   }
   func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }

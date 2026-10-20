@@ -139,6 +139,7 @@ let neutralTargets: [Target] =
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),
+          .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
           .product(name: "NIOCore", package: "swift-nio"),
           .product(name: "NIOHTTP1", package: "swift-nio"),
           .product(name: "NIOPosix", package: "swift-nio"),
@@ -183,6 +184,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",
           "ComputerMCPProcess",
           "ComputerMCPTestSupport",
+          .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         ],
         resources: [.copy("Fixtures")]
       ),

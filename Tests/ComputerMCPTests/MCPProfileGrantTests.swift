@@ -1,7 +1,7 @@
 import ComputerMCPTestSupport
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
@@ -475,8 +475,8 @@ private struct ProfileRuntimeFixture {
 }
 
 private struct ProfileCatalogClient: DownstreamMCPClient {
-  private let calls = OSAllocatedUnfairLock(initialState: [String]())
-  var calledServers: [String] { calls.withLock { $0 } }
+  private let calls = NIOLockedValueBox([String]())
+  var calledServers: [String] { calls.withLockedValue { $0 } }
 
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
@@ -497,7 +497,7 @@ private struct ProfileCatalogClient: DownstreamMCPClient {
   }
 
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    calls.withLock { $0.append(server.id) }
+    calls.withLockedValue { $0.append(server.id) }
     return .object([
       "content": .array([
         .object(["type": .string("text"), "text": .string("\(server.id):\(name)")])
@@ -520,12 +520,12 @@ private final class ReplacedProfileCatalogClient: DownstreamMCPClient, Sendable 
     var revision = 1
     var calledServers: [String] = []
   }
-  private let state = OSAllocatedUnfairLock(initialState: State())
+  private let state = NIOLockedValueBox(State())
 
-  var calledServers: [String] { state.withLock { $0.calledServers } }
+  var calledServers: [String] { state.withLockedValue { $0.calledServers } }
 
   func replace(server: String, revision: Int) {
-    state.withLock {
+    state.withLockedValue {
       $0.server = server
       $0.revision = revision
     }
@@ -536,7 +536,7 @@ private final class ReplacedProfileCatalogClient: DownstreamMCPClient, Sendable 
   ) -> any DownstreamMCPClient { self }
 
   func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    state.withLock { state in
+    state.withLockedValue { state in
       guard state.server == server.id else { return [] }
       return [
         .init(
@@ -550,7 +550,7 @@ private final class ReplacedProfileCatalogClient: DownstreamMCPClient, Sendable 
   }
 
   func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    try state.withLock { state in
+    try state.withLockedValue { state in
       state.calledServers.append(server.id)
       guard state.server == server.id else { throw GatewayToolError.unknownTool(name) }
       return .object([

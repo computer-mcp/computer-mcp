@@ -1,7 +1,7 @@
 import ComputerMCPTestSupport
 import Foundation
+import NIOConcurrencyHelpers
 import Testing
-import os
 
 @testable import ComputerMCP
 @testable import ComputerMCPCore
@@ -63,7 +63,7 @@ final class GatewayToolProviderTests {
 
   @Test
   func retainedContinuationRequiresPrivateSelectionAndExpiresWithItsOwner() async throws {
-    let visibility = OSAllocatedUnfairLock(initialState: (visible: true, owned: true))
+    let visibility = NIOLockedValueBox((visible: true, owned: true))
     let reference = MCPToolReference(serverID: "fixture", toolName: "inspect")
     let provider = TestGatewayToolProvider(
       id: "fixture",
@@ -73,11 +73,11 @@ final class GatewayToolProviderTests {
         id: "fixture.inspect", risk: .readOnly, workspaceRequirement: .required,
         mcpReference: reference))
     let router = try GatewayProviderRouter(
-      source: { visibility.withLock { $0.visible } ? [provider] : [] },
+      source: { visibility.withLockedValue { $0.visible } ? [provider] : [] },
       retainsContinuation: { candidate in
-        candidate == reference && visibility.withLock { $0.owned }
+        candidate == reference && visibility.withLockedValue { $0.owned }
       })
-    visibility.withLock { $0.visible = false }
+    visibility.withLockedValue { $0.visible = false }
     try await router.refreshTools()
     #expect(try router.listTools().isEmpty)
     #expect(router.continuationReference(named: "fixture.inspect") == reference)
@@ -99,7 +99,7 @@ final class GatewayToolProviderTests {
         try router.callTool(name: "fixture.inspect", arguments: nil)
       }
     }
-    visibility.withLock { $0.owned = false }
+    visibility.withLockedValue { $0.owned = false }
     try await router.refreshTools()
     #expect(router.continuationReference(named: "fixture.inspect") == nil)
     MCPContinuationTarget.$current.withValue(target(reference)) {

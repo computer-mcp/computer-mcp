@@ -5,6 +5,7 @@ import ComputerMCPToolKit
 
 package struct NetworkToolProvider: GatewayToolProvider {
   package let id = "network"
+  package let namespaces = ["network"]
   let environment: ToolEnvironment
   let configuration: GatewayConfiguration
 

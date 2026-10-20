@@ -3,6 +3,7 @@ import ComputerMCPToolKit
 
 package struct ShellToolProvider: GatewayToolProvider {
   package let id = "shell"
+  package let namespaces = ["shell"]
   let environment: ToolEnvironment
 
   package init(environment: ToolEnvironment) {

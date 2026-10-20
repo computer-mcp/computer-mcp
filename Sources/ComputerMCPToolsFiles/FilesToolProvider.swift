@@ -5,6 +5,7 @@ import ComputerMCPToolKit
 
 package struct FilesToolProvider: GatewayToolProvider {
   package let id = "file"
+  package let namespaces = ["file", "archive"]
   let environment: ToolEnvironment
 
   package init(environment: ToolEnvironment) {

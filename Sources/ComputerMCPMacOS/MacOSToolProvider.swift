@@ -5,6 +5,7 @@ import ComputerMCPToolKit
 
 package struct MacOSToolProvider: GatewayToolProvider {
   package let id = "macos"
+  package let namespaces = ["macos"]
   let environment: ToolEnvironment
   let configuration: GatewayConfiguration
 

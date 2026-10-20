@@ -24,9 +24,92 @@ struct MCPReexportNamingTests {
       toolEnvironment: environment, mcpClient: ReexportNamingClient(["first": [name]]))
     let snapshot = try GatewayToolCatalogSnapshot(providers: registry.providers())
     let route = try #require(snapshot.routes[name])
-    #expect(route.provider is ConfiguredMCPToolProvider)
     #expect(route.provider.id == "configured")
+    #expect(route.provider.namespaces.isEmpty)
     #expect(route.capability.mcpReference == .init(serverID: "first", toolName: name))
+  }
+
+  @Test
+  func downstreamToolsListWithTheirNamespaceProvidersBeforeTreesAndComputerUse() async throws {
+    let workspace = try ScopedTemporaryDirectory()
+    let treeURL = workspace.url.appendingPathComponent("tree.json")
+    try JSONEncoder().encode(CLITreeGatewayTests.tree(CLITreeGatewayTests.printCommand()))
+      .write(to: treeURL)
+    var configuration = GatewayConfiguration.fixture(
+      cli: .init(commands: [
+        .init(
+          id: "printf", executable: "/usr/bin/printf", allowAnyArgs: false,
+          tree: .init(kind: .file, path: treeURL.path))
+      ]),
+      mcp: .init(servers: [
+        Self.server("first", prefix: "mcp"), Self.server("second", prefix: "custom"),
+      ]),
+      tools: [
+        .init(name: "git.zulu", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "custom.alias", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "git.alpha", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "mcpish.alias", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "skills.alias", adapter: .mcp, source: "first", tool: "inspect"),
+      ],
+      builtin: .init(enabled: [
+        "file.read", "file.stat", "git.root", "git.status", "system.time", "network.interfaces",
+        "macos.screens", "macos.user_directories",
+      ]),
+      skills: .init(enabled: true, roots: [.init(id: "fixture", path: workspace.url.path)]))
+    configuration.workspaceDirectory = workspace.url
+    try configuration.validate()
+    let environment = ToolEnvironment(configuration: configuration)
+    let treeTools = try CLIToolProvider(environment: environment).treeProviders().flatMap {
+      try $0.definitions().map(\.tool.name)
+    }
+    try #require(treeTools.count == 1)
+    let client = ReexportNamingClient([
+      "first": ["zeta", "inspect"], "second": ["inspect", "alpha"],
+    ])
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: environment, mcpClient: client)
+    let router = try GatewayProviderRouter(registry: registry)
+    do {
+      let discoveries = client.discoveredServers
+      let expected =
+        [
+          "cli.list", "cli.describe", "cli.status", "cli.help", "cli.exec",
+          "process.spawn", "process.list", "process.read", "process.cancel",
+          "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
+          "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
+          "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
+          "mcp.requests.list", "mcp.requests.cancel", "mcp.connections.close", "mcp.requests.read",
+          "mcp.zeta", "mcp.inspect",
+          "skills.roots", "skills.list", "skills.describe", "skills.validate", "skills.frontmatter",
+          "skills.read", "skills.files", "skills.read_file", "skills.read_files",
+          "skills.read_package", "skills.outline", "skills.section", "skills.tables",
+          "skills.links", "skills.link_check", "skills.search", "skills.search_files",
+          "skills.alias",
+          "file.read", "file.stat", "git.root", "git.status", "git.zulu", "git.alpha",
+          "system.time", "network.interfaces", "macos.screens", "macos.user_directories",
+          "custom.alias", "mcpish.alias", "custom.inspect", "custom.alpha",
+        ] + treeTools + [
+          "computer.permissions", "computer.displays", "computer.screenshot", "computer.windows",
+          "computer.pointer.position", "computer.pointer.move", "computer.pointer.click",
+          "computer.keyboard.key", "computer.keyboard.text", "computer.scroll",
+          "computer.accessibility.query", "computer.accessibility.action", "computer.verify",
+        ]
+      #expect(discoveries == ["first", "first", "first", "first", "first", "first", "second"])
+      #expect(try router.listTools(context: .empty).map(\.name) == expected)
+      client.replace("first", names: ["fresh"])
+      #expect(try router.listTools(context: .empty).map(\.name) == expected)
+      #expect(
+        try router.callTool(name: "git.alpha", arguments: nil, context: .empty)
+          == .string("first:inspect"))
+      #expect(
+        try await router.callToolAsync(name: "mcp.inspect", arguments: nil, context: .empty)
+          == .string("first:inspect"))
+      #expect(client.discoveredServers == discoveries)
+      await router.shutdown()
+    } catch {
+      await router.shutdown()
+      throw error
+    }
   }
 
   @Test

@@ -5,6 +5,7 @@ import ComputerMCPToolKit
 
 package struct SystemToolProvider: GatewayToolProvider {
   package let id = "system"
+  package let namespaces = ["system", "logs", "service", "env"]
   let environment: ToolEnvironment
   let configuration: GatewayConfiguration
 

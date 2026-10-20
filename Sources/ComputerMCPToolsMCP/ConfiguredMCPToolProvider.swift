@@ -33,6 +33,47 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
     try catalogDefinitions(refresh: true)
   }
 
+  /// Places snapshot contributions after their first namespace owner, retaining definition order.
+  package func listed(among builtins: [any GatewayToolProvider]) throws -> [any GatewayToolProvider]
+  {
+    var contributions = Array(repeating: [ToolDefinition](), count: builtins.count + 1)
+    for definition in try definitions() {
+      let owner =
+        builtins.firstIndex { provider in
+          provider.namespaces.contains { definition.tool.name.hasPrefix("\($0).") }
+        } ?? builtins.count
+      contributions[owner].append(definition)
+    }
+
+    var providers: [any GatewayToolProvider] = []
+    for (index, builtin) in builtins.enumerated() {
+      providers.append(builtin)
+      if !contributions[index].isEmpty {
+        providers.append(Listing(snapshot: self, toolDefinitions: contributions[index]))
+      }
+    }
+    if !contributions[builtins.count].isEmpty {
+      providers.append(Listing(snapshot: self, toolDefinitions: contributions[builtins.count]))
+    }
+    return providers
+  }
+
+  private struct Listing: GatewayToolProvider {
+    let id = "configured"
+    let snapshot: ConfiguredMCPToolProvider
+    let toolDefinitions: [ToolDefinition]
+
+    func definitions() throws -> [ToolDefinition] { toolDefinitions }
+
+    func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+      try snapshot.callTool(invocation)
+    }
+
+    func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+      try await snapshot.callToolAsync(invocation)
+    }
+  }
+
   private func catalogDefinitions(refresh: Bool) throws -> [ToolDefinition] {
     if let toolDefinitions { return toolDefinitions }
     return try catalogLock.withLock {

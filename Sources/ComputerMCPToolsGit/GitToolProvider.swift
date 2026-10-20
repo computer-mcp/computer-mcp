@@ -3,6 +3,7 @@ import ComputerMCPToolKit
 
 package struct GitToolProvider: GatewayToolProvider {
   package let id = "git"
+  package let namespaces = ["git"]
   let environment: ToolEnvironment
 
   package init(environment: ToolEnvironment) {

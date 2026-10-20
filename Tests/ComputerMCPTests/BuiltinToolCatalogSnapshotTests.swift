@@ -93,6 +93,39 @@ struct BuiltinToolCatalogSnapshotTests {
   }
 
   @Test
+  func builtinProviderNamespacesAreDisjointAndCoverEveryDefinition() async throws {
+    let environment = ToolEnvironment(
+      configuration: .fixture(
+        policy: .init(shellEnabled: true),
+        builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
+        skills: .init(enabled: true)))
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: environment, mcpClient: CatalogDiscoveryStub())
+    do {
+      let providers = try registry.providers().filter { $0.id != "computer-use" }
+      #expect(providers.count == 12)
+      var namespaces: Set<String> = []
+      for provider in providers {
+        #expect(!provider.namespaces.isEmpty, "Provider: \(provider.id)")
+        for namespace in provider.namespaces {
+          #expect(namespaces.insert(namespace).inserted, "Shared namespace: \(namespace)")
+        }
+        let definitions = try provider.definitions()
+        #expect(!definitions.isEmpty, "Provider: \(provider.id)")
+        for definition in definitions {
+          #expect(
+            provider.namespaces.contains { definition.tool.name.hasPrefix("\($0).") },
+            "Tool \(definition.tool.name) must belong to provider \(provider.id)")
+        }
+      }
+      await registry.shutdown()
+    } catch {
+      await registry.shutdown()
+      throw error
+    }
+  }
+
+  @Test
   func completeHostCatalogMatchesReviewedSnapshot() async throws {
     let workspace = try ScopedTemporaryDirectory()
     let configuration = GatewayConfiguration(

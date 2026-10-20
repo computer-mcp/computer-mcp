@@ -4,6 +4,10 @@ import ComputerMCPToolKit
 
 package struct StructuredToolProvider: GatewayToolProvider {
   package let id = "structured"
+  package let namespaces = [
+    "json", "jsonl", "toml", "yaml", "xml", "plist", "csv", "sqlite", "structured", "markdown",
+    "image", "pdf", "media",
+  ]
   let environment: ToolEnvironment
 
   package init(environment: ToolEnvironment) {

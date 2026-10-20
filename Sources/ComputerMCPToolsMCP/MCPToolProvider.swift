@@ -5,6 +5,7 @@ import ComputerMCPToolKit
 
 package struct MCPToolProvider: GatewayToolProvider {
   package let id = "mcp"
+  package let namespaces = ["mcp"]
   let environment: ToolEnvironment
   let configuration: GatewayConfiguration
   let mcpClient: any DownstreamMCPClient

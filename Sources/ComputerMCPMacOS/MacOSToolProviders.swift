@@ -75,8 +75,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       providers: {
         let configured = try ConfiguredMCPToolProvider(environment: environment, mcpClient: client)
           .snapshot()
-        return providers + [configured]
-          + (try cli.treeProviders()) + [computerUse]
+        return try configured.listed(among: providers) + (try cli.treeProviders()) + [computerUse]
       },
       invalidations: client.toolChanges(),
       refreshInterval: configuration.mcp.servers.contains {

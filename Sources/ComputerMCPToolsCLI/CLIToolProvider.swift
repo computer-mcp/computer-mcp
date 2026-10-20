@@ -4,6 +4,7 @@ import ComputerMCPToolKit
 
 package struct CLIToolProvider: GatewayToolProvider {
   package let id = "cli"
+  package let namespaces = ["cli"]
   let environment: ToolEnvironment
 
   package init(environment: ToolEnvironment) {

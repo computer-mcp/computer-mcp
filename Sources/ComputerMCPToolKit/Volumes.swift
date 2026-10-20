@@ -41,7 +41,7 @@ package func volumeInfo(url: URL, keys: Set<URLResourceKey>) -> JSONValue {
   let values = try? url.resourceValues(forKeys: keys)
   let name =
     values?.volumeLocalizedName ?? values?.volumeName ?? values?.name ?? url.lastPathComponent
-  // Capacity estimates are exposed only by Apple's Foundation.
+  // Capacity estimates and cloning metadata are exposed only by Apple's Foundation.
   #if os(macOS)
     let importantCapacity =
       values?.volumeAvailableCapacityForImportantUsage
@@ -49,9 +49,11 @@ package func volumeInfo(url: URL, keys: Set<URLResourceKey>) -> JSONValue {
     let opportunisticCapacity =
       values?.volumeAvailableCapacityForOpportunisticUsage
       .map { JSONValue.integer(Int64($0)) } ?? .null
+    let supportsFileCloning = values?.volumeSupportsFileCloning.map(JSONValue.bool) ?? .null
   #else
     let importantCapacity = JSONValue.null
     let opportunisticCapacity = JSONValue.null
+    let supportsFileCloning = JSONValue.null
   #endif
   return .object([
     "path": .string(url.path),
@@ -74,7 +76,7 @@ package func volumeInfo(url: URL, keys: Set<URLResourceKey>) -> JSONValue {
     "supports_case_sensitive_names": values?.volumeSupportsCaseSensitiveNames
       .map(JSONValue.bool) ?? .null,
     "supports_compression": values?.volumeSupportsCompression.map(JSONValue.bool) ?? .null,
-    "supports_file_cloning": values?.volumeSupportsFileCloning.map(JSONValue.bool) ?? .null,
+    "supports_file_cloning": supportsFileCloning,
     "supports_hard_links": values?.volumeSupportsHardLinks.map(JSONValue.bool) ?? .null,
     "supports_journaling": values?.volumeSupportsJournaling.map(JSONValue.bool) ?? .null,
     "supports_persistent_ids": values?.volumeSupportsPersistentIDs.map(JSONValue.bool) ?? .null,

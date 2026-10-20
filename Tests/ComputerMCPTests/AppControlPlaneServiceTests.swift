@@ -2783,6 +2783,7 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       directories: directories,
       database: database,
       manifestStore: manifestStore,
+      defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
       gatewayExecutablePath: gatewayExecutablePath,

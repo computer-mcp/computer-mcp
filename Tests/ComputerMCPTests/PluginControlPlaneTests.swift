@@ -598,6 +598,7 @@ struct PluginControlFixture: Sendable {
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifestStore,
+      defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,

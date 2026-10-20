@@ -754,6 +754,7 @@ private final class CloudflareControlPlaneFixture {
       directories: directories,
       database: database,
       manifestStore: manifestStore,
+      defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),

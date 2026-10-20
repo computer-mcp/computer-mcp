@@ -1,5 +1,6 @@
 import ComputerMCP
 import ComputerMCPComputerUse
+import ComputerMCPConfiguration
 import ComputerMCPGateway
 import ComputerMCPPersistence
 import ComputerMCPPlatformDarwin
@@ -33,6 +34,7 @@ extension AppControlPlaneService {
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
       secretStore: secretStore, executableSearchDirectories: platform.executableSearchDirectories,
       proxyResolver: SystemNetworkProxyResolver())
+    let defaultManifest = DefaultGatewayConfiguration.manifest
     if !FileManager.default.fileExists(atPath: resolvedDirectories.manifest.path) {
       _ = try manifestStore.activate(manifest: defaultManifest)
     }
@@ -40,6 +42,7 @@ extension AppControlPlaneService {
       directories: resolvedDirectories,
       database: database,
       manifestStore: manifestStore,
+      defaultManifest: defaultManifest,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
       gatewayExecutablePath: gatewayExecutablePath,

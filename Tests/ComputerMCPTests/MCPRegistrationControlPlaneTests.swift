@@ -552,6 +552,7 @@ struct MCPRegistrationControlFixture: Sendable {
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
       directories: directories, database: database, manifestStore: store,
+      defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,

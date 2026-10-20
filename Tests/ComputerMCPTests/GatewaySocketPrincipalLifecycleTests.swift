@@ -29,7 +29,8 @@ struct GatewaySocketPrincipalLifecycleTests {
         database: database, applications: MacOSPlatform.services.applications))
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let control = AppControlPlaneService(
-      directories: directories, database: database, manifestStore: manifest, secretStore: secrets,
+      directories: directories, database: database, manifestStore: manifest,
+      defaultManifest: DefaultGatewayConfiguration.manifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,

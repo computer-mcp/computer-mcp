@@ -2476,6 +2476,7 @@ private struct GenerationFixture: Sendable {
         manifestURL: directories.manifest, database: database,
         loader: GatewayManifestConfigurationLoader(
           database: database, applications: MacOSPlatform.services.applications)),
+      defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,

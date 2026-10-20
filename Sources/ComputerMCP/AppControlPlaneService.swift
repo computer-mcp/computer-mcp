@@ -61,6 +61,7 @@ package actor AppControlPlaneService {
 
   let database: GatewayDatabase
   let manifestStore: AtomicManifestStore
+  package nonisolated let defaultManifest: String
   let secretStore: any SecretStore
   private let openAITunnelSupervisor: OpenAITunnelSupervisor
   private let providerDiscovery: any ControlPlaneProviderDiscovering
@@ -90,6 +91,7 @@ package actor AppControlPlaneService {
     directories: AppControlPlaneServiceDirectories,
     database: GatewayDatabase,
     manifestStore: AtomicManifestStore,
+    defaultManifest: String,
     secretStore: any SecretStore,
     openAITunnelSupervisor: OpenAITunnelSupervisor,
     gatewayExecutablePath: String = "computer-mcp",
@@ -106,6 +108,7 @@ package actor AppControlPlaneService {
     self.gatewayExecutablePath = gatewayExecutablePath
     self.database = database
     self.manifestStore = manifestStore
+    self.defaultManifest = defaultManifest
     self.secretStore = secretStore
     self.openAITunnelSupervisor = openAITunnelSupervisor
     self.providerDiscovery =
@@ -124,8 +127,6 @@ package actor AppControlPlaneService {
     self.pluginDownload = pluginDownload
     self.bundledPlugins = bundledPlugins
   }
-
-  package static let defaultManifest = DefaultGatewayConfiguration.manifest
 
   package func start() async throws {
     try directories.prepare()

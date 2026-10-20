@@ -1,5 +1,3 @@
-import Foundation
-
 package protocol GatewayToolProvider: Sendable {
   var id: String { get }
   func definitions() throws -> [ToolDefinition]

@@ -78,16 +78,18 @@ package enum MCPRuntimeAdapter: Sendable {
     registry: any GatewayAsyncToolServing,
     transportTrace: GatewayTransportTrace?
   ) async {
-    let changes = registry.toolChanges()
+    let changes = registry.toolChanges(context: .empty)
     let notifier = MCPToolCatalogNotifier(
-      registry: registry, changes: changes, initialCatalog: try? await registry.listToolsAsync())
+      registry: registry, changes: changes,
+      initialCatalog: try? await registry.listToolsAsync(context: .empty))
     await server.onNotification(InitializedNotification.self) { [weak server] _ in
       if let server { await notifier.start(server: server) }
     }
 
     await server.withMethodHandler(MCP.ListTools.self) { _ in
-      try await registry.refreshTools()
-      return MCP.ListTools.Result(tools: try await registry.listToolsAsync().map(\.sdkTool))
+      try await registry.refreshTools(context: .empty)
+      return MCP.ListTools.Result(
+        tools: try await registry.listToolsAsync(context: .empty).map(\.sdkTool))
     }
 
     await server.withMethodHandler(MCP.CallTool.self) { params in
@@ -101,7 +103,8 @@ package enum MCPRuntimeAdapter: Sendable {
 
       do {
         let result = try await $requestTrace.withValue(transportTrace) {
-          try await registry.callToolForMCPAsync(name: params.name, arguments: arguments)
+          try await registry.callToolForMCPAsync(
+            name: params.name, arguments: arguments, context: .empty)
         }
         try Task.checkCancellation()
         return try result.sdkCallToolResult()

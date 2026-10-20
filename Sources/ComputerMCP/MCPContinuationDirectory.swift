@@ -102,8 +102,6 @@ final class MCPContinuationDirectory: Sendable {
 
 /// Host-selected routing evidence is private to a call; it does not confer authority.
 struct MCPContinuationTarget: ContinuationRoute {
-  @TaskLocal static var current: MCPContinuationTarget?
-
   let workspaceID: String?
   let reference: MCPToolReference
   let connectionID: UUID

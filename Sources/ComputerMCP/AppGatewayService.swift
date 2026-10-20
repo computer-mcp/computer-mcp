@@ -90,28 +90,34 @@ package actor AppGatewayService {
     let trace: GatewayTransportTrace
     let changes: GatewayToolChangeBroadcaster
 
-    func toolChanges() -> AsyncStream<Void> { changes.stream() }
+    func toolChanges(context: InvocationContext) -> AsyncStream<Void> { changes.stream() }
 
-    func listToolsAsync() async throws -> [MCPTool] {
+    func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
       guard let service else { throw GatewaySocketError.notConnected }
-      return try await service.listTools(key: key, epoch: epoch, trace: trace)
+      return try await service.listTools(key: key, epoch: epoch, trace: trace, context: context)
     }
 
-    func refreshTools() async throws {
+    func refreshTools(context: InvocationContext) async throws {
       guard let service else { throw GatewaySocketError.notConnected }
-      try await service.refreshTools(key: key, epoch: epoch, trace: trace)
+      try await service.refreshTools(key: key, epoch: epoch, trace: trace, context: context)
     }
 
-    func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+    func callToolAsync(name: String, arguments: JSONValue?, context: InvocationContext) async throws
+      -> JSONValue
+    {
       guard let service else { throw GatewaySocketError.notConnected }
       return try await service.callTool(
-        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false)
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: false,
+        context: context)
     }
 
-    func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+    func callToolForMCPAsync(name: String, arguments: JSONValue?, context: InvocationContext)
+      async throws -> JSONValue
+    {
       guard let service else { throw GatewaySocketError.notConnected }
       return try await service.callTool(
-        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true,
+        context: context)
     }
   }
 
@@ -300,7 +306,7 @@ package actor AppGatewayService {
     try await listTools(
       key: localAdminKey(identity: identity), epoch: epoch,
       trace: GatewayTransportTrace(
-        transport: "control_socket", socketConnectionID: identity.connectionID))
+        transport: "control_socket", socketConnectionID: identity.connectionID), context: .empty)
   }
 
   func callLocalAdminTool(
@@ -311,7 +317,8 @@ package actor AppGatewayService {
       transport: "control_socket", socketConnectionID: identity.connectionID)
     return try await MCPRuntimeAdapter.$requestTrace.withValue(trace) {
       try await callTool(
-        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true)
+        name: name, arguments: arguments, key: key, epoch: epoch, trace: trace, envelope: true,
+        context: .empty)
     }
   }
 
@@ -695,7 +702,9 @@ package actor AppGatewayService {
     }
   }
 
-  private func listTools(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace) async throws
+  private func listTools(
+    key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace, context: InvocationContext
+  ) async throws
     -> [MCPTool]
   {
     _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
@@ -704,18 +713,19 @@ package actor AppGatewayService {
     let reservation = try runtime.ownedWork.admitInvocation(
       workspaceID: nil, resourceID: "tools/list")
     defer { reservation.finish() }
-    return try await runtime.listToolsAsync()
+    return try await runtime.listToolsAsync(context: context)
   }
 
-  private func refreshTools(key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace) async throws
-  {
+  private func refreshTools(
+    key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace, context: InvocationContext
+  ) async throws {
     _ = try await admittedRuntime(key: key, epoch: epoch, trace: trace)
     try requireAdmission(key: key, epoch: epoch)
     guard let runtime = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
     let reservation = try runtime.ownedWork.admitInvocation(
       workspaceID: nil, resourceID: "tools/list")
     defer { reservation.finish() }
-    try await runtime.refreshTools()
+    try await runtime.refreshTools(context: context)
   }
 
   private func selectInvocation(
@@ -816,7 +826,7 @@ package actor AppGatewayService {
 
   private func callTool(
     name: String, arguments: JSONValue?, key: RuntimeKey, epoch: UUID, trace: GatewayTransportTrace,
-    envelope: Bool
+    envelope: Bool, context: InvocationContext
   ) async throws -> JSONValue {
     do {
       let selection = try await selectInvocation(
@@ -836,15 +846,17 @@ package actor AppGatewayService {
         try await GatewayOwnerRouting.$call.withValue({ [weak self] owner, tool, arguments in
           guard let self else { throw GatewayOwnerSelection.unavailable() }
           return try await self.callOwnedTool(
-            owner: owner, name: tool, arguments: arguments, key: key, epoch: epoch)
+            owner: owner, name: tool, arguments: arguments, key: key, epoch: epoch, context: context
+          )
         }) {
-          try await MCPContinuationTarget.$current.withValue(selection.target) {
-            if envelope {
-              return try await selection.gateway.callToolForMCPAsync(
-                name: name, arguments: scopedArguments)
-            }
-            return try await selection.gateway.callToolAsync(name: name, arguments: scopedArguments)
+          let invocationContext = InvocationContext(
+            session: context.session, continuation: selection.target)
+          if envelope {
+            return try await selection.gateway.callToolForMCPAsync(
+              name: name, arguments: scopedArguments, context: invocationContext)
           }
+          return try await selection.gateway.callToolAsync(
+            name: name, arguments: scopedArguments, context: invocationContext)
         }
       }
     } catch is CancellationError {
@@ -852,12 +864,13 @@ package actor AppGatewayService {
     } catch {
       guard envelope, let runtime = runtimes[key]?.gateway else { throw error }
       return runtime.routingErrorForMCP(
-        error, name: name, arguments: arguments, recordFailure: true)
+        error, name: name, arguments: arguments, invocationContext: context, recordFailure: true)
     }
   }
 
   private func callOwnedTool(
-    owner: GatewayOwnerSelection, name: String, arguments: JSONValue, key: RuntimeKey, epoch: UUID
+    owner: GatewayOwnerSelection, name: String, arguments: JSONValue, key: RuntimeKey, epoch: UUID,
+    context: InvocationContext
   ) async throws -> JSONValue {
     try requireAdmission(key: key, epoch: epoch)
     let runtime: GatewayRuntime?
@@ -867,7 +880,8 @@ package actor AppGatewayService {
       runtime = retiredRuntimes[key]?[owner.runtimeID]
     }
     guard let runtime else { throw GatewayOwnerSelection.unavailable() }
-    return try await runtime.callOwnedTool(owner: owner, name: name, arguments: arguments)
+    return try await runtime.callOwnedTool(
+      owner: owner, name: name, arguments: arguments, context: context)
   }
 
   package func snapshot() async -> AppGatewayServiceSnapshot {

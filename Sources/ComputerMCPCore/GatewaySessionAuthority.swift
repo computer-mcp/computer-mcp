@@ -14,8 +14,3 @@ package protocol GatewaySessionAuthority: AnyObject, Sendable {
   /// Fails when the session ended or its revision differs from `expected`.
   func requireRevision(_ expected: Int64?) throws
 }
-
-/// The session on whose behalf the current task runs.
-package enum GatewaySessionScope {
-  @TaskLocal package static var current: (any GatewaySessionAuthority)?
-}

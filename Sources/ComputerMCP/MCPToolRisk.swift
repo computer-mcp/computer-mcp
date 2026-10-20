@@ -9,7 +9,7 @@ extension GatewayConfiguration {
 }
 
 extension InvocationAdmission {
-  func validate(
+  package func validate(
     reference: MCPToolReference, risk: CapabilityRisk,
     hostServiceAction: MCPHostServiceAction?
   ) throws {
@@ -25,7 +25,7 @@ extension InvocationAdmission {
     }
   }
 
-  func correlationID(for server: MCPServerConfig, tool: String) -> UUID? {
+  package func correlationID(for server: MCPServerConfig, tool: String) -> UUID? {
     guard server.hostServices, reference == MCPToolReference(serverID: server.id, toolName: tool)
     else { return nil }
     return hostInvocationID

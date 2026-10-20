@@ -7,6 +7,9 @@ import Foundation
 
 /// Owns configured source definitions, gateway tool schemas, and dispatch.
 package final class GatewayToolRegistry: @unchecked Sendable {
+  private static let calls = BlockingOperationExecutor(
+    label: "computer-mcp.registry-calls", serial: false)
+
   internal let configuration: GatewayConfiguration
 
   internal let workspaceScope: WorkspaceScope
@@ -75,7 +78,9 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     }
   }
 
-  package func toolChanges() -> AsyncStream<Void> { mcpClient.toolChanges() }
+  package func toolChanges(context: InvocationContext = .empty) -> AsyncStream<Void> {
+    mcpClient.toolChanges()
+  }
 
   package func shutdown() async {
     await shellManager.shutdown()
@@ -84,11 +89,11 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   /// Registered gateway and optionally reexported downstream MCP tools.
-  package func listTools() throws -> [MCPTool] {
-    try definitions().map(\.tool)
+  package func listTools(context: InvocationContext = .empty) throws -> [MCPTool] {
+    try definitions(context: context).map(\.tool)
   }
 
-  package func definitions() throws -> [ToolDefinition] {
+  package func definitions(context: InvocationContext = .empty) throws -> [ToolDefinition] {
     var definitions = Self.gatewayDefinitions(
       shellEnabled: configuration.policy.shellEnabled,
       builtins: Set(configuration.builtin.enabled),
@@ -101,10 +106,11 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     for configuredTool in configuration.tools {
       guard let target = configuredTool.tool,
         let server = configuration.mcp.servers.first(where: { $0.id == configuredTool.source }),
-        mcpClient.isServerVisible(server), server.permitsTool(target),
-        let downstream = try permittedDownstreamTools(server: server).first(where: {
-          $0.name == target
-        })
+        mcpClient.isServerVisible(server, context: context), server.permitsTool(target),
+        let downstream = try permittedDownstreamTools(server: server, context: context).first(
+          where: {
+            $0.name == target
+          })
       else { continue }
       let tool = try toolDefinition(for: configuredTool, downstream: downstream)
       try appendDefinition(try downstreamDefinition(for: tool), to: &definitions)
@@ -115,7 +121,8 @@ package final class GatewayToolRegistry: @unchecked Sendable {
         throw GatewayToolError.invalidArguments(
           "MCP server '\(server.id)' uses reexport exposure but has no prefix.")
       }
-      let downstreamDefinitions = try permittedDownstreamTools(server: server).map {
+      let downstreamDefinitions = try permittedDownstreamTools(server: server, context: context).map
+      {
         try downstreamDefinition(for: $0.prefixed(prefix, serverID: server.id))
       }
       let existing = Set(definitions.map(\.tool.name))
@@ -130,7 +137,9 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   /// Validates arguments, executes a tool, and returns MCP tool content.
-  package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+  package func callTool(name: String, arguments: JSONValue?, context: InvocationContext = .empty)
+    throws -> JSONValue
+  {
     let object = arguments?.objectValue ?? [:]
 
     switch name {
@@ -156,63 +165,63 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
     case "mcp.servers.list":
       try requireMCPProviders()
-      return try textResult(mcpServerList())
+      return try textResult(mcpServerList(context: context))
 
     case "mcp.servers.status":
       try requireMCPProviders()
-      return try textResult(mcpServerStatus(arguments: object))
+      return try textResult(mcpServerStatus(arguments: object, context: context))
 
     case "mcp.tools.list":
       try requireMCPProviders()
-      return try textResult(listDownstreamMCPTools(arguments: object))
+      return try textResult(listDownstreamMCPTools(arguments: object, context: context))
 
     case "mcp.tools.describe":
       try requireMCPProviders()
-      return try textResult(describeDownstreamMCPTool(arguments: object))
+      return try textResult(describeDownstreamMCPTool(arguments: object, context: context))
 
     case "mcp.tools.find":
       try requireMCPProviders()
-      return try textResult(findDownstreamMCPTools(arguments: object))
+      return try textResult(findDownstreamMCPTools(arguments: object, context: context))
 
     case "mcp.tools.call":
       try requireMCPProviders()
-      return try callDownstreamMCPTool(arguments: object)
+      return try callDownstreamMCPTool(arguments: object, context: context)
 
     case "mcp.resources.list":
       try requireMCPProviders()
-      return try textResult(listDownstreamMCPResources(arguments: object))
+      return try textResult(listDownstreamMCPResources(arguments: object, context: context))
 
     case "mcp.resources.templates.list":
       try requireMCPProviders()
-      return try textResult(listDownstreamMCPResourceTemplates(arguments: object))
+      return try textResult(listDownstreamMCPResourceTemplates(arguments: object, context: context))
 
     case "mcp.resources.read":
       try requireMCPProviders()
-      return try textResult(readDownstreamMCPResource(arguments: object))
+      return try textResult(readDownstreamMCPResource(arguments: object, context: context))
 
     case "mcp.prompts.list":
       try requireMCPProviders()
-      return try textResult(listDownstreamMCPPrompts(arguments: object))
+      return try textResult(listDownstreamMCPPrompts(arguments: object, context: context))
 
     case "mcp.prompts.get":
       try requireMCPProviders()
-      return try textResult(getDownstreamMCPPrompt(arguments: object))
+      return try textResult(getDownstreamMCPPrompt(arguments: object, context: context))
 
     case "mcp.events.read":
       try requireMCPProviders()
-      return try textResult(readDownstreamMCPEvents(arguments: object))
+      return try textResult(readDownstreamMCPEvents(arguments: object, context: context))
 
     case "mcp.requests.list":
       try requireMCPProviders()
-      return try textResult(listDownstreamMCPRequests(arguments: object))
+      return try textResult(listDownstreamMCPRequests(arguments: object, context: context))
 
     case "mcp.requests.read":
       try requireMCPProviders()
-      return try textResult(readDownstreamMCPRequest(arguments: object))
+      return try textResult(readDownstreamMCPRequest(arguments: object, context: context))
 
     case "mcp.requests.cancel":
       try requireMCPProviders()
-      return try textResult(cancelDownstreamMCPRequest(arguments: object))
+      return try textResult(cancelDownstreamMCPRequest(arguments: object, context: context))
 
     case "mcp.connections.close":
       try requireMCPProviders()
@@ -220,7 +229,9 @@ package final class GatewayToolRegistry: @unchecked Sendable {
         throw GatewayToolError.invalidArguments("Supply only the selected MCP server id.")
       }
       return try textResult(
-        mcpClient.closeConnection(server: mcpServer(requiredString("server", in: object))))
+        mcpClient.closeConnection(
+          server: mcpServer(requiredString("server", in: object), context: context),
+          context: context))
 
     case "process.spawn":
       try requireCLIProviders()
@@ -1096,7 +1107,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
     default:
       if let configuredTool = configuration.tools.first(where: { $0.name == name }) {
-        return try callConfiguredTool(configuredTool, arguments: object)
+        return try callConfiguredTool(configuredTool, arguments: object, context: context)
       }
       guard configuration.mcp.servers.contains(where: { $0.exposure.includesReexport }) else {
         throw GatewayToolError.unknownTool(name)
@@ -1106,7 +1117,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       if let definition = try listTools().first(where: { $0.name == name }),
         definition.mcpReference != nil
       {
-        return try callTool(definition: definition, arguments: arguments)
+        return try callTool(definition: definition, arguments: arguments, context: context)
       }
       throw GatewayToolError.unknownTool(name)
     }
@@ -1134,28 +1145,31 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     definitions.append(definition)
   }
 
-  private func callConfiguredTool(_ tool: ToolConfig, arguments object: [String: JSONValue])
+  private func callConfiguredTool(
+    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext = .empty
+  )
     throws -> JSONValue
   {
     switch tool.adapter {
     case .mcp:
-      return try callConfiguredMCPTool(tool, arguments: object)
+      return try callConfiguredMCPTool(tool, arguments: object, context: context)
     }
   }
 
-  private func callConfiguredMCPTool(_ tool: ToolConfig, arguments object: [String: JSONValue])
+  private func callConfiguredMCPTool(
+    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext = .empty
+  )
     throws -> JSONValue
   {
     guard let downstreamTool = tool.tool else {
       throw GatewayToolError.invalidArguments("MCP-backed tool '\(tool.name)' requires tool.")
     }
-    let server = try mcpServer(tool.source)
+    let server = try mcpServer(tool.source, context: context)
     try requireDownstreamToolAllowed(downstreamTool, server: server)
     return try mcpClient.callTool(
       server: server,
       name: downstreamTool,
-      arguments: .object(object)
-    )
+      arguments: .object(object), context: context)
   }
 
   private func requireBuiltinEnabled(_ name: String) throws {
@@ -1183,11 +1197,13 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     )
   }
 
-  internal func downstreamPolicy(for reference: MCPToolReference) throws -> MCPToolAdmissionPolicy {
-    let server = try mcpServer(reference.serverID)
+  internal func downstreamPolicy(
+    for reference: MCPToolReference, context: InvocationContext = .empty
+  ) throws -> MCPToolAdmissionPolicy {
+    let server = try mcpServer(reference.serverID, context: context)
     try requireDownstreamToolAllowed(reference.toolName, server: server)
     guard
-      let tool = try permittedDownstreamTools(server: server).first(where: {
+      let tool = try permittedDownstreamTools(server: server, context: context).first(where: {
         $0.name == reference.toolName
       })
     else {
@@ -1204,12 +1220,13 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     definition: MCPTool, arguments: JSONValue?, context: InvocationContext = .empty
   ) throws -> JSONValue {
     guard let reference = definition.mcpReference else {
-      return try callTool(name: definition.name, arguments: arguments)
+      return try callTool(name: definition.name, arguments: arguments, context: context)
     }
-    let server = try mcpServer(reference.serverID)
+    let server = try mcpServer(reference.serverID, context: context)
     try requireDownstreamToolAllowed(reference.toolName, server: server)
     return try mcpClient.callTool(
-      server: server, name: reference.toolName, arguments: arguments ?? .object([:]))
+      server: server, name: reference.toolName, arguments: arguments ?? .object([:]),
+      context: context)
   }
 
   internal func callToolAsync(
@@ -1217,40 +1234,26 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   ) async throws -> JSONValue {
     try Task.checkCancellation()
     if let reference = definition.mcpReference {
-      let server = try mcpServer(reference.serverID)
+      let server = try mcpServer(reference.serverID, context: context)
       try requireDownstreamToolAllowed(reference.toolName, server: server)
       return try await mcpClient.callToolAsync(
         server: server, name: reference.toolName, arguments: arguments ?? .object([:]),
-        requestID: nil)
+        requestID: nil, context: context)
     }
     if definition.name == "mcp.tools.call" {
       let object = arguments?.objectValue ?? [:]
       if try optionalBool("wait_for_result", in: object) ?? true {
-        let server = try mcpServer(requiredString("server", in: object))
+        let server = try mcpServer(requiredString("server", in: object), context: context)
         let name = try requiredString("tool", in: object)
         try requireDownstreamToolAllowed(name, server: server)
         return try textResult(
           await mcpClient.callToolAsync(
             server: server, name: name, arguments: object["arguments"] ?? .object([:]),
-            requestID: optionalString("request_id", in: object)))
+            requestID: optionalString("request_id", in: object), context: context))
       }
     }
-    let authorization = MCPInvocationAdmission.current
-    let target = MCPContinuationTarget.current
-    let session = GatewaySessionScope.current
-    return try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        continuation.resume(
-          with: Result {
-            try MCPInvocationAdmission.$current.withValue(authorization) {
-              try GatewaySessionScope.$current.withValue(session) {
-                try MCPContinuationTarget.$current.withValue(target) {
-                  try self.callTool(definition: definition, arguments: arguments)
-                }
-              }
-            }
-          })
-      }
+    return try await Self.calls.perform {
+      try self.callTool(definition: definition, arguments: arguments, context: context)
     }
   }
 }

@@ -10,6 +10,41 @@ import Testing
 @Suite
 struct MCPHostContextTests {
   @Test
+  func scopedProxyRejectsUnsupportedHostEnvironmentBeforeLaunching() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(
+      at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = root.appendingPathComponent("ownership")
+    let hostContext = NonGatewayHostEnvironment(
+      launchMetadata: .init(
+        runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .chatGPTObserve),
+        workspaceID: "fixture", rootURL: root, readOnly: true),
+      workspaceRoot: root, processOwnershipRoot: storage)
+    let client = MCPProxyClient()
+    let scoped = client.makeScopedClient(
+      workingDirectory: root, environment: [:], hostContext: hostContext)
+    let marker = root.appendingPathComponent("launched")
+    let server = MCPServerConfig(
+      id: "unsupported-host", transport: .stdio, command: "/usr/bin/touch", args: [marker.path],
+      hostServices: false)
+    try await BlockingOperationExecutor(label: "unsupported-host-proxy-test").perform {
+      #expect(
+        throws: GatewayToolError.executionFailed(
+          "Gateway MCP connections require a gateway host environment.")
+      ) {
+        try scoped.listTools(server: server, context: .empty)
+      }
+      let status = try scoped.connectionStatus(server: server, context: .empty)
+      #expect(status.objectValue?["state"] == .string("not_started"))
+    }
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    #expect(!FileManager.default.fileExists(atPath: storage.path))
+    await scoped.shutdown()
+    await client.shutdown()
+  }
+
+  @Test
   func scopedProxyUsesHostStorageOverrideBeforeLaunching() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(
@@ -50,4 +85,16 @@ struct MCPHostContextTests {
     #expect(root != MCPProcessOwnership.defaultRoot)
   }
 
+}
+
+private struct NonGatewayHostEnvironment: MCPHostEnvironment {
+  let launchMetadata: MCPHostLaunchMetadata
+  let workspaceRoot: URL
+  let processOwnershipRoot: URL?
+  let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
+  let providesHostServices = false
+
+  func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
+    throw GatewayToolError.executionFailed("Host services are unavailable.")
+  }
 }

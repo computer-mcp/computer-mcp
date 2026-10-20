@@ -6,7 +6,7 @@ import Testing
 
 struct MCPHostLaunchMetadataTests {
   @Test(arguments: [false, true], [false, true])
-  func encodingMatchesHostLaunchWireFormat(traced: Bool, managed: Bool) throws {
+  func encodingPreservesHostLaunchJSONSemantics(traced: Bool, managed: Bool) throws {
     let runtimeID = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
     let context = ExecutionContext(
       caller: .localMCP, profileID: .chatGPTOperate,
@@ -26,16 +26,17 @@ struct MCPHostLaunchMetadataTests {
       transportTrace: context.transportTrace,
       managedWorkspaceRoot: managedRoot?.standardizedFileURL.path,
       principalID: context.principalID)
-    // JSON object ordering is unspecified; order both encodings to compare their bytes.
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    #expect(try encoder.encode(metadata) == encoder.encode(legacy))
+    let expected = try JSONDecoder().decode(
+      [String: JSONValue].self, from: JSONEncoder().encode(legacy))
+    let actual = try JSONDecoder().decode(
+      [String: JSONValue].self, from: JSONEncoder().encode(metadata))
+    #expect(actual == expected)
     let environment = try MCPHostLaunchMetadata.launchEnvironment(
       inherited: [:], overrides: [:], context: metadata)
     let wire = try #require(environment[MCPHostLaunchMetadata.environmentKey])
-    let actual = try JSONDecoder().decode(JSONValue.self, from: Data(wire.utf8))
-    let expected = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(legacy))
-    #expect(actual == expected)
+    let environmentValue = try JSONDecoder().decode(
+      [String: JSONValue].self, from: Data(wire.utf8))
+    #expect(environmentValue == expected)
   }
 
   @Test(arguments: [false, true])

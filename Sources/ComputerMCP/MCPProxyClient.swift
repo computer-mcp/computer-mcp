@@ -19,11 +19,17 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   package init(
     workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
     environment: [String: String] = ProcessInfo.processInfo.environment,
-    hostContext: MCPHostContext? = nil,
+    hostContext: (any MCPHostEnvironment)? = nil,
     secretStore: KeychainSecretStore? = nil,
     processOwnershipRoot: URL? = nil,
     executionDatabase: GatewayDatabase? = nil, executionScope: String? = nil
   ) {
+    // Gateway connections need journal, retained-work and host-tool authority.
+    // The nonthrowing factory defers unsupported host environments to connection admission.
+    let gatewayContext = hostContext as? MCPHostContext
+    let hostContextError: GatewayToolError? =
+      hostContext != nil && gatewayContext == nil
+      ? .executionFailed("Gateway MCP connections require a gateway host environment.") : nil
     let changes = GatewayToolChangeBroadcaster()
     self.changes = changes
     self.secretStore = secretStore
@@ -37,15 +43,16 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
           ]))
       } ?? UUID().uuidString
     let journal = MCPExecutionJournal(
-      database: executionDatabase ?? hostContext?.executionDatabase, scope: scope)
+      database: executionDatabase ?? gatewayContext?.executionDatabase, scope: scope)
     self.journal = journal
-    var hostContext = hostContext
+    var hostContext = gatewayContext
     if hostContext?.processOwnershipRoot == nil {
       hostContext?.processOwnershipRoot = processOwnershipRoot
     }
     self.pool = MCPConnectionPool(
       workingDirectory: workingDirectory.standardizedFileURL, environment: environment,
-      hostContext: hostContext, secretStore: secretStore, journal: journal,
+      hostContext: hostContext, hostContextError: hostContextError,
+      secretStore: secretStore, journal: journal,
       toolsChanged: { changes.send() })
   }
 
@@ -54,10 +61,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   )
     -> any DownstreamMCPClient
   {
-    // Gateway connections also need journal, retained-work and host-tool authority.
-    // This is the restore point from the downstream launch interface to gateway state.
-    let hostContext = hostContext as? MCPHostContext
-    return MCPProxyClient(
+    MCPProxyClient(
       workingDirectory: workingDirectory, environment: environment, hostContext: hostContext,
       secretStore: secretStore, processOwnershipRoot: processOwnershipRoot)
   }
@@ -502,19 +506,21 @@ private final class MCPConnectionPool: @unchecked Sendable {
   private let workingDirectory: URL
   private let environment: [String: String]
   private let hostContext: MCPHostContext?
+  private let hostContextError: GatewayToolError?
   private let secretStore: KeychainSecretStore?
   private let journal: MCPExecutionJournal
   private let toolsChanged: @Sendable () -> Void
 
   init(
     workingDirectory: URL, environment: [String: String],
-    hostContext: MCPHostContext?,
+    hostContext: MCPHostContext?, hostContextError: GatewayToolError?,
     secretStore: KeychainSecretStore?, journal: MCPExecutionJournal,
     toolsChanged: @escaping @Sendable () -> Void
   ) {
     self.workingDirectory = workingDirectory
     self.environment = environment
     self.hostContext = hostContext
+    self.hostContextError = hostContextError
     self.secretStore = secretStore
     self.journal = journal
     self.toolsChanged = toolsChanged
@@ -523,6 +529,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
   func connection(for server: MCPServerConfig, continuation: MCPContinuationTarget?) throws
     -> MCPProxyConnection
   {
+    if let hostContextError { throw hostContextError }
     guard server.enabled else {
       throw GatewayToolError.disabled("MCP registration '\(server.id)' is disabled.")
     }

@@ -429,7 +429,8 @@ let neutralTargets: [Target] =
           "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPersistence", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
           "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTransport",
-          "ComputerMCPTunnels", .product(name: "MCP", package: "swift-sdk"),
+          "ComputerMCPTunnels", .product(name: "Crypto", package: "swift-crypto"),
+          .product(name: "MCP", package: "swift-sdk"),
         ],
         exclude: ["ComputerMCP.docc"]
       ),

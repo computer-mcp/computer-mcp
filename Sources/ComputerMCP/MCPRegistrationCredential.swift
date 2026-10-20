@@ -2,7 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlugins
-import CryptoKit
+import Crypto
 import Foundation
 
 package struct MCPRegistrationCredentialStatus: Codable, Equatable, Sendable {

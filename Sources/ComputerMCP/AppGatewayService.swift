@@ -8,8 +8,15 @@ import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPToolsWorkspace
 import ComputerMCPTransport
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 package enum AppGatewayServiceState: String, Codable, Equatable, Sendable {
   case stopped

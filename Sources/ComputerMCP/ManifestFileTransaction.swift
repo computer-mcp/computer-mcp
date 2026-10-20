@@ -1,6 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPGateway
-import CryptoKit
+import Crypto
 import Foundation
 
 #if canImport(Darwin)

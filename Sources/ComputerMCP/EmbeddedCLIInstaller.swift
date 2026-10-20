@@ -1,5 +1,12 @@
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 package enum EmbeddedCLIInstallationState: String, Codable, Equatable, Sendable {
   case notInstalled = "not-installed"

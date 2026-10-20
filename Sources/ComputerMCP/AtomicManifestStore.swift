@@ -3,7 +3,7 @@ import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPPlatform
 import ComputerMCPPlugins
-import CryptoKit
+import Crypto
 import Foundation
 
 internal enum ManifestChangeReason: String, Codable, Equatable, Sendable {

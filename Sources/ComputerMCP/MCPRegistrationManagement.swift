@@ -2,7 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlugins
 import ComputerMCPProcess
-import CryptoKit
+import Crypto
 import Foundation
 
 package struct MCPRegistrationEntry: Codable, Equatable, Sendable, Identifiable {

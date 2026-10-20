@@ -1,6 +1,13 @@
 import ComputerMCPPlatform
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 package struct AppControlPlaneServiceDirectories: Codable, Equatable, Sendable {
   package var applicationSupport: URL

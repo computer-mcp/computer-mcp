@@ -4,9 +4,20 @@ import ComputerMCPGateway
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPTunnels
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
+
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 extension AppControlPlaneService {
   package func cloudflareTunnelConfigurations() throws -> [CloudflareTunnelConfiguration] {

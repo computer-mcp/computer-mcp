@@ -77,11 +77,12 @@ git diff -- Tests/ComputerMCPMacOSTests/Fixtures/builtin-tool-catalog.json
 /usr/bin/swift test --filter BuiltinToolCatalogSnapshotTests
 ```
 
-`Scripts/module-graph.json` maps Swift sources relative to
-`Tests/ComputerMCPMacOSTests` to their planned `<owner>Tests` targets. This includes
-test support files; copied `Fixtures` resources are excluded. `python3
-Scripts/verify-module-graph.py plan` rejects missing or stale mappings and test
-targets whose owner does not appear in `layers`.
+`python3 Scripts/verify-module-graph.py package` checks declared SwiftPM target
+dependencies against the layers, permitted same-layer edges and macOS boundaries
+in `Scripts/module-graph.json`. The package boundary gate checks neutral source
+imports and system paths. Tests live with their owning targets under
+`Tests/<Target>Tests/`; macOS composition tests and their copied fixtures live in
+`Tests/ComputerMCPMacOSTests/`.
 
 ## Command hierarchy
 

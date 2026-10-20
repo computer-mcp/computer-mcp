@@ -152,12 +152,10 @@ cycles, no upward edges and no neutral target that depends on a Darwin target.
   then plugins, Computer Use, gateway and control plane. The shared target is
   removed when it is empty. `Delivery` and `Authorization` are new targets
   created with their capabilities; no existing declarations move into them.
-- `Scripts/verify-module-graph.py` checks the planned allocation against all
-  target directories during extraction, including macOS imports in extracted
-  neutral targets, and checks the target dependencies declared in
-  `Package.swift` against the layer rules. `Scripts/module-graph.json` holds the
-  layers and the planned allocation; its allocation entries are removed as
-  targets are extracted.
+- `Scripts/verify-module-graph.py package` checks the target dependencies declared
+  in `Package.swift` against the layer rules and platform boundaries.
+  `Scripts/module-graph.json` holds the layers, permitted same-layer dependencies,
+  platform rules, test support targets and test ownership.
 - Neutral targets do not import macOS frameworks or reference macOS executable
   paths. As targets are extracted, `Scripts/verify-package-boundary.sh` is
   extended to reject both, and a Linux CI job builds and tests the extracted

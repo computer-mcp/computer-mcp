@@ -15,7 +15,6 @@
       "commands": [
         ["python3", "Scripts/version.py", "check", "--dependencies"],
         ["Scripts/verify-package-boundary.sh"],
-        ["python3", "Scripts/verify-module-graph.py", "plan"],
         ["python3", "Scripts/verify-module-graph.py", "package"],
         ["Scripts/verify-public-repository.sh"]
       ],

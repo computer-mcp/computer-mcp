@@ -88,7 +88,6 @@ swift-format format --in-place --recursive --configuration .swift-format Package
 swift-format lint --strict --recursive --configuration .swift-format Package.swift Sources Tests
 /usr/bin/swift build
 /usr/bin/swift test
-python3 Scripts/verify-module-graph.py plan
 python3 Scripts/verify-module-graph.py package
 ```
 

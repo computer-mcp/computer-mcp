@@ -1,5 +1,5 @@
 {
-  "description": "Planned allocation of Sources/ComputerMCP declarations and Tests/ComputerMCPTests Swift sources to targets. See Documentation/Decisions/ModuleArchitecture.md. A cut 'A->B' is a reference from declaration A to type B that is replaced by an injected interface.",
+  "description": "Target layers, permitted same-layer dependencies, platform boundaries and test ownership. See Documentation/Decisions/ModuleArchitecture.md.",
   "layers": [
     {
       "name": "base",
@@ -54,12 +54,6 @@
       ]
     },
     {
-      "name": "transitional",
-      "targets": [
-        "ComputerMCP"
-      ]
-    },
-    {
       "name": "composition-root",
       "targets": [
         "ComputerMCPMacOS"
@@ -107,7 +101,6 @@
     "ComputerMCPPlatformDarwin",
     "ComputerMCPComputerUse",
     "ComputerMCPComputerUseTests",
-    "ComputerMCP",
     "ComputerMCPMacOS",
     "ComputerMCPApp",
     "computer-mcp",
@@ -159,19 +152,9 @@
   "posix_paths": [
     "/usr/bin/env"
   ],
-  "executables": [
-    "ComputerMCPApp",
-    "computer-mcp"
-  ],
   "test_support": [
     "ComputerMCPTestSupport"
   ],
-  "residual": "ComputerMCP",
-  "removed": [],
-  "types": {},
-  "extensions": {},
-  "files": {},
-  "cuts": [],
   "tests": {
     "BuiltinToolCatalogSnapshotTests.swift": "ComputerMCPMacOSTests",
     "VerificationScriptDependencyTests.swift": "ComputerMCPMacOSTests",

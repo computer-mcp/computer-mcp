@@ -5,8 +5,19 @@ import Foundation
 
 /// App-owned management is injected into each admitted generation; the normal
 /// gateway still owns tool admission, invocation leases, tickets and audit.
-package struct GatewayRemoteManagement: Sendable {
+package struct GatewayRemoteManagement: GatewayManagementProvider {
   let call: @Sendable (String, [String: JSONValue], ExecutionContext) async throws -> JSONValue
+
+  package var definitions: [ToolDefinition] { Self.definitions }
+  package var readCapabilities: Set<String> { Self.readCapabilities }
+
+  package func containsTool(named name: String) -> Bool { Self.byName[name] != nil }
+
+  package func call(
+    name: String, arguments: [String: JSONValue], context: ExecutionContext
+  ) async throws -> JSONValue {
+    try await call(name, arguments, context)
+  }
 
   struct Contract: Sendable {
     let input: ControlToolContract
@@ -265,31 +276,5 @@ package struct GatewayRemoteManagement: Sendable {
           uniquingKeysWith: { old, _ in old })
     else { throw denied("MCP authentication changes require the local credential owner.") }
     return result
-  }
-}
-
-/// Captured before asynchronous preparation; only the commit runs under its lock.
-package struct GatewayManagementAuthorization: Sendable {
-  let session: GatewayControlSession
-  let context: ExecutionContext
-  let revision: Int64
-  let requiresFullAccess: Bool
-  let consent: GatewayFullAccessConsent?
-
-  init(
-    session: GatewayControlSession, context: ExecutionContext, revision: Int64,
-    requiresFullAccess: Bool
-  ) {
-    self.session = session
-    self.context = context
-    self.revision = revision
-    self.requiresFullAccess = requiresFullAccess
-    self.consent = session.snapshot.fullAccessConsent
-  }
-
-  func perform<Result>(_ operation: () throws -> Result) throws -> Result {
-    try session.withManagementAuthorization(
-      context: context, expectedRevision: revision, requiresFullAccess: requiresFullAccess,
-      operation: operation)
   }
 }

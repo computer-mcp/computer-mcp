@@ -48,7 +48,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
-  private let remoteManagement: GatewayRemoteManagement?
+  private let remoteManagement: (any GatewayManagementProvider)?
   private let hostToolDirectory = MCPHostToolDirectory()
   package let pluginOrigins: [IntegrationRegistration: PluginContributionOrigin]
   package let pluginDiagnostics: [PluginResolutionDiagnostic]
@@ -68,7 +68,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     requiresControlSession: Bool = false,
-    remoteManagement: GatewayRemoteManagement? = nil
+    remoteManagement: (any GatewayManagementProvider)? = nil
   ) throws {
     try self.init(
       configuration: configuration, context: context, database: database,
@@ -93,7 +93,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     requiresControlSession: Bool = false,
-    remoteManagement: GatewayRemoteManagement? = nil
+    remoteManagement: (any GatewayManagementProvider)? = nil
   ) async throws -> GatewayRuntime {
     try Task.checkCancellation()
     let lifetime = GatewayRuntimeLifetime()
@@ -127,7 +127,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     artifactStorage: PluginInstallationStorage? = nil,
     requiresControlSession: Bool = false,
-    remoteManagement: GatewayRemoteManagement? = nil
+    remoteManagement: (any GatewayManagementProvider)? = nil
   ) async throws -> GatewayRuntimePreparation {
     try Task.checkCancellation()
     let lifetime = GatewayRuntimeLifetime()
@@ -182,7 +182,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime,
     preparationState: GatewayDatabase.ConfigurationState?,
     artifactStorage: PluginInstallationStorage?, requiresControlSession: Bool,
-    remoteManagement: GatewayRemoteManagement?
+    remoteManagement: (any GatewayManagementProvider)?
   ) throws {
     let initializationConfiguration = configuration
     self.lifetime = lifetime
@@ -307,7 +307,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let router = try GatewayProviderRouter(
         registry: registry,
         reservedToolNames: Set(
-          Self.coreDefinitions(databaseEnabled: true, managementEnabled: true).map(\.tool.name)),
+          Self.coreDefinitions(databaseEnabled: true, management: remoteManagement).map(\.tool.name)
+        ),
         retainsContinuation: { [ownedWork, workspaceID = workspace.id] reference in
           ownedWork.continuations.retainsContinuation(
             workspaceID: workspaceID, reference: reference)
@@ -333,8 +334,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       var readOnlyCapabilities: Set<String> = ["workspace.list", "workspace.describe"]
       // The observe risk boundary independently limits this to host-classified read-only targets.
       readOnlyCapabilities.insert("mcp.tools.call")
-      if remoteManagement != nil {
-        readOnlyCapabilities.formUnion(GatewayRemoteManagement.readCapabilities)
+      if let remoteManagement {
+        readOnlyCapabilities.formUnion(remoteManagement.readCapabilities)
       }
       if let providerRouter = configuredWorkspaces.lazy.compactMap({ providerRouterByID[$0.id] })
         .first
@@ -807,7 +808,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   {
     guard (try? currentHostGrant(context: context)) != nil else { return [] }
     let coreDefinitions = Self.coreDefinitions(
-      databaseEnabled: database != nil, managementEnabled: remoteManagement != nil)
+      databaseEnabled: database != nil, management: remoteManagement)
     let routedDefinitions: [ToolDefinition] =
       try firstProviderRouter.map { router in
         try router.listTools(context: invocationContext).map { tool in
@@ -1298,7 +1299,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           context: routed.context, invocationContext: invocationContext)
         operationLinkage = invocation.linkage
         rawResult = try executeCommittedOperation(invocation, invocationContext: invocationContext)
-      case let name where GatewayRemoteManagement.byName[name] != nil:
+      case let name where remoteManagement?.containsTool(named: name) == true:
         throw GatewayToolError.invalidArguments("Management tools require asynchronous dispatch.")
       default:
         guard let registryWorkspaceID = routed.registryWorkspaceID else {
@@ -1449,10 +1450,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         operationLinkage = invocation.linkage
         rawResult = try await executeCommittedOperationAsync(
           invocation, invocationContext: invocationContext)
-      case let name where GatewayRemoteManagement.byName[name] != nil:
+      case let name where remoteManagement?.containsTool(named: name) == true:
         guard let remoteManagement else { throw GatewayToolError.unknownTool(name) }
         rawResult = try resultEnvelope(
-          await remoteManagement.call(name, routed.arguments, routed.context))
+          await remoteManagement.call(
+            name: name, arguments: routed.arguments, context: routed.context))
       default:
         guard let registryWorkspaceID = routed.registryWorkspaceID else {
           throw GatewayRuntimeError.noWorkspaces
@@ -1993,7 +1995,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         try validateExecutionWorkspace(
           workspaceID,
           requiresAccess: !Self.coreDefinitions(
-            databaseEnabled: database != nil, managementEnabled: remoteManagement != nil
+            databaseEnabled: database != nil, management: remoteManagement
           ).contains {
             $0.tool.name == descriptor.id
           })
@@ -2001,7 +2003,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     if let workspaceID = context.workspaceID, let error = workspaceErrors[workspaceID],
       !Self.coreDefinitions(
-        databaseEnabled: database != nil, managementEnabled: remoteManagement != nil
+        databaseEnabled: database != nil, management: remoteManagement
       )
       .contains(where: { $0.tool.name == descriptor.id }
       )
@@ -2056,7 +2058,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     -> CapabilityDescriptor
   {
     if let definition = Self.coreDefinitions(
-      databaseEnabled: database != nil, managementEnabled: remoteManagement != nil
+      databaseEnabled: database != nil, management: remoteManagement
     )
     .first(where: { $0.tool.name == name }) {
       return definition.capability
@@ -2272,7 +2274,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return .object(object)
   }
 
-  private static func coreDefinitions(databaseEnabled: Bool, managementEnabled: Bool)
+  private static func coreDefinitions(
+    databaseEnabled: Bool, management: (any GatewayManagementProvider)?
+  )
     -> [ToolDefinition]
   {
     var definitions = [
@@ -2409,7 +2413,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         )
       )
     }
-    if managementEnabled { definitions += GatewayRemoteManagement.definitions }
+    if let management { definitions += management.definitions }
     return definitions
   }
 

@@ -489,6 +489,23 @@ struct GatewayRemoteManagementTests {
 
 struct GatewayRemoteManagementAuthorityTests {
   @Test
+  func managementWithoutProviderFailsBeforeSynchronousDispatch() async throws {
+    let runtime = try GatewayRuntime(
+      configuration: GatewayConfiguration(), registeredWorkspaces: [],
+      platform: MacOSPlatform.services,
+      bundledPlugins: .load(directory: nil))
+    for name in GatewayRemoteManagement.definitions.map(\.tool.name) {
+      #expect(throws: GatewayToolError.unknownTool(name)) {
+        try runtime.capabilityDescriptor(named: name)
+      }
+      #expect(throws: GatewayToolError.unknownTool(name)) {
+        try runtime.callTool(name: name, arguments: .object([:]), context: .empty)
+      }
+    }
+    await runtime.shutdown()
+  }
+
+  @Test
   func pluginSummariesStaySmallAndInstallationPagesUseStableIDs() throws {
     let files = try PluginStoreFixture()
     defer { files.cleanup() }

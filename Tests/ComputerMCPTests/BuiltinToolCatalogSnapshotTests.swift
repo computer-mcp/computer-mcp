@@ -152,7 +152,7 @@ struct BuiltinToolCatalogSnapshotTests {
       ],
       platform: MacOSPlatform.services, mcpClient: CatalogDiscoveryStub(), plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
-      remoteManagement: .init(call: { _, _, _ in
+      remoteManagement: GatewayRemoteManagement(call: { _, _, _ in
         throw GatewayToolError.executionFailed("Catalog discovery must not execute management.")
       }))
     let actual: [String: JSONValue]

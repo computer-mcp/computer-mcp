@@ -207,7 +207,6 @@
     "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
     "ControlToolResponse->AppControlPlaneServiceError",
     "GatewayHTTPApp->AppControlPlaneServiceError",
-    "GatewayRuntime->GatewayRemoteManagement",
     "HTTPClientControlRegistry->GatewayClientControl",
     "MCPConnectionPool->KeychainSecretStore",
     "MCPProxyClient->KeychainSecretStore",

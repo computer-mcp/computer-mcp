@@ -416,7 +416,7 @@ package struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
 }
 
 extension ComputerUseGatewayProvider {
-  internal static let toolCount = makeDefinitions().count
+  package static let toolCount = makeDefinitions().count
 
   fileprivate static func makeDefinitions() -> [ToolDefinition] {
     [

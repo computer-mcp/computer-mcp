@@ -367,7 +367,6 @@ let neutralTargets: [Target] =
         name: "ComputerMCP",
         dependencies: [
           "ComputerMCPPlugins",
-          "ComputerMCPToolsSkills",
           "ComputerMCPToolsFiles",
           "ComputerMCPToolsWorkspace",
           "ComputerMCPDownstream",
@@ -413,6 +412,7 @@ let neutralTargets: [Target] =
         name: "ComputerMCPApp",
         dependencies: [
           "ComputerMCPPlugins",
+          "ComputerMCPToolsSkills",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",

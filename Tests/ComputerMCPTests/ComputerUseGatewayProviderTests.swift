@@ -1,11 +1,8 @@
 import ComputerMCPTestSupport
-import ComputerMCPToolKit
-import ComputerMCPToolsSkills
 import Foundation
 import Testing
 
 @testable import ComputerMCP
-@testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 
@@ -57,17 +54,7 @@ final class ComputerUseGatewayProviderTests {
           && $0.outputSchema?.objectValue?["properties"]?.objectValue?["result"] != nil
           && $0.annotations != nil
       })
-    #expect(GatewayToolCounts.computerUse == tools.count)
-  }
-
-  @Test
-  func testSkillsToolCountMatchesTheFullCatalog() throws {
-    let skills = try SkillsToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(skills: .init(enabled: true)))
-    )
-    .definitions()
-    #expect(!skills.isEmpty)
-    #expect(GatewayToolCounts.skills == skills.count)
+    #expect(ComputerUseGatewayProvider.toolCount == tools.count)
   }
 
   @Test

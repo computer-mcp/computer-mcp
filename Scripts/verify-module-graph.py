@@ -118,12 +118,13 @@ def code_text(text):
     return "".join(out)
 
 
-MEMBER = re.compile(r"[{}]|\b(?:struct|class|enum|actor|protocol|typealias|func)\s+([A-Za-z_]\w*)")
+MEMBER = re.compile(r"[{}]|\b(struct|class|enum|actor|protocol|typealias|func)\s+([A-Za-z_]\w*)")
 SCOPE = re.compile(r"[{}]|\b(?:let|var)\s+([A-Za-z_]\w*)|(?<![.\w])([A-Za-z_]\w*)\b")
 
 
-def member_names(text, path, index):
+def member_names(text, path):
     """Record direct member types and functions, keyed by dotted declaration path."""
+    types, functions = collections.defaultdict(set), collections.defaultdict(set)
     # The first body opened in a chunk belongs to the chunk's own declaration or extension.
     stack, pending, depth = [path], path, 0
     for token in MEMBER.finditer(text):
@@ -135,9 +136,12 @@ def member_names(text, path, index):
             depth -= 1
             stack = stack[:depth + 1]
         else:
+            kind, name = token.groups()
             if depth >= 1:
-                index[stack[depth]].add(token.group(1))
-            pending = f"{stack[depth]}.{token.group(1)}" if depth >= 1 else path
+                index = functions if kind == "func" else types
+                index[stack[depth]].add(name)
+            pending = f"{stack[depth]}.{name}" if depth >= 1 else path
+    return types, functions
 
 
 def free_references(text, functions):
@@ -350,15 +354,16 @@ def plan(graph, sources, tests=None):
     # Executable targets cannot be imported, so their declarations never own a reference.
     executables = set(graph.get("executables", []))
     types, functions = collections.defaultdict(set), collections.defaultdict(set)
-    nested = collections.defaultdict(set)
+    nested_types, nested_functions = collections.defaultdict(set), collections.defaultdict(set)
     for chunk, target in zip(all_chunks, targets):
         if target is None:
             continue
         if chunk["kind"] in ("decl", "ext"):
-            members = collections.defaultdict(set)
-            member_names(chunk["text"], chunk.get("path", chunk["name"]), members)
+            members, methods = member_names(chunk["text"], chunk.get("path", chunk["name"]))
             for path, names in members.items():
-                nested[(target, path)].update(names)
+                nested_types[(target, path)].update(names)
+            for path, names in methods.items():
+                nested_functions[(target, path)].update(names)
         if target in executables:
             continue
         if chunk["kind"] == "decl":
@@ -370,22 +375,27 @@ def plan(graph, sources, tests=None):
     for chunk, source in zip(all_chunks, targets):
         if source is None or source in removed:
             continue
-        # Member types and functions of this declaration or the type an extension extends
-        # resolve locally; other unqualified or module-qualified names resolve to owners.
-        local = nested.get((source, chunk.get("path", chunk["name"])), set())
+        # Only unqualified references can be shadowed by members of this declaration
+        # or the type an extension extends.
+        path = (source, chunk.get("path", chunk["name"]))
+        local_types = nested_types.get(path, set())
+        local_functions = nested_functions.get(path, set())
         references = set()
         for match in IDENTIFIER.finditer(chunk["text"]):
             name, start = match.group(0), match.start()
-            if name not in types or name in local or source in types[name]:
+            if name not in types:
                 continue
             if start > 0 and chunk["text"][start - 1] == ".":
                 qualifier = re.search(r"([A-Za-z_]\w*)\s*\.$", chunk["text"][max(0, start - 80):start])
                 if not qualifier or qualifier.group(1) not in modules:
                     continue
+            elif name in local_types or source in types[name]:
+                continue
             references.add(name)
         if chunk["kind"] == "ext" and chunk["name"] in types:
             references.add(chunk["name"])
-        references |= {n for n in free_references(chunk["text"], functions.keys() - local) if source not in functions[n]}
+        references |= {n for n in free_references(chunk["text"], functions.keys() - local_types - local_functions)
+                       if source not in functions[n]}
         for name in references:
             if (chunk["name"], name) in cuts:
                 continue

@@ -88,6 +88,14 @@ class PlanModeTests(unittest.TestCase):
                    "  func use() -> Int { fileType() }\n  static func fileType() -> Int { 2 }\n}\n")
         self.assertEqual(self.problems(), [])
 
+    def test_member_function_does_not_hide_a_type_reference(self):
+        for reference in ("HighService", "High.HighService"):
+            with self.subTest(reference=reference):
+                self.write("Shared/Low.swift", "package struct LowValue {\n"
+                           "  func HighService() -> Int { 0 }\n"
+                           f"  let owner: {reference}?\n}}\n")
+                self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
+
     def test_extension_sees_member_function_from_a_sibling_extension(self):
         self.write("Shared/High.swift", "package func fileType() -> Int { 1 }\n")
         self.write("Shared/Low.swift", "package struct LowValue {}\n"
@@ -164,6 +172,11 @@ class PlanModeTests(unittest.TestCase):
         self.write("Shared/Low.swift", "package struct LowValue {\n  struct HighService {}\n}\n"
                    "extension LowValue {\n  func use() -> HighService { HighService() }\n}\n")
         self.assertEqual(self.problems(), [])
+
+    def test_nested_type_does_not_hide_a_module_qualified_type_reference(self):
+        self.write("Shared/Low.swift", "package struct LowValue {\n  struct HighService {}\n"
+                   "  let owner: High.HighService?\n}\n")
+        self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
 
     def test_deeply_nested_name_does_not_hide_a_member_reference(self):
         self.write("Shared/Low.swift", "package struct LowValue {\n  struct Container {\n    struct HighService {}\n  }\n"

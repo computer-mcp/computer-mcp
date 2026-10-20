@@ -4,11 +4,7 @@ import ComputerMCPToolKit
 import ComputerMCPToolsStructured
 import Foundation
 
-extension GatewayToolRegistry {
-  private var structured: StructuredToolProvider {
-    StructuredToolProvider(environment: ToolEnvironment(configuration: configuration))
-  }
-
+extension SkillsToolProvider {
   internal func requireSkillsEnabled() throws {
     guard configuration.skills.enabled else {
       throw GatewayToolError.disabled("skills tools are disabled by configuration.")

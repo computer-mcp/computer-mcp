@@ -85,6 +85,19 @@ let neutralTargets: [Target] =
         "ComputerMCPPlatform", "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPToolsSkills",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPToolsStructured", "ComputerMCPCore",
+        "ComputerMCPConfiguration",
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsSkillsTests",
+      dependencies: [
+        "ComputerMCPToolsSkills", "ComputerMCPToolKit", "ComputerMCPCore",
+        "ComputerMCPConfiguration",
+        "ComputerMCPTestSupport",
+      ]),
+    .target(
       name: "ComputerMCPToolsGit",
       dependencies: [
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -266,6 +279,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
           "ComputerMCPToolsStructured",
+          "ComputerMCPToolsSkills",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
@@ -276,7 +290,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCP",
         dependencies: [
-          "ComputerMCPToolsStructured",
+          "ComputerMCPToolsSkills",
           "ComputerMCPDownstream",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
@@ -297,7 +311,6 @@ let neutralTargets: [Target] =
           .product(name: "NIOPosix", package: "swift-nio"),
           .product(name: "Subprocess", package: "swift-subprocess"),
           .product(name: "TOML", package: "swift-toml"),
-          .product(name: "Yams", package: "Yams"),
         ],
         exclude: ["ComputerMCP.docc"]
       ),
@@ -340,7 +353,8 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPToolsStructuredDarwinTests",
         dependencies: [
-          "ComputerMCPToolsStructured", "ComputerMCPToolKit", "ComputerMCPCore",
+          "ComputerMCPToolsStructured",
+          "ComputerMCPToolKit", "ComputerMCPCore",
           "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ]),
       .testTarget(
@@ -350,6 +364,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
           "ComputerMCPToolsStructured",
+          "ComputerMCPToolsSkills",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",

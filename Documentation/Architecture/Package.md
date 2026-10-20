@@ -54,6 +54,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPTunnels/` | Platform-neutral OpenAI tunnel launch planning and supervision, Cloudflare runtime values, the HTTP origin lifecycle contract and system proxy settings parsing |
 | `Sources/ComputerMCPToolsCLI/` | Platform-neutral CLI provider, CLI tree catalogs, validation, parameter mapping and executable compatibility checks |
 | `Sources/ComputerMCPToolsShell/` | Platform-neutral shell and managed-process providers with explicit definitions, annotations, descriptors and workspace runtime dispatch |
+| `Sources/ComputerMCPToolsSkills/` | Platform-neutral skill package provider with explicit definitions, bounded inventory and reads, and Markdown/structured parsing through the Structured domain |
 | `Sources/ComputerMCPToolsStructured/` | Platform-neutral Markdown and structured-data provider with explicit definitions, bounded parsing helpers, registered SQLite commands and injected media inspection |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
@@ -73,18 +74,19 @@ package product and does not install or bundle vendor binaries.
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
 
 `GatewayToolRegistry` retains configuration, runtime ownership and tool dispatch.
-Its domain extensions contain the MCP, skills, workspace, file
-and platform implementations. Its catalog extension owns the definitions and
-annotations for those domains. `ComputerMCPToolKit` owns shared
+Its domain extensions contain the MCP, workspace, file and platform
+implementations. Its catalog extension owns the definitions and annotations
+for those domains. `ComputerMCPToolKit` owns shared
 argument/result helpers, `WorkspaceScope` path checks and file metadata, and
 `RegisteredCommands` resolution and execution with its CLI process lifecycle.
 `ToolEnvironment` shares a workspace's configuration, scope, command execution,
-environment, process/shell runtimes and media inspection across providers; the host owns shutdown.
+environment, process/shell runtimes and media inspection across providers; the
+host owns shutdown.
 `MCPTool` and `DownstreamMCPClient` own their definitions
-and client contract. `GitToolProvider`, `CLIToolProvider`, `ShellToolProvider` and
-`ProcessToolProvider` and `StructuredToolProvider` own their definitions and dispatch using the
-shared tool environment. The
-composition root registers them alongside the remaining registry providers, which
+and client contract. `GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`,
+`ProcessToolProvider`, `StructuredToolProvider` and `SkillsToolProvider` own their
+definitions and dispatch using the shared tool environment. The composition root
+registers them alongside the remaining registry providers, which
 retain the shared runtime lifecycle. Each
 catalog refresh loads CLI tree providers from the CLI module and publishes them
 with their validated immutable definitions.
@@ -93,8 +95,8 @@ with their validated immutable definitions.
 used by Skills. `MediaInspector` returns neutral, bounded metadata and PDF text;
 `DarwinMediaInspector` owns ImageIO, PDFKit and AVFoundation loading, including
 per-property timeouts and cancellation. The composition root supplies that inspector
-and the fixed SQLite command to the workspace environment. The domain tests build
-on macOS and Linux; `ComputerMCPToolsStructuredDarwinTests` exercises the real media
+and the fixed SQLite command to the workspace environment. The neutral domain
+test targets are included on macOS and Linux; `ComputerMCPToolsStructuredDarwinTests` exercises the real media
 frameworks and their native fixtures on macOS.
 
 The release scripts assemble the SwiftPM App executable and embedded CLI into a

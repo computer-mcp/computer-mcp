@@ -2069,11 +2069,6 @@ private struct DynamicCodingKey: CodingKey {
 package struct StructuredDocument {
   package var value: JSONValue
   package var metadata: JSONValue
-
-  package init(value: JSONValue, metadata: JSONValue) {
-    self.value = value
-    self.metadata = metadata
-  }
 }
 
 private struct StructuredSelection {

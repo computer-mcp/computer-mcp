@@ -1,4 +1,6 @@
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPToolsSkills
 import Foundation
 import Testing
 
@@ -59,14 +61,11 @@ final class ComputerUseGatewayProviderTests {
   }
 
   @Test
-  func testSkillsToolCountMatchesTheFullCatalog() {
-    let tools = GatewayToolRegistry.gatewayDefinitions(
-      builtins: Set(DefaultGatewayConfiguration.enabledBuiltinCapabilities),
-      skillsEnabled: true,
-      hasMCPProviders: true,
-      toolMeta: nil
+  func testSkillsToolCountMatchesTheFullCatalog() throws {
+    let skills = try SkillsToolProvider(
+      environment: ToolEnvironment(configuration: .fixture(skills: .init(enabled: true)))
     )
-    let skills = tools.filter { $0.tool.name.hasPrefix("skills.") }
+    .definitions()
     #expect(!skills.isEmpty)
     #expect(GatewayToolCounts.skills == skills.count)
   }

@@ -207,6 +207,7 @@ struct MCPReexportNamingTests {
           [
             CLIToolProvider(environment: environment), GitToolProvider(environment: environment),
             ShellToolProvider(environment: environment),
+            ProcessToolProvider(environment: environment),
           ]
         })
     }

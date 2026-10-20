@@ -10,34 +10,14 @@ package struct ShellToolProvider: GatewayToolProvider {
   }
 
   package func definitions() throws -> [ToolDefinition] {
-    Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta).filter { definition in
-      if definition.tool.name.hasPrefix("process.") {
-        return !environment.configuration.cli.commands.isEmpty
-      }
-      return environment.configuration.policy.shellEnabled
-    }
+    guard environment.configuration.policy.shellEnabled else { return [] }
+    return Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta)
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
     let name = invocation.name
     let object = invocation.arguments?.objectValue ?? [:]
     switch name {
-    case "process.spawn":
-      try requireCLIProviders()
-      return try textResult(spawnProcess(arguments: object))
-
-    case "process.list":
-      try requireCLIProviders()
-      return try textResult(listProcesses())
-
-    case "process.read":
-      try requireCLIProviders()
-      return try textResult(readProcess(arguments: object))
-
-    case "process.cancel":
-      try requireCLIProviders()
-      return try textResult(cancelProcess(arguments: object))
-
     case "shell.run":
       try requireShellEnabled()
       return try textResult(runShell(arguments: object))

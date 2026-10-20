@@ -28,7 +28,8 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       processManager: processManager, shellManager: shellManager)
     let cli = CLIToolProvider(environment: environment)
     let providers: [any GatewayToolProvider] = [
-      GitToolProvider(environment: environment), cli, ShellToolProvider(environment: environment),
+      GitToolProvider(environment: environment), cli, ProcessToolProvider(environment: environment),
+      ShellToolProvider(environment: environment),
     ]
     let computerUse = ComputerUseGatewayProvider()
     return (

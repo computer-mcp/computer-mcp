@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
@@ -13,6 +14,38 @@ import Testing
 @testable import ComputerMCPCore
 
 struct BuiltinToolCatalogSnapshotTests {
+  @Test(arguments: [(false, true), (true, true), (false, false), (true, false)])
+  func shellAndProcessRoutesKeepSeparateProviderOwnership(
+    shellEnabled: Bool, hasCLI: Bool
+  ) async throws {
+    let configuration = GatewayConfiguration.fixture(
+      cli: .init(commands: hasCLI ? [.init(id: "fixture", executable: "/unused/catalog-cli")] : []),
+      mcp: .init(), policy: .init(shellEnabled: shellEnabled))
+    let (registry, additionalProviders) = MacOSToolProviders().makeProviders(
+      configuration: configuration, commandRunner: RecordingCommandRunner(),
+      processManager: ManagedProcessRegistry(), shellManager: SubprocessShellRuntime(),
+      mcpClient: CatalogDiscoveryStub(),
+      hostContext: .init(
+        runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
+        workspaceID: "catalog", rootURL: configuration.workspaceDirectory, readOnly: false))
+    do {
+      let snapshot = try GatewayToolCatalogSnapshot(providers: additionalProviders())
+      for name in ["process.spawn", "process.list", "process.read", "process.cancel"] {
+        #expect(snapshot.routes[name]?.provider.id == (hasCLI ? "process" : nil))
+      }
+      for name in [
+        "shell.run", "shell.spawn", "shell.list", "shell.read", "shell.write", "shell.cancel",
+      ] {
+        #expect(snapshot.routes[name]?.provider.id == (shellEnabled ? "shell" : nil))
+      }
+      #expect(snapshot.routes["cli.exec"]?.provider.id == (hasCLI ? "cli" : nil))
+      await registry.shutdown()
+    } catch {
+      await registry.shutdown()
+      throw error
+    }
+  }
+
   @Test
   func builtinDefinitionsDeclareMatchingCapabilityIDs() throws {
     var definitions = GatewayToolRegistry.gatewayDefinitions(
@@ -27,6 +60,7 @@ struct BuiltinToolCatalogSnapshotTests {
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities)))
     definitions += try GitToolProvider(environment: environment).definitions()
     definitions += try CLIToolProvider(environment: environment).definitions()
+    definitions += try ProcessToolProvider(environment: environment).definitions()
     definitions += try ShellToolProvider(environment: environment).definitions()
 
     #expect(definitions.count == 239)

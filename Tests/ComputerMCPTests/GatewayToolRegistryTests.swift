@@ -17470,7 +17470,7 @@ final class GatewayToolRegistryTests {
       additionalProviders: {
         [
           CLIToolProvider(environment: environment), ShellToolProvider(environment: environment),
-          GitToolProvider(environment: environment),
+          ProcessToolProvider(environment: environment), GitToolProvider(environment: environment),
         ]
       })
   }

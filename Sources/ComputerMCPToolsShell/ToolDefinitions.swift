@@ -1,6 +1,6 @@
 import ComputerMCPCore
 
-extension ShellToolProvider {
+extension ProcessToolProvider {
   static func toolDefinitions(toolMeta: JSONValue?) -> [ToolDefinition] {
     [
       ToolDefinition(
@@ -76,6 +76,13 @@ extension ShellToolProvider {
           localOnly: false, usesNetwork: false
         )
       ),
+    ]
+  }
+}
+
+extension ShellToolProvider {
+  static func toolDefinitions(toolMeta: JSONValue?) -> [ToolDefinition] {
+    [
       ToolDefinition(
         tool: MCPTool(
           name: "shell.run",
@@ -208,21 +215,6 @@ extension ShellToolProvider {
     ]
   }
 
-  private static func objectSchema(
-    properties: [String: JSONValue] = [:],
-    required: [String] = []
-  ) -> JSONValue {
-    var object: [String: JSONValue] = [
-      "type": .string("object"),
-      "properties": .object(properties),
-      "additionalProperties": .bool(false),
-    ]
-    if !required.isEmpty {
-      object["required"] = .array(required.map { .string($0) })
-    }
-    return .object(object)
-  }
-
   private static func shellLaunchSchema(
     includeTimeout: Bool,
     includeStandardInput: Bool
@@ -263,24 +255,39 @@ extension ShellToolProvider {
     }
     return objectSchema(properties: properties)
   }
+}
 
-  private static func stringSchema(_ description: String) -> JSONValue {
-    .object(["type": .string("string"), "description": .string(description)])
+private func objectSchema(
+  properties: [String: JSONValue] = [:],
+  required: [String] = []
+) -> JSONValue {
+  var object: [String: JSONValue] = [
+    "type": .string("object"),
+    "properties": .object(properties),
+    "additionalProperties": .bool(false),
+  ]
+  if !required.isEmpty {
+    object["required"] = .array(required.map { .string($0) })
   }
+  return .object(object)
+}
 
-  private static func integerSchema(_ description: String) -> JSONValue {
-    .object(["type": .string("integer"), "description": .string(description)])
-  }
+private func stringSchema(_ description: String) -> JSONValue {
+  .object(["type": .string("string"), "description": .string(description)])
+}
 
-  private static func boolSchema(_ description: String) -> JSONValue {
-    .object(["type": .string("boolean"), "description": .string(description)])
-  }
+private func integerSchema(_ description: String) -> JSONValue {
+  .object(["type": .string("integer"), "description": .string(description)])
+}
 
-  private static func stringArraySchema(_ description: String) -> JSONValue {
-    .object([
-      "type": .string("array"),
-      "items": .object(["type": .string("string")]),
-      "description": .string(description),
-    ])
-  }
+private func boolSchema(_ description: String) -> JSONValue {
+  .object(["type": .string("boolean"), "description": .string(description)])
+}
+
+private func stringArraySchema(_ description: String) -> JSONValue {
+  .object([
+    "type": .string("array"),
+    "items": .object(["type": .string("string")]),
+    "description": .string(description),
+  ])
 }

@@ -14,12 +14,11 @@ final class ShellToolProviderTests {
   @Test
   func alreadyCancelledSpawnDoesNotReachManagers() async {
     let runner = RecordingCommandRunner()
-    let processes = FakeProcessManager()
     let shells = RecordingShellManager()
     let provider = ShellToolProvider(
       environment: ToolEnvironment(
         configuration: .fixture(policy: .init(shellEnabled: true)), commandRunner: runner,
-        processManager: processes, shellManager: shells))
+        shellManager: shells))
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }
       return try await provider.callToolAsync(
@@ -30,64 +29,7 @@ final class ShellToolProviderTests {
 
     await #expect(throws: CancellationError.self) { try await task.value }
     #expect(runner.calls.isEmpty)
-    #expect(processes.spawnedIDs.isEmpty)
     #expect(shells.spawnCount == 0)
-  }
-
-  @Test
-  func testProcessListReturnsGatewayManagedSessions() throws {
-    let processManager = FakeProcessManager()
-    processManager.snapshots = [
-      ManagedProcessSnapshot(
-        processID: "proc-1",
-        isRunning: true,
-        exitCode: nil,
-        stdout: "ready\n",
-        stderr: "",
-        stdoutTruncated: false,
-        stderrTruncated: false
-      )
-    ]
-    let provider = ShellToolProvider(
-      environment: ToolEnvironment(
-        configuration: .fixture(),
-        processManager: processManager
-      ))
-
-    let result = try provider.callTool(
-      .init(
-        name: "process.list", arguments: .object([:]), context: .empty))
-    let payload = try decodeTextPayload(result)
-    let process = try #require(payload.objectValue?["processes"]?.arrayValue?.first?.objectValue)
-
-    #expect((process["process_id"]) == (.string("proc-1")))
-    #expect((process["is_running"]) == (.bool(true)))
-    #expect((process["stdout"]) == (.string("ready\n")))
-  }
-
-  @Test
-  func testProcessSpawnRejectsCommandThatDisallowsArbitraryArgs() {
-    let provider = ShellToolProvider(
-      environment: ToolEnvironment(
-        configuration: .fixture(
-          cli: CLISectionConfig(commands: [
-            CLICommandConfig(id: "echo", executable: "/bin/echo", allowAnyArgs: false)
-          ])
-        )
-      ))
-
-    expectThrows(
-      try provider.callTool(
-        .init(
-          name: "process.spawn",
-          arguments: .object([
-            "id": .string("echo"),
-            "argv": .array([.string("hello")]),
-          ]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("does not allow arbitrary args"))
-    }
   }
 
   @Test
@@ -204,43 +146,5 @@ private final class RecordingShellManager: ShellManaging, @unchecked Sendable {
 
   func cancel(sessionID: String) throws -> ShellCancelResult {
     throw GatewayToolError.executionFailed("Unexpected shell manager call.")
-  }
-}
-
-private final class FakeProcessManager: ProcessManaging, @unchecked Sendable {
-  var snapshots: [ManagedProcessSnapshot] = []
-  var spawnedIDs: [String] = []
-  var cancelledIDs: [String] = []
-
-  func spawn(
-    executable: String,
-    arguments: [String],
-    workingDirectory: URL?,
-    environment: [String: String],
-    maxOutputBytes: Int
-  ) throws -> String {
-    let id = "proc-\(spawnedIDs.count + 1)"
-    spawnedIDs.append(id)
-    return id
-  }
-
-  func list() throws -> [ManagedProcessSnapshot] {
-    snapshots
-  }
-
-  func read(processID: String) throws -> ManagedProcessSnapshot {
-    guard let snapshot = snapshots.first(where: { $0.processID == processID }) else {
-      throw ProcessRegistryError.unknownProcess(processID)
-    }
-    return snapshot
-  }
-
-  func cancel(processID: String) throws -> ManagedProcessCancelResult {
-    cancelledIDs.append(processID)
-    return ManagedProcessCancelResult(
-      processID: processID,
-      cancelled: true,
-      exitCode: nil
-    )
   }
 }

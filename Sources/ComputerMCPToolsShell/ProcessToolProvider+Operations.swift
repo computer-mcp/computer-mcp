@@ -2,7 +2,7 @@ import ComputerMCPCore
 import ComputerMCPToolKit
 import Foundation
 
-extension ShellToolProvider {
+extension ProcessToolProvider {
   internal func requireCLIProviders() throws {
     guard !environment.configuration.cli.commands.isEmpty else {
       throw GatewayToolError.disabled("CLI gateway tools require at least one configured provider.")

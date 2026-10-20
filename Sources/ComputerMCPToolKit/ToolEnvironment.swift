@@ -13,6 +13,9 @@ package struct ToolEnvironment: Sendable {
   package let environment: [String: String]
   package let processManager: any ProcessManaging
   package let shellManager: any ShellManaging
+  package let extendedAttributes: (any ExtendedAttributes)?
+  package let fileTrasher: (any FileTrashing)?
+  package let workspaceOpener: (any WorkspaceOpener)?
   package let mediaInspector: (any MediaInspector)?
 
   package init(
@@ -22,7 +25,11 @@ package struct ToolEnvironment: Sendable {
     shellManager: any ShellManaging = SubprocessShellRuntime(),
     environment: [String: String] = ProcessInfo.processInfo.environment,
     mediaInspector: (any MediaInspector)? = nil,
-    sqliteCommand: CLICommandConfig? = nil
+    sqliteCommand: CLICommandConfig? = nil,
+    builtinExecutables: [String: String] = [:],
+    extendedAttributes: (any ExtendedAttributes)? = nil,
+    fileTrasher: (any FileTrashing)? = nil,
+    workspaceOpener: (any WorkspaceOpener)? = nil
   ) {
     self.configuration = configuration
     let toolMeta: JSONValue? =
@@ -33,10 +40,13 @@ package struct ToolEnvironment: Sendable {
     self.commandRunner = commandRunner
     self.registeredCommands = RegisteredCommands(
       configuration: configuration, commandRunner: commandRunner, environment: environment,
-      sqliteCommand: sqliteCommand)
+      sqliteCommand: sqliteCommand, builtinExecutables: builtinExecutables)
     self.environment = environment
     self.processManager = processManager
     self.shellManager = shellManager
     self.mediaInspector = mediaInspector
+    self.extendedAttributes = extendedAttributes
+    self.fileTrasher = fileTrasher
+    self.workspaceOpener = workspaceOpener
   }
 }

@@ -2521,30 +2521,36 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let url = try Self.operationStateURL(path: path, rootURL: rootURL)
       records.append(contentsOf: try Self.operationStateRecords(url: url, rootURL: rootURL))
       if tool == "file.remove_xattr", let name = arguments["name"]?.stringValue {
-        let count = getxattr(url.path, name, nil, 0, 0, 0)
-        if count == -1, errno == ENOATTR {
-          records.append(.object(["xattr": .string(name), "present": .bool(false)]))
-        } else {
-          guard count >= 0, count <= 1_048_576 else {
-            throw Self.invalid(
-              code: "operations.state_unavailable",
-              message: "Cannot bind the extended attribute within its byte limit.")
+        #if canImport(Darwin)
+          let count = getxattr(url.path, name, nil, 0, 0, 0)
+          if count == -1, errno == ENOATTR {
+            records.append(.object(["xattr": .string(name), "present": .bool(false)]))
+          } else {
+            guard count >= 0, count <= 1_048_576 else {
+              throw Self.invalid(
+                code: "operations.state_unavailable",
+                message: "Cannot bind the extended attribute within its byte limit.")
+            }
+            var value = Data(count: count)
+            let read = value.withUnsafeMutableBytes {
+              getxattr(url.path, name, $0.baseAddress, count, 0, 0)
+            }
+            guard read == count else {
+              throw Self.invalid(
+                code: "operations.state_changed",
+                message: "The extended attribute changed while binding approval state.")
+            }
+            records.append(
+              .object([
+                "xattr": .string(name), "present": .bool(true),
+                "sha256": .string(Self.digest(value)),
+              ]))
           }
-          var value = Data(count: count)
-          let read = value.withUnsafeMutableBytes {
-            getxattr(url.path, name, $0.baseAddress, count, 0, 0)
-          }
-          guard read == count else {
-            throw Self.invalid(
-              code: "operations.state_changed",
-              message: "The extended attribute changed while binding approval state.")
-          }
-          records.append(
-            .object([
-              "xattr": .string(name), "present": .bool(true),
-              "sha256": .string(Self.digest(value)),
-            ]))
-        }
+        #elseif canImport(Glibc) || canImport(Musl)
+          throw Self.invalid(
+            code: "operations.state_unavailable",
+            message: "Cannot bind extended attribute \(name) on this platform.")
+        #endif
       }
     }
     let data = try Self.encoder.encode(

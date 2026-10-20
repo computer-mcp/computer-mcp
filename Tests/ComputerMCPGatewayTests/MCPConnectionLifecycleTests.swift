@@ -19,46 +19,50 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPConnectionLifecycleTests {
-  @Test
-  func completedResponseSurvivesNativeExitAndClosedClientIsReleased() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    weak var releasedClient: MCPProxyClient?
-    do {
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
-      releasedClient = client
-      let server = fixture.server(version: "first")
+  #if canImport(Darwin)
+    // Connected MCP transports inherit an ownership descriptor, supported only on Darwin.
+    @Test
+    func completedResponseSurvivesNativeExitAndClosedClientIsReleased() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      weak var releasedClient: MCPProxyClient?
       do {
-        let result = try await blocking {
-          try client.callTool(
-            server: server, name: "first",
-            arguments: .object([
-              "exit_after_response": .bool(true)
-            ]), context: .empty)
+        let client = MCPProxyClient(workingDirectory: fixture.directory)
+        releasedClient = client
+        let server = fixture.server(version: "first")
+        do {
+          let result = try await blocking {
+            try client.callTool(
+              server: server, name: "first",
+              arguments: .object([
+                "exit_after_response": .bool(true)
+              ]), context: .empty)
+          }
+          #expect(result.objectValue?["isError"] != .bool(true))
+          #expect(
+            result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]
+              == .string("done")
+          )
+          try await fixture.expectAllExited()
+          let deadline = ContinuousClock.now + .seconds(1)
+          while try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
+            == .string("connected"),
+            ContinuousClock.now < deadline
+          {
+            try await Task.sleep(for: .milliseconds(10))
+          }
+          #expect(
+            try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
+              != .string("connected"))
+          await client.shutdown()
+        } catch {
+          await client.shutdown()
+          throw error
         }
-        #expect(result.objectValue?["isError"] != .bool(true))
-        #expect(
-          result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"] == .string("done")
-        )
-        try await fixture.expectAllExited()
-        let deadline = ContinuousClock.now + .seconds(1)
-        while try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
-          == .string("connected"),
-          ContinuousClock.now < deadline
-        {
-          try await Task.sleep(for: .milliseconds(10))
-        }
-        #expect(
-          try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
-            != .string("connected"))
-        await client.shutdown()
-      } catch {
-        await client.shutdown()
-        throw error
       }
+      #expect(releasedClient == nil)
     }
-    #expect(releasedClient == nil)
-  }
+  #endif
 
   @Test
   func responsiveDescendantIsReapedWithoutSpendingTheTerminationGrace() async throws {
@@ -147,7 +151,13 @@ struct MCPConnectionLifecycleTests {
       var lines = transport.inboundLines.makeAsyncIterator()
       let ready = try #require(try await lines.next())
       let child = try #require(Int32(ready))
-      owner.terminate()
+      #if canImport(Darwin)
+        owner.terminate()
+      #elseif canImport(Glibc) || canImport(Musl)
+        // Foundation Process can inherit a blocked SIGTERM mask from its launching thread.
+        try #require(kill(owner.processIdentifier, SIGKILL) == 0)
+        owner.waitUntilExit()
+      #endif
       let deadline = ContinuousClock.now + .seconds(5)
       while !(await transport.snapshot().hasExited), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
@@ -163,371 +173,378 @@ struct MCPConnectionLifecycleTests {
     }
   }
 
-  @Test(arguments: ["duplicateID", "unknownCancel", "invalidEvents"])
-  func rejectedRequestPreservesUnrelatedWork(failure: String) async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first")
-    do {
-      _ = try await blocking {
-        try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
-          context: .empty)
-      }
-      try await fixture.waitForCalls(1)
-      await #expect(throws: (any Error).self) {
-        try await blocking {
-          switch failure {
-          case "duplicateID":
-            return try client.startToolCall(
-              server: server, name: "hang", arguments: .object(["changed": .bool(true)]),
-              requestID: "sibling", context: .empty)
-          case "unknownCancel":
-            return try client.cancelRequest(
-              server: server, requestID: "absent", reason: nil, context: .empty)
-          default:
-            return try client.readEvents(
-              server: server, afterCursor: -1, maxResults: 10, context: .empty)
+  #if canImport(Darwin)
+    // Connected MCP transports inherit an ownership descriptor, supported only on Darwin.
+    @Test(arguments: ["duplicateID", "unknownCancel", "invalidEvents"])
+    func rejectedRequestPreservesUnrelatedWork(failure: String) async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first")
+      do {
+        _ = try await blocking {
+          try client.startToolCall(
+            server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+            context: .empty)
+        }
+        try await fixture.waitForCalls(1)
+        await #expect(throws: (any Error).self) {
+          try await blocking {
+            switch failure {
+            case "duplicateID":
+              return try client.startToolCall(
+                server: server, name: "hang", arguments: .object(["changed": .bool(true)]),
+                requestID: "sibling", context: .empty)
+            case "unknownCancel":
+              return try client.cancelRequest(
+                server: server, requestID: "absent", reason: nil, context: .empty)
+            default:
+              return try client.readEvents(
+                server: server, afterCursor: -1, maxResults: 10, context: .empty)
+            }
           }
         }
+        let requests = try await blocking {
+          try client.activeRequests(server: server, context: .empty)
+        }
+        #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
+        #expect(
+          requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
+            == .string("sibling"))
+        let tools = try await blocking { try client.listTools(server: server, context: .empty) }
+        #expect(tools.map(\.name) == ["first", "hang"])
+        #expect(try fixture.starts().count == 1)
+        #expect(try fixture.calls().count == 1)
+        #expect(try fixture.cancellations().isEmpty)
+        await client.shutdown()
+        try await fixture.expectAllExited()
+      } catch {
+        await client.shutdown()
+        throw error
       }
-      let requests = try await blocking {
-        try client.activeRequests(server: server, context: .empty)
-      }
-      #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
-      #expect(
-        requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
-          == .string("sibling"))
-      let tools = try await blocking { try client.listTools(server: server, context: .empty) }
-      #expect(tools.map(\.name) == ["first", "hang"])
-      #expect(try fixture.starts().count == 1)
-      #expect(try fixture.calls().count == 1)
-      #expect(try fixture.cancellations().isEmpty)
-      await client.shutdown()
-      try await fixture.expectAllExited()
-    } catch {
-      await client.shutdown()
-      throw error
     }
-  }
 
-  @Test
-  func cancellingAWaitedRequestPreservesItsSiblingAndConnection() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first")
-    do {
-      _ = try await blocking {
-        try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
-          context: .empty)
-      }
-      let waited = Task {
-        try await blocking {
+    @Test
+    func cancellingAWaitedRequestPreservesItsSiblingAndConnection() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first")
+      do {
+        _ = try await blocking {
+          try client.startToolCall(
+            server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+            context: .empty)
+        }
+        let waited = Task {
+          try await blocking {
+            try client.callTool(
+              server: server, name: "hang", arguments: .object([:]), requestID: "waited",
+              context: .empty)
+          }
+        }
+        try await fixture.waitForCalls(2)
+        _ = try await blocking {
+          try client.cancelRequest(
+            server: server, requestID: "waited", reason: "cancel only this request", context: .empty
+          )
+        }
+        let outcome = await waited.result
+        guard case .failure(let error) = outcome else {
+          await client.shutdown()
+          Issue.record("Cancelled request unexpectedly succeeded.")
+          return
+        }
+        #expect(error is CancellationError)
+        let receipt = try client.readRequest(
+          server: server, requestID: "waited", offset: 0, maxBytes: 4096, context: .empty)
+        #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(receipt.objectValue?["cancellation"] == .string("sent"))
+        #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
+        #expect(throws: (any Error).self) {
           try client.callTool(
             server: server, name: "hang", arguments: .object([:]), requestID: "waited",
             context: .empty)
         }
-      }
-      try await fixture.waitForCalls(2)
-      _ = try await blocking {
-        try client.cancelRequest(
-          server: server, requestID: "waited", reason: "cancel only this request", context: .empty)
-      }
-      let outcome = await waited.result
-      guard case .failure(let error) = outcome else {
-        await client.shutdown()
-        Issue.record("Cancelled request unexpectedly succeeded.")
-        return
-      }
-      #expect(error is CancellationError)
-      let receipt = try client.readRequest(
-        server: server, requestID: "waited", offset: 0, maxBytes: 4096, context: .empty)
-      #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
-      #expect(receipt.objectValue?["cancellation"] == .string("sent"))
-      #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
-      #expect(throws: (any Error).self) {
-        try client.callTool(
+        let observed = try client.startToolCall(
           server: server, name: "hang", arguments: .object([:]), requestID: "waited",
           context: .empty)
+        #expect(observed.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(try fixture.calls().count == 2)
+        let requests = try await blocking {
+          try client.activeRequests(server: server, context: .empty)
+        }
+        #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
+        #expect(
+          requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
+            == .string("sibling"))
+        _ = try await blocking { try client.listTools(server: server, context: .empty) }
+        #expect(try fixture.starts().count == 1)
+        #expect(try fixture.cancellations().count == 1)
+        await client.shutdown()
+        try await fixture.expectAllExited()
+      } catch {
+        await client.shutdown()
+        throw error
       }
-      let observed = try client.startToolCall(
-        server: server, name: "hang", arguments: .object([:]), requestID: "waited", context: .empty)
-      #expect(observed.objectValue?["state"] == .string("outcome_unknown"))
-      #expect(try fixture.calls().count == 2)
-      let requests = try await blocking {
-        try client.activeRequests(server: server, context: .empty)
-      }
-      #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
-      #expect(
-        requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
-          == .string("sibling"))
-      _ = try await blocking { try client.listTools(server: server, context: .empty) }
-      #expect(try fixture.starts().count == 1)
-      #expect(try fixture.cancellations().count == 1)
-      await client.shutdown()
-      try await fixture.expectAllExited()
-    } catch {
-      await client.shutdown()
-      throw error
     }
-  }
 
-  @Test(arguments: [-32601, -32602, -32050, -32042])
-  func remoteRequestErrorsPreserveCodeAndUnrelatedWork(code: Int) async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first")
-    do {
-      _ = try await blocking {
-        try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
-          context: .empty)
-      }
-      try await fixture.waitForCalls(1)
+    @Test(arguments: [-32601, -32602, -32050, -32042])
+    func remoteRequestErrorsPreserveCodeAndUnrelatedWork(code: Int) async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first")
       do {
         _ = try await blocking {
-          try client.callTool(
-            server: server, name: "first",
-            arguments: .object(["error_code": .number(Double(code))]), context: .empty)
-        }
-        Issue.record("The fixture's JSON-RPC error was not propagated.")
-      } catch let error as MCPError {
-        #expect(error.code == code)
-        if code == -32042 {
-          guard case .urlElicitationRequired(let message, let elicitations) = error else {
-            await client.shutdown()
-            Issue.record("URL elicitation lost its typed error details.")
-            return
-          }
-          #expect(message == "fixture rejection")
-          #expect(elicitations.count == 1)
-          #expect(elicitations.first?.elicitationId == "fixture-input")
-          #expect(elicitations.first?.url == "https://example.invalid/confirm")
-        }
-      }
-      let requests = try await blocking {
-        try client.activeRequests(server: server, context: .empty)
-      }
-      #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
-      #expect(
-        requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
-          == .string("sibling"))
-      _ = try await blocking { try client.listTools(server: server, context: .empty) }
-      #expect(try fixture.starts().count == 1)
-      #expect(try fixture.calls().count == 2)
-      #expect(try fixture.cancellations().isEmpty)
-      await client.shutdown()
-      try await fixture.expectAllExited()
-    } catch {
-      await client.shutdown()
-      throw error
-    }
-  }
-
-  @Test
-  func toolErrorResultPreservesContentAndUnrelatedWork() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first")
-    do {
-      _ = try await blocking {
-        try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
-          context: .empty)
-      }
-      try await fixture.waitForCalls(1)
-      let result = try await blocking {
-        try client.callTool(
-          server: server, name: "first", arguments: .object(["tool_error": .bool(true)]),
-          context: .empty)
-      }
-      #expect(result.objectValue?["isError"] == .bool(true))
-      #expect(result.objectValue?["structuredContent"] == .object(["accepted": .bool(false)]))
-      #expect(
-        result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]
-          == .string("operation rejected"))
-      let requests = try await blocking {
-        try client.activeRequests(server: server, context: .empty)
-      }
-      #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
-      _ = try await blocking { try client.listTools(server: server, context: .empty) }
-      #expect(try fixture.starts().count == 1)
-      #expect(try fixture.cancellations().isEmpty)
-      await client.shutdown()
-      try await fixture.expectAllExited()
-    } catch {
-      await client.shutdown()
-      throw error
-    }
-  }
-
-  @Test
-  func concurrentDuplicateIDsDispatchExactlyOneRequest() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first")
-    do {
-      _ = try await blocking { try client.listTools(server: server, context: .empty) }
-      let accepted = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
-        for _ in 0..<32 {
-          group.addTask {
-            do {
-              _ = try await blocking {
-                try client.startToolCall(
-                  server: server, name: "hang", arguments: .object([:]), requestID: "one-operation",
-                  context: .empty)
-              }
-              return true
-            } catch {
-              return false
-            }
-          }
-        }
-        var count = 0
-        for await success in group where success { count += 1 }
-        return count
-      }
-      #expect(accepted == 32)
-      try await fixture.waitForCalls(1)
-      let requests = try await blocking {
-        try client.activeRequests(server: server, context: .empty)
-      }
-      #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
-      #expect(try fixture.calls().count == 1)
-      #expect(try fixture.starts().count == 1)
-      await client.shutdown()
-      try await fixture.expectAllExited()
-    } catch {
-      await client.shutdown()
-      throw error
-    }
-  }
-
-  @Test
-  func replacementJoinsTheOldGenerationBeforeStartingAndDoesNotReplayWork() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let original = fixture.server(version: "first")
-    do {
-      let tools = try await blocking { try client.listTools(server: original, context: .empty) }
-      #expect(tools.map(\.name) == ["first", "hang"])
-      _ = try await blocking {
-        try client.startToolCall(
-          server: original, name: "hang", arguments: .object([:]), requestID: "owned-write",
-          context: .empty)
-      }
-      try await fixture.waitForCalls(1)
-      let replacement = fixture.server(version: "second")
-      let next = try await blocking { try client.listTools(server: replacement, context: .empty) }
-      #expect(next.map(\.name) == ["second", "hang"])
-      let starts = try fixture.starts()
-      #expect(starts.count == 2)
-      #expect(starts.last?.objectValue?["overlap"] == .bool(false))
-      #expect(try fixture.calls().count == 1)
-      #expect(try fixture.cancellations().count == 1)
-      await client.shutdown()
-      try await fixture.expectAllExited()
-    } catch {
-      await client.shutdown()
-      throw error
-    }
-  }
-
-  @Test(arguments: [false, true])
-  func timeoutRetirementIsJoinedByConcurrentShutdown(startup: Bool) async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first", holdInitialize: startup, shortDeadline: true)
-    let call = Task {
-      try await blocking {
-        if startup { return try client.listTools(server: server, context: .empty).count }
-        _ = try client.callTool(
-          server: server, name: "hang", arguments: .object([:]), requestID: "timed-out",
-          context: .empty)
-        return 0
-      }
-    }
-    let result = await call.result
-    guard case .failure(let error) = result else {
-      await client.shutdown()
-      Issue.record("The deliberately stalled request unexpectedly completed.")
-      return
-    }
-    #expect(String(describing: error).contains("timed out"))
-    async let first: Void = client.shutdown()
-    async let second: Void = client.shutdown()
-    _ = await (first, second)
-    try await fixture.expectAllExited()
-    #expect(try fixture.starts().count == 1)
-    #expect(try fixture.calls().count == (startup ? 0 : 1))
-    #expect(try fixture.cancellations().count == (startup ? 0 : 1))
-    let status = try client.connectionStatus(server: server, context: .empty)
-    #expect(status.objectValue?["state"] == .string("stopped"))
-    await #expect(throws: (any Error).self) {
-      try await blocking { try client.listTools(server: server, context: .empty) }
-    }
-    #expect(try fixture.starts().count == 1)
-  }
-
-  @Test
-  func timeoutReconnectRefreshesTheCatalogAfterConfirmedRetirement() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first", shortDeadline: true)
-    do {
-      await #expect(throws: (any Error).self) {
-        try await blocking {
-          try client.callTool(
-            server: server, name: "hang", arguments: .object([:]), requestID: "one-write",
+          try client.startToolCall(
+            server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
             context: .empty)
         }
+        try await fixture.waitForCalls(1)
+        do {
+          _ = try await blocking {
+            try client.callTool(
+              server: server, name: "first",
+              arguments: .object(["error_code": .number(Double(code))]), context: .empty)
+          }
+          Issue.record("The fixture's JSON-RPC error was not propagated.")
+        } catch let error as MCPError {
+          #expect(error.code == code)
+          if code == -32042 {
+            guard case .urlElicitationRequired(let message, let elicitations) = error else {
+              await client.shutdown()
+              Issue.record("URL elicitation lost its typed error details.")
+              return
+            }
+            #expect(message == "fixture rejection")
+            #expect(elicitations.count == 1)
+            #expect(elicitations.first?.elicitationId == "fixture-input")
+            #expect(elicitations.first?.url == "https://example.invalid/confirm")
+          }
+        }
+        let requests = try await blocking {
+          try client.activeRequests(server: server, context: .empty)
+        }
+        #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
+        #expect(
+          requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
+            == .string("sibling"))
+        _ = try await blocking { try client.listTools(server: server, context: .empty) }
+        #expect(try fixture.starts().count == 1)
+        #expect(try fixture.calls().count == 2)
+        #expect(try fixture.cancellations().isEmpty)
+        await client.shutdown()
+        try await fixture.expectAllExited()
+      } catch {
+        await client.shutdown()
+        throw error
       }
-      try Data("refreshed".utf8).write(to: fixture.directory.appendingPathComponent("version"))
-      let tools = try await blocking { try client.listTools(server: server, context: .empty) }
-      #expect(tools.map(\.name) == ["refreshed", "hang"])
-      #expect(try fixture.starts().count == 2)
-      #expect(try fixture.starts().last?.objectValue?["overlap"] == .bool(false))
-      #expect(try fixture.calls().count == 1)
-      await client.shutdown()
-      try await fixture.expectAllExited()
-    } catch {
-      await client.shutdown()
-      throw error
     }
-  }
 
-  @Test
-  func shutdownDuringInitializeCannotActivateALateConnection() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.directory)
-    let server = fixture.server(version: "first", holdInitialize: true)
-    let starting = Task {
-      try await blocking { try client.listTools(server: server, context: .empty) }
+    @Test
+    func toolErrorResultPreservesContentAndUnrelatedWork() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first")
+      do {
+        _ = try await blocking {
+          try client.startToolCall(
+            server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+            context: .empty)
+        }
+        try await fixture.waitForCalls(1)
+        let result = try await blocking {
+          try client.callTool(
+            server: server, name: "first", arguments: .object(["tool_error": .bool(true)]),
+            context: .empty)
+        }
+        #expect(result.objectValue?["isError"] == .bool(true))
+        #expect(result.objectValue?["structuredContent"] == .object(["accepted": .bool(false)]))
+        #expect(
+          result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]
+            == .string("operation rejected"))
+        let requests = try await blocking {
+          try client.activeRequests(server: server, context: .empty)
+        }
+        #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
+        _ = try await blocking { try client.listTools(server: server, context: .empty) }
+        #expect(try fixture.starts().count == 1)
+        #expect(try fixture.cancellations().isEmpty)
+        await client.shutdown()
+        try await fixture.expectAllExited()
+      } catch {
+        await client.shutdown()
+        throw error
+      }
     }
-    try await fixture.waitForStarts(1)
-    async let first: Void = client.shutdown()
-    async let second: Void = client.shutdown()
-    _ = await (first, second)
-    guard case .failure = await starting.result else {
-      Issue.record("A closed generation must not publish initialization.")
-      return
+
+    @Test
+    func concurrentDuplicateIDsDispatchExactlyOneRequest() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first")
+      do {
+        _ = try await blocking { try client.listTools(server: server, context: .empty) }
+        let accepted = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
+          for _ in 0..<32 {
+            group.addTask {
+              do {
+                _ = try await blocking {
+                  try client.startToolCall(
+                    server: server, name: "hang", arguments: .object([:]),
+                    requestID: "one-operation",
+                    context: .empty)
+                }
+                return true
+              } catch {
+                return false
+              }
+            }
+          }
+          var count = 0
+          for await success in group where success { count += 1 }
+          return count
+        }
+        #expect(accepted == 32)
+        try await fixture.waitForCalls(1)
+        let requests = try await blocking {
+          try client.activeRequests(server: server, context: .empty)
+        }
+        #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
+        #expect(try fixture.calls().count == 1)
+        #expect(try fixture.starts().count == 1)
+        await client.shutdown()
+        try await fixture.expectAllExited()
+      } catch {
+        await client.shutdown()
+        throw error
+      }
     }
-    try await fixture.expectAllExited()
-    #expect(try fixture.starts().count == 1)
-    #expect(
-      try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
-        == .string("stopped"))
-  }
+
+    @Test
+    func replacementJoinsTheOldGenerationBeforeStartingAndDoesNotReplayWork() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let original = fixture.server(version: "first")
+      do {
+        let tools = try await blocking { try client.listTools(server: original, context: .empty) }
+        #expect(tools.map(\.name) == ["first", "hang"])
+        _ = try await blocking {
+          try client.startToolCall(
+            server: original, name: "hang", arguments: .object([:]), requestID: "owned-write",
+            context: .empty)
+        }
+        try await fixture.waitForCalls(1)
+        let replacement = fixture.server(version: "second")
+        let next = try await blocking { try client.listTools(server: replacement, context: .empty) }
+        #expect(next.map(\.name) == ["second", "hang"])
+        let starts = try fixture.starts()
+        #expect(starts.count == 2)
+        #expect(starts.last?.objectValue?["overlap"] == .bool(false))
+        #expect(try fixture.calls().count == 1)
+        #expect(try fixture.cancellations().count == 1)
+        await client.shutdown()
+        try await fixture.expectAllExited()
+      } catch {
+        await client.shutdown()
+        throw error
+      }
+    }
+
+    @Test(arguments: [false, true])
+    func timeoutRetirementIsJoinedByConcurrentShutdown(startup: Bool) async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first", holdInitialize: startup, shortDeadline: true)
+      let call = Task {
+        try await blocking {
+          if startup { return try client.listTools(server: server, context: .empty).count }
+          _ = try client.callTool(
+            server: server, name: "hang", arguments: .object([:]), requestID: "timed-out",
+            context: .empty)
+          return 0
+        }
+      }
+      let result = await call.result
+      guard case .failure(let error) = result else {
+        await client.shutdown()
+        Issue.record("The deliberately stalled request unexpectedly completed.")
+        return
+      }
+      #expect(String(describing: error).contains("timed out"))
+      async let first: Void = client.shutdown()
+      async let second: Void = client.shutdown()
+      _ = await (first, second)
+      try await fixture.expectAllExited()
+      #expect(try fixture.starts().count == 1)
+      #expect(try fixture.calls().count == (startup ? 0 : 1))
+      #expect(try fixture.cancellations().count == (startup ? 0 : 1))
+      let status = try client.connectionStatus(server: server, context: .empty)
+      #expect(status.objectValue?["state"] == .string("stopped"))
+      await #expect(throws: (any Error).self) {
+        try await blocking { try client.listTools(server: server, context: .empty) }
+      }
+      #expect(try fixture.starts().count == 1)
+    }
+
+    @Test
+    func timeoutReconnectRefreshesTheCatalogAfterConfirmedRetirement() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first", shortDeadline: true)
+      do {
+        await #expect(throws: (any Error).self) {
+          try await blocking {
+            try client.callTool(
+              server: server, name: "hang", arguments: .object([:]), requestID: "one-write",
+              context: .empty)
+          }
+        }
+        try Data("refreshed".utf8).write(to: fixture.directory.appendingPathComponent("version"))
+        let tools = try await blocking { try client.listTools(server: server, context: .empty) }
+        #expect(tools.map(\.name) == ["refreshed", "hang"])
+        #expect(try fixture.starts().count == 2)
+        #expect(try fixture.starts().last?.objectValue?["overlap"] == .bool(false))
+        #expect(try fixture.calls().count == 1)
+        await client.shutdown()
+        try await fixture.expectAllExited()
+      } catch {
+        await client.shutdown()
+        throw error
+      }
+    }
+
+    @Test
+    func shutdownDuringInitializeCannotActivateALateConnection() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let server = fixture.server(version: "first", holdInitialize: true)
+      let starting = Task {
+        try await blocking { try client.listTools(server: server, context: .empty) }
+      }
+      try await fixture.waitForStarts(1)
+      async let first: Void = client.shutdown()
+      async let second: Void = client.shutdown()
+      _ = await (first, second)
+      guard case .failure = await starting.result else {
+        Issue.record("A closed generation must not publish initialization.")
+        return
+      }
+      try await fixture.expectAllExited()
+      #expect(try fixture.starts().count == 1)
+      #expect(
+        try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
+          == .string("stopped"))
+    }
+
+  #endif
 
   @Test
   func disconnectBeforeTransportConnectDoesNotLaunchAProcess() async throws {
@@ -542,22 +559,25 @@ struct MCPConnectionLifecycleTests {
     #expect(try fixture.starts().isEmpty)
   }
 
-  @Test
-  func closedChildTransportJoinsStubbornDescendantsForEveryWaiter() async throws {
-    let fixture = try LifecycleFixture()
-    defer { fixture.remove() }
-    let transport = try MCPChildProcessTransport(
-      server: fixture.server(version: "first"), workingDirectory: fixture.directory,
-      environment: ProcessInfo.processInfo.environment)
-    try await transport.connect()
-    try await fixture.waitForStarts(1)
-    async let first: Void = transport.disconnect()
-    async let second: Void = transport.disconnect()
-    _ = await (first, second)
-    #expect(await transport.shutdownConfirmed())
-    try await fixture.expectAllExited()
-    await #expect(throws: (any Error).self) { try await transport.send(Data("{}".utf8)) }
-  }
+  #if canImport(Darwin)
+    // Connected MCP transports inherit an ownership descriptor, supported only on Darwin.
+    @Test
+    func closedChildTransportJoinsStubbornDescendantsForEveryWaiter() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let transport = try MCPChildProcessTransport(
+        server: fixture.server(version: "first"), workingDirectory: fixture.directory,
+        environment: ProcessInfo.processInfo.environment)
+      try await transport.connect()
+      try await fixture.waitForStarts(1)
+      async let first: Void = transport.disconnect()
+      async let second: Void = transport.disconnect()
+      _ = await (first, second)
+      #expect(await transport.shutdownConfirmed())
+      try await fixture.expectAllExited()
+      await #expect(throws: (any Error).self) { try await transport.send(Data("{}".utf8)) }
+    }
+  #endif
 }
 
 private func blocking<T: Sendable>(

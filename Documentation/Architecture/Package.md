@@ -259,6 +259,10 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
 - Delegate MCP JSON-RPC semantics to the upstream-aligned SDK. The shared owned-process
   primitive handles bounded newline-delimited stdio, supervisor/group lifetime
   and byte flow for downstream MCP without a domain dependency.
+  Its supervisor uses `/bin/sh` on macOS and `/bin/bash` on Linux for job control
+  without a terminal. Descriptor inheritance, including MCP ownership locks,
+  uses Darwin spawn file actions; Linux rejects configurations that require
+  inherited descriptors.
   The HTTP client transport uses Foundation URLSession and a bounded SSE decoder.
   macOS reads native asynchronous bytes; Linux bridges data-delegate callbacks
   into the response byte stream. Each POST response and the standalone GET event channel own

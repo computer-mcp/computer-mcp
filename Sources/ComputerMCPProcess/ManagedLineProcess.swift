@@ -295,7 +295,12 @@ package final class ManagedLineProcess: @unchecked Sendable {
       )
       let supervisor = try makeSupervisor(configuration: configuration)
       supervisorDirectory = supervisor.directory
-      let executable: Executable = .path(FilePath("/bin/sh"))
+      #if os(Linux)
+        // The supervisor needs job control without a terminal; Ubuntu's sh is dash.
+        let executable: Executable = .path(FilePath("/bin/bash"))
+      #else
+        let executable: Executable = .path(FilePath("/bin/sh"))
+      #endif
       var platformOptions = PlatformOptions()
       platformOptions.processGroupID = 0
       var inheritedDescriptors = configuration.inheritedDescriptors

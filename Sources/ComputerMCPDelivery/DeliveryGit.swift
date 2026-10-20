@@ -30,8 +30,8 @@ internal struct DeliveryGit: Sendable {
   @discardableResult
   func run(_ arguments: [String], at directory: URL, accepting: Set<Int32> = [0]) throws -> Result {
     do {
-      let pathOptions =
-        ["add", "status", "diff"].contains(arguments.first ?? "") ? ["--literal-pathspecs"] : []
+      let command = arguments.drop(while: { $0 == "--no-optional-locks" }).first ?? ""
+      let pathOptions = ["add", "status", "diff"].contains(command) ? ["--literal-pathspecs"] : []
       let result = try runner.run(
         executable: executable, arguments: prefix + pathOptions + arguments,
         workingDirectory: directory, environment: environment,
@@ -54,13 +54,17 @@ internal struct DeliveryGit: Sendable {
 
   func revision(_ ref: String, at directory: URL) throws -> String? {
     let result = try run(
-      ["rev-parse", "--verify", "--quiet", "\(ref)^{commit}"], at: directory, accepting: [0, 1])
+      ["--no-optional-locks", "rev-parse", "--verify", "--quiet", "\(ref)^{commit}"], at: directory,
+      accepting: [0, 1])
     return result.exitCode == 0
       ? result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : nil
   }
 
   func isAncestor(_ commit: String, of ref: String, at directory: URL) throws -> Bool {
-    try run(["merge-base", "--is-ancestor", commit, ref], at: directory, accepting: [0, 1]).exitCode
+    try run(
+      ["--no-optional-locks", "merge-base", "--is-ancestor", commit, ref], at: directory,
+      accepting: [0, 1]
+    ).exitCode
       == 0
   }
 }

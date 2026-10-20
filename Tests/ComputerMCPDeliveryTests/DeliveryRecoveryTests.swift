@@ -244,6 +244,10 @@ struct DeliveryRecoveryTests {
       let script = """
         #!\(try testExecutable("sh"))
         printf '%s\\n' "$PWD" >> \(quote(trace.path))
+        case "$1" in
+          rev-parse|merge-base|show-ref) exit 88 ;;
+          worktree) if test "$2" = list; then exit 88; fi ;;
+        esac
         exec \(quote(fixture.executable)) "$@"
         """
       try Data(script.utf8).write(to: wrapper)

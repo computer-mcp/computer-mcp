@@ -34,20 +34,25 @@ internal struct DeliveryRepository: Sendable {
     self.cancellation = cancellation
     let workspace = workspace.standardizedFileURL.resolvingSymlinksInPath()
     let repository = try Self.checkedPath(scope.repository, inside: workspace, allowRoot: true)
-    let top = try git.run(["rev-parse", "--show-toplevel"], at: repository).stdout
+    let top = try git.run(["--no-optional-locks", "rev-parse", "--show-toplevel"], at: repository)
+      .stdout
       .trimmingCharacters(in: .newlines)
     root = URL(fileURLWithPath: top).standardizedFileURL.resolvingSymlinksInPath()
     guard root.path == repository.path else {
       throw DeliveryFailure(
         reason: .pathInvalid, detail: "repository must identify a repository root.")
     }
-    let commonPath = try git.run(["rev-parse", "--git-common-dir"], at: root).stdout
+    let commonPath = try git.run(
+      ["--no-optional-locks", "rev-parse", "--git-common-dir"], at: root
+    ).stdout
       .trimmingCharacters(in: .newlines)
     common =
       (commonPath.hasPrefix("/")
       ? URL(fileURLWithPath: commonPath) : root.appendingPathComponent(commonPath))
       .standardizedFileURL.resolvingSymlinksInPath()
-    let worktrees = try git.run(["worktree", "list", "--porcelain", "-z"], at: root).stdout
+    let worktrees = try git.run(
+      ["--no-optional-locks", "worktree", "list", "--porcelain", "-z"], at: root
+    ).stdout
     guard let entry = worktrees.split(separator: "\0").first, entry.hasPrefix("worktree ") else {
       throw DeliveryFailure(reason: .gitFailed, detail: "Cannot locate the main checkout.")
     }
@@ -89,7 +94,8 @@ internal struct DeliveryRepository: Sendable {
     _ = try Self.checkedPath(scope.worktreeRoot, inside: root)
     guard
       try git.run(
-        ["check-ignore", "-q", "--", scope.worktreeRoot + "/"], at: root, accepting: [0, 1]
+        ["--no-optional-locks", "check-ignore", "-q", "--", scope.worktreeRoot + "/"], at: root,
+        accepting: [0, 1]
       ).exitCode == 0
     else {
       throw DeliveryFailure(
@@ -97,7 +103,10 @@ internal struct DeliveryRepository: Sendable {
     }
     if scope.mode == .land { try requireMainBranch(scope.defaultBranch) }
     let status = try git.run(
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching", "--"]
+      [
+        "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all",
+        "--ignored=matching", "--",
+      ]
         + request.paths, at: main)
     guard status.stdout.isEmpty else {
       throw DeliveryFailure(
@@ -115,8 +124,10 @@ internal struct DeliveryRepository: Sendable {
   }
 
   func requireMainBranch(_ branch: String) throws {
-    let current = try git.run(["symbolic-ref", "--quiet", "HEAD"], at: main, accepting: [0, 1])
-      .stdout.trimmingCharacters(in: .newlines)
+    let current = try git.run(
+      ["--no-optional-locks", "symbolic-ref", "--quiet", "HEAD"], at: main, accepting: [0, 1]
+    )
+    .stdout.trimmingCharacters(in: .newlines)
     guard current == "refs/heads/\(branch)" else {
       throw DeliveryFailure(
         reason: .mainCheckoutBranch, detail: "The main checkout must be on \(branch).")
@@ -175,7 +186,9 @@ internal struct DeliveryRepository: Sendable {
       let recordedRoot = URL(fileURLWithPath: journal.repository).standardizedFileURL
         .resolvingSymlinksInPath()
       if recordedRoot.path != root.path {
-        let recordedCommon = try git.run(["rev-parse", "--git-common-dir"], at: recordedRoot).stdout
+        let recordedCommon = try git.run(
+          ["--no-optional-locks", "rev-parse", "--git-common-dir"], at: recordedRoot
+        ).stdout
           .trimmingCharacters(in: .newlines)
         let recordedCommonURL =
           (recordedCommon.hasPrefix("/")
@@ -214,7 +227,9 @@ internal struct DeliveryRepository: Sendable {
   }
 
   private func isRegisteredWorktree(_ worktree: URL) throws -> Bool {
-    let listing = try git.run(["worktree", "list", "--porcelain", "-z"], at: root).stdout.split(
+    let listing = try git.run(
+      ["--no-optional-locks", "worktree", "list", "--porcelain", "-z"], at: root
+    ).stdout.split(
       separator: "\0")
     guard
       listing.contains(where: { entry in
@@ -249,7 +264,8 @@ internal struct DeliveryRepository: Sendable {
       .standardizedFileURL.resolvingSymlinksInPath()
     guard backlinkURL.path == gitFile.path else { return false }
     // Only a validated gitfile may select the repository for this command.
-    let top = try git.run(["rev-parse", "--show-toplevel"], at: worktree).stdout
+    let top = try git.run(["--no-optional-locks", "rev-parse", "--show-toplevel"], at: worktree)
+      .stdout
       .trimmingCharacters(in: .newlines)
     return URL(fileURLWithPath: top).standardizedFileURL.resolvingSymlinksInPath().path
       == worktree.path
@@ -269,7 +285,9 @@ internal struct DeliveryRepository: Sendable {
       return false
     }
     for name in ["rebase-merge", "rebase-apply"] {
-      let path = try git.run(["rev-parse", "--git-path", name], at: worktree).stdout
+      let path = try git.run(
+        ["--no-optional-locks", "rev-parse", "--git-path", name], at: worktree
+      ).stdout
         .trimmingCharacters(in: .newlines)
       let url =
         path.hasPrefix("/") ? URL(fileURLWithPath: path) : worktree.appendingPathComponent(path)
@@ -320,7 +338,8 @@ internal struct DeliveryRepository: Sendable {
     var result = journal.result
     if result.state == .cleanupPending,
       let branch = try? git.run(
-        ["show-ref", "--verify", "--quiet", "refs/heads/\(journal.branch)"], at: root,
+        ["--no-optional-locks", "show-ref", "--verify", "--quiet", "refs/heads/\(journal.branch)"],
+        at: root,
         accepting: [0, 1])
     {
       result.branch = branch.exitCode == 0 ? journal.branch : nil

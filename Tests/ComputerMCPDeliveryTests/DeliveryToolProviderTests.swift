@@ -207,6 +207,31 @@ struct DeliveryToolProviderTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func preflightLeavesIndexBytesUnchanged(rejected: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      if rejected { try fixture.git(["branch", "docs/entry"]) }
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSince1970: 1)],
+        ofItemAtPath: fixture.root.appendingPathComponent("notes/log.md").path)
+      let index = fixture.root.appendingPathComponent(".git/index")
+      let before = try Data(contentsOf: index)
+      let repository = try fixture.repository()
+      let request = try DeliveryRequest(arguments: fixture.request())
+      if rejected {
+        #expect(throws: DeliveryFailure.self) { try repository.preflight(request) }
+      } else {
+        #expect(try repository.preflight(request) == fixture.git(["rev-parse", "main"]))
+      }
+      #expect(try Data(contentsOf: index) == before)
+      #expect(try fixture.journals().isEmpty)
+      // Confirm the stale stat data would have caused an ordinary status to rewrite this index.
+      try fixture.git(["status", "--porcelain=v1", "--", "notes/log.md"])
+      #expect(try Data(contentsOf: index) != before)
+    }
+  }
+
   @Test
   func mainBranchAndUnignoredRootAndExistingBranch() async throws {
     try await deliveryTest {

@@ -107,7 +107,9 @@ configuration and hooks remain active.
 
 Preflight checks scopes, path containment, the ignored worktree root, a clean
 main-checkout state for target files, branch availability and the message. Land
-mode also requires the main checkout to be on the default branch. The isolated
+mode also requires the main checkout to be on the default branch.
+Git inspections in preflight and recovery use `--no-optional-locks` so that
+checking status does not refresh or write the main checkout's index. The isolated
 worktree starts at the current default-branch commit. Sparse mode uses non-cone,
 exact-path sparse checkout.
 

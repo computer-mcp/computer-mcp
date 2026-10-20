@@ -133,7 +133,10 @@ extension DeliveryRepository {
       return
     }
     let changedPaths = try git.run(
-      ["diff", "--no-renames", "--name-only", "-z", currentDefault, journal.commit!], at: worktree
+      [
+        "--no-optional-locks", "diff", "--no-renames", "--name-only", "-z", currentDefault,
+        journal.commit!,
+      ], at: worktree
     ).stdout.split(separator: "\0").map(String.init)
     guard Set(changedPaths) == Set(paths), changedPaths.allSatisfy({ scope.contains(path: $0) })
     else {

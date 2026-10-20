@@ -954,217 +954,6 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func outlineItems(
-    in content: String,
-    language: String?,
-    includeImports: Bool
-  ) -> [FileOutlineItem] {
-    var allItems: [FileOutlineItem] = []
-    let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-    var insideMarkdownFence = false
-    for (index, line) in lines.enumerated() {
-      if language == "markdown" {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-          insideMarkdownFence.toggle()
-          continue
-        }
-        if insideMarkdownFence {
-          continue
-        }
-      }
-      guard
-        let item = outlineItem(line: String(line), lineNumber: index + 1, language: language)
-      else {
-        continue
-      }
-      if item.kind == "import" && !includeImports {
-        continue
-      }
-      allItems.append(item)
-    }
-    return allItems
-  }
-
-  internal func outlineLanguage(for url: URL) -> String? {
-    let name = url.lastPathComponent.lowercased()
-    let ext = url.pathExtension.lowercased()
-    if ["md", "markdown", "mdown"].contains(ext) {
-      return "markdown"
-    }
-    if ext == "swift" {
-      return "swift"
-    }
-    if ["js", "jsx", "mjs", "cjs"].contains(ext) {
-      return "javascript"
-    }
-    if ["ts", "tsx", "mts", "cts"].contains(ext) {
-      return "typescript"
-    }
-    if ext == "py" {
-      return "python"
-    }
-    if ext == "go" {
-      return "go"
-    }
-    if ext == "rs" {
-      return "rust"
-    }
-    if ext == "java" {
-      return "java"
-    }
-    if ["kt", "kts"].contains(ext) {
-      return "kotlin"
-    }
-    if ["c", "h", "cc", "cpp", "cxx", "hpp"].contains(ext) {
-      return "c-family"
-    }
-    if name == "makefile" || ext == "mk" {
-      return "make"
-    }
-    return nil
-  }
-
-  private func outlineItem(line: String, lineNumber: Int, language: String?) -> FileOutlineItem? {
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    guard !trimmed.isEmpty else {
-      return nil
-    }
-
-    if language == "markdown", let heading = markdownHeading(trimmed, lineNumber: lineNumber) {
-      return heading
-    }
-
-    var tokens = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-    guard !tokens.isEmpty else {
-      return nil
-    }
-
-    let modifiers = Set([
-      "public", "private", "internal", "fileprivate", "open", "static", "final", "override",
-      "mutating", "nonmutating", "lazy", "async", "throws", "rethrows", "export", "default",
-      "pub", "abstract", "sealed", "data", "inline", "extern", "virtual",
-    ])
-    while let first = tokens.first, modifiers.contains(first) {
-      tokens.removeFirst()
-    }
-    guard !tokens.isEmpty else {
-      return nil
-    }
-
-    if tokens.count >= 2, tokens[0] == "async", tokens[1] == "def" {
-      return declarationOutlineItem(
-        kind: "function",
-        rawName: tokens.dropFirst(2).first,
-        line: line,
-        lineNumber: lineNumber
-      )
-    }
-
-    let keyword = tokens[0]
-    let rawName = tokens.dropFirst().first
-    let kind: String
-    switch keyword {
-    case "class":
-      kind = "class"
-    case "struct":
-      kind = "struct"
-    case "enum":
-      kind = "enum"
-    case "protocol", "interface", "trait":
-      kind = "interface"
-    case "actor":
-      kind = "actor"
-    case "extension", "impl":
-      kind = "extension"
-    case "func", "function", "def", "fn":
-      kind = "function"
-    case "init", "deinit", "constructor":
-      kind = "function"
-    case "var", "let", "const":
-      kind = "variable"
-    case "typealias", "type":
-      kind = "type"
-    case "import", "package", "mod", "use":
-      kind = "import"
-    default:
-      if language == "make", trimmed.hasSuffix(":"), !trimmed.hasPrefix("\t"),
-        !trimmed.contains("=")
-      {
-        let target = String(trimmed.dropLast()).trimmingCharacters(in: .whitespaces)
-        guard !target.isEmpty else {
-          return nil
-        }
-        return FileOutlineItem(
-          line: lineNumber,
-          kind: "target",
-          level: nil,
-          name: target,
-          text: line
-        )
-      }
-      return nil
-    }
-
-    return declarationOutlineItem(kind: kind, rawName: rawName, line: line, lineNumber: lineNumber)
-  }
-
-  internal func markdownHeading(_ trimmed: String, lineNumber: Int) -> FileOutlineItem? {
-    var level = 0
-    for scalar in trimmed.unicodeScalars {
-      if scalar == "#" {
-        level += 1
-        continue
-      }
-      break
-    }
-    guard level > 0, level <= 6 else {
-      return nil
-    }
-    let index = trimmed.index(trimmed.startIndex, offsetBy: level)
-    guard index < trimmed.endIndex, trimmed[index].isWhitespace else {
-      return nil
-    }
-    let name = trimmed[index...].trimmingCharacters(in: .whitespaces)
-    guard !name.isEmpty else {
-      return nil
-    }
-    return FileOutlineItem(
-      line: lineNumber, kind: "heading", level: level, name: name, text: trimmed)
-  }
-
-  private func declarationOutlineItem(
-    kind: String,
-    rawName: String?,
-    line: String,
-    lineNumber: Int
-  ) -> FileOutlineItem? {
-    guard let rawName else {
-      return nil
-    }
-    let name = cleanedOutlineName(rawName)
-    guard !name.isEmpty else {
-      return nil
-    }
-    return FileOutlineItem(
-      line: lineNumber,
-      kind: kind,
-      level: nil,
-      name: name,
-      text: line.trimmingCharacters(in: .whitespaces)
-    )
-  }
-
-  private func cleanedOutlineName(_ raw: String) -> String {
-    let delimiters = CharacterSet(charactersIn: "({[:=<,")
-    let scalarView = raw.unicodeScalars
-    if let delimiter = scalarView.firstIndex(where: { delimiters.contains($0) }) {
-      return String(String.UnicodeScalarView(scalarView[..<delimiter]))
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    return raw.trimmingCharacters(in: CharacterSet(charactersIn: " \t({[:=<,"))
-  }
-
   internal func tailFile(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
     let maxLines = optionalInt("max_lines", in: object) ?? 200
@@ -2436,17 +2225,6 @@ extension GatewayToolRegistry {
     return .object(payload)
   }
 
-  internal func existingFileSizeBytes(url: URL, existed: Bool) throws -> UInt64 {
-    guard existed else {
-      return 0
-    }
-    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-    guard let number = attributes[.size] as? NSNumber else {
-      return 0
-    }
-    return number.uint64Value
-  }
-
   internal func replaceTextInFile(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
     let search = try requiredString("search", in: object)
@@ -3632,13 +3410,6 @@ extension GatewayToolRegistry {
     }
   }
 
-  internal func sortedDirectoryChildren(_ directory: URL, includeHidden: Bool) throws -> [URL] {
-    try FileManager.default.contentsOfDirectory(atPath: directory.path)
-      .filter { includeHidden || !$0.hasPrefix(".") }
-      .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-      .map { directory.appendingPathComponent($0) }
-  }
-
   private func validateSymbolicLinkDestination(_ destination: String) throws {
     try validateUTF8ByteLimit(destination, name: "destination", maxBytes: 4_096)
     guard !destination.isEmpty else {
@@ -3682,53 +3453,12 @@ extension GatewayToolRegistry {
     }
   }
 
-  internal func readBoundedFileData(url: URL, path: String, maxBytes: Int) throws -> Data {
-    let handle = try FileHandle(forReadingFrom: url)
-    defer {
-      try? handle.close()
-    }
-    let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
-    guard data.count <= maxBytes else {
-      throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
-    }
-    return data
-  }
-
-  internal func fileNameMatchMode(_ value: String) throws -> FileNameMatchMode {
-    guard let mode = FileNameMatchMode(rawValue: value) else {
-      throw GatewayToolError.invalidArguments(
-        "match must be one of: contains, prefix, suffix, exact.")
-    }
-    return mode
-  }
-
   private func fileTimelineSort(_ value: String) throws -> FileTimelineSort {
     guard let sort = FileTimelineSort(rawValue: value) else {
       throw GatewayToolError.invalidArguments(
         "sort must be one of: modified_desc, modified_asc, path.")
     }
     return sort
-  }
-
-  internal func fileName(
-    _ name: String,
-    matches query: String,
-    mode: FileNameMatchMode,
-    caseSensitive: Bool
-  ) -> Bool {
-    let candidate = caseSensitive ? name : name.lowercased()
-    let needle = caseSensitive ? query : query.lowercased()
-
-    switch mode {
-    case .contains:
-      return candidate.contains(needle)
-    case .prefix:
-      return candidate.hasPrefix(needle)
-    case .suffix:
-      return candidate.hasSuffix(needle)
-    case .exact:
-      return candidate == needle
-    }
   }
 
   private func countOccurrences(of needle: String, in haystack: String) -> Int {
@@ -3784,37 +3514,6 @@ extension GatewayToolRegistry {
       }
     }
     return String(content[start..<end])
-  }
-
-  internal func utf8Preview(_ value: String, maxBytes: Int) -> (text: String, truncated: Bool) {
-    let data = Data(value.utf8)
-    guard data.count > maxBytes else {
-      return (value, false)
-    }
-
-    var index = value.startIndex
-    var byteCount = 0
-    while index < value.endIndex {
-      let next = value.index(after: index)
-      let characterByteCount = value[index..<next].utf8.count
-      guard byteCount + characterByteCount <= maxBytes else {
-        break
-      }
-      byteCount += characterByteCount
-      index = next
-    }
-
-    return (String(value[..<index]), true)
-  }
-
-  internal func requireDirectory(_ url: URL, originalPath: String) throws {
-    var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-      throw GatewayToolError.invalidArguments("Directory does not exist: \(originalPath)")
-    }
-    guard isDirectory.boolValue else {
-      throw GatewayToolError.invalidArguments("Path is not a directory: \(originalPath)")
-    }
   }
 
   private func prepareDestination(
@@ -4205,31 +3904,6 @@ private struct ListedFile {
       "is_symlink": .bool(info.isSymlink),
     ])
   }
-}
-
-internal struct FileOutlineItem {
-  var line: Int
-  var kind: String
-  var level: Int?
-  var name: String
-  var text: String
-
-  var json: JSONValue {
-    .object([
-      "line": .integer(Int64(line)),
-      "kind": .string(kind),
-      "level": level.map { .integer(Int64($0)) } ?? .null,
-      "name": .string(name),
-      "text": .string(text),
-    ])
-  }
-}
-
-internal enum FileNameMatchMode: String {
-  case contains
-  case prefix
-  case suffix
-  case exact
 }
 
 private enum FileTimelineSort: String {

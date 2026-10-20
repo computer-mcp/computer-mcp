@@ -21,7 +21,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   internal let environment: [String: String]
 
-  internal let cliExecution: CLIProcessExecution
+  internal let registeredCommands: RegisteredCommands
 
   package init(
     configuration: GatewayConfiguration,
@@ -41,9 +41,10 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       enabledConfiguration.server.http.accessTokenEnv == nil
       ? .object(["securitySchemes": .array([.object(["type": .string("noauth")])])]) : nil
     self.workspaceScope = WorkspaceScope(configuration: enabledConfiguration, toolMeta: toolMeta)
-    self.cliExecution = CLIProcessExecution(
-      maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
-    self.commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
+    let commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
+    self.commandRunner = commandRunner
+    self.registeredCommands = RegisteredCommands(
+      configuration: enabledConfiguration, commandRunner: commandRunner, environment: environment)
     self.processManager = processManager
     self.shellManager = shellManager
     self.mcpClient = mcpClient.makeScopedClient(
@@ -64,10 +65,11 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       var command = command
       command.env = environment.merging(command.env) { _, value in value }
       let tree = try source.load(
-        command: command, workspace: configuration.workspaceDirectory, execution: cliExecution)
+        command: command, workspace: configuration.workspaceDirectory,
+        execution: registeredCommands.execution)
       return CLITreeToolProvider(
         registration: command, tree: tree, workspace: configuration.workspaceDirectory,
-        execution: cliExecution,
+        execution: registeredCommands.execution,
         timeoutMilliseconds: command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs,
         maxOutputBytes: configuration.policy.maxOutputBytes)
     }
@@ -77,7 +79,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   package func shutdown() async {
     await shellManager.shutdown()
-    await cliExecution.shutdown()
+    await registeredCommands.execution.shutdown()
     await mcpClient.shutdown()
   }
 

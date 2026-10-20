@@ -31,3 +31,43 @@ package func relativePath(fromDirectoryPath rootPath: String, to url: URL) -> St
   }
   return String(path.dropFirst(prefix.count))
 }
+
+package func sortedDirectoryChildren(_ directory: URL, includeHidden: Bool) throws -> [URL] {
+  try FileManager.default.contentsOfDirectory(atPath: directory.path)
+    .filter { includeHidden || !$0.hasPrefix(".") }
+    .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    .map { directory.appendingPathComponent($0) }
+}
+
+package func readBoundedFileData(url: URL, path: String, maxBytes: Int) throws -> Data {
+  let handle = try FileHandle(forReadingFrom: url)
+  defer {
+    try? handle.close()
+  }
+  let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+  guard data.count <= maxBytes else {
+    throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
+  }
+  return data
+}
+
+package func existingFileSizeBytes(url: URL, existed: Bool) throws -> UInt64 {
+  guard existed else {
+    return 0
+  }
+  let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+  guard let number = attributes[.size] as? NSNumber else {
+    return 0
+  }
+  return number.uint64Value
+}
+
+package func requireDirectory(_ url: URL, originalPath: String) throws {
+  var isDirectory: ObjCBool = false
+  guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+    throw GatewayToolError.invalidArguments("Directory does not exist: \(originalPath)")
+  }
+  guard isDirectory.boolValue else {
+    throw GatewayToolError.invalidArguments("Path is not a directory: \(originalPath)")
+  }
+}

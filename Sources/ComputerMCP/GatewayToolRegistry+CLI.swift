@@ -61,7 +61,8 @@ extension GatewayToolRegistry {
         )
       }
       let tree = try source.load(
-        command: command, workspace: configuration.workspaceDirectory, execution: cliExecution)
+        command: command, workspace: configuration.workspaceDirectory,
+        execution: registeredCommands.execution)
       guard let node = tree.commands.first(where: { $0.path == path }) else {
         throw GatewayToolError.invalidArguments("The path is not in the declared CLI tree.")
       }
@@ -79,7 +80,7 @@ extension GatewayToolRegistry {
       helpArgv.append("--help")
     }
 
-    let result = try runRegisteredCLI(
+    let result = try registeredCommands.runRegisteredCLI(
       command: command,
       args: helpArgv,
       timeout: optionalInt("timeout_ms", in: object),
@@ -105,7 +106,7 @@ extension GatewayToolRegistry {
     let id = try requiredString("id", in: object)
     let args = try requiredStringArray("argv", in: object)
     let command = try registeredCLICommand(id)
-    return try runRegisteredCLI(
+    return try registeredCommands.runRegisteredCLI(
       command: command,
       args: args,
       timeout: optionalInt("timeout_ms", in: object),
@@ -119,29 +120,6 @@ extension GatewayToolRegistry {
       throw GatewayToolError.unknownCLI(id)
     }
     return command
-  }
-
-  internal func runRegisteredCLI(
-    command: CLICommandConfig,
-    args: [String],
-    timeout: Int?,
-    requireArbitraryArgs: Bool
-  ) throws -> CommandResult {
-    if requireArbitraryArgs && (!command.allowAnyArgs || command.tree != nil) {
-      throw GatewayToolError.disabled(
-        "CLI command '\(command.id)' does not allow arbitrary args.")
-    }
-
-    let invocation = try resolveCLIInvocation(command)
-    return try commandRunner.run(
-      executable: invocation.executable,
-      arguments: invocation.arguments + args,
-      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
-      environment: command.env,
-      timeoutMilliseconds: timeout ?? command.defaultTimeoutMs
-        ?? configuration.policy.defaultTimeoutMs,
-      maxOutputBytes: configuration.policy.maxOutputBytes
-    )
   }
 
   private func cliDescription(_ command: CLICommandConfig) -> JSONValue {
@@ -159,27 +137,8 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func validateExecutableLookupName(_ name: String) throws {
-    try validateUTF8ByteLimit(name, name: "name", maxBytes: 128)
-    guard !name.isEmpty else {
-      throw GatewayToolError.invalidArguments("name must not be empty.")
-    }
-    guard !name.hasPrefix("-") else {
-      throw GatewayToolError.invalidArguments("name must not start with an option marker.")
-    }
-    guard name != "." && name != ".." else {
-      throw GatewayToolError.invalidArguments("name must be an executable basename.")
-    }
-    let allowed = CharacterSet(
-      charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+@-")
-    guard name.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
-      throw GatewayToolError.invalidArguments(
-        "name must be an executable basename without slashes or whitespace.")
-    }
-  }
-
   private func cliExecutableStatus(_ command: CLICommandConfig) -> JSONValue {
-    let resolved = resolveExecutable(command.executable, command: command)
+    let resolved = registeredCommands.resolveExecutable(command.executable, command: command)
     return .object([
       "id": .string(command.id),
       "executable": .string(command.executable),
@@ -195,69 +154,4 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func resolveExecutable(_ executable: String, command: CLICommandConfig)
-    -> ExecutableInspection
-  {
-    ExecutableInspection.invocation(
-      executable,
-      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory)
-        ?? configuration.workspaceDirectory,
-      environment: environment.merging(command.env) { _, value in value },
-      interpreterBindings: command.interpreterBindings
-    ).inspection
-  }
-
-  internal func resolveCLIInvocation(_ command: CLICommandConfig) throws
-    -> (executable: String, arguments: [String])
-  {
-    guard !command.interpreterBindings.isEmpty else { return (command.executable, []) }
-    let invocation = ExecutableInspection.invocation(
-      command.executable,
-      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory)
-        ?? configuration.workspaceDirectory,
-      environment: environment.merging(command.env) { _, value in value },
-      interpreterBindings: command.interpreterBindings)
-    guard !invocation.inspection.hasKnownFailure, let executable = invocation.executable else {
-      throw GatewayToolError.invalidArguments(invocation.inspection.message)
-    }
-    return (executable, invocation.arguments)
-  }
-
-  internal func resolveExecutable(
-    _ executable: String, base: URL?, defaultBase: URL, overrides: [String: String]
-  ) -> ExecutableInspection {
-    ExecutableInspection.inspect(
-      executable, workingDirectory: base ?? defaultBase,
-      environment: environment.merging(overrides) { _, value in value })
-  }
-
-  internal func executableResolutionJSON(_ resolution: ExecutableInspection) -> JSONValue {
-    resolution.json
-  }
-
-  internal func pathExecutables(_ executable: String, allMatches: Bool) -> [String] {
-    var matches: [String] = []
-    var seen = Set<String>()
-    for directory in pathSearchDirectories() {
-      let candidate = URL(fileURLWithPath: directory).appendingPathComponent(executable).path
-      guard FileManager.default.isExecutableFile(atPath: candidate) else {
-        continue
-      }
-      guard seen.insert(candidate).inserted else {
-        continue
-      }
-      matches.append(candidate)
-      if !allMatches {
-        break
-      }
-    }
-    return matches
-  }
-
-  internal func pathSearchDirectories() -> [String] {
-    let pathValue =
-      environment["PATH"]
-      ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-    return pathValue.split(separator: ":").map(String.init).filter { !$0.isEmpty }
-  }
 }

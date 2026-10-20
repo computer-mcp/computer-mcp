@@ -13,7 +13,7 @@ extension GatewayToolRegistry {
           "path": .string(configuration.server.http.path),
           "health_path": .string(configuration.server.http.healthPath),
           "public_base_url": configuration.server.http.publicBaseURL.map(JSONValue.string) ?? .null,
-          "auth": .string(httpAuthMode()),
+          "auth": .string(httpAuthMode(configuration: configuration)),
           "access_token_env": configuration.server.http.accessTokenEnv.map(JSONValue.string)
             ?? .null,
         ]),
@@ -567,7 +567,7 @@ extension GatewayToolRegistry {
     let maxResults = optionalInt("max_results", in: object) ?? 200
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     let paths = try optionalGitPaths(in: object)
-    let command = try gitCLICommand()
+    let command = try registeredCommands.gitCLICommand()
 
     var arguments = ["status", "--porcelain=v1", "-z", "--untracked-files=all"]
     if !paths.isEmpty {
@@ -575,7 +575,7 @@ extension GatewayToolRegistry {
       arguments.append(contentsOf: paths)
     }
 
-    let result = try runRegisteredCLI(
+    let result = try registeredCommands.runRegisteredCLI(
       command: command,
       args: arguments,
       timeout: optionalInt("timeout_ms", in: object),

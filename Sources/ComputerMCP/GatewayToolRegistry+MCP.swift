@@ -52,7 +52,7 @@ extension GatewayToolRegistry {
     switch server.transport {
     case .stdio:
       let command = server.command ?? ""
-      let resolved = resolveExecutable(
+      let resolved = registeredCommands.resolveExecutable(
         command,
         base: server.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
         defaultBase: configuration.workspaceDirectory,

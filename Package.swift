@@ -201,6 +201,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",
           "ComputerMCPProcess",
+          "ComputerMCPToolKit",
           "ComputerMCPTestSupport",
           .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         ],

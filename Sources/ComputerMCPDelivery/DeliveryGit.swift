@@ -14,6 +14,14 @@ internal struct DeliveryGit: Sendable {
   let environment: [String: String]
   let timeout: Int
   private let runner = ManagedCommandRunner()
+  private var worktree: (root: URL, directory: URL)?
+
+  /// Pins repository discovery even if the worktree's gitfile disappears.
+  func pinned(to root: URL, directory: URL) -> Self {
+    var git = self
+    git.worktree = (root, directory)
+    return git
+  }
 
   init(environment tools: ToolEnvironment) throws {
     let command = try tools.registeredCommands.gitCLICommand()
@@ -34,10 +42,16 @@ internal struct DeliveryGit: Sendable {
   ) throws -> Result {
     do {
       let command = arguments.drop(while: { $0 == "--no-optional-locks" }).first ?? ""
-      let pathOptions = ["add", "status", "diff"].contains(command) ? ["--literal-pathspecs"] : []
+      let pathOptions =
+        ["add", "status", "diff", "restore", "ls-files"].contains(command)
+        ? ["--literal-pathspecs"] : []
+      let binding =
+        worktree.map { ["--git-dir=\($0.directory.path)", "--work-tree=\($0.root.path)"] }
+        ?? []
       let result = try runner.runData(
         executable: executable,
-        invocation: .init(arguments: prefix + pathOptions + arguments, standardInput: input),
+        invocation: .init(
+          arguments: prefix + binding + pathOptions + arguments, standardInput: input),
         workingDirectory: directory, environment: environment,
         timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
       guard !result.timedOut, let code = result.exitCode, accepting.contains(code),

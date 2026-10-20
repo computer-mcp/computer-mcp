@@ -90,6 +90,7 @@ Results use the normal readable JSON and `structuredContent.result` envelope:
 | `commit` | Commit ID, when a commit exists |
 | `branch` | Branch name, when retained |
 | `reason` | Reason code, except for `merged` |
+| `message` | Diagnostic detail when cleanup requires attention |
 | `files` | Objects with `path` and `snippets` from the final edited content |
 
 Replacement snippets include three lines before and after the changed text;
@@ -122,32 +123,63 @@ exactly the requested paths, all within scope. A hook that stages another file
 therefore returns `committed` / `scope_changed`, retains the branch and stops
 before landing.
 
-Land attempts `merge --ff-only --no-squash --no-edit <verified_commit>` in the main
-checkout, using the immutable commit ID on both attempts. Live delivery reports
+Immediately before each landing attempt, delivery requires the main checkout's
+`HEAD` to equal the baseline used for path validation. An advance or rewind
+counts as a moved default branch: delivery rebases onto its current tip, checks
+the entire new baseline-to-commit diff and retries once. A second baseline
+change returns `committed` / `not_fast_forward` without another merge or rebase.
+Land runs `merge --ff-only --no-squash --no-edit <verified_commit>` in the main
+checkout using the immutable, validated commit ID. Live delivery reports
 `merged` only when that checkout's `HEAD` equals the delivery commit, including
 after a command failure, timeout or exception. A post-merge hook that creates a
-descendant leaves the result `committed` with its branch retained. If the default
-branch has advanced and prevents fast-forwarding, delivery rebases its worktree.
-Before retrying once, it checks the rebased diff against the new baseline with
-the same exact-path rule. A mismatch, including an empty diff when the default
-branch already contains the patch, retains the commit and branch with
-`scope_changed`. A failed rebase is aborted and the saved commit retained.
-Commit-only mode keeps the branch without landing.
+descendant leaves the result `committed` with its branch retained.
 
-Cleanup removes the worktree. `committed` always retains its branch, even when
-the commit is reachable from the default branch; `cleanup_pending` with an
-undelivered commit also retains it. Branch deletion is limited to `merged` and
-`aborted` and uses one `update-ref --stdin` transaction with an expected delivery
-branch value. For `merged`, the transaction also verifies the default branch's
-checked commit ID: the delivery commit for live landing, or the tip used to
-verify reachability during recovery. If another Git process changes either ref,
-the transaction fails with `cleanup_pending` / `cleanup_failed`, preserving the
-branch and its commits for recovery.
+Every rebase is followed by the same exact-path validation against its new
+baseline. A mismatch, including an empty diff when the default branch already
+contains the patch, returns `committed` / `scope_changed` with the branch retained.
+An in-progress failed rebase is aborted to the saved commit. If a rebase command
+fails or times out with no rebase in progress, delivery reads the branch's actual
+tip, validates it again and records that commit; it does not attempt landing
+after the command failure. Commit-only mode retains the branch without landing.
+
+Cleanup uses `worktree remove` without `--force` and checks for tracked,
+untracked and ignored changes. For `aborted`, durable undo records restore only
+files still matching this operation's writes and unstage only its recorded index
+entries. Other changes make removal fail and remain available in the worktree.
+`committed` always retains its branch, even when the commit is reachable from the
+default branch; `cleanup_pending` with an undelivered commit also retains it.
+Branch deletion is limited to `merged` and `aborted`. Before an aborted deletion,
+the branch tip must be reachable from the current default tip. One
+`update-ref --stdin` transaction verifies the checked main `HEAD` and default tip,
+and deletes the delivery branch with its expected value. Verifying symbolic
+`HEAD` on the default branch also verifies and locks its referent; other `HEAD`
+targets need a separate default-ref verification. The main `HEAD` branch or
+detached state is checked immediately before the transaction. For live `merged`,
+both `HEAD` and the default tip must equal the delivery commit; recovery uses the
+default tip captured for its reachability check. Detected interference returns
+`cleanup_pending` / `cleanup_failed`, retains the branch and records diagnostic
+detail, including a changed main checkout.
+
+The repository lock serializes delivery calls across App and CLI processes.
+Other Git writers, including users and other tools, do not take this lock.
+Against those writers, delivery preserves committed work (both newly delivered
+and previously existing work remains reachable from a ref or is identified in
+the result), preserves files, uncommitted changes and worktrees it does not own,
+checks state immediately before each guarded Git mutation, and uses Git's atomic
+reference transactions where available. Detected interference converges to a
+retained branch with `committed` or `cleanup_pending` and a reason. The only
+excluded case is an external write in the short interval between a check and
+the next Git command where no atomic primitive covers both. These checks do not
+provide isolation from external Git writers across that interval.
 
 Journals live at `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`.
 Schema 1 records `operation_id`, `workspace`, `scope`, `repository`,
 `default_branch`, `branch`, `worktree`, baseline `base`, `phase`, optional `commit`,
-`merged`, optional terminal `state` and `reason`, and `files`. Each write uses a
+`merged`, optional terminal `state`, `reason` and `message`, and `files`. Immediately
+after creation, `worktree_identity` records the administrative `directory` under
+`<git-common-dir>/worktrees/` and the exact contents of its `gitdir` file. Optional
+`changes` record original and written file bytes and original index entries before
+each edit; `staged` records index entries after staging. Each write uses a
 same-directory temporary file, file fsync, rename and directory fsync.
 Creating the `computer-mcp` and `delivery` directories also fsyncs each directory's
 parent before execution can mutate Git state, including when the lock directory
@@ -170,9 +202,15 @@ On provider construction, background recovery processes configured repositories;
 provider shutdown cancels and joins that work. Every apply also recovers under
 the repository lock before its preflight. Before running Git in a recorded
 worktree, recovery requires its path in `worktree list --porcelain`, a regular
-`.git` file pointing to the corresponding worktree metadata under this
-repository's common Git directory, and an exact `rev-parse --show-toplevel`
-match. An unrecognized empty directory is removed; a nonempty directory is
+`.git` file selecting the recorded administrative directory, that directory's
+unchanged recorded `gitdir` contents and backlink, the recorded delivery branch
+in `HEAD`, and an exact `rev-parse --show-toplevel` match. During a rebase, the
+saved `head-name` identifies the branch that abort restores. Every Git command
+inside a verified worktree, including verification commands, passes explicit
+`--git-dir` and `--work-tree`; loss of `.git` cannot redirect discovery into the
+main checkout. A moved original worktree or a replacement at its old path does
+not pass ownership verification. An unrecognized empty directory is removed;
+a nonempty directory is
 retained with `cleanup_pending` / `worktree_unrecognized` and its path in the
 journal. If the directory is missing but its registration remains, recovery runs
 `worktree prune --expire=now` from the verified repository root and confirms that

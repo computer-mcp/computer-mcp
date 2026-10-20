@@ -305,11 +305,12 @@ struct DeliveryRecoveryTests {
   func recoveryKeepsUnrecognizedWorktreeAndMainRebase(registered: Bool) async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
-      let journal = try interrupted(fixture, at: .beforeWorktree)
+      var journal = try interrupted(fixture, at: .beforeWorktree)
       let worktree = URL(fileURLWithPath: journal.worktree)
       var gitfile: Data?
       if registered {
         try fixture.git(["worktree", "add", "-b", journal.branch, worktree.path, journal.base])
+        try fixture.repository().recordWorktreeIdentity(&journal)
         gitfile = try Data(contentsOf: worktree.appendingPathComponent(".git"))
         try FileManager.default.removeItem(at: worktree.appendingPathComponent(".git"))
       } else {
@@ -508,6 +509,98 @@ struct DeliveryRecoveryTests {
     }
   }
 
+  @Test
+  func recoveryPreservesMovedWorktreeAndReplacement() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .afterCommit)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      let moved = fixture.temporary.url.appendingPathComponent("moved")
+      try fixture.git(["worktree", "move", worktree.path, moved.path])
+      try fixture.git(["worktree", "add", "-b", "other", worktree.path, "main"])
+      try fixture.write("outside.txt", "replacement staged work\n", at: worktree)
+      try fixture.git(["add", "outside.txt"], at: worktree)
+      try fixture.write("notes/log.md", "replacement unstaged work\n", at: worktree)
+      try fixture.write("keep.txt", "untracked work\n", at: worktree)
+      let replacementGitfile = try fixture.read(".git", at: worktree)
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      let pending = try #require(fixture.journals().first)
+      #expect(pending.phase == .cleanupPending && pending.reason == .worktreeUnrecognized)
+      #expect(try fixture.read(".git", at: worktree) == replacementGitfile)
+      #expect(try fixture.git(["branch", "--show-current"], at: worktree) == "other")
+      #expect(try fixture.git(["show", ":outside.txt"], at: worktree) == "replacement staged work")
+      #expect(try fixture.read("notes/log.md", at: worktree) == "replacement unstaged work\n")
+      #expect(try fixture.read("keep.txt", at: worktree) == "untracked work\n")
+      #expect(try fixture.read("notes/log.md", at: moved) == "beta\nstable\n")
+      #expect(try fixture.git(["rev-parse", journal.branch]) == journal.commit)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func recoveryRejectsChangedWorktreeBranchOrBacklink(changedBranch: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .afterCommit)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      if changedBranch {
+        try fixture.git(["switch", "-c", "other"], at: worktree)
+      } else {
+        let directory = URL(fileURLWithPath: try #require(journal.worktreeIdentity).directory)
+        try Data((worktree.appendingPathComponent(".git").path + "\n\n").utf8)
+          .write(to: directory.appendingPathComponent("gitdir"))
+      }
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      #expect(try fixture.journals().first?.reason == .worktreeUnrecognized)
+      #expect(try fixture.read("notes/log.md", at: worktree) == "beta\nstable\n")
+      #expect(try fixture.git(["rev-parse", journal.branch]) == journal.commit)
+    }
+  }
+
+  @Test
+  func gitfileDisappearanceAfterVerificationCannotAbortMainRebase() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .duringRebase)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      try fixture.git(["switch", "-c", "topic"])
+      try fixture.write("notes/log.md", "topic\nstable\n")
+      try fixture.git(["commit", "-am", "test: topic"])
+      try fixture.git(["switch", "main"])
+      try fixture.write("notes/log.md", "main\nstable\n")
+      try fixture.git(["commit", "-am", "test: main"])
+      try fixture.git(["rebase", "topic"], accepting: [1])
+      let head = try fixture.git(["rev-parse", "HEAD"])
+      let index = try Data(contentsOf: fixture.root.appendingPathComponent(".git/index"))
+      let conflict = try fixture.read("notes/log.md")
+      let gitfile = try Data(contentsOf: worktree.appendingPathComponent(".git"))
+      let io = DeliveryIO(afterWorktreeVerification: { _ in
+        let path = worktree.appendingPathComponent(".git")
+        if FileManager.default.fileExists(atPath: path.path) {
+          try FileManager.default.removeItem(at: path)
+        }
+      })
+      let repository = try fixture.repository(io: io)
+      try repository.withLock { try repository.recover() }
+      #expect(try fixture.journals().first?.reason == .worktreeUnrecognized)
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == head)
+      #expect(try Data(contentsOf: fixture.root.appendingPathComponent(".git/index")) == index)
+      #expect(try fixture.read("notes/log.md") == conflict)
+      #expect(
+        FileManager.default.fileExists(
+          atPath: fixture.root.appendingPathComponent(".git/rebase-merge").path))
+      // The verified binding still selected only the delivery administration directory.
+      let directory = URL(fileURLWithPath: try #require(journal.worktreeIdentity).directory)
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: directory.appendingPathComponent("rebase-merge").path))
+      #expect(try fixture.read("notes/log.md", at: worktree) == "beta\nstable\n")
+      try gitfile.write(to: worktree.appendingPathComponent(".git"))
+      try fixture.git(["rebase", "--abort"])
+    }
+  }
+
   private func interrupted(_ fixture: DeliveryFixture, at point: Interruption) throws
     -> DeliveryJournal
   {
@@ -522,8 +615,17 @@ struct DeliveryRecoveryTests {
     try repository.io.write(journal, to: repository.journals)
     if point == .beforeWorktree { return journal }
     try fixture.git(["worktree", "add", "-b", journal.branch, worktree.path, journal.base])
-    try fixture.write("notes/log.md", "beta\nstable\n", at: worktree)
+    try repository.recordWorktreeIdentity(&journal)
+    let pinned = try #require(try repository.verifiedWorktree(journal))
+    _ = try repository.edit(
+      DeliveryRequest(arguments: fixture.request()), journal: &journal, git: pinned)
     try fixture.git(["add", "notes/log.md"], at: worktree)
+    journal.staged = [
+      "notes/log.md": try pinned.run(
+        ["--no-optional-locks", "ls-files", "--stage", "-z", "--", "notes/log.md"], at: worktree
+      ).stdout
+    ]
+    try repository.io.write(journal, to: repository.journals)
     if point == .beforeCommit { return journal }
     try fixture.git(["commit", "-m", "docs: interrupted entry"], at: worktree)
     let commit = try fixture.git(["rev-parse", "HEAD"], at: worktree)

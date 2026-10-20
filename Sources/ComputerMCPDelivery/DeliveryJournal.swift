@@ -8,6 +8,18 @@ import Foundation
 
 /// Persisted before worktree creation. Git state is authoritative during recovery.
 internal struct DeliveryJournal: Codable, Sendable {
+  struct WorktreeIdentity: Codable, Sendable {
+    var directory: String
+    var gitdir: String
+  }
+
+  struct Change: Codable, Sendable {
+    var path: String
+    var original: Data?
+    var written: Data
+    var index: String
+  }
+
   enum Phase: String, Codable, Sendable {
     case started, committed
     case cleanupPending = "cleanup_pending"
@@ -22,30 +34,36 @@ internal struct DeliveryJournal: Codable, Sendable {
   var branch: String
   var worktree: String
   var base: String
+  var worktreeIdentity: WorktreeIdentity?
+  // Each undo record is durable before its file is written. Index entries are saved after staging.
+  var changes: [Change]?
+  var staged: [String: String]?
   var phase: Phase = .started
   var commit: String?
   var merged = false
   var state: DeliveryState?
   var reason: DeliveryReason?
+  var message: String?
   var files: [DeliveryFile] = []
 
   enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case operationID = "operation_id"
     case defaultBranch = "default_branch"
+    case worktreeIdentity = "worktree_identity"
     case workspace, scope, repository, branch, worktree, base, phase, commit, merged, state, reason,
-      files
+      files, changes, staged, message
   }
 
   var result: DeliveryResult {
     DeliveryResult(
       state: state ?? .aborted, commit: commit,
       branch: (state == .committed || state == .cleanupPending) ? branch : nil,
-      reason: reason, files: files)
+      reason: reason, message: message, files: files)
   }
 }
 
-/// Fault injection is limited to durable writes and cleanup mutation boundaries.
+/// Narrow mutation boundaries; production defaults perform no additional work.
 internal struct DeliveryIO: Sendable {
   var beforeJournalWrite: @Sendable (DeliveryJournal) throws -> Void = { _ in }
   var beforeCleanup: @Sendable (DeliveryJournal) throws -> Void = { _ in }
@@ -53,6 +71,8 @@ internal struct DeliveryIO: Sendable {
     _, _ in
   }
   var beforeDirectorySync: @Sendable (URL) throws -> Void = { _ in }
+  var beforeMergeCheck: @Sendable (DeliveryJournal) throws -> Void = { _ in }
+  var afterWorktreeVerification: @Sendable (DeliveryJournal) throws -> Void = { _ in }
 
   func prepareDirectory(_ directory: URL) throws {
     let parent = directory.deletingLastPathComponent()

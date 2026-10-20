@@ -21,6 +21,11 @@ extension DeliveryRepository {
         var arguments = ["worktree", "add", "-b", request.branch]
         if scope.sparse { arguments.append("--no-checkout") }
         try git.run(arguments + [worktree.path, base], at: root)
+        try recordWorktreeIdentity(&journal)
+        guard let worktreeGit = try verifiedWorktree(journal) else {
+          throw DeliveryFailure(
+            reason: .worktreeUnrecognized, detail: "Delivery worktree is missing.")
+        }
         if scope.sparse {
           // Anchored literal patterns select files, including glob metacharacters in their names.
           let patterns = request.paths.map {
@@ -30,15 +35,35 @@ extension DeliveryRepository {
                 result.append(character)
               }
           }
-          try git.run(["sparse-checkout", "set", "--no-cone", "--"] + patterns, at: worktree)
-          try git.run(["checkout"], at: worktree)
+          try worktreeGit.run(
+            ["sparse-checkout", "set", "--no-cone", "--"] + patterns, at: worktree)
+          try worktreeGit.run(["checkout"], at: worktree)
         }
-        journal.files = try edit(request, in: worktree)
+        journal.files = try edit(request, journal: &journal, git: worktreeGit)
         try cancellation.check()
-        try git.run(["add", "--"] + request.paths, at: worktree)
+        guard
+          try worktreeGit.run(
+            ["--no-optional-locks", "diff", "--cached", "--quiet", "--"] + request.paths,
+            at: worktree, accepting: [0, 1]
+          ).exitCode == 0
+        else {
+          throw DeliveryFailure(
+            reason: .gitFailed, detail: "Delivery target index entries have changed.")
+        }
+        try worktreeGit.run(["add", "--"] + request.paths, at: worktree)
+        journal.staged = try Dictionary(
+          uniqueKeysWithValues: request.paths.map { path in
+            (
+              path,
+              try worktreeGit.run(
+                ["--no-optional-locks", "ls-files", "--stage", "-z", "--", path], at: worktree
+              ).stdout
+            )
+          })
+        try io.write(journal, to: journals)
         try cancellation.check()
-        try git.run(["commit", "-m", request.message], at: worktree)
-        guard let commit = try git.revision("HEAD", at: worktree), commit != base else {
+        try worktreeGit.run(["commit", "-m", request.message], at: worktree)
+        guard let commit = try worktreeGit.revision("HEAD", at: worktree), commit != base else {
           throw DeliveryFailure(reason: .gitFailed, detail: "Git did not create a delivery commit.")
         }
         journal.commit = commit
@@ -55,7 +80,7 @@ extension DeliveryRepository {
             journal.state = .committed
             journal.reason = .commitOnly
           } else {
-            try land(&journal, worktree: worktree, paths: request.paths)
+            try land(&journal, paths: request.paths)
           }
         }
       } catch {
@@ -65,7 +90,7 @@ extension DeliveryRepository {
             reason: .gitFailed, detail: boundedDeliveryText(error.localizedDescription))
         // A hook, timeout or failed journal write can leave a commit despite a failed command.
         do {
-          try abortRebase(at: worktree)
+          try abortRebase(journal)
           if journal.commit == nil,
             let commit = try git.revision("refs/heads/\(request.branch)", at: root), commit != base
           {
@@ -92,58 +117,83 @@ extension DeliveryRepository {
     }
   }
 
-  private func land(_ journal: inout DeliveryJournal, worktree: URL, paths: [String]) throws {
-    try cancellation.check()
-    try requireMainBranch(scope.defaultBranch)
-    let original = journal.commit!
-    let merge = try git.run(
-      ["merge", "--ff-only", "--no-squash", "--no-edit", original], at: main,
-      accepting: [0, 1, 128])
-    if try git.revision("HEAD", at: main) == original {
-      journal.merged = true
-      journal.state = .merged
-      return
-    }
+  private func land(_ journal: inout DeliveryJournal, paths: [String]) throws {
+    var validatedBase = journal.base
     journal.state = .committed
     journal.reason = .notFastForward
-    guard merge.exitCode != 0 else { return }
-    guard let currentDefault = try git.revision("refs/heads/\(scope.defaultBranch)", at: root),
-      currentDefault != journal.base
-    else {
-      throw DeliveryFailure(
-        reason: .gitFailed, detail: "Fast-forward merge failed.", exitCode: merge.exitCode,
-        stderr: merge.stderr)
+    for attempt in 0...1 {
+      try cancellation.check()
+      try io.beforeMergeCheck(journal)
+      try requireMainBranch(scope.defaultBranch)
+      // No intervening Git command may separate this baseline check from the merge it guards.
+      if try git.revision("HEAD", at: main) == validatedBase {
+        let merge = try git.run(
+          ["merge", "--ff-only", "--no-squash", "--no-edit", journal.commit!], at: main,
+          accepting: [0, 1, 128])
+        if try git.revision("HEAD", at: main) == journal.commit {
+          journal.merged = true
+          journal.state = .merged
+          journal.reason = nil
+          return
+        }
+        guard merge.exitCode != 0 else { return }
+      }
+      guard attempt == 0,
+        let currentDefault = try git.revision("refs/heads/\(scope.defaultBranch)", at: root),
+        currentDefault != validatedBase
+      else { return }
+      // A post-merge hook may have advanced HEAD after the delivery commit landed.
+      guard try !git.isAncestor(journal.commit!, of: currentDefault, at: root) else { return }
+      guard try rebase(&journal, onto: currentDefault, paths: paths) else { return }
+      validatedBase = currentDefault
     }
-    // A post-merge hook may have advanced HEAD after the delivery commit landed.
-    guard try !git.isAncestor(original, of: currentDefault, at: root) else { return }
+  }
+
+  private func rebase(_ journal: inout DeliveryJournal, onto base: String, paths: [String]) throws
+    -> Bool
+  {
     try cancellation.check()
-    let rebase = try git.run(
-      ["rebase", currentDefault], at: worktree, accepting: [0, 1, 128])
-    if rebase.exitCode != 0 {
-      try abortRebase(at: worktree)
+    guard let pinned = try verifiedWorktree(journal) else {
+      throw DeliveryFailure(reason: .worktreeUnrecognized, detail: "Delivery worktree is missing.")
+    }
+    let worktree = URL(fileURLWithPath: journal.worktree)
+    let original = journal.commit!
+    var failure: DeliveryFailure?
+    do {
+      let result = try pinned.run(["rebase", base], at: worktree, accepting: [0, 1, 128])
+      if result.exitCode != 0 {
+        failure = DeliveryFailure(
+          reason: .gitFailed, detail: "Rebase command failed.",
+          exitCode: result.exitCode, stderr: result.stderr)
+      }
+    } catch {
+      failure =
+        (error as? DeliveryFailure)
+        ?? DeliveryFailure(
+          reason: .gitFailed,
+          detail: boundedDeliveryText(error.localizedDescription))
+    }
+    if rebaseDirectory(journal) != nil {
+      try abortRebase(journal)
       guard try git.revision("refs/heads/\(journal.branch)", at: root) == original else {
         throw DeliveryFailure(
           reason: .gitFailed, detail: "Rebase abort did not restore the saved commit.")
       }
-      journal.state = .committed
       journal.reason = .rebaseConflict
-      return
+      return false
     }
-    journal.commit = try git.revision("HEAD", at: worktree)
+    // A runner can fail after Git has finished rewriting the branch. Its actual tip owns the outcome.
+    guard let actual = try git.revision("refs/heads/\(journal.branch)", at: root) else {
+      throw DeliveryFailure(reason: .gitFailed, detail: "Delivery branch disappeared after rebase.")
+    }
+    journal.commit = actual
+    let valid = try verifyPaths(&journal, base: base, paths: paths)
+    if valid, let failure { journal.reason = failure.reason }
     do { try io.write(journal, to: journals) } catch {
-      journal.state = .committed
       journal.reason = .journalFailed
-      return
+      return false
     }
-    guard try verifyPaths(&journal, base: currentDefault, paths: paths) else { return }
-    try cancellation.check()
-    try requireMainBranch(scope.defaultBranch)
-    try git.run(
-      ["merge", "--ff-only", "--no-squash", "--no-edit", journal.commit!], at: main,
-      accepting: [0, 1, 128])
-    journal.merged = try git.revision("HEAD", at: main) == journal.commit
-    journal.state = journal.merged ? .merged : .committed
-    journal.reason = journal.merged ? nil : .notFastForward
+    return valid && failure == nil
   }
 
   private func verifyPaths(_ journal: inout DeliveryJournal, base: String, paths: [String]) throws
@@ -162,7 +212,10 @@ extension DeliveryRepository {
     return true
   }
 
-  private func edit(_ request: DeliveryRequest, in worktree: URL) throws -> [DeliveryFile] {
+  func edit(_ request: DeliveryRequest, journal: inout DeliveryJournal, git pinned: DeliveryGit)
+    throws -> [DeliveryFile]
+  {
+    let worktree = URL(fileURLWithPath: journal.worktree)
     struct EditedFile {
       var content: String
       var created: Bool
@@ -216,7 +269,21 @@ extension DeliveryRepository {
           content: content.replacingCharacters(in: range, with: new),
           created: previous?.created ?? false, ranges: ranges)
       }
-      try Data(expected[edit.path]!.content.utf8).write(to: url)
+      let written = Data(expected[edit.path]!.content.utf8)
+      var changes = journal.changes ?? []
+      if let index = changes.firstIndex(where: { $0.path == edit.path }) {
+        changes[index].written = written
+      } else {
+        let index = try pinned.run(
+          ["--no-optional-locks", "ls-files", "--stage", "-z", "--", edit.path], at: worktree
+        ).stdout
+        changes.append(
+          .init(
+            path: edit.path, original: try? Data(contentsOf: url), written: written, index: index))
+      }
+      journal.changes = changes
+      try io.write(journal, to: journals)
+      try written.write(to: url)
     }
     return try request.paths.map { path in
       let url = try Self.checkedPath(path, inside: worktree)

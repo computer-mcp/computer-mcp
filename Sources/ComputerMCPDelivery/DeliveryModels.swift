@@ -53,6 +53,7 @@ internal struct DeliveryResult: Codable, Sendable {
   var commit: String?
   var branch: String?
   var reason: DeliveryReason?
+  var message: String?
   var files: [DeliveryFile] = []
 
   func envelope(failure: DeliveryFailure? = nil) throws -> JSONValue {

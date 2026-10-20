@@ -97,6 +97,17 @@ let neutralTargets: [Target] =
         "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPToolsSystem",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsSystemTests",
+      dependencies: [
+        "ComputerMCPToolsSystem", "ComputerMCPToolKit", "ComputerMCPCore",
+        "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPTestSupport",
+      ]),
+    .target(
       name: "ComputerMCPToolsStructured",
       dependencies: [
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -391,6 +402,12 @@ let neutralTargets: [Target] =
         dependencies: [
           "ComputerMCPToolsWorkspace", "ComputerMCPToolKit", "ComputerMCPCore",
           "ComputerMCPPlatform",
+          "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+        ]),
+      .testTarget(
+        name: "ComputerMCPToolsSystemDarwinTests",
+        dependencies: [
+          "ComputerMCPToolsSystem", "ComputerMCPToolKit", "ComputerMCPCore",
           "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ]),
       .testTarget(

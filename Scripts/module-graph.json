@@ -112,7 +112,8 @@
     "computer-mcp",
     "ComputerMCPToolsStructuredDarwinTests",
     "ComputerMCPToolsFilesDarwinTests",
-    "ComputerMCPToolsWorkspaceDarwinTests"
+    "ComputerMCPToolsWorkspaceDarwinTests",
+    "ComputerMCPToolsSystemDarwinTests"
   ],
   "macos_imports": [
     "AVFoundation",

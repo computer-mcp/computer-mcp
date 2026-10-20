@@ -115,12 +115,13 @@ above them and supplied by the composition root:
 | `HTTPOriginLifecycle` | `Tunnels` | `GatewayHTTPRuntime` in Cloudflare runtime state |
 | `OpenAITunnelHTTPProxyResolving` | `Tunnels` | system proxy lookup in tunnel supervision; `PlatformDarwin` reads system settings and `MacOS` supplies the conformance that parses them in `Tunnels` |
 | Control error classification | `Gateway` | control-plane error types in the HTTP adapter and control responses |
+| `AuditErrorClassifying` | `Core` | concrete Computer Use error checks in gateway audit classification; errors supply an optional audit decision and code |
 | Client control | `Gateway` | `GatewayClientControl` in the HTTP client registry |
 | `SecretStore` | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |
 | Workspace grant store | `Platform` | `WorkspaceBookmarkService` in gateway and control plane |
 | Login item controller | `Platform` | the `SMAppService` controller in the control plane |
 | Distribution environment | `Platform` | the App distribution environment in control-plane storage |
-| Computer Use provider and permission status | `Core`, `Platform` | direct Computer Use references in the gateway and control plane; the composition root registers the provider |
+| `GatewayToolProvider` and `ComputerUsePermissionReading` | `Core`, `Platform` | the composition root registers the Computer Use provider and injects its service for control-plane permission snapshots |
 | Archive extractor | `Platform` | the `libarchive`-based extractor, which moves to `PlatformDarwin`; archive limits, errors, staging directories and directory identity become `Platform` values |
 | Directory identity capture and private staging | `Platform` | descriptor-anchored private directory creation/recovery, identity capture/matching and exclusive rename; implemented in `PlatformDarwin`, including birth time and volume UUID |
 | Application locator | `Platform` | Launch Services application lookup in plugin dependency resolution |

@@ -44,8 +44,8 @@ package product and does not install or bundle vendor binaries.
 | Path | Role |
 | --- | --- |
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
-| `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
-| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, workspace opening and native system readings |
+| `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors, audit error classification and the session authority interface |
+| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
@@ -63,10 +63,11 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
 | `Sources/ComputerMCPPlugins/` | Platform-neutral plugin manifests, bundled inventory and distribution, catalogs, installation/recovery, contribution resolution, archive preparation and the injected plugin state store contract |
+| `Sources/ComputerMCPComputerUse/` | macOS Computer Use provider, observation and action service, native Accessibility and screen capture adapter, and permission readings |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCP/` | Shared target for the gateway, providers, persistence, tunnel administration, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
-| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
+| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, Computer Use permission readings, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
@@ -100,6 +101,20 @@ native macOS tools. Each catalog generation creates a `ConfiguredMCPToolProvider
 with validated configured and reexported downstream bindings, and loads CLI tree
 providers from their immutable definitions. `MCPTool` and `DownstreamMCPClient`
 own the downstream definition values and client contract.
+
+`ComputerMCPComputerUse` depends only on `ComputerMCPCore` and
+`ComputerMCPPlatform`. `MacOSToolProviders` registers its `ComputerUseGatewayProvider`
+through Core's `GatewayToolProvider` contract. Its errors implement
+`AuditErrorClassifying` in Core: permission failures classify as denied, other
+provider failures as failed, and each classification uses the error's own code.
+The protocol permits nil for errors whose classification belongs to the caller.
+
+`ComputerUseService` implements Platform's `ComputerUsePermissionReading` protocol.
+The live control-plane factory injects the service into `AppControlPlaneService`
+for non-prompting permission snapshots. The App reads tool counts directly from
+`SkillsToolProvider` and `ComputerUseGatewayProvider`.
+`ComputerMCPComputerUseTests` covers the service and provider on macOS; audit
+integration with `GatewayRuntime` remains in `ComputerMCPTests`.
 
 `StructuredToolProvider` owns the shared Markdown and structured parsing operations
 used by Skills. `MediaInspector` returns neutral, bounded metadata and PDF text;

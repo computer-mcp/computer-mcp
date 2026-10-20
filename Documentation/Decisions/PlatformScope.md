@@ -17,8 +17,11 @@ without restructuring the core:
   future Linux host: process groups and signals, Unix-domain sockets and peer
   credentials, file locks and path resolution.
 - `ComputerMCPPlatformDarwin` holds macOS implementations: Keychain, security
-  bookmarks, Launch Services, TCC and Accessibility probes, login items, Finder
+  bookmarks, Launch Services, login items, Finder
   and media frameworks, and the system, network and macOS command probes.
+- `ComputerMCPComputerUse` holds the native Computer Use provider, Accessibility
+  and screen capture operations, and non-prompting TCC permission readings. Its
+  service implements the permission-reading protocol defined in `ComputerMCPPlatform`.
 - The macOS composition root assembles these implementations for the App and the
   CLI.
 

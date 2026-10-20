@@ -30,6 +30,7 @@ internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
   }
 
   internal func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    try Task.checkCancellation()
     guard let definition = toolDefinitions.first(where: { $0.tool.name == invocation.name }) else {
       throw GatewayToolError.unknownTool(invocation.name)
     }
@@ -152,13 +153,9 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     changes.finish()
   }
 
-  internal convenience init(registry: GatewayToolRegistry) throws {
-    try self.init(registry: registry, additionalProviders: [])
-  }
-
   internal convenience init(
     registry: GatewayToolRegistry,
-    additionalProviders: [any GatewayToolProvider],
+    additionalProviders: @escaping @Sendable () throws -> [any GatewayToolProvider] = { [] },
     reservedToolNames: Set<String> = [],
     retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false }
   ) throws {
@@ -166,11 +163,25 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
       source: {
         // The host catalog is built independently of any caller invocation.
         let definitions = try registry.definitions(context: .empty)
-        return GatewayToolDomain.allCases.map { domain in
-          GatewayDomainToolProvider(
-            id: domain.rawValue, registry: registry,
-            definitions: definitions.filter { GatewayToolDomain.classify($0.tool.name) == domain })
-        } + (try registry.cliTreeProviders()) + additionalProviders
+        let providers =
+          GatewayToolDomain.allCases.compactMap { domain -> (any GatewayToolProvider)? in
+            let definitions = definitions.filter {
+              GatewayToolDomain.classify($0.tool.name) == domain
+            }
+            guard !definitions.isEmpty else { return nil }
+            return GatewayDomainToolProvider(
+              id: domain.rawValue, registry: registry, definitions: definitions)
+          } + (try additionalProviders())
+        // Provider IDs define the host catalog order; extra providers retain their source order.
+        let order = Dictionary(
+          uniqueKeysWithValues: GatewayToolDomain.allCases.enumerated().map {
+            ($0.element.rawValue, $0.offset)
+          })
+        return providers.enumerated().sorted {
+          let left = order[$0.element.id] ?? order.count
+          let right = order[$1.element.id] ?? order.count
+          return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
       },
       invalidations: registry.toolChanges(context: .empty),
       refreshInterval: registry.hasReexportedMCPServers || registry.hasCLITrees

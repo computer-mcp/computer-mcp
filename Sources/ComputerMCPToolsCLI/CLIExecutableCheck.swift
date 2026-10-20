@@ -1,5 +1,5 @@
 import ComputerMCPProcess
-import CryptoKit
+import Crypto
 import Foundation
 
 /// A publisher-declared compatibility assertion, executed only within an authorized

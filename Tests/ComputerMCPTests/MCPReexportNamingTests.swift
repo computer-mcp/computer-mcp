@@ -1,5 +1,10 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPToolsCLI
+import ComputerMCPToolsGit
+import ComputerMCPToolsShell
 import Foundation
 import Testing
 
@@ -187,13 +192,25 @@ struct MCPReexportNamingTests {
     }
   }
 
-  @Test
-  func nativeNamesCannotShadowBuiltins() throws {
+  @Test(arguments: ["cli.list", "git.status", "shell.run", "process.list"])
+  func nativeNamesCannotShadowBuiltins(name: String) throws {
     let configuration = GatewayConfiguration.fixture(
-      mcp: .init(servers: [Self.server("first", prefix: "")]))
+      mcp: .init(servers: [Self.server("first", prefix: "")]),
+      policy: .init(shellEnabled: true), builtin: .init(enabled: ["git.status"]))
+    let environment = ToolEnvironment(configuration: configuration)
     let registry = GatewayToolRegistry(
-      configuration: configuration, mcpClient: ReexportNamingClient(["first": ["cli.list"]]))
-    #expect(throws: (any Error).self) { _ = try registry.listTools(context: .empty) }
+      toolEnvironment: environment, mcpClient: ReexportNamingClient(["first": [name]]))
+    #expect(throws: (any Error).self) {
+      _ = try GatewayProviderRouter(
+        registry: registry,
+        additionalProviders: {
+          [
+            CLIToolProvider(environment: environment), GitToolProvider(environment: environment),
+            ShellToolProvider(environment: environment),
+            ProcessToolProvider(environment: environment),
+          ]
+        })
+    }
   }
 
   @Test(arguments: [false, true])
@@ -262,7 +279,7 @@ struct MCPReexportNamingTests {
       configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")])),
       mcpClient: client)
     let router = try GatewayProviderRouter(
-      registry: registry, additionalProviders: [], reservedToolNames: ["workspace.list"])
+      registry: registry, additionalProviders: { [] }, reservedToolNames: ["workspace.list"])
     do {
       client.replace("first", names: ["workspace.list"])
       await #expect(throws: GatewayProviderRouterError.duplicateTool("workspace.list")) {

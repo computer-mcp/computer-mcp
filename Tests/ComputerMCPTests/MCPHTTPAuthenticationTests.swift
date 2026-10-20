@@ -10,6 +10,7 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPProcess
+@testable import ComputerMCPToolsCLI
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPAuthenticationTests {

@@ -189,13 +189,10 @@
     "^GatewayHTTPRuntime": "ComputerMCPGateway",
     "^ComputerUse": "ComputerMCPComputerUse",
     "^GatewayToolRegistry\\+Skills": "ComputerMCPToolsSkills",
-    "^GatewayToolRegistry\\+Git": "ComputerMCPToolsGit",
     "^GatewayToolRegistry\\+(System|Network|MacOS)": "ComputerMCPToolsSystem",
     "^GatewayToolRegistry\\+(StructuredData|Markdown|Media)": "ComputerMCPToolsStructured",
     "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
     "^GatewayToolRegistry\\+(Workspace|WorkspaceInventory)\\.swift|^Workspace(Deduplication|ConfigurationChange)": "ComputerMCPToolsWorkspace",
-    "^GatewayToolRegistry\\+(Shell|Process)": "ComputerMCPToolsShell",
-    "^GatewayToolRegistry\\+CLI|^CLI(Tree|ArgumentEncoder|ValueValidation|Executable|ProcessExecution)": "ComputerMCPToolsCLI",
     "^MCPRegistration": "ComputerMCPControlPlane",
     "^MCPRuntimeAdapter": "ComputerMCPGateway",
     "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
@@ -243,11 +240,6 @@
     "BuiltinToolCatalogSnapshotTests.swift": "ComputerMCPGatewayTests",
     "BundledPluginDistributionTests.swift": "ComputerMCPPluginsTests",
     "BundledPluginsTests.swift": "ComputerMCPPluginsTests",
-    "CLIExecutableCheckTests.swift": "ComputerMCPToolsCLITests",
-    "CLIExecutionContextTests.swift": "ComputerMCPGatewayTests",
-    "CLIParameterMappingTests.swift": "ComputerMCPToolsCLITests",
-    "CLITreeTests.swift": "ComputerMCPToolsCLITests",
-    "CLITreeValidationTests.swift": "ComputerMCPToolsCLITests",
     "CloudflareTunnelTests.swift": "ComputerMCPControlPlaneTests",
     "CombinedPluginWorkflowTests.swift": "ComputerMCPPluginsTests",
     "ComputerUseGatewayProviderTests.swift": "ComputerMCPComputerUseTests",
@@ -330,8 +322,9 @@
     "StandaloneToolCommandTests.swift": "ComputerMCPControlPlaneTests",
     "StaticPluginCatalogHTTPTests.swift": "ComputerMCPPluginsTests",
     "StaticPluginCatalogTests.swift": "ComputerMCPPluginsTests",
-    "TestFixtures.swift": "ComputerMCPGatewayTests",
     "VerificationScriptDependencyTests.swift": "ComputerMCPControlPlaneTests",
-    "WorkspaceRepairTests.swift": "ComputerMCPGatewayTests"
+    "WorkspaceRepairTests.swift": "ComputerMCPGatewayTests",
+    "CLITreeGatewayTests.swift": "ComputerMCPGatewayTests",
+    "CLIExecutableCheckGatewayTests.swift": "ComputerMCPGatewayTests"
   }
 }

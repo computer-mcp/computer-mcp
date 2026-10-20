@@ -21,9 +21,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   internal let commandRunner: CommandRunning
 
-  internal let processManager: ProcessManaging
-
-  internal let shellManager: ShellManaging
+  private let shellManager: ShellManaging
 
   internal let mcpClient: DownstreamMCPClient
 
@@ -31,7 +29,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   internal let registeredCommands: RegisteredCommands
 
-  package init(
+  package convenience init(
     configuration: GatewayConfiguration,
     commandRunner: CommandRunning? = nil,
     processManager: ProcessManaging = ManagedProcessRegistry(),
@@ -40,25 +38,32 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     hostContext: MCPHostContext? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
+    self.init(
+      toolEnvironment: ToolEnvironment(
+        configuration: configuration, commandRunner: commandRunner,
+        processManager: processManager, shellManager: shellManager, environment: environment),
+      mcpClient: mcpClient, hostContext: hostContext)
+  }
+
+  package init(
+    toolEnvironment: ToolEnvironment,
+    mcpClient: DownstreamMCPClient = MCPProxyClient(),
+    hostContext: MCPHostContext? = nil
+  ) {
+    let configuration = toolEnvironment.configuration
     var enabledConfiguration = configuration
     let disabledMCPIDs = Set(configuration.mcp.servers.filter { !$0.enabled }.map(\.id))
     enabledConfiguration.mcp.servers.removeAll { !$0.enabled }
     enabledConfiguration.tools.removeAll { disabledMCPIDs.contains($0.source) }
     self.configuration = enabledConfiguration
-    let toolMeta: JSONValue? =
-      enabledConfiguration.server.http.accessTokenEnv == nil
-      ? .object(["securitySchemes": .array([.object(["type": .string("noauth")])])]) : nil
-    self.workspaceScope = WorkspaceScope(configuration: enabledConfiguration, toolMeta: toolMeta)
-    let commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
-    self.commandRunner = commandRunner
-    self.registeredCommands = RegisteredCommands(
-      configuration: enabledConfiguration, commandRunner: commandRunner, environment: environment)
-    self.processManager = processManager
-    self.shellManager = shellManager
+    self.workspaceScope = toolEnvironment.workspaceScope
+    self.commandRunner = toolEnvironment.commandRunner
+    self.registeredCommands = toolEnvironment.registeredCommands
+    self.shellManager = toolEnvironment.shellManager
+    self.environment = toolEnvironment.environment
     self.mcpClient = mcpClient.makeScopedClient(
-      workingDirectory: configuration.workspaceDirectory, environment: environment,
+      workingDirectory: configuration.workspaceDirectory, environment: toolEnvironment.environment,
       hostContext: hostContext)
-    self.environment = environment
   }
 
   internal var hasReexportedMCPServers: Bool {
@@ -66,22 +71,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   internal var hasCLITrees: Bool { configuration.cli.commands.contains { $0.tree != nil } }
-
-  internal func cliTreeProviders() throws -> [any GatewayToolProvider] {
-    try configuration.cli.commands.compactMap { command in
-      guard let source = command.tree else { return nil }
-      var command = command
-      command.env = environment.merging(command.env) { _, value in value }
-      let tree = try source.load(
-        command: command, workspace: configuration.workspaceDirectory,
-        execution: registeredCommands.execution)
-      return CLITreeToolProvider(
-        registration: command, tree: tree, workspace: configuration.workspaceDirectory,
-        execution: registeredCommands.execution,
-        timeoutMilliseconds: command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs,
-        maxOutputBytes: configuration.policy.maxOutputBytes)
-    }
-  }
 
   package func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
     mcpClient.toolChanges()
@@ -118,10 +107,8 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   private func discoverDefinitions() throws -> [ToolDefinition] {
     let context = InvocationContext.empty
     var definitions = Self.gatewayDefinitions(
-      shellEnabled: configuration.policy.shellEnabled,
       builtins: Set(configuration.builtin.enabled),
       skillsEnabled: configuration.skills.enabled,
-      hasCLIProviders: !configuration.cli.commands.isEmpty,
       hasMCPProviders: !configuration.mcp.servers.isEmpty,
       toolMeta: workspaceScope.toolMeta
     )
@@ -169,26 +156,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     let object = arguments?.objectValue ?? [:]
 
     switch name {
-    case "cli.list":
-      try requireCLIProviders()
-      return try textResult(cliList())
-
-    case "cli.describe":
-      try requireCLIProviders()
-      return try textResult(cliDescribe(arguments: object))
-
-    case "cli.status":
-      try requireCLIProviders()
-      return try textResult(cliStatus(arguments: object))
-
-    case "cli.help":
-      try requireCLIProviders()
-      return try textResult(runCLIHelp(arguments: object))
-
-    case "cli.exec":
-      try requireCLIProviders()
-      return try textResult(runCLIExec(arguments: object))
-
     case "mcp.servers.list":
       try requireMCPProviders()
       return try textResult(mcpServerList(context: context))
@@ -259,22 +226,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
           server: mcpServer(requiredString("server", in: object), context: context),
           context: context))
 
-    case "process.spawn":
-      try requireCLIProviders()
-      return try textResult(spawnProcess(arguments: object))
-
-    case "process.list":
-      try requireCLIProviders()
-      return try textResult(listProcesses())
-
-    case "process.read":
-      try requireCLIProviders()
-      return try textResult(readProcess(arguments: object))
-
-    case "process.cancel":
-      try requireCLIProviders()
-      return try textResult(cancelProcess(arguments: object))
-
     case "skills.roots":
       try requireSkillsEnabled()
       return try textResult(skillsRoots())
@@ -342,30 +293,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     case "skills.search_files":
       try requireSkillsEnabled()
       return try textResult(skillsSearchFiles(arguments: object))
-
-    case "shell.run":
-      try requireShellEnabled()
-      return try textResult(runShell(arguments: object))
-
-    case "shell.spawn":
-      try requireShellEnabled()
-      return try textResult(spawnShell(arguments: object))
-
-    case "shell.list":
-      try requireShellEnabled()
-      return try textResult(listShellSessions(arguments: object))
-
-    case "shell.read":
-      try requireShellEnabled()
-      return try textResult(readShellSession(arguments: object))
-
-    case "shell.write":
-      try requireShellEnabled()
-      return try textResult(writeShellSession(arguments: object))
-
-    case "shell.cancel":
-      try requireShellEnabled()
-      return try textResult(cancelShellSession(arguments: object))
 
     case "workspace.info":
       try requireBuiltinEnabled(name)
@@ -950,186 +877,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     case "workspace.reveal":
       try requireBuiltinEnabled(name)
       return try textResult(revealWorkspacePath(arguments: object))
-
-    case "git.root":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitRoot(arguments: object))
-
-    case "git.config":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitConfig(arguments: object))
-
-    case "git.remotes":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitRemotes(arguments: object))
-
-    case "git.worktrees":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitWorktrees(arguments: object))
-
-    case "git.stashes":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitStashes(arguments: object))
-
-    case "git.stash_show":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitStashShow(arguments: object))
-
-    case "git.stash_push":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitStashPush(arguments: object))
-
-    case "git.tags":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitTags(arguments: object))
-
-    case "git.tag_show":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitTagShow(arguments: object))
-
-    case "git.tag_create":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitTagCreate(arguments: object))
-
-    case "git.tag_delete":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitTagDelete(arguments: object))
-
-    case "git.ignored":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitIgnored(arguments: object))
-
-    case "git.submodules":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitSubmodules(arguments: object))
-
-    case "git.files":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitFiles(arguments: object))
-
-    case "git.grep":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitGrep(arguments: object))
-
-    case "git.blame":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitBlame(arguments: object))
-
-    case "git.file_history":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitFileHistory(arguments: object))
-
-    case "git.file_at_revision":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitFileAtRevision(arguments: object))
-
-    case "git.staged_file":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitStagedFile(arguments: object))
-
-    case "git.conflicts":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitConflicts(arguments: object))
-
-    case "git.status":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitStatus(arguments: object))
-
-    case "git.tracking_status":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitTrackingStatus(arguments: object))
-
-    case "git.clean_preview":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitCleanPreview(arguments: object))
-
-    case "git.clean":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitClean(arguments: object))
-
-    case "git.reflog":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitReflog(arguments: object))
-
-    case "git.refs":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitRefs(arguments: object))
-
-    case "git.resolve_ref":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitResolveRef(arguments: object))
-
-    case "git.merge_base":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitMergeBase(arguments: object))
-
-    case "git.compare_refs":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitCompareRefs(arguments: object))
-
-    case "git.is_ancestor":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitIsAncestor(arguments: object))
-
-    case "git.diff":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitDiff(arguments: object))
-
-    case "git.diff_summary":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitDiffSummary(arguments: object))
-
-    case "git.diff_check":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitDiffCheck(arguments: object))
-
-    case "git.branch":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitBranch(arguments: object))
-
-    case "git.branch_create":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitBranchCreate(arguments: object))
-
-    case "git.branch_delete":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitBranchDelete(arguments: object))
-
-    case "git.branch_rename":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitBranchRename(arguments: object))
-
-    case "git.branch_switch":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitBranchSwitch(arguments: object))
-
-    case "git.log":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitLog(arguments: object))
-
-    case "git.commit_files":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitCommitFiles(arguments: object))
-
-    case "git.show":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitShow(arguments: object))
-
-    case "git.add":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitAdd(arguments: object))
-
-    case "git.unstage":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitUnstage(arguments: object))
-
-    case "git.restore_worktree":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitRestoreWorktree(arguments: object))
-
-    case "git.commit":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitCommit(arguments: object))
 
     default:
       throw GatewayToolError.unknownTool(name)

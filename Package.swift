@@ -68,6 +68,45 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPToolsGit",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsGitTests",
+      dependencies: [
+        "ComputerMCPToolsGit", "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration",
+        "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+        "ComputerMCPTestSupport",
+      ]),
+    .target(
+      name: "ComputerMCPToolsCLI",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
+        "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        .product(name: "Crypto", package: "swift-crypto"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsCLITests",
+      dependencies: [
+        "ComputerMCPToolsCLI", "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration",
+        "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+        "ComputerMCPTestSupport", .product(name: "Crypto", package: "swift-crypto"),
+      ]),
+    .target(
+      name: "ComputerMCPToolsShell",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
+        "ComputerMCPPlatform",
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsShellTests",
+      dependencies: [
+        "ComputerMCPToolsShell", "ComputerMCPToolKit", "ComputerMCPCore",
+        "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        "ComputerMCPProcess", "ComputerMCPTestSupport",
+      ]),
+    .target(
       name: "ComputerMCPTransport",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -206,11 +245,14 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCPMacOS",
         dependencies: [
+          "ComputerMCPToolsShell",
+          "ComputerMCPToolsCLI",
+          "ComputerMCPToolsGit",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
-          "ComputerMCPTunnels",
+          "ComputerMCPTunnels", "ComputerMCPToolKit",
         ]
       ),
       .target(
@@ -243,6 +285,7 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "computer-mcp",
         dependencies: [
+          "ComputerMCPToolsCLI",
           "ComputerMCP",
           "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
@@ -278,6 +321,9 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPTests",
         dependencies: [
+          "ComputerMCPToolsShell",
+          "ComputerMCPToolsCLI",
+          "ComputerMCPToolsGit",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",

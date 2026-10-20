@@ -1,9 +1,7 @@
-import ComputerMCP
-
-@testable import ComputerMCPConfiguration
+import ComputerMCPConfiguration
 
 extension GatewayConfiguration {
-  static func fixture(
+  package static func fixture(
     server: ServerConfig = ServerConfig(),
     cli: CLISectionConfig = CLISectionConfig(commands: [
       CLICommandConfig(id: "echo", executable: "/bin/echo")

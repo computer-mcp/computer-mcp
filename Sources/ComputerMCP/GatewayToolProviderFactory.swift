@@ -6,6 +6,7 @@ import ComputerMCPProcess
 
 package protocol GatewayToolProviderFactory: Sendable {
   /// Creates workspace-owned providers whose routing and shutdown belong to the runtime.
+  /// The provider source is reevaluated for each catalog generation and may fail discovery.
   func makeProviders(
     configuration: GatewayConfiguration,
     commandRunner: any CommandRunning,
@@ -13,5 +14,8 @@ package protocol GatewayToolProviderFactory: Sendable {
     shellManager: any ShellManaging,
     mcpClient: any DownstreamMCPClient,
     hostContext: MCPHostContext
-  ) -> (registry: GatewayToolRegistry, additionalProviders: [any GatewayToolProvider])
+  ) -> (
+    registry: GatewayToolRegistry,
+    additionalProviders: @Sendable () throws -> [any GatewayToolProvider]
+  )
 }

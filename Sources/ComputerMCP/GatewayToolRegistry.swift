@@ -1114,7 +1114,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       }
       // Membership and routing come from the validated discovered definition,
       // including explicitly preserved native names, not a prefix guess.
-      if let definition = try listTools().first(where: { $0.name == name }),
+      if let definition = try listTools(context: context).first(where: { $0.name == name }),
         definition.mcpReference != nil
       {
         return try callTool(definition: definition, arguments: arguments, context: context)
@@ -1146,7 +1146,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func callConfiguredTool(
-    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext = .empty
+    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext
   )
     throws -> JSONValue
   {
@@ -1157,7 +1157,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   private func callConfiguredMCPTool(
-    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext = .empty
+    _ tool: ToolConfig, arguments object: [String: JSONValue], context: InvocationContext
   )
     throws -> JSONValue
   {
@@ -1198,7 +1198,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   internal func downstreamPolicy(
-    for reference: MCPToolReference, context: InvocationContext = .empty
+    for reference: MCPToolReference, context: InvocationContext
   ) throws -> MCPToolAdmissionPolicy {
     let server = try mcpServer(reference.serverID, context: context)
     try requireDownstreamToolAllowed(reference.toolName, server: server)
@@ -1217,7 +1217,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   internal func callTool(
-    definition: MCPTool, arguments: JSONValue?, context: InvocationContext = .empty
+    definition: MCPTool, arguments: JSONValue?, context: InvocationContext
   ) throws -> JSONValue {
     guard let reference = definition.mcpReference else {
       return try callTool(name: definition.name, arguments: arguments, context: context)
@@ -1230,7 +1230,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   internal func callToolAsync(
-    definition: MCPTool, arguments: JSONValue?, context: InvocationContext = .empty
+    definition: MCPTool, arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
     try Task.checkCancellation()
     if let reference = definition.mcpReference {

@@ -178,6 +178,47 @@ struct MCPProviderWorkNativeTests {
   }
 
   @Test
+  func directRegistryReexportCannotStartAnUnavailableSelectedConnection() async throws {
+    try await withProvider { client, original, _ in
+      var server = original
+      server.exposure = .reexport
+      server.prefix = "fixture"
+      server.allowedTools = ["inspect"]
+      server.toolRisks = ["inspect": .readOnly]
+      let script = try #require(server.args.first)
+      let root = URL(fileURLWithPath: script).deletingLastPathComponent()
+      let registry = GatewayToolRegistry(
+        configuration: .init(mcp: .init(servers: [server]), workspaceDirectory: root),
+        mcpClient: client)
+      let selected = MCPContinuationTarget(
+        workspaceID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
+        connectionID: UUID(), instanceID: UUID(), resources: [:])
+      let context = InvocationContext(continuation: selected)
+      let blocking = BlockingOperationExecutor(label: "registry-selected-connection-test")
+      do {
+        do {
+          _ = try await blocking.perform {
+            try registry.callTool(
+              name: "fixture.inspect", arguments: .object([:]), context: context)
+          }
+          Issue.record("Registry discovery accepted an unavailable selected connection.")
+        } catch {
+          #expect(error.localizedDescription.contains("mcp.continuation_unavailable"))
+        }
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("starts").path))
+        #expect(
+          try registry.mcpClient.connectionStatus(server: server, context: .empty).objectValue?[
+            "state"]
+            == .string("not_started"))
+        await registry.shutdown()
+      } catch {
+        await registry.shutdown()
+        throw error
+      }
+    }
+  }
+
+  @Test
   func missingSelectedConnectionCannotStartOrReplaceAProvider() async throws {
     try await withProvider { client, server, work in
       let started = try await call(client, server, "start")

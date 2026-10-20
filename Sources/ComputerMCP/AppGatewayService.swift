@@ -850,7 +850,7 @@ package actor AppGatewayService {
           )
         }) {
           let invocationContext = InvocationContext(
-            session: context.session, continuation: selection.target)
+            session: context.session, continuation: context.continuation ?? selection.target)
           if envelope {
             return try await selection.gateway.callToolForMCPAsync(
               name: name, arguments: scopedArguments, context: invocationContext)

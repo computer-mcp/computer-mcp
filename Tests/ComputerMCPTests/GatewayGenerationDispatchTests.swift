@@ -14,6 +14,54 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
+  @Test(arguments: [false, true])
+  func managedDispatchKeepsAnExplicitContinuation(cachedOwner: Bool) async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
+    let source = try await fixture.service.makeHTTPSessions(
+      profileID: .chatGPTOperate, trace: .init(transport: "http"))
+    do {
+      let serving = try await source.makeSession("context-client")
+      let handle = JSONValue.string("selected")
+      _ = try await serving.callToolAsync(
+        name: cachedOwner ? "fixture.start" : "fixture.identity",
+        arguments: .object(["handle": handle]))
+      if cachedOwner {
+        let deadline = ContinuousClock.now + .seconds(5)
+        var acquired = false
+        repeat {
+          let result = try await serving.callToolAsync(
+            name: "runtime.owners.list", arguments: .object(["workspace_id": .string("fixture")]))
+          acquired =
+            result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
+              "owners"]?
+            .arrayValue?.contains { $0.objectValue?["kind"] == .string("mcpResource") } == true
+          if !acquired { try await Task.sleep(for: .milliseconds(10)) }
+        } while !acquired && ContinuousClock.now < deadline
+        try #require(acquired)
+      }
+      let calls = try fixture.calls()
+      let starts = try fixture.pids()
+      let selected = MCPContinuationTarget(
+        workspaceID: "fixture", reference: .init(serverID: "fixture", toolName: "inspect"),
+        connectionID: UUID(), instanceID: UUID(), resources: [:])
+      let result = try await serving.callToolForMCPAsync(
+        name: "fixture.inspect",
+        arguments: .object(["workspace_id": .string("fixture"), "handle": handle]),
+        context: .init(continuation: selected))
+      #expect(result.objectValue?["isError"] == .bool(true))
+      #expect(String(describing: result).contains("mcp.continuation_unavailable"))
+      #expect(try fixture.calls() == calls)
+      #expect(try fixture.pids() == starts)
+      await source.shutdown()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
+    } catch {
+      await source.shutdown()
+      throw error
+    }
+  }
+
   @Test
   func ownerConsentPreservesAnUnadmittedExternalManifestEdit() async throws {
     let fixture = try GenerationFixture()

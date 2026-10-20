@@ -203,7 +203,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   }
 
   internal func downstreamPolicy(
-    for reference: MCPToolReference, context: InvocationContext = .empty
+    for reference: MCPToolReference, context: InvocationContext
   ) throws -> MCPToolAdmissionPolicy {
     guard let mcpPolicyResolver else { throw GatewayToolError.unknownTool(reference.toolName) }
     return try mcpPolicyResolver(reference, context)
@@ -242,7 +242,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
 
   private func route(
     named name: String, expectedCapability: CapabilityDescriptor? = nil,
-    context: InvocationContext = .empty
+    context: InvocationContext
   ) throws
     -> GatewayToolCatalogSnapshot.Route
   {

@@ -9,6 +9,108 @@ import Testing
 @testable import ComputerMCPCore
 
 struct GatewayInvocationContextTests {
+  @Test(arguments: [false, true])
+  func standaloneOwnerCallsKeepLiveSessionAndSelectTheOwnedConnection(envelope: Bool) async throws {
+    let fixture = try InvocationFixture(requiresControlSession: true)
+    let serving = GatewayControlSessionServing(base: fixture.runtime, session: fixture.session)
+    let connectionID = UUID()
+    let lease = fixture.runtime.ownedWork.retain(
+      .mcpObservation, workspaceID: "fixture", registrationID: "fixture",
+      resourceID: "observation", connectionID: connectionID)
+    defer { lease.finish() }
+    let owner = GatewayOwnerSelection(
+      runtimeID: fixture.runtime.generationID, workspaceID: "fixture", ownershipID: lease.id)
+    func call(_ tool: String) async throws -> JSONValue {
+      let arguments = JSONValue.object([
+        "workspace_id": .string("fixture"), "owner": owner.json,
+        "tool": .string("mcp.tools.call"), "arguments": .object(fixture.arguments(tool: tool)),
+      ])
+      if envelope {
+        return try await serving.callToolForMCPAsync(
+          name: "runtime.owners.call", arguments: arguments)
+      }
+      return try await serving.callToolAsync(name: "runtime.owners.call", arguments: arguments)
+    }
+    do {
+      #expect(GatewayOwnerRouting.call == nil)
+      _ = try await call("change")
+      try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
+      let result = try await call("inspect")
+      #expect(result.objectValue?["isError"] != .bool(true))
+      let observed = try #require(fixture.client.calls.last)
+      #expect(observed.session === fixture.session)
+      #expect(observed.admission?.reference == .init(serverID: "fixture", toolName: "inspect"))
+      let selected = try #require(observed.continuation as? MCPContinuationTarget)
+      #expect(selected.connectionID == connectionID)
+      #expect(selected.selectedOwnershipID == owner.ownershipID)
+      if envelope {
+        #expect(try await call("change").objectValue?["isError"] == .bool(true))
+      } else {
+        await #expect(throws: (any Error).self) { try await call("change") }
+      }
+      fixture.session.end()
+      if envelope {
+        #expect(try await call("inspect").objectValue?["isError"] == .bool(true))
+      } else {
+        await #expect(throws: (any Error).self) { try await call("inspect") }
+      }
+      #expect(fixture.client.calls.count == 2)
+      await fixture.runtime.shutdown()
+    } catch {
+      await fixture.runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func directRegistryReexportDiscoveryKeepsLiveSessionAndRoute(asynchronous: Bool) async throws {
+    let fixture = try InvocationFixture(reexportTools: true)
+    let configuration = fixture.configuration
+    let grant = configuration.profileGrant(for: .localAdmin)
+    let executionContext = ExecutionContext(
+      caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "context-client")
+    let client = AuthorizedMCPClient(
+      base: fixture.client,
+      policy: .init(configuration: configuration, grant: grant, derivesObserveGrant: false),
+      policyProvider: { session in
+        .init(
+          configuration: configuration,
+          grant: try session?.apply(to: grant, context: executionContext) ?? grant,
+          derivesObserveGrant: false)
+      })
+    let registry = GatewayToolRegistry(configuration: configuration, mcpClient: client)
+    let route = InvocationRouteProbe()
+    let context = InvocationContext(session: fixture.session, continuation: route)
+    let initialDiscoveries = fixture.client.discoveries.count
+    func call(_ tool: String) async throws -> JSONValue {
+      if asynchronous {
+        return try await registry.callToolAsync(
+          name: "fixture." + tool, arguments: .object([:]), context: context)
+      }
+      return try registry.callTool(
+        name: "fixture." + tool, arguments: .object([:]), context: context)
+    }
+    do {
+      try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
+      _ = try await call("inspect")
+      await #expect(throws: (any Error).self) { try await call("change") }
+      let discoveries = fixture.client.discoveries.dropFirst(initialDiscoveries)
+      #expect(!discoveries.isEmpty)
+      #expect(discoveries.allSatisfy { $0.session === fixture.session })
+      #expect(discoveries.allSatisfy { ($0.continuation as? InvocationRouteProbe) === route })
+      fixture.session.end()
+      await #expect(throws: (any Error).self) { try await call("inspect") }
+      #expect(fixture.client.calls.count == 1)
+      #expect(fixture.client.calls.first?.session === fixture.session)
+      await registry.shutdown()
+      await fixture.runtime.shutdown()
+    } catch {
+      await registry.shutdown()
+      await fixture.runtime.shutdown()
+      throw error
+    }
+  }
+
   @Test(arguments: ["sync", "async", "background"])
   func downstreamAdmissionSurvivesExecutionBridges(path: String) async throws {
     let fixture = try InvocationFixture()
@@ -244,6 +346,7 @@ private struct InvocationFixture {
   let workspace: ScopedTemporaryDirectory
   let database: GatewayDatabase
   let client: InvocationClientSpy
+  let configuration: GatewayConfiguration
   let runtime: GatewayRuntime
   let session = GatewayControlSession(
     principalID: "context-client", profileID: .localAdmin, caller: .localMCP)
@@ -258,15 +361,16 @@ private struct InvocationFixture {
     workspace = try ScopedTemporaryDirectory()
     database = try GatewayDatabase(inMemory: ())
     client = InvocationClientSpy()
+    configuration = GatewayConfiguration(
+      runtime: .init(caller: .localMCP, profileID: .localAdmin),
+      profiles: [
+        .init(
+          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
+          allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
+      ],
+      mcp: .init(servers: [server]), workspaceDirectory: workspace.url)
     runtime = try GatewayRuntime(
-      configuration: .init(
-        runtime: .init(caller: .localMCP, profileID: .localAdmin),
-        profiles: [
-          .init(
-            id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
-            allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
-        ],
-        mcp: .init(servers: [server]), workspaceDirectory: workspace.url),
+      configuration: configuration,
       context: .init(
         caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "context-client"),
       database: database,

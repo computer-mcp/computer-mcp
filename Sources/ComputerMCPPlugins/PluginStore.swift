@@ -391,8 +391,9 @@ package actor PluginStore {
     }
     next.revision = expectedRevision + 1
     try next.validate()
+    let commit = try stateStore.prepareCommit()
     try validateSnapshot(next)
-    try await stateStore.commit(next, expectedRevision: expectedRevision, storage: storage)
+    try await commit.commit(next, expectedRevision: expectedRevision, storage: storage)
     return next
   }
 

@@ -19,19 +19,16 @@ struct PluginStoreTests {
     let workspace = RegisteredWorkspace(
       id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
     try database.saveWorkspace(workspace)
-    let store = PluginStore(
-      database: database, platform: MacOSPlatform.services,
-      expectedConfiguration: try database.configurationState(),
-      validateSnapshot: { _ in
-        if change == "workspace" {
-          try concurrent.deleteWorkspace(id: workspace.id)
-        } else {
-          try concurrent.saveProfile(
-            ProfileGrant(
-              id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: [workspace.id],
-              allowedCallers: [.localCLI]))
-        }
-      })
+    let store = PluginStore(database: database, platform: MacOSPlatform.services) { _ in
+      if change == "workspace" {
+        try concurrent.deleteWorkspace(id: workspace.id)
+      } else {
+        try concurrent.saveProfile(
+          ProfileGrant(
+            id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: [workspace.id],
+            allowedCallers: [.localCLI]))
+      }
+    }
     var rejected = false
     do {
       _ = try await store.setEnabled(true, for: "candidate", expectedRevision: 0)

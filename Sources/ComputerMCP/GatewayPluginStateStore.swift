@@ -19,18 +19,11 @@ struct GatewayPluginStateStore: PluginStateStore {
     try database.pluginStoreSnapshot()
   }
 
-  func commit(
-    _ snapshot: PluginStoreSnapshot, expectedRevision: Int64,
-    storage: PluginInstallationStorage?
-  ) async throws {
-    let configuration = try expectedConfiguration ?? database.configurationState()
-    if let publishSnapshot {
-      try await publishSnapshot(snapshot, configuration, storage)
-    } else {
-      try Task.checkCancellation()
-      try database.savePluginStoreSnapshot(
-        snapshot, expectedRevision: expectedRevision, expectedConfiguration: configuration)
-    }
+  func prepareCommit() throws -> any PluginStateCommit {
+    try Commit(
+      database: database,
+      expectedConfiguration: expectedConfiguration ?? database.configurationState(),
+      publishSnapshot: publishSnapshot)
   }
 
   func pluginOwnedDirectories() throws -> [PluginOwnedDirectory] {
@@ -49,6 +42,26 @@ struct GatewayPluginStateStore: PluginStateStore {
     _ identity: PluginDirectoryIdentity, replacing expected: PluginOwnedDirectory
   ) throws -> PluginOwnedDirectory {
     try database.updatePluginDirectoryIdentity(identity, replacing: expected)
+  }
+
+  private struct Commit: PluginStateCommit {
+    let database: GatewayDatabase
+    let expectedConfiguration: GatewayDatabase.ConfigurationState
+    let publishSnapshot: PublishSnapshot?
+
+    func commit(
+      _ snapshot: PluginStoreSnapshot, expectedRevision: Int64,
+      storage: PluginInstallationStorage?
+    ) async throws {
+      if let publishSnapshot {
+        try await publishSnapshot(snapshot, expectedConfiguration, storage)
+      } else {
+        try Task.checkCancellation()
+        try database.savePluginStoreSnapshot(
+          snapshot, expectedRevision: expectedRevision,
+          expectedConfiguration: expectedConfiguration)
+      }
+    }
   }
 }
 

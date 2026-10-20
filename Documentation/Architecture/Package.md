@@ -26,7 +26,7 @@ targets, and CI builds and tests them there.
 | swift-system | `FilePath` for process launches where the System framework is unavailable |
 | GRDB | Transactional App metadata and redacted audit; system SQLite on Linux |
 | swift-log | Runtime logging integration |
-| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore` and `ComputerMCPToolsCLI` targets on macOS and Linux |
+| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI` and `ComputerMCPPlugins` targets on macOS and Linux |
 | macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
 
 `CSystemArchive` is an internal system-library module with the minimal C ABI
@@ -62,10 +62,11 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsMCP/` | Platform-neutral MCP builtin and configured providers, downstream discovery, validated catalogs, host risk descriptors and context-preserving calls |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
+| `Sources/ComputerMCPPlugins/` | Platform-neutral plugin manifests, bundled inventory and distribution, catalogs, installation/recovery, contribution resolution, archive preparation and the injected plugin state store contract |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
-| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction and staging, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
+| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCP/` | Shared target for the gateway, providers, persistence, tunnel administration, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
-| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, executable search directories, file change monitors, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
+| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
@@ -129,6 +130,30 @@ tools. Portable tests inject command paths and native readings.
 
 The neutral domain test targets are included on macOS and Linux; `ComputerMCPToolsStructuredDarwinTests` exercises the real media
 frameworks and their native fixtures on macOS.
+
+`ComputerMCPPlugins` owns `PluginStateStore`, which reads plugin snapshots, commits
+validated revisions and maintains the local directory ownership ledger.
+`GatewayPluginStateStore` in the shared target binds those commits to the expected
+gateway configuration and optional runtime publication; `GatewayDatabase` retains
+its transactions and configuration snapshot. The store validates the next snapshot
+and the host's preflight checks before handing it to that adapter.
+
+`PluginArchiveExtracting`, `PluginArchiveDirectoryFactory`,
+`PluginArchiveStagingDirectory` and `ApplicationBundleLocating` are defined in
+`ComputerMCPPlatform`. Darwin supplies the extractor, descriptor-anchored private
+directories, directory identity capture/matching, exclusive rename and Launch
+Services lookup. `MacOSPlatform.services` injects the directory factory and
+application locator, and the CLI's internal archive command selects the Darwin
+extractor. Archive worker lock-descriptor inheritance is implemented on Darwin;
+the Linux branch fails with `PluginArchiveError.workerFailed` when inheritance is
+requested.
+
+`ComputerMCPPluginsTests` runs neutral catalog, HTTP, manifest and package tests on
+macOS and Linux. `ComputerMCPPluginsDarwinTests` covers native archive handling,
+application lookup and current macOS package activation/compatibility. Plugin tests
+that also exercise the gateway database or runtime remain in `ComputerMCPTests`.
+Their shared fixtures in `ComputerMCPTestSupport` use injected directory services
+and application lookup substitutes.
 
 The release scripts assemble the SwiftPM App executable and embedded CLI into a
 standard `.app`, sign both code objects, and package the bundle in a DMG. The

@@ -97,6 +97,18 @@ let neutralTargets: [Target] =
         "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPToolsMCP",
+      dependencies: [
+        "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration",
+        "ComputerMCPDownstream",
+      ]),
+    .testTarget(
+      name: "ComputerMCPToolsMCPTests",
+      dependencies: [
+        "ComputerMCPToolsMCP", "ComputerMCPToolKit", "ComputerMCPCore",
+        "ComputerMCPConfiguration", "ComputerMCPDownstream", "ComputerMCPTestSupport",
+      ]),
+    .target(
       name: "ComputerMCPToolsSystem",
       dependencies: [
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",

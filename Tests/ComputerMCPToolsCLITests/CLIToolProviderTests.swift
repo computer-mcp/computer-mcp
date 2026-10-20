@@ -269,6 +269,37 @@ final class CLIToolProviderTests {
     }
   }
 
+  @Test
+  func testStatusUsesProviderEnvironmentForScriptInterpretersWithoutStartingThem() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let script = directory.appendingPathComponent("script")
+    try "#!/usr/bin/env sh\ntouch should-not-run\n".write(
+      to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    let config = GatewayConfiguration.fixture(
+      cli: .init(commands: [
+        .init(
+          id: "missing-runtime", executable: script.path, cwd: directory.path,
+          env: ["PATH": directory.path]),
+        .init(
+          id: "available-runtime", executable: script.path, cwd: directory.path,
+          env: ["PATH": "/bin"]),
+      ]))
+    let cli = try decodeTextPayload(
+      CLIToolProvider(
+        environment: ToolEnvironment(configuration: config, environment: ["PATH": "/bin"])
+      ).callTool(.init(name: "cli.status", arguments: .object([:]), context: .empty)))
+    let commands = try #require(cli.objectValue?["commands"]?.arrayValue)
+    #expect(
+      commands[0].objectValue?["resolution"]?.objectValue?["status"]
+        == .string("interpreter_unavailable"))
+    #expect(commands[1].objectValue?["resolution"]?.objectValue?["status"] == .string("passed"))
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: directory.appendingPathComponent("should-not-run").path))
+  }
+
   private func decodeTextPayload(_ value: JSONValue) throws -> JSONValue {
     let text = try #require(
       value.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)

@@ -3,21 +3,22 @@ import ComputerMCPProcess
 import ComputerMCPToolKit
 import Foundation
 
-extension GatewayToolRegistry {
+extension ShellToolProvider {
   internal func runShell(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let timeout = optionalInt("timeout_ms", in: object) ?? configuration.policy.defaultTimeoutMs
+    let timeout =
+      optionalInt("timeout_ms", in: object) ?? environment.configuration.policy.defaultTimeoutMs
     guard timeout > 0 else {
       throw GatewayToolError.invalidArguments("timeout_ms must be greater than zero.")
     }
-    return try shellManager.run(
+    return try environment.shellManager.run(
       request: shellLaunchRequest(arguments: object),
-      defaultShell: configuration.policy.shellExecutable,
-      defaultWorkingDirectory: configuration.workspaceDirectory,
+      defaultShell: environment.configuration.policy.shellExecutable,
+      defaultWorkingDirectory: environment.configuration.workspaceDirectory,
       standardInput: try shellStandardInput(arguments: object),
       timeoutMilliseconds: timeout,
-      maxOutputBytes: configuration.policy.maxOutputBytes,
-      maxSessions: configuration.policy.maxShellSessions,
-      terminationGraceMilliseconds: configuration.policy.shellTerminationGraceMs
+      maxOutputBytes: environment.configuration.policy.maxOutputBytes,
+      maxSessions: environment.configuration.policy.maxShellSessions,
+      terminationGraceMilliseconds: environment.configuration.policy.shellTerminationGraceMs
     ).json
   }
 
@@ -26,28 +27,28 @@ extension GatewayToolRegistry {
     if let timeout, timeout <= 0 {
       throw GatewayToolError.invalidArguments("timeout_ms must be greater than zero when set.")
     }
-    let id = try shellManager.spawn(
+    let id = try environment.shellManager.spawn(
       request: shellLaunchRequest(arguments: object),
-      defaultShell: configuration.policy.shellExecutable,
-      defaultWorkingDirectory: configuration.workspaceDirectory,
+      defaultShell: environment.configuration.policy.shellExecutable,
+      defaultWorkingDirectory: environment.configuration.workspaceDirectory,
       timeoutMilliseconds: timeout,
-      maxOutputBytes: configuration.policy.maxOutputBytes,
-      maxSessions: configuration.policy.maxShellSessions,
-      terminationGraceMilliseconds: configuration.policy.shellTerminationGraceMs
+      maxOutputBytes: environment.configuration.policy.maxOutputBytes,
+      maxSessions: environment.configuration.policy.maxShellSessions,
+      terminationGraceMilliseconds: environment.configuration.policy.shellTerminationGraceMs
     )
     return .object(["session_id": .string(id)])
   }
 
   internal func listShellSessions(arguments object: [String: JSONValue]) throws -> JSONValue {
     let maxBytes = optionalInt("max_bytes", in: object) ?? 0
-    guard maxBytes >= 0 && maxBytes <= configuration.policy.maxOutputBytes else {
+    guard maxBytes >= 0 && maxBytes <= environment.configuration.policy.maxOutputBytes else {
       throw GatewayToolError.invalidArguments(
         "max_bytes must be between 0 and policy.max_output_bytes."
       )
     }
     return .object([
       "sessions": .array(
-        try shellManager.list(
+        try environment.shellManager.list(
           maxReadBytes: maxBytes,
           encoding: try shellEncoding(arguments: object)
         ).map(\.json)
@@ -56,13 +57,14 @@ extension GatewayToolRegistry {
   }
 
   internal func readShellSession(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
-    guard maxBytes >= 0 && maxBytes <= configuration.policy.maxOutputBytes else {
+    let maxBytes =
+      optionalInt("max_bytes", in: object) ?? environment.configuration.policy.maxOutputBytes
+    guard maxBytes >= 0 && maxBytes <= environment.configuration.policy.maxOutputBytes else {
       throw GatewayToolError.invalidArguments(
         "max_bytes must be between 0 and policy.max_output_bytes."
       )
     }
-    return try shellManager.read(
+    return try environment.shellManager.read(
       sessionID: requiredString("session_id", in: object),
       stdoutCursor: Int64(optionalInt("stdout_cursor", in: object) ?? 0),
       stderrCursor: Int64(optionalInt("stderr_cursor", in: object) ?? 0),
@@ -88,12 +90,12 @@ extension GatewayToolRegistry {
     } else {
       data = Data()
     }
-    guard data.count <= configuration.policy.maxShellInputBytes else {
+    guard data.count <= environment.configuration.policy.maxShellInputBytes else {
       throw GatewayToolError.invalidArguments(
         "Shell input exceeds policy.max_shell_input_bytes."
       )
     }
-    return try shellManager.write(
+    return try environment.shellManager.write(
       sessionID: requiredString("session_id", in: object),
       data: data,
       close: object["close"]?.boolValue ?? false
@@ -101,7 +103,7 @@ extension GatewayToolRegistry {
   }
 
   internal func cancelShellSession(arguments object: [String: JSONValue]) throws -> JSONValue {
-    try shellManager.cancel(
+    try environment.shellManager.cancel(
       sessionID: requiredString("session_id", in: object)
     ).json
   }
@@ -151,7 +153,7 @@ extension GatewayToolRegistry {
     } else {
       data = Data()
     }
-    guard data.count <= configuration.policy.maxShellInputBytes else {
+    guard data.count <= environment.configuration.policy.maxShellInputBytes else {
       throw GatewayToolError.invalidArguments(
         "Shell input exceeds policy.max_shell_input_bytes."
       )
@@ -160,7 +162,7 @@ extension GatewayToolRegistry {
   }
 
   internal func requireShellEnabled() throws {
-    guard configuration.policy.shellEnabled else {
+    guard environment.configuration.policy.shellEnabled else {
       throw GatewayToolError.disabled("Shell is disabled by policy.")
     }
   }

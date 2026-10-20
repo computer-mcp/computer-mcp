@@ -54,6 +54,7 @@ internal enum GatewayToolDomain: String, CaseIterable, Sendable {
   case configured
 
   fileprivate static func classify(_ name: String) -> GatewayToolDomain {
+    if name.hasPrefix("cli.") { return .cli }
     if name.hasPrefix("process.") { return .process }
     if name.hasPrefix("shell.") { return .shell }
     if name.hasPrefix("mcp.") { return .mcp }
@@ -68,6 +69,7 @@ internal enum GatewayToolDomain: String, CaseIterable, Sendable {
     {
       return .structured
     }
+    if name.hasPrefix("git.") { return .git }
     if name.hasPrefix("system.") || name.hasPrefix("logs.") || name.hasPrefix("service.")
       || name.hasPrefix("env.")
     {

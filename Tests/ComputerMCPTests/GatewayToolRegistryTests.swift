@@ -4,6 +4,7 @@ import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
+import ComputerMCPToolsShell
 import CoreText
 import Darwin
 import Foundation
@@ -66,11 +67,8 @@ final class GatewayToolRegistryTests {
 
   @Test
   func testGatewayToolsExposeCLIAndMCPTools() throws {
-    let registry = GatewayToolRegistry(configuration: .fixture())
-    let names = try
-      (registry.listTools(context: .empty)
-      + CLIToolProvider(environment: ToolEnvironment(configuration: .fixture())).definitions().map(
-        \.tool)).map(\.name)
+    let router = try toolRouter(configuration: .fixture())
+    let names = try router.listTools(context: .empty).map(\.name)
 
     #expect(names.contains("cli.list"))
     #expect(names.contains("cli.describe"))
@@ -123,21 +121,14 @@ final class GatewayToolRegistryTests {
       builtin: BuiltinConfig(
         enabled: ["system.time", "file.write", "file.mkdir", "git.commit"])
     )
-    let registry = GatewayToolRegistry(configuration: config)
-    let tools =
-      try registry.listTools(context: .empty)
-      + GitToolProvider(environment: ToolEnvironment(configuration: config)).definitions().map(
-        \.tool)
-    let catalogTools =
-      tools
-      + (try CLIToolProvider(environment: ToolEnvironment(configuration: config)).definitions().map(
-        \.tool))
-    let cliList = try #require(catalogTools.first { $0.name == "cli.list" })
-    let cliExec = try #require(catalogTools.first { $0.name == "cli.exec" })
-    let systemTime = try #require(catalogTools.first { $0.name == "system.time" })
-    let fileWrite = try #require(catalogTools.first { $0.name == "file.write" })
-    let fileMkdir = try #require(catalogTools.first { $0.name == "file.mkdir" })
-    let gitCommit = try #require(catalogTools.first { $0.name == "git.commit" })
+    let router = try toolRouter(configuration: config)
+    let tools = try router.listTools(context: .empty)
+    let cliList = try #require(tools.first { $0.name == "cli.list" })
+    let cliExec = try #require(tools.first { $0.name == "cli.exec" })
+    let systemTime = try #require(tools.first { $0.name == "system.time" })
+    let fileWrite = try #require(tools.first { $0.name == "file.write" })
+    let fileMkdir = try #require(tools.first { $0.name == "file.mkdir" })
+    let gitCommit = try #require(tools.first { $0.name == "git.commit" })
 
     #expect((cliList.annotations?.readOnlyHint) == (true))
     #expect((cliList.annotations?.destructiveHint) == (false))
@@ -176,7 +167,7 @@ final class GatewayToolRegistryTests {
   }
 
   @Test
-  func testStatusUsesProviderEnvironmentForScriptInterpretersWithoutStartingThem() throws {
+  func testMCPStatusUsesProviderEnvironmentForScriptInterpretersWithoutStartingThem() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let script = directory.appendingPathComponent("script")
@@ -184,29 +175,12 @@ final class GatewayToolRegistryTests {
       to: script, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
     let config = GatewayConfiguration.fixture(
-      cli: .init(commands: [
-        .init(
-          id: "missing-runtime", executable: script.path, cwd: directory.path,
-          env: ["PATH": directory.path]),
-        .init(
-          id: "available-runtime", executable: script.path, cwd: directory.path,
-          env: ["PATH": "/bin"]),
-      ]),
       mcp: .init(servers: [
         .init(
           id: "missing-runtime", transport: .stdio, command: script.path,
           env: ["PATH": directory.path, "TOKEN": "never-emit-this"], cwd: directory.path)
       ]))
     let registry = GatewayToolRegistry(configuration: config, environment: ["PATH": "/bin"])
-    let cli = try decodeTextPayload(
-      CLIToolProvider(
-        environment: ToolEnvironment(configuration: config, environment: ["PATH": "/bin"])
-      ).callTool(.init(name: "cli.status", arguments: .object([:]), context: .empty)))
-    let commands = try #require(cli.objectValue?["commands"]?.arrayValue)
-    #expect(
-      commands[0].objectValue?["resolution"]?.objectValue?["status"]
-        == .string("interpreter_unavailable"))
-    #expect(commands[1].objectValue?["resolution"]?.objectValue?["status"] == .string("passed"))
     let mcp = try decodeTextPayload(
       registry.callTool(name: "mcp.servers.status", arguments: .object([:]), context: .empty))
     let server = try #require(mcp.objectValue?["servers"]?.arrayValue?.first?.objectValue)
@@ -2308,58 +2282,6 @@ final class GatewayToolRegistryTests {
   }
 
   @Test
-  func testProcessListReturnsGatewayManagedSessions() throws {
-    let processManager = FakeProcessManager()
-    processManager.snapshots = [
-      ManagedProcessSnapshot(
-        processID: "proc-1",
-        isRunning: true,
-        exitCode: nil,
-        stdout: "ready\n",
-        stderr: "",
-        stdoutTruncated: false,
-        stderrTruncated: false
-      )
-    ]
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(),
-      processManager: processManager
-    )
-
-    let result = try registry.callTool(
-      name: "process.list", arguments: .object([:]), context: .empty)
-    let payload = try decodeTextPayload(result)
-    let process = try #require(payload.objectValue?["processes"]?.arrayValue?.first?.objectValue)
-
-    #expect((process["process_id"]) == (.string("proc-1")))
-    #expect((process["is_running"]) == (.bool(true)))
-    #expect((process["stdout"]) == (.string("ready\n")))
-  }
-
-  @Test
-  func testProcessSpawnRejectsCommandThatDisallowsArbitraryArgs() {
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(
-        cli: CLISectionConfig(commands: [
-          CLICommandConfig(id: "echo", executable: "/bin/echo", allowAnyArgs: false)
-        ])
-      )
-    )
-
-    expectThrows(
-      try registry.callTool(
-        name: "process.spawn",
-        arguments: .object([
-          "id": .string("echo"),
-          "argv": .array([.string("hello")]),
-        ]), context: .empty
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("does not allow arbitrary args"))
-    }
-  }
-
-  @Test
   func testConfiguredMCPBackedToolProxiesDownstreamCall() throws {
     let mcp = FakeDownstreamMCPClient()
     let config = GatewayConfiguration.fixture(
@@ -2391,20 +2313,6 @@ final class GatewayToolRegistryTests {
     #expect((result.objectValue?["isError"]) == (.bool(false)))
     #expect((mcp.calls.first?.tool) == ("sample"))
     #expect((mcp.calls.first?.arguments) == (.object(["value": .string("typed")])))
-  }
-
-  @Test
-  func testShellRunIsDisabledByDefault() {
-    let registry = GatewayToolRegistry(configuration: .fixture())
-
-    expectThrows(
-      try registry.callTool(
-        name: "shell.run",
-        arguments: .object(["command": .string("echo nope")]), context: .empty
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("disabled"))
-    }
   }
 
   @Test
@@ -17554,6 +17462,19 @@ final class GatewayToolRegistryTests {
     }
   }
 
+  private func toolRouter(configuration: GatewayConfiguration) throws -> GatewayProviderRouter {
+    let environment = ToolEnvironment(configuration: configuration)
+    return try GatewayProviderRouter(
+      registry: GatewayToolRegistry(
+        toolEnvironment: environment, mcpClient: FakeDownstreamMCPClient()),
+      additionalProviders: {
+        [
+          CLIToolProvider(environment: environment), ShellToolProvider(environment: environment),
+          GitToolProvider(environment: environment),
+        ]
+      })
+  }
+
   private func decodeTextPayload(_ value: JSONValue) throws -> JSONValue {
     let text = try #require(
       value.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -17670,44 +17591,6 @@ final class GatewayToolRegistryTests {
         userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))]
       )
     }
-  }
-}
-
-private final class FakeProcessManager: ProcessManaging, @unchecked Sendable {
-  var snapshots: [ManagedProcessSnapshot] = []
-  var spawnedIDs: [String] = []
-  var cancelledIDs: [String] = []
-
-  func spawn(
-    executable: String,
-    arguments: [String],
-    workingDirectory: URL?,
-    environment: [String: String],
-    maxOutputBytes: Int
-  ) throws -> String {
-    let id = "proc-\(spawnedIDs.count + 1)"
-    spawnedIDs.append(id)
-    return id
-  }
-
-  func list() throws -> [ManagedProcessSnapshot] {
-    snapshots
-  }
-
-  func read(processID: String) throws -> ManagedProcessSnapshot {
-    guard let snapshot = snapshots.first(where: { $0.processID == processID }) else {
-      throw ProcessRegistryError.unknownProcess(processID)
-    }
-    return snapshot
-  }
-
-  func cancel(processID: String) throws -> ManagedProcessCancelResult {
-    cancelledIDs.append(processID)
-    return ManagedProcessCancelResult(
-      processID: processID,
-      cancelled: true,
-      exitCode: nil
-    )
   }
 }
 

@@ -21,9 +21,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   internal let commandRunner: CommandRunning
 
-  internal let processManager: ProcessManaging
-
-  internal let shellManager: ShellManaging
+  private let shellManager: ShellManaging
 
   internal let mcpClient: DownstreamMCPClient
 
@@ -61,7 +59,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     self.workspaceScope = toolEnvironment.workspaceScope
     self.commandRunner = toolEnvironment.commandRunner
     self.registeredCommands = toolEnvironment.registeredCommands
-    self.processManager = toolEnvironment.processManager
     self.shellManager = toolEnvironment.shellManager
     self.environment = toolEnvironment.environment
     self.mcpClient = mcpClient.makeScopedClient(
@@ -110,10 +107,8 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   private func discoverDefinitions() throws -> [ToolDefinition] {
     let context = InvocationContext.empty
     var definitions = Self.gatewayDefinitions(
-      shellEnabled: configuration.policy.shellEnabled,
       builtins: Set(configuration.builtin.enabled),
       skillsEnabled: configuration.skills.enabled,
-      hasCLIProviders: !configuration.cli.commands.isEmpty,
       hasMCPProviders: !configuration.mcp.servers.isEmpty,
       toolMeta: workspaceScope.toolMeta
     )
@@ -231,22 +226,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
           server: mcpServer(requiredString("server", in: object), context: context),
           context: context))
 
-    case "process.spawn":
-      try requireCLIProviders()
-      return try textResult(spawnProcess(arguments: object))
-
-    case "process.list":
-      try requireCLIProviders()
-      return try textResult(listProcesses())
-
-    case "process.read":
-      try requireCLIProviders()
-      return try textResult(readProcess(arguments: object))
-
-    case "process.cancel":
-      try requireCLIProviders()
-      return try textResult(cancelProcess(arguments: object))
-
     case "skills.roots":
       try requireSkillsEnabled()
       return try textResult(skillsRoots())
@@ -314,30 +293,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     case "skills.search_files":
       try requireSkillsEnabled()
       return try textResult(skillsSearchFiles(arguments: object))
-
-    case "shell.run":
-      try requireShellEnabled()
-      return try textResult(runShell(arguments: object))
-
-    case "shell.spawn":
-      try requireShellEnabled()
-      return try textResult(spawnShell(arguments: object))
-
-    case "shell.list":
-      try requireShellEnabled()
-      return try textResult(listShellSessions(arguments: object))
-
-    case "shell.read":
-      try requireShellEnabled()
-      return try textResult(readShellSession(arguments: object))
-
-    case "shell.write":
-      try requireShellEnabled()
-      return try textResult(writeShellSession(arguments: object))
-
-    case "shell.cancel":
-      try requireShellEnabled()
-      return try textResult(cancelShellSession(arguments: object))
 
     case "workspace.info":
       try requireBuiltinEnabled(name)

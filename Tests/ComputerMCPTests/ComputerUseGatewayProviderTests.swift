@@ -47,10 +47,8 @@ final class ComputerUseGatewayProviderTests {
   @Test
   func testSkillsToolCountMatchesTheFullCatalog() {
     let tools = GatewayToolRegistry.gatewayDefinitions(
-      shellEnabled: true,
       builtins: Set(DefaultGatewayConfiguration.enabledBuiltinCapabilities),
       skillsEnabled: true,
-      hasCLIProviders: true,
       hasMCPProviders: true,
       toolMeta: nil
     )

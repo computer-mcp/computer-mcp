@@ -7,6 +7,7 @@ import ComputerMCPProcess
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
+import ComputerMCPToolsShell
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
   package init() {}
@@ -27,7 +28,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       processManager: processManager, shellManager: shellManager)
     let cli = CLIToolProvider(environment: environment)
     let providers: [any GatewayToolProvider] = [
-      GitToolProvider(environment: environment), cli,
+      GitToolProvider(environment: environment), cli, ShellToolProvider(environment: environment),
     ]
     let computerUse = ComputerUseGatewayProvider()
     return (

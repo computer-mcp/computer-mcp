@@ -319,53 +319,6 @@ final class ShellSessionRuntimeTests {
     #expect(output.text?.utf8.count == 4_096)
   }
 
-  @Test
-  func testGatewayExposesCompleteShellSurfaceOnlyWhenEnabled() async throws {
-    let disabled = GatewayToolRegistry(
-      configuration: .fixture(policy: PolicyConfig(shellEnabled: false))
-    )
-    #expect(!(try disabled.listTools(context: .empty).contains { $0.name.hasPrefix("shell.") }))
-
-    let enabled = GatewayToolRegistry(
-      configuration: .fixture(policy: PolicyConfig(shellEnabled: true))
-    )
-    let names = Set(try enabled.listTools(context: .empty).map(\.name))
-    #expect(
-      Set([
-        "shell.run",
-        "shell.spawn",
-        "shell.list",
-        "shell.read",
-        "shell.write",
-        "shell.cancel",
-      ]).isSubset(of: names))
-
-    let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      try enabled.callTool(
-        name: "shell.run",
-        arguments: .object([
-          "mode": .string("argv"),
-          "executable": .string("/bin/cat"),
-          "stdin_text": .string("gateway"),
-        ]), context: .empty
-      )
-    }
-    let envelope = try #require(result.objectValue)
-    #expect((envelope["isError"]) == (.bool(false)))
-    let payload = try #require(
-      envelope["structuredContent"]?.objectValue?["result"]?.objectValue
-    )
-    #expect((payload["exit_code"]) == (.number(0)))
-    #expect((payload["is_running"]) == (.bool(false)))
-    #expect((payload["exitCode"]) == nil)
-    #expect((payload["stdout"]?.objectValue?["text"]) == (.string("gateway")))
-    #expect(
-      (try enabled.listTools(context: .empty)
-        .first(where: { $0.name == "shell.run" })?
-        .inputSchema.objectValue?["properties"]?
-        .objectValue?["stdin_text"]) != nil)
-  }
-
   private func waitForExit(
     runtime: SubprocessShellRuntime,
     sessionID: String

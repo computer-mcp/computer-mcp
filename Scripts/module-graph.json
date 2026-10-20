@@ -193,7 +193,6 @@
     "^GatewayToolRegistry\\+(StructuredData|Markdown|Media)": "ComputerMCPToolsStructured",
     "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
     "^GatewayToolRegistry\\+(Workspace|WorkspaceInventory)\\.swift|^Workspace(Deduplication|ConfigurationChange)": "ComputerMCPToolsWorkspace",
-    "^GatewayToolRegistry\\+(Shell|Process)": "ComputerMCPToolsShell",
     "^MCPRegistration": "ComputerMCPControlPlane",
     "^MCPRuntimeAdapter": "ComputerMCPGateway",
     "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",

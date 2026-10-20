@@ -127,10 +127,6 @@ extension CLIToolProvider {
     .object(["type": .string("integer"), "description": .string(description)])
   }
 
-  private static func boolSchema(_ description: String) -> JSONValue {
-    .object(["type": .string("boolean"), "description": .string(description)])
-  }
-
   private static func stringArraySchema(_ description: String) -> JSONValue {
     .object([
       "type": .string("array"),

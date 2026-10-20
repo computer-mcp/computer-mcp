@@ -53,6 +53,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |
 | `Sources/ComputerMCPTunnels/` | Platform-neutral OpenAI tunnel launch planning and supervision, Cloudflare runtime values, the HTTP origin lifecycle contract and system proxy settings parsing |
 | `Sources/ComputerMCPToolsCLI/` | Platform-neutral CLI provider, CLI tree catalogs, validation, parameter mapping and executable compatibility checks |
+| `Sources/ComputerMCPToolsShell/` | Platform-neutral shell and managed-process provider with explicit definitions, annotations, descriptors and workspace runtime dispatch |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
@@ -71,17 +72,18 @@ package product and does not install or bundle vendor binaries.
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
 
 `GatewayToolRegistry` retains configuration, runtime ownership and tool dispatch.
-Its domain extensions contain the MCP, process, shell, skills,
-workspace, file, structured-data and platform implementations. The catalog
-extension owns tool schemas and annotations. `ComputerMCPToolKit` owns shared
+Its domain extensions contain the MCP, skills, workspace, file, structured-data
+and platform implementations. Its catalog extension owns the definitions and
+annotations for those domains. `ComputerMCPToolKit` owns shared
 argument/result helpers, `WorkspaceScope` path checks and file metadata, and
 `RegisteredCommands` resolution and execution with its CLI process lifecycle.
 `ToolEnvironment` shares a workspace's configuration, scope, command execution,
 environment and process/shell runtimes across providers; the host owns shutdown.
 `MCPTool` and `DownstreamMCPClient` own their definitions
-and client contract. `GitToolProvider` and `CLIToolProvider` own their definitions and dispatch using
-the shared tool environment. The composition root registers them alongside the
-remaining registry providers, which retain the shared runtime lifecycle. Each
+and client contract. `GitToolProvider`, `CLIToolProvider` and `ShellToolProvider`
+own their definitions and dispatch using the shared tool environment. The
+composition root registers them alongside the remaining registry providers, which
+retain the shared runtime lifecycle. Each
 catalog refresh loads CLI tree providers from the CLI module and publishes them
 with their validated immutable definitions.
 

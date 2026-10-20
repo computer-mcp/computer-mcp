@@ -2,6 +2,7 @@ import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPToolsCLI
 import Foundation
 import Testing
 
@@ -410,13 +411,15 @@ struct PluginResolverTests {
     let plugin = try fixture.resolve(settings: settings)
     let composition = try GatewayPluginComposition(
       configuration: GatewayConfiguration(workspaceDirectory: fixture.root), plugins: [plugin])
-    let registry = GatewayToolRegistry(
-      configuration: composition.runtimeConfiguration, mcpClient: CompositionCatalogClient())
-    let output = try registry.callTool(
-      name: "cli.exec",
-      arguments: .object([
-        "id": .string("commands"), "argv": .array([.string("%s"), .string("空 格;$(no-execution)")]),
-      ]), context: .empty)
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(configuration: composition.runtimeConfiguration))
+    let output = try provider.callTool(
+      .init(
+        name: "cli.exec",
+        arguments: .object([
+          "id": .string("commands"),
+          "argv": .array([.string("%s"), .string("空 格;$(no-execution)")]),
+        ]), context: .empty))
     let payload = try #require(output.objectValue?["structuredContent"]?.objectValue?["result"])
     #expect(payload.objectValue?["stdout"] == .string("空 格;$(no-execution)"))
     #expect(payload.objectValue?["exit_code"] == .number(0))

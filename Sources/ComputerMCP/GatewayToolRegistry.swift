@@ -80,7 +80,11 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   /// Registered gateway and optionally reexported downstream MCP tools.
   package func listTools() throws -> [MCPTool] {
-    var tools = Self.gatewayTools(
+    try definitions().map(\.tool)
+  }
+
+  package func definitions() throws -> [ToolDefinition] {
+    var definitions = Self.gatewayDefinitions(
       shellEnabled: configuration.policy.shellEnabled,
       builtins: Set(configuration.builtin.enabled),
       skillsEnabled: configuration.skills.enabled,
@@ -97,7 +101,8 @@ package final class GatewayToolRegistry: @unchecked Sendable {
           $0.name == target
         })
       else { continue }
-      try appendTool(try toolDefinition(for: configuredTool, downstream: downstream), to: &tools)
+      let tool = try toolDefinition(for: configuredTool, downstream: downstream)
+      try appendDefinition(try downstreamDefinition(for: tool), to: &definitions)
     }
 
     for server in configuration.mcp.servers where server.exposure.includesReexport {
@@ -105,17 +110,18 @@ package final class GatewayToolRegistry: @unchecked Sendable {
         throw GatewayToolError.invalidArguments(
           "MCP server '\(server.id)' uses reexport exposure but has no prefix.")
       }
-      let downstreamTools = try permittedDownstreamTools(server: server).map {
-        $0.prefixed(prefix, serverID: server.id)
+      let downstreamDefinitions = try permittedDownstreamTools(server: server).map {
+        try downstreamDefinition(for: $0.prefixed(prefix, serverID: server.id))
       }
-      let existing = Set(tools.map(\.name))
-      if let conflict = downstreamTools.first(where: { existing.contains($0.name) }) {
-        throw GatewayToolError.invalidArguments("Reexported tool name conflicts: \(conflict.name)")
+      let existing = Set(definitions.map(\.tool.name))
+      if let conflict = downstreamDefinitions.first(where: { existing.contains($0.tool.name) }) {
+        throw GatewayToolError.invalidArguments(
+          "Reexported tool name conflicts: \(conflict.tool.name)")
       }
-      tools.append(contentsOf: downstreamTools)
+      definitions.append(contentsOf: downstreamDefinitions)
     }
 
-    return tools
+    return definitions
   }
 
   /// Validates arguments, executes a tool, and returns MCP tool content.
@@ -1113,11 +1119,14 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     )
   }
 
-  private func appendTool(_ tool: MCPTool, to tools: inout [MCPTool]) throws {
-    if tools.contains(where: { $0.name == tool.name }) {
-      throw GatewayToolError.invalidArguments("Configured tool name conflicts: \(tool.name)")
+  private func appendDefinition(
+    _ definition: ToolDefinition, to definitions: inout [ToolDefinition]
+  ) throws {
+    if definitions.contains(where: { $0.tool.name == definition.tool.name }) {
+      throw GatewayToolError.invalidArguments(
+        "Configured tool name conflicts: \(definition.tool.name)")
     }
-    tools.append(tool)
+    definitions.append(definition)
   }
 
   private func callConfiguredTool(_ tool: ToolConfig, arguments object: [String: JSONValue])
@@ -1150,18 +1159,22 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     }
   }
 
-  internal func capability(for tool: MCPTool) throws -> CapabilityDescriptor {
+  private func downstreamDefinition(for tool: MCPTool) throws -> ToolDefinition {
     guard let reference = tool.mcpReference else {
-      return GatewayCapabilityCatalog().descriptor(for: tool)
+      throw GatewayToolError.invalidArguments(
+        "Downstream tool '\(tool.name)' requires a registered MCP reference.")
     }
-    return CapabilityDescriptor(
-      id: tool.name,
-      risk: try configuration.mcpRisk(for: reference, declaredBy: tool),
-      workspaceRequirement: .optional,
-      usesNetwork: true,
-      mcpReference: reference,
-      equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference),
-      hostServiceAction: try tool.hostServiceAction
+    return ToolDefinition(
+      tool: tool,
+      capability: CapabilityDescriptor(
+        id: tool.name,
+        risk: try configuration.mcpRisk(for: reference, declaredBy: tool),
+        workspaceRequirement: .optional,
+        usesNetwork: true,
+        mcpReference: reference,
+        equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference),
+        hostServiceAction: try tool.hostServiceAction
+      )
     )
   }
 

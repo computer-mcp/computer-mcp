@@ -39,8 +39,11 @@ bookmarks or Keychain state.
 ## Routing
 
 `GatewayRuntime` composes `GatewayToolProvider` instances through
-`GatewayProviderRouter`. Every `CapabilityDescriptor` declares its id, risk,
-workspace scope, caller restrictions, and MCP metadata.
+`GatewayProviderRouter`. Providers return `ToolDefinition` values through
+`definitions()`, pairing MCP metadata with an explicit `CapabilityDescriptor`
+for risk, workspace requirements, network use, local-only access and TCC services.
+Configured and reexported MCP tools declare their descriptors during discovery
+using configuration risk and downstream declarations.
 
 The execution sequence is:
 

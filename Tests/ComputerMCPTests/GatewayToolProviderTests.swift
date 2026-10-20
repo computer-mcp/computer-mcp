@@ -149,12 +149,12 @@ private struct TestGatewayToolProvider: GatewayToolProvider {
     self.descriptor = descriptor
   }
 
-  func listTools() throws -> [MCPTool] {
-    [tool]
-  }
-
-  func capability(for tool: MCPTool) -> CapabilityDescriptor {
-    descriptor ?? GatewayCapabilityCatalog().descriptor(for: tool)
+  func definitions() throws -> [ToolDefinition] {
+    [
+      ToolDefinition(
+        tool: tool,
+        capability: descriptor ?? CapabilityDescriptor(id: tool.name, risk: .externalWrite))
+    ]
   }
 
   func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {

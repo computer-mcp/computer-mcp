@@ -29,7 +29,7 @@ struct CLIParameterMappingTests {
         .init(kind: .option, parameter: "values", flag: "--value", style: style),
       ], stdout: .json, outputSchema: CLITreeTests.strings)
     let provider = CLITreeTests.provider(command, executable: "/usr/bin/python3")
-    let tool = try #require(provider.listTools().first?.name)
+    let tool = try #require(provider.definitions().first?.tool.name)
     let values: JSONValue = .array([
       .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
     ])
@@ -52,7 +52,7 @@ struct CLIParameterMappingTests {
         .init(kind: .positional, parameter: "value"),
       ], stdout: .json, outputSchema: schema)
     let provider = CLITreeTests.provider(command, executable: "/usr/bin/python3")
-    let tool = try #require(provider.listTools().first?.name)
+    let tool = try #require(provider.definitions().first?.tool.name)
     let result = try await provider.callToolAsync(
       name: tool, arguments: .object(["value": .integer(integer)]))
     await provider.execution.shutdown()

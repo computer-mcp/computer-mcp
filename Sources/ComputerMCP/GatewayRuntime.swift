@@ -306,7 +306,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         registry: registry,
         additionalProviders: additionalProviders,
         reservedToolNames: Set(
-          Self.coreTools(databaseEnabled: true, managementEnabled: true).map(\.name)),
+          Self.coreDefinitions(databaseEnabled: true, managementEnabled: true).map(\.tool.name)),
         retainsContinuation: { [ownedWork, workspaceID = workspace.id] reference in
           ownedWork.continuations.retainsContinuation(
             workspaceID: workspaceID, reference: reference)
@@ -790,23 +790,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   package func listTools(context: ExecutionContext) throws -> [MCPTool] {
     guard (try? currentHostGrant(context: context)) != nil else { return [] }
-    let catalog = GatewayCapabilityCatalog()
-    let coreTools = Self.coreTools(
+    let coreDefinitions = Self.coreDefinitions(
       databaseEnabled: database != nil, managementEnabled: remoteManagement != nil)
-    let routedTools =
-      try firstProviderRouter?.listTools().map { tool in
-        Self.addWorkspaceID(
-          to: tool,
-          descriptor: try firstProviderRouter?.capability(named: tool.name)
-            ?? catalog.descriptor(for: tool)
-        )
+    let routedDefinitions: [ToolDefinition] =
+      try firstProviderRouter.map { router in
+        try router.listTools().map { tool in
+          let capability = try router.capability(named: tool.name)
+          return ToolDefinition(
+            tool: Self.addWorkspaceID(to: tool, descriptor: capability), capability: capability)
+        }
       } ?? []
-    return (coreTools + routedTools).filter { tool in
-      let descriptor =
-        (try? firstProviderRouter?.capability(named: tool.name))
-        ?? catalog.descriptor(for: tool)
-      return isVisible(descriptor, context: context)
-    }
+    return (coreDefinitions + routedDefinitions)
+      .filter { isVisible($0.capability, context: context) }.map(\.tool)
   }
 
   package func capabilityDescriptor(named name: String) throws -> CapabilityDescriptor {
@@ -1946,17 +1941,19 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       } else {
         try validateExecutionWorkspace(
           workspaceID,
-          requiresAccess: !Self.coreTools(
+          requiresAccess: !Self.coreDefinitions(
             databaseEnabled: database != nil, managementEnabled: remoteManagement != nil
           ).contains {
-            $0.name == descriptor.id
+            $0.tool.name == descriptor.id
           })
       }
     }
     if let workspaceID = context.workspaceID, let error = workspaceErrors[workspaceID],
-      !Self.coreTools(databaseEnabled: database != nil, managementEnabled: remoteManagement != nil)
-        .contains(where: { $0.name == descriptor.id }
-        )
+      !Self.coreDefinitions(
+        databaseEnabled: database != nil, managementEnabled: remoteManagement != nil
+      )
+      .contains(where: { $0.tool.name == descriptor.id }
+      )
     {
       throw Self.invalid(code: error.code, message: error.localizedDescription)
     }
@@ -2005,11 +2002,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func descriptor(named name: String, workspaceID: String? = nil) throws
     -> CapabilityDescriptor
   {
-    if let tool = Self.coreTools(
+    if let definition = Self.coreDefinitions(
       databaseEnabled: database != nil, managementEnabled: remoteManagement != nil
     )
-    .first(where: { $0.name == name }) {
-      return GatewayCapabilityCatalog().descriptor(for: tool)
+    .first(where: { $0.tool.name == name }) {
+      return definition.capability
     }
     if let router = workspaceID.flatMap({ providerRouters[$0] }) ?? firstProviderRouter {
       return try router.capability(named: name)
@@ -2216,108 +2213,145 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return .object(object)
   }
 
-  private static func coreTools(databaseEnabled: Bool, managementEnabled: Bool) -> [MCPTool] {
-    var tools = [
-      MCPTool(
-        name: "workspace.list",
-        description:
-          "List workspaces registered and granted to the active profile. Approved Full Access clients on an App-managed gateway can register folders with workspace.add.",
-        inputSchema: .object(["type": .string("object"), "additionalProperties": .bool(false)]),
-        annotations: .init(
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false
+  private static func coreDefinitions(databaseEnabled: Bool, managementEnabled: Bool)
+    -> [ToolDefinition]
+  {
+    var definitions = [
+      ToolDefinition(
+        tool: MCPTool(
+          name: "workspace.list",
+          description:
+            "List workspaces registered and granted to the active profile. Approved Full Access clients on an App-managed gateway can register folders with workspace.add.",
+          inputSchema: .object(["type": .string("object"), "additionalProperties": .bool(false)]),
+          annotations: .init(
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false
+          )
+        ),
+        capability: CapabilityDescriptor(
+          id: "workspace.list", risk: .readOnly,
+          workspaceRequirement: .none,
+          localOnly: false, usesNetwork: false
         )
       ),
-      MCPTool(
-        name: "workspace.describe",
-        description: "Describe one registered workspace by stable workspace_id.",
-        inputSchema: .object([
-          "type": .string("object"),
-          "properties": .object([
-            "workspace_id": .object([
-              "type": .string("string"),
-              "description": .string("Stable workspace id returned by workspace.list."),
-            ])
+      ToolDefinition(
+        tool: MCPTool(
+          name: "workspace.describe",
+          description: "Describe one registered workspace by stable workspace_id.",
+          inputSchema: .object([
+            "type": .string("object"),
+            "properties": .object([
+              "workspace_id": .object([
+                "type": .string("string"),
+                "description": .string("Stable workspace id returned by workspace.list."),
+              ])
+            ]),
+            "required": .array([.string("workspace_id")]),
+            "additionalProperties": .bool(false),
           ]),
-          "required": .array([.string("workspace_id")]),
-          "additionalProperties": .bool(false),
-        ]),
-        annotations: .init(
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false
+          annotations: .init(
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false
+          )
+        ),
+        capability: CapabilityDescriptor(
+          id: "workspace.describe", risk: .readOnly,
+          workspaceRequirement: .none,
+          localOnly: false, usesNetwork: false
         )
       ),
-      MCPTool(
-        name: "policy.probe",
-        description:
-          "Evaluate whether the active Gateway profile and workspace would authorize one capability without executing it. Policy denials return their stable error code and are audited.",
-        inputSchema: .object([
-          "type": .string("object"),
-          "properties": .object([
-            "capability_id": .object([
-              "type": .string("string"),
-              "description": .string("Exact Gateway capability id to evaluate."),
+      ToolDefinition(
+        tool: MCPTool(
+          name: "policy.probe",
+          description:
+            "Evaluate whether the active Gateway profile and workspace would authorize one capability without executing it. Policy denials return their stable error code and are audited.",
+          inputSchema: .object([
+            "type": .string("object"),
+            "properties": .object([
+              "capability_id": .object([
+                "type": .string("string"),
+                "description": .string("Exact Gateway capability id to evaluate."),
+              ]),
+              "arguments": .object([
+                "type": .string("object"),
+                "description": .string(
+                  "Optional target arguments used only for workspace routing and policy evaluation."
+                ),
+                "additionalProperties": .bool(true),
+              ]),
+              "workspace_id": .object([
+                "type": .string("string"),
+                "description": .string("Optional stable workspace id for the policy context."),
+              ]),
             ]),
-            "arguments": .object([
-              "type": .string("object"),
-              "description": .string(
-                "Optional target arguments used only for workspace routing and policy evaluation."
-              ),
-              "additionalProperties": .bool(true),
-            ]),
-            "workspace_id": .object([
-              "type": .string("string"),
-              "description": .string("Optional stable workspace id for the policy context."),
-            ]),
+            "required": .array([.string("capability_id")]),
+            "additionalProperties": .bool(false),
           ]),
-          "required": .array([.string("capability_id")]),
-          "additionalProperties": .bool(false),
-        ]),
-        annotations: .init(
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false
+          annotations: .init(
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false
+          )
+        ),
+        capability: CapabilityDescriptor(
+          id: "policy.probe", risk: .readOnly,
+          workspaceRequirement: .optional,
+          localOnly: false, usesNetwork: false
         )
       ),
     ]
-    tools.append(contentsOf: GatewayOwnerRouting.tools)
+    definitions.append(contentsOf: GatewayOwnerRouting.definitions)
     if databaseEnabled {
-      tools.append(
-        MCPTool(
-          name: "operations.prepare",
-          description:
-            "Prepare a short-lived single-use ticket for an irreversible gateway operation without executing it.",
-          inputSchema: operationSchema(commit: false),
-          annotations: .init(
-            readOnlyHint: false,
-            destructiveHint: false,
-            idempotentHint: false,
-            openWorldHint: false
+      definitions.append(
+        ToolDefinition(
+          tool: MCPTool(
+            name: "operations.prepare",
+            description:
+              "Prepare a short-lived single-use ticket for an irreversible gateway operation without executing it.",
+            inputSchema: operationSchema(commit: false),
+            annotations: .init(
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: false,
+              openWorldHint: false
+            )
+          ),
+          capability: CapabilityDescriptor(
+            id: "operations.prepare", risk: .externalWrite,
+            workspaceRequirement: .optional,
+            localOnly: false, usesNetwork: false
           )
         )
       )
-      tools.append(
-        MCPTool(
-          name: "operations.commit",
-          description:
-            "Execute exactly the irreversible operation and arguments bound to a prepared ticket.",
-          inputSchema: operationSchema(commit: true),
-          annotations: .init(
-            readOnlyHint: false,
-            destructiveHint: true,
-            idempotentHint: false,
-            openWorldHint: false
+      definitions.append(
+        ToolDefinition(
+          tool: MCPTool(
+            name: "operations.commit",
+            description:
+              "Execute exactly the irreversible operation and arguments bound to a prepared ticket.",
+            inputSchema: operationSchema(commit: true),
+            annotations: .init(
+              readOnlyHint: false,
+              destructiveHint: true,
+              idempotentHint: false,
+              openWorldHint: false
+            )
+          ),
+          capability: CapabilityDescriptor(
+            id: "operations.commit", risk: .externalWrite,
+            workspaceRequirement: .optional,
+            localOnly: false, usesNetwork: false
           )
         )
       )
     }
-    if managementEnabled { tools += GatewayRemoteManagement.tools }
-    return tools
+    if managementEnabled { definitions += GatewayRemoteManagement.definitions }
+    return definitions
   }
 
   private static func operationSchema(commit: Bool) -> JSONValue {

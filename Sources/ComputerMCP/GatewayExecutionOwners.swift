@@ -49,59 +49,74 @@ enum GatewayOwnerRouting {
   @TaskLocal static var call: Call?
   @TaskLocal static var selection: GatewayOwnerSelection?
 
-  static let tools = [
-    MCPTool(
-      name: "runtime.owners.list",
-      description:
-        "List retained execution owners in one authorized workspace, without starting providers. Use the returned owner with runtime.owners.call to address a previous execution instance. Ownership is a locator, not permission.",
-      inputSchema: .object([
-        "type": .string("object"),
-        "properties": .object([
-          "workspace_id": .object(["type": .string("string")]),
-          "server": .object(["type": .string("string")]),
-          "after": .object([
-            "type": .string("string"),
-            "description": .string(
-              "Cursor returned by the previous page. The live directory may change between pages."),
+  static let definitions = [
+    ToolDefinition(
+      tool: MCPTool(
+        name: "runtime.owners.list",
+        description:
+          "List retained execution owners in one authorized workspace, without starting providers. Use the returned owner with runtime.owners.call to address a previous execution instance. Ownership is a locator, not permission.",
+        inputSchema: .object([
+          "type": .string("object"),
+          "properties": .object([
+            "workspace_id": .object(["type": .string("string")]),
+            "server": .object(["type": .string("string")]),
+            "after": .object([
+              "type": .string("string"),
+              "description": .string(
+                "Cursor returned by the previous page. The live directory may change between pages."
+              ),
+            ]),
+            "limit": .object([
+              "type": .string("integer"), "minimum": .integer(1), "maximum": .integer(100),
+              "default": .integer(50),
+            ]),
           ]),
-          "limit": .object([
-            "type": .string("integer"), "minimum": .integer(1), "maximum": .integer(100),
-            "default": .integer(50),
-          ]),
+          "required": .array([.string("workspace_id")]), "additionalProperties": .bool(false),
         ]),
-        "required": .array([.string("workspace_id")]), "additionalProperties": .bool(false),
-      ]),
-      annotations: .init(
-        readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)),
-    MCPTool(
-      name: "runtime.owners.call",
-      description:
-        "Call a gateway tool on one retained execution owner. Supply its exact owner, target tool and unchanged target arguments. Current target permissions and approvals still apply; stale owners fail without launching replacements. For operations.prepare or operations.commit, use the same owner for both calls.",
-      inputSchema: .object([
-        "type": .string("object"),
-        "properties": .object([
-          "owner": .object([
-            "type": .string("object"),
-            "properties": .object(
-              Dictionary(
-                uniqueKeysWithValues: ["runtime_id", "workspace_id", "ownership_id"].map {
-                  ($0, .object(["type": .string("string")]))
-                })),
-            "required": .array(
-              ["runtime_id", "workspace_id", "ownership_id"].map(JSONValue.string)),
-            "additionalProperties": .bool(false),
+        annotations: .init(
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)),
+      capability: CapabilityDescriptor(
+        id: "runtime.owners.list", risk: .readOnly,
+        workspaceRequirement: .required,
+        localOnly: false, usesNetwork: false
+      )
+    ),
+    ToolDefinition(
+      tool: MCPTool(
+        name: "runtime.owners.call",
+        description:
+          "Call a gateway tool on one retained execution owner. Supply its exact owner, target tool and unchanged target arguments. Current target permissions and approvals still apply; stale owners fail without launching replacements. For operations.prepare or operations.commit, use the same owner for both calls.",
+        inputSchema: .object([
+          "type": .string("object"),
+          "properties": .object([
+            "owner": .object([
+              "type": .string("object"),
+              "properties": .object(
+                Dictionary(
+                  uniqueKeysWithValues: ["runtime_id", "workspace_id", "ownership_id"].map {
+                    ($0, .object(["type": .string("string")]))
+                  })),
+              "required": .array(
+                ["runtime_id", "workspace_id", "ownership_id"].map(JSONValue.string)),
+              "additionalProperties": .bool(false),
+            ]),
+            "tool": .object(["type": .string("string")]),
+            "arguments": .object(["type": .string("object"), "additionalProperties": .bool(true)]),
+            "workspace_id": .object([
+              "type": .string("string"),
+              "description": .string("Must equal the selected owner's workspace."),
+            ]),
           ]),
-          "tool": .object(["type": .string("string")]),
-          "arguments": .object(["type": .string("object"), "additionalProperties": .bool(true)]),
-          "workspace_id": .object([
-            "type": .string("string"),
-            "description": .string("Must equal the selected owner's workspace."),
-          ]),
+          "required": .array([.string("owner"), .string("tool"), .string("workspace_id")]),
+          "additionalProperties": .bool(false),
         ]),
-        "required": .array([.string("owner"), .string("tool"), .string("workspace_id")]),
-        "additionalProperties": .bool(false),
-      ]),
-      annotations: .init(
-        readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true)),
+        annotations: .init(
+          readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true)),
+      capability: CapabilityDescriptor(
+        id: "runtime.owners.call", risk: .readOnly,
+        workspaceRequirement: .required,
+        localOnly: false, usesNetwork: false
+      )
+    ),
   ]
 }

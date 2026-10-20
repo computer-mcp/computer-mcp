@@ -75,17 +75,18 @@ extension AppControlPlaneService {
       inputs: inputs, caller: .localApp, profileID: .localAdmin, persistentState: false)
     let capabilities: [ProfilePermissionCapability]
     do {
-      capabilities = try (gateway.listTools() + GatewayRemoteManagement.tools).compactMap { tool in
-        let descriptor =
-          try GatewayRemoteManagement.byName[tool.name]?.descriptor
-          ?? gateway.capabilityDescriptor(named: tool.name)
-        guard descriptor.risk != .fullShell,
-          !ProfileGrant.mcpSurfaceCapabilities.contains(tool.name),
-          !ProfilePermissionSelection.supportCapabilities.contains(tool.name)
-        else { return nil }
-        return ProfilePermissionCapability(
-          id: tool.name, title: tool.title, summary: tool.description, descriptor: descriptor)
-      }.sorted { $0.id < $1.id }
+      capabilities = try (gateway.listTools() + GatewayRemoteManagement.definitions.map(\.tool))
+        .compactMap { tool in
+          let descriptor =
+            try GatewayRemoteManagement.byName[tool.name]?.definition.capability
+            ?? gateway.capabilityDescriptor(named: tool.name)
+          guard descriptor.risk != .fullShell,
+            !ProfileGrant.mcpSurfaceCapabilities.contains(tool.name),
+            !ProfilePermissionSelection.supportCapabilities.contains(tool.name)
+          else { return nil }
+          return ProfilePermissionCapability(
+            id: tool.name, title: tool.title, summary: tool.description, descriptor: descriptor)
+        }.sorted { $0.id < $1.id }
     } catch {
       await gateway.shutdown()
       throw error

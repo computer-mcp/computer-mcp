@@ -42,7 +42,7 @@ package struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
   package let id = "computer-use"
 
   private let service: ComputerUseService
-  private let tools: [MCPTool]
+  private let toolDefinitions: [ToolDefinition]
 
   package init() {
     self.init(service: ComputerUseService())
@@ -50,23 +50,11 @@ package struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
 
   internal init(service: ComputerUseService) {
     self.service = service
-    self.tools = Self.makeTools()
+    self.toolDefinitions = Self.makeDefinitions()
   }
 
-  package func listTools() throws -> [MCPTool] {
-    tools
-  }
-
-  package func capability(for tool: MCPTool) -> CapabilityDescriptor {
-    let readOnly = Self.readOnlyTools.contains(tool.name)
-    return CapabilityDescriptor(
-      id: tool.name,
-      risk: readOnly ? .readOnly : .externalWrite,
-      workspaceRequirement: .none,
-      localOnly: false,
-      usesNetwork: false,
-      tccServices: Self.tccServices(for: tool.name)
-    )
+  package func definitions() throws -> [ToolDefinition] {
+    toolDefinitions
   }
 
   package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
@@ -416,63 +404,36 @@ package struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
 }
 
 extension ComputerUseGatewayProvider {
-  internal static let toolCount = makeTools().count
+  internal static let toolCount = makeDefinitions().count
 
-  fileprivate static let readOnlyTools: Set<String> = [
-    "computer.permissions",
-    "computer.displays",
-    "computer.screenshot",
-    "computer.windows",
-    "computer.pointer.position",
-    "computer.accessibility.query",
-    "computer.verify",
-  ]
-
-  fileprivate static func tccServices(for name: String) -> [String] {
-    if name == "computer.screenshot" || name == "computer.windows" {
-      return ["screen-recording"]
-    }
-    if name == "computer.pointer.position" {
-      return []
-    }
-    if name.hasPrefix("computer.pointer.") || name.hasPrefix("computer.keyboard.")
-      || name == "computer.scroll" || name.hasPrefix("computer.accessibility.")
-    {
-      return ["accessibility"]
-    }
-    if name == "computer.verify" {
-      return ["accessibility"]
-    }
-    return []
-  }
-
-  fileprivate static func makeTools() -> [MCPTool] {
+  fileprivate static func makeDefinitions() -> [ToolDefinition] {
     [
-      tool(
+      definition(
         name: "computer.permissions",
         description:
           "Read current Accessibility and Screen Recording permission status. Never prompts.",
         input: objectSchema(),
         result: permissionSchema,
-        readOnly: true
+        risk: .readOnly
       ),
-      tool(
+      definition(
         name: "computer.displays",
         description: "List active display geometry and pixel metadata without capturing pixels.",
         input: objectSchema(),
         result: arraySchema(displaySchema),
-        readOnly: true
+        risk: .readOnly
       ),
-      tool(
+      definition(
         name: "computer.screenshot",
         description:
           "Capture a bounded PNG of one display or window. Requires existing Screen Recording "
           + "permission and never prompts for it.",
         input: screenshotInputSchema,
         result: screenshotSchema,
-        readOnly: true
+        risk: .readOnly,
+        tccServices: ["screen-recording"]
       ),
-      tool(
+      definition(
         name: "computer.windows",
         description:
           "List filtered, bounded window metadata. Prefer owner, title, process, layer, or alpha "
@@ -480,62 +441,69 @@ extension ComputerUseGatewayProvider {
           + "Recording permission and never prompts for it.",
         input: windowInputSchema,
         result: arraySchema(windowSchema),
-        readOnly: true
+        risk: .readOnly,
+        tccServices: ["screen-recording"]
       ),
-      tool(
+      definition(
         name: "computer.pointer.position",
         description:
           "Read the current macOS pointer position without moving it or requesting permissions.",
         input: objectSchema(),
         result: pointSchema,
-        readOnly: true
+        risk: .readOnly
       ),
-      tool(
+      definition(
         name: "computer.pointer.move",
         description: "Move the macOS pointer to an absolute display coordinate.",
         input: pointerMoveInputSchema,
         result: actionResultSchema,
-        readOnly: false,
+        risk: .externalWrite,
+        tccServices: ["accessibility"],
         idempotent: true
       ),
-      tool(
+      definition(
         name: "computer.pointer.click",
         description: "Click a pointer button at a bounded coordinate or current pointer location.",
         input: pointerClickInputSchema,
         result: actionResultSchema,
-        readOnly: false
+        risk: .externalWrite,
+        tccServices: ["accessibility"]
       ),
-      tool(
+      definition(
         name: "computer.keyboard.key",
         description: "Press a macOS virtual key code with explicit modifiers and repeat count.",
         input: keyboardKeyInputSchema,
         result: actionResultSchema,
-        readOnly: false
+        risk: .externalWrite,
+        tccServices: ["accessibility"]
       ),
-      tool(
+      definition(
         name: "computer.keyboard.text",
         description: "Type bounded Unicode text through the macOS input event system.",
         input: keyboardTextInputSchema,
         result: actionResultSchema,
-        readOnly: false
+        risk: .externalWrite,
+        tccServices: ["accessibility"]
       ),
-      tool(
+      definition(
         name: "computer.scroll",
         description: "Post a bounded two-axis line or pixel scroll event.",
         input: scrollInputSchema,
         result: actionResultSchema,
-        readOnly: false
+        risk: .externalWrite,
+        tccServices: ["accessibility"]
       ),
-      tool(
+      definition(
         name: "computer.accessibility.query",
         description:
           "Query a bounded Accessibility element tree for one process and return stable "
           + "element references.",
         input: accessibilityQuerySchema,
         result: arraySchema(accessibilityObservationSchema),
-        readOnly: true
+        risk: .readOnly,
+        tccServices: ["accessibility"]
       ),
-      tool(
+      definition(
         name: "computer.accessibility.action",
         description:
           "Perform one standard Accessibility action on a previously returned reference. "
@@ -543,39 +511,47 @@ extension ComputerUseGatewayProvider {
           + "owner-only computer-mcp CLI.",
         input: accessibilityActionInputSchema,
         result: actionResultSchema,
-        readOnly: false
+        risk: .externalWrite,
+        tccServices: ["accessibility"]
       ),
-      tool(
+      definition(
         name: "computer.verify",
         description:
           "Poll a bounded mechanical postcondition without performing an input action.",
         input: verifyInputSchema,
         result: verificationResultSchema,
-        readOnly: true
+        risk: .readOnly,
+        tccServices: ["accessibility"]
       ),
     ]
   }
 
-  private static func tool(
+  private static func definition(
     name: String,
     description: String,
     input: JSONValue,
     result: JSONValue,
-    readOnly: Bool,
+    risk: CapabilityRisk,
+    tccServices: [String] = [],
     idempotent: Bool? = nil
-  ) -> MCPTool {
-    MCPTool(
-      name: name,
-      description: description,
-      inputSchema: input,
-      outputSchema: resultEnvelopeSchema(result),
-      annotations: MCPToolAnnotations(
-        readOnlyHint: readOnly,
-        destructiveHint: false,
-        idempotentHint: idempotent ?? (readOnly ? true : false),
-        openWorldHint: false
-      )
-    )
+  ) -> ToolDefinition {
+    let readOnly = risk == .readOnly
+    return ToolDefinition(
+      tool: MCPTool(
+        name: name,
+        description: description,
+        inputSchema: input,
+        outputSchema: resultEnvelopeSchema(result),
+        annotations: MCPToolAnnotations(
+          readOnlyHint: readOnly,
+          destructiveHint: false,
+          idempotentHint: idempotent ?? (readOnly ? true : false),
+          openWorldHint: false
+        )
+      ),
+      capability: CapabilityDescriptor(
+        id: name, risk: risk, workspaceRequirement: .none, localOnly: false,
+        usesNetwork: false, tccServices: tccServices))
   }
 
   private static func decodingMessage(_ error: DecodingError) -> String {

@@ -2,100 +2,37 @@ import ComputerMCPCore
 import Foundation
 import NIOConcurrencyHelpers
 
-internal struct GatewayCapabilityCatalog: Sendable {
-  internal func descriptor(for tool: MCPTool) -> CapabilityDescriptor {
-    let name = tool.name
-    if let management = GatewayRemoteManagement.byName[name] { return management.descriptor }
-    let risk: CapabilityRisk
-    if name == "runtime.owners.call" {
-      // The routing operation authorizes no effect; its selected target performs risk and approval admission.
-      risk = .readOnly
-    } else if name.hasPrefix("shell.") || name == "cli.exec" || name == "process.spawn" {
-      risk = .fullShell
-    } else if name == "operations.commit" {
-      risk = .externalWrite
-    } else if name.hasPrefix("mcp.") && name != "mcp.tools.call"
-      && name != "mcp.requests.cancel" && name != "mcp.connections.close"
-    {
-      risk = .readOnly
-    } else if tool.annotations?.destructiveHint == true {
-      risk = .destructive
-    } else if tool.annotations?.readOnlyHint == true {
-      risk = .readOnly
-    } else if name.hasPrefix("file.") || name.hasPrefix("git.")
-      || name.hasPrefix("workspace.")
-    {
-      risk = .workspaceWrite
-    } else {
-      risk = .externalWrite
-    }
-
-    let workspaceRequirement: WorkspaceRequirement
-    if name == "workspace.list" || name == "workspace.describe"
-      || name.hasPrefix("skills.") || name.hasPrefix("system.")
-      || name.hasPrefix("macos.") || name.hasPrefix("network.")
-      || name.hasPrefix("mcp.") || name == "cli.list" || name == "cli.status"
-      || name == "cli.describe" || name == "cli.help"
-    {
-      workspaceRequirement = .none
-    } else if name.hasPrefix("operations.") {
-      workspaceRequirement = .optional
-    } else if name.hasPrefix("shell.") || name.hasPrefix("runtime.owners.") {
-      workspaceRequirement = .required
-    } else if name.hasPrefix("file.") || name.hasPrefix("git.")
-      || name.hasPrefix("workspace.") || name.hasPrefix("cli.")
-      || name.hasPrefix("process.")
-    {
-      workspaceRequirement = .required
-    } else {
-      workspaceRequirement = .optional
-    }
-
-    return CapabilityDescriptor(
-      id: name,
-      risk: risk,
-      workspaceRequirement: workspaceRequirement,
-      localOnly: false,
-      usesNetwork: name.hasPrefix("network.") || name.hasPrefix("mcp.")
-    )
-  }
-}
-
 internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
   internal let id: String
   private let registry: GatewayToolRegistry
-  private let tools: [MCPTool]
+  private let toolDefinitions: [ToolDefinition]
 
   internal init(
     id: String,
     registry: GatewayToolRegistry,
-    tools: [MCPTool]
+    definitions: [ToolDefinition]
   ) {
     self.id = id
     self.registry = registry
-    self.tools = tools
+    self.toolDefinitions = definitions
   }
 
-  internal func listTools() throws -> [MCPTool] {
-    tools
-  }
-
-  internal func capability(for tool: MCPTool) throws -> CapabilityDescriptor {
-    try registry.capability(for: tool)
+  internal func definitions() throws -> [ToolDefinition] {
+    toolDefinitions
   }
 
   internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    guard let definition = tools.first(where: { $0.name == name }) else {
+    guard let definition = toolDefinitions.first(where: { $0.tool.name == name }) else {
       throw GatewayToolError.unknownTool(name)
     }
-    return try registry.callTool(definition: definition, arguments: arguments)
+    return try registry.callTool(definition: definition.tool, arguments: arguments)
   }
 
   internal func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    guard let definition = tools.first(where: { $0.name == name }) else {
+    guard let definition = toolDefinitions.first(where: { $0.tool.name == name }) else {
       throw GatewayToolError.unknownTool(name)
     }
-    return try await registry.callToolAsync(definition: definition, arguments: arguments)
+    return try await registry.callToolAsync(definition: definition.tool, arguments: arguments)
   }
 }
 
@@ -221,11 +158,11 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   ) throws {
     try self.init(
       source: {
-        let tools = try registry.listTools()
+        let definitions = try registry.definitions()
         return GatewayToolDomain.allCases.map { domain in
           GatewayDomainToolProvider(
             id: domain.rawValue, registry: registry,
-            tools: tools.filter { GatewayToolDomain.classify($0.name) == domain })
+            definitions: definitions.filter { GatewayToolDomain.classify($0.tool.name) == domain })
         } + (try registry.cliTreeProviders()) + additionalProviders
       },
       invalidations: registry.toolChanges(),

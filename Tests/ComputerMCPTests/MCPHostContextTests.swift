@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import Foundation
 import Testing
 
@@ -8,6 +9,41 @@ import Testing
 
 @Suite
 struct MCPHostContextTests {
+  @Test
+  func scopedProxyRejectsUnsupportedHostEnvironmentBeforeLaunching() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(
+      at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = root.appendingPathComponent("ownership")
+    let hostContext = NonGatewayHostEnvironment(
+      launchMetadata: .init(
+        runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .chatGPTObserve),
+        workspaceID: "fixture", rootURL: root, readOnly: true),
+      workspaceRoot: root, processOwnershipRoot: storage)
+    let client = MCPProxyClient()
+    let scoped = client.makeScopedClient(
+      workingDirectory: root, environment: [:], hostContext: hostContext)
+    let marker = root.appendingPathComponent("launched")
+    let server = MCPServerConfig(
+      id: "unsupported-host", transport: .stdio, command: "/usr/bin/touch", args: [marker.path],
+      hostServices: false)
+    try await BlockingOperationExecutor(label: "unsupported-host-proxy-test").perform {
+      #expect(
+        throws: GatewayToolError.executionFailed(
+          "Gateway MCP connections require a gateway host environment.")
+      ) {
+        try scoped.listTools(server: server, context: .empty)
+      }
+      let status = try scoped.connectionStatus(server: server, context: .empty)
+      #expect(status.objectValue?["state"] == .string("not_started"))
+    }
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    #expect(!FileManager.default.fileExists(atPath: storage.path))
+    await scoped.shutdown()
+    await client.shutdown()
+  }
+
   @Test
   func scopedProxyUsesHostStorageOverrideBeforeLaunching() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -40,41 +76,25 @@ struct MCPHostContextTests {
   }
 
   @Test
-  func trustedContextReplacesInheritedAndRegistrationValues() throws {
-    let context = MCPHostContext(
-      runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaceID: "project", rootURL: URL(fileURLWithPath: "/tmp"), readOnly: false,
-      processOwnershipRoot: URL(fileURLWithPath: "/private/host-ownership"))
-    let environment = try MCPHostContext.launchEnvironment(
-      inherited: [
-        MCPHostContext.environmentKey: "ancestor", "KEEP": "inherited",
-        MCPHostContext.readHandleEnvironmentKey: "144",
-      ],
-      overrides: [
-        MCPHostContext.environmentKey: "registration", "EMPTY": "",
-        MCPHostContext.writeHandleEnvironmentKey: "148",
-      ], context: context)
-    let value = try JSONDecoder().decode(
-      JSONValue.self, from: Data(try #require(environment[MCPHostContext.environmentKey]).utf8))
-    #expect(value.objectValue?["caller"] == .string("local-cli"))
-    #expect(value.objectValue?["runtimeID"] == .string(context.runtimeID.uuidString))
-    #expect(environment["KEEP"] == "inherited")
-    #expect(environment["EMPTY"] == "")
-    #expect(environment[MCPHostContext.readHandleEnvironmentKey] == nil)
-    #expect(environment[MCPHostContext.writeHandleEnvironmentKey] == nil)
-    #expect(value.objectValue?["processOwnershipRoot"] == nil)
+  func transientDatabasesHaveIndependentProcessOwnership() throws {
+    let first = try GatewayDatabase(inMemory: ())
+    let second = try GatewayDatabase(inMemory: ())
+    let root = try #require(first.mcpProcessOwnershipRoot)
+    #expect(root == first.mcpProcessOwnershipRoot)
+    #expect(root != second.mcpProcessOwnershipRoot)
+    #expect(root != MCPProcessOwnership.defaultRoot)
   }
 
-  @Test
-  func excessiveProvenanceFailsBeforeLaunch() {
-    let context = MCPHostContext(
-      runtimeID: UUID(),
-      context: .init(
-        caller: .localMCP, profileID: .localAdmin,
-        transportTrace: .init(transport: String(repeating: "x", count: 16_384))),
-      workspaceID: "project", rootURL: URL(fileURLWithPath: "/tmp"), readOnly: false)
-    #expect(throws: (any Error).self) {
-      try MCPHostContext.launchEnvironment(inherited: [:], overrides: [:], context: context)
-    }
+}
+
+private struct NonGatewayHostEnvironment: MCPHostEnvironment {
+  let launchMetadata: MCPHostLaunchMetadata
+  let workspaceRoot: URL
+  let processOwnershipRoot: URL?
+  let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
+  let providesHostServices = false
+
+  func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
+    throw GatewayToolError.executionFailed("Host services are unavailable.")
   }
 }

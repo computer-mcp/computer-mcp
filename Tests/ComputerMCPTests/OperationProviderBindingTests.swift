@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import Foundation
 import NIOConcurrencyHelpers
@@ -189,7 +190,7 @@ private final class ProviderBindingClient: DownstreamMCPClient, Sendable {
   var calls: [String] { recordedCalls.withLockedValue { $0 } }
 
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
 
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {

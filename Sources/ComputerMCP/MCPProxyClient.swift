@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPTransport
@@ -18,11 +19,17 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   package init(
     workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
     environment: [String: String] = ProcessInfo.processInfo.environment,
-    hostContext: MCPHostContext? = nil,
+    hostContext: (any MCPHostEnvironment)? = nil,
     secretStore: KeychainSecretStore? = nil,
     processOwnershipRoot: URL? = nil,
     executionDatabase: GatewayDatabase? = nil, executionScope: String? = nil
   ) {
+    // Gateway connections need journal, retained-work and host-tool authority.
+    // The nonthrowing factory defers unsupported host environments to connection admission.
+    let gatewayContext = hostContext as? MCPHostContext
+    let hostContextError: GatewayToolError? =
+      hostContext != nil && gatewayContext == nil
+      ? .executionFailed("Gateway MCP connections require a gateway host environment.") : nil
     let changes = GatewayToolChangeBroadcaster()
     self.changes = changes
     self.secretStore = secretStore
@@ -31,24 +38,26 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       executionScope ?? hostContext.map {
         MCPExecutionRecord.digest(
           .array([
-            .string($0.principalID), .string($0.profileID.rawValue), .string($0.workspace.id),
+            .string($0.launchMetadata.principalID), .string($0.launchMetadata.profileID.rawValue),
+            .string($0.launchMetadata.workspace.id),
           ]))
       } ?? UUID().uuidString
     let journal = MCPExecutionJournal(
-      database: executionDatabase ?? hostContext?.executionDatabase, scope: scope)
+      database: executionDatabase ?? gatewayContext?.executionDatabase, scope: scope)
     self.journal = journal
-    var hostContext = hostContext
+    var hostContext = gatewayContext
     if hostContext?.processOwnershipRoot == nil {
       hostContext?.processOwnershipRoot = processOwnershipRoot
     }
     self.pool = MCPConnectionPool(
       workingDirectory: workingDirectory.standardizedFileURL, environment: environment,
-      hostContext: hostContext, secretStore: secretStore, journal: journal,
+      hostContext: hostContext, hostContextError: hostContextError,
+      secretStore: secretStore, journal: journal,
       toolsChanged: { changes.send() })
   }
 
   package func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   {
@@ -497,19 +506,21 @@ private final class MCPConnectionPool: @unchecked Sendable {
   private let workingDirectory: URL
   private let environment: [String: String]
   private let hostContext: MCPHostContext?
+  private let hostContextError: GatewayToolError?
   private let secretStore: KeychainSecretStore?
   private let journal: MCPExecutionJournal
   private let toolsChanged: @Sendable () -> Void
 
   init(
     workingDirectory: URL, environment: [String: String],
-    hostContext: MCPHostContext?,
+    hostContext: MCPHostContext?, hostContextError: GatewayToolError?,
     secretStore: KeychainSecretStore?, journal: MCPExecutionJournal,
     toolsChanged: @escaping @Sendable () -> Void
   ) {
     self.workingDirectory = workingDirectory
     self.environment = environment
     self.hostContext = hostContext
+    self.hostContextError = hostContextError
     self.secretStore = secretStore
     self.journal = journal
     self.toolsChanged = toolsChanged
@@ -518,6 +529,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
   func connection(for server: MCPServerConfig, continuation: MCPContinuationTarget?) throws
     -> MCPProxyConnection
   {
+    if let hostContextError { throw hostContextError }
     guard server.enabled else {
       throw GatewayToolError.disabled("MCP registration '\(server.id)' is disabled.")
     }
@@ -528,7 +540,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
     if let continuation {
       guard continuation.reference.serverID == server.id,
-        continuation.workspaceID == hostContext?.workspace.id,
+        continuation.workspaceID == hostContext?.launchMetadata.workspace.id,
         let entry = entries[server.id], entry.configuration == server,
         entry.connection.connectionID == continuation.connectionID
       else { throw MCPContinuationTarget.unavailable() }
@@ -562,7 +574,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
     if let target = continuation,
       target.connectionID != entry.connection.connectionID || target.reference.serverID != server.id
-        || target.workspaceID != hostContext?.workspace.id
+        || target.workspaceID != hostContext?.launchMetadata.workspace.id
     {
       return nil
     }
@@ -727,7 +739,7 @@ private actor MCPProxyConnection {
     self.toolsChanged = toolsChanged
     self.onTermination = onTermination
     ownedWork = hostContext?.ownedWork
-    workspaceID = hostContext?.workspace.id
+    workspaceID = hostContext?.launchMetadata.workspace.id
     hostTools = hostContext?.tools
     client = MCP.Client(
       name: "computer-mcp-gateway",

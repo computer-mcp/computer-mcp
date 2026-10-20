@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
@@ -717,7 +718,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   func makeHostServices(context: MCPHostContext, origin: String) throws -> MCPBoundHostServices? {
     guard let database else { return nil }
-    try validateHostOrigin(workspaceID: context.workspace.id, origin: origin)
+    try validateHostOrigin(workspaceID: context.launchMetadata.workspace.id, origin: origin)
     return MCPBoundHostServices(
       database: database, directory: hostToolDirectory, context: context, origin: origin)
   }

@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import Foundation
 import NIOConcurrencyHelpers
@@ -425,7 +426,7 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
   func raiseAfterNextDiscovery() { state.withLockedValue { $0.raiseAfterDiscovery = true } }
   func suspendDiscovery() { state.withLockedValue { $0.discoverySuspended = true } }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient {
     workingDirectory.path == scopedHighRisk ? RiskCatalogClient(risk: .string("full-shell")) : self
   }

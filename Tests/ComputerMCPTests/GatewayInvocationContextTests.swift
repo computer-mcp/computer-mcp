@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
@@ -498,7 +499,7 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
   private let observations = NIOLockedValueBox([Observation]())
   var calls: [Observation] { observations.withLockedValue { $0 } }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     catalogs.withLockedValue { $0.append((server.id, context)) }

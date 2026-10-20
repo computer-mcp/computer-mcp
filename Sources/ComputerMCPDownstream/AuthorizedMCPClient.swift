@@ -4,20 +4,30 @@ import ComputerMCPPlatform
 import Foundation
 
 /// Applies one profile's host-owned scope to every route into a downstream session.
-struct AuthorizedMCPClient: DownstreamMCPClient {
+package struct AuthorizedMCPClient: DownstreamMCPClient {
   private static let discovery = BlockingOperationExecutor(
     label: "computer-mcp.mcp-authorization-discovery", serial: false)
-  let base: any DownstreamMCPClient
-  let policy: MCPToolAccessPolicy
-  var policyProvider: (@Sendable ((any GatewaySessionAuthority)?) throws -> MCPToolAccessPolicy)? =
-    nil
+  private let base: any DownstreamMCPClient
+  private let policy: MCPToolAccessPolicy
+  private let policyProvider:
+    (@Sendable ((any GatewaySessionAuthority)?) throws -> MCPToolAccessPolicy)?
+
+  package init(
+    base: any DownstreamMCPClient, policy: MCPToolAccessPolicy,
+    policyProvider: (@Sendable ((any GatewaySessionAuthority)?) throws -> MCPToolAccessPolicy)? =
+      nil
+  ) {
+    self.base = base
+    self.policy = policy
+    self.policyProvider = policyProvider
+  }
 
   private func currentPolicy(context: InvocationContext) throws -> MCPToolAccessPolicy {
     try policyProvider?(context.session) ?? policy
   }
 
-  func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+  package func makeScopedClient(
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   {
@@ -27,14 +37,14 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       policy: policy, policyProvider: policyProvider)
   }
 
-  func toolChanges() -> AsyncStream<Void> { base.toolChanges() }
-  func shutdown() async { await base.shutdown() }
+  package func toolChanges() -> AsyncStream<Void> { base.toolChanges() }
+  package func shutdown() async { await base.shutdown() }
 
-  func isServerVisible(_ server: MCPServerConfig, context: InvocationContext) -> Bool {
+  package func isServerVisible(_ server: MCPServerConfig, context: InvocationContext) -> Bool {
     (try? currentPolicy(context: context).isVisible(server)) ?? false
   }
 
-  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
+  package func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     let policy = try currentPolicy(context: context)
     guard policy.canDiscoverTools(on: server) else { return [] }
     return try base.listTools(server: server, context: context).filter {
@@ -44,13 +54,13 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     }
   }
 
-  func callTool(
+  package func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
   ) throws -> JSONValue {
     try callTool(server: server, name: name, arguments: arguments, requestID: nil, context: context)
   }
 
-  func callTool(
+  package func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
     context: InvocationContext
   )
@@ -61,7 +71,7 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       server: server, name: name, arguments: arguments, requestID: requestID, context: context)
   }
 
-  func startToolCall(
+  package func startToolCall(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String,
     context: InvocationContext
   )
@@ -72,7 +82,7 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       server: server, name: name, arguments: arguments, requestID: requestID, context: context)
   }
 
-  func callToolAsync(
+  package func callToolAsync(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
     context: InvocationContext
   )
@@ -87,35 +97,39 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       server: server, name: name, arguments: arguments, requestID: requestID, context: context)
   }
 
-  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+  package func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws
     -> JSONValue
   {
     try requireServer(server, capability: "mcp.resources.list", context: context)
     return try base.listResources(server: server, cursor: cursor, context: context)
   }
 
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+  package func listResourceTemplates(
+    server: MCPServerConfig, cursor: String?, context: InvocationContext
+  )
     throws -> JSONValue
   {
     try requireServer(server, capability: "mcp.resources.templates.list", context: context)
     return try base.listResourceTemplates(server: server, cursor: cursor, context: context)
   }
 
-  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+  package func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
     -> JSONValue
   {
     try requireServer(server, capability: "mcp.resources.read", context: context)
     return try base.readResource(server: server, uri: uri, context: context)
   }
 
-  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+  package func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws
     -> JSONValue
   {
     try requireServer(server, capability: "mcp.prompts.list", context: context)
     return try base.listPrompts(server: server, cursor: cursor, context: context)
   }
 
-  func getPrompt(
+  package func getPrompt(
     server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
   ) throws
     -> JSONValue
@@ -124,19 +138,23 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     return try base.getPrompt(server: server, name: name, arguments: arguments, context: context)
   }
 
-  func connectionStatus(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
+  package func connectionStatus(server: MCPServerConfig, context: InvocationContext) throws
+    -> JSONValue
+  {
     guard isServerVisible(server, context: context) else {
       return .object(["state": .string("not_authorized")])
     }
     return try base.connectionStatus(server: server, context: context)
   }
 
-  func closeConnection(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
+  package func closeConnection(server: MCPServerConfig, context: InvocationContext) throws
+    -> JSONValue
+  {
     try requireServer(server, capability: "mcp.connections.close", context: context)
     return try base.closeConnection(server: server, context: context)
   }
 
-  func readEvents(
+  package func readEvents(
     server: MCPServerConfig, afterCursor: Int, maxResults: Int, context: InvocationContext
   ) throws -> JSONValue {
     try requireServer(server, capability: "mcp.events.read", context: context)
@@ -144,7 +162,7 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       server: server, afterCursor: afterCursor, maxResults: maxResults, context: context)
   }
 
-  func readEvents(
+  package func readEvents(
     server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?,
     context: InvocationContext
   ) throws -> JSONValue {
@@ -154,12 +172,14 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       context: context)
   }
 
-  func activeRequests(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
+  package func activeRequests(server: MCPServerConfig, context: InvocationContext) throws
+    -> JSONValue
+  {
     try requireServer(server, capability: "mcp.requests.list", context: context)
     return try base.activeRequests(server: server, context: context)
   }
 
-  func cancelRequest(
+  package func cancelRequest(
     server: MCPServerConfig, requestID: String, reason: String?, context: InvocationContext
   ) throws
     -> JSONValue
@@ -195,7 +215,7 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
       hostServiceAction: tool.hostServiceAction)
   }
 
-  func readRequest(
+  package func readRequest(
     server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int,
     context: InvocationContext
   ) throws

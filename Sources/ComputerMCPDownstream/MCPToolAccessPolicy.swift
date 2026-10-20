@@ -3,12 +3,19 @@ import ComputerMCPCore
 import Foundation
 
 /// Resolves host grants against registration identity, before downstream discovery or execution.
-struct MCPToolAccessPolicy: Sendable {
-  let configuration: GatewayConfiguration
-  let grant: ProfileGrant
-  let derivesObserveGrant: Bool
+package struct MCPToolAccessPolicy: Sendable {
+  package let configuration: GatewayConfiguration
+  package let grant: ProfileGrant
+  package let derivesObserveGrant: Bool
 
-  func allows(_ reference: MCPToolReference, riskFloor: CapabilityRisk? = nil) -> Bool {
+  package init(configuration: GatewayConfiguration, grant: ProfileGrant, derivesObserveGrant: Bool)
+  {
+    self.configuration = configuration
+    self.grant = grant
+    self.derivesObserveGrant = derivesObserveGrant
+  }
+
+  package func allows(_ reference: MCPToolReference, riskFloor: CapabilityRisk? = nil) -> Bool {
     guard let server = configuration.mcp.servers.first(where: { $0.id == reference.serverID }),
       server.permitsTool(reference.toolName)
     else { return false }
@@ -22,7 +29,7 @@ struct MCPToolAccessPolicy: Sendable {
         equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference)))
   }
 
-  func canDiscoverTools(on server: MCPServerConfig) -> Bool {
+  package func canDiscoverTools(on server: MCPServerConfig) -> Bool {
     guard server.enabled else { return false }
     if grant.capabilityIDs.contains("*") || grant.mcpServerIDs.contains(server.id)
       || grant.capabilityIDs.contains("mcp.tools.call")
@@ -45,14 +52,14 @@ struct MCPToolAccessPolicy: Sendable {
     return names.contains { allows(.init(serverID: server.id, toolName: $0)) }
   }
 
-  func permitsServer(_ server: MCPServerConfig, capability: String) -> Bool {
+  package func permitsServer(_ server: MCPServerConfig, capability: String) -> Bool {
     guard server.enabled else { return false }
     return grant.capabilityIDs.contains("*") || grant.mcpServerIDs.contains(server.id)
       || grant.capabilityIDs.contains(capability)
       || (derivesObserveGrant && Self.observeCapabilities.contains(capability))
   }
 
-  func isVisible(_ server: MCPServerConfig) -> Bool {
+  package func isVisible(_ server: MCPServerConfig) -> Bool {
     canDiscoverTools(on: server)
       || Self.sessionCapabilities.contains { permitsServer(server, capability: $0) }
   }

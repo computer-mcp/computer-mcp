@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import Foundation

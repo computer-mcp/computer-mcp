@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
@@ -213,7 +214,12 @@ final class PluginInstallationStorage: Sendable {
         let lease = try PluginArtifactLease(directory: directory, exclusive: true)
         defer { lease.close() }
         if let processOwnershipRoot {
-          try MCPProcessOwnership.requireArtifactUnused(root: processOwnershipRoot, artifact: owned)
+          do {
+            try MCPProcessOwnership.requireArtifactUnused(
+              root: processOwnershipRoot, artifact: owned)
+          } catch MCPProcessOwnershipError.artifactInUse {
+            throw PluginStoreError.artifactInUse
+          }
         }
         try directory.discard()
       }

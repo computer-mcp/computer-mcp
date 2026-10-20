@@ -1,24 +1,19 @@
+import ComputerMCPDownstream
 import ComputerMCPTestSupport
-import Darwin
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPProcessOwnershipTests {
-  @Test
-  func transientDatabasesHaveIndependentProcessOwnership() throws {
-    let first = try GatewayDatabase(inMemory: ())
-    let second = try GatewayDatabase(inMemory: ())
-    let root = try #require(first.mcpProcessOwnershipRoot)
-    #expect(root == first.mcpProcessOwnershipRoot)
-    #expect(root != second.mcpProcessOwnershipRoot)
-    #expect(root != MCPProcessOwnership.defaultRoot)
-  }
-
   @Test
   func uncertainLegacyArtifactProvenanceStillRetainsMigratedFiles() throws {
     let root = try makeRoot()
@@ -36,7 +31,7 @@ struct MCPProcessOwnershipTests {
     provenance["device"] = Int32.max
     receipt["artifact"] = provenance
     try JSONSerialization.data(withJSONObject: receipt).write(to: file)
-    #expect(throws: PluginStoreError.artifactInUse) {
+    #expect(throws: MCPProcessOwnershipError.artifactInUse) {
       try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
     }
   }
@@ -53,7 +48,7 @@ struct MCPProcessOwnershipTests {
       JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
     receipt.removeValue(forKey: "formatVersion")
     try JSONSerialization.data(withJSONObject: receipt).write(to: file)
-    #expect(throws: PluginStoreError.artifactInUse) {
+    #expect(throws: MCPProcessOwnershipError.artifactInUse) {
       try MCPProcessOwnership.requireArtifactUnused(
         root: storage, artifact: directoryIdentity(root))
     }
@@ -76,7 +71,7 @@ struct MCPProcessOwnershipTests {
     let owner = try MCPProcessOwnership.acquire(
       root: storage, workspace: root, registration: "live", artifact: artifact)
     defer { try? owner.finish(confirmed: true) }
-    #expect(throws: PluginStoreError.artifactInUse) {
+    #expect(throws: MCPProcessOwnershipError.artifactInUse) {
       try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
     }
   }
@@ -266,7 +261,7 @@ struct MCPProcessOwnershipTests {
     let descriptor = try first.supervisorHandle().fileDescriptor
     let inherited = fcntl(descriptor, F_DUPFD_CLOEXEC, 10)
     try #require(inherited >= 0)
-    defer { Darwin.close(inherited) }
+    defer { close(inherited) }
     #expect(throws: GatewayToolError.self) { try first.finish(confirmed: true) }
     #expect(try receipts(storage).count == 1)
     #expect(throws: GatewayToolError.self) {
@@ -339,7 +334,10 @@ struct MCPProcessOwnershipTests {
     defer { close(descriptor) }
     var status = stat()
     try #require(fstat(descriptor, &status) == 0)
-    return try PluginDirectoryIdentity(url: root, status: status, descriptor: descriptor)
+    return PluginDirectoryIdentity(
+      url: root, volumeUUID: UUID(uuidString: "12345678-1234-1234-1234-123456789ABC"),
+      device: Int32(truncatingIfNeeded: status.st_dev),
+      inode: UInt64(status.st_ino), birthSeconds: 0, birthNanoseconds: 0)
   }
 
   private func receipts(_ root: URL) throws -> [URL] {

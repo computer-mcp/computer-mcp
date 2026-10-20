@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
@@ -764,6 +765,28 @@ struct PluginStoreInstallationTests {
 
 @Suite(.timeLimit(.minutes(1)))
 struct PluginInstallationStorageTests {
+  @Test
+  func liveProcessOwnershipKeepsPluginCleanupErrorAndFiles() async throws {
+    let fixture = try await PreparationFixture.make()
+    defer { fixture.files.remove() }
+    let storage = try PluginInstallationStorage(at: fixture.installationRoot)
+    defer { storage.finishTransaction() }
+    let identity = try storage.createInstallation()
+    let processRoot = fixture.installationRoot.deletingLastPathComponent().appendingPathComponent(
+      "processes")
+    let owner = try MCPProcessOwnership.acquire(
+      root: processRoot, workspace: fixture.installationRoot, registration: "mcp",
+      artifact: identity)
+    defer { try? owner.finish(confirmed: true) }
+    #expect(throws: PluginStoreError.artifactInUse) {
+      try storage.clean(identity, keepingPackage: false, processOwnershipRoot: processRoot)
+    }
+    #expect(FileManager.default.fileExists(atPath: identity.url.path))
+    try owner.finish(confirmed: true)
+    try storage.clean(identity, keepingPackage: false, processOwnershipRoot: processRoot)
+    #expect(!FileManager.default.fileExists(atPath: identity.url.path))
+  }
+
   @Test
   func completedTransactionReleasesLockEvenWhileAnUnrelatedDuplicateSurvives() async throws {
     let fixture = try await PreparationFixture.make()

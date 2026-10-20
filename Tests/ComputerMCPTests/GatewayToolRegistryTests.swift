@@ -1,4 +1,5 @@
 import AppKit
+import ComputerMCPDownstream
 import ComputerMCPTestSupport
 import CoreText
 import Darwin
@@ -22284,7 +22285,7 @@ private final class FakeProcessManager: ProcessManaging, @unchecked Sendable {
 
 private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sendable {
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   { self }

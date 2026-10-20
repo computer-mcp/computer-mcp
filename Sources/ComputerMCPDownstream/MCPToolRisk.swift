@@ -3,7 +3,9 @@ import ComputerMCPCore
 import Foundation
 
 extension GatewayConfiguration {
-  func mcpRisk(for reference: MCPToolReference, declaredBy tool: MCPTool) throws -> CapabilityRisk {
+  package func mcpRisk(for reference: MCPToolReference, declaredBy tool: MCPTool) throws
+    -> CapabilityRisk
+  {
     try mcpRisk(for: reference).raised(to: tool.declaredRiskFloor)
   }
 }

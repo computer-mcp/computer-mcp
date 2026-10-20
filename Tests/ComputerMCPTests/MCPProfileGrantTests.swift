@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
@@ -499,7 +500,7 @@ private struct ProfileCatalogClient: DownstreamMCPClient {
   var calledServers: [String] { calls.withLockedValue { $0 } }
 
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   { self }
@@ -564,7 +565,7 @@ private final class ReplacedProfileCatalogClient: DownstreamMCPClient, Sendable 
   }
 
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
 
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {

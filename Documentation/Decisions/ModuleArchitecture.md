@@ -26,7 +26,8 @@ Dependencies inside a layer are limited to these:
 - Platform: `PlatformPOSIX` and `PlatformDarwin` use `Platform`;
   `PlatformDarwin` may use `PlatformPOSIX` and `CSystemArchive`.
 - Services: `Process`, `Transport`, `Downstream` and `Tunnels` may use
-  `Configuration`; `Downstream` and `Tunnels` may use `Process`.
+  `Configuration`; `Downstream` and `Tunnels` may use `Process`; `Downstream` may use
+  `Transport`.
 - Capabilities: tool domains may use `ToolKit`; `ToolsWorkspace`,
   `ToolsStructured`, `ToolsSkills` and `ToolsSystem` may use `ToolsFiles`;
   `ToolsSkills` may use `ToolsStructured`; `Plugins` composes contributions and
@@ -104,13 +105,13 @@ above them and supplied by the composition root:
 | --- | --- | --- |
 | Session authority | `Core` | `GatewayControlSession` in execution contexts and downstream clients |
 | Continuation route | `Core` | `MCPContinuationTarget` reads in downstream clients |
-| Host invocation context and host session factory | `Downstream` | `MCPHostContext` and `MCPHostSession` in downstream clients and child transports |
+| `MCPHostEnvironment`, `MCPHostLaunchMetadata` and `MCPHostSessionHandle` | `Downstream` | `MCPHostContext` and `MCPHostSession` in downstream clients and child transports |
 | Domain stores | each owner | direct `GatewayDatabase` use by plugins, workspaces, receipts and the HTTP adapter |
 | Package file reader | `PlatformPOSIX` | package file access in CLI tree loading and validation |
 | CLI tree source value | `Configuration` | `CLITreeSource` stored in command configuration |
 | CLI invocation layer | `ToolsCLI` | CLI checks inside bounded process execution |
 | Owned work tracking | `Process` | `GatewayOwnedWork` in shell sessions |
-| Process owner errors | `Downstream` | plugin store errors in process ownership; directory identity itself is a `Platform` value |
+| `MCPProcessOwnershipError` | `Downstream` | plugin store errors in process ownership; directory identity itself is a `Platform` value |
 | HTTP origin lifecycle | `Tunnels` | `GatewayHTTPRuntime` in Cloudflare runtime state |
 | Control error classification | `Gateway` | control-plane error types in the HTTP adapter and control responses |
 | Client control | `Gateway` | `GatewayClientControl` in the HTTP client registry |

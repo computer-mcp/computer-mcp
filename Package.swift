@@ -81,6 +81,25 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPDownstream",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTransport",
+        .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "MCP", package: "swift-sdk"),
+        .product(name: "Logging", package: "swift-log"),
+      ]
+    ),
+    .testTarget(
+      name: "ComputerMCPDownstreamTests",
+      dependencies: [
+        "ComputerMCPDownstream", "ComputerMCPCore", "ComputerMCPConfiguration",
+        "ComputerMCPPlatform",
+        "ComputerMCPProcess", "ComputerMCPTestSupport",
+        .product(name: "MCP", package: "swift-sdk"),
+      ]
+    ),
+    .target(
       name: "ComputerMCPTestSupport",
       dependencies: ["ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPProcess"],
       path: "Tests/ComputerMCPTestSupport"),
@@ -170,6 +189,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCPMacOS",
         dependencies: [
+          "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
@@ -178,6 +198,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCP",
         dependencies: [
+          "ComputerMCPDownstream",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPersistence",
@@ -216,6 +237,7 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "ComputerMCPApp",
         dependencies: [
+          "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
@@ -235,6 +257,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPTests",
         dependencies: [
+          "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",

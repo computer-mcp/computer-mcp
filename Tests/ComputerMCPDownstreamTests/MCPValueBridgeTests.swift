@@ -1,8 +1,8 @@
+import ComputerMCPDownstream
 import Foundation
 import MCP
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
 
 struct MCPValueBridgeTests {

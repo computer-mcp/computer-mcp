@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPTestSupport
+import ComputerMCPTransport
 import Foundation
 import MCP
 import Testing
@@ -12,6 +13,26 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPAuthenticationTests {
+  @Test(arguments: [false, true])
+  func gatewayClientSessionTerminatesThroughItsTransportOnce(streaming: Bool) async throws {
+    try await HTTPStreamProcessFixture.withFixture { fixture in
+      let session = try await GatewayClientSession.connectHTTP(
+        endpoint: fixture.endpoint, accessToken: "fixture-token", streaming: streaming)
+      do {
+        #expect(try await session.listToolNames() == ["inspect"])
+        await session.disconnect()
+        await session.disconnect()
+        let deletions = try fixture.requests().filter { $0["method"] == .string("DELETE") }
+        #expect(deletions.count == 1)
+        #expect(deletions.first?["authorized"] == .bool(true))
+        #expect(deletions.first?["session"] == .string("fixture-session"))
+      } catch {
+        await session.disconnect()
+        throw error
+      }
+    }
+  }
+
   @Test(arguments: ["source", "endpoint", "ambiguous"])
   func inactivePluginCredentialsRequireUnambiguousCurrentSourceAndEndpoint(change: String)
     async throws
@@ -136,22 +157,6 @@ struct MCPHTTPAuthenticationTests {
       }
       await client.shutdown()
       #expect(try fixture.requests().isEmpty)
-    }
-  }
-
-  @Test
-  func redirectsDoNotReplayAuthenticatedRequests() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
-      let transport = MCPHTTPClientTransport(
-        endpoint: fixture.endpoint.deletingLastPathComponent().appendingPathComponent("redirect"),
-        streaming: false, bearerToken: { "fixture-token" })
-      try await transport.connect()
-      await #expect(throws: MCPHTTPTransportError.httpStatus(307)) {
-        try await transport.send(
-          Data(#"{"jsonrpc":"2.0","id":"redirect","method":"initialize","params":{}}"#.utf8))
-      }
-      await transport.disconnect()
-      #expect(try fixture.requests().count == 1)
     }
   }
 

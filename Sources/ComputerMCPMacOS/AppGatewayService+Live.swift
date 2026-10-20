@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPTransport
 
 extension AppGatewayService {
   package static func live(

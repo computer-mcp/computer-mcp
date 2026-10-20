@@ -1,13 +1,25 @@
-import Darwin
 import Foundation
 import Logging
 import MCP
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
+
 /// A private inherited socket carries standard newline-delimited MCP messages.
 /// It owns its descriptor; it never opens a pathname, listener or privileged socket.
-actor MCPInheritedSocketTransport: Transport {
-  nonisolated let logger = Logger(
+package actor MCPInheritedSocketTransport: Transport {
+  package nonisolated let logger = Logger(
     label: "mcp.inherited-socket", factory: { _ in SwiftLogNoOpLogHandler() })
+  #if canImport(Darwin)
+    private static let streamType = SOCK_STREAM
+  #else
+    private static let streamType = Int32(SOCK_STREAM.rawValue)
+  #endif
   private let handle: FileHandle
   private let maximumMessageBytes: Int
   private let maximumQueuedMessages: Int
@@ -21,7 +33,7 @@ actor MCPInheritedSocketTransport: Transport {
   private var writer: Task<Void, Error>?
   private var queuedWrites = 0
 
-  init(
+  package init(
     takingOwnershipOf handle: FileHandle, maximumMessageBytes: Int = 1_048_576,
     maximumQueuedMessages: Int = 32, writeTimeout: Duration = .seconds(30)
   ) throws {
@@ -42,16 +54,20 @@ actor MCPInheritedSocketTransport: Transport {
     guard descriptor >= 3, fstat(descriptor, &info) == 0,
       info.st_mode & S_IFMT == S_IFSOCK,
       getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &type, &length) == 0,
-      type == SOCK_STREAM, peerResult == 0, Int32(address.ss_family) == AF_UNIX
+      type == Self.streamType, peerResult == 0, Int32(address.ss_family) == AF_UNIX
     else { throw MCPError.invalidParams("Host transport requires a connected Unix stream socket.") }
     let flags = fcntl(descriptor, F_GETFL)
     let fdFlags = fcntl(descriptor, F_GETFD)
-    var noSigpipe: Int32 = 1
     guard flags >= 0, fdFlags >= 0,
       fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0,
-      fcntl(descriptor, F_SETFD, fdFlags | FD_CLOEXEC) == 0,
-      setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, length) == 0
+      fcntl(descriptor, F_SETFD, fdFlags | FD_CLOEXEC) == 0
     else { throw MCPError.transportError(POSIXError(.EIO)) }
+    #if canImport(Darwin)
+      var noSigpipe: Int32 = 1
+      guard setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, length) == 0 else {
+        throw MCPError.transportError(POSIXError(.EIO))
+      }
+    #endif
     self.handle = handle
     self.maximumMessageBytes = maximumMessageBytes
     self.maximumQueuedMessages = maximumQueuedMessages
@@ -60,9 +76,9 @@ actor MCPInheritedSocketTransport: Transport {
       bufferingPolicy: .bufferingOldest(maximumQueuedMessages))
   }
 
-  static func makePair() throws -> (FileHandle, FileHandle) {
+  package static func makePair() throws -> (FileHandle, FileHandle) {
     var descriptors: [Int32] = [-1, -1]
-    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
+    guard socketpair(AF_UNIX, streamType, 0, &descriptors) == 0 else {
       throw MCPError.transportError(POSIXError(.EMFILE))
     }
     let pair = (
@@ -80,7 +96,7 @@ actor MCPInheritedSocketTransport: Transport {
     return pair
   }
 
-  func connect() async throws {
+  package func connect() async throws {
     guard !closed else { throw MCPError.connectionClosed }
     guard !connected else { return }
     connected = true
@@ -92,9 +108,9 @@ actor MCPInheritedSocketTransport: Transport {
     }
   }
 
-  func receive() -> AsyncThrowingStream<Data, Error> { stream }
+  package func receive() -> AsyncThrowingStream<Data, Error> { stream }
 
-  func send(_ message: Data) async throws {
+  package func send(_ message: Data) async throws {
     try Task.checkCancellation()
     guard connected, !closed else { throw MCPError.connectionClosed }
     guard !message.isEmpty, message.count <= maximumMessageBytes,
@@ -125,7 +141,7 @@ actor MCPInheritedSocketTransport: Transport {
     }
   }
 
-  func disconnect() async {
+  package func disconnect() async {
     finish()
     let reading = reader
     let writing = writer
@@ -147,8 +163,18 @@ actor MCPInheritedSocketTransport: Transport {
           throw MCPError.transportError(POSIXError(.ETIMEDOUT))
         }
         let count = data.withUnsafeBytes {
-          Darwin.send(
-            handle.fileDescriptor, $0.baseAddress!.advanced(by: offset), data.count - offset, 0)
+          #if canImport(Darwin)
+            Darwin.send(
+              handle.fileDescriptor, $0.baseAddress!.advanced(by: offset), data.count - offset, 0)
+          #elseif canImport(Glibc)
+            Glibc.send(
+              handle.fileDescriptor, $0.baseAddress!.advanced(by: offset), data.count - offset,
+              Int32(MSG_NOSIGNAL))
+          #elseif canImport(Musl)
+            Musl.send(
+              handle.fileDescriptor, $0.baseAddress!.advanced(by: offset), data.count - offset,
+              Int32(MSG_NOSIGNAL))
+          #endif
         }
         if count > 0 {
           offset += count
@@ -209,7 +235,11 @@ actor MCPInheritedSocketTransport: Transport {
     closed = true
     pending.removeAll(keepingCapacity: false)
     if let error { continuation.finish(throwing: error) } else { continuation.finish() }
-    _ = Darwin.shutdown(handle.fileDescriptor, SHUT_RDWR)
+    #if canImport(Darwin)
+      _ = Darwin.shutdown(handle.fileDescriptor, SHUT_RDWR)
+    #else
+      _ = shutdown(handle.fileDescriptor, Int32(SHUT_RDWR))
+    #endif
     try? handle.close()
   }
 }

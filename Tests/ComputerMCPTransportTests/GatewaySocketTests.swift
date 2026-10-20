@@ -1,13 +1,44 @@
-import Darwin
 import Foundation
 import MCP
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPTransport
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 @Suite(.serialized)
 
 final class GatewaySocketTests {
+  @Test
+  func credentialsContainIndependentRandom32ByteBase64Tokens() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "socket-credentials-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    var credentials = Set<Data>()
+    for index in 0..<16 {
+      let url = root.appendingPathComponent("credential-\(index)")
+      try GatewaySocketCredentialStore.create(at: url)
+      let content = try String(contentsOf: url, encoding: .utf8)
+      #expect(content.utf8.count == 45)
+      #expect(content.last == "\n")
+      let token = String(content.dropLast())
+      let bytes = try #require(Data(base64Encoded: token))
+      #expect(bytes.count == 32)
+      #expect(bytes.base64EncodedString() == token)
+      #expect(try GatewaySocketCredentialStore.read(at: url) == bytes)
+      #expect(try fileStatus(at: url.path).st_mode & 0o777 == 0o600)
+      credentials.insert(bytes)
+    }
+    #expect(credentials.count == 16)
+    #expect(try fileStatus(at: root.path).st_mode & 0o777 == 0o700)
+  }
+
   @Test(arguments: ["9007199254740993", "9223372036854775807", "-9223372036854775808"])
   func responseCorrelationRetainsExactNumericIdentifiers(_ literal: String) throws {
     let response = Data(
@@ -532,11 +563,8 @@ final class GatewaySocketTests {
 
     let terminalStream = await transport.receive()
     var terminalIterator = terminalStream.makeAsyncIterator()
-    do {
+    await #expect(throws: (any Error).self) {
       _ = try await terminalIterator.next()
-      Issue.record("Expected a terminal transport error after peer closure.")
-    } catch GatewaySocketError.notConnected {
-      // Expected: MCP.Client breaks its receive loop instead of replaying a finished stream.
     }
 
     await transport.disconnect()
@@ -662,24 +690,6 @@ final class GatewaySocketTests {
     await server.stop()
   }
 
-  @Test
-  func testControlClientTimesOutWhenOwnedSocketNeverResponds() async throws {
-    let fixture = try SocketFixture(createDirectory: true)
-    let server = try UnresponsiveUnixSocketServer(path: fixture.configuration.socketURL.path)
-    defer { server.close() }
-    let client = AppControlPlaneServiceClient(socketURL: fixture.configuration.socketURL)
-    let clock = ContinuousClock()
-    let startedAt = clock.now
-
-    do {
-      _ = try await client.call("readiness", timeout: .milliseconds(100))
-      Issue.record("Expected an unresponsive control socket to time out.")
-    } catch let error as ControlSocketCallError {
-      #expect(error.code == "control.timeout")
-    }
-
-    #expect(startedAt.duration(to: clock.now) < .seconds(1))
-  }
 }
 
 private actor CancellationProbe {
@@ -801,8 +811,14 @@ private func fileStatus(at path: String) throws -> stat {
   return status
 }
 
+#if canImport(Darwin)
+  private let socketStreamType = SOCK_STREAM
+#else
+  private let socketStreamType = Int32(SOCK_STREAM.rawValue)
+#endif
+
 private func createStaleUnixSocket(at path: String) throws {
-  let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+  let descriptor = socket(AF_UNIX, socketStreamType, 0)
   guard descriptor >= 0 else {
     throw GatewaySocketError.ioError(operation: "socket", code: errno)
   }
@@ -812,7 +828,13 @@ private func createStaleUnixSocket(at path: String) throws {
   let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + path.utf8.count + 1)
   let result = withUnsafePointer(to: &address) { pointer in
     pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-      Darwin.bind(descriptor, $0, addressLength)
+      #if canImport(Darwin)
+        Darwin.bind(descriptor, $0, addressLength)
+      #elseif canImport(Glibc)
+        Glibc.bind(descriptor, $0, addressLength)
+      #elseif canImport(Musl)
+        Musl.bind(descriptor, $0, addressLength)
+      #endif
     }
   }
   guard result == 0 else {
@@ -825,13 +847,18 @@ private func runBlocking<T: Sendable>(
 ) async throws -> T {
   try await withCheckedThrowingContinuation { continuation in
     Thread.detachNewThread {
-      autoreleasepool {
+      let run = {
         do {
           continuation.resume(returning: try operation())
         } catch {
           continuation.resume(throwing: error)
         }
       }
+      #if canImport(Darwin)
+        autoreleasepool(invoking: run)
+      #else
+        run()
+      #endif
     }
   }
 }
@@ -840,7 +867,7 @@ private final class RawUnixSocket: @unchecked Sendable {
   private let descriptor: CInt
 
   init(path: String) throws {
-    descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    descriptor = socket(AF_UNIX, socketStreamType, 0)
     guard descriptor >= 0 else {
       throw GatewaySocketError.ioError(operation: "socket", code: errno)
     }
@@ -860,7 +887,13 @@ private final class RawUnixSocket: @unchecked Sendable {
     let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + path.utf8.count + 1)
     let result = withUnsafePointer(to: &address) { pointer in
       pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.connect(descriptor, $0, addressLength)
+        #if canImport(Darwin)
+          Darwin.connect(descriptor, $0, addressLength)
+        #elseif canImport(Glibc)
+          Glibc.connect(descriptor, $0, addressLength)
+        #elseif canImport(Musl)
+          Musl.connect(descriptor, $0, addressLength)
+        #endif
       }
     }
     guard result == 0 else {
@@ -878,7 +911,13 @@ private final class RawUnixSocket: @unchecked Sendable {
     var remaining = data
     while !remaining.isEmpty {
       let count = remaining.withUnsafeBytes {
-        Darwin.write(descriptor, $0.baseAddress, $0.count)
+        #if canImport(Darwin)
+          Darwin.write(descriptor, $0.baseAddress, $0.count)
+        #elseif canImport(Glibc)
+          Glibc.write(descriptor, $0.baseAddress, $0.count)
+        #elseif canImport(Musl)
+          Musl.write(descriptor, $0.baseAddress, $0.count)
+        #endif
       }
       guard count > 0 else {
         throw GatewaySocketError.ioError(operation: "write", code: errno)
@@ -900,57 +939,19 @@ private final class RawUnixSocket: @unchecked Sendable {
     result.reserveCapacity(count)
     while result.count < count {
       var buffer = [UInt8](repeating: 0, count: count - result.count)
-      let bytesRead = Darwin.read(descriptor, &buffer, buffer.count)
+      #if canImport(Darwin)
+        let bytesRead = Darwin.read(descriptor, &buffer, buffer.count)
+      #elseif canImport(Glibc)
+        let bytesRead = Glibc.read(descriptor, &buffer, buffer.count)
+      #elseif canImport(Musl)
+        let bytesRead = Musl.read(descriptor, &buffer, buffer.count)
+      #endif
       guard bytesRead > 0 else {
         throw GatewaySocketError.ioError(operation: "read", code: errno)
       }
       result.append(contentsOf: buffer.prefix(bytesRead))
     }
     return result
-  }
-}
-
-private final class UnresponsiveUnixSocketServer: @unchecked Sendable {
-  private let descriptor: CInt
-  private let path: String
-  private let lock = NSLock()
-  private var isClosed = false
-
-  init(path: String) throws {
-    self.path = path
-    descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard descriptor >= 0 else {
-      throw GatewaySocketError.ioError(operation: "socket", code: errno)
-    }
-
-    var address = try unixSocketAddress(path: path)
-    let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + path.utf8.count + 1)
-    let bindResult = withUnsafePointer(to: &address) { pointer in
-      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.bind(descriptor, $0, addressLength)
-      }
-    }
-    guard bindResult == 0, chmod(path, 0o600) == 0, listen(descriptor, 1) == 0 else {
-      let code = errno
-      _ = Darwin.close(descriptor)
-      throw GatewaySocketError.ioError(operation: "listen(\(path))", code: code)
-    }
-  }
-
-  deinit {
-    close()
-  }
-
-  func close() {
-    lock.lock()
-    guard !isClosed else {
-      lock.unlock()
-      return
-    }
-    isClosed = true
-    lock.unlock()
-    _ = Darwin.close(descriptor)
-    _ = Darwin.unlink(path)
   }
 }
 

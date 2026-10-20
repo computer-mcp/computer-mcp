@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPTransport
 import Foundation
 
 /// Each accepted socket retains the HTTP generation that admitted it.

@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPTransport
 import Foundation
 import MCP
 

@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPTransport
 import CryptoKit
 import Foundation
 

@@ -4,6 +4,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPProcess
+import ComputerMCPTransport
 import Foundation
 import MCP
 

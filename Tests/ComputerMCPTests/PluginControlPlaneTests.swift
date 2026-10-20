@@ -1,5 +1,6 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPTransport
 import CryptoKit
 import Foundation
 import MCP

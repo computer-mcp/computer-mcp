@@ -49,10 +49,11 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
+| `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, and configured command resolution and execution |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction and staging |
-| `Sources/ComputerMCP/` | Shared target for the gateway, transports, providers, persistence, tunnel, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
+| `Sources/ComputerMCP/` | Shared target for the gateway, providers, persistence, tunnels, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
 | `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, executable search directories, file change monitors and live App services to the shared target |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
@@ -147,8 +148,9 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
 - Delegate MCP JSON-RPC semantics to the upstream-aligned SDK. The shared owned-process
   primitive handles bounded newline-delimited stdio, supervisor/group lifetime
   and byte flow for downstream MCP without a domain dependency.
-  The host-owned HTTP client transport uses Foundation URLSession and a bounded
-  SSE decoder. Each POST response and the standalone GET event channel own
+  The HTTP client transport uses Foundation URLSession and a bounded SSE decoder.
+  macOS reads native asynchronous bytes; Linux bridges data-delegate callbacks
+  into the response byte stream. Each POST response and the standalone GET event channel own
   independent resume cursors and cancellation lifetimes. Response recovery uses
   GET; it does not repeat a possibly executed POST.
 - Connect the independent Codex adapter through the ordinary MCP registration

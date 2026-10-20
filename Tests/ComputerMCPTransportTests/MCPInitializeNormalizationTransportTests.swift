@@ -3,8 +3,8 @@ import Logging
 import MCP
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
+@testable import ComputerMCPTransport
 
 struct MCPInitializeNormalizationTransportTests {
   @Test func initializeNormalizationPreservesLargeRequestIdentifiers() throws {

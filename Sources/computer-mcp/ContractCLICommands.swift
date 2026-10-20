@@ -3,6 +3,7 @@ import ComputerMCP
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPMacOS
+import ComputerMCPTransport
 import Foundation
 
 enum BridgeClientIdentity: String, ExpressibleByArgument {

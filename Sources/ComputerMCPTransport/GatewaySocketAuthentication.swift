@@ -1,8 +1,14 @@
 import ComputerMCPCore
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
-import Security
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 package enum GatewaySocketConnectionOrigin: String, Codable, Equatable, Sendable {
   case localMCP = "local-mcp"
@@ -76,12 +82,8 @@ package enum GatewaySocketCredentialStore {
       ofItemAtPath: parent.path
     )
 
-    var bytes = [UInt8](repeating: 0, count: 32)
-    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-      throw GatewaySocketError.credentialUnavailable(
-        "Could not generate the local Tunnel bridge credential."
-      )
-    }
+    var generator = SystemRandomNumberGenerator()
+    let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
     let token = Data(bytes).base64EncodedString()
     try Data((token + "\n").utf8).write(to: url, options: .atomic)
     try fileManager.setAttributes(

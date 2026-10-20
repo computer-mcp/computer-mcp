@@ -4,6 +4,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPMacOS
 import ComputerMCPPlatform
+import ComputerMCPTransport
 import Foundation
 
 @main

@@ -3,7 +3,7 @@ import Logging
 import MCP
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPTransport
 
 struct MCPHTTPEventSubscriptionTransportTests {
   @Test

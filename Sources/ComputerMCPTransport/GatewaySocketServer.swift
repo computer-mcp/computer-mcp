@@ -1,9 +1,16 @@
-import Darwin
 import Foundation
 import Logging
 import MCP
 @preconcurrency import NIOCore
 @preconcurrency import NIOPosix
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 package final class GatewaySocketServer: @unchecked Sendable {
   package typealias ServerFactory =
@@ -508,7 +515,12 @@ private enum GatewaySocketServerSecurity {
   }
 
   private static func isSocketActive(path: String) throws -> Bool {
-    let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    #if canImport(Darwin)
+      let streamType = SOCK_STREAM
+    #else
+      let streamType = Int32(SOCK_STREAM.rawValue)
+    #endif
+    let descriptor = socket(AF_UNIX, streamType, 0)
     guard descriptor >= 0 else {
       throw GatewaySocketError.ioError(operation: "socket", code: errno)
     }
@@ -533,7 +545,13 @@ private enum GatewaySocketServerSecurity {
     )
     let result = withUnsafePointer(to: &address) { pointer in
       pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.connect(descriptor, $0, addressLength)
+        #if canImport(Darwin)
+          Darwin.connect(descriptor, $0, addressLength)
+        #elseif canImport(Glibc)
+          Glibc.connect(descriptor, $0, addressLength)
+        #elseif canImport(Musl)
+          Musl.connect(descriptor, $0, addressLength)
+        #endif
       }
     }
     if result == 0 {

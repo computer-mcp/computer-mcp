@@ -600,7 +600,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         managedWorkspaceRoot: managed)
       service = MCPBoundHostServices(
         database: database, directory: try #require(captured.tools), context: scoped,
-        origin: "probe",
+        origin: "probe", gitExecutable: nativeGit ? "/usr/bin/git" : "fixture-git",
         commandRunner: nativeGit
           ? ProcessCommandRunner()
           : HostWorktreeGitStub(source: captured.launchMetadata.workspace.rootPath))
@@ -802,6 +802,7 @@ private struct HostWorktreeGitStub: CommandRunning {
     executable: String, arguments: [String], workingDirectory: URL?, environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
+    #expect(executable == "fixture-git")
     let output: String
     switch arguments {
     case ["rev-parse", "--show-toplevel"]: output = try #require(workingDirectory).path

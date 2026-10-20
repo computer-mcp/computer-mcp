@@ -16,6 +16,7 @@ actor MCPBoundHostServices {
   private let origin: String
   private let now: @Sendable () -> Date
   private let commandRunner: any CommandRunning
+  private let gitExecutable: String
   private let canonicalRoot: String
   private var closed = false
   private var auditInvocation: MCPHostInvocation?
@@ -24,7 +25,7 @@ actor MCPBoundHostServices {
 
   init(
     database: GatewayDatabase, directory: MCPHostToolDirectory, context: MCPHostContext,
-    origin: String, now: @escaping @Sendable () -> Date = { Date() },
+    origin: String, gitExecutable: String, now: @escaping @Sendable () -> Date = { Date() },
     commandRunner: any CommandRunning = ProcessCommandRunner()
   ) {
     self.database = database
@@ -33,6 +34,7 @@ actor MCPBoundHostServices {
     self.origin = origin
     self.now = now
     self.commandRunner = commandRunner
+    self.gitExecutable = gitExecutable
     canonicalRoot =
       URL(fileURLWithPath: context.launchMetadata.workspace.rootPath).standardizedFileURL
       .resolvingSymlinksInPath()
@@ -446,7 +448,7 @@ actor MCPBoundHostServices {
 
   private func gitOutput(_ args: [String], at url: URL) throws -> String {
     let result = try commandRunner.run(
-      executable: "/usr/bin/git", arguments: args, workingDirectory: url,
+      executable: gitExecutable, arguments: args, workingDirectory: url,
       environment: ["GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"], timeoutMilliseconds: 5_000,
       maxOutputBytes: 16_384)
     guard result.exitCode == 0, !result.timedOut, !result.stdoutTruncated, !result.stderrTruncated

@@ -10,6 +10,7 @@ package enum MacOSPlatform {
       applications: ApplicationBundleLookup(),
       toolProviders: MacOSToolProviders(),
       executableSearchDirectories: ExternalProviderDiscovery.macOSSearchDirectories,
+      gitExecutable: "/usr/bin/git",
       fileChanges: { try DirectoryEventFileChangeMonitor(fileURL: $0) }
     )
   }

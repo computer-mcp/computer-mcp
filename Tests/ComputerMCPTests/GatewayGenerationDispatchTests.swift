@@ -2491,6 +2491,7 @@ private struct GenerationFixture: Sendable {
         applications: MacOSPlatform.services.applications,
         toolProviders: MacOSPlatform.services.toolProviders,
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        gitExecutable: MacOSPlatform.services.gitExecutable,
         fileChanges: MacOSPlatform.services.fileChanges),
       bundledPlugins: .init(packages: [], issues: []))
     service = AppGatewayService(

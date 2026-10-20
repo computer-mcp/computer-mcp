@@ -8,6 +8,7 @@ package struct PlatformServices: Sendable {
   package let workspaceGrants: any WorkspaceBookmarkServicing
   package let toolProviders: any GatewayToolProviderFactory
   package let executableSearchDirectories: [String]
+  package let gitExecutable: String
   package let fileChanges: @Sendable (URL) throws -> any FileChangeMonitor
 
   package init(
@@ -16,6 +17,7 @@ package struct PlatformServices: Sendable {
     applications: any ApplicationBundleLocating,
     toolProviders: any GatewayToolProviderFactory,
     executableSearchDirectories: [String],
+    gitExecutable: String,
     fileChanges: @escaping @Sendable (URL) throws -> any FileChangeMonitor
   ) {
     self.workspaceGrants = workspaceGrants
@@ -23,6 +25,7 @@ package struct PlatformServices: Sendable {
     self.applications = applications
     self.toolProviders = toolProviders
     self.executableSearchDirectories = executableSearchDirectories
+    self.gitExecutable = gitExecutable
     self.fileChanges = fileChanges
   }
 }

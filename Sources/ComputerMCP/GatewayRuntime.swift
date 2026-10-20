@@ -724,7 +724,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let database else { return nil }
     try validateHostOrigin(workspaceID: context.launchMetadata.workspace.id, origin: origin)
     return MCPBoundHostServices(
-      database: database, directory: hostToolDirectory, context: context, origin: origin)
+      database: database, directory: hostToolDirectory, context: context, origin: origin,
+      gitExecutable: platform.gitExecutable)
   }
 
   deinit {

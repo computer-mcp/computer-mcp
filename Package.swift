@@ -451,6 +451,7 @@ let neutralTargets: [Target] =
           "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
+          "ComputerMCPPersistence",
           "ComputerMCPPlatform",
           "ComputerMCPProcess",
           "ComputerMCPTransport",
@@ -470,7 +471,6 @@ let neutralTargets: [Target] =
           "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
-          "ComputerMCPTransport",
           "ComputerMCPTunnels",
         ],
         resources: [

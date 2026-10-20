@@ -77,9 +77,11 @@ struct GatewayStateImportTests {
     let holder = try FileHandle(forReadingFrom: directory.database)
 
     #expect(
-      throws: GatewayStateImportError.databaseInUse(processIDs: [
-        ProcessInfo.processInfo.processIdentifier
-      ])
+      throws: GatewayStateImportError.databaseInUse(
+        path: directory.database.path,
+        processIDs: [
+          ProcessInfo.processInfo.processIdentifier
+        ])
     ) {
       try Self.importState(Self.export(), into: directory.database)
     }
@@ -102,19 +104,21 @@ struct GatewayStateImportTests {
     #expect(directory.entries() == ["gateway.sqlite", "gateway.sqlite.lock"])
   }
 
-  @Test func refusesWhenThePreviousDatabaseNameIsTaken() throws {
+  @Test(arguments: [false, true])
+  func refusesWhenThePreviousDatabaseNameIsTaken(withDatabase: Bool) throws {
     let directory = try TemporaryDirectory()
-    try Self.makeEarlierDatabase(at: directory.database)
+    if withDatabase { try Self.makeEarlierDatabase(at: directory.database) }
     try Data("kept".utf8).write(to: directory.previous)
 
     #expect(throws: GatewayStateImportError.previousDatabaseExists(directory.previous.path)) {
       try Self.importState(Self.export(), into: directory.database)
     }
     #expect(try Data(contentsOf: directory.previous) == Data("kept".utf8))
-    #expect(
-      directory.entries() == [
-        "gateway.sqlite", "gateway.sqlite.before-import", "gateway.sqlite.lock",
-      ])
+    let expected =
+      withDatabase
+      ? ["gateway.sqlite", "gateway.sqlite.before-import", "gateway.sqlite.lock"]
+      : ["gateway.sqlite.before-import", "gateway.sqlite.lock"]
+    #expect(directory.entries() == expected)
   }
 
   @Test func failedVerificationLeavesTheEarlierDatabaseUsable() throws {
@@ -133,6 +137,105 @@ struct GatewayStateImportTests {
     #expect(throws: UnsupportedDatabaseSchema(identifiers: ["initial-schema"])) {
       try GatewayDatabaseConnection(path: directory.database.path)
     }
+  }
+
+  @Test(arguments: ["file", "directory", "symlink"])
+  func refusesAnUnownedStagedPath(_ kind: String) throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    let before = try Data(contentsOf: directory.database)
+    if kind == "directory" {
+      try FileManager.default.createDirectory(
+        at: directory.staged, withIntermediateDirectories: true)
+      try Data("kept".utf8).write(to: directory.staged.appendingPathComponent("file"))
+    } else if kind == "symlink" {
+      try FileManager.default.createSymbolicLink(
+        atPath: directory.staged.path, withDestinationPath: "missing.sqlite")
+    } else {
+      try Data("kept".utf8).write(to: directory.staged)
+    }
+    let staged = try GatewayStateImport.FileIdentity.require(directory.staged)
+    let stagedLock = URL(fileURLWithPath: directory.staged.path + ".lock")
+    let lock = try FileLock(path: stagedLock.path, mode: .shared)
+    defer { lock.release() }
+    let lockIdentity = try GatewayStateImport.FileIdentity.require(stagedLock)
+
+    #expect(throws: GatewayStateImportError.unexpectedFile(directory.staged.path)) {
+      try Self.importState(Self.export(), into: directory.database)
+    }
+    #expect(try Data(contentsOf: directory.database) == before)
+    #expect(try GatewayStateImport.FileIdentity.require(directory.staged) == staged)
+    #expect(try GatewayStateImport.FileIdentity.require(stagedLock) == lockIdentity)
+    if kind == "symlink" {
+      #expect(
+        try FileManager.default.destinationOfSymbolicLink(atPath: directory.staged.path)
+          == "missing.sqlite")
+    } else {
+      let contents =
+        kind == "directory" ? directory.staged.appendingPathComponent("file") : directory.staged
+      #expect(try Data(contentsOf: contents) == Data("kept".utf8))
+    }
+  }
+
+  @Test func anExportAtTheStagedPathIsPreserved() throws {
+    let directory = try TemporaryDirectory()
+    _ = try Self.write(Self.export(), to: directory.staged)
+    let before = try Data(contentsOf: directory.staged)
+    #expect(throws: GatewayStateImportError.unexpectedFile(directory.staged.path)) {
+      try GatewayStateImport.run(exportFile: directory.staged, database: directory.database) { _ in
+      }
+    }
+    #expect(try Data(contentsOf: directory.staged) == before)
+    #expect(directory.entries() == ["gateway.sqlite.import", "gateway.sqlite.lock"])
+  }
+
+  @Test(arguments: GatewayStateImport.Paths.sidecars)
+  func refusesUnownedStagedSidecars(_ suffix: String) throws {
+    let directory = try TemporaryDirectory()
+    let sidecar = URL(fileURLWithPath: directory.staged.path + suffix)
+    try Data("kept".utf8).write(to: sidecar)
+    #expect(throws: GatewayStateImportError.sidecarExists(sidecar.path)) {
+      try Self.importState(Self.export(), into: directory.database)
+    }
+    #expect(try Data(contentsOf: sidecar) == Data("kept".utf8))
+    #expect(directory.entries() == ["gateway.sqlite.import" + suffix, "gateway.sqlite.lock"])
+  }
+
+  @Test func verificationUsesTheOwnedConnectionAndImportClosesItBeforeReplacement() throws {
+    let directory = try TemporaryDirectory()
+    var retained: GatewayDatabaseConnection?
+    try GatewayStateImport.run(
+      exportFile: Self.write(Self.export(), to: directory.export), database: directory.database
+    ) { connection in
+      retained = connection
+      #expect(connection.fileURL == directory.staged)
+      #expect(
+        try connection.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM profiles") }
+          == 1)
+      let attributes = try FileManager.default.attributesOfItem(atPath: directory.staged.path)
+      #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+      #expect(directory.entries() == ["gateway.sqlite.import", "gateway.sqlite.lock"])
+    }
+    try withExtendedLifetime(retained) { () throws in
+      #expect(try ProcessTable.processesHoldingOpen(path: directory.database.path).isEmpty)
+      #expect(directory.entries() == ["gateway.sqlite", "gateway.sqlite.lock"])
+    }
+  }
+
+  @Test func failedVerificationPreservesAForeignStagedIdentity() throws {
+    let directory = try TemporaryDirectory()
+    struct Unusable: Error {}
+    #expect(throws: Unusable.self) {
+      try GatewayStateImport.run(
+        exportFile: Self.write(Self.export(), to: directory.export), database: directory.database
+      ) { _ in
+        try FileManager.default.moveItem(
+          at: directory.staged, to: directory.url.appendingPathComponent("owned.sqlite"))
+        try Data("foreign".utf8).write(to: directory.staged)
+        throw Unusable()
+      }
+    }
+    #expect(try Data(contentsOf: directory.staged) == Data("foreign".utf8))
   }
 
   @Test(arguments: [
@@ -173,7 +276,10 @@ struct GatewayStateImportTests {
       path: directory.database.path)
     let before = try Data(contentsOf: directory.database)
     _ = withExtendedLifetime(connection) {
-      #expect(throws: GatewayStateImportError.databaseInUse(processIDs: [getpid()])) {
+      #expect(
+        throws: GatewayStateImportError.databaseInUse(
+          path: directory.database.path, processIDs: [getpid()])
+      ) {
         try Self.importState(Self.export(), into: directory.database)
       }
     }
@@ -190,7 +296,10 @@ struct GatewayStateImportTests {
       #expect(throws: StateImportInProgress(path: directory.database.path)) {
         try GatewayDatabaseConnection(path: directory.database.path)
       }
-      #expect(throws: GatewayStateImportError.databaseInUse(processIDs: [getpid()])) {
+      #expect(
+        throws: GatewayStateImportError.databaseInUse(
+          path: directory.database.path, processIDs: [getpid()])
+      ) {
         try GatewayStateImport.run(exportFile: file, database: directory.database) { _ in }
       }
     }
@@ -293,7 +402,10 @@ struct GatewayStateImportTests {
     try Self.interruptReplacement(in: directory, at: .stagedRenamed)
     let lock = try FileLock(path: directory.lock.path, mode: .exclusive)
     let before = try directory.snapshot()
-    #expect(throws: GatewayStateImportError.databaseInUse(processIDs: [getpid()])) {
+    #expect(
+      throws: GatewayStateImportError.databaseInUse(
+        path: directory.database.path, processIDs: [getpid()])
+    ) {
       try Self.importState(Self.export(), into: directory.database)
     }
     #expect(try directory.snapshot() == before)
@@ -301,6 +413,173 @@ struct GatewayStateImportTests {
     let report = try Self.importState(Self.export(), into: directory.database)
     #expect(report.restoredInterruptedImport)
     #expect(try Self.dump(directory.previous) == old)
+  }
+
+  @Test(arguments: ["database", "previous", "staged"], [""] + GatewayStateImport.Paths.sidecars)
+  func recoveryRefusesOpenParticipantsBeforeChangingFiles(_ name: String, suffix: String) throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    try Self.interruptReplacement(in: directory, at: name == "staged" ? .recorded : .stagedRenamed)
+    let database =
+      name == "database"
+      ? directory.database : name == "previous" ? directory.previous : directory.staged
+    let url = URL(fileURLWithPath: database.path + suffix)
+    if !suffix.isEmpty { try Data("sidecar".utf8).write(to: url) }
+    let holder = try FileHandle(forReadingFrom: url)
+    defer { try? holder.close() }
+    let before = try directory.snapshot()
+    let expected = GatewayStateImportError.databaseInUse(path: url.path, processIDs: [getpid()])
+
+    #expect(throws: expected) {
+      try Self.importState(Self.export(), into: directory.database)
+    }
+    #expect(try directory.snapshot() == before)
+    #expect(expected.localizedDescription.contains(url.path))
+  }
+
+  @Test(arguments: ["database", "previous", "staged"], GatewayStateImport.Paths.sidecars)
+  func recoveryRefusesEverySidecarBeforeChangingFiles(_ name: String, suffix: String) throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    try Self.interruptReplacement(in: directory, at: .stagedRenamed)
+    let database =
+      name == "database"
+      ? directory.database : name == "previous" ? directory.previous : directory.staged
+    let sidecar = URL(fileURLWithPath: database.path + suffix)
+    try Data("sidecar".utf8).write(to: sidecar)
+    let before = try directory.snapshot()
+
+    #expect(throws: GatewayStateImportError.sidecarExists(sidecar.path)) {
+      try Self.importState(Self.export(), into: directory.database)
+    }
+    #expect(try directory.snapshot() == before)
+  }
+
+  @Test(arguments: [false, true])
+  func recoversACompleteTemporaryRecordBeforeOrAfterPublication(published: Bool) throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    let before = try Self.dump(directory.database)
+    try Self.interruptReplacement(in: directory, at: .recorded)
+    try FileManager.default.moveItem(at: directory.replacing, to: directory.replacingTemporary)
+    if published {
+      try FileManager.default.linkItem(at: directory.replacingTemporary, to: directory.replacing)
+    }
+    let lock = try FileLock(path: directory.lock.path, mode: .exclusive)
+    defer { lock.release() }
+
+    #expect(try GatewayStateImport.recover(.init(database: directory.database)))
+    #expect(try !GatewayStateImport.recover(.init(database: directory.database)))
+    #expect(try Self.dump(directory.database) == before)
+    #expect(directory.entries() == ["gateway.sqlite", "gateway.sqlite.lock"])
+  }
+
+  @Test(arguments: ["empty", "truncated", "missingPrevious", "foreignStaged", "missingStaged"])
+  func preservesAnUnrecognizedTemporaryRecord(_ defect: String) throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    try Self.interruptReplacement(in: directory, at: .recorded)
+    try FileManager.default.moveItem(at: directory.replacing, to: directory.replacingTemporary)
+    var expected = GatewayStateImportError.invalidReplacementRecord(
+      directory.replacingTemporary.path)
+    switch defect {
+    case "empty": try Data().write(to: directory.replacingTemporary)
+    case "truncated": try Data(#"{"previous":"#.utf8).write(to: directory.replacingTemporary)
+    case "missingPrevious":
+      let record = try JSONDecoder().decode(
+        GatewayStateImport.ReplacementRecord.self,
+        from: Data(contentsOf: directory.replacingTemporary))
+      try JSONSerialization.data(withJSONObject: [
+        "staged": ["device": record.staged.device, "inode": record.staged.inode]
+      ])
+      .write(to: directory.replacingTemporary)
+    case "foreignStaged":
+      try Data("foreign".utf8).write(to: directory.staged, options: .atomic)
+      expected = .unexpectedFile(directory.replacingTemporary.path)
+    default:
+      try FileManager.default.removeItem(at: directory.staged)
+      expected = .unexpectedFile(directory.replacingTemporary.path)
+    }
+    let before = try directory.snapshot()
+
+    #expect(throws: expected) { try Self.importState(Self.export(), into: directory.database) }
+    #expect(try directory.snapshot() == before)
+  }
+
+  @Test func recoveryPreservesAForeignTemporaryRecordBesideAPublishedRecord() throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    try Self.interruptReplacement(in: directory, at: .stagedRenamed)
+    try Data("foreign".utf8).write(to: directory.replacingTemporary)
+    let before = try directory.snapshot()
+
+    #expect(throws: GatewayStateImportError.unexpectedFile(directory.replacingTemporary.path)) {
+      try Self.importState(Self.export(), into: directory.database)
+    }
+    #expect(try directory.snapshot() == before)
+  }
+
+  @Test func recordPublicationNeverOverwritesAnExistingRecord() throws {
+    let directory = try TemporaryDirectory()
+    try Self.makeEarlierDatabase(at: directory.database)
+    let before = try Data(contentsOf: directory.database)
+    #expect(throws: GatewayStateImportError.unexpectedFile(directory.replacing.path)) {
+      try GatewayStateImport.run(
+        exportFile: Self.write(Self.export(), to: directory.export), database: directory.database
+      ) { _ in try Data("foreign".utf8).write(to: directory.replacing) }
+    }
+    #expect(try Data(contentsOf: directory.database) == before)
+    #expect(try Data(contentsOf: directory.replacing) == Data("foreign".utf8))
+    let temporary = try JSONDecoder().decode(
+      GatewayStateImport.ReplacementRecord.self,
+      from: Data(contentsOf: directory.replacingTemporary))
+    #expect(try temporary.previous == GatewayStateImport.FileIdentity.require(directory.database))
+    #expect(try temporary.staged == GatewayStateImport.FileIdentity.require(directory.staged))
+  }
+
+  @Test(arguments: MissingDatabaseStep.allCases)
+  func recoveryResumesAnInstallationIntoAMissingDatabase(_ step: MissingDatabaseStep) throws {
+    let directory = try TemporaryDirectory()
+    try Self.interruptInstallation(in: directory, at: step)
+    let lock = try FileLock(path: directory.lock.path, mode: .exclusive)
+    defer { lock.release() }
+
+    #expect(
+      try GatewayStateImport.recover(.init(database: directory.database))
+        == (step != .recordRemoved))
+    #expect(try !GatewayStateImport.recover(.init(database: directory.database)))
+    #expect(directory.entries() == ["gateway.sqlite.lock"])
+  }
+
+  @Test(arguments: [MissingDatabaseStep.recorded, .databaseLinked, .stagedUnlinked])
+  func importsAfterAnInterruptedInstallationIntoAMissingDatabase(_ step: MissingDatabaseStep) throws
+  {
+    let directory = try TemporaryDirectory()
+    try Self.interruptInstallation(in: directory, at: step)
+    #expect(throws: InterruptedStateImport(path: directory.database.path)) {
+      try GatewayDatabaseConnection(path: directory.database.path)
+    }
+    let report = try Self.importState(Self.export(), into: directory.database)
+
+    #expect(report.restoredInterruptedImport)
+    #expect(report.previousDatabase == nil)
+    #expect(try Self.ledger(directory.database) == ["gateway-initial"])
+    #expect(directory.entries() == ["gateway.sqlite", "gateway.sqlite.lock"])
+  }
+
+  @Test(arguments: ["database", "previous", "staged"])
+  func missingDatabaseRecoveryPreservesEveryForeignIdentity(_ name: String) throws {
+    let directory = try TemporaryDirectory()
+    try Self.interruptInstallation(in: directory, at: .databaseLinked)
+    let url =
+      name == "database"
+      ? directory.database : name == "previous" ? directory.previous : directory.staged
+    try Data("foreign".utf8).write(to: url, options: .atomic)
+    let before = try directory.snapshot()
+    #expect(throws: GatewayStateImportError.unexpectedFile(url.path)) {
+      try Self.importState(Self.export(), into: directory.database)
+    }
+    #expect(try directory.snapshot() == before)
   }
 
   @Test func interruptedReplacementPreventsOpeningAfterTheImportLockIsReleased() throws {
@@ -455,10 +734,46 @@ struct GatewayStateImportTests {
     case recorded, previousLinked, stagedRenamed, previousRestored, previousUnlinked,
       stagedUnlinked, recordRemoved
   }
+  enum MissingDatabaseStep: CaseIterable, Sendable {
+    case recorded, databaseLinked, stagedUnlinked, databaseUnlinked, stagedRolledBack, recordRemoved
+  }
+
+  private static func interruptInstallation(
+    in directory: TemporaryDirectory, at step: MissingDatabaseStep
+  )
+    throws
+  {
+    let lock = try FileLock(path: directory.lock.path, mode: .exclusive)
+    defer { lock.release() }
+    let staged = try DatabaseQueue(path: directory.staged.path)
+    try GatewayDatabaseConnection.migrator.migrate(staged)
+    try staged.close()
+    let record = GatewayStateImport.ReplacementRecord(
+      previous: nil, staged: try GatewayStateImport.FileIdentity.require(directory.staged))
+    let data = try JSONEncoder().encode(record)
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    #expect(json["previous"] is NSNull)
+    try data.write(to: directory.replacing)
+    if step != .recorded {
+      try FileManager.default.linkItem(at: directory.staged, to: directory.database)
+    }
+    if step == .stagedUnlinked {
+      try FileManager.default.removeItem(at: directory.staged)
+    }
+    if step == .databaseUnlinked || step == .stagedRolledBack || step == .recordRemoved {
+      try FileManager.default.removeItem(at: directory.database)
+    }
+    if step == .stagedRolledBack || step == .recordRemoved {
+      try FileManager.default.removeItem(at: directory.staged)
+    }
+    if step == .recordRemoved { try FileManager.default.removeItem(at: directory.replacing) }
+  }
 
   private static func interruptReplacement(in directory: TemporaryDirectory, at step: RecoveryStep)
     throws
   {
+    let lock = try FileLock(path: directory.lock.path, mode: .exclusive)
+    defer { lock.release() }
     let staged = try DatabaseQueue(path: directory.staged.path)
     try GatewayDatabaseConnection.migrator.migrate(staged)
     try staged.close()
@@ -636,6 +951,7 @@ private final class TemporaryDirectory {
   var staged: URL { url.appendingPathComponent("gateway.sqlite.import") }
   var previous: URL { url.appendingPathComponent("gateway.sqlite.before-import") }
   var replacing: URL { url.appendingPathComponent("gateway.sqlite.import-replacing") }
+  var replacingTemporary: URL { url.appendingPathComponent("gateway.sqlite.import-replacing.tmp") }
 
   func snapshot() throws -> [String: Data] {
     try Dictionary(

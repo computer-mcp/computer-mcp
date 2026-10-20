@@ -32,6 +32,7 @@ package enum ProcessTable {
   }
 
   /// The processes with an open descriptor for the file at `path`, including this process.
+  /// File identity, rather than the opened name, matches hard-link aliases on both platforms.
   /// Only processes this user may inspect are visible.
   package static func processesHoldingOpen(path: String) throws -> [Int32] {
     #if canImport(Darwin)
@@ -45,12 +46,10 @@ package enum ProcessTable {
       guard bytes >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
       return Array(processIDs.prefix(Int(bytes) / MemoryLayout<Int32>.stride)).sorted()
     #else
-      // Descriptor links name the file by its real path.
-      guard let real = realpath(path, nil) else {
+      var target = stat()
+      guard stat(path, &target) == 0 else {
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
       }
-      let resolved = String(cString: real)
-      free(real)
       let fileManager = FileManager.default
       var holders: [Int32] = []
       for entry in try fileManager.contentsOfDirectory(atPath: "/proc") {
@@ -58,8 +57,9 @@ package enum ProcessTable {
           let descriptors = try? fileManager.contentsOfDirectory(atPath: "/proc/\(entry)/fd")
         else { continue }
         if descriptors.contains(where: {
-          (try? fileManager.destinationOfSymbolicLink(atPath: "/proc/\(entry)/fd/\($0)"))
-            == resolved
+          var opened = stat()
+          return stat("/proc/\(entry)/fd/\($0)", &opened) == 0
+            && opened.st_dev == target.st_dev && opened.st_ino == target.st_ino
         }) {
           holders.append(processID)
         }

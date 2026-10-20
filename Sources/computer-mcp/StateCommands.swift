@@ -20,8 +20,9 @@ struct StateImport: ParsableCommand {
       Quit the App and stop every gateway, bridge and tunnel process first: the import \
       refuses a database that any process has open, a concurrent import and any remaining \
       SQLite sidecars after hot-journal recovery. Connections and imports coordinate through \
-      <database>.lock. The previous database is kept as <database>.before-import. An \
-      interrupted import is rolled back by the next run.
+      <database>.lock. Staging creates no separate lock file. The previous database is kept \
+      as <database>.before-import. The next run rolls back an interrupted import only after \
+      refusing open files or SQLite sidecars at the database, backup and staged names.
       """
   )
 
@@ -40,8 +41,8 @@ struct StateImport: ParsableCommand {
       .appendingPathComponent("Configuration", isDirectory: true)
     let report = try GatewayStateImport.run(
       exportFile: URL(fileURLWithPath: file).standardizedFileURL, database: databaseURL
-    ) { staged in
-      try GatewayDatabase(path: staged.path)
+    ) { connection in
+      try GatewayDatabase(connection: connection)
         .verifyImportedState(configurationDirectory: configurationDirectory)
     }
     printJSON(

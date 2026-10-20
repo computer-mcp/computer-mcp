@@ -15,7 +15,7 @@ import GRDB
 /// unchanged into a staged database next to the target, counted and verified, and only then
 /// put in place; the previous database is kept as `<database>.before-import`.
 /// While the replacement is underway a `<database>.import-replacing` record exists, the
-/// database is not opened, and the next import first restores the previous database.
+/// database is not opened, and the next import first rolls back the interrupted replacement.
 package enum GatewayStateImport {
   package struct Report: Equatable, Sendable {
     /// Imported rows per preserved table, in import order.
@@ -31,12 +31,12 @@ package enum GatewayStateImport {
     package var rows: Int
   }
 
-  /// Imports `exportFile` into `database`. `verify` reads the staged database at the given
-  /// path with the domain decoders and throws when this version cannot use its state; every
-  /// connection it opens must be closed when it returns.
+  /// Imports `exportFile` into `database`. `verify` reads through the importer's staged
+  /// connection with the domain decoders and throws when this version cannot use its state.
+  /// The importer closes that connection before moving the staged file.
   @discardableResult
   package static func run(
-    exportFile: URL, database: URL, verify: (URL) throws -> Void
+    exportFile: URL, database: URL, verify: (GatewayDatabaseConnection) throws -> Void
   ) throws -> Report {
     let paths = Paths(database: database.standardizedFileURL)
     let lock: FileLock
@@ -44,54 +44,46 @@ package enum GatewayStateImport {
       lock = try FileLock(path: paths.lock.path, mode: .exclusive)
     } catch FileLockError.held {
       throw GatewayStateImportError.databaseInUse(
+        path: paths.database.path,
         processIDs: (try? ProcessTable.processesHoldingOpen(path: paths.lock.path)) ?? [])
     }
     defer { lock.release() }
     let restored = try recover(paths)
+    try requireNoSidecars([paths.previous, paths.staged])
+    guard try FileIdentity.read(paths.staged) == nil else {
+      throw GatewayStateImportError.unexpectedFile(paths.staged.path)
+    }
+    try requireUnused(paths.participants)
     let tables = try ExportedTables(data: Data(contentsOf: exportFile))
-    try requireUnused(paths)
     // SQLite may clean up WAL files when a read-write connection closes. This database
     // uses rollback journals, so preserve any WAL/SHM for explicit recovery before opening.
-    try requireNoSidecars(paths, suffixes: ["-wal", "-shm"])
+    try requireNoSidecars([paths.database], suffixes: ["-wal", "-shm"])
     let previous = try classifyExisting(paths)
-    try requireNoSidecars(paths)
-    if previous != nil, try FileIdentity.read(paths.previous) != nil {
+    try requireNoSidecars(paths.participants)
+    if try FileIdentity.read(paths.previous) != nil {
       throw GatewayStateImportError.previousDatabaseExists(paths.previous.path)
     }
+    let staged = try createStaged(at: paths.staged)
     let counts: [TableCount]
     do {
-      try paths.removeStaged()
-      counts = try stage(tables, at: paths.staged)
-      try verify(paths.staged)
-      for sidecar in Paths.sidecars where paths.exists(paths.staged, sidecar) {
-        throw GatewayStateImportError.stagedDatabaseStillOpen
+      counts = try stage(tables, at: paths.staged, verify: verify)
+      guard try FileIdentity.read(paths.staged) == staged else {
+        throw GatewayStateImportError.unexpectedFile(paths.staged.path)
       }
-      try FileManager.default.setAttributes(
-        [.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: paths.staged.path)
-      try requireUnused(paths)
-      try requireNoSidecars(paths)
+      try requireUnused(paths.participants)
+      try requireNoSidecars(paths.participants)
     } catch {
-      try? paths.removeStaged()
+      try? removeStaged(paths, identity: staged)
       throw error
     }
-    if let previous {
-      try replace(paths, previous: previous)
-    } else {
-      guard link(paths.staged.path, paths.database.path) == 0 else {
-        if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(paths.database.path) }
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-      }
-      try syncDirectory(paths.directory)
-      try remove(paths.staged, in: paths.directory)
-    }
-    try paths.removeStaged()
+    try replace(paths, previous: previous, staged: staged)
     return Report(
       rowCounts: counts, previousDatabase: previous != nil ? paths.previous : nil,
       restoredInterruptedImport: restored)
   }
 
   /// Whether a replacement of `database` was interrupted: it is then not opened until the
-  /// next import restores the previous database.
+  /// next import rolls the replacement back.
   package static func isReplacing(_ database: URL) -> Bool {
     let paths = Paths(database: database.standardizedFileURL)
     return (try? FileIdentity.read(paths.replacing)) != nil
@@ -102,12 +94,25 @@ package enum GatewayStateImport {
   /// next one, so recovery can resume after any of its own steps.
   @discardableResult
   static func recover(_ paths: Paths) throws -> Bool {
-    guard try FileIdentity.read(paths.replacing) != nil else { return false }
-    let record = try JSONDecoder().decode(
-      ReplacementRecord.self, from: Data(contentsOf: paths.replacing))
+    let published = try FileIdentity.read(paths.replacing)
+    let temporary = try FileIdentity.read(paths.replacingTemporary)
+    guard published != nil || temporary != nil else { return false }
+    try requireUnused(paths.participants)
+    try requireNoSidecars(paths.participants)
+    let recordURL = published != nil ? paths.replacing : paths.replacingTemporary
+    let record = try readRecord(at: recordURL)
     let database = try FileIdentity.read(paths.database)
     let previous = try FileIdentity.read(paths.previous)
     let staged = try FileIdentity.read(paths.staged)
+    if let temporary {
+      if let published {
+        guard temporary == published else {
+          throw GatewayStateImportError.unexpectedFile(paths.replacingTemporary.path)
+        }
+      } else if staged != record.staged {
+        throw GatewayStateImportError.unexpectedFile(paths.replacingTemporary.path)
+      }
+    }
     if let database, database != record.previous && database != record.staged {
       throw GatewayStateImportError.unexpectedFile(paths.database.path)
     }
@@ -117,39 +122,61 @@ package enum GatewayStateImport {
     if let staged, staged != record.staged {
       throw GatewayStateImportError.unexpectedFile(paths.staged.path)
     }
-    guard database != nil else {
-      throw GatewayStateImportError.unexpectedFile(paths.database.path)
-    }
-    if database == record.staged {
-      guard previous == record.previous else {
+    if record.previous != nil {
+      guard database != nil else {
+        throw GatewayStateImportError.unexpectedFile(paths.database.path)
+      }
+      if database == record.staged, previous != record.previous {
         throw GatewayStateImportError.unexpectedFile(paths.previous.path)
       }
-      try rename(paths.previous, to: paths.database)
-      try syncDirectory(paths.directory)
-    } else if previous == record.previous {
-      try remove(paths.previous, in: paths.directory)
+    }
+    if temporary != nil {
+      // Complete an interrupted publication so rollback retains its record at every step.
+      if published == nil {
+        try sync(paths.replacingTemporary)
+        try publishRecord(paths)
+      }
+      try remove(paths.replacingTemporary, in: paths.directory)
+    }
+    if record.previous != nil {
+      if database == record.staged {
+        try rename(paths.previous, to: paths.database)
+        try sync(paths.directory)
+      } else if previous == record.previous {
+        try remove(paths.previous, in: paths.directory)
+      }
+    } else if database == record.staged {
+      try remove(paths.database, in: paths.directory)
     }
     if staged == record.staged { try remove(paths.staged, in: paths.directory) }
     try remove(paths.replacing, in: paths.directory)
     return true
   }
 
-  private static func replace(_ paths: Paths, previous: FileIdentity) throws {
-    let record = ReplacementRecord(
-      previous: previous, staged: try FileIdentity.require(paths.staged))
-    try createRecord(record, at: paths.replacing)
-    try syncDirectory(paths.directory)
+  private static func replace(_ paths: Paths, previous: FileIdentity?, staged: FileIdentity) throws
+  {
+    let record = ReplacementRecord(previous: previous, staged: staged)
+    try createRecord(record, paths: paths)
     do {
-      guard link(paths.database.path, paths.previous.path) == 0 else {
-        if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(paths.previous.path) }
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      if previous != nil {
+        guard link(paths.database.path, paths.previous.path) == 0 else {
+          if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(paths.previous.path) }
+          throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        try sync(paths.directory)
+        guard try FileIdentity.read(paths.database) == record.previous else {
+          throw GatewayStateImportError.unexpectedFile(paths.database.path)
+        }
+        try rename(paths.staged, to: paths.database)
+        try sync(paths.directory)
+      } else {
+        guard link(paths.staged.path, paths.database.path) == 0 else {
+          if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(paths.database.path) }
+          throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        try sync(paths.directory)
+        try remove(paths.staged, in: paths.directory)
       }
-      try syncDirectory(paths.directory)
-      guard try FileIdentity.read(paths.database) == record.previous else {
-        throw GatewayStateImportError.unexpectedFile(paths.database.path)
-      }
-      try rename(paths.staged, to: paths.database)
-      try syncDirectory(paths.directory)
     } catch {
       try recover(paths)
       throw error
@@ -175,29 +202,63 @@ package enum GatewayStateImport {
     return identity
   }
 
-  private static func requireNoSidecars(_ paths: Paths, suffixes: [String] = Paths.sidecars) throws
+  private static func requireNoSidecars(_ databases: [URL], suffixes: [String] = Paths.sidecars)
+    throws
   {
-    for suffix in suffixes {
-      let url = URL(fileURLWithPath: paths.database.path + suffix)
-      if try FileIdentity.read(url) != nil {
-        throw GatewayStateImportError.sidecarExists(url.path)
+    for database in databases {
+      for suffix in suffixes {
+        let url = URL(fileURLWithPath: database.path + suffix)
+        if try FileIdentity.read(url) != nil {
+          throw GatewayStateImportError.sidecarExists(url.path)
+        }
       }
     }
   }
 
-  private static func requireUnused(_ paths: Paths) throws {
-    var holders = Set<Int32>()
-    for suffix in [""] + Paths.sidecars where paths.exists(paths.database, suffix) {
-      holders.formUnion(try ProcessTable.processesHoldingOpen(path: paths.database.path + suffix))
-    }
-    guard holders.isEmpty else {
-      throw GatewayStateImportError.databaseInUse(processIDs: holders.sorted())
+  private static func requireUnused(_ databases: [URL]) throws {
+    for database in databases {
+      for suffix in [""] + Paths.sidecars {
+        let url = URL(fileURLWithPath: database.path + suffix)
+        guard try FileIdentity.read(url) != nil else { continue }
+        let holders = try ProcessTable.processesHoldingOpen(path: url.path)
+        guard holders.isEmpty else {
+          throw GatewayStateImportError.databaseInUse(path: url.path, processIDs: holders)
+        }
+      }
     }
   }
 
-  private static func stage(_ tables: ExportedTables, at url: URL) throws -> [TableCount] {
-    let connection = try GatewayDatabaseConnection(path: url.path)
-    return try connection.writer.write { database in
+  private static func createStaged(at url: URL) throws -> FileIdentity {
+    let descriptor = open(url.path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else {
+      if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(url.path) }
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    defer { close(descriptor) }
+    var status = stat()
+    guard fstat(descriptor, &status) == 0 else {
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    return FileIdentity(
+      device: UInt64(truncatingIfNeeded: status.st_dev), inode: UInt64(status.st_ino))
+  }
+
+  private static func removeStaged(_ paths: Paths, identity: FileIdentity) throws {
+    guard let staged = try FileIdentity.read(paths.staged) else { return }
+    guard staged == identity else {
+      throw GatewayStateImportError.unexpectedFile(paths.staged.path)
+    }
+    try requireUnused([paths.staged])
+    try requireNoSidecars([paths.staged])
+    try remove(paths.staged, in: paths.directory)
+  }
+
+  private static func stage(
+    _ tables: ExportedTables, at url: URL, verify: (GatewayDatabaseConnection) throws -> Void
+  ) throws -> [TableCount] {
+    let connection = try GatewayDatabaseConnection(stagedPath: url.path)
+    defer { try? connection.writer.close() }
+    let counts = try connection.writer.write { database in
       try tables.tables.map { table, rows in
         let columns = Set(try database.columns(in: table).map(\.name))
         for row in rows {
@@ -224,6 +285,9 @@ package enum GatewayStateImport {
         return TableCount(table: table, rows: imported)
       }
     }
+    try verify(connection)
+    try connection.writer.close()
+    return counts
   }
 
   struct FileIdentity: Codable, Equatable {
@@ -248,14 +312,47 @@ package enum GatewayStateImport {
   }
 
   struct ReplacementRecord: Codable {
-    let previous: FileIdentity
+    let previous: FileIdentity?
     let staged: FileIdentity
+
+    private enum CodingKeys: String, CodingKey { case previous, staged }
+
+    init(previous: FileIdentity?, staged: FileIdentity) {
+      self.previous = previous
+      self.staged = staged
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      previous = try container.decode(FileIdentity?.self, forKey: .previous)
+      staged = try container.decode(FileIdentity.self, forKey: .staged)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+      var container = encoder.container(keyedBy: CodingKeys.self)
+      try container.encode(previous, forKey: .previous)
+      try container.encode(staged, forKey: .staged)
+    }
   }
 
-  private static func createRecord(_ record: ReplacementRecord, at url: URL) throws {
+  private static func readRecord(at url: URL) throws -> ReplacementRecord {
+    do {
+      return try JSONDecoder().decode(ReplacementRecord.self, from: Data(contentsOf: url))
+    } catch {
+      throw GatewayStateImportError.invalidReplacementRecord(url.path)
+    }
+  }
+
+  private static func createRecord(_ record: ReplacementRecord, paths: Paths) throws {
     let data = try JSONEncoder().encode(record)
-    let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
-    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    let descriptor = open(
+      paths.replacingTemporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else {
+      if errno == EEXIST {
+        throw GatewayStateImportError.unexpectedFile(paths.replacingTemporary.path)
+      }
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
     defer { close(descriptor) }
     try data.withUnsafeBytes { bytes in
       var offset = 0
@@ -267,6 +364,15 @@ package enum GatewayStateImport {
       }
     }
     guard fsync(descriptor) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    try publishRecord(paths)
+    try remove(paths.replacingTemporary, in: paths.directory)
+  }
+
+  private static func publishRecord(_ paths: Paths) throws {
+    guard link(paths.replacingTemporary.path, paths.replacing.path) == 0 else {
+      if errno == EEXIST { throw GatewayStateImportError.unexpectedFile(paths.replacing.path) }
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
   }
 
   private static func rename(_ source: URL, to destination: URL) throws {
@@ -280,10 +386,10 @@ package enum GatewayStateImport {
 
   private static func remove(_ url: URL, in directory: URL) throws {
     guard unlink(url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-    try syncDirectory(directory)
+    try sync(directory)
   }
 
-  private static func syncDirectory(_ url: URL) throws {
+  private static func sync(_ url: URL) throws {
     let descriptor = open(url.path, O_RDONLY)
     guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     defer { close(descriptor) }
@@ -300,16 +406,8 @@ package enum GatewayStateImport {
     var staged: URL { sibling(".import") }
     var previous: URL { sibling(".before-import") }
     var replacing: URL { sibling(".import-replacing") }
-
-    func exists(_ url: URL, _ suffix: String) -> Bool {
-      FileManager.default.fileExists(atPath: url.path + suffix)
-    }
-
-    func removeStaged() throws {
-      for suffix in [""] + Self.sidecars + [".lock"] where exists(staged, suffix) {
-        try FileManager.default.removeItem(atPath: staged.path + suffix)
-      }
-    }
+    var replacingTemporary: URL { sibling(".import-replacing.tmp") }
+    var participants: [URL] { [database, previous, staged] }
 
     private func sibling(_ suffix: String) -> URL {
       directory.appendingPathComponent(database.lastPathComponent + suffix)
@@ -319,19 +417,19 @@ package enum GatewayStateImport {
 
 package enum GatewayStateImportError: Error, LocalizedError, Equatable {
   case invalidExport(String)
-  case databaseInUse(processIDs: [Int32])
+  case databaseInUse(path: String, processIDs: [Int32])
   case databaseAlreadyCurrent(String)
   case previousDatabaseExists(String)
   case sidecarExists(String)
   case unexpectedFile(String)
-  case stagedDatabaseStillOpen
+  case invalidReplacementRecord(String)
 
   package var errorDescription: String? {
     switch self {
     case .invalidExport(let reason):
       return "The state export cannot be imported: \(reason)."
-    case .databaseInUse(let processIDs):
-      return "The database is in use"
+    case .databaseInUse(let path, let processIDs):
+      return "The file at \(path) is in use"
         + (processIDs.isEmpty
           ? "" : " by process " + processIDs.map(String.init).joined(separator: ", "))
         + ". Quit Computer MCP and stop its gateway, bridge and tunnel processes, then import again."
@@ -345,8 +443,8 @@ package enum GatewayStateImportError: Error, LocalizedError, Equatable {
     case .unexpectedFile(let path):
       return
         "The file at \(path) does not have the expected import identity; it was left unchanged."
-    case .stagedDatabaseStillOpen:
-      return "The staged database was still open after verification; nothing was replaced."
+    case .invalidReplacementRecord(let path):
+      return "The import replacement record at \(path) is invalid; it was left unchanged."
     }
   }
 }

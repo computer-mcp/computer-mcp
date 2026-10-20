@@ -31,8 +31,8 @@ struct GatewayStateImportVerificationTests {
     let export = try Self.export(root.appendingPathComponent("source.sqlite"), to: root)
     let target = root.appendingPathComponent("gateway.sqlite")
 
-    try GatewayStateImport.run(exportFile: export, database: target) { staged in
-      try GatewayDatabase(path: staged.path).verifyImportedState(configurationDirectory: root)
+    try GatewayStateImport.run(exportFile: export, database: target) { connection in
+      try GatewayDatabase(connection: connection).verifyImportedState(configurationDirectory: root)
     }
 
     let imported = try GatewayDatabase(path: target.path)
@@ -62,8 +62,9 @@ struct GatewayStateImportVerificationTests {
     }
 
     #expect(throws: DecodingError.self) {
-      try GatewayStateImport.run(exportFile: export, database: target) { staged in
-        try GatewayDatabase(path: staged.path).verifyImportedState(configurationDirectory: root)
+      try GatewayStateImport.run(exportFile: export, database: target) { connection in
+        try GatewayDatabase(connection: connection).verifyImportedState(
+          configurationDirectory: root)
       }
     }
     #expect(throws: UnsupportedDatabaseSchema(identifiers: ["initial-schema"])) {
@@ -118,8 +119,8 @@ struct GatewayStateImportVerificationTests {
     var verificationFailed = false
 
     #expect(throws: (any Error).self) {
-      try GatewayStateImport.run(exportFile: export, database: target) { staged in
-        let imported = try GatewayDatabase(path: staged.path)
+      try GatewayStateImport.run(exportFile: export, database: target) { connection in
+        let imported = GatewayDatabase(connection: connection)
         do {
           try imported.verifyImportedState(configurationDirectory: root)
         } catch {

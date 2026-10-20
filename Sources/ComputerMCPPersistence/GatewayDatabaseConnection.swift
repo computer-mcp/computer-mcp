@@ -37,6 +37,15 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
     try Self.open(writer)
   }
 
+  /// Opens an exclusively created staging file. The importer must hold the target's
+  /// exclusive lock until this connection is closed and replacement is complete.
+  package init(stagedPath: String) throws {
+    fileURL = URL(fileURLWithPath: stagedPath).standardizedFileURL
+    fileLock = nil
+    writer = try DatabaseQueue(path: stagedPath)
+    try Self.open(writer)
+  }
+
   static let migrator: DatabaseMigrator = {
     var migrator = DatabaseMigrator()
     migrator.registerMigration("gateway-initial") { database in

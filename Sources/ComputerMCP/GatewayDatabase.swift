@@ -31,6 +31,10 @@ package final class GatewayDatabase: @unchecked Sendable {
     connection = try GatewayDatabaseConnection(inMemory: ())
   }
 
+  package init(connection: GatewayDatabaseConnection) {
+    self.connection = connection
+  }
+
   /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
   /// comparison even though only canonical workspaces appear in the public directory.
   struct ConfigurationState: Equatable, Sendable {

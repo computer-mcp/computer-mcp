@@ -48,14 +48,14 @@ package struct UnsupportedDatabaseSchema: Error, LocalizedError, Equatable {
 }
 
 /// A state import was replacing the database at `path` and did not finish. The database is
-/// not opened until the next import restores the previous one.
+/// not opened until the next import rolls the interrupted replacement back.
 package struct InterruptedStateImport: Error, LocalizedError, Equatable {
   package let path: String
 
   package var errorDescription: String? {
     "A state import replacing the database at \(path) did not finish, so it was not opened. "
-      + "Run `computer-mcp state import <export-file>` again: it first restores the previous "
-      + "database."
+      + "Run `computer-mcp state import <export-file>` again: it first rolls back the interrupted "
+      + "replacement."
   }
 }
 

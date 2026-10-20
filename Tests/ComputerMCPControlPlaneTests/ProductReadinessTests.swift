@@ -158,7 +158,7 @@ final class ProductReadinessTests {
     EmbeddedCLIInstallationStatus(
       state: .installed,
       destination: "/Users/example/.local/bin/computer-mcp",
-      target: "/Applications/Computer MCP.app/Contents/Resources/computer-mcp",
+      target: "/fixture/Computer MCP.app/Contents/Resources/computer-mcp",
       destinationDirectoryIsOnPath: true
     )
   }
@@ -170,8 +170,8 @@ final class ProductReadinessTests {
         tunnelClientProfile: "computer-mcp",
         tunnelID: "tunnel-id",
         gatewayProfile: .chatGPTObserve,
-        manifestPath: "/Applications/Computer MCP.app/manifest.json",
-        gatewayExecutablePath: "/Applications/Computer MCP.app/Contents/Resources/computer-mcp"
+        manifestPath: "/fixture/Computer MCP.app/manifest.json",
+        gatewayExecutablePath: "/fixture/Computer MCP.app/Contents/Resources/computer-mcp"
       ),
       status: OpenAITunnelStatus(
         profileID: "chatgpt",

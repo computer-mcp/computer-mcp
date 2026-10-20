@@ -15,7 +15,7 @@ final class EmbeddedCLIInstallerTests {
       at: appCLI.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: appCLI)
+    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/env"), to: appCLI)
     try FileManager.default.setAttributes(
       [.posixPermissions: NSNumber(value: Int16(0o755))],
       ofItemAtPath: appCLI.path
@@ -52,7 +52,7 @@ final class EmbeddedCLIInstallerTests {
         at: cli.deletingLastPathComponent(),
         withIntermediateDirectories: true
       )
-      try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: cli)
+      try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/env"), to: cli)
       try FileManager.default.setAttributes(
         [.posixPermissions: NSNumber(value: Int16(0o755))],
         ofItemAtPath: cli.path
@@ -86,14 +86,14 @@ final class EmbeddedCLIInstallerTests {
     #expect((try installer.status(destination: destination).state) == .occupied)
     expectThrows(
       try installer.install(
-        source: URL(fileURLWithPath: "/usr/bin/true"),
+        source: URL(fileURLWithPath: "/usr/bin/env"),
         destination: destination,
         replaceInvalidLink: true
       )
     ) { error in
       #expect(
         (error as? EmbeddedCLIInstallerError)
-          == .notEmbeddedExecutable("/usr/bin/true")
+          == .notEmbeddedExecutable("/usr/bin/env")
       )
     }
   }

@@ -189,7 +189,15 @@ internal struct DeliveryRepository: Sendable {
       }
       let relativeWorktree = String(journal.worktree.dropFirst(journal.repository.count + 1))
       let worktree = try Self.checkedPath(relativeWorktree, inside: recordedRoot)
-      try abortRebase(at: worktree)
+      do { try abortRebase(at: worktree) } catch let failure as DeliveryFailure
+        where failure.reason == .worktreeUnrecognized
+      {
+        journal.phase = .cleanupPending
+        journal.state = .cleanupPending
+        journal.reason = .worktreeUnrecognized
+        try io.write(journal, to: journals)
+        continue
+      }
       let branchCommit = try git.revision("refs/heads/\(journal.branch)", at: root)
       if let branchCommit, branchCommit != journal.base { journal.commit = branchCommit }
       if let commit = journal.commit {
@@ -205,8 +213,61 @@ internal struct DeliveryRepository: Sendable {
     }
   }
 
-  func abortRebase(at worktree: URL) throws {
-    guard FileManager.default.fileExists(atPath: worktree.path) else { return }
+  private func isRegisteredWorktree(_ worktree: URL) throws -> Bool {
+    let listing = try git.run(["worktree", "list", "--porcelain", "-z"], at: root).stdout.split(
+      separator: "\0")
+    guard
+      listing.contains(where: { entry in
+        guard entry.hasPrefix("worktree ") else { return false }
+        return URL(fileURLWithPath: String(entry.dropFirst(9))).standardizedFileURL
+          .resolvingSymlinksInPath().path == worktree.path
+      })
+    else { return false }
+    let gitFile = worktree.appendingPathComponent(".git")
+    guard
+      let attributes = try? FileManager.default.attributesOfItem(atPath: gitFile.path),
+      attributes[.type] as? FileAttributeType == .typeRegular,
+      let marker = try? String(contentsOf: gitFile, encoding: .utf8).trimmingCharacters(
+        in: .newlines),
+      marker.hasPrefix("gitdir: ")
+    else { return false }
+    let gitPath = String(marker.dropFirst(8))
+    let directory =
+      (gitPath.hasPrefix("/")
+      ? URL(fileURLWithPath: gitPath) : worktree.appendingPathComponent(gitPath))
+      .standardizedFileURL.resolvingSymlinksInPath()
+    guard
+      directory.deletingLastPathComponent().path
+        == common.appendingPathComponent("worktrees").path,
+      let backlink = try? String(
+        contentsOf: directory.appendingPathComponent("gitdir"), encoding: .utf8
+      ).trimmingCharacters(in: .newlines)
+    else { return false }
+    let backlinkURL =
+      (backlink.hasPrefix("/")
+      ? URL(fileURLWithPath: backlink) : directory.appendingPathComponent(backlink))
+      .standardizedFileURL.resolvingSymlinksInPath()
+    guard backlinkURL.path == gitFile.path else { return false }
+    // Only a validated gitfile may select the repository for this command.
+    let top = try git.run(["rev-parse", "--show-toplevel"], at: worktree).stdout
+      .trimmingCharacters(in: .newlines)
+    return URL(fileURLWithPath: top).standardizedFileURL.resolvingSymlinksInPath().path
+      == worktree.path
+  }
+
+  /// Returns whether cleanup may remove a verified worktree. Unrecognized empty directories
+  /// are removed; nonempty directories are preserved without invoking Git inside them.
+  @discardableResult
+  func abortRebase(at worktree: URL) throws -> Bool {
+    guard FileManager.default.fileExists(atPath: worktree.path) else { return false }
+    guard try isRegisteredWorktree(worktree) else {
+      guard try FileManager.default.contentsOfDirectory(atPath: worktree.path).isEmpty else {
+        throw DeliveryFailure(
+          reason: .worktreeUnrecognized, detail: "Unrecognized worktree retained: \(worktree.path)")
+      }
+      try FileManager.default.removeItem(at: worktree)
+      return false
+    }
     for name in ["rebase-merge", "rebase-apply"] {
       let path = try git.run(["rev-parse", "--git-path", name], at: worktree).stdout
         .trimmingCharacters(in: .newlines)
@@ -214,27 +275,17 @@ internal struct DeliveryRepository: Sendable {
         path.hasPrefix("/") ? URL(fileURLWithPath: path) : worktree.appendingPathComponent(path)
       if FileManager.default.fileExists(atPath: url.path) {
         try git.run(["rebase", "--abort"], at: worktree)
-        return
+        return true
       }
     }
+    return true
   }
 
   func cleanup(_ journal: DeliveryJournal) throws {
     try io.beforeCleanup(journal)
     let worktree = URL(fileURLWithPath: journal.worktree)
-    try abortRebase(at: worktree)
-    let listing = try git.run(["worktree", "list", "--porcelain", "-z"], at: root).stdout.split(
-      separator: "\0")
-    let registered = listing.contains { entry in
-      guard entry.hasPrefix("worktree ") else { return false }
-      return URL(fileURLWithPath: String(entry.dropFirst(9))).standardizedFileURL
-        .resolvingSymlinksInPath().path
-        == worktree.standardizedFileURL.resolvingSymlinksInPath().path
-    }
-    if registered {
+    if try abortRebase(at: worktree) {
       try git.run(["worktree", "remove", "--force", worktree.path], at: root)
-    } else if FileManager.default.fileExists(atPath: worktree.path) {
-      try FileManager.default.removeItem(at: worktree)
     }
     if let commit = try git.revision("refs/heads/\(journal.branch)", at: root) {
       // A branch with an undelivered commit survives every cleanup path.
@@ -260,7 +311,9 @@ internal struct DeliveryRepository: Sendable {
     } catch {
       journal.phase = .cleanupPending
       journal.state = .cleanupPending
-      journal.reason = .cleanupFailed
+      journal.reason =
+        (error as? DeliveryFailure)?.reason == .worktreeUnrecognized
+        ? .worktreeUnrecognized : .cleanupFailed
       try? io.write(journal, to: journals)
     }
     var result = journal.result

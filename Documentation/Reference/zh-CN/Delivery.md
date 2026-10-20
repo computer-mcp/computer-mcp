@@ -101,7 +101,11 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 清理失败返回 `cleanup_pending` / `cleanup_failed`。
 
 provider 构造时在后台恢复已配置仓库，关闭时取消并等待后台任务；每次 apply 在持锁
-后、预检前也先恢复。恢复先中止进行中的 rebase，再按实际 Git 状态分类，包括提交
+后、预检前也先恢复。在记录目录内运行 Git 前，核对 worktree 登记路径、指向该仓库
+公共 Git 目录下对应元数据的 `.git` 文件，以及 `rev-parse --show-toplevel` 返回的
+根路径。未识别的空目录删除；非空目录保留，以 `cleanup_pending` /
+`worktree_unrecognized` 记录，日志保留目录路径。仅在已核对的 worktree 内中止
+进行中的 rebase，再按实际 Git 状态分类，包括提交
 已生成但尚未写入日志的情况：无提交则清理为 `aborted`；提交从默认分支可达则清理
 为 `merged`；未合并提交只删除 worktree，保留分支并归类为 `committed` /
 `interrupted`。清理仍失败则保持 `cleanup_pending`，等待下次重试。
@@ -111,5 +115,5 @@ provider 构造时在后台恢复已配置仓库，关闭时取消并等待后�
 `main_checkout_dirty`、`main_checkout_branch`、`worktree_root_not_ignored`、
 `branch_exists`、`message_invalid`、`busy`、`git_failed`、`commit_only`、
 `not_fast_forward`、`rebase_conflict`、`rebase_scope_changed`、`journal_failed`、`interrupted`、
-`cleanup_failed`。错误 ID 加 `delivery.` 前缀。完整字段和逐项原因释义见
+`worktree_unrecognized`、`cleanup_failed`。错误 ID 加 `delivery.` 前缀。完整字段和逐项原因释义见
 [英文参考](../Delivery.md)。

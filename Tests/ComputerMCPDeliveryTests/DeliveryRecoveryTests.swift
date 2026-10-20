@@ -155,6 +155,98 @@ struct DeliveryRecoveryTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func recoveryKeepsUnrecognizedWorktreeAndMainRebase(registered: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .beforeWorktree)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      var gitfile: Data?
+      if registered {
+        try fixture.git(["worktree", "add", "-b", journal.branch, worktree.path, journal.base])
+        gitfile = try Data(contentsOf: worktree.appendingPathComponent(".git"))
+        try FileManager.default.removeItem(at: worktree.appendingPathComponent(".git"))
+      } else {
+        try fixture.write("keep.txt", "unrecognized content\n", at: worktree)
+      }
+      try fixture.git(["switch", "-c", "docs/main-rebase"])
+      try fixture.write("notes/log.md", "topic\nstable\n")
+      try fixture.git(["commit", "-am", "test: topic change"])
+      try fixture.git(["switch", "main"])
+      try fixture.write("notes/log.md", "main\nstable\n")
+      try fixture.git(["commit", "-am", "test: main change"])
+      try fixture.git(["rebase", "docs/main-rebase"], accepting: [1])
+      let head = try fixture.git(["rev-parse", "HEAD"])
+      let index = try Data(contentsOf: fixture.root.appendingPathComponent(".git/index"))
+      let conflict = try fixture.read("notes/log.md")
+
+      let trace = fixture.temporary.url.appendingPathComponent("git-directories")
+      let wrapper = fixture.temporary.url.appendingPathComponent("git-wrapper")
+      let script = """
+        #!\(try testExecutable("sh"))
+        printf '%s\\n' "$PWD" >> \(quote(trace.path))
+        exec \(quote(fixture.executable)) "$@"
+        """
+      try Data(script.utf8).write(to: wrapper)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+      var configuration = fixture.tools().configuration
+      configuration.cli.commands[0].executable = wrapper.path
+      let tools = ToolEnvironment(configuration: configuration, environment: fixture.environment)
+      let repository = try DeliveryRepository(
+        scope: fixture.scope, workspace: fixture.root, git: DeliveryGit(environment: tools))
+      try repository.withLock { try repository.recover() }
+      let pending = try #require(fixture.journals().first)
+      #expect(pending.phase == .cleanupPending)
+      #expect(pending.state == .cleanupPending)
+      #expect(pending.reason == .worktreeUnrecognized)
+      #expect(pending.worktree == worktree.path)
+      #expect(FileManager.default.fileExists(atPath: worktree.path))
+      #expect(
+        FileManager.default.fileExists(
+          atPath: fixture.root.appendingPathComponent(".git/rebase-merge").path))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == head)
+      #expect(try Data(contentsOf: fixture.root.appendingPathComponent(".git/index")) == index)
+      #expect(try fixture.read("notes/log.md") == conflict)
+      let directories = try String(contentsOf: trace, encoding: .utf8).split(separator: "\n")
+      #expect(!directories.contains(Substring(worktree.path)))
+
+      try fixture.git(["rebase", "--abort"])
+      if let gitfile {
+        try gitfile.write(to: worktree.appendingPathComponent(".git"))
+      } else {
+        #expect(try fixture.read("keep.txt", at: worktree) == "unrecognized content\n")
+        try FileManager.default.removeItem(at: worktree.appendingPathComponent("keep.txt"))
+      }
+      try repository.withLock { try repository.recover() }
+      #expect(try fixture.journals().first?.phase == .finished)
+      #expect(!FileManager.default.fileExists(atPath: worktree.path))
+      try fixture.assertClean()
+    }
+  }
+
+  @Test
+  func recoveryRejectsGitfileForAnotherWorktree() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .afterCommit)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      let linked = fixture.temporary.url.appendingPathComponent("linked")
+      try fixture.git(["worktree", "add", "-b", "other", linked.path])
+      let gitfile = try Data(contentsOf: worktree.appendingPathComponent(".git"))
+      let otherGitfile = try Data(contentsOf: linked.appendingPathComponent(".git"))
+      try otherGitfile.write(to: worktree.appendingPathComponent(".git"))
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      #expect(try fixture.journals().first?.reason == .worktreeUnrecognized)
+      #expect(try fixture.read("notes/log.md", at: worktree) == "beta\nstable\n")
+      #expect(try fixture.read("notes/log.md", at: linked) == "alpha\nstable\n")
+      try gitfile.write(to: worktree.appendingPathComponent(".git"))
+      try repository.withLock { try repository.recover() }
+      try fixture.git(["worktree", "remove", linked.path])
+      try fixture.assertClean(retained: true)
+    }
+  }
+
   @Test
   func providerStartupRecoversAndShutdownJoins() async throws {
     let fixture = try DeliveryFixture()

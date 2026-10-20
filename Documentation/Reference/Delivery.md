@@ -142,8 +142,14 @@ with `cleanup_failed` and retain a retryable journal.
 
 On provider construction, background recovery processes configured repositories;
 provider shutdown cancels and joins that work. Every apply also recovers under
-the repository lock before its preflight. Recovery first aborts an in-progress
-rebase and reconciles actual refs, including a commit created before its journal
+the repository lock before its preflight. Before running Git in a recorded
+worktree, recovery requires its path in `worktree list --porcelain`, a regular
+`.git` file pointing to the corresponding worktree metadata under this
+repository's common Git directory, and an exact `rev-parse --show-toplevel`
+match. An unrecognized empty directory is removed; a nonempty directory is
+retained with `cleanup_pending` / `worktree_unrecognized` and its path in the
+journal. Recovery aborts an in-progress rebase only in a verified worktree and
+reconciles actual refs, including a commit created before its journal
 update. No commit means cleanup and `aborted`; a commit reachable from the default
 branch means cleanup and `merged`; an unmerged commit means worktree removal,
 branch retention and `committed` / `interrupted`. Failed cleanup remains pending
@@ -171,6 +177,7 @@ Error IDs prefix these codes with `delivery.`:
 | `not_fast_forward` | Second fast-forward attempt failed |
 | `rebase_conflict` | Rebase failed and was aborted to the saved commit |
 | `rebase_scope_changed` | Rebased diff no longer changes exactly the requested in-scope paths; branch retained |
+| `worktree_unrecognized` | Recorded worktree is not the repository's registered worktree; nonempty directory retained for inspection |
 | `journal_failed` | Journal could not be persisted; an existing commit remains on its branch |
 | `interrupted` | Recovery classified an interrupted operation |
 | `cleanup_failed` | Cleanup or final journal persistence requires retry |

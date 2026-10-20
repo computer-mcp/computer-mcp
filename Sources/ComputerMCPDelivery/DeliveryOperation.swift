@@ -75,7 +75,9 @@ extension DeliveryRepository {
         } catch {
           journal.phase = .cleanupPending
           journal.state = .cleanupPending
-          journal.reason = .cleanupFailed
+          journal.reason =
+            (error as? DeliveryFailure)?.reason == .worktreeUnrecognized
+            ? .worktreeUnrecognized : .cleanupFailed
           try? io.write(journal, to: journals)
           return (journal.result, nil)
         }

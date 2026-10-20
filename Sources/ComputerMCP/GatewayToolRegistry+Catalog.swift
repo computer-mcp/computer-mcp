@@ -1059,6 +1059,7 @@ extension GatewayToolRegistry {
               ),
               meta: toolMeta
             ),
+            // Shell output can contain secrets, so reading sessions needs shell authority.
             capability: CapabilityDescriptor(
               id: "shell.list", risk: .fullShell,
               workspaceRequirement: .required,
@@ -1084,6 +1085,7 @@ extension GatewayToolRegistry {
               ),
               meta: toolMeta
             ),
+            // Shell output can contain secrets, so reading sessions needs shell authority.
             capability: CapabilityDescriptor(
               id: "shell.read", risk: .fullShell,
               workspaceRequirement: .required,
@@ -4784,7 +4786,7 @@ extension GatewayToolRegistry {
             capability: CapabilityDescriptor(
               id: "file.download", risk: .destructive,
               workspaceRequirement: .required,
-              localOnly: false, usesNetwork: false
+              localOnly: false, usesNetwork: true
             )
           ))
 

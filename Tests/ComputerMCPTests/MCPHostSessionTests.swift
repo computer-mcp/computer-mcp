@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
@@ -263,7 +264,7 @@ struct MCPHostSessionTests {
     #expect(
       try JSONDecoder().decode(PluginMCPSettings.self, from: JSONEncoder().encode(settings))
         .hostServices)
-    let environment = try MCPHostContext.launchEnvironment(
+    let environment = try MCPHostLaunchMetadata.launchEnvironment(
       inherited: [
         "COMPUTER_MCP_HOST_FD": "8", "COMPUTER_MCP_HOST_READ_HANDLE": "144",
         "COMPUTER_MCP_HOST_WRITE_HANDLE": "148",
@@ -412,7 +413,7 @@ private final class HostCatalogClient: DownstreamMCPClient, @unchecked Sendable 
   private var count = 0
   var invocations: Int { lock.withLock { count } }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     [.init(name: "operation", description: "Fixture", inputSchema: .object([:]))]

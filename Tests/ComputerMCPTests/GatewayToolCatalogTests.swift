@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
@@ -677,7 +678,7 @@ private struct CatalogProviderFixture: GatewayToolProvider {
 
 private final class MutableCatalogClient: DownstreamMCPClient, Sendable {
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   { self }

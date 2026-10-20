@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
@@ -253,7 +254,7 @@ private struct CatalogClient: DownstreamMCPClient {
   private let calls = NIOLockedValueBox(0)
   var callCount: Int { calls.withLockedValue { $0 } }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   { self }

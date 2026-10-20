@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import CryptoKit
@@ -33,7 +34,8 @@ actor MCPBoundHostServices {
     self.now = now
     self.commandRunner = commandRunner
     canonicalRoot =
-      URL(fileURLWithPath: context.workspace.rootPath).standardizedFileURL.resolvingSymlinksInPath()
+      URL(fileURLWithPath: context.launchMetadata.workspace.rootPath).standardizedFileURL
+      .resolvingSymlinksInPath()
       .path
   }
 
@@ -90,7 +92,8 @@ actor MCPBoundHostServices {
   func call(name: String, arguments: [String: JSONValue]) throws -> MCP.CallTool.Result {
     guard !closed else { throw MCPError.connectionClosed }
     // Rollback/removal authority lasts only for its forwarded invocation.
-    let live = Set(directory.active(workspaceID: context.workspace.id, origin: origin).map(\.id))
+    let live = Set(
+      directory.active(workspaceID: context.launchMetadata.workspace.id, origin: origin).map(\.id))
     registrations = registrations.filter { live.contains($0.value) }
     removalInvocations = removalInvocations.filter { live.contains($0.value) }
     let started = ContinuousClock.now
@@ -146,16 +149,20 @@ actor MCPBoundHostServices {
 
   private var owner: MCPHostServiceOwner {
     .init(
-      workspaceID: context.workspace.id, profileID: context.profileID.rawValue,
-      caller: context.caller.rawValue, transport: context.transportTrace?.transport,
-      socketConnectionID: context.transportTrace?.socketConnectionID,
-      tunnelInstanceID: context.transportTrace?.tunnelInstanceID,
-      tunnelProfileID: context.transportTrace?.tunnelProfileID, principalID: context.principalID)
+      workspaceID: context.launchMetadata.workspace.id,
+      profileID: context.launchMetadata.profileID.rawValue,
+      caller: context.launchMetadata.caller.rawValue,
+      transport: context.launchMetadata.transportTrace?.transport,
+      socketConnectionID: context.launchMetadata.transportTrace?.socketConnectionID,
+      tunnelInstanceID: context.launchMetadata.transportTrace?.tunnelInstanceID,
+      tunnelProfileID: context.launchMetadata.transportTrace?.tunnelProfileID,
+      principalID: context.launchMetadata.principalID)
   }
 
   private func validateSourceIdentity() throws {
     guard
-      URL(fileURLWithPath: context.workspace.rootPath).standardizedFileURL.resolvingSymlinksInPath()
+      URL(fileURLWithPath: context.launchMetadata.workspace.rootPath).standardizedFileURL
+        .resolvingSymlinksInPath()
         .path == canonicalRoot
     else {
       throw MCPHostServiceError.denied("The source directory identity changed.")
@@ -166,7 +173,7 @@ actor MCPBoundHostServices {
     _ action: MCPHostServiceAction, matching: (MCPHostInvocation) -> Bool = { _ in true }
   ) throws -> MCPHostInvocation {
     let invocation = try directory.resolve().requireHostInvocation(
-      workspaceID: context.workspace.id, origin: origin,
+      workspaceID: context.launchMetadata.workspace.id, origin: origin,
       action: action, matching: matching)
     auditInvocation = invocation
     return invocation
@@ -180,9 +187,10 @@ actor MCPBoundHostServices {
       ($0.arguments["limit"]?.intValue ?? 100) >= limit
     }
     var execution = ExecutionContext(
-      caller: context.caller, profileID: context.profileID, transportTrace: context.transportTrace,
+      caller: context.launchMetadata.caller, profileID: context.launchMetadata.profileID,
+      transportTrace: context.launchMetadata.transportTrace,
       trustedPrincipalID: context.verifiedPrincipalID)
-    execution.workspaceID = context.workspace.id
+    execution.workspaceID = context.launchMetadata.workspace.id
     let audits = try database.hostDiagnosticAudits(context: execution, limit: limit)
     return .object([
       "owner": try JSONValue.encoded(owner),
@@ -190,7 +198,7 @@ actor MCPBoundHostServices {
         audits.map { audit in
           .object([
             "id": .string(audit.id), "request_id": .string(audit.requestID),
-            "workspace_id": .string(context.workspace.id),
+            "workspace_id": .string(context.launchMetadata.workspace.id),
             "profile_id": .string(audit.profileID.rawValue),
             "caller": .string(audit.caller.rawValue),
             "capability_id": .string(audit.capabilityID),
@@ -222,19 +230,19 @@ actor MCPBoundHostServices {
     }
     let runtime = try directory.resolve()
     let active = try runtime.requireHostInvocation(
-      workspaceID: context.workspace.id, origin: origin, id: id)
+      workspaceID: context.launchMetadata.workspace.id, origin: origin, id: id)
     auditInvocation = active
     let plugin = runtime.pluginOrigins[.init(kind: .mcp, id: origin)]
     return .object([
       "format_version": .integer(1), "invocation_id": .string(active.id.uuidString),
-      "generation_id": .string(context.runtimeID.uuidString),
+      "generation_id": .string(context.launchMetadata.runtimeID.uuidString),
       "registration_id": .string(origin),
       "plugin_id": plugin.map { .string($0.pluginID) } ?? .null,
       "contribution_id": plugin.map { .string($0.componentID) } ?? .null,
       "principal_id": .string(active.context.principalID),
       "profile_id": .string(active.context.profileID.rawValue),
       "caller": .string(active.context.caller.rawValue),
-      "workspace_id": .string(context.workspace.id),
+      "workspace_id": .string(context.launchMetadata.workspace.id),
       "request_id": .string(active.context.requestID),
       "authorization_revision": .integer(active.authorizationRevision),
       "capability_id": .string(active.upstreamName), "tool": .string(active.reference.toolName),
@@ -260,15 +268,17 @@ actor MCPBoundHostServices {
     } else {
       registration = MCPDerivedWorkspaceRegistration(
         origin: origin, receiptID: record.id,
-        sourceWorkspaceID: context.workspace.id, sourceRoot: canonicalRoot,
+        sourceWorkspaceID: context.launchMetadata.workspace.id, sourceRoot: canonicalRoot,
         receiptDigest: try record.digest(),
-        profileID: context.profileID, principalID: context.principalID, caller: context.caller,
+        profileID: context.launchMetadata.profileID,
+        principalID: context.launchMetadata.principalID, caller: context.launchMetadata.caller,
         workspace: .init(
           id: record.workspaceID, displayName: record.branch, rootPath: record.path,
           createdAt: now(), updatedAt: now()))
     }
     try database.registerDerivedWorkspace(
-      registration, verifiedPrincipalID: context.principalID, caller: context.caller)
+      registration, verifiedPrincipalID: context.launchMetadata.principalID,
+      caller: context.launchMetadata.caller)
     registrations[record.id] = active.id
     return .object(["registered": .bool(true), "workspace_id": .string(record.workspaceID)])
   }
@@ -313,7 +323,7 @@ actor MCPBoundHostServices {
         return .object(["unregistered": .bool(true)])
       }
     }
-    let live = directory.active(workspaceID: context.workspace.id, origin: origin)
+    let live = directory.active(workspaceID: context.launchMetadata.workspace.id, origin: origin)
     if record.state == "provisioning" {
       // Exact rollback can remove the registration we just created even after revocation.
       guard let id = registrations[record.id], live.contains(where: { $0.id == id }) else {
@@ -333,7 +343,8 @@ actor MCPBoundHostServices {
     }
     if let old {
       try database.unregisterDerivedWorkspace(
-        old, verifiedPrincipalID: context.principalID, caller: context.caller,
+        old, verifiedPrincipalID: context.launchMetadata.principalID,
+        caller: context.launchMetadata.caller,
         allowRevokedSourceForRollback: record.state == "provisioning")
     }
     return .object(["unregistered": .bool(true), "workspace_id": .string(record.workspaceID)])
@@ -354,9 +365,10 @@ actor MCPBoundHostServices {
     guard let id = invocation.ticketID, let ticket = try database.operationTicket(id: id),
       ticket.state == .executing, ticket.invocationID == invocation.ticketInvocationID,
       ticket.parentRequestID == invocation.parentRequestID,
-      invocation.context.principalID == context.principalID,
-      ticket.workspaceID == context.workspace.id, ticket.profileID == context.profileID,
-      ticket.caller == context.caller, ticket.capabilityID == invocation.upstreamName
+      invocation.context.principalID == context.launchMetadata.principalID,
+      ticket.workspaceID == context.launchMetadata.workspace.id,
+      ticket.profileID == context.launchMetadata.profileID,
+      ticket.caller == context.launchMetadata.caller, ticket.capabilityID == invocation.upstreamName
     else {
       throw MCPHostServiceError.denied("This operation has no matching executing host ticket.")
     }
@@ -367,17 +379,20 @@ actor MCPBoundHostServices {
       throw MCPHostServiceError.denied("A worktree receipt is required.")
     }
     let record = try DerivedIdentity(object)
-    guard let root = context.managedWorkspaceRoot,
-      context.verifiedPrincipalID == context.principalID,
-      record.sourceWorkspaceID == context.workspace.id, record.sourceRoot == canonicalRoot,
-      record.profileID == context.profileID.rawValue, record.principalID == context.principalID,
+    guard let root = context.launchMetadata.managedWorkspaceRoot,
+      context.verifiedPrincipalID == context.launchMetadata.principalID,
+      record.sourceWorkspaceID == context.launchMetadata.workspace.id,
+      record.sourceRoot == canonicalRoot,
+      record.profileID == context.launchMetadata.profileID.rawValue,
+      record.principalID == context.launchMetadata.principalID,
       record.workspaceID == "derived-workspace-" + record.id
         || record.workspaceID == "codex-worktree-" + record.id,
       UUID(uuidString: record.id)?.uuidString.lowercased() == record.id
     else {
       throw MCPHostServiceError.denied("The derived receipt does not match this host scope.")
     }
-    let component = SHA256.hash(data: Data(context.workspace.id.utf8)).prefix(12).map {
+    let component = SHA256.hash(data: Data(context.launchMetadata.workspace.id.utf8)).prefix(12).map
+    {
       String(format: "%02x", $0)
     }.joined()
     let target = URL(fileURLWithPath: root).appendingPathComponent(component)
@@ -392,8 +407,9 @@ actor MCPBoundHostServices {
   private func verifyOwnership(_ old: MCPDerivedWorkspaceRegistration, _ record: DerivedIdentity)
     throws
   {
-    guard old.origin == origin, old.sourceWorkspaceID == context.workspace.id,
-      old.profileID == context.profileID, old.principalID == context.verifiedPrincipalID,
+    guard old.origin == origin, old.sourceWorkspaceID == context.launchMetadata.workspace.id,
+      old.profileID == context.launchMetadata.profileID,
+      old.principalID == context.verifiedPrincipalID,
       old.principalID != nil,
       old.receiptID == record.id, old.receiptDigest == (try record.digest())
     else {
@@ -403,7 +419,7 @@ actor MCPBoundHostServices {
   }
 
   private func validateManagedParents(_ record: DerivedIdentity, targetExists: Bool) throws {
-    guard let root = context.managedWorkspaceRoot else {
+    guard let root = context.launchMetadata.managedWorkspaceRoot else {
       throw MCPHostServiceError.denied("Managed workspace root unavailable.")
     }
     let directory = URL(fileURLWithPath: record.path, isDirectory: true)
@@ -550,19 +566,19 @@ actor MCPBoundHostServices {
     arguments: [String: JSONValue], result: JSONValue?
   ) throws {
     let duration = start.duration(to: .now)
-    let trace = auditInvocation?.context.transportTrace ?? context.transportTrace
+    let trace = auditInvocation?.context.transportTrace ?? context.launchMetadata.transportTrace
     try database.recordAudit(
       .init(
         requestID: "host-service:" + UUID().uuidString,
         invocationID: auditInvocation?.ticketInvocationID,
         parentRequestID: auditInvocation?.context.requestID, ticketID: auditInvocation?.ticketID,
-        caller: context.caller,
+        caller: context.launchMetadata.caller,
         principalDigest: AuditEvent.verifiedPrincipalDigest(context.verifiedPrincipalID),
         transport: trace?.transport,
         socketConnectionID: trace?.socketConnectionID,
         tunnelInstanceID: trace?.tunnelInstanceID,
-        tunnelProfileID: trace?.tunnelProfileID, profileID: context.profileID,
-        workspaceID: context.workspace.id, capabilityID: name, decision: decision,
+        tunnelProfileID: trace?.tunnelProfileID, profileID: context.launchMetadata.profileID,
+        workspaceID: context.launchMetadata.workspace.id, capabilityID: name, decision: decision,
         errorCode: decision == .allowed ? nil : "host.service_denied",
         durationMilliseconds: Int(duration.components.seconds * 1000),
         inputDigest: try Self.digest(.object(arguments)), outputDigest: try result.map(Self.digest))

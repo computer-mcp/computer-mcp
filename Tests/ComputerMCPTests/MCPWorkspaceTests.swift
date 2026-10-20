@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
@@ -95,7 +96,7 @@ struct MCPWorkspaceTests {
     let fixture = try MCPWorkspaceFixture()
     defer { fixture.remove() }
     var configuration = fixture.configuration()
-    configuration.mcp.servers[0].env[MCPHostContext.environmentKey] = "forged registration"
+    configuration.mcp.servers[0].env[MCPHostLaunchMetadata.environmentKey] = "forged registration"
     let context = ExecutionContext(
       caller: readOnly ? .secureTunnel : .localMCP,
       profileID: readOnly ? .chatGPTObserve : .localAdmin,
@@ -198,12 +199,12 @@ struct MCPWorkspaceTests {
     configuration.mcp.servers[0].args = []
     configuration.mcp.servers[0].cwd = cwd
     configuration.mcp.servers[0].env = ["PATH": "bin", "SCOPE_VALUE": "child", "EMPTY": ""]
-    configuration.mcp.servers[0].env[MCPHostContext.environmentKey] = "forged registration"
+    configuration.mcp.servers[0].env[MCPHostLaunchMetadata.environmentKey] = "forged registration"
     let registry = GatewayToolRegistry(
       configuration: configuration,
       environment: [
         "PATH": "/unrelated", "SCOPE_VALUE": "parent", "EMPTY": "parent",
-        MCPHostContext.environmentKey: "forged ancestor",
+        MCPHostLaunchMetadata.environmentKey: "forged ancestor",
       ])
     do {
       let value = try await BlockingOperationExecutor(label: "test.mcp-launch").perform {

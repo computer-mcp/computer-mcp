@@ -1,8 +1,20 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+
+  // Glibc also exports a struct named flock; bind the function by its C symbol.
+  @_silgen_name("flock") private func flock(_ descriptor: Int32, _ operation: Int32) -> Int32
+#endif
+
+package enum MCPProcessOwnershipError: Error, Equatable {
+  case artifactInUse
+}
 
 /// Host-local launch state. An available lock alone does not prove host authorization cleanup.
 package struct MCPProcessReceiptStatus: Codable, Equatable, Sendable, Identifiable {
@@ -12,12 +24,24 @@ package struct MCPProcessReceiptStatus: Codable, Equatable, Sendable, Identifiab
   package let state: String
   package let recoverable: Bool
   package let blocksLaunch: Bool
+
+  package init(
+    id: String, digest: String, ownerPID: Int32?, state: String, recoverable: Bool,
+    blocksLaunch: Bool
+  ) {
+    self.id = id
+    self.digest = digest
+    self.ownerPID = ownerPID
+    self.state = state
+    self.recoverable = recoverable
+    self.blocksLaunch = blocksLaunch
+  }
 }
 
 /// A launch receipt and inherited lock outlive a crashed host. Live owners may
 /// create independent sessions; failed or orphaned sessions block new launches.
-final class MCPProcessOwnership: @unchecked Sendable {
-  static var defaultRoot: URL {
+package final class MCPProcessOwnership: @unchecked Sendable {
+  package static var defaultRoot: URL {
     FileManager.default.temporaryDirectory.appendingPathComponent(
       "computer-mcp-mcp-processes", isDirectory: true)
   }
@@ -28,15 +52,44 @@ final class MCPProcessOwnership: @unchecked Sendable {
     let microseconds: UInt64
 
     static func read(_ pid: Int32) throws -> Owner? {
-      var info = proc_bsdinfo()
-      let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
-      errno = 0
-      guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else {
-        if errno == ESRCH { return nil }
-        throw failure("Cannot establish the previous MCP owner's process identity.")
-      }
-      guard info.pbi_status != SZOMB else { return nil }
-      return Owner(pid: pid, seconds: info.pbi_start_tvsec, microseconds: info.pbi_start_tvusec)
+      #if canImport(Darwin)
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        errno = 0
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else {
+          if errno == ESRCH { return nil }
+          throw failure("Cannot establish the previous MCP owner's process identity.")
+        }
+        guard info.pbi_status != SZOMB else { return nil }
+        return Owner(pid: pid, seconds: info.pbi_start_tvsec, microseconds: info.pbi_start_tvusec)
+      #else
+        let descriptor = open("/proc/\(pid)/stat", O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else {
+          if errno == ENOENT || errno == ESRCH { return nil }
+          throw failure("Cannot establish the previous MCP owner's process identity.")
+        }
+        defer { close(descriptor) }
+        var bytes = [UInt8](repeating: 0, count: 4_096)
+        let count = Glibc.read(descriptor, &bytes, bytes.count)
+        guard count > 0, let nameEnd = bytes[..<count].lastIndex(of: UInt8(ascii: ")")) else {
+          throw failure("Cannot establish the previous MCP owner's process identity.")
+        }
+        let fields = String(decoding: bytes[(nameEnd + 1)..<count], as: UTF8.self).split(
+          separator: " ")
+        guard fields.count >= 20, let ticks = UInt64(fields[19]) else {
+          throw failure("Cannot establish the previous MCP owner's process identity.")
+        }
+        guard fields[0] != "Z", fields[0] != "X" else { return nil }
+        let frequency = sysconf(Int32(_SC_CLK_TCK))
+        guard frequency > 0 else {
+          throw failure("Cannot establish the previous MCP owner's process identity.")
+        }
+        // Linux reports start time as ticks since boot; together with the PID it
+        // identifies the process throughout the lifetime of an inherited lock.
+        let hertz = UInt64(frequency)
+        return Owner(
+          pid: pid, seconds: ticks / hertz, microseconds: ticks % hertz * 1_000_000 / hertz)
+      #endif
     }
   }
 
@@ -55,14 +108,14 @@ final class MCPProcessOwnership: @unchecked Sendable {
   private var handle: FileHandle?
   private var receipt: Receipt
 
-  func supervisorHandle() throws -> FileHandle {
+  package func supervisorHandle() throws -> FileHandle {
     try lock.withLock {
       guard let handle else { throw Self.failure("MCP ownership receipt is closed.") }
       return handle
     }
   }
 
-  static func acquire(
+  package static func acquire(
     root: URL, workspace: URL, registration: String, artifact: PluginDirectoryIdentity? = nil
   ) throws -> MCPProcessOwnership {
     let scope = try scope(workspace: workspace, registration: registration)
@@ -74,7 +127,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
           throw failure("Unexpected file in MCP ownership storage.")
         }
         let descriptor = try openFile(directory, name: name, flags: O_RDWR)
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
         let available = flock(descriptor, LOCK_EX | LOCK_NB) == 0
         guard available || errno == EWOULDBLOCK else {
           throw failure("Cannot inspect MCP process lock.")
@@ -111,7 +164,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
         return MCPProcessOwnership(
           root: root, scope: scope, name: name, descriptor: descriptor, receipt: receipt)
       } catch {
-        Darwin.close(descriptor)
+        close(descriptor)
         throw error
       }
     }
@@ -120,13 +173,13 @@ final class MCPProcessOwnership: @unchecked Sendable {
   /// Called under an exclusive artifact lease. No new runtime can acquire the
   /// artifact while this checks locks inherited by supervisors and watchdogs.
   /// Legacy receipts have no file provenance, so live/uncertain ones retain files.
-  static func requireArtifactUnused(root: URL, artifact: PluginDirectoryIdentity) throws {
-    let storage = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+  package static func requireArtifactUnused(root: URL, artifact: PluginDirectoryIdentity) throws {
+    let storage = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard storage >= 0 else {
       if errno == ENOENT { return }
       throw failure("Cannot inspect MCP artifact ownership storage.")
     }
-    defer { Darwin.close(storage) }
+    defer { close(storage) }
     var original = stat()
     guard fstat(storage, &original) == 0, original.st_uid == geteuid(),
       original.st_mode & 0o077 == 0
@@ -149,7 +202,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
             throw failure("Unexpected MCP ownership receipt.")
           }
           let descriptor = try openFile(directory, name: name, flags: O_RDWR)
-          defer { Darwin.close(descriptor) }
+          defer { close(descriptor) }
           let receipt = try readReceipt(descriptor)
           guard
             receipt.artifact?.mayReferToSameDirectory(as: artifact) == true
@@ -159,7 +212,9 @@ final class MCPProcessOwnership: @unchecked Sendable {
           guard available || errno == EWOULDBLOCK else {
             throw failure("Cannot inspect MCP artifact ownership lock.")
           }
-          guard available && !receipt.cleanupFailed else { throw PluginStoreError.artifactInUse }
+          guard available && !receipt.cleanupFailed else {
+            throw MCPProcessOwnershipError.artifactInUse
+          }
         }
       }
     }
@@ -173,7 +228,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
     self.receipt = receipt
   }
 
-  func finish(confirmed: Bool, hostServicesConfirmed: Bool = false) throws {
+  package func finish(confirmed: Bool, hostServicesConfirmed: Bool = false) throws {
     try lock.withLock {
       guard let handle else { return }
       try Self.withDirectory(root: root, scope: scope) { directory in
@@ -182,7 +237,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
           var original = stat()
           var named = stat()
           let verification = try Self.openFile(directory, name: name, flags: O_RDWR)
-          defer { Darwin.close(verification) }
+          defer { close(verification) }
           guard fstat(handle.fileDescriptor, &original) == 0,
             fstat(verification, &named) == 0,
             original.st_dev == named.st_dev, original.st_ino == named.st_ino
@@ -216,7 +271,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
     }
   }
 
-  static func inspect(root: URL, workspace: URL, registration: String) throws
+  package static func inspect(root: URL, workspace: URL, registration: String) throws
     -> [MCPProcessReceiptStatus]
   {
     let scope = try scope(workspace: workspace, registration: registration)
@@ -226,7 +281,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
           throw failure("Unexpected file in MCP ownership storage.")
         }
         let descriptor = try openFile(directory, name: name, flags: O_RDWR)
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
         return try inspect(descriptor, name: name, scope: scope)
       }
     }
@@ -234,7 +289,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
 
   /// Removes one reviewed receipt after independently locking it. Never signals a
   /// process, revokes a grant, launches a replacement, or replays a downstream call.
-  static func recover(
+  package static func recover(
     root: URL, workspace: URL, registration: String, id: String, expectedDigest: String
   ) throws {
     guard UUID(uuidString: id)?.uuidString == id else {
@@ -243,7 +298,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
     let scope = try scope(workspace: workspace, registration: registration)
     try withDirectory(root: root, scope: scope) { directory in
       let descriptor = try openFile(directory, name: id, flags: O_RDWR)
-      defer { Darwin.close(descriptor) }
+      defer { close(descriptor) }
       let status = try inspect(descriptor, name: id, scope: scope)
       guard status.digest == expectedDigest, status.recoverable else {
         throw failure(
@@ -340,7 +395,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
     guard fstat(descriptor, &status) == 0, status.st_mode & S_IFMT == S_IFREG,
       status.st_uid == geteuid(), status.st_mode & 0o077 == 0, status.st_nlink == 1
     else {
-      Darwin.close(descriptor)
+      close(descriptor)
       throw failure("MCP ownership file must be private and regular.")
     }
     return descriptor
@@ -350,9 +405,9 @@ final class MCPProcessOwnership: @unchecked Sendable {
     -> T
   {
     let parentURL = root.deletingLastPathComponent().resolvingSymlinksInPath()
-    let parent = Darwin.open(parentURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    let parent = open(parentURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard parent >= 0 else { throw failure("Cannot open MCP ownership parent.") }
-    defer { Darwin.close(parent) }
+    defer { close(parent) }
     var status = stat()
     guard fstat(parent, &status) == 0, status.st_uid == geteuid(), status.st_mode & 0o022 == 0
     else {
@@ -367,17 +422,17 @@ final class MCPProcessOwnership: @unchecked Sendable {
       var info = stat()
       guard fstat(descriptor, &info) == 0, info.st_uid == geteuid(), info.st_mode & 0o077 == 0
       else {
-        Darwin.close(descriptor)
+        close(descriptor)
         throw failure("MCP ownership directory must be private.")
       }
       return descriptor
     }
     let storage = try openDirectory(parent, root.lastPathComponent)
-    defer { Darwin.close(storage) }
+    defer { close(storage) }
     let directory = try openDirectory(storage, scope)
-    defer { Darwin.close(directory) }
+    defer { close(directory) }
     let gate = try openFile(directory, name: "scope.lock", flags: O_RDWR | O_CREAT)
-    defer { Darwin.close(gate) }
+    defer { close(gate) }
     let deadline = ContinuousClock.now + .seconds(1)
     while flock(gate, LOCK_EX | LOCK_NB) != 0 {
       guard errno == EWOULDBLOCK || errno == EINTR, ContinuousClock.now < deadline else {
@@ -409,7 +464,7 @@ final class MCPProcessOwnership: @unchecked Sendable {
     let copy = fcntl(descriptor, F_DUPFD_CLOEXEC, 10)
     guard copy >= 0 else { throw failure("Cannot inspect MCP ownership directory.") }
     guard let directory = fdopendir(copy) else {
-      Darwin.close(copy)
+      close(copy)
       throw failure("Cannot inspect MCP ownership directory.")
     }
     defer { closedir(directory) }
@@ -420,7 +475,9 @@ final class MCPProcessOwnership: @unchecked Sendable {
         break
       }
       let name = withUnsafePointer(to: &entry.pointee.d_name) {
-        $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+        $0.withMemoryRebound(
+          to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)
+        ) { String(cString: $0) }
       }
       if name != ".", name != ".." { try visit(name) }
     }

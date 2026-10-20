@@ -3,7 +3,7 @@ import Foundation
 import MCP
 
 extension JSONValue {
-  var sdkValue: MCP.Value {
+  package var sdkValue: MCP.Value {
     switch self {
     case .string(let value):
       return .string(value)
@@ -30,7 +30,7 @@ extension JSONValue {
     }
   }
 
-  init(sdkValue: MCP.Value) {
+  package init(sdkValue: MCP.Value) {
     switch sdkValue {
     case .null:
       self = .null
@@ -53,7 +53,7 @@ extension JSONValue {
 }
 
 extension MCPTool {
-  var sdkTool: MCP.Tool {
+  package var sdkTool: MCP.Tool {
     MCP.Tool(
       name: name,
       title: title,
@@ -67,7 +67,7 @@ extension MCPTool {
 }
 
 extension MCPToolAnnotations {
-  var sdkAnnotations: MCP.Tool.Annotations {
+  package var sdkAnnotations: MCP.Tool.Annotations {
     MCP.Tool.Annotations(
       readOnlyHint: readOnlyHint,
       destructiveHint: destructiveHint,
@@ -78,7 +78,7 @@ extension MCPToolAnnotations {
 }
 
 extension JSONValue {
-  var sdkMetadata: MCP.Metadata? {
+  package var sdkMetadata: MCP.Metadata? {
     guard let object = objectValue else {
       return nil
     }
@@ -87,7 +87,7 @@ extension JSONValue {
 }
 
 extension JSONValue {
-  static func sdkToolResult(
+  package static func sdkToolResult(
     content: [MCP.Tool.Content],
     structuredContent: MCP.Value?,
     isError: Bool?,
@@ -106,7 +106,7 @@ extension JSONValue {
     return .object(object)
   }
 
-  func sdkCallToolResult() throws -> MCP.CallTool.Result {
+  package func sdkCallToolResult() throws -> MCP.CallTool.Result {
     guard let object = objectValue else {
       return MCP.CallTool.Result(
         content: [.text(text: encodedText(), annotations: nil, _meta: nil)]

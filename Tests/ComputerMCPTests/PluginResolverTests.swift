@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
@@ -496,7 +497,7 @@ struct PluginResolverTests {
 
 private struct CompositionCatalogClient: DownstreamMCPClient {
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   { self }

@@ -8,18 +8,18 @@ import Logging
 import MCP
 
 /// MCP framing over the same owned-process primitive used by other stdio adapters.
-actor MCPChildProcessTransport: MCP.Transport {
-  nonisolated let logger: Logger
+package actor MCPChildProcessTransport: MCP.Transport {
+  package nonisolated let logger: Logger
   /// Finishes after process and host-service cleanup, including failed startup.
-  nonisolated let termination: AsyncStream<Void>
+  package nonisolated let termination: AsyncStream<Void>
   private let terminated: AsyncStream<Void>.Continuation
 
   private let server: MCPServerConfig
   private let command: String
   private let workingDirectory: URL
   private let environment: [String: String]
-  private let hostContext: MCPHostContext?
-  private var hostSession: MCPHostSession?
+  private let hostContext: (any MCPHostEnvironment)?
+  private var hostSession: (any MCPHostSessionHandle)?
   private var process: ManagedLineProcess?
   private var ownership: MCPProcessOwnership?
   private var ownershipError = false
@@ -29,14 +29,14 @@ actor MCPChildProcessTransport: MCP.Transport {
   private let stream: AsyncThrowingStream<Data, Swift.Error>
   private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
 
-  init(
+  package init(
     server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
-    hostContext: MCPHostContext? = nil, logger: Logger? = nil
+    hostContext: (any MCPHostEnvironment)? = nil, logger: Logger? = nil
   ) throws {
     guard let command = server.command, !command.isEmpty else {
       throw GatewayToolError.executionFailed("MCP server '\(server.id)' has no command.")
     }
-    guard !server.hostServices || hostContext?.tools != nil else {
+    guard !server.hostServices || hostContext?.providesHostServices == true else {
       throw GatewayToolError.executionFailed(
         "The stdio registration requires scoped host services.")
     }
@@ -46,8 +46,8 @@ actor MCPChildProcessTransport: MCP.Transport {
     self.workingDirectory =
       server.resolvedWorkingDirectory(base: workingDirectory)
       .standardizedFileURL
-    self.environment = try MCPHostContext.launchEnvironment(
-      inherited: environment, overrides: server.env, context: hostContext)
+    self.environment = try MCPHostLaunchMetadata.launchEnvironment(
+      inherited: environment, overrides: server.env, context: hostContext?.launchMetadata)
     self.logger =
       logger
       ?? Logger(
@@ -56,7 +56,7 @@ actor MCPChildProcessTransport: MCP.Transport {
     (termination, terminated) = AsyncStream.makeStream()
   }
 
-  func connect() async throws {
+  package func connect() async throws {
     guard !closed else { throw MCPError.connectionClosed }
     try Task.checkCancellation()
     guard process == nil else { return }
@@ -68,15 +68,15 @@ actor MCPChildProcessTransport: MCP.Transport {
     }
     let ownership = try MCPProcessOwnership.acquire(
       root: hostContext?.processOwnershipRoot ?? MCPProcessOwnership.defaultRoot,
-      workspace: hostContext.map { URL(fileURLWithPath: $0.workspace.rootPath) }
+      workspace: hostContext?.workspaceRoot
         ?? workingDirectory,
       registration: server.id, artifact: hostContext?.pluginArtifacts[server.id])
     self.ownership = ownership
     let session =
       try server.hostServices
-      ? hostContext.map { try MCPHostSession(context: $0, server: server) } : nil
+      ? hostContext.map { try $0.makeHostSession(server: server) } : nil
     var environment = environment
-    if session != nil { environment[MCPHostContext.descriptorEnvironmentKey] = "3" }
+    if session != nil { environment[MCPHostLaunchMetadata.descriptorEnvironmentKey] = "3" }
     let process: ManagedLineProcess
     do {
       process = try ManagedLineProcess(
@@ -114,7 +114,7 @@ actor MCPChildProcessTransport: MCP.Transport {
     }
   }
 
-  func disconnect() async {
+  package func disconnect() async {
     await closeProcess()
     await reader?.value
   }
@@ -143,14 +143,14 @@ actor MCPChildProcessTransport: MCP.Transport {
     await task.value
   }
 
-  func shutdownConfirmed() async -> Bool {
+  package func shutdownConfirmed() async -> Bool {
     guard !ownershipError else { return false }
     guard await hostSession?.shutdownConfirmed() ?? true else { return false }
     guard let process else { return closed }
     return await process.snapshot().hasExited
   }
 
-  func send(_ data: Data) async throws {
+  package func send(_ data: Data) async throws {
     guard !closed, let process else { throw MCPError.connectionClosed }
     guard let line = String(data: data, encoding: .utf8) else {
       throw MCPError.invalidRequest("MCP stdio requires UTF-8 JSON.")
@@ -158,5 +158,5 @@ actor MCPChildProcessTransport: MCP.Transport {
     try await process.sendLine(line)
   }
 
-  func receive() -> AsyncThrowingStream<Data, Swift.Error> { stream }
+  package func receive() -> AsyncThrowingStream<Data, Swift.Error> { stream }
 }

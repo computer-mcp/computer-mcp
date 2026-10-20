@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import Foundation
 import Testing
 
@@ -40,41 +41,13 @@ struct MCPHostContextTests {
   }
 
   @Test
-  func trustedContextReplacesInheritedAndRegistrationValues() throws {
-    let context = MCPHostContext(
-      runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaceID: "project", rootURL: URL(fileURLWithPath: "/tmp"), readOnly: false,
-      processOwnershipRoot: URL(fileURLWithPath: "/private/host-ownership"))
-    let environment = try MCPHostContext.launchEnvironment(
-      inherited: [
-        MCPHostContext.environmentKey: "ancestor", "KEEP": "inherited",
-        MCPHostContext.readHandleEnvironmentKey: "144",
-      ],
-      overrides: [
-        MCPHostContext.environmentKey: "registration", "EMPTY": "",
-        MCPHostContext.writeHandleEnvironmentKey: "148",
-      ], context: context)
-    let value = try JSONDecoder().decode(
-      JSONValue.self, from: Data(try #require(environment[MCPHostContext.environmentKey]).utf8))
-    #expect(value.objectValue?["caller"] == .string("local-cli"))
-    #expect(value.objectValue?["runtimeID"] == .string(context.runtimeID.uuidString))
-    #expect(environment["KEEP"] == "inherited")
-    #expect(environment["EMPTY"] == "")
-    #expect(environment[MCPHostContext.readHandleEnvironmentKey] == nil)
-    #expect(environment[MCPHostContext.writeHandleEnvironmentKey] == nil)
-    #expect(value.objectValue?["processOwnershipRoot"] == nil)
+  func transientDatabasesHaveIndependentProcessOwnership() throws {
+    let first = try GatewayDatabase(inMemory: ())
+    let second = try GatewayDatabase(inMemory: ())
+    let root = try #require(first.mcpProcessOwnershipRoot)
+    #expect(root == first.mcpProcessOwnershipRoot)
+    #expect(root != second.mcpProcessOwnershipRoot)
+    #expect(root != MCPProcessOwnership.defaultRoot)
   }
 
-  @Test
-  func excessiveProvenanceFailsBeforeLaunch() {
-    let context = MCPHostContext(
-      runtimeID: UUID(),
-      context: .init(
-        caller: .localMCP, profileID: .localAdmin,
-        transportTrace: .init(transport: String(repeating: "x", count: 16_384))),
-      workspaceID: "project", rootURL: URL(fileURLWithPath: "/tmp"), readOnly: false)
-    #expect(throws: (any Error).self) {
-      try MCPHostContext.launchEnvironment(inherited: [:], overrides: [:], context: context)
-    }
-  }
 }

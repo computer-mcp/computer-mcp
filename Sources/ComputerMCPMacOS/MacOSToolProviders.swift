@@ -1,6 +1,7 @@
 import ComputerMCP
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPProcess
 

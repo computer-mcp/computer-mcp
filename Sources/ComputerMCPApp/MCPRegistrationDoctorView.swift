@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPDownstream
 import SwiftUI
 
 struct MCPRegistrationDoctorView: View {

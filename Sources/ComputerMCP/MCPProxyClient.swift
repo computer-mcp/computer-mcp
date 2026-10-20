@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPTransport
@@ -31,7 +32,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       executionScope ?? hostContext.map {
         MCPExecutionRecord.digest(
           .array([
-            .string($0.principalID), .string($0.profileID.rawValue), .string($0.workspace.id),
+            .string($0.launchMetadata.principalID), .string($0.launchMetadata.profileID.rawValue),
+            .string($0.launchMetadata.workspace.id),
           ]))
       } ?? UUID().uuidString
     let journal = MCPExecutionJournal(
@@ -48,11 +50,14 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   }
 
   package func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
     -> any DownstreamMCPClient
   {
-    MCPProxyClient(
+    // Gateway connections also need journal, retained-work and host-tool authority.
+    // This is the restore point from the downstream launch interface to gateway state.
+    let hostContext = hostContext as? MCPHostContext
+    return MCPProxyClient(
       workingDirectory: workingDirectory, environment: environment, hostContext: hostContext,
       secretStore: secretStore, processOwnershipRoot: processOwnershipRoot)
   }
@@ -528,7 +533,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
     if let continuation {
       guard continuation.reference.serverID == server.id,
-        continuation.workspaceID == hostContext?.workspace.id,
+        continuation.workspaceID == hostContext?.launchMetadata.workspace.id,
         let entry = entries[server.id], entry.configuration == server,
         entry.connection.connectionID == continuation.connectionID
       else { throw MCPContinuationTarget.unavailable() }
@@ -562,7 +567,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
     if let target = continuation,
       target.connectionID != entry.connection.connectionID || target.reference.serverID != server.id
-        || target.workspaceID != hostContext?.workspace.id
+        || target.workspaceID != hostContext?.launchMetadata.workspace.id
     {
       return nil
     }
@@ -727,7 +732,7 @@ private actor MCPProxyConnection {
     self.toolsChanged = toolsChanged
     self.onTermination = onTermination
     ownedWork = hostContext?.ownedWork
-    workspaceID = hostContext?.workspace.id
+    workspaceID = hostContext?.launchMetadata.workspace.id
     hostTools = hostContext?.tools
     client = MCP.Client(
       name: "computer-mcp-gateway",

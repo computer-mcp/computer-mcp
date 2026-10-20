@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import Foundation
 import MCP
 import Testing

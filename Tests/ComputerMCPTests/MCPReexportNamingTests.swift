@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import Foundation
 import Testing
@@ -298,7 +299,7 @@ private final class ReexportNamingClient: DownstreamMCPClient, @unchecked Sendab
   init(_ names: [String: [String]]) { self.names = names }
   func replace(_ id: String, names: [String]) { lock.withLock { self.names[id] = names } }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     let names = lock.withLock {

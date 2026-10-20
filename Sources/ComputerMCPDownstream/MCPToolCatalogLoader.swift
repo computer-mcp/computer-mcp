@@ -3,8 +3,8 @@ import Foundation
 import MCP
 
 /// Builds a complete catalog before any caller can publish it or activate its routes.
-enum MCPToolCatalogLoader {
-  static func load(
+package enum MCPToolCatalogLoader {
+  package static func load(
     maxPages: Int = 1_024,
     maxTools: Int = 100_000,
     maxEncodedBytes: Int = 32 * 1_024 * 1_024,

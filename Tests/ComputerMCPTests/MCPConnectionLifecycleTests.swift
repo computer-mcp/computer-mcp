@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPTestSupport
 import Darwin
 import Foundation

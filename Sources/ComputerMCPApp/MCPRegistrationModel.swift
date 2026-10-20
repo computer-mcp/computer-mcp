@@ -2,6 +2,7 @@ import Combine
 import ComputerMCP
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import Foundation
 
 @MainActor

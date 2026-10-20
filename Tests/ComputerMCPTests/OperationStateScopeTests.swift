@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import Foundation
 import NIOConcurrencyHelpers
@@ -199,7 +200,7 @@ private final class StateScopeMCPClient: DownstreamMCPClient, Sendable {
   private let calls = NIOLockedValueBox(0)
   var callCount: Int { calls.withLockedValue { $0 } }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     ["mutate", "file.write", "archive.create"].map {

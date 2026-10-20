@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
@@ -200,7 +201,7 @@ private final class ConstructionMCPClient: DownstreamMCPClient, Sendable {
     self.pauseDiscovery = pauseDiscovery
   }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     if pauseDiscovery {

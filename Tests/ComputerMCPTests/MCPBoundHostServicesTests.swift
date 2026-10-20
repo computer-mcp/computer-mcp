@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import CryptoKit
@@ -369,7 +370,9 @@ struct MCPBoundHostServicesTests {
     #expect(value["tool"] == .string("fixture.read"))
     #expect(value["capability_id"] == .string("adapter.fixture.read"))
     #expect(value["authorization_revision"]?.intValue != nil)
-    #expect(value["generation_id"] == fixture.peer.context.map { .string($0.runtimeID.uuidString) })
+    #expect(
+      value["generation_id"]
+        == fixture.peer.context.map { .string($0.launchMetadata.runtimeID.uuidString) })
     #expect(value["plugin_id"] == .null)
     #expect(value["contribution_id"] == .null)
     let id = try #require(value["invocation_id"])
@@ -586,18 +589,21 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       let managed = root.resolvingSymlinksInPath().appendingPathComponent("managed")
       try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: false)
       let scoped = MCPHostContext(
-        runtimeID: captured.runtimeID,
+        runtimeID: captured.launchMetadata.runtimeID,
         context: .init(
-          caller: captured.caller, profileID: captured.profileID,
-          transportTrace: captured.transportTrace, trustedPrincipalID: captured.principalID),
-        workspaceID: captured.workspace.id,
-        rootURL: URL(fileURLWithPath: captured.workspace.rootPath),
-        readOnly: captured.readOnly, tools: captured.tools, managedWorkspaceRoot: managed)
+          caller: captured.launchMetadata.caller, profileID: captured.launchMetadata.profileID,
+          transportTrace: captured.launchMetadata.transportTrace,
+          trustedPrincipalID: captured.launchMetadata.principalID),
+        workspaceID: captured.launchMetadata.workspace.id,
+        rootURL: URL(fileURLWithPath: captured.launchMetadata.workspace.rootPath),
+        readOnly: captured.launchMetadata.readOnly, tools: captured.tools,
+        managedWorkspaceRoot: managed)
       service = MCPBoundHostServices(
         database: database, directory: try #require(captured.tools), context: scoped,
         origin: "probe",
         commandRunner: nativeGit
-          ? ProcessCommandRunner() : HostWorktreeGitStub(source: captured.workspace.rootPath))
+          ? ProcessCommandRunner()
+          : HostWorktreeGitStub(source: captured.launchMetadata.workspace.rootPath))
     } else {
       service = try #require(try runtime.makeHostServices(context: captured, origin: "probe"))
     }
@@ -730,9 +736,9 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     lock.withLock { handler = value }
   }
   func makeScopedClient(
-    workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
+    workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient {
-    lock.withLock { captured = hostContext }
+    lock.withLock { captured = hostContext as? MCPHostContext }
     return self
   }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {

@@ -186,7 +186,8 @@ struct GatewayPermissionLifecycleTests {
     let owner = context(principal: "verified-first")
     let scope = MCPExecutionRecord.digest(
       .array([
-        .string(owner.principalID), .string(owner.profileID.rawValue), .string(owner.workspace.id),
+        .string(owner.launchMetadata.principalID), .string(owner.launchMetadata.profileID.rawValue),
+        .string(owner.launchMetadata.workspace.id),
       ]))
     let journal = MCPExecutionJournal(database: database, scope: scope)
     _ = try journal.reserve(

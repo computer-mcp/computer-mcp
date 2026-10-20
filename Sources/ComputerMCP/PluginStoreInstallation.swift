@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX

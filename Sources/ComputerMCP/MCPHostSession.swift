@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPTransport
 import Foundation
 import MCP
@@ -106,7 +107,7 @@ package final class MCPHostToolDirectory: @unchecked Sendable {
 }
 
 /// A borrowed standard MCP session. Ending it never shuts down its parent gateway.
-final class MCPHostSession: Sendable {
+final class MCPHostSession: MCPHostSessionHandle {
   let childHandle: FileHandle
   private let transport: MCPInheritedSocketTransport
   private let task: Task<Void, Never>
@@ -120,7 +121,7 @@ final class MCPHostSession: Sendable {
     childHandle = pair.1
     let transport = try MCPInheritedSocketTransport(takingOwnershipOf: pair.0)
     self.transport = transport
-    let workspaceID = context.workspace.id
+    let workspaceID = context.launchMetadata.workspace.id
     let origin = registration.id
     let sessionID = UUID().uuidString
     let services = MCPHostSessionServices(directory: directory, context: context, origin: origin)

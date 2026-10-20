@@ -21,18 +21,20 @@ internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
     toolDefinitions
   }
 
-  internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    guard let definition = toolDefinitions.first(where: { $0.tool.name == name }) else {
-      throw GatewayToolError.unknownTool(name)
+  internal func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    guard let definition = toolDefinitions.first(where: { $0.tool.name == invocation.name }) else {
+      throw GatewayToolError.unknownTool(invocation.name)
     }
-    return try registry.callTool(definition: definition.tool, arguments: arguments)
+    return try registry.callTool(
+      definition: definition.tool, arguments: invocation.arguments, context: invocation.context)
   }
 
-  internal func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    guard let definition = toolDefinitions.first(where: { $0.tool.name == name }) else {
-      throw GatewayToolError.unknownTool(name)
+  internal func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    guard let definition = toolDefinitions.first(where: { $0.tool.name == invocation.name }) else {
+      throw GatewayToolError.unknownTool(invocation.name)
     }
-    return try await registry.callToolAsync(definition: definition.tool, arguments: arguments)
+    return try await registry.callToolAsync(
+      definition: definition.tool, arguments: invocation.arguments, context: invocation.context)
   }
 }
 
@@ -208,7 +210,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     name: String, arguments: JSONValue?, expectedCapability: CapabilityDescriptor?
   ) throws -> JSONValue {
     let route = try route(named: name, expectedCapability: expectedCapability)
-    return try route.provider.callTool(name: name, arguments: arguments)
+    return try route.provider.callTool(.init(name: name, arguments: arguments))
   }
 
   internal func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
@@ -219,7 +221,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     name: String, arguments: JSONValue?, expectedCapability: CapabilityDescriptor?
   ) async throws -> JSONValue {
     let route = try route(named: name, expectedCapability: expectedCapability)
-    return try await route.provider.callToolAsync(name: name, arguments: arguments)
+    return try await route.provider.callToolAsync(.init(name: name, arguments: arguments))
   }
 
   private func route(named name: String, expectedCapability: CapabilityDescriptor? = nil) throws

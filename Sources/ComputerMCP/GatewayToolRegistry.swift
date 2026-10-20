@@ -1200,7 +1200,9 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       hostServiceAction: tool.hostServiceAction)
   }
 
-  internal func callTool(definition: MCPTool, arguments: JSONValue?) throws -> JSONValue {
+  internal func callTool(
+    definition: MCPTool, arguments: JSONValue?, context: InvocationContext = .empty
+  ) throws -> JSONValue {
     guard let reference = definition.mcpReference else {
       return try callTool(name: definition.name, arguments: arguments)
     }
@@ -1210,8 +1212,9 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       server: server, name: reference.toolName, arguments: arguments ?? .object([:]))
   }
 
-  internal func callToolAsync(definition: MCPTool, arguments: JSONValue?) async throws -> JSONValue
-  {
+  internal func callToolAsync(
+    definition: MCPTool, arguments: JSONValue?, context: InvocationContext = .empty
+  ) async throws -> JSONValue {
     try Task.checkCancellation()
     if let reference = definition.mcpReference {
       let server = try mcpServer(reference.serverID)

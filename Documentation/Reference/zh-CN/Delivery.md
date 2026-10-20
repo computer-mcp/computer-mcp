@@ -78,7 +78,9 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 预检要求路径合法、worktree 根被忽略、主检出目标文件没有未提交改动、分支可用，
 且提交说明合法。land 模式要求主检出处于默认分支。隔离 worktree 从默认分支当前
 提交开始；稀疏模式使用精确路径的非 cone 检出。首先尝试主检出 `merge --ff-only`；
-默认分支前进时在隔离 worktree 中 rebase，再重试一次。冲突时中止 rebase 并保留
+默认分支前进时在隔离 worktree 中 rebase，核对新提交相对新基线的改动路径集合恰好
+等于本次请求且仍在范围内，才重试一次；不符则以 `rebase_scope_changed` 保留提交与
+分支。冲突时中止 rebase 并保留
 原提交。commit-only 只提交并保留分支。清理删除 worktree；没有交付提交或提交已从
 默认分支可达时才删除分支。未落地提交的分支始终保留。
 
@@ -108,6 +110,6 @@ provider 构造时在后台恢复已配置仓库，关闭时取消并等待后�
 `match_missing`、`match_ambiguous`、`file_exists`、`file_missing`、`not_text`、
 `main_checkout_dirty`、`main_checkout_branch`、`worktree_root_not_ignored`、
 `branch_exists`、`message_invalid`、`busy`、`git_failed`、`commit_only`、
-`not_fast_forward`、`rebase_conflict`、`journal_failed`、`interrupted`、
+`not_fast_forward`、`rebase_conflict`、`rebase_scope_changed`、`journal_failed`、`interrupted`、
 `cleanup_failed`。错误 ID 加 `delivery.` 前缀。完整字段和逐项原因释义见
 [英文参考](../Delivery.md)。

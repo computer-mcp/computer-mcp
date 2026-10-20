@@ -301,6 +301,33 @@ struct DeliveryToolProviderTests {
     }
   }
 
+  @Test(arguments: ["private/log.md", "notes/renamed.md"])
+  func rebaseRenameRetainsBranchWithoutLanding(path: String) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let main = quote(fixture.root.path)
+      let clean =
+        "env -i PATH=\(quote(systemUtilityPath)) HOME=\(quote(fixture.temporary.url.path)) \(quote(fixture.executable)) -C \(main) -c core.hooksPath=/dev/null"
+      try fixture.hook(
+        "post-commit",
+        body: """
+          mkdir -p \(main)/\(quote(String(path.split(separator: "/")[0])))
+          \(clean) mv notes/log.md \(quote(path))
+          \(clean) commit -m 'test: rename target on default branch'
+          rm \(main)/.git/hooks/post-commit
+          """)
+      let result = try fixture.apply()
+      #expect(result["state"] == .string("committed"))
+      #expect(result["reason"] == .string("rebase_scope_changed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.read(path) == "alpha\nstable\n")
+      #expect(try fixture.git(["show", "docs/entry:\(path)"]) == "beta\nstable")
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+      #expect(try fixture.journals().first?.reason == .rebaseScopeChanged)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
   @Test
   func sparseCheckoutAndLiteralPaths() async throws {
     try await deliveryTest {

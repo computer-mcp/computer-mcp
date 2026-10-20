@@ -54,7 +54,7 @@ extension DeliveryRepository {
           journal.state = .committed
           journal.reason = .commitOnly
         } else {
-          try land(&journal, worktree: worktree)
+          try land(&journal, worktree: worktree, paths: request.paths)
         }
       } catch {
         failure =
@@ -87,7 +87,7 @@ extension DeliveryRepository {
     }
   }
 
-  private func land(_ journal: inout DeliveryJournal, worktree: URL) throws {
+  private func land(_ journal: inout DeliveryJournal, worktree: URL, paths: [String]) throws {
     try cancellation.check()
     try requireMainBranch(scope.defaultBranch)
     let merge = try git.run(
@@ -97,8 +97,9 @@ extension DeliveryRepository {
       journal.state = .merged
       return
     }
-    let currentDefault = try git.revision("refs/heads/\(scope.defaultBranch)", at: root)
-    guard currentDefault != journal.base else {
+    guard let currentDefault = try git.revision("refs/heads/\(scope.defaultBranch)", at: root),
+      currentDefault != journal.base
+    else {
       throw DeliveryFailure(
         reason: .gitFailed, detail: "Fast-forward merge failed.", exitCode: merge.exitCode,
         stderr: merge.stderr)
@@ -106,7 +107,7 @@ extension DeliveryRepository {
     try cancellation.check()
     let original = journal.commit!
     let rebase = try git.run(
-      ["rebase", "refs/heads/\(scope.defaultBranch)"], at: worktree, accepting: [0, 1, 128])
+      ["rebase", currentDefault], at: worktree, accepting: [0, 1, 128])
     if rebase.exitCode != 0 {
       try abortRebase(at: worktree)
       guard try git.revision("refs/heads/\(journal.branch)", at: root) == original else {
@@ -121,6 +122,15 @@ extension DeliveryRepository {
     do { try io.write(journal, to: journals) } catch {
       journal.state = .committed
       journal.reason = .journalFailed
+      return
+    }
+    let changedPaths = try git.run(
+      ["diff", "--no-renames", "--name-only", "-z", currentDefault, journal.commit!], at: worktree
+    ).stdout.split(separator: "\0").map(String.init)
+    guard Set(changedPaths) == Set(paths), changedPaths.allSatisfy({ scope.contains(path: $0) })
+    else {
+      journal.state = .committed
+      journal.reason = .rebaseScopeChanged
       return
     }
     try cancellation.check()

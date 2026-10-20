@@ -27,6 +27,7 @@ internal enum DeliveryReason: String, Codable, Sendable {
   case commitOnly = "commit_only"
   case notFastForward = "not_fast_forward"
   case rebaseConflict = "rebase_conflict"
+  case rebaseScopeChanged = "rebase_scope_changed"
   case journalFailed = "journal_failed"
   case interrupted
   case cleanupFailed = "cleanup_failed"

@@ -112,8 +112,11 @@ worktree starts at the current default-branch commit. Sparse mode uses non-cone,
 exact-path sparse checkout.
 
 Land first attempts `merge --ff-only` in the main checkout. If the default branch
-has advanced, delivery rebases its worktree and retries once. A failed rebase is
-aborted and the saved commit retained. Commit-only mode keeps the branch without
+has advanced, delivery rebases its worktree. Before retrying once, it verifies
+that the rebased diff against the new baseline changes exactly the requested
+paths and that every path remains in scope. A mismatch retains the rebased commit
+and branch with `rebase_scope_changed`. A failed rebase is aborted and the saved
+commit retained. Commit-only mode keeps the branch without
 landing. Cleanup removes the worktree; it deletes the branch only when no delivery
 commit exists or that commit is reachable from the default branch. An undelivered
 commit's branch is always preserved.
@@ -167,6 +170,7 @@ Error IDs prefix these codes with `delivery.`:
 | `commit_only` | Commit retained under commit-only mode |
 | `not_fast_forward` | Second fast-forward attempt failed |
 | `rebase_conflict` | Rebase failed and was aborted to the saved commit |
+| `rebase_scope_changed` | Rebased diff no longer changes exactly the requested in-scope paths; branch retained |
 | `journal_failed` | Journal could not be persisted; an existing commit remains on its branch |
 | `interrupted` | Recovery classified an interrupted operation |
 | `cleanup_failed` | Cleanup or final journal persistence requires retry |

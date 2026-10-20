@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import CryptoKit
 import Darwin
@@ -1235,7 +1236,8 @@ final class AppControlPlaneServiceTests {
       let source = try await fixture.controlPlane.activeConfiguration()
       #expect(source.cli.commands.map(\.id) == ["personal"])
       #expect(source.knownPluginMCPServerIDs.contains("plugin-12-test-package-native"))
-      let runtime = try GatewayRuntime(configuration: source, database: fixture.database)
+      let runtime = try GatewayRuntime(
+        configuration: source, database: fixture.database, platform: MacOSPlatform.services)
       #expect(runtime.pluginOrigins.count == 2)
       #expect(runtime.pluginDiagnostics.isEmpty && runtime.pluginIssues.isEmpty)
       #expect(
@@ -1275,7 +1277,8 @@ final class AppControlPlaneServiceTests {
       #expect(disabled.settings["test-package"]?.enabled == false)
       #expect(
         disabled.settings["test-package"]?.dependencyExecutables == settings.dependencyExecutables)
-      let disabledRuntime = try GatewayRuntime(configuration: source, database: fixture.database)
+      let disabledRuntime = try GatewayRuntime(
+        configuration: source, database: fixture.database, platform: MacOSPlatform.services)
       #expect(disabledRuntime.pluginOrigins.isEmpty)
       await disabledRuntime.shutdown()
       let audit = try #require(
@@ -2281,7 +2284,7 @@ final class AppControlPlaneServiceTests {
         workspaceID: workspace.id
       ),
       database: fixture.database,
-      registeredWorkspaces: [workspace]
+      registeredWorkspaces: [workspace], platform: MacOSPlatform.services
     )
     let toolNames = Set(try gateway.listTools().map(\.name))
     #expect(!toolNames.contains("file.read"))
@@ -2748,6 +2751,7 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
     secretStore = try KeychainSecretStore(adapter: keychainAdapter ?? MemoryKeychainAdapter())
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: OpenAITunnelCommandRunner(),
@@ -2762,7 +2766,7 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       gatewayExecutablePath: gatewayExecutablePath,
       providerDiscovery: providerDiscovery,
       launchAtLoginController: launchAtLoginController,
-      pluginCatalog: pluginCatalog
+      platform: MacOSPlatform.services, pluginCatalog: pluginCatalog
     )
   }
 

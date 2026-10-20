@@ -2,7 +2,6 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import Darwin
@@ -119,6 +118,7 @@ package actor AppGatewayService {
   package nonisolated let socketConfiguration: GatewaySocketConfiguration
 
   private let controlPlane: AppControlPlaneService
+  private let platform: PlatformServices
   private var controlSessionRecords: [String: (key: RuntimeKey, session: GatewayControlSession)] =
     [:]
   private var server: GatewaySocketServer?
@@ -156,20 +156,8 @@ package actor AppGatewayService {
     socketConfiguration: GatewaySocketConfiguration
   ) {
     self.controlPlane = controlPlane
+    self.platform = controlPlane.platform
     self.socketConfiguration = socketConfiguration
-  }
-
-  package static func live(
-    controlPlane: AppControlPlaneService,
-    directories: AppControlPlaneServiceDirectories
-  ) -> AppGatewayService {
-    AppGatewayService(
-      controlPlane: controlPlane,
-      socketConfiguration: GatewaySocketConfiguration(
-        socketURL: directories.gatewaySocket,
-        tunnelCredentialFile: directories.openAITunnelGatewayCredential
-      )
-    )
   }
 
   package func start(profile requestedProfile: GatewayProfileID? = nil) async throws {
@@ -1212,7 +1200,7 @@ package actor AppGatewayService {
     guard manifestMonitor == nil else { return }
     let monitor: any FileChangeMonitor
     do {
-      monitor = try DirectoryEventFileChangeMonitor(fileURL: controlPlane.directories.manifest)
+      monitor = try platform.fileChanges(controlPlane.directories.manifest)
     } catch let error as POSIXError {
       throw AtomicManifestStoreError.posix(
         operation: "watch manifest directory", code: Int32(error.code.rawValue))

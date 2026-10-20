@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
@@ -900,7 +901,7 @@ final class GatewayRuntimeTests {
     return try GatewayRuntime(
       configuration: configuration,
       database: database,
-      registeredWorkspaces: workspaces
+      registeredWorkspaces: workspaces, platform: MacOSPlatform.services
     )
   }
 

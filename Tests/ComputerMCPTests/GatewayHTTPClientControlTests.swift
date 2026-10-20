@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -274,7 +275,8 @@ private struct HTTPClientControlFixture: Sendable {
     configuration.policy.shellEnabled = true
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      platform: MacOSPlatform.services)
     runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway,
       host: "127.0.0.1", port: port, publicBaseURL: nil, accessToken: token,

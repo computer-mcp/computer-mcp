@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Darwin
 import Foundation
 import Testing
@@ -29,7 +30,8 @@ struct GatewayHTTPRuntimeTests {
           configuration: configuration, database: database,
           registeredWorkspaces: [
             RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path)
-          ]), host: "127.0.0.1", port: 0, publicBaseURL: nil, accessToken: token)
+          ], platform: MacOSPlatform.services), host: "127.0.0.1", port: 0, publicBaseURL: nil,
+        accessToken: token)
     }
     let first = try runtime(token: "first-fixture-credential")
     let other = try runtime(token: "other-fixture-credential")
@@ -128,7 +130,8 @@ struct GatewayHTTPRuntimeTests {
       builtin: .init(enabled: ["file.read", "file.write"]))
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      platform: MacOSPlatform.services)
     let runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway, host: "127.0.0.1", port: 0,
       publicBaseURL: nil, accessToken: "shared-fixture-credential")
@@ -202,7 +205,8 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     #expect(configuration.server.http.port != port)
 
-    let registry = try GatewayRuntime(configuration: configuration)
+    let registry = try GatewayRuntime(
+      configuration: configuration, platform: MacOSPlatform.services)
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
       registry: registry,
@@ -230,7 +234,8 @@ struct GatewayHTTPRuntimeTests {
   func testStoppedRuntimeReleasesTheListenerAndCanRestart() async throws {
     let port = try availableHTTPRuntimeLoopbackPort()
     let configuration = GatewayConfiguration()
-    let registry = try GatewayRuntime(configuration: configuration)
+    let registry = try GatewayRuntime(
+      configuration: configuration, platform: MacOSPlatform.services)
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
       registry: registry,
@@ -251,7 +256,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -286,7 +291,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -322,7 +327,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -359,7 +364,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -397,7 +402,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -443,7 +448,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -475,7 +480,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil
@@ -502,7 +507,7 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration),
+      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil

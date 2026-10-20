@@ -1,0 +1,44 @@
+import ComputerMCP
+import ComputerMCPPersistence
+import ComputerMCPPlatformDarwin
+import Foundation
+
+extension AppControlPlaneService {
+  package static func live(
+    directories: AppControlPlaneServiceDirectories? = nil,
+    gatewayExecutablePath: String = "computer-mcp",
+    keychainService: String,
+    keychainAccessGroup: String
+  ) throws -> AppControlPlaneService {
+    let resolvedDirectories = try directories ?? .standard()
+    try resolvedDirectories.prepare()
+    let database = try GatewayDatabase(path: resolvedDirectories.database.path)
+    try resolvedDirectories.secureDatabaseFiles()
+    let bundledPlugins = BundledPlugins.current
+    let manifestStore = try AtomicManifestStore(
+      manifestURL: resolvedDirectories.manifest,
+      database: database,
+      loader: GatewayManifestConfigurationLoader(database: database, bundledPlugins: bundledPlugins)
+    )
+    let secretStore = try KeychainSecretStore(
+      service: keychainService,
+      accessGroup: keychainAccessGroup
+    )
+    let platform = MacOSPlatform.services
+    let openAITunnelSupervisor = OpenAITunnelSupervisor(
+      secretStore: secretStore, executableSearchDirectories: platform.executableSearchDirectories)
+    if !FileManager.default.fileExists(atPath: resolvedDirectories.manifest.path) {
+      _ = try manifestStore.activate(manifest: defaultManifest)
+    }
+    return AppControlPlaneService(
+      directories: resolvedDirectories,
+      database: database,
+      manifestStore: manifestStore,
+      secretStore: secretStore,
+      openAITunnelSupervisor: openAITunnelSupervisor,
+      gatewayExecutablePath: gatewayExecutablePath,
+      platform: platform,
+      bundledPlugins: bundledPlugins
+    )
+  }
+}

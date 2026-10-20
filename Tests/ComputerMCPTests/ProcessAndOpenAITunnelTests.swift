@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -392,7 +393,9 @@ final class ProcessAndOpenAITunnelTests {
         executablePath: codex ? "/bin/cat" : executable.path)
     }
     #expect(throws: (any Error).self) {
-      try OpenAITunnelClientResolver().resolve(
+      try OpenAITunnelClientResolver(
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories
+      ).resolve(
         requestedPath: executable.path,
         configuration: GatewayConfiguration(workspaceDirectory: root))
     }

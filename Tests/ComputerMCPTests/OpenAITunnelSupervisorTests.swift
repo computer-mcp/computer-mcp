@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -19,7 +20,10 @@ final class OpenAITunnelSupervisorTests {
         .init(id: "tunnel-client", transport: .stdio, command: "/bin/echo")
       ]))
     #expect(throws: (any Error).self) {
-      try OpenAITunnelClientResolver(commandRunner: runner).resolve(
+      try OpenAITunnelClientResolver(
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        commandRunner: runner
+      ).resolve(
         requestedPath: nil, configuration: configuration)
     }
     #expect(runner.allArguments == [["--version"]])
@@ -45,6 +49,7 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager(output: "connected super-secret")
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: commandRunner,
@@ -106,6 +111,7 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: ExecutableOpenAITunnelClientResolver(),
       proxyResolver: FixedOpenAITunnelHTTPProxyResolver(
         value: "http://127.0.0.1:6152"
@@ -132,6 +138,7 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: commandRunner,
@@ -162,6 +169,7 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: commandRunner,
@@ -197,6 +205,7 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: commandRunner,
@@ -227,6 +236,7 @@ final class OpenAITunnelSupervisorTests {
     let secretStore = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: OpenAITunnelCommandRunner(),
@@ -252,6 +262,7 @@ final class OpenAITunnelSupervisorTests {
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: OpenAITunnelCommandRunner(),
@@ -297,6 +308,7 @@ final class OpenAITunnelSupervisorTests {
     try secretStore.set("super-secret", for: reference)
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: ThrowingTunnelCommandRunner(),
@@ -322,6 +334,7 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: OpenAITunnelCommandRunner(),
@@ -343,6 +356,7 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager(exitAfterReadCount: 2)
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
+      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       commandRunner: OpenAITunnelCommandRunner(),

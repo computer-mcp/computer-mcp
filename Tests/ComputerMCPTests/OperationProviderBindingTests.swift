@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -141,7 +142,7 @@ private struct ProviderBindingFixture {
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-owner"),
       database: database,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      mcpClient: client, plugins: [plugin])
+      platform: MacOSPlatform.services, mcpClient: client, plugins: [plugin])
   }
 
   func prepare(in runtime: GatewayRuntime, generic: Bool = false) throws -> String {

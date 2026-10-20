@@ -5,7 +5,7 @@ import Foundation
 
 /// Streams a selected public asset into an empty, caller-owned private file.
 /// The caller retains the descriptor until this operation, including cancellation, has joined.
-final class GitHubPluginDownload: Sendable {
+package final class GitHubPluginDownload: Sendable {
   private let session: URLSession
   private let origin: URL
   private let redirectOrigins: Set<URL>

@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -536,8 +537,10 @@ private final class AppControlPlaneFixture {
       database: database,
       manifestStore: manifestStore,
       secretStore: secretStore,
-      openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secretStore),
-      launchAtLoginController: AppTestLaunchAtLoginController()
+      openAITunnelSupervisor: OpenAITunnelSupervisor(
+        secretStore: secretStore,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+      launchAtLoginController: AppTestLaunchAtLoginController(), platform: MacOSPlatform.services
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,

@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -383,7 +384,7 @@ private struct RiskFixture {
         tools: [.init(name: "review.inspect", adapter: .mcp, source: "vendor", tool: "inspect")]),
       database: database,
       registeredWorkspaces: workspaces,
-      mcpClient: client)
+      platform: MacOSPlatform.services, mcpClient: client)
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

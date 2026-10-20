@@ -38,12 +38,13 @@ package enum ComputerMCPProductContracts {
     }
   }
 
-  package static func providers(configPath: String) throws -> JSONValue {
+  package static func providers(configPath: String, platform: PlatformServices) throws -> JSONValue
+  {
     let configurationURL = URL(fileURLWithPath: configPath).standardizedFileURL
     let gateway = try GatewayConfiguration.load(path: configurationURL.path)
     let providers = try ExternalProviderDiscovery(
       configuration: gateway,
-      systemSearchDirectories: ExternalProviderDiscovery.macOSSearchDirectories
+      systemSearchDirectories: platform.executableSearchDirectories
     ).discover().sorted {
       $0.providerID < $1.providerID
     }

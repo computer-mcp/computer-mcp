@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -34,7 +35,8 @@ struct MCPHostInvocationTests {
             hostServices: true)
         ])),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      platform: MacOSPlatform.services)
     do {
       // Retained contexts must not exhaust the independent 256 active-call slots.
       for _ in 0..<257 {
@@ -145,7 +147,8 @@ struct MCPHostInvocationTests {
             hostServices: hostServices)
         ])),
       database: try GatewayDatabase(path: root.appendingPathComponent("host.db").path),
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      platform: MacOSPlatform.services)
     do {
       let arguments = Self.arguments(tool: mode == "detached" ? "deferred" : "inspect")
       let result: JSONValue

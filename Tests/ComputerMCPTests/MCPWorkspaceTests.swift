@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -106,7 +107,7 @@ struct MCPWorkspaceTests {
       registeredWorkspaces: [
         .init(id: "first", displayName: "First", rootPath: fixture.first.path),
         .init(id: "second", displayName: "Second", rootPath: fixture.second.path),
-      ], mcpClient: MCPProxyClient(), plugins: [])
+      ], platform: MacOSPlatform.services, mcpClient: MCPProxyClient(), plugins: [])
     do {
       async let first = gateway.callToolAsync(
         name: "fixture.context",

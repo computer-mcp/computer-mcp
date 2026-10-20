@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -34,7 +35,7 @@ struct OperationStateScopeTests {
       context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture"),
       database: database,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      mcpClient: client)
+      platform: MacOSPlatform.services, mcpClient: client)
     do {
       let input: JSONValue =
         tool == "file.write"
@@ -95,7 +96,7 @@ struct OperationStateScopeTests {
       context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture"),
       database: database,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      mcpClient: StateScopeMCPClient())
+      platform: MacOSPlatform.services, mcpClient: StateScopeMCPClient())
     do {
       let target: JSONValue =
         tool == "mcp.tools.call"
@@ -157,7 +158,8 @@ struct OperationStateScopeTests {
       configuration: .init(
         profiles: [profile], builtin: .init(enabled: ["file.read", "file.write"])),
       context: context, database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)])
+      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      platform: MacOSPlatform.services)
     do {
       #expect(try runtime.listTools().contains { $0.name == "file.read" })
       var revoked = try #require(database.profiles().first)

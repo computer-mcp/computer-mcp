@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -32,7 +33,7 @@ struct BuiltinToolCatalogSnapshotTests {
       registeredWorkspaces: [
         .init(id: "catalog", displayName: "Catalog", rootPath: workspace.url.path)
       ],
-      mcpClient: CatalogDiscoveryStub(), plugins: [],
+      platform: MacOSPlatform.services, mcpClient: CatalogDiscoveryStub(), plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
       remoteManagement: .init(call: { _, _, _ in
         throw GatewayToolError.executionFailed("Catalog discovery must not execute management.")

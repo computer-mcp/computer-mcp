@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -382,7 +383,8 @@ private final class HostFixture: Sendable {
         tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],
         builtin: .init(enabled: ["file.read", "file.replace_text"] + (git ? ["git.add"] : []))),
       context: context, database: database,
-      registeredWorkspaces: persistWorkspaces ? workspaces : nil, mcpClient: downstream)
+      registeredWorkspaces: persistWorkspaces ? workspaces : nil, platform: MacOSPlatform.services,
+      mcpClient: downstream)
   }
 
   func session() throws -> MCPHostSession {

@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -24,8 +25,10 @@ struct GatewaySocketPrincipalLifecycleTests {
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let control = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifest, secretStore: secrets,
-      openAITunnelSupervisor: OpenAITunnelSupervisor(secretStore: secrets),
-      bundledPlugins: .init(packages: [], issues: []))
+      openAITunnelSupervisor: OpenAITunnelSupervisor(
+        secretStore: secrets,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+      platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
     let script = root.appendingPathComponent("fixture.py")
     try Data(Self.server.utf8).write(to: script)
     let configuration = GatewayConfiguration(

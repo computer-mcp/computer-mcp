@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -38,7 +39,8 @@ struct GatewayConstructionTests {
     for _ in 0..<2 {
       do {
         let runtime = try await GatewayRuntime.make(
-          configuration: configuration, registeredWorkspaces: workspaces)
+          configuration: configuration, registeredWorkspaces: workspaces,
+          platform: MacOSPlatform.services)
         await runtime.shutdown()
         Issue.record("Expected failure at \(stage)")
       } catch {
@@ -53,7 +55,7 @@ struct GatewayConstructionTests {
     configuration.cli.commands = []
     configuration.mcp.servers[0].args = [script.path, root.path, "inspect"]
     let runtime = try await GatewayRuntime.make(
-      configuration: configuration, registeredWorkspaces: [first])
+      configuration: configuration, registeredWorkspaces: [first], platform: MacOSPlatform.services)
     #expect(try runtime.listTools().contains { $0.name == "inspect" })
     await runtime.shutdown()
     try expectProcessesExited(root)
@@ -78,7 +80,7 @@ struct GatewayConstructionTests {
           RegisteredWorkspace(
             id: "fixture", displayName: "Fixture", rootPath: configuration.workspaceDirectory.path)
         ],
-        mcpClient: client)
+        platform: MacOSPlatform.services, mcpClient: client)
       shutdown = { await runtime.shutdown() }
     }
     let entered = gate.entered.stream()
@@ -117,7 +119,7 @@ struct GatewayConstructionTests {
             id: "fixture", displayName: "Fixture",
             rootPath: FileManager.default.temporaryDirectory.path)
         ],
-        mcpClient: client)
+        platform: MacOSPlatform.services, mcpClient: client)
     }
     var discoveries = discovery.makeAsyncIterator()
     _ = await discoveries.next()

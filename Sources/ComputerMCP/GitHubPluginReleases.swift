@@ -66,7 +66,7 @@ package struct PluginCatalogReleaseVersion: Codable, Equatable, Sendable {
 }
 
 /// Revalidates one selected public release against current GitHub source and membership.
-struct GitHubPluginReleases: Sendable {
+package struct GitHubPluginReleases: Sendable {
   private let http: any PluginCatalogHTTPFetching
 
   private let timeout: Duration

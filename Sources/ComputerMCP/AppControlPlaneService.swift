@@ -7,15 +7,20 @@ import ComputerMCPProcess
 import Foundation
 import MCP
 
-internal protocol ControlPlaneProviderDiscovering: Sendable {
+package protocol ControlPlaneProviderDiscovering: Sendable {
   func discover(configuration: GatewayConfiguration) throws -> [ExternalProviderDiscoveryResult]
 }
 
 internal struct AppControlPlaneProviderDiscovery: ControlPlaneProviderDiscovering {
   private let commandRunner: any CommandRunning
+  private let executableSearchDirectories: [String]
 
-  internal init(commandRunner: any CommandRunning = ManagedCommandRunner()) {
+  internal init(
+    executableSearchDirectories: [String],
+    commandRunner: any CommandRunning = ManagedCommandRunner()
+  ) {
     self.commandRunner = commandRunner
+    self.executableSearchDirectories = executableSearchDirectories
   }
 
   internal func discover(configuration: GatewayConfiguration) throws
@@ -24,7 +29,7 @@ internal struct AppControlPlaneProviderDiscovery: ControlPlaneProviderDiscoverin
     try ExternalProviderDiscovery(
       configuration: configuration,
       commandRunner: commandRunner,
-      systemSearchDirectories: ExternalProviderDiscovery.macOSSearchDirectories
+      systemSearchDirectories: executableSearchDirectories
     ).discover()
   }
 }
@@ -60,7 +65,7 @@ package actor AppControlPlaneService {
     label: "com.showxu.computer-mcp.launch-at-login",
     serial: false
   )
-  let bookmarkService: any WorkspaceBookmarkServicing
+  package nonisolated let platform: PlatformServices
   var cloudflareRuntimes: [String: CloudflareRuntimeState] = [:]
   var cloudflareStartTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
   var cloudflareStopTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
@@ -76,18 +81,17 @@ package actor AppControlPlaneService {
   let pluginDownload: GitHubPluginDownload
   let bundledPlugins: BundledPlugins
 
-  internal init(
+  package init(
     directories: AppControlPlaneServiceDirectories,
     database: GatewayDatabase,
     manifestStore: AtomicManifestStore,
     secretStore: KeychainSecretStore,
     openAITunnelSupervisor: OpenAITunnelSupervisor,
     gatewayExecutablePath: String = "computer-mcp",
-    providerDiscovery: any ControlPlaneProviderDiscovering =
-      AppControlPlaneProviderDiscovery(),
+    providerDiscovery: (any ControlPlaneProviderDiscovering)? = nil,
     launchAtLoginController: any LaunchAtLoginControlling =
       SMAppServiceLaunchAtLoginController(),
-    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
+    platform: PlatformServices,
     pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
     pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
@@ -99,9 +103,12 @@ package actor AppControlPlaneService {
     self.manifestStore = manifestStore
     self.secretStore = secretStore
     self.openAITunnelSupervisor = openAITunnelSupervisor
-    self.providerDiscovery = providerDiscovery
+    self.providerDiscovery =
+      providerDiscovery
+      ?? AppControlPlaneProviderDiscovery(
+        executableSearchDirectories: platform.executableSearchDirectories)
     self.launchAtLoginController = launchAtLoginController
-    self.bookmarkService = bookmarkService
+    self.platform = platform
     self.pluginCatalog =
       pluginCatalog
       ?? StaticPluginCatalog(
@@ -110,41 +117,6 @@ package actor AppControlPlaneService {
     self.pluginReleases = pluginReleases
     self.pluginDownload = pluginDownload
     self.bundledPlugins = bundledPlugins
-  }
-
-  package static func live(
-    directories: AppControlPlaneServiceDirectories? = nil,
-    gatewayExecutablePath: String = "computer-mcp",
-    keychainService: String,
-    keychainAccessGroup: String
-  ) throws -> AppControlPlaneService {
-    let resolvedDirectories = try directories ?? .standard()
-    try resolvedDirectories.prepare()
-    let database = try GatewayDatabase(path: resolvedDirectories.database.path)
-    try resolvedDirectories.secureDatabaseFiles()
-    let bundledPlugins = BundledPlugins.current
-    let manifestStore = try AtomicManifestStore(
-      manifestURL: resolvedDirectories.manifest,
-      database: database,
-      loader: GatewayManifestConfigurationLoader(database: database, bundledPlugins: bundledPlugins)
-    )
-    let secretStore = try KeychainSecretStore(
-      service: keychainService,
-      accessGroup: keychainAccessGroup
-    )
-    let openAITunnelSupervisor = OpenAITunnelSupervisor(secretStore: secretStore)
-    if !FileManager.default.fileExists(atPath: resolvedDirectories.manifest.path) {
-      _ = try manifestStore.activate(manifest: defaultManifest)
-    }
-    return AppControlPlaneService(
-      directories: resolvedDirectories,
-      database: database,
-      manifestStore: manifestStore,
-      secretStore: secretStore,
-      openAITunnelSupervisor: openAITunnelSupervisor,
-      gatewayExecutablePath: gatewayExecutablePath,
-      bundledPlugins: bundledPlugins
-    )
   }
 
   package static let defaultManifest = DefaultGatewayConfiguration.manifest
@@ -249,7 +221,7 @@ package actor AppControlPlaneService {
   }
 
   package func workspaceAccessReports() throws -> [WorkspaceAccessReport] {
-    try database.workspaces().map { try bookmarkService.inspect($0) }
+    try database.workspaces().map { try platform.workspaceGrants.inspect($0) }
   }
 
   @discardableResult
@@ -257,7 +229,7 @@ package actor AppControlPlaneService {
     at url: URL,
     displayName: String? = nil
   ) throws -> RegisteredWorkspace {
-    let proposed = try bookmarkService.registerFolder(at: url, displayName: displayName)
+    let proposed = try platform.workspaceGrants.registerFolder(at: url, displayName: displayName)
     let registration = try database.registerWorkspaceIdempotently(proposed)
     if !registration.created,
       displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
@@ -351,7 +323,7 @@ package actor AppControlPlaneService {
     var includeWildcard = false
     switch change {
     case .register(let url, let displayName):
-      let workspace = try bookmarkService.registerFolder(at: url, displayName: displayName)
+      let workspace = try platform.workspaceGrants.registerFolder(at: url, displayName: displayName)
       mutation = .register(workspace)
       affectedWorkspaceIDs = []
       if displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
@@ -362,7 +334,7 @@ package actor AppControlPlaneService {
       guard let original = inputs.workspaces.first(where: { $0.id == canonicalID }) else {
         throw AppControlPlaneServiceError.unknownWorkspace(id)
       }
-      let bookmarks = bookmarkService
+      let bookmarks = platform.workspaceGrants
       let (selected, identity) = try await gatewayOperations.perform {
         let selected = try bookmarks.registerFolder(
           at: root, displayName: displayName ?? original.displayName)
@@ -760,7 +732,7 @@ package actor AppControlPlaneService {
     return try await GatewayRuntime.prepare(
       configuration: inputs.configuration, context: context, database: database,
       state: inputs.persisted,
-      bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
+      platform: platform, mcpClient: MCPProxyClient(secretStore: secretStore),
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
       artifactStorage: artifactStorage, requiresControlSession: requiresControlSession,
       remoteManagement: remoteManagement)
@@ -797,7 +769,7 @@ package actor AppControlPlaneService {
   ) async throws -> GatewayRuntime {
     try requireCurrentGatewayInputs(inputs)
     let database = persistentState ? database : nil
-    let bookmarkService = bookmarkService
+    let platform = platform
     let bundledPlugins = bundledPlugins
     let secretStore = secretStore
     let plugins: [ResolvedPlugin]? = try await gatewayOperations.perform {
@@ -811,7 +783,7 @@ package actor AppControlPlaneService {
       configuration: inputs.configuration,
       context: context,
       database: database, registeredWorkspaces: inputs.workspaces,
-      bookmarkService: bookmarkService, mcpClient: MCPProxyClient(secretStore: secretStore),
+      platform: platform, mcpClient: MCPProxyClient(secretStore: secretStore),
       plugins: plugins, pluginState: inputs.plugins, bundledPlugins: bundledPlugins,
       terminalSessions: terminalSessions, requiresControlSession: requiresControlSession,
       remoteManagement: remoteManagement)

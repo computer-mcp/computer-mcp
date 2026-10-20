@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
@@ -143,7 +144,8 @@ private struct InvocationFixture {
       registeredWorkspaces: [
         .init(id: "fixture", displayName: "Fixture", rootPath: workspace.url.path)
       ],
-      mcpClient: client, plugins: [], bundledPlugins: .init(packages: [], issues: []))
+      platform: MacOSPlatform.services, mcpClient: client, plugins: [],
+      bundledPlugins: .init(packages: [], issues: []))
   }
 
   func arguments(tool: String) -> [String: JSONValue] {

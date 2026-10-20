@@ -127,6 +127,13 @@ let neutralTargets: [Target] =
         ]
       ),
       .target(
+        name: "ComputerMCPMacOS",
+        dependencies: [
+          "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
+        ]
+      ),
+      .target(
         name: "ComputerMCP",
         dependencies: [
           "ComputerMCPConfiguration",
@@ -153,6 +160,7 @@ let neutralTargets: [Target] =
         name: "computer-mcp",
         dependencies: [
           "ComputerMCP",
+          "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
@@ -163,7 +171,8 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "ComputerMCPApp",
         dependencies: [
-          "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
+          "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
         ],
         resources: [
@@ -180,7 +189,8 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPTests",
         dependencies: [
-          "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
+          "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",
           "ComputerMCPProcess",
           "ComputerMCPTestSupport",
@@ -191,7 +201,8 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPAppTests",
         dependencies: [
-          "ComputerMCPApp", "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore",
+          "ComputerMCPApp", "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration",
+          "ComputerMCPCore",
           "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTestSupport",
         ]

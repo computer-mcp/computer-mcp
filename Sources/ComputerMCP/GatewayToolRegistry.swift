@@ -5,7 +5,7 @@ import ComputerMCPProcess
 import Foundation
 
 /// Owns configured source definitions, gateway tool schemas, and dispatch.
-internal final class GatewayToolRegistry: @unchecked Sendable {
+package final class GatewayToolRegistry: @unchecked Sendable {
   internal let configuration: GatewayConfiguration
 
   internal let commandRunner: CommandRunning
@@ -22,7 +22,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
 
   internal let cliExecution: CLIProcessExecution
 
-  internal init(
+  package init(
     configuration: GatewayConfiguration,
     commandRunner: CommandRunning? = nil,
     processManager: ProcessManaging = ManagedProcessRegistry(),
@@ -70,16 +70,16 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
     }
   }
 
-  internal func toolChanges() -> AsyncStream<Void> { mcpClient.toolChanges() }
+  package func toolChanges() -> AsyncStream<Void> { mcpClient.toolChanges() }
 
-  internal func shutdown() async {
+  package func shutdown() async {
     await shellManager.shutdown()
     await cliExecution.shutdown()
     await mcpClient.shutdown()
   }
 
   /// Registered gateway and optionally reexported downstream MCP tools.
-  internal func listTools() throws -> [MCPTool] {
+  package func listTools() throws -> [MCPTool] {
     var tools = Self.gatewayTools(
       shellEnabled: configuration.policy.shellEnabled,
       builtins: Set(configuration.builtin.enabled),
@@ -119,7 +119,7 @@ internal final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   /// Validates arguments, executes a tool, and returns MCP tool content.
-  internal func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+  package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
     let object = arguments?.objectValue ?? [:]
 
     switch name {

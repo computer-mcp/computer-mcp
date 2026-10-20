@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
@@ -38,7 +39,7 @@ struct MCPProfileGrantTests {
       registeredWorkspaces: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
-      mcpClient: client)
+      platform: MacOSPlatform.services, mcpClient: client)
     do {
       #expect(try runtime.listTools().contains { $0.name == publicName })
       _ = try runtime.callTool(name: publicName, arguments: .object([:]))
@@ -315,7 +316,7 @@ struct MCPProfileGrantTests {
       registeredWorkspaces: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
-      mcpClient: client)
+      platform: MacOSPlatform.services, mcpClient: client)
     #expect(try !runtime.listTools().contains { $0.name == "alpha.inspect" })
     #expect(try runtime.listTools().contains { $0.name == "beta.inspect" })
     for (name, arguments) in [
@@ -468,7 +469,7 @@ private struct ProfileRuntimeFixture {
     try GatewayRuntime(
       configuration: configuration,
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      mcpClient: ProfileCatalogClient())
+      platform: MacOSPlatform.services, mcpClient: ProfileCatalogClient())
   }
 
   func cleanup() { try? FileManager.default.removeItem(at: root) }

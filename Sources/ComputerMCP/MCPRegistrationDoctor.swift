@@ -48,7 +48,7 @@ extension AppControlPlaneService {
         "computer-mcp-mcp-processes", isDirectory: true)
     func inspectCleanup() throws {
       guard entry.server.transport == .stdio else { return }
-      let access = try bookmarkService.resolve(workspace)
+      let access = try platform.workspaceGrants.resolve(workspace)
       defer { access.close() }
       report.processReceipts = try MCPProcessOwnership.inspect(
         root: ownershipRoot, workspace: access.rootURL, registration: id)
@@ -80,7 +80,7 @@ extension AppControlPlaneService {
       }
     }
     if entry.server.transport == .stdio {
-      let access = try bookmarkService.resolve(workspace)
+      let access = try platform.workspaceGrants.resolve(workspace)
       defer { access.close() }
       let inspection = ExecutableInspection.inspect(
         entry.server.command ?? "",
@@ -113,7 +113,7 @@ extension AppControlPlaneService {
     // This ephemeral read-only scope has no persistence authority or unrelated providers.
     let runtime = try await GatewayRuntime.make(
       configuration: configuration, registeredWorkspaces: [workspace],
-      bookmarkService: bookmarkService,
+      platform: platform,
       mcpClient: MCPProxyClient(secretStore: secretStore, processOwnershipRoot: ownershipRoot),
       plugins: [], bundledPlugins: .load(directory: nil))
     let arguments: JSONValue = .object([
@@ -170,7 +170,7 @@ extension AppControlPlaneService {
     else {
       throw GatewayToolError.invalidArguments("Select a stdio MCP and a registered workspace.")
     }
-    let access = try bookmarkService.resolve(workspace)
+    let access = try platform.workspaceGrants.resolve(workspace)
     defer { access.close() }
     try MCPProcessOwnership.recover(
       root: database.mcpProcessOwnershipRoot

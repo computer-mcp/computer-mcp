@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import Foundation
 import GRDB
 import Testing
@@ -249,8 +250,12 @@ private struct PreparationStateFixture: Sendable {
       configuration: GatewayConfiguration(workspaceDirectory: root),
       context: ExecutionContext(caller: .localCLI, profileID: .localAdmin, workspaceID: "fixture"),
       database: database, state: state,
-      bookmarkService: WorkspaceBookmarkService(
-        adapter: adapter, now: { Date(timeIntervalSince1970: 2000) }),
+      platform: PlatformServices(
+        workspaceGrants: WorkspaceBookmarkService(
+          adapter: adapter, now: { Date(timeIntervalSince1970: 2000) }),
+        toolProviders: MacOSPlatform.services.toolProviders,
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        fileChanges: MacOSPlatform.services.fileChanges),
       bundledPlugins: BundledPlugins(packages: [], issues: []))
   }
 

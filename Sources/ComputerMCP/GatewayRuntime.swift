@@ -2,7 +2,6 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import CryptoKit
@@ -21,7 +20,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let workspaces: [String: RegisteredWorkspace]
   private let workspaceOrder: [String]
   private let workspaceAccesses: [String: ResolvedWorkspaceAccess]
-  private let bookmarkService: any WorkspaceBookmarkServicing
+  private let platform: PlatformServices
   private let workspaceErrors: [String: WorkspaceBookmarkError]
   private let providerRouters: [String: GatewayProviderRouter]
   private let lifetime: GatewayRuntimeLifetime
@@ -62,7 +61,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     context: ExecutionContext? = nil,
     database: GatewayDatabase? = nil,
     registeredWorkspaces: [RegisteredWorkspace]? = nil,
-    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
+    platform: PlatformServices,
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     plugins: [ResolvedPlugin]? = nil,
@@ -74,7 +73,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   ) throws {
     try self.init(
       configuration: configuration, context: context, database: database,
-      registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
+      registeredWorkspaces: registeredWorkspaces, platform: platform,
       policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
       pluginState: pluginState,
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
@@ -87,7 +86,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     context: ExecutionContext? = nil,
     database: GatewayDatabase? = nil,
     registeredWorkspaces: [RegisteredWorkspace]? = nil,
-    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
+    platform: PlatformServices,
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     plugins: [ResolvedPlugin]? = nil,
@@ -103,7 +102,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let runtime = try await construction.perform {
         try GatewayRuntime(
           configuration: configuration, context: context, database: database,
-          registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
+          registeredWorkspaces: registeredWorkspaces, platform: platform,
           policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
           pluginState: pluginState,
           bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime,
@@ -123,7 +122,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   static func prepare(
     configuration: GatewayConfiguration, context: ExecutionContext,
     database: GatewayDatabase, state: GatewayDatabase.ConfigurationState,
-    bookmarkService: any WorkspaceBookmarkServicing = WorkspaceBookmarkService(),
+    platform: PlatformServices,
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
@@ -137,7 +136,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let runtime = try await construction.perform {
         try GatewayRuntime(
           configuration: configuration, context: context, database: database,
-          registeredWorkspaces: state.workspaces, bookmarkService: bookmarkService,
+          registeredWorkspaces: state.workspaces, platform: platform,
           policyEvaluator: GatewayPolicyEvaluator(), mcpClient: mcpClient,
           plugins: nil, pluginState: state.plugins, bundledPlugins: bundledPlugins,
           terminalSessions: terminalSessions, lifetime: lifetime,
@@ -164,7 +163,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let workspace = workspaces[id], let admitted = workspaceAccesses[id],
       admitted.isActive, admitted.rootIdentity == root
     else { throw WorkspaceBookmarkError.rootChanged(workspaceID: id) }
-    let access = try bookmarkService.resolve(workspace)
+    let access = try platform.workspaceGrants.resolve(workspace)
     defer { access.close() }
     guard access.rootIdentity == root else {
       throw WorkspaceBookmarkError.rootChanged(workspaceID: id)
@@ -178,7 +177,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private init(
     configuration: GatewayConfiguration, context: ExecutionContext?, database: GatewayDatabase?,
-    registeredWorkspaces: [RegisteredWorkspace]?, bookmarkService: any WorkspaceBookmarkServicing,
+    registeredWorkspaces: [RegisteredWorkspace]?, platform: PlatformServices,
     policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
     plugins: [ResolvedPlugin]?, pluginState: PluginStoreSnapshot?, bundledPlugins: BundledPlugins,
     terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime,
@@ -259,7 +258,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceByID[workspace.id] = workspace
       let access: ResolvedWorkspaceAccess
       do {
-        access = try bookmarkService.resolve(workspace)
+        access = try platform.workspaceGrants.resolve(workspace)
       } catch let error as WorkspaceBookmarkError {
         errorByID[workspace.id] = error
         continue
@@ -294,7 +293,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           hostContext.pluginArtifacts[registration.id] = lease.identity
         }
       }
-      let registry = GatewayToolRegistry(
+      let (registry, additionalProviders) = platform.toolProviders.makeProviders(
         configuration: workspaceConfiguration,
         commandRunner: commandRunner,
         processManager: processManager,
@@ -303,9 +302,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         hostContext: hostContext
       )
       let registryCleanup = lifetime.onShutdown { await registry.shutdown() }
-      let additionalProviders: [any GatewayToolProvider] = [
-        ComputerUseGatewayProvider()
-      ]
       let router = try GatewayProviderRouter(
         registry: registry,
         additionalProviders: additionalProviders,
@@ -387,7 +383,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       bound.controlSession = nil
       return try GatewayRuntime(
         configuration: initializationConfiguration, context: bound, database: database,
-        registeredWorkspaces: registeredWorkspaces, bookmarkService: bookmarkService,
+        registeredWorkspaces: registeredWorkspaces, platform: platform,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
         pluginState: pluginState,
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
@@ -402,7 +398,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.workspaces = workspaceByID
     self.workspaceOrder = configuredWorkspaces.map(\.id)
     self.workspaceAccesses = accessByID
-    self.bookmarkService = bookmarkService
+    self.platform = platform
     self.workspaceErrors = errorByID
     self.providerRouters = providerRouterByID
     if preparationState == nil {
@@ -549,7 +545,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     do {
       let current = try currentRegisteredWorkspace(workspace.id) ?? workspace
-      let access = try bookmarkService.resolve(current)
+      let access = try platform.workspaceGrants.resolve(current)
       defer { access.close() }
       guard admitted.isActive, access.rootIdentity == admitted.rootIdentity else {
         return .rootChanged(workspaceID: workspace.id)

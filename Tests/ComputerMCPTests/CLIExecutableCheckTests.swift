@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import CryptoKit
 import Darwin
@@ -347,7 +348,7 @@ struct CLIExecutableCheckTests {
         context: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         registeredWorkspaces: [
           .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-        ])
+        ], platform: MacOSPlatform.services)
       #expect(try !observe.listTools().contains { $0.name == tool.name })
       await #expect(throws: (any Error).self) {
         try await observe.callToolAsync(name: tool.name, arguments: .object([:]))

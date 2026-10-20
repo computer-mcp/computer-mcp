@@ -166,6 +166,7 @@
     "GatewayDatabase": "ComputerMCPGateway",
     "GatewayManagementAuthorization": "ComputerMCPGateway",
     "GatewayToolCounts": "ComputerMCPGateway",
+    "GatewayToolProviderFactory": "ComputerMCPGateway",
     "HTTPCheckOutput": "ComputerMCPToolKit",
     "HTTPClientControlRegistry": "ComputerMCPGateway",
     "MCPInvocationAdmission": "ComputerMCPDownstream",
@@ -173,6 +174,7 @@
     "MCPToolAccessPolicy": "ComputerMCPDownstream",
     "ManifestFileTransaction": "ComputerMCPControlPlane",
     "ManifestRecoveryRecord": "ComputerMCPControlPlane",
+    "PlatformServices": "ComputerMCPGateway",
     "StructuredPathSegment": "ComputerMCPToolKit",
     "WorkspaceDeduplicationDigestInput": "ComputerMCPToolsWorkspace"
   },
@@ -183,8 +185,8 @@
     "MCPToolRisk.swift:GatewayConfiguration": "ComputerMCPDownstream"
   },
   "files": {
+    "^PlatformServices": "ComputerMCPGateway",
     "^GatewayRemoteManagement": "ComputerMCPControlPlane",
-    "^ExternalProviderDiscovery\\+macOS": "ComputerMCPMacOS",
     "^MCPToolCatalogNotifier": "ComputerMCPGateway",
     "^(MCPProxyClient|MCPContinuationDirectory|MCPProviderContinuation|MCPCallCancellation)": "ComputerMCPGateway",
     "^MCPProviderWork": "ComputerMCPGateway",
@@ -215,11 +217,9 @@
     "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway"
   },
   "cuts": [
-    "AppGatewayService->DirectoryEventFileChangeMonitor",
     "AppControlPlaneService->ComputerUseService",
     "AppControlPlaneService->KeychainSecretStore",
     "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
-    "AppControlPlaneService->WorkspaceBookmarkService",
     "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
     "AuthorizedMCPClient->MCPContinuationTarget",
     "AuthorizedMCPClient->MCPHostContext",
@@ -230,10 +230,8 @@
     "DownstreamMCPClient->MCPHostContext",
     "GatewayCapabilityCatalog->GatewayRemoteManagement",
     "GatewayHTTPApp->AppControlPlaneServiceError",
-    "GatewayRuntime->ComputerUseGatewayProvider",
     "GatewayRuntime->ComputerUseGatewayProviderError",
     "GatewayRuntime->GatewayRemoteManagement",
-    "GatewayRuntime->WorkspaceBookmarkService",
     "GatewayToolCounts->ComputerUseGatewayProvider",
     "GatewayToolRegistry->GatewayToolRegistry",
     "HTTPClientControlRegistry->GatewayClientControl",

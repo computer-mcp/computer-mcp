@@ -9,7 +9,7 @@ import Foundation
 /// File descriptor access and callback/task ownership are serialized by lock. Nonblocking reads
 /// let shutdown drain a finite pipe without waiting on a descendant that retained stdout.
 ///
-/// One read source watches the descriptor for the reader's lifetime. It is suspended while a
+/// One source watches the descriptor for the reader's lifetime. It is suspended while a
 /// chunk is consumed, and the descriptor is closed only by its cancel handler, after the
 /// source no longer monitors it.
 internal final class ProcessOutputReader: @unchecked Sendable {
@@ -20,9 +20,8 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   private let queue = DispatchQueue(label: "computer-mcp.process-output")
   private let lock = NSLock()
   private var stopped = false
-  private var source: DispatchSourceRead?
-  private var suspended = false
-  /// The read source was cancelled, or the descriptor closed without one.
+  private var source: ProcessOutputSource?
+  /// The source was cancelled, or the descriptor closed before monitoring began.
   private var finished = false
   private var consumptionTask: Task<Void, Never>?
 
@@ -47,10 +46,9 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   func start() {
     lock.withLock {
       guard !stopped, !finished, source == nil else { return }
-      let source = DispatchSource.makeReadSource(
-        fileDescriptor: handle.fileDescriptor, queue: queue)
-      source.setEventHandler { [weak self] in self?.consumeAvailableData() }
-      source.setCancelHandler { [handle] in try? handle.close() }
+      let source = ProcessOutputSource(handle: handle, queue: queue) { [weak self] in
+        self?.consumeAvailableData()
+      }
       self.source = source
       source.resume()
     }
@@ -92,8 +90,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   /// data or end of file that arrived while it was suspended.
   private func resume() {
     lock.withLock {
-      guard !stopped, suspended, let source else { return }
-      suspended = false
+      guard !stopped, let source, source.isSuspended else { return }
       source.resume()
     }
     queue.async { [weak self] in self?.consumeAvailableData() }
@@ -102,7 +99,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   private func consumeAvailableData() {
     lock.withLock {
       // One chunk is outstanding at a time; its consumer resumes and reads again.
-      guard !stopped, !suspended, let source else { return }
+      guard !stopped, let source, !source.isSuspended else { return }
       guard let data = readChunkLocked() else { return }
       guard !data.isEmpty else {
         stopped = true
@@ -111,7 +108,6 @@ internal final class ProcessOutputReader: @unchecked Sendable {
         return
       }
       source.suspend()
-      suspended = true
       enqueueLocked(data)
     }
   }
@@ -156,8 +152,8 @@ internal final class ProcessOutputReader: @unchecked Sendable {
     }
   }
 
-  /// Cancels the read source; its cancel handler closes the descriptor. A suspended source
-  /// delivers its cancellation only after it resumes. Without a source, closes directly.
+  /// Cancels the source, balancing suspension before its cancel handler closes the descriptor.
+  /// Before monitoring begins, the descriptor can be closed directly.
   private func finishSourceLocked() {
     guard !finished else { return }
     finished = true
@@ -166,10 +162,6 @@ internal final class ProcessOutputReader: @unchecked Sendable {
       return
     }
     self.source = nil
-    if suspended {
-      suspended = false
-      source.resume()
-    }
     source.cancel()
   }
 }

@@ -52,7 +52,7 @@ package struct PluginStoreSnapshot: Codable, Equatable, Sendable {
       })
   }
 
-  func validate() throws {
+  package func validate() throws {
     let byID = Dictionary(grouping: installations, by: \.id)
     guard revision >= 0, byID.values.allSatisfy({ $0.count == 1 }),
       installations.allSatisfy({
@@ -107,12 +107,18 @@ package struct PluginStoreMutation: Sendable {
   package let issues: [PluginStoreIssue]
 }
 
-struct PluginOwnedDirectory: Codable, Equatable, Sendable {
-  let installationID: String
-  let pluginID: String
-  let identity: PluginDirectoryIdentity
+package struct PluginOwnedDirectory: Codable, Equatable, Sendable {
+  package let installationID: String
+  package let pluginID: String
+  package let identity: PluginDirectoryIdentity
 
-  func validate() throws {
+  package init(installationID: String, pluginID: String, identity: PluginDirectoryIdentity) {
+    self.installationID = installationID
+    self.pluginID = pluginID
+    self.identity = identity
+  }
+
+  package func validate() throws {
     try validatePluginID(pluginID)
     guard UUID(uuidString: installationID)?.uuidString == installationID,
       identity.url.lastPathComponent == installationID,
@@ -132,39 +138,18 @@ package struct PluginStoreResolution: Sendable {
 /// Host-owned state changes are synchronous database transactions inside this actor.
 /// Revision comparison in the database also protects against other store instances/processes.
 package actor PluginStore {
-  let database: GatewayDatabase
-  typealias PublishSnapshot =
-    @Sendable (
-      PluginStoreSnapshot, GatewayDatabase.ConfigurationState, PluginInstallationStorage?
-    ) async throws -> Void
-
-  private let expectedConfiguration: GatewayDatabase.ConfigurationState?
-  private let publishSnapshot: PublishSnapshot?
+  let stateStore: any PluginStateStore
   private let validateSnapshot: @Sendable (PluginStoreSnapshot) throws -> Void
 
   package init(
-    database: GatewayDatabase,
+    stateStore: any PluginStateStore,
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
-    self.database = database
-    self.expectedConfiguration = nil
-    self.publishSnapshot = nil
+    self.stateStore = stateStore
     self.validateSnapshot = validateSnapshot
   }
 
-  /// One management change may await archive preparation before entering its commit.
-  init(
-    database: GatewayDatabase, expectedConfiguration: GatewayDatabase.ConfigurationState,
-    publishSnapshot: PublishSnapshot? = nil,
-    validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
-  ) {
-    self.database = database
-    self.expectedConfiguration = expectedConfiguration
-    self.publishSnapshot = publishSnapshot
-    self.validateSnapshot = validateSnapshot
-  }
-
-  package func snapshot() throws -> PluginStoreSnapshot { try database.pluginStoreSnapshot() }
+  package func snapshot() throws -> PluginStoreSnapshot { try stateStore.pluginStoreSnapshot() }
 
   @discardableResult
   package func registerDevelopment(at root: URL, expectedRevision: Int64) async throws
@@ -376,15 +361,8 @@ package actor PluginStore {
     }
     next.revision = expectedRevision + 1
     try next.validate()
-    let configuration = try expectedConfiguration ?? database.configurationState()
     try validateSnapshot(next)
-    if let publishSnapshot {
-      try await publishSnapshot(next, configuration, storage)
-    } else {
-      try Task.checkCancellation()
-      try database.savePluginStoreSnapshot(
-        next, expectedRevision: expectedRevision, expectedConfiguration: configuration)
-    }
+    try await stateStore.commit(next, expectedRevision: expectedRevision, storage: storage)
     return next
   }
 

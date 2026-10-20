@@ -88,11 +88,11 @@ extension PluginStore {
     let owned = PluginOwnedDirectory(
       installationID: identity.url.lastPathComponent, pluginID: pluginID, identity: identity)
     do {
-      try database.recordPluginDirectory(owned)
+      try stateStore.recordPluginDirectory(owned)
     } catch {
       try storage.clean(
         identity, keepingPackage: false,
-        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
+        processOwnershipRoot: stateStore.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
       throw error
     }
     let preparation = PluginArchivePreparation(
@@ -124,8 +124,8 @@ extension PluginStore {
       guard !Self.isReferenced(identity, in: current) else { throw PluginStoreError.invalidState }
       try storage.clean(
         identity, keepingPackage: false,
-        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
-      try database.forgetPluginDirectory(owned)
+        processOwnershipRoot: stateStore.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
+      try stateStore.forgetPluginDirectory(owned)
       throw error
     }
   }
@@ -165,7 +165,7 @@ extension PluginStore {
     var state = try checkedSnapshot(expectedRevision)
     guard let record = state.installations.first(where: { $0.id == installationID }),
       record.source.kind == .artifact,
-      let owned = try database.pluginOwnedDirectories().first(where: {
+      let owned = try stateStore.pluginOwnedDirectories().first(where: {
         $0.installationID == installationID
       }),
       owned.pluginID == record.pluginID,
@@ -182,8 +182,8 @@ extension PluginStore {
     do {
       try storage.clean(
         owned.identity, keepingPackage: false,
-        processOwnershipRoot: database.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
-      try database.forgetPluginDirectory(owned)
+        processOwnershipRoot: stateStore.mcpProcessOwnershipRoot ?? MCPProcessOwnership.defaultRoot)
+      try stateStore.forgetPluginDirectory(owned)
       return PluginStoreMutation(snapshot: committed, issues: [])
     } catch {
       return PluginStoreMutation(snapshot: committed, issues: [cleanupIssue(record.pluginID)])
@@ -199,7 +199,7 @@ extension PluginStore {
     defer { storage.finishTransaction() }
     let state = try expectedRevision.map(checkedSnapshot) ?? snapshot()
     var issues: [PluginStoreIssue] = []
-    let ownedDirectories = try database.pluginOwnedDirectories()
+    let ownedDirectories = try stateStore.pluginOwnedDirectories()
     for owned in ownedDirectories {
       do {
         try storage.validate(owned.identity)
@@ -209,7 +209,7 @@ extension PluginStore {
           else { throw PluginStoreError.invalidState }
           let identity = try storage.currentIdentity(owned.identity)
           if identity != owned.identity {
-            _ = try database.updatePluginDirectoryIdentity(identity, replacing: owned)
+            _ = try stateStore.updatePluginDirectoryIdentity(identity, replacing: owned)
           }
           try storage.clean(identity, keepingPackage: true)
         } else {
@@ -218,9 +218,9 @@ extension PluginStore {
           }
           try storage.clean(
             owned.identity, keepingPackage: false,
-            processOwnershipRoot: database.mcpProcessOwnershipRoot
+            processOwnershipRoot: stateStore.mcpProcessOwnershipRoot
               ?? MCPProcessOwnership.defaultRoot)
-          try database.forgetPluginDirectory(owned)
+          try stateStore.forgetPluginDirectory(owned)
         }
       } catch {
         issues.append(cleanupIssue(owned.pluginID))

@@ -9,7 +9,7 @@ import NIOConcurrencyHelpers
 /// Serializes filesystem transactions across store instances and host restarts.
 /// A worker inherits the same open lock reference; closing the host reference
 /// must not unlock a worker that is still writing after its parent exits.
-final class PluginInstallationStorage: Sendable {
+package final class PluginInstallationStorage: Sendable {
   let root: URL
   let lockDescriptor: Int32
   private let descriptor: Int32

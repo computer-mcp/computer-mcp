@@ -86,7 +86,7 @@ extension AppControlPlaneService {
     let inputs = try gatewayInputs()
     let manifestStore = manifestStore
     let bundledPlugins = bundledPlugins
-    let publication: PluginStore.PublishSnapshot?
+    let publication: GatewayPluginStateStore.PublishSnapshot?
     if let publish {
       publication = { proposed, expected, storage in
         guard expected == inputs.persisted else { throw GatewayDatabaseError.configurationChanged }

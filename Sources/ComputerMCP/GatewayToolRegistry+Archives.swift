@@ -15,8 +15,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -75,8 +75,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
 
-    let archiveURL = try resolvedWorkspaceURL(path)
-    let archiveInfo = try fileInfo(url: archiveURL)
+    let archiveURL = try workspaceScope.resolvedWorkspaceURL(path)
+    let archiveInfo = try workspaceScope.fileInfo(url: archiveURL)
     guard archiveInfo.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -182,12 +182,12 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let archiveURL = try resolvedWorkspaceURL(path)
-    let archiveInfo = try fileInfo(url: archiveURL)
+    let archiveURL = try workspaceScope.resolvedWorkspaceURL(path)
+    let archiveInfo = try workspaceScope.fileInfo(url: archiveURL)
     guard archiveInfo.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
-    let destinationURL = try resolvedWorkspaceURL(destinationPath)
+    let destinationURL = try workspaceScope.resolvedWorkspaceURL(destinationPath)
     let fileManager = FileManager.default
     var destinationIsDirectory = ObjCBool(false)
     let destinationExists = fileManager.fileExists(
@@ -274,7 +274,7 @@ extension GatewayToolRegistry {
       ]),
       "destination": .object([
         "path": .string(destinationURL.path),
-        "workspace_relative_path": .string(workspaceRelativePath(destinationURL)),
+        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(destinationURL)),
         "exists": .bool(destinationExists),
         "would_create": .bool(!destinationExists && createDirectories),
       ]),
@@ -326,7 +326,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let archiveURL = try resolvedWorkspaceURLPreservingFinalSymlink(path)
+    let archiveURL = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(path)
     let archiveParentURL = archiveURL.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -349,7 +349,7 @@ extension GatewayToolRegistry {
       isDirectory: &archiveIsDirectory
     )
     if archiveExists {
-      let archiveInfo = try fileInfo(url: archiveURL)
+      let archiveInfo = try workspaceScope.fileInfo(url: archiveURL)
       guard !archiveInfo.isSymlink else {
         throw GatewayToolError.invalidArguments("Archive output path is a symlink: \(path)")
       }
@@ -400,7 +400,8 @@ extension GatewayToolRegistry {
       "operation": .string("archive.create"),
       "archive": .object([
         "path": .string(archiveURL.path),
-        "workspace_relative_path": .string(workspaceRelativePathPreservingSymlinks(archiveURL)),
+        "workspace_relative_path": .string(
+          workspaceScope.workspaceRelativePathPreservingSymlinks(archiveURL)),
         "format": .string(createCommand.format),
         "exists": .bool(archiveExists),
         "would_create_parent_directories": .bool(!parentExists && createDirectories),
@@ -600,16 +601,16 @@ extension GatewayToolRegistry {
       if previewEntries.count < maxPreviewEntries {
         previewEntries.append(
           ArchiveCreateEntry(
-            workspaceRelativePath: workspaceRelativePathPreservingSymlinks(url),
+            workspaceRelativePath: workspaceScope.workspaceRelativePathPreservingSymlinks(url),
             type: type
           ))
       }
     }
 
     for rawSourcePath in rawSourcePaths {
-      let lexicalSourceURL = try lexicalWorkspaceURL(rawSourcePath)
-      let resolvedSourceURL = try resolvedWorkspaceURL(rawSourcePath)
-      let sourceInfo = try fileInfo(url: lexicalSourceURL)
+      let lexicalSourceURL = try workspaceScope.lexicalWorkspaceURL(rawSourcePath)
+      let resolvedSourceURL = try workspaceScope.resolvedWorkspaceURL(rawSourcePath)
+      let sourceInfo = try workspaceScope.fileInfo(url: lexicalSourceURL)
       guard !sourceInfo.isSymlink else {
         throw GatewayToolError.invalidArguments(
           "archive.create refuses symbolic link sources: \(rawSourcePath)")
@@ -658,7 +659,7 @@ extension GatewayToolRegistry {
           ])
           if values.isSymbolicLink == true {
             throw GatewayToolError.invalidArguments(
-              "archive.create refuses symbolic link entries: \(workspaceRelativePathPreservingSymlinks(itemURL))"
+              "archive.create refuses symbolic link entries: \(workspaceScope.workspaceRelativePathPreservingSymlinks(itemURL))"
             )
           }
           let type =
@@ -667,7 +668,7 @@ extension GatewayToolRegistry {
             : (values.isRegularFile == true ? "file" : "other")
           guard type == "file" || type == "directory" else {
             throw GatewayToolError.invalidArguments(
-              "archive.create source contains unsupported file type: \(workspaceRelativePathPreservingSymlinks(itemURL))"
+              "archive.create source contains unsupported file type: \(workspaceScope.workspaceRelativePathPreservingSymlinks(itemURL))"
             )
           }
           try appendEntry(url: itemURL, type: type)
@@ -681,7 +682,7 @@ extension GatewayToolRegistry {
       }
 
       let sourceEntryCount = entryCount - sourceEntryStart
-      let argvSourcePath = workspaceRelativePathPreservingSymlinks(lexicalSourceURL)
+      let argvSourcePath = workspaceScope.workspaceRelativePathPreservingSymlinks(lexicalSourceURL)
       argvSourcePaths.append(argvSourcePath)
       sources.append(
         ArchiveCreateSource(
@@ -814,7 +815,7 @@ extension GatewayToolRegistry {
           originalPath: rawEntry,
           normalizedPath: normalizedPath,
           isDirectory: isDirectory,
-          destinationWorkspaceRelativePath: workspaceRelativePath(targetURL),
+          destinationWorkspaceRelativePath: workspaceScope.workspaceRelativePath(targetURL),
           wouldOverwrite: targetExists && !isDirectory
         ))
     }

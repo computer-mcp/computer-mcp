@@ -13,8 +13,8 @@ extension GatewayToolRegistry {
     let maxPropertyDepth = optionalInt("max_property_depth", in: object) ?? 2
     try validateBoundedNonNegative(maxPropertyDepth, name: "max_property_depth", upperBound: 6)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -310,8 +310,8 @@ extension GatewayToolRegistry {
     let includeAttributes = try optionalBool("include_attributes", in: object) ?? true
     try validateBoundedNonNegative(maxPages, name: "max_pages", upperBound: 10_000)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -384,8 +384,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxPages, name: "max_pages", upperBound: 10_000)
     try validateBoundedPositive(maxCharacters, name: "max_characters", upperBound: 5_000_000)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -606,8 +606,8 @@ extension GatewayToolRegistry {
     try validateBoundedNonNegative(maxTracks, name: "max_tracks", upperBound: 1_000)
     try validateBoundedPositive(loadTimeoutMS, name: "load_timeout_ms", upperBound: 600_000)
 
-    let url = try resolvedWorkspaceURL(path)
-    let info = try fileInfo(url: url)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let info = try workspaceScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }

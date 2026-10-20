@@ -1205,7 +1205,7 @@ extension GatewayToolRegistry {
       return
     }
 
-    let directoryInfo = try fileInfo(url: directory)
+    let directoryInfo = try workspaceScope.fileInfo(url: directory)
     scannedDirectoryCount += 1
     let children = try sortedDirectoryChildren(directory, includeHidden: true)
     if children.isEmpty {
@@ -1235,7 +1235,7 @@ extension GatewayToolRegistry {
       }
       scannedEntries += 1
 
-      let childInfo = try fileInfo(url: child)
+      let childInfo = try workspaceScope.fileInfo(url: child)
       guard childInfo.type == "directory", !childInfo.isSymlink else {
         continue
       }
@@ -1286,7 +1286,7 @@ extension GatewayToolRegistry {
       }
 
       let name = child.lastPathComponent
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
       guard info.type == "directory", !info.isSymlink else {
         scannedEntries += 1
         continue
@@ -1364,8 +1364,8 @@ extension GatewayToolRegistry {
         return
       }
 
-      let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try fileInfo(url: resolved)
+      let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
+      let info = try workspaceScope.fileInfo(url: resolved)
       if info.type == "directory" && !info.isSymlink {
         if currentDepth < maxDepth {
           try collectTodoMatches(
@@ -1591,8 +1591,8 @@ extension GatewayToolRegistry {
       }
       scannedEntries += 1
 
-      let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try fileInfo(url: resolved)
+      let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
+      let info = try workspaceScope.fileInfo(url: resolved)
       if info.type == "directory" && !info.isSymlink {
         guard currentDepth < maxDepth else {
           continue
@@ -1806,7 +1806,7 @@ extension GatewayToolRegistry {
 
       scannedEntries += 1
       let name = child.lastPathComponent
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if name.hasPrefix("."), !includeHidden {
         if info.type == "directory" {
@@ -1875,7 +1875,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.projectRootSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -2016,7 +2016,7 @@ extension GatewayToolRegistry {
 
       scannedEntries += 1
       let name = child.lastPathComponent
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if name.hasPrefix("."), !includeHidden {
         continue
@@ -2114,7 +2114,7 @@ extension GatewayToolRegistry {
 
       scannedEntries += 1
       let name = child.lastPathComponent
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if name.hasPrefix("."), !includeHidden {
         continue
@@ -2291,9 +2291,10 @@ extension GatewayToolRegistry {
       return
     }
 
-    let candidateWorkspaceRelativePath = workspaceRelativePathPreservingSymlinks(candidate)
-    let resolved = try resolvedWorkspaceURL(candidateWorkspaceRelativePath)
-    let info = try fileInfo(url: resolved)
+    let candidateWorkspaceRelativePath = workspaceScope.workspaceRelativePathPreservingSymlinks(
+      candidate)
+    let resolved = try workspaceScope.resolvedWorkspaceURL(candidateWorkspaceRelativePath)
+    let info = try workspaceScope.fileInfo(url: resolved)
     guard info.type == "file" else {
       return
     }
@@ -2387,7 +2388,7 @@ extension GatewayToolRegistry {
 
       scannedEntries += 1
       let name = child.lastPathComponent
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if name.hasPrefix("."), !includeHidden {
         continue
@@ -2529,7 +2530,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.ciSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -2722,7 +2723,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.infraSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -2987,7 +2988,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.configSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3162,7 +3163,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.configSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3251,7 +3252,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.sourceSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3331,7 +3332,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.archiveSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3409,7 +3410,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.logSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3527,7 +3528,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.dataSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3631,7 +3632,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.schemaSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3847,7 +3848,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.sourceSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -3927,7 +3928,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.sourceSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -4078,7 +4079,7 @@ extension GatewayToolRegistry {
       scannedEntries += 1
       let name = child.lastPathComponent
       let lowercasedName = name.lowercased()
-      let info = try fileInfo(url: child)
+      let info = try workspaceScope.fileInfo(url: child)
 
       if Self.sourceSkippedDirectoryNames.contains(lowercasedName), info.type == "directory" {
         continue
@@ -4311,7 +4312,7 @@ extension GatewayToolRegistry {
       }
     }
 
-    let directory = workspaceURL(forRelativeDirectory: cwdWorkspaceRelativePath)
+    let directory = workspaceScope.workspaceURL(forRelativeDirectory: cwdWorkspaceRelativePath)
     if FileManager.default.fileExists(
       atPath: directory.appendingPathComponent("pnpm-lock.yaml").path)
     {
@@ -4382,7 +4383,7 @@ extension GatewayToolRegistry {
     fileTruncated: Bool
   ) -> WorkspaceCommandManifestParseResult {
     let hasMain = FileManager.default.fileExists(
-      atPath: workspaceURL(forRelativeDirectory: cwdWorkspaceRelativePath)
+      atPath: workspaceScope.workspaceURL(forRelativeDirectory: cwdWorkspaceRelativePath)
         .appendingPathComponent("src/main.rs").path)
     var commands = [
       commandInfo(

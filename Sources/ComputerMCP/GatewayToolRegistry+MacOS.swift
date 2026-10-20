@@ -181,7 +181,7 @@ extension GatewayToolRegistry {
     let target: JSONValue
     if let path, !path.isEmpty {
       try validateUTF8ByteLimit(path, name: "path", maxBytes: 4_096)
-      let fileURL = try resolvedWorkspaceURL(path)
+      let fileURL = try workspaceScope.resolvedWorkspaceURL(path)
       guard FileManager.default.fileExists(atPath: fileURL.path) else {
         throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
       }
@@ -189,7 +189,7 @@ extension GatewayToolRegistry {
       target = .object([
         "type": .string("path"),
         "path": .string(fileURL.path),
-        "workspace_relative_path": .string(workspaceRelativePath(fileURL)),
+        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(fileURL)),
       ])
     } else {
       let urlString = urlString ?? ""
@@ -332,7 +332,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let directory = try resolvedWorkspaceURL(path)
+    let directory = try workspaceScope.resolvedWorkspaceURL(path)
     try requireDirectory(directory, originalPath: path)
 
     let result = try commandRunner.run(
@@ -368,7 +368,7 @@ extension GatewayToolRegistry {
       }
 
       if matched.count < maxResults {
-        matched.append(try fileInfo(url: candidate))
+        matched.append(try workspaceScope.fileInfo(url: candidate))
       }
     }
 
@@ -381,7 +381,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("macos.spotlight_search"),
       "path": .string(directory.path),
-      "workspace_relative_path": .string(workspaceRelativePath(directory)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(directory)),
       "query": .string(query),
       "max_results": .integer(Int64(maxResults)),
       "max_output_bytes": .integer(Int64(maxOutputBytes)),

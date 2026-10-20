@@ -37,7 +37,7 @@ extension GatewayToolRegistry {
       ]),
       "tools": .object([
         "configured": .array(configuration.tools.map(\.name).sorted().map { .string($0) }),
-        "tool_meta": toolMeta() ?? .null,
+        "tool_meta": workspaceScope.toolMeta ?? .null,
       ]),
     ])
   }
@@ -267,8 +267,8 @@ extension GatewayToolRegistry {
           continue
         }
 
-        let resolved = try resolvedWorkspaceURL(url.path)
-        let info = try fileInfo(url: resolved)
+        let resolved = try workspaceScope.resolvedWorkspaceURL(url.path)
+        let info = try workspaceScope.fileInfo(url: resolved)
         if info.type == "file" {
           files.append(info)
         }
@@ -317,9 +317,9 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
     try requireDirectory(root, originalPath: path)
-    let rootWorkspaceRelativePath = workspaceRelativePath(root)
+    let rootWorkspaceRelativePath = workspaceScope.workspaceRelativePath(root)
     let rootPath = root.standardizedFileURL.resolvingSymlinksInPath().path
     let keys: [URLResourceKey] = [
       .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
@@ -370,8 +370,8 @@ extension GatewayToolRegistry {
         }
 
         scannedCount += 1
-        let resolved = try resolvedWorkspaceURLPreservingFinalSymlink(url.path)
-        let info = try fileInfo(url: resolved)
+        let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(url.path)
+        let info = try workspaceScope.fileInfo(url: resolved)
         let groupPath = directoryStatsGroupPath(
           rootWorkspaceRelativePath: rootWorkspaceRelativePath,
           relativeToRoot: relativeToRoot
@@ -457,7 +457,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
     try requireDirectory(root, originalPath: path)
     var artifactDirectories: [WorkspaceArtifactDirectoryInfo] = []
     var scannedEntries = 0
@@ -487,7 +487,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.artifact_directories"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -514,7 +514,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
     try requireDirectory(root, originalPath: path)
     var emptyDirectories: [WorkspaceEmptyDirectoryInfo] = []
     var scannedEntries = 0
@@ -546,7 +546,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.empty_directories"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -814,8 +814,8 @@ extension GatewayToolRegistry {
           continue
         }
 
-        let resolved = try resolvedWorkspaceURL(url.path)
-        let info = try fileInfo(url: resolved)
+        let resolved = try workspaceScope.resolvedWorkspaceURL(url.path)
+        let info = try workspaceScope.fileInfo(url: resolved)
         if info.type == "file" {
           regularFileCount += 1
           totalSizeBytes += info.size ?? 0
@@ -899,7 +899,7 @@ extension GatewayToolRegistry {
           continue
         }
 
-        let linkURL = try resolvedWorkspaceURLPreservingFinalSymlink(url.path)
+        let linkURL = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(url.path)
         let destination =
           (try? FileManager.default.destinationOfSymbolicLink(atPath: linkURL.path)) ?? ""
         let targetURL =
@@ -915,12 +915,12 @@ extension GatewayToolRegistry {
         symlinks.append(
           WorkspaceSymlinkInfo(
             path: linkURL.path,
-            workspaceRelativePath: workspaceRelativePathPreservingSymlinks(linkURL),
+            workspaceRelativePath: workspaceScope.workspaceRelativePathPreservingSymlinks(linkURL),
             destination: destination,
             targetAbsolutePath: targetURL.standardizedFileURL.path,
             targetExists: targetExists,
             targetIsDirectory: targetExists && targetIsDirectory.boolValue,
-            targetWorkspaceContained: isWorkspaceContained(targetURL)
+            targetWorkspaceContained: workspaceScope.isWorkspaceContained(targetURL)
           ))
       }
     }
@@ -997,8 +997,8 @@ extension GatewayToolRegistry {
           continue
         }
 
-        let resolved = try resolvedWorkspaceURL(url.path)
-        let info = try fileInfo(url: resolved)
+        let resolved = try workspaceScope.resolvedWorkspaceURL(url.path)
+        let info = try workspaceScope.fileInfo(url: resolved)
         if info.type == "file" && info.isExecutable {
           executableFiles.append(info)
         }
@@ -1049,7 +1049,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxMatches, name: "max_matches", upperBound: 10_000)
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 20_971_520)
 
-    let root = try resolvedWorkspaceURL(path)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
     var matches: [WorkspaceTodoMatch] = []
     var filesScanned = 0
     var filesSkipped = 0
@@ -1057,7 +1057,7 @@ extension GatewayToolRegistry {
     var truncatedFiles = 0
     var truncated = false
 
-    let rootInfo = try fileInfo(url: root)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     if rootInfo.type == "directory" {
       try collectTodoMatches(
         directory: root,
@@ -1097,7 +1097,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.todos"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "markers": .array(markers.map(JSONValue.string)),
       "case_sensitive": .bool(caseSensitive),
       "include_hidden": .bool(includeHidden),
@@ -1131,8 +1131,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 1_048_576)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 100_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var envFiles: [WorkspaceEnvFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1171,7 +1171,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.env_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden_directories": .bool(includeHiddenDirectories),
       "max_depth": .integer(Int64(maxDepth)),
       "max_files": .integer(Int64(maxFiles)),
@@ -1201,8 +1201,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var dependencyFiles: [WorkspaceDependencyFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1238,7 +1238,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.dependency_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1264,8 +1264,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var dependencyFiles: [WorkspaceDependencyFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1300,7 +1300,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.project_roots"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1329,8 +1329,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var documentationFiles: [WorkspaceDocumentationFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1366,7 +1366,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.documentation_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1391,8 +1391,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var agentFiles: [WorkspaceAgentFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1432,7 +1432,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.agent_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1456,15 +1456,15 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 1_048_576)
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 200)
 
-    let targetURL = try lexicalWorkspaceURL(path)
+    let targetURL = try workspaceScope.lexicalWorkspaceURL(path)
     let targetExists = FileManager.default.fileExists(atPath: targetURL.path)
-    let scopeURL = try workspaceInstructionScopeURL(
+    let scopeURL = try workspaceScope.workspaceInstructionScopeURL(
       targetURL: targetURL,
       originalPath: path,
       pathIsDirectory: pathIsDirectory,
       targetExists: targetExists
     )
-    let scopeDirectories = workspaceInstructionScopeDirectories(scopeURL: scopeURL)
+    let scopeDirectories = workspaceScope.workspaceInstructionScopeDirectories(scopeURL: scopeURL)
     var files: [WorkspaceInstructionFileInfo] = []
     var seenPaths = Set<String>()
     var resultTruncated = false
@@ -1474,7 +1474,7 @@ extension GatewayToolRegistry {
       guard !resultTruncated else {
         break
       }
-      let scopeWorkspaceRelativePath = workspaceRelativePath(directory)
+      let scopeWorkspaceRelativePath = workspaceScope.workspaceRelativePath(directory)
       try collectWorkspaceInstructionFiles(
         directory: directory,
         scopeWorkspaceRelativePath: scopeWorkspaceRelativePath,
@@ -1491,10 +1491,10 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.instructions"),
       "path": .string(targetURL.path),
-      "workspace_relative_path": .string(workspaceRelativePath(targetURL)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(targetURL)),
       "target_exists": .bool(targetExists),
       "path_is_directory": pathIsDirectory.map(JSONValue.bool) ?? .null,
-      "scope_workspace_relative_path": .string(workspaceRelativePath(scopeURL)),
+      "scope_workspace_relative_path": .string(workspaceScope.workspaceRelativePath(scopeURL)),
       "include_content": .bool(includeContent),
       "max_bytes_per_file": .integer(Int64(maxBytesPerFile)),
       "max_results": .integer(Int64(maxResults)),
@@ -1517,8 +1517,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var testFiles: [WorkspaceTestFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1557,7 +1557,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.test_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1582,8 +1582,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var ciFiles: [WorkspaceCIFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1622,7 +1622,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.ci_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1647,8 +1647,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var infraFiles: [WorkspaceInfraFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1692,7 +1692,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.infra_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1717,8 +1717,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var configFiles: [WorkspaceConfigFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1757,7 +1757,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.config_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1782,8 +1782,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var ignoreFiles: [WorkspaceIgnoreFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1822,7 +1822,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.ignore_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1847,8 +1847,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var assetFiles: [WorkspaceAssetFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1887,7 +1887,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.asset_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1912,8 +1912,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var archiveFiles: [WorkspaceArchiveFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -1953,7 +1953,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.archive_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -1978,8 +1978,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var logFiles: [WorkspaceLogFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -2019,7 +2019,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.log_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -2044,8 +2044,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var dataFiles: [WorkspaceDataFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -2088,7 +2088,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.data_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -2113,8 +2113,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var schemaFiles: [WorkspaceSchemaFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -2156,7 +2156,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.schema_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -2182,8 +2182,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var sourceFiles: [WorkspaceSourceFileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -2224,7 +2224,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.source_files"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "include_tests": .bool(includeTests),
       "max_depth": .integer(Int64(maxDepth)),
@@ -2257,8 +2257,8 @@ extension GatewayToolRegistry {
       maxBytesPerFile, name: "max_bytes_per_file", upperBound: 20_971_520)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var items: [WorkspaceOutlineItem] = []
     var scannedEntries = 0
     var outlineFileCount = 0
@@ -2320,7 +2320,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.outline"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "include_tests": .bool(includeTests),
       "include_imports": .bool(includeImports),
@@ -2355,8 +2355,8 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 2_097_152)
 
-    let root = try resolvedWorkspaceURL(path)
-    let rootInfo = try fileInfo(url: root)
+    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let rootInfo = try workspaceScope.fileInfo(url: root)
     var manifests: [FileInfo] = []
     var scannedEntries = 0
     var scanTruncated = false
@@ -2420,7 +2420,7 @@ extension GatewayToolRegistry {
     return .object([
       "operation": .string("workspace.commands"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceRelativePath(root)),
+      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_results": .integer(Int64(maxResults)),
@@ -2443,7 +2443,7 @@ extension GatewayToolRegistry {
     let path = try optionalString("path", in: object) ?? "."
     let application = try optionalString("application", in: object)
     let timeout = optionalInt("timeout_ms", in: object) ?? 10_000
-    let url = try resolvedWorkspaceURL(path)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
     var args: [String] = []
     if let application {
       args.append(contentsOf: ["-a", application])
@@ -2463,7 +2463,7 @@ extension GatewayToolRegistry {
   internal func revealWorkspacePath(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try optionalString("path", in: object) ?? "."
     let timeout = optionalInt("timeout_ms", in: object) ?? 10_000
-    let url = try resolvedWorkspaceURL(path)
+    let url = try workspaceScope.resolvedWorkspaceURL(path)
 
     return try commandRunner.run(
       executable: "/usr/bin/open",

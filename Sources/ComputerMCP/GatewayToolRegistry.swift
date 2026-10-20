@@ -9,6 +9,8 @@ import Foundation
 package final class GatewayToolRegistry: @unchecked Sendable {
   internal let configuration: GatewayConfiguration
 
+  internal let workspaceScope: WorkspaceScope
+
   internal let commandRunner: CommandRunning
 
   internal let processManager: ProcessManaging
@@ -35,6 +37,10 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     enabledConfiguration.mcp.servers.removeAll { !$0.enabled }
     enabledConfiguration.tools.removeAll { disabledMCPIDs.contains($0.source) }
     self.configuration = enabledConfiguration
+    let toolMeta: JSONValue? =
+      enabledConfiguration.server.http.accessTokenEnv == nil
+      ? .object(["securitySchemes": .array([.object(["type": .string("noauth")])])]) : nil
+    self.workspaceScope = WorkspaceScope(configuration: enabledConfiguration, toolMeta: toolMeta)
     self.cliExecution = CLIProcessExecution(
       maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
     self.commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
@@ -87,7 +93,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       skillsEnabled: configuration.skills.enabled,
       hasCLIProviders: !configuration.cli.commands.isEmpty,
       hasMCPProviders: !configuration.mcp.servers.isEmpty,
-      toolMeta: toolMeta()
+      toolMeta: workspaceScope.toolMeta
     )
 
     for configuredTool in configuration.tools {
@@ -1241,13 +1247,5 @@ package final class GatewayToolRegistry: @unchecked Sendable {
           })
       }
     }
-  }
-
-  internal func toolMeta() -> JSONValue? {
-    if configuration.server.http.accessTokenEnv == nil {
-      return .object(["securitySchemes": .array([.object(["type": .string("noauth")])])])
-    }
-
-    return nil
   }
 }

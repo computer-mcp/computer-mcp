@@ -118,12 +118,12 @@ def code_text(text):
     return "".join(out)
 
 
-MEMBER = re.compile(r"[{}]|\b(?:struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
+MEMBER = re.compile(r"[{}]|\b(?:struct|class|enum|actor|protocol|typealias|func)\s+([A-Za-z_]\w*)")
 SCOPE = re.compile(r"[{}]|\b(?:let|var)\s+([A-Za-z_]\w*)|(?<![.\w])([A-Za-z_]\w*)\b")
 
 
-def member_types(text, path, index):
-    """Record the types declared directly inside each type body, keyed by dotted type path."""
+def member_names(text, path, index):
+    """Record direct member types and functions, keyed by dotted declaration path."""
     # The first body opened in a chunk belongs to the chunk's own declaration or extension.
     stack, pending, depth = [path], path, 0
     for token in MEMBER.finditer(text):
@@ -356,7 +356,7 @@ def plan(graph, sources, tests=None):
             continue
         if chunk["kind"] in ("decl", "ext"):
             members = collections.defaultdict(set)
-            member_types(chunk["text"], chunk.get("path", chunk["name"]), members)
+            member_names(chunk["text"], chunk.get("path", chunk["name"]), members)
             for path, names in members.items():
                 nested[(target, path)].update(names)
         if target in executables:
@@ -370,7 +370,7 @@ def plan(graph, sources, tests=None):
     for chunk, source in zip(all_chunks, targets):
         if source is None or source in removed:
             continue
-        # Names declared in this declaration, or nested in the type an extension extends,
+        # Member types and functions of this declaration or the type an extension extends
         # resolve locally; other unqualified or module-qualified names resolve to owners.
         local = nested.get((source, chunk.get("path", chunk["name"])), set())
         references = set()
@@ -385,7 +385,7 @@ def plan(graph, sources, tests=None):
             references.add(name)
         if chunk["kind"] == "ext" and chunk["name"] in types:
             references.add(chunk["name"])
-        references |= {n for n in free_references(chunk["text"], functions) if source not in functions[n]}
+        references |= {n for n in free_references(chunk["text"], functions.keys() - local) if source not in functions[n]}
         for name in references:
             if (chunk["name"], name) in cuts:
                 continue

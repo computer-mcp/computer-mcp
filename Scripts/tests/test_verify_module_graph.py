@@ -82,6 +82,25 @@ class PlanModeTests(unittest.TestCase):
                    "  var label: String { \"\\(HighService.self)\" }\n}\n")
         self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
 
+    def test_member_function_shadows_a_nonprivate_free_function(self):
+        self.write("Shared/High.swift", "package func fileType() -> Int { 1 }\n")
+        self.write("Shared/Low.swift", "package struct LowValue {\n"
+                   "  func use() -> Int { fileType() }\n  static func fileType() -> Int { 2 }\n}\n")
+        self.assertEqual(self.problems(), [])
+
+    def test_extension_sees_member_function_from_a_sibling_extension(self):
+        self.write("Shared/High.swift", "package func fileType() -> Int { 1 }\n")
+        self.write("Shared/Low.swift", "package struct LowValue {}\n"
+                   "extension LowValue {\n  func use() -> Int { fileType() }\n}\n"
+                   "extension LowValue {\n  func fileType() -> Int { 2 }\n}\n")
+        self.assertEqual(self.problems(), [])
+
+    def test_another_types_method_does_not_hide_a_free_function_reference(self):
+        self.write("Shared/High.swift", "package func fileType() -> Int { 1 }\n")
+        self.write("Shared/Low.swift", "package struct Container {\n  func fileType() -> Int { 2 }\n}\n"
+                   "package struct LowValue {\n  func use() -> Int { fileType() }\n}\n")
+        self.assertTrue(any(p.startswith("upward: Low -> High") for p in self.problems()))
+
     def test_plain_string_text_does_not_count(self):
         self.write("Shared/Low.swift", "package struct LowValue {\n  let id = \"HighService\"\n}\n")
         self.assertEqual(self.problems(), [])

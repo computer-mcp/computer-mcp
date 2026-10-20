@@ -89,8 +89,12 @@ struct ProcessOutputLifecycleTests {
     let activeReader = reader
     try await withinDeadline {
       if shutdown == .stop || shutdown == .drain {
+        let stoppingStarted = AsyncStream<Void>.makeStream()
         async let stopping: Void =
-          activeReader?.stop(drainRemainingOutput: shutdown == .drain) ?? ()
+          activeReader?.stop(
+            drainRemainingOutput: shutdown == .drain,
+            onStopping: { stoppingStarted.continuation.finish() }) ?? ()
+        for await _ in stoppingStarted.stream {}
         release.continuation.finish()
         await stopping
       } else {
@@ -102,12 +106,44 @@ struct ProcessOutputLifecycleTests {
     let data = await output.data
     if shutdown == .endOfFile || shutdown == .drain {
       #expect(data == Data("firstlast".utf8))
-    } else if shutdown == .stop {
-      #expect(data == Data("first".utf8) || data == Data("firstlast".utf8))
     } else {
       #expect(data == Data("first".utf8))
     }
     #expect(await output.errors == (shutdown == .consumerFailure ? 1 : 0))
+  }
+
+  @Test
+  func deadlineDoesNotWaitForStalledOperation() async throws {
+    let blocking = BlockingOperationExecutor(label: "test.deadline-stalled-operation")
+    let release = DispatchSemaphore(value: 0)
+    let started = AsyncStream<Void>.makeStream()
+    let completed = AsyncStream<Void>.makeStream()
+    var timedOut = false
+    do {
+      defer { release.signal() }
+      await withKnownIssue("The deadline reports that stalled work may leak.") {
+        do {
+          try await withinDeadline(timeout: .milliseconds(50)) {
+            try await blocking.perform {
+              started.continuation.finish()
+              release.wait()
+            }
+            completed.continuation.finish()
+          }
+        } catch is DeadlineExceeded {
+          timedOut = true
+        } catch {
+          Issue.record(error)
+        }
+      }
+      #expect(timedOut)
+      try await withinDeadline {
+        for await _ in started.stream {}
+      }
+    }
+    try await withinDeadline {
+      for await _ in completed.stream {}
+    }
   }
 
   @Test
@@ -191,16 +227,51 @@ struct ProcessOutputLifecycleTests {
     func recordError() { errors += 1 }
   }
 
-  private func withinDeadline(_ operation: @escaping @Sendable () async throws -> Void) async throws
-  {
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { try await operation() }
-      group.addTask {
-        try await Task.sleep(for: .seconds(10))
-        throw DeadlineExceeded()
+  private func withinDeadline(
+    timeout: Duration = .seconds(10),
+    _ operation: @escaping @Sendable () async throws -> Void
+  ) async throws {
+    var work: Task<Void, Never>?
+    var timer: Task<Void, Never>?
+    defer {
+      work?.cancel()
+      timer?.cancel()
+    }
+    try await withCheckedThrowingContinuation { continuation in
+      let completion = DeadlineContinuation(continuation)
+      work = Task {
+        do {
+          try await operation()
+          await completion.resume(with: .success(()))
+        } catch {
+          await completion.resume(with: .failure(error))
+        }
       }
-      defer { group.cancelAll() }
-      try await group.next()
+      timer = Task {
+        do {
+          try await Task.sleep(for: timeout)
+        } catch {
+          return
+        }
+        await completion.resume(with: .failure(DeadlineExceeded()))
+      }
+    }
+  }
+
+  private actor DeadlineContinuation {
+    private var continuation: CheckedContinuation<Void, any Error>?
+
+    init(_ continuation: CheckedContinuation<Void, any Error>) {
+      self.continuation = continuation
+    }
+
+    func resume(with result: Result<Void, any Error>) {
+      guard let continuation else { return }
+      self.continuation = nil
+      if case .failure(let error) = result, error is DeadlineExceeded {
+        Issue.record("Operation exceeded its deadline; stalled work may leak after cancellation.")
+      }
+      continuation.resume(with: result)
     }
   }
 

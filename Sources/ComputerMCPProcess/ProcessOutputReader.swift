@@ -60,10 +60,13 @@ internal final class ProcessOutputReader: @unchecked Sendable {
     await stop(drainRemainingOutput: false)
   }
 
-  func stop(drainRemainingOutput: Bool) async {
+  /// `onStopping` is a test seam called under lock so tests can observe shutdown before
+  /// releasing a suspended consumer.
+  func stop(drainRemainingOutput: Bool, onStopping: (@Sendable () -> Void)? = nil) async {
     let task = lock.withLock { () -> Task<Void, Never>? in
       guard !stopped else { return consumptionTask }
       stopped = true
+      onStopping?()
       if drainRemainingOutput {
         // A pipe holds fewer bytes than this budget. A concurrent writer cannot make drain infinite.
         var remaining = 1_048_576

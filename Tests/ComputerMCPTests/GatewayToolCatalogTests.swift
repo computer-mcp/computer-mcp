@@ -1,5 +1,6 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPTransport
 import Foundation
 import Logging
 import MCP

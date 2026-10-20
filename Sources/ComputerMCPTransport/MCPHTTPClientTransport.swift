@@ -4,13 +4,17 @@ import Foundation
 import Logging
 import MCP
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 /// HTTP stream ownership is independent of JSON-RPC request handling in the MCP SDK client.
-actor MCPHTTPClientTransport: Transport {
+package actor MCPHTTPClientTransport: Transport {
   private struct RequestExchange {
     let identity: UUID
     let task: Task<Void, Error>
   }
-  nonisolated let logger: Logger
+  package nonisolated let logger: Logger
   private let worker: MCPHTTPStreamWorker
   private let streaming: Bool
   private let incoming: AsyncThrowingStream<Data, any Error>
@@ -24,7 +28,7 @@ actor MCPHTTPClientTransport: Transport {
   private(set) var sessionID: String?
   private var protocolVersion = Version.latest
 
-  init(
+  package init(
     endpoint: URL,
     configuration: URLSessionConfiguration = .ephemeral,
     streaming: Bool = true,
@@ -43,14 +47,14 @@ actor MCPHTTPClientTransport: Transport {
       bufferingPolicy: .bufferingOldest(32))
   }
 
-  func connect() async throws {
+  package func connect() async throws {
     guard !closed else { throw MCPError.connectionClosed }
     connected = true
   }
 
-  func receive() -> AsyncThrowingStream<Data, any Error> { incoming }
+  package func receive() -> AsyncThrowingStream<Data, any Error> { incoming }
 
-  func send(_ data: Data) async throws {
+  package func send(_ data: Data) async throws {
     try Task.checkCancellation()
     guard connected, !closed else { throw MCPError.connectionClosed }
     guard data.count <= 32 * 1_024 * 1_024 else { throw MCPHTTPTransportError.messageTooLarge }
@@ -99,7 +103,7 @@ actor MCPHTTPClientTransport: Transport {
     return try JSONDecoder().decode(MCP.ID.self, from: JSONEncoder().encode(value))
   }
 
-  func disconnect() async {
+  package func disconnect() async {
     if let disconnectTask {
       await disconnectTask.value
       return
@@ -118,7 +122,7 @@ actor MCPHTTPClientTransport: Transport {
     // Concurrent disconnect callers join the same bounded cleanup and never duplicate DELETE.
     let task = Task { [worker] in
       await worker.endSession(context: context)
-      worker.session.invalidateAndCancel()
+      MCPHTTPResponseStream.invalidateAndCancel(worker.session)
       for exchange in exchanges { _ = await exchange.result }
       await events?.value
     }
@@ -183,26 +187,15 @@ actor MCPHTTPClientTransport: Transport {
     connected = false
     eventTask?.cancel()
     for exchange in requestExchanges.values { exchange.task.cancel() }
-    worker.session.invalidateAndCancel()
+    MCPHTTPResponseStream.invalidateAndCancel(worker.session)
     continuation.finish(throwing: error)
   }
 
   deinit {
     eventTask?.cancel()
     for exchange in requestExchanges.values { exchange.task.cancel() }
-    worker.session.invalidateAndCancel()
+    MCPHTTPResponseStream.invalidateAndCancel(worker.session)
     continuation.finish()
-  }
-}
-
-/// Redirects must not replay an MCP write or forward credentials to a different endpoint.
-private final class MCPHTTPRedirectPolicy: NSObject, URLSessionTaskDelegate, Sendable {
-  func urlSession(
-    _ session: URLSession, task: URLSessionTask,
-    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
-    completionHandler: @escaping @Sendable (URLRequest?) -> Void
-  ) {
-    completionHandler(nil)
   }
 }
 
@@ -240,7 +233,8 @@ private struct MCPHTTPStreamWorker: Sendable {
     // Session termination is best effort; servers may reject DELETE. Do not consume an
     // unbounded response body or retry an ambiguous request during local shutdown.
     do {
-      let (bytes, _) = try await session.bytes(for: authorized(request))
+      let (bytes, _) = try await MCPHTTPResponseStream.open(
+        for: authorized(request), session: session)
       bytes.task.cancel()
     } catch {}
   }
@@ -261,7 +255,8 @@ private struct MCPHTTPStreamWorker: Sendable {
     while true {
       try Task.checkCancellation()
       do {
-        let (bytes, response) = try await session.bytes(for: authorized(request))
+        let (bytes, response) = try await MCPHTTPResponseStream.open(
+          for: authorized(request), session: session)
         defer { bytes.task.cancel() }
         guard let response = response as? HTTPURLResponse else {
           throw MCPHTTPTransportError.invalidResponse
@@ -305,7 +300,8 @@ private struct MCPHTTPStreamWorker: Sendable {
       var request = request(method: "GET", context: context)
       if let id = cursor.id { request.setValue(id, forHTTPHeaderField: HTTPHeaderName.lastEventID) }
       do {
-        let (bytes, response) = try await session.bytes(for: authorized(request))
+        let (bytes, response) = try await MCPHTTPResponseStream.open(
+          for: authorized(request), session: session)
         defer { bytes.task.cancel() }
         guard let response = response as? HTTPURLResponse else {
           throw MCPHTTPTransportError.invalidResponse
@@ -352,7 +348,7 @@ private struct MCPHTTPStreamWorker: Sendable {
     return request
   }
 
-  private func readJSON(_ bytes: URLSession.AsyncBytes) async throws -> Data {
+  private func readJSON(_ bytes: MCPHTTPResponseStream.Bytes) async throws -> Data {
     try await withTaskCancellationHandler {
       var data = Data()
       for try await byte in bytes {
@@ -366,7 +362,7 @@ private struct MCPHTTPStreamWorker: Sendable {
   }
 
   private func readEvents(
-    _ bytes: URLSession.AsyncBytes,
+    _ bytes: MCPHTTPResponseStream.Bytes,
     cursor: inout Cursor,
     expectedID: JSONValue?,
     deliver: @Sendable (Data) async throws -> Void

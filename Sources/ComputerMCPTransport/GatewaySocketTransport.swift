@@ -1,10 +1,17 @@
 import ComputerMCPPlatformPOSIX
-import Darwin
 import Foundation
 import Logging
 import MCP
 @preconcurrency import NIOCore
 @preconcurrency import NIOPosix
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 package enum GatewaySocketError: Error, Equatable, LocalizedError, Sendable {
   case alreadyRunning(String)
@@ -130,7 +137,7 @@ package actor GatewaySocketTransport: Transport {
 
   package nonisolated let logger: Logger
   private nonisolated let terminationStream = AsyncStream<Void>.makeStream()
-  nonisolated var termination: AsyncStream<Void> { terminationStream.stream }
+  package nonisolated var termination: AsyncStream<Void> { terminationStream.stream }
 
   private let configuration: GatewaySocketConfiguration
   private var channel: Channel?

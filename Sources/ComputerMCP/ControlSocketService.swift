@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPProcess
+import ComputerMCPTransport
 import Foundation
 import MCP
 

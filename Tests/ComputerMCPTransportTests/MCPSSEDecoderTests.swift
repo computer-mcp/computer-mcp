@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPTransport
 
 struct MCPSSEDecoderTests {
   @Test(arguments: ["\n", "\r", "\r\n"])

@@ -4,15 +4,15 @@ import Logging
 import MCP
 
 /// Adapts open-ended MCP initialize capabilities to the narrower Swift SDK 0.12 model.
-internal actor MCPInitializeNormalizationTransport: Transport {
+package actor MCPInitializeNormalizationTransport: Transport {
   private let underlying: any Transport
   private var initialInitializeID: JSONValue?
   private var initializeResponse: JSONValue?
   private var pendingInitializeIDs: [JSONValue] = []
 
-  internal nonisolated let logger: Logger
+  package nonisolated let logger: Logger
 
-  internal init(
+  package init(
     wrapping underlying: any Transport,
     logger: Logger = Logger(label: "computer-mcp.mcp-initialize-normalization")
   ) {
@@ -20,18 +20,18 @@ internal actor MCPInitializeNormalizationTransport: Transport {
     self.logger = logger
   }
 
-  internal func connect() async throws {
+  package func connect() async throws {
     try await underlying.connect()
   }
 
-  internal func disconnect() async {
+  package func disconnect() async {
     initialInitializeID = nil
     initializeResponse = nil
     pendingInitializeIDs.removeAll()
     await underlying.disconnect()
   }
 
-  internal func send(_ data: Data) async throws {
+  package func send(_ data: Data) async throws {
     guard
       let initialInitializeID,
       let response = MCPInitializeNormalization.initializationResponse(
@@ -62,7 +62,7 @@ internal actor MCPInitializeNormalizationTransport: Transport {
     }
   }
 
-  internal func receive() -> AsyncThrowingStream<Data, Swift.Error> {
+  package func receive() -> AsyncThrowingStream<Data, Swift.Error> {
     return AsyncThrowingStream { continuation in
       Task {
         await self.forwardMessages(to: continuation)

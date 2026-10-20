@@ -79,6 +79,7 @@ enum MCPHTTPTransportError: Error, Equatable, LocalizedError {
   case invalidUTF8
   case messageTooLarge
   case receiveQueueFull
+  case consumerTooSlow
   case httpStatus(Int)
   case unsupportedContentType
   case incompleteResponse
@@ -90,6 +91,8 @@ enum MCPHTTPTransportError: Error, Equatable, LocalizedError {
     case .invalidUTF8: "The MCP event stream contains invalid UTF-8."
     case .messageTooLarge: "The MCP HTTP message exceeds the 32 MiB transport limit."
     case .receiveQueueFull: "The MCP HTTP receive queue is full; reconnect and refresh the catalog."
+    case .consumerTooSlow:
+      "The MCP HTTP response consumer is too slow; the Linux receive buffer exceeded 32 MiB."
     case .httpStatus(let status): "The MCP HTTP server returned status \(status)."
     case .unsupportedContentType: "The MCP HTTP response is neither JSON nor an event stream."
     case .incompleteResponse:

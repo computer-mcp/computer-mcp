@@ -1,12 +1,92 @@
-import Darwin
+import ComputerMCPCore
 import Foundation
 import MCP
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPTransport
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 @Suite(.timeLimit(.minutes(1)))
 struct MCPInheritedSocketTransportTests {
+  @Test
+  func closedPeerWritesRaiseErrors() async throws {
+    #if os(Linux)
+      let receiptVariable = "COMPUTER_MCP_SOCKET_WRITE_RECEIPT"
+      guard let receipt = ProcessInfo.processInfo.environment[receiptVariable] else {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+          "closed-socket-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let receipt = root.appendingPathComponent("write-error")
+        let executable = CommandLine.arguments[0]
+        let result = try await BlockingOperationExecutor(label: "closed-socket-test").perform {
+          let process = Process()
+          process.executableURL = URL(fileURLWithPath: executable)
+          process.arguments = [
+            "--testing-library", "swift-testing", "--filter", "closedPeerWritesRaiseErrors",
+          ]
+          var environment = ProcessInfo.processInfo.environment
+          environment[receiptVariable] = receipt.path
+          process.environment = environment
+          let output = Pipe()
+          process.standardOutput = output
+          process.standardError = output
+          try process.run()
+          process.waitUntilExit()
+          let text = String(
+            decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+          return (process.terminationReason == .exit, process.terminationStatus, text)
+        }
+        #expect(result.0, "The socket probe terminated by a signal: \(result.2)")
+        #expect(result.1 == 0, "The socket probe failed: \(result.2)")
+        #expect(try String(contentsOf: receipt, encoding: .utf8) == "EPIPE")
+        return
+      }
+      _ = signal(SIGPIPE, SIG_DFL)
+    #endif
+
+    let pair = try MCPInheritedSocketTransport.makePair()
+    defer { try? pair.1.close() }
+    let transport = try MCPInheritedSocketTransport(takingOwnershipOf: pair.0)
+    #if canImport(Darwin)
+      var noSigpipe: Int32 = 0
+      var length = socklen_t(MemoryLayout<Int32>.size)
+      #expect(getsockopt(pair.0.fileDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, &length) == 0)
+      #expect(noSigpipe == 1)
+      try pair.1.close()
+    #else
+      // Keeping the peer's write half open makes this exercise send rather than reader EOF.
+      #expect(shutdown(pair.1.fileDescriptor, Int32(SHUT_RD)) == 0)
+    #endif
+    try await transport.connect()
+    do {
+      try await transport.send(Data("{}".utf8))
+      Issue.record("A write to the peer's closed read half unexpectedly succeeded.")
+    } catch MCPError.transportError(let error) {
+      #expect((error as? POSIXError)?.code == .EPIPE)
+      #if os(Linux)
+        if (error as? POSIXError)?.code == .EPIPE {
+          try "EPIPE".write(toFile: receipt, atomically: true, encoding: .utf8)
+        }
+      #endif
+    } catch MCPError.connectionClosed {
+      #if !canImport(Darwin)
+        Issue.record("The reader closed before the write exercised MSG_NOSIGNAL.")
+      #endif
+    } catch {
+      await transport.disconnect()
+      throw error
+    }
+    await transport.disconnect()
+  }
+
   @Test
   func standardMCPClientAndServerShareTheInheritedTransport() async throws {
     let pair = try MCPInheritedSocketTransport.makePair()

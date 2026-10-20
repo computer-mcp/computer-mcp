@@ -2,34 +2,55 @@ import ComputerMCPCore
 import Foundation
 import MCP
 
-internal struct GatewaySocketCatalogTool: Codable, Equatable, Sendable {
-  internal let name: String
-  internal let title: String?
-  internal let description: String?
-  internal let inputSchema: JSONValue
-  internal let outputSchema: JSONValue?
-  internal let readOnlyHint: Bool?
-  internal let destructiveHint: Bool?
-  internal let idempotentHint: Bool?
-  internal let openWorldHint: Bool?
-  internal let meta: JSONValue?
+package struct GatewaySocketCatalogTool: Codable, Equatable, Sendable {
+  package let name: String
+  package let title: String?
+  package let description: String?
+  package let inputSchema: JSONValue
+  package let outputSchema: JSONValue?
+  package let readOnlyHint: Bool?
+  package let destructiveHint: Bool?
+  package let idempotentHint: Bool?
+  package let openWorldHint: Bool?
+  package let meta: JSONValue?
 
-  init(tool: MCP.Tool) {
+  package init(tool: MCP.Tool) {
     self.name = tool.name
     self.title = tool.title
     self.description = tool.description
-    self.inputSchema = JSONValue(sdkValue: tool.inputSchema)
-    self.outputSchema = tool.outputSchema.map(JSONValue.init(sdkValue:))
+    self.inputSchema = Self.jsonValue(tool.inputSchema)
+    self.outputSchema = tool.outputSchema.map(Self.jsonValue)
     self.readOnlyHint = tool.annotations.readOnlyHint
     self.destructiveHint = tool.annotations.destructiveHint
     self.idempotentHint = tool.annotations.idempotentHint
     self.openWorldHint = tool.annotations.openWorldHint
     self.meta = tool._meta.map {
-      .object($0.fields.mapValues(JSONValue.init(sdkValue:)))
+      .object($0.fields.mapValues(Self.jsonValue))
     }
   }
 
-  internal var gatewayToolJSON: JSONValue {
+  private static func jsonValue(_ value: MCP.Value) -> JSONValue {
+    switch value {
+    case .null:
+      return .null
+    case .bool(let value):
+      return .bool(value)
+    case .int(let value):
+      return .integer(Int64(value))
+    case .double(let value):
+      return .number(value)
+    case .string(let value):
+      return .string(value)
+    case .data:
+      return .string(value.description)
+    case .array(let value):
+      return .array(value.map(jsonValue))
+    case .object(let value):
+      return .object(value.mapValues(jsonValue))
+    }
+  }
+
+  package var gatewayToolJSON: JSONValue {
     MCPTool(
       name: name,
       title: title,
@@ -47,17 +68,17 @@ internal struct GatewaySocketCatalogTool: Codable, Equatable, Sendable {
   }
 }
 
-internal struct GatewaySocketCatalogReport: Codable, Equatable, Sendable {
-  internal let schemaVersion: Int
-  internal let generatedAt: String
-  internal let socketPath: String
-  internal let protocolVersion: String
-  internal let serverName: String
-  internal let serverVersion: String
-  internal let toolCount: Int
-  internal let tools: [GatewaySocketCatalogTool]
+package struct GatewaySocketCatalogReport: Codable, Equatable, Sendable {
+  package let schemaVersion: Int
+  package let generatedAt: String
+  package let socketPath: String
+  package let protocolVersion: String
+  package let serverName: String
+  package let serverVersion: String
+  package let toolCount: Int
+  package let tools: [GatewaySocketCatalogTool]
 
-  internal init(
+  package init(
     schemaVersion: Int = 1,
     generatedAt: String,
     socketPath: String,
@@ -76,11 +97,11 @@ internal struct GatewaySocketCatalogReport: Codable, Equatable, Sendable {
     self.tools = tools
   }
 
-  internal var toolNames: [String] {
+  package var toolNames: [String] {
     tools.map(\.name)
   }
 
-  internal func encodedJSON(prettyPrinted: Bool = true) throws -> Data {
+  package func encodedJSON(prettyPrinted: Bool = true) throws -> Data {
     let encoder = CanonicalJSONCoding.encoder(
       outputFormatting:
         prettyPrinted
@@ -91,8 +112,10 @@ internal struct GatewaySocketCatalogReport: Codable, Equatable, Sendable {
   }
 }
 
-internal struct GatewaySocketCatalogInspector: Sendable {
-  internal func inspect(
+package struct GatewaySocketCatalogInspector: Sendable {
+  package init() {}
+
+  package func inspect(
     socketURL: URL,
     generatedAt: Date = Date()
   ) async throws -> GatewaySocketCatalogReport {
@@ -102,7 +125,7 @@ internal struct GatewaySocketCatalogInspector: Sendable {
     )
   }
 
-  internal func inspect(
+  package func inspect(
     configuration: GatewaySocketConfiguration,
     generatedAt: Date = Date()
   ) async throws -> GatewaySocketCatalogReport {

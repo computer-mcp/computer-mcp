@@ -3,12 +3,175 @@ import Foundation
 import MCP
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPCore
-@testable import ComputerMCPProcess
+@testable import ComputerMCPTransport
 
-@Suite(.nativeIntegration)
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
+@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPClientTransportTests {
+  @Test
+  func sseMessagesArriveBeforeTheServerCompletesTheResponse() async throws {
+    try await HTTPStreamProcessFixture.withFixture { fixture in
+      let transport = fixture.transport(streaming: false)
+      try await transport.connect()
+      let incoming = await transport.receive()
+      let sending = Task { try await transport.send(Self.request("incremental", id: "chunks")) }
+      let reading = Task {
+        try await Self.withTimeout {
+          var iterator = incoming.makeAsyncIterator()
+          let first = try #require(try await iterator.next())
+          let notification = try JSONDecoder().decode(JSONValue.self, from: first)
+          #expect(notification.objectValue?["method"] == .string("notifications/progress"))
+          #expect(notification.objectValue?["params"]?.objectValue?["message"] == .string("正在读取"))
+          try Data().write(to: fixture.root.appendingPathComponent("release-chunks"))
+          let last = try #require(try await iterator.next())
+          let response = try JSONDecoder().decode(JSONValue.self, from: last)
+          #expect(response.objectValue?["id"] == .string("chunks"))
+          #expect(response.objectValue?["result"]?.objectValue?["completed"] == .bool(true))
+        }
+      }
+      do {
+        try await reading.value
+        try await sending.value
+        await transport.disconnect()
+      } catch {
+        sending.cancel()
+        reading.cancel()
+        await transport.disconnect()
+        _ = await sending.result
+        _ = await reading.result
+        throw error
+      }
+    }
+  }
+
+  @Test
+  func cancellationAfterAnSSEMessageClosesTheDataTask() async throws {
+    try await HTTPStreamProcessFixture.withFixture { fixture in
+      let transport = fixture.transport(streaming: false)
+      try await transport.connect()
+      let incoming = await transport.receive()
+      let sending = Task {
+        try await transport.send(Self.request("cancel-stream", id: "midstream"))
+      }
+      let reading = Task { try await Self.collect(incoming, count: 1) }
+      do {
+        let messages = try await reading.value
+        #expect(messages.first?.objectValue?["method"] == .string("notifications/progress"))
+        sending.cancel()
+        await #expect(throws: (any Error).self) {
+          try await sending.value
+        }
+        try await Self.waitForClosedStream("midstream", fixture: fixture)
+        try await transport.send(Self.request("json", id: "after-cancellation"))
+        #expect(try fixture.requests().filter { $0["id"] == .string("midstream") }.count == 1)
+        await transport.disconnect()
+      } catch {
+        sending.cancel()
+        reading.cancel()
+        await transport.disconnect()
+        _ = await sending.result
+        _ = await reading.result
+        throw error
+      }
+    }
+  }
+
+  @Test
+  func httpErrorStatusIsReportedBeforeAnOpenBodyCompletes() async throws {
+    try await HTTPStreamProcessFixture.withFixture { fixture in
+      let transport = fixture.transport(streaming: false)
+      try await transport.connect()
+      do {
+        await #expect(throws: MCPHTTPTransportError.httpStatus(503)) {
+          try await Self.withTimeout {
+            try await transport.send(Self.request("http-error", id: "unavailable"))
+          }
+        }
+        try await Self.waitForClosedStream("unavailable", fixture: fixture)
+        #expect(try fixture.requests().filter { $0["id"] == .string("unavailable") }.count == 1)
+        await transport.disconnect()
+      } catch {
+        await transport.disconnect()
+        throw error
+      }
+    }
+  }
+
+  @Test(arguments: ["server-close", "truncated"])
+  func serverClosureEndsTheResponseWithoutReposting(method: String) async throws {
+    try await HTTPStreamProcessFixture.withFixture { fixture in
+      let transport = fixture.transport(streaming: false)
+      try await transport.connect()
+      do {
+        do {
+          try await Self.withTimeout {
+            try await transport.send(Self.request(method, id: "closed"))
+          }
+          Issue.record("The server closed before sending a JSON-RPC response.")
+        } catch {
+          if method == "server-close" {
+            #expect(error as? MCPHTTPTransportError == .incompleteResponse)
+          } else {
+            #expect(error is URLError || error as? MCPHTTPTransportError == .incompleteResponse)
+          }
+        }
+        #expect(try fixture.requests().filter { $0["id"] == .string("closed") }.count == 1)
+        await transport.disconnect()
+      } catch {
+        await transport.disconnect()
+        throw error
+      }
+    }
+  }
+
+  @Test
+  func redirectsDoNotReplayRequestsOrForwardCredentials() async throws {
+    try await HTTPStreamProcessFixture.withFixture { fixture in
+      let transport = MCPHTTPClientTransport(
+        endpoint: fixture.endpoint.deletingLastPathComponent().appendingPathComponent("redirect"),
+        streaming: false, bearerToken: { "fixture-token" })
+      try await transport.connect()
+      await #expect(throws: MCPHTTPTransportError.httpStatus(307)) {
+        try await transport.send(Self.request("initialize", id: "redirect"))
+      }
+      await transport.disconnect()
+      #expect(try fixture.requests().count == 1)
+    }
+  }
+
+  private static func waitForClosedStream(_ id: String, fixture: HTTPStreamProcessFixture)
+    async throws
+  {
+    try await withTimeout {
+      let receipt = fixture.root.appendingPathComponent("closed-streams")
+      while true {
+        let closed =
+          (try? String(contentsOf: receipt, encoding: .utf8))?
+          .split(separator: "\n").map(String.init) ?? []
+        if closed.contains(id) { return }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+    }
+  }
+
+  private static func withTimeout<T: Sendable>(
+    _ operation: @escaping @Sendable () async throws -> T
+  ) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+      group.addTask(operation: operation)
+      group.addTask {
+        try await Task.sleep(for: .seconds(5))
+        throw HTTPStreamTestError.timeout
+      }
+      defer { group.cancelAll() }
+      return try await group.next()!
+    }
+  }
+
   @Test
   func protocolCancellationClosesItsResponseStreamWithoutEndingTheSession() async throws {
     try await HTTPStreamProcessFixture.withFixture { fixture in
@@ -55,26 +218,6 @@ struct MCPHTTPClientTransportTests {
         await transport.disconnect()
         _ = await first.result
         _ = await sibling.result
-        throw error
-      }
-    }
-  }
-
-  @Test(arguments: [false, true])
-  func gatewayClientSessionTerminatesThroughItsTransportOnce(streaming: Bool) async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
-      let session = try await GatewayClientSession.connectHTTP(
-        endpoint: fixture.endpoint, accessToken: "fixture-token", streaming: streaming)
-      do {
-        #expect(try await session.listToolNames() == ["inspect"])
-        await session.disconnect()
-        await session.disconnect()
-        let deletions = try fixture.requests().filter { $0["method"] == .string("DELETE") }
-        #expect(deletions.count == 1)
-        #expect(deletions.first?["authorized"] == .bool(true))
-        #expect(deletions.first?["session"] == .string("fixture-session"))
-      } catch {
-        await session.disconnect()
         throw error
       }
     }
@@ -251,50 +394,7 @@ struct MCPHTTPClientTransportTests {
   }
 }
 
-private enum HTTPStreamTestError: Error { case timeout }
-
-struct HTTPStreamProcessFixture {
-  let root: URL
-  let process: ManagedLineProcess
-  let endpoint: URL
-
-  init() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "mcp-http-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let script = root.appendingPathComponent("server.py")
-    try Self.script.write(to: script, atomically: true, encoding: .utf8)
-    let process = try ManagedLineProcess(
-      configuration: .init(
-        executable: "/usr/bin/python3", arguments: [script.path, root.path],
-        workingDirectory: root, terminationGraceMilliseconds: 100, killGraceMilliseconds: 2_000))
-    do {
-      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-      let ready = root.appendingPathComponent("port")
-      var port: Int?
-      while ContinuousClock.now < deadline {
-        if let data = FileManager.default.contents(atPath: ready.path),
-          let text = String(data: data, encoding: .utf8), let value = Int(text)
-        {
-          port = value
-          break
-        }
-        guard !(await process.snapshot().hasExited) else { throw HTTPStreamTestError.timeout }
-        try await Task.sleep(for: .milliseconds(10))
-      }
-      guard let port, let endpoint = URL(string: "http://127.0.0.1:\(port)/mcp") else {
-        throw HTTPStreamTestError.timeout
-      }
-      self.root = root
-      self.process = process
-      self.endpoint = endpoint
-    } catch {
-      await process.close()
-      if await process.snapshot().hasExited { try? FileManager.default.removeItem(at: root) }
-      throw error
-    }
-  }
-
+extension HTTPStreamProcessFixture {
   func transport(streaming: Bool = true) -> MCPHTTPClientTransport {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 3
@@ -308,171 +408,4 @@ struct HTTPStreamProcessFixture {
       })
   }
 
-  func requests() throws -> [[String: JSONValue]] {
-    guard
-      let data = FileManager.default.contents(
-        atPath: root.appendingPathComponent("requests.jsonl").path)
-    else { return [] }
-    return try data.split(separator: 10).compactMap {
-      try JSONDecoder().decode(JSONValue.self, from: Data($0)).objectValue
-    }
-  }
-
-  func waitForRequest(id: String) async throws {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-    while ContinuousClock.now < deadline {
-      if try requests().contains(where: { $0["id"] == .string(id) }) { return }
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    throw HTTPStreamTestError.timeout
-  }
-
-  static func withFixture(_ operation: (Self) async throws -> Void) async throws {
-    let fixture = try await Self()
-    do {
-      try await operation(fixture)
-      await fixture.cleanup()
-    } catch {
-      await fixture.cleanup()
-      throw error
-    }
-  }
-
-  func cleanup() async {
-    await process.close()
-    guard await process.snapshot().hasExited else {
-      Issue.record("The owned HTTP fixture did not confirm exit; its directory is preserved.")
-      return
-    }
-    try? FileManager.default.removeItem(at: root)
-  }
-
-  private static let script = #"""
-    import http.server
-    import json
-    import pathlib
-    import sys
-    import threading
-    import time
-
-    root = pathlib.Path(sys.argv[1])
-    lock = threading.Lock()
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def log_message(self, *args):
-            pass
-
-        def record(self, message=None):
-            message = message or {}
-            authorized = self.headers.get("Authorization") == "Bearer fixture-token"
-            record = {"method": self.command, "rpc": message.get("method"), "id": message.get("id"), "cursor": self.headers.get("Last-Event-ID"), "session": self.headers.get("Mcp-Session-Id"), "protocol": self.headers.get("Mcp-Protocol-Version"), "authorized": authorized}
-            with lock:
-                with (root / "requests.jsonl").open("a") as file:
-                    file.write(json.dumps(record) + "\n")
-            if not authorized:
-                self.send_response(401)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-            return authorized
-
-        def begin(self, content_type):
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Mcp-Session-Id", "fixture-session")
-            self.send_header("Transfer-Encoding", "chunked")
-            self.end_headers()
-
-        def chunk(self, data):
-            data = data.encode("utf-8")
-            self.wfile.write(("%x\r\n" % len(data)).encode() + data + b"\r\n")
-            self.wfile.flush()
-
-        def finish(self):
-            self.wfile.write(b"0\r\n\r\n")
-            self.wfile.flush()
-
-        def keep_alive(self, identifier=None):
-            try:
-                for _ in range(100):
-                    self.chunk(": heartbeat\n\n")
-                    time.sleep(0.1)
-                self.finish()
-            except (BrokenPipeError, ConnectionResetError):
-                if identifier is not None:
-                    with lock:
-                        with (root / "closed-streams").open("a") as file:
-                            file.write(identifier + "\n")
-
-        def do_DELETE(self):
-            if not self.record():
-                return
-            self.send_response(204)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def do_POST(self):
-            message = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
-            if not self.record(message):
-                return
-            if self.path == "/redirect":
-                self.send_response(307)
-                self.send_header("Location", "/mcp")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            if "id" not in message:
-                self.send_response(202)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            method, identifier = message["method"], str(message["id"])
-            if method in ("tools/list", "tools/call"):
-                result = {"tools": [{"name": "inspect", "inputSchema": {"type": "object"}}]} if method == "tools/list" else {"content": [{"type": "text", "text": "authenticated reply"}], "isError": False}
-                self.begin("application/json")
-                self.chunk(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}))
-                self.finish()
-                return
-            if method == "json":
-                self.begin("application/json")
-                self.chunk(json.dumps({"jsonrpc": "2.0", "id": identifier, "result": {"json": True}}))
-                self.finish()
-                return
-            self.begin("text/event-stream")
-            if method == "ambiguous":
-                self.chunk(": response interrupted\n\n")
-                self.finish()
-                return
-            self.chunk("id: request-" + identifier + "\nretry: 10\ndata:\n\n")
-            if method == "never":
-                self.keep_alive(identifier)
-                return
-            if method == "initialize":
-                result = {"protocolVersion": "2025-03-26", "capabilities": {"tools": {"listChanged": True}}, "serverInfo": {"name": "stream-fixture", "version": "1"}}
-                self.chunk("data: " + json.dumps({"jsonrpc": "2.0", "id": identifier, "result": result}) + "\n\n")
-            self.finish()
-
-        def do_GET(self):
-            if not self.record():
-                return
-            cursor = self.headers.get("Last-Event-ID")
-            self.begin("text/event-stream")
-            if cursor and cursor.startswith("request-"):
-                identifier = cursor[len("request-"):]
-                self.chunk("data: " + json.dumps({"jsonrpc": "2.0", "id": identifier, "result": {"resumed": True}}) + "\n\n")
-                self.finish()
-                return
-            if cursor is None or cursor == "events-1":
-                identifier = "events-1" if cursor is None else "events-2"
-                self.chunk("id: " + identifier + "\nretry: 10\ndata: " + json.dumps({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}) + "\n\n")
-                if cursor is None:
-                    self.finish()
-                    return
-            self.keep_alive()
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    (root / "port").write_text(str(server.server_address[1]))
-    server.serve_forever()
-    """#
 }

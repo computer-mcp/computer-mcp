@@ -60,3 +60,7 @@ product decision.
 - Plugin archives are extracted through an archive extractor interface whose
   only implementation uses the macOS system `libarchive`; the Linux build has no
   implementation until a Linux host is planned.
+- Until a Linux host adopts a backpressured HTTP client, the Linux streaming
+  bridge fails when more than 32 MiB of response bytes wait in its own queue.
+  The triggering callback can overshoot by one chunk. Foundation buffers
+  redirect bodies internally on both platforms, outside this queue bound.

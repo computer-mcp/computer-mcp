@@ -4,14 +4,14 @@ import MCP
 
 /// Keeps one catalog invalidation until the HTTP client's first GET event subscription.
 /// Later stream reconnections use the underlying transport's event IDs and replay store.
-actor MCPHTTPEventSubscriptionTransport: Transport {
-  nonisolated let logger: Logger
+package actor MCPHTTPEventSubscriptionTransport: Transport {
+  package nonisolated let logger: Logger
   private let underlying: any Transport
   private var subscribed = false
   private var disconnected = false
   private var pendingCatalogChange: Data?
 
-  init(
+  package init(
     wrapping underlying: any Transport,
     logger: Logger = Logger(label: "computer-mcp.http-event-subscription")
   ) {
@@ -19,15 +19,15 @@ actor MCPHTTPEventSubscriptionTransport: Transport {
     self.logger = logger
   }
 
-  func connect() async throws { try await underlying.connect() }
+  package func connect() async throws { try await underlying.connect() }
 
-  func disconnect() async {
+  package func disconnect() async {
     disconnected = true
     pendingCatalogChange = nil
     await underlying.disconnect()
   }
 
-  func receive() -> AsyncThrowingStream<Data, any Error> {
+  package func receive() -> AsyncThrowingStream<Data, any Error> {
     let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
     let forwarding = Task { [underlying] in
       do {
@@ -44,7 +44,7 @@ actor MCPHTTPEventSubscriptionTransport: Transport {
     return stream
   }
 
-  func send(_ data: Data) async throws {
+  package func send(_ data: Data) async throws {
     guard !disconnected else { throw MCPError.connectionClosed }
     if !subscribed,
       let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -57,7 +57,7 @@ actor MCPHTTPEventSubscriptionTransport: Transport {
     try await underlying.send(data)
   }
 
-  func eventStreamOpened() async throws {
+  package func eventStreamOpened() async throws {
     guard !disconnected else { throw MCPError.connectionClosed }
     subscribed = true
     if let pendingCatalogChange {

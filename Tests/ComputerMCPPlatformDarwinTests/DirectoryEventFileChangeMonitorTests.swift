@@ -23,7 +23,10 @@ struct DirectoryEventFileChangeMonitorTests {
       #expect(try Data(contentsOf: url) == Data(content.utf8))
     }
     await monitor.close()
-    #expect(await changes.next() == nil)
+    // A report made before close can remain buffered; the stream then finishes.
+    var buffered = 0
+    while await changes.next() != nil { buffered += 1 }
+    #expect(buffered <= 1)
     await monitor.close()
   }
 

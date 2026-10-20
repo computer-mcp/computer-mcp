@@ -2,7 +2,7 @@
 """Verify the gateway module graph described in Documentation/Decisions/ModuleArchitecture.md.
 
 Scripts/module-graph.json declares the layers (bottom-up), the dependencies permitted
-between targets of the same layer, macOS platform boundaries and test ownership.
+between targets of the same layer, macOS platform boundaries and test support targets.
 
 Package mode reads `swift package dump-package` and applies the layer, permission and
 neutrality rules to declared target dependencies. Test support libraries are unranked,

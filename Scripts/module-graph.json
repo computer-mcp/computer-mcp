@@ -1,5 +1,5 @@
 {
-  "description": "Target layers, permitted same-layer dependencies, platform boundaries and test ownership. See Documentation/Decisions/ModuleArchitecture.md.",
+  "description": "Target layers, permitted same-layer dependencies, platform boundaries and test support targets. See Documentation/Decisions/ModuleArchitecture.md.",
   "layers": [
     {
       "name": "base",
@@ -154,21 +154,5 @@
   ],
   "test_support": [
     "ComputerMCPTestSupport"
-  ],
-  "tests": {
-    "BuiltinToolCatalogSnapshotTests.swift": "ComputerMCPMacOSTests",
-    "VerificationScriptDependencyTests.swift": "ComputerMCPMacOSTests",
-    "ClientAccessTests.swift": "ComputerMCPAppTests",
-    "ComputerMCPAppModelTests.swift": "ComputerMCPAppTests",
-    "LiveAppControlPlaneTests.swift": "ComputerMCPAppTests",
-    "MCPRegistrationModelTests.swift": "ComputerMCPAppTests",
-    "OperationApprovalDetailsTests.swift": "ComputerMCPAppTests",
-    "PermissionCoachWindowTests.swift": "ComputerMCPAppTests",
-    "PluginCatalogModelTests.swift": "ComputerMCPAppTests",
-    "PluginDoctorModelTests.swift": "ComputerMCPAppTests",
-    "PluginManagementTests.swift": "ComputerMCPAppTests",
-    "PluginReleaseTests.swift": "ComputerMCPAppTests",
-    "ProfilePermissionsTests.swift": "ComputerMCPAppTests",
-    "WorkspaceOpenPanelTests.swift": "ComputerMCPAppTests"
-  }
+  ]
 }

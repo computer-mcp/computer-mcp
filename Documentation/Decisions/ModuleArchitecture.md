@@ -155,7 +155,7 @@ cycles, no upward edges and no neutral target that depends on a Darwin target.
 - `Scripts/verify-module-graph.py package` checks the target dependencies declared
   in `Package.swift` against the layer rules and platform boundaries.
   `Scripts/module-graph.json` holds the layers, permitted same-layer dependencies,
-  platform rules, test support targets and test ownership.
+  platform rules and test support targets.
 - Neutral targets do not import macOS frameworks or reference macOS executable
   paths. As targets are extracted, `Scripts/verify-package-boundary.sh` is
   extended to reject both, and a Linux CI job builds and tests the extracted

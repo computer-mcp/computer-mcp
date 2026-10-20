@@ -1,13 +1,11 @@
-import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPPlatform
-@testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPProcess
+@testable import ComputerMCPTunnels
 
 @Suite(.nativeIntegration, .serialized)
 
@@ -21,7 +19,7 @@ final class OpenAITunnelSupervisorTests {
       ]))
     #expect(throws: (any Error).self) {
       try OpenAITunnelClientResolver(
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: [],
         commandRunner: runner
       ).resolve(
         requestedPath: nil, configuration: configuration)
@@ -41,17 +39,17 @@ final class OpenAITunnelSupervisorTests {
 
   @Test
   func testProvisionDoctorStartLogsReconnectAndStop() async throws {
-    let adapter = MemoryKeychainAdapter()
-    let secretStore = try KeychainSecretStore(adapter: adapter)
+    let secretStore = InMemoryTunnelSecretStore()
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
-    try secretStore.set("super-secret", for: reference)
+    try await secretStore.setAsynchronously("super-secret", for: reference)
     let commandRunner = OpenAITunnelCommandRunner(output: "key=super-secret")
     let process = TestOpenAITunnelProcessManager(output: "connected super-secret")
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: commandRunner,
       processManager: process
     )
@@ -110,8 +108,8 @@ final class OpenAITunnelSupervisorTests {
   func testExplicitHTTPProxyOverridesSystemProxyAndBlankUsesSystemProxy() async throws {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
-      secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      secretStore: InMemoryTunnelSecretStore(),
+      executableSearchDirectories: [],
       resolver: ExecutableOpenAITunnelClientResolver(),
       proxyResolver: FixedOpenAITunnelHTTPProxyResolver(
         value: "http://127.0.0.1:6152"
@@ -137,10 +135,11 @@ final class OpenAITunnelSupervisorTests {
     let commandRunner = OpenAITunnelCommandRunner()
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
-      secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      secretStore: InMemoryTunnelSecretStore(),
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: commandRunner,
       processManager: process,
       startupStabilityMilliseconds: 0
@@ -168,10 +167,11 @@ final class OpenAITunnelSupervisorTests {
     )
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
-      secretStore: try KeychainSecretStore(adapter: MemoryKeychainAdapter()),
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      secretStore: InMemoryTunnelSecretStore(),
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: commandRunner,
       processManager: process
     )
@@ -197,7 +197,7 @@ final class OpenAITunnelSupervisorTests {
 
   @Test
   func testDoctorFailurePreventsProcessLaunch() async throws {
-    let secretStore = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
+    let secretStore = InMemoryTunnelSecretStore()
     let commandRunner = OpenAITunnelCommandRunner(
       output: "invalid profile",
       exitCodesByCommand: ["doctor": 2]
@@ -205,9 +205,10 @@ final class OpenAITunnelSupervisorTests {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: commandRunner,
       processManager: process
     )
@@ -233,12 +234,13 @@ final class OpenAITunnelSupervisorTests {
 
   @Test
   func testMissingReferencedSecretFailsClosed() async throws {
-    let secretStore = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
+    let secretStore = InMemoryTunnelSecretStore()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: OpenAITunnelCommandRunner(),
       processManager: TestOpenAITunnelProcessManager()
     )
@@ -256,15 +258,38 @@ final class OpenAITunnelSupervisorTests {
   }
 
   @Test
-  func testKeychainAuthorizationDoesNotBlockStatusSnapshot() async throws {
-    let adapter = BlockingTunnelKeychainAdapter(secret: "super-secret")
-    let secretStore = try KeychainSecretStore(adapter: adapter)
+  func testStartPassesSecretAuthenticationPolicy() async throws {
+    let secretStore = InMemoryTunnelSecretStore()
+    let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
+    try await secretStore.setAsynchronously("super-secret", for: reference)
+    let supervisor = OpenAITunnelSupervisor(
+      secretStore: secretStore,
+      executableSearchDirectories: [],
+      resolver: FixedOpenAITunnelClientResolver(),
+      planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
+      commandRunner: OpenAITunnelCommandRunner(),
+      processManager: TestOpenAITunnelProcessManager(),
+      startupStabilityMilliseconds: 0
+    )
+
+    _ = try await supervisor.start(
+      tunnelProfile(reference: reference), configuration: GatewayConfiguration(),
+      authenticationUI: .fail)
+
+    #expect(await secretStore.lastAuthenticationUI == .fail)
+  }
+
+  @Test
+  func testSecretReadDoesNotBlockStatusSnapshot() async throws {
+    let secretStore = SuspendingTunnelSecretStore(secret: "super-secret")
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: OpenAITunnelCommandRunner(),
       processManager: TestOpenAITunnelProcessManager()
     )
@@ -275,12 +300,12 @@ final class OpenAITunnelSupervisorTests {
         configuration: GatewayConfiguration()
       )
     }
-    defer { adapter.resumeSecretRead() }
+    defer { Task { await secretStore.resumeSecretRead() } }
 
-    for _ in 0..<100 where !adapter.secretReadStarted {
+    for _ in 0..<100 where !(await secretStore.secretReadStarted) {
       try await Task.sleep(for: .milliseconds(10))
     }
-    #expect(adapter.secretReadStarted)
+    #expect(await secretStore.secretReadStarted)
 
     let completion = TunnelStatusCompletion()
     let statusTask = Task {
@@ -293,7 +318,7 @@ final class OpenAITunnelSupervisorTests {
     }
     let statusWasResponsive = completion.status
 
-    adapter.resumeSecretRead()
+    await secretStore.resumeSecretRead()
     _ = try await doctorTask.value
     _ = await statusTask.value
 
@@ -302,15 +327,15 @@ final class OpenAITunnelSupervisorTests {
 
   @Test
   func testAdapterErrorCannotLeakReferencedSecret() async throws {
-    let adapter = MemoryKeychainAdapter()
-    let secretStore = try KeychainSecretStore(adapter: adapter)
+    let secretStore = InMemoryTunnelSecretStore()
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
-    try secretStore.set("super-secret", for: reference)
+    try await secretStore.setAsynchronously("super-secret", for: reference)
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: ThrowingTunnelCommandRunner(),
       processManager: TestOpenAITunnelProcessManager()
     )
@@ -330,13 +355,14 @@ final class OpenAITunnelSupervisorTests {
 
   @Test
   func testStatusRefreshDetectsExitedTunnelProcess() async throws {
-    let secretStore = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
+    let secretStore = InMemoryTunnelSecretStore()
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: OpenAITunnelCommandRunner(),
       processManager: process
     )
@@ -352,13 +378,14 @@ final class OpenAITunnelSupervisorTests {
 
   @Test
   func testStartFailsClosedWhenProcessExitsDuringStabilization() async throws {
-    let secretStore = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
+    let secretStore = InMemoryTunnelSecretStore()
     let process = TestOpenAITunnelProcessManager(exitAfterReadCount: 2)
     let supervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: OpenAITunnelCommandRunner(),
       processManager: process,
       startupStabilityMilliseconds: 1
@@ -397,134 +424,6 @@ final class OpenAITunnelSupervisorTests {
   }
 }
 
-struct FixedOpenAITunnelClientResolver: OpenAITunnelClientResolving {
-  func resolve(
-    requestedPath: String?,
-    configuration: GatewayConfiguration
-  ) throws -> String {
-    "/fake/tunnel-client"
-  }
-}
-
-struct ExecutableOpenAITunnelClientResolver: OpenAITunnelClientResolving {
-  func resolve(
-    requestedPath: String?,
-    configuration: GatewayConfiguration
-  ) throws -> String {
-    "/bin/echo"
-  }
-}
-
-struct FixedOpenAITunnelHTTPProxyResolver: OpenAITunnelHTTPProxyResolving {
-  var value: String?
-
-  func systemHTTPProxy() -> String? {
-    value
-  }
-}
-
-struct FixedOpenAITunnelPlanBuilder: OpenAITunnelPlanBuilding {
-  func plan(
-    profile: OpenAITunnelConfiguration,
-    tunnelClientPath: String,
-    force: Bool
-  ) throws -> OpenAITunnelPlan {
-    let command = "computer-mcp serve stdio"
-    return OpenAITunnelPlan(
-      initInvocation: OpenAITunnelInvocation(
-        tunnelClient: tunnelClientPath,
-        arguments: ["init", "--tunnel-id", profile.tunnelID] + (force ? ["--force"] : []),
-        mcpCommand: command
-      ),
-      doctorInvocation: OpenAITunnelInvocation(
-        tunnelClient: tunnelClientPath,
-        arguments: ["doctor", "--profile", profile.tunnelClientProfile],
-        mcpCommand: command
-      ),
-      runInvocation: OpenAITunnelInvocation(
-        tunnelClient: tunnelClientPath,
-        arguments: ["run", "--profile", profile.tunnelClientProfile],
-        mcpCommand: command
-      )
-    )
-  }
-}
-
-final class OpenAITunnelCommandRunner: CommandRunning, @unchecked Sendable {
-  private let output: String
-  private let exitCode: Int32
-  private let exitCodesByCommand: [String: Int32]
-  private let lock = NSLock()
-  private var environment: [String: String] = [:]
-  private var arguments: [String] = []
-  private var argumentsHistory: [[String]] = []
-
-  init(
-    output: String = "ok",
-    exitCode: Int32 = 0,
-    exitCodesByCommand: [String: Int32] = [:]
-  ) {
-    self.output = output
-    self.exitCode = exitCode
-    self.exitCodesByCommand = exitCodesByCommand
-  }
-
-  var lastEnvironment: [String: String] {
-    lock.lock()
-    defer { lock.unlock() }
-    return environment
-  }
-
-  var lastArguments: [String] {
-    lock.lock()
-    defer { lock.unlock() }
-    return arguments
-  }
-
-  var allArguments: [[String]] {
-    lock.lock()
-    defer { lock.unlock() }
-    return argumentsHistory
-  }
-
-  func run(
-    executable: String,
-    arguments: [String],
-    workingDirectory: URL?,
-    environment: [String: String],
-    timeoutMilliseconds: Int,
-    maxOutputBytes: Int
-  ) throws -> CommandResult {
-    lock.lock()
-    self.environment = environment
-    self.arguments = arguments
-    argumentsHistory.append(arguments)
-    lock.unlock()
-    let effectiveExitCode = arguments.first.flatMap { exitCodesByCommand[$0] } ?? exitCode
-    return CommandResult(
-      executable: executable,
-      arguments: arguments,
-      exitCode: effectiveExitCode,
-      timedOut: false,
-      stdout: output,
-      stderr: "",
-      stdoutTruncated: false,
-      stderrTruncated: false
-    )
-  }
-
-  func runData(
-    executable: String,
-    arguments: [String],
-    workingDirectory: URL?,
-    environment: [String: String],
-    timeoutMilliseconds: Int,
-    maxOutputBytes: Int
-  ) throws -> CommandDataResult {
-    fatalError("Unused by tunnel supervisor tests.")
-  }
-}
-
 private struct ThrowingTunnelCommandRunner: CommandRunning {
   func run(
     executable: String,
@@ -560,177 +459,62 @@ private enum TunnelAdapterTestError: Error, LocalizedError {
   }
 }
 
-final class TestOpenAITunnelProcessManager: OpenAITunnelProcessManaging, @unchecked Sendable {
-  private let output: String
-  private let lock = NSLock()
-  private var sessions = 0
-  private var environment: [String: String] = [:]
-  private var arguments: [String] = []
-  private var cancelled: [String] = []
-  private var running = true
-  private var exitCode: Int32?
-  private var readCount = 0
-  private let exitAfterReadCount: Int?
+private actor InMemoryTunnelSecretStore: SecretStore {
+  private var values: [SecretReference: String] = [:]
+  private(set) var lastAuthenticationUI: KeychainAuthenticationUI?
 
-  init(output: String = "", exitAfterReadCount: Int? = nil) {
-    self.output = output
-    self.exitAfterReadCount = exitAfterReadCount
+  func setAsynchronously(_ secret: String, for reference: SecretReference) async throws {
+    values[reference] = secret
   }
 
-  var spawnCount: Int {
-    lock.lock()
-    defer { lock.unlock() }
-    return sessions
+  func valueAsynchronously(
+    for reference: SecretReference, authenticationUI: KeychainAuthenticationUI
+  ) async throws -> String? {
+    lastAuthenticationUI = authenticationUI
+    return values[reference]
   }
 
-  var lastEnvironment: [String: String] {
-    lock.lock()
-    defer { lock.unlock() }
-    return environment
+  func containsAsynchronously(
+    _ reference: SecretReference, authenticationUI: KeychainAuthenticationUI
+  ) async throws -> Bool {
+    values[reference] != nil
   }
 
-  var lastArguments: [String] {
-    lock.lock()
-    defer { lock.unlock() }
-    return arguments
-  }
-
-  var cancelledSessionIDs: [String] {
-    lock.lock()
-    defer { lock.unlock() }
-    return cancelled
-  }
-
-  func finish(exitCode: Int32) {
-    lock.lock()
-    running = false
-    self.exitCode = exitCode
-    lock.unlock()
-  }
-
-  func spawn(
-    executable: String,
-    arguments: [String],
-    environment: [String: String],
-    maxOutputBytes: Int
-  ) throws -> String {
-    lock.lock()
-    sessions += 1
-    self.environment = environment
-    self.arguments = arguments
-    running = true
-    exitCode = nil
-    readCount = 0
-    let id = "session-\(sessions)"
-    lock.unlock()
-    return id
-  }
-
-  func read(
-    sessionID: String,
-    stdoutCursor: Int64,
-    stderrCursor: Int64,
-    maxReadBytes: Int
-  ) throws -> ShellSessionSnapshot {
-    lock.lock()
-    readCount += 1
-    if let exitAfterReadCount, readCount >= exitAfterReadCount {
-      running = false
-      exitCode = 7
-    }
-    let isRunning = running
-    let exitCode = exitCode
-    lock.unlock()
-    let data = Data(output.utf8)
-    let pageData = data.dropFirst(min(Int(stdoutCursor), data.count))
-      .prefix(maxReadBytes)
-    return ShellSessionSnapshot(
-      sessionID: sessionID,
-      processID: 42,
-      isRunning: isRunning,
-      exitCode: exitCode,
-      signal: nil,
-      timedOut: false,
-      cancelled: false,
-      startedAt: Date(timeIntervalSince1970: 1_000),
-      finishedAt: nil,
-      launchError: nil,
-      streamErrors: [],
-      stdout: ShellStreamRead(
-        requestedCursor: stdoutCursor,
-        startCursor: stdoutCursor,
-        nextCursor: stdoutCursor + Int64(pageData.count),
-        endCursor: Int64(data.count),
-        missedBytes: false,
-        truncated: false,
-        encoding: .utf8,
-        text: String(decoding: pageData, as: UTF8.self),
-        base64: nil
-      ),
-      stderr: ShellStreamRead(
-        requestedCursor: stderrCursor,
-        startCursor: stderrCursor,
-        nextCursor: stderrCursor,
-        endCursor: stderrCursor,
-        missedBytes: false,
-        truncated: false,
-        encoding: .utf8,
-        text: "",
-        base64: nil
-      )
-    )
-  }
-
-  func cancel(sessionID: String) throws {
-    lock.lock()
-    cancelled.append(sessionID)
-    if running {
-      exitCode = 0
-    }
-    running = false
-    lock.unlock()
+  func deleteAsynchronously(_ reference: SecretReference) async throws {
+    values[reference] = nil
   }
 }
 
-private final class BlockingTunnelKeychainAdapter: KeychainAdapter, @unchecked Sendable {
-  private let secret: Data
-  private let lock = NSLock()
-  private let resumeSemaphore = DispatchSemaphore(value: 0)
-  private var started = false
-  private var resumed = false
+private actor SuspendingTunnelSecretStore: SecretStore {
+  private let secret: String
+  private var readContinuation: CheckedContinuation<String?, Never>?
+  private(set) var secretReadStarted = false
 
   init(secret: String) {
-    self.secret = Data(secret.utf8)
-  }
-
-  var secretReadStarted: Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return started
+    self.secret = secret
   }
 
   func resumeSecretRead() {
-    lock.lock()
-    guard !resumed else {
-      lock.unlock()
-      return
+    readContinuation?.resume(returning: secret)
+    readContinuation = nil
+  }
+
+  func setAsynchronously(_ secret: String, for reference: SecretReference) async throws {}
+
+  func valueAsynchronously(
+    for reference: SecretReference, authenticationUI: KeychainAuthenticationUI
+  ) async throws -> String? {
+    await withCheckedContinuation {
+      secretReadStarted = true
+      readContinuation = $0
     }
-    resumed = true
-    lock.unlock()
-    resumeSemaphore.signal()
   }
 
-  func set(service: String, account: String, data: Data) throws {}
+  func containsAsynchronously(
+    _ reference: SecretReference, authenticationUI: KeychainAuthenticationUI
+  ) async throws -> Bool { true }
 
-  func get(service: String, account: String) throws -> Data? {
-    lock.lock()
-    started = true
-    lock.unlock()
-    _ = resumeSemaphore.wait(timeout: .now() + 5)
-    return secret
-  }
-
-  func delete(service: String, account: String) throws {}
+  func deleteAsynchronously(_ reference: SecretReference) async throws {}
 }
 
 private final class TunnelStatusCompletion: @unchecked Sendable {

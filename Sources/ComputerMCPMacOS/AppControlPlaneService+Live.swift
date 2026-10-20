@@ -1,6 +1,7 @@
 import ComputerMCP
 import ComputerMCPPersistence
 import ComputerMCPPlatformDarwin
+import ComputerMCPTunnels
 import Foundation
 
 extension AppControlPlaneService {
@@ -26,7 +27,8 @@ extension AppControlPlaneService {
     )
     let platform = MacOSPlatform.services
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
-      secretStore: secretStore, executableSearchDirectories: platform.executableSearchDirectories)
+      secretStore: secretStore, executableSearchDirectories: platform.executableSearchDirectories,
+      proxyResolver: SystemNetworkProxyResolver())
     if !FileManager.default.fileExists(atPath: resolvedDirectories.manifest.path) {
       _ = try manifestStore.activate(manifest: defaultManifest)
     }

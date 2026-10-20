@@ -5,6 +5,7 @@ import ComputerMCPMacOS
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPProcess
+import ComputerMCPTunnels
 import Foundation
 
 @MainActor

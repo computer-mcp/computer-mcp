@@ -1,5 +1,6 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPTunnels
 import Darwin
 import Foundation
 import Testing
@@ -27,7 +28,9 @@ struct GatewaySocketPrincipalLifecycleTests {
       directories: directories, database: database, manifestStore: manifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories),
+        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
+      ),
       platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
     let script = root.appendingPathComponent("fixture.py")
     try Data(Self.server.utf8).write(to: script)

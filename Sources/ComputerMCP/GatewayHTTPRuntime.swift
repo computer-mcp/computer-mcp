@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPTransport
+import ComputerMCPTunnels
 import CryptoKit
 import Foundation
 import Logging
@@ -66,7 +67,7 @@ package struct GatewayHTTPControlConfiguration: Sendable {
   }
 }
 
-internal final class GatewayHTTPRuntime: @unchecked Sendable {
+internal final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable {
   private let configuration: GatewayConfiguration
   private let host: String
   private let port: Int
@@ -128,7 +129,7 @@ internal final class GatewayHTTPRuntime: @unchecked Sendable {
     await app.waitUntilClosed()
   }
 
-  internal func stop() async {
+  package func stop() async {
     await app.stop()
   }
 

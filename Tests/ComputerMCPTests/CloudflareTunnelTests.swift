@@ -1,5 +1,6 @@
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPTunnels
 import Darwin
 import Foundation
 import Testing
@@ -743,6 +744,7 @@ private final class CloudflareControlPlaneFixture {
       executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
+      proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
       commandRunner: OpenAITunnelCommandRunner(),
       processManager: TestOpenAITunnelProcessManager()
     )

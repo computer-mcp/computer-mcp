@@ -4,10 +4,10 @@ import ComputerMCPPlatform
 import ComputerMCPProcess
 import Foundation
 
-internal struct OpenAITunnelInvocation: Codable, Equatable, Sendable {
-  internal var tunnelClient: String
-  internal var arguments: [String]
-  internal var mcpCommand: String
+package struct OpenAITunnelInvocation: Codable, Equatable, Sendable {
+  package var tunnelClient: String
+  package var arguments: [String]
+  package var mcpCommand: String
 
   private enum CodingKeys: String, CodingKey {
     case tunnelClient = "tunnel_client"
@@ -15,12 +15,21 @@ internal struct OpenAITunnelInvocation: Codable, Equatable, Sendable {
     case mcpCommand = "mcp_command"
   }
 
+  package init(
+    tunnelClient: String,
+    arguments: [String],
+    mcpCommand: String
+  ) {
+    self.tunnelClient = tunnelClient
+    self.arguments = arguments
+    self.mcpCommand = mcpCommand
+  }
 }
 
 package struct OpenAITunnelPlan: Codable, Equatable, Sendable {
-  internal var initInvocation: OpenAITunnelInvocation?
-  internal var doctorInvocation: OpenAITunnelInvocation
-  internal var runInvocation: OpenAITunnelInvocation
+  package var initInvocation: OpenAITunnelInvocation?
+  package var doctorInvocation: OpenAITunnelInvocation
+  package var runInvocation: OpenAITunnelInvocation
 
   private enum CodingKeys: String, CodingKey {
     case initInvocation = "init_invocation"
@@ -28,12 +37,21 @@ package struct OpenAITunnelPlan: Codable, Equatable, Sendable {
     case runInvocation = "run_invocation"
   }
 
+  package init(
+    initInvocation: OpenAITunnelInvocation?,
+    doctorInvocation: OpenAITunnelInvocation,
+    runInvocation: OpenAITunnelInvocation
+  ) {
+    self.initInvocation = initInvocation
+    self.doctorInvocation = doctorInvocation
+    self.runInvocation = runInvocation
+  }
 }
 
-internal struct ChatGPTProfileAudit: Codable, Equatable, Sendable {
-  internal var toolCount: Int
-  internal var readOnlyToolCount: Int
-  internal var writeCapableToolNames: [String]
+package struct ChatGPTProfileAudit: Codable, Equatable, Sendable {
+  package var toolCount: Int
+  package var readOnlyToolCount: Int
+  package var writeCapableToolNames: [String]
 
   private enum CodingKeys: String, CodingKey {
     case toolCount = "tool_count"
@@ -41,14 +59,23 @@ internal struct ChatGPTProfileAudit: Codable, Equatable, Sendable {
     case writeCapableToolNames = "write_capable_tool_names"
   }
 
+  package init(
+    toolCount: Int,
+    readOnlyToolCount: Int,
+    writeCapableToolNames: [String]
+  ) {
+    self.toolCount = toolCount
+    self.readOnlyToolCount = readOnlyToolCount
+    self.writeCapableToolNames = writeCapableToolNames
+  }
 }
 
-internal enum ChatGPTProfileAuditError: Error, LocalizedError, Equatable {
+package enum ChatGPTProfileAuditError: Error, LocalizedError, Equatable {
   case noTools
   case missingReadOnlyAnnotations([String])
   case writeToolsRequireExplicitOptIn([String])
 
-  internal var errorDescription: String? {
+  package var errorDescription: String? {
     switch self {
     case .noTools:
       return "ChatGPT tunnel profile exposes no MCP tools."
@@ -59,44 +86,6 @@ internal enum ChatGPTProfileAuditError: Error, LocalizedError, Equatable {
       return
         "ChatGPT Pro supports read/fetch MCP access only. These tools are not read-only: \(names.joined(separator: ", ")). Use a read-only profile, or pass --allow-write-tools only for an eligible Business, Enterprise, or Edu workspace."
     }
-  }
-}
-
-internal struct ChatGPTProfileAuditor: Sendable {
-  internal func audit(
-    configuration: GatewayConfiguration,
-    registry: any GatewayToolServing,
-    allowWriteTools: Bool
-  ) throws -> ChatGPTProfileAudit {
-    // Profile auditing inventories the host catalog outside any caller invocation.
-    let tools = try GatewayMCPToolSurface(registry: registry).listTools(context: .empty)
-    guard !tools.isEmpty else {
-      throw ChatGPTProfileAuditError.noTools
-    }
-
-    let missingAnnotations =
-      tools
-      .filter { $0.annotations?.readOnlyHint == nil }
-      .map(\.name)
-      .sorted()
-    guard missingAnnotations.isEmpty else {
-      throw ChatGPTProfileAuditError.missingReadOnlyAnnotations(missingAnnotations)
-    }
-
-    let writeCapable =
-      tools
-      .filter { $0.annotations?.readOnlyHint != true }
-      .map(\.name)
-      .sorted()
-    if !allowWriteTools, !writeCapable.isEmpty {
-      throw ChatGPTProfileAuditError.writeToolsRequireExplicitOptIn(writeCapable)
-    }
-
-    return ChatGPTProfileAudit(
-      toolCount: tools.count,
-      readOnlyToolCount: tools.count - writeCapable.count,
-      writeCapableToolNames: writeCapable
-    )
   }
 }
 

@@ -199,13 +199,13 @@
     "^MCPRegistration": "ComputerMCPControlPlane",
     "^MCPRuntimeAdapter": "ComputerMCPGateway",
     "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
-    "^(OpenAITunnel|CloudflareTunnel)": "ComputerMCPTunnels",
     "^GatewayDatabase": "ComputerMCPGateway",
     "^DefaultGatewayConfiguration\\+macOS": "ComputerMCPMacOS",
     "^ManifestFile": "ComputerMCPControlPlane",
     "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|HTTPClientControlRegistry|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane",
     "^(MCPTool(Risk|AccessPolicy)|ComputerMCPProductContracts|GatewayToolCounts)": "ComputerMCPCore",
-    "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway"
+    "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway",
+    "^(ChatGPTProfileAuditor|CloudflareTunnel)": "ComputerMCPControlPlane"
   },
   "cuts": [
     "AppControlPlaneService->ComputerUseService",
@@ -213,7 +213,6 @@
     "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
     "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
     "BundledPluginDistribution->PluginArchiveDirectory",
-    "CloudflareRuntimeState->GatewayHTTPRuntime",
     "ControlToolResponse->AppControlPlaneServiceError",
     "GatewayHTTPApp->AppControlPlaneServiceError",
     "GatewayRuntime->ComputerUseGatewayProviderError",
@@ -224,7 +223,6 @@
     "MCPConnectionPool->KeychainSecretStore",
     "MCPProxyClient->KeychainSecretStore",
     "MCPProxyConnection->KeychainSecretStore",
-    "OpenAITunnelSupervisor->KeychainSecretStore",
     "PluginArchivePreparation->PluginArchiveDirectory",
     "PluginArchiveSnapshot->PluginArchiveDirectory",
     "PluginArchiveWorker->PluginArchiveExtractor",
@@ -312,7 +310,6 @@
     "MCPUpstreamCancellationTests.swift": "ComputerMCPGatewayTests",
     "MCPWorkspaceTests.swift": "ComputerMCPGatewayTests",
     "NativeCLITreeIntegrationTests.swift": "ComputerMCPGatewayTests",
-    "OpenAITunnelSupervisorTests.swift": "ComputerMCPTunnelsTests",
     "OperationApprovalPreviewTests.swift": "ComputerMCPGatewayTests",
     "OperationProviderBindingTests.swift": "ComputerMCPGatewayTests",
     "OperationStateScopeTests.swift": "ComputerMCPGatewayTests",
@@ -333,7 +330,6 @@
     "StandaloneToolCommandTests.swift": "ComputerMCPControlPlaneTests",
     "StaticPluginCatalogHTTPTests.swift": "ComputerMCPPluginsTests",
     "StaticPluginCatalogTests.swift": "ComputerMCPPluginsTests",
-    "SystemNetworkProxySettingsTests.swift": "ComputerMCPTunnelsTests",
     "TestFixtures.swift": "ComputerMCPGatewayTests",
     "VerificationScriptDependencyTests.swift": "ComputerMCPControlPlaneTests",
     "WorkspaceRepairTests.swift": "ComputerMCPGatewayTests"

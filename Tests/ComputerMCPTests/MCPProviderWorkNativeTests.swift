@@ -28,7 +28,8 @@ struct MCPProviderWorkNativeTests {
         platform: MacOSPlatform.services, plugins: [],
         bundledPlugins: .init(packages: [], issues: []))
       do {
-        _ = try await runtime.callToolAsync(name: "fixture.start", arguments: .object([:]))
+        _ = try await runtime.callToolAsync(
+          name: "fixture.start", arguments: .object([:]), context: .empty)
         try await wait { runtime.ownedWork.snapshot.contains { $0.kind == .mcpResource } }
         let native = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
         let generic = JSONValue.object([
@@ -62,15 +63,18 @@ struct MCPProviderWorkNativeTests {
         #expect(
           try runtime.continuationLookup(
             name: "workspace.list", arguments: nil, workspaceID: "fixture") == nil)
-        let inspected = try await runtime.callToolAsync(name: "fixture.inspect", arguments: native)
+        let inspected = try await runtime.callToolAsync(
+          name: "fixture.inspect", arguments: native, context: .empty)
         #expect(
           inspected.objectValue?["structuredContent"]?.objectValue?["call_count"] == .integer(2))
-        _ = try await runtime.callToolAsync(name: "fixture.finish", arguments: .object([:]))
+        _ = try await runtime.callToolAsync(
+          name: "fixture.finish", arguments: .object([:]), context: .empty)
         try await wait { runtime.ownedWork.snapshot.isEmpty }
         let retirement = try #require(runtime.beginRetirementIfDrained())
         await retirement.value
         await #expect(throws: GatewayToolError.self) {
-          try await runtime.callToolAsync(name: "fixture.start", arguments: .object([:]))
+          try await runtime.callToolAsync(
+            name: "fixture.start", arguments: .object([:]), context: .empty)
         }
       } catch {
         await runtime.shutdown()
@@ -101,22 +105,20 @@ struct MCPProviderWorkNativeTests {
       }
       let current = NIOLockedValueBox(policy(true))
       let authorized = AuthorizedMCPClient(
-        base: client, policy: policy(true), policyProvider: { current.withLockedValue { $0 } })
+        base: client, policy: policy(true), policyProvider: { _ in current.withLockedValue { $0 } })
       // The policy's selected tools do not change the already-connected transport config.
-      let result = try await MCPContinuationTarget.$current.withValue(target) {
-        try await authorized.callToolAsync(
-          server: server, name: "inspect", arguments: arguments, requestID: nil)
-      }
+      let result = try await authorized.callToolAsync(
+        server: server, name: "inspect", arguments: arguments, requestID: nil,
+        context: .init(continuation: target))
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["pid"] == started.objectValue?["pid"]
       )
       let revoked = policy(false)
       current.withLockedValue { $0 = revoked }
       await #expect(throws: GatewayToolError.self) {
-        try await MCPContinuationTarget.$current.withValue(target) {
-          try await authorized.callToolAsync(
-            server: server, name: "inspect", arguments: arguments, requestID: nil)
-        }
+        try await authorized.callToolAsync(
+          server: server, name: "inspect", arguments: arguments, requestID: nil,
+          context: .init(continuation: target))
       }
       _ = try await call(client, server, "finish")
       try await wait { work.snapshot.isEmpty }
@@ -126,15 +128,13 @@ struct MCPProviderWorkNativeTests {
       #expect(target.connectionID == next.connectionID && target.instanceID == next.instanceID)
       #expect(target.resources != next.resources)
       await #expect(throws: GatewayToolError.self) {
-        try await MCPContinuationTarget.$current.withValue(target) {
-          try await client.callToolAsync(
-            server: server, name: "inspect", arguments: arguments, requestID: nil)
-        }
-      }
-      let inspected = try await MCPContinuationTarget.$current.withValue(next) {
         try await client.callToolAsync(
-          server: server, name: "inspect", arguments: arguments, requestID: nil)
+          server: server, name: "inspect", arguments: arguments, requestID: nil,
+          context: .init(continuation: target))
       }
+      let inspected = try await client.callToolAsync(
+        server: server, name: "inspect", arguments: arguments, requestID: nil,
+        context: .init(continuation: next))
       #expect(
         inspected.objectValue?["structuredContent"]?.objectValue?["call_count"] == .integer(5))
       #expect(
@@ -142,6 +142,167 @@ struct MCPProviderWorkNativeTests {
           == started.objectValue?["pid"])
       _ = try await call(client, server, "finish")
       try await wait { work.snapshot.isEmpty }
+    }
+  }
+
+  @Test(arguments: ["status", "events", "requests", "cancel"])
+  func existingConnectionRevalidatesSelectedOwnerInsideDetachedBridge(operation: String)
+    async throws
+  {
+    try await withProvider { client, server, work in
+      let started = try await call(client, server, "start")
+      try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
+      var selected = try continuationTarget(
+        work, server: server, arguments: .object(["handle": .integer(9_007_199_254_740_993)]))
+      selected.selectedOwnershipID = UUID()
+      let context = InvocationContext(continuation: selected)
+      let blocking = BlockingOperationExecutor(label: "selected-owner-test")
+      do {
+        _ = try await blocking.perform {
+          switch operation {
+          case "status": return try client.connectionStatus(server: server, context: context)
+          case "events":
+            return try client.readEvents(
+              server: server, afterCursor: 0, maxResults: 10, context: context)
+          case "requests": return try client.activeRequests(server: server, context: context)
+          default:
+            return try client.cancelRequest(
+              server: server, requestID: "unknown", reason: nil, context: context)
+          }
+        }
+        Issue.record("A nonexistent selected owner reached an existing connection operation.")
+      } catch {
+        #expect(error.localizedDescription.contains("mcp.continuation_unavailable"))
+      }
+      let inspected = try await call(client, server, "inspect")
+      #expect(inspected.objectValue?["pid"] == started.objectValue?["pid"])
+      _ = try await call(client, server, "finish")
+      try await wait { work.snapshot.isEmpty }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func directRegistryRejectsAStaleContinuationWithoutDiscoveryOrReplacement(
+    asynchronous: Bool
+  ) async throws {
+    try await withProvider { client, original, _ in
+      var server = original
+      server.exposure = .reexport
+      server.prefix = "fixture"
+      server.allowedTools = ["inspect"]
+      server.toolRisks = ["inspect": .readOnly]
+      let script = try #require(server.args.first)
+      let root = URL(fileURLWithPath: script).deletingLastPathComponent()
+      let registry = GatewayToolRegistry(
+        configuration: .init(mcp: .init(servers: [server]), workspaceDirectory: root),
+        mcpClient: client)
+      let selected = MCPContinuationTarget(
+        workspaceID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
+        connectionID: UUID(), instanceID: UUID(), resources: [:])
+      let context = InvocationContext(continuation: selected)
+      let blocking = BlockingOperationExecutor(label: "registry-selected-connection-test")
+      do {
+        _ = try await blocking.perform { try registry.listTools(context: .empty) }
+        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let discoveries = try String(
+          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+        do {
+          if asynchronous {
+            _ = try await registry.callToolAsync(
+              name: "fixture.inspect", arguments: .object([:]), context: context)
+          } else {
+            _ = try await blocking.perform {
+              try registry.callTool(
+                name: "fixture.inspect", arguments: .object([:]), context: context)
+            }
+          }
+          Issue.record("Registry execution accepted an unavailable selected connection.")
+        } catch {
+          #expect(error.localizedDescription.contains("mcp.continuation_unavailable"))
+        }
+        #expect(starts == "started\n")
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+            == discoveries)
+        #expect(
+          try registry.mcpClient.connectionStatus(server: server, context: .empty).objectValue?[
+            "state"]
+            == .string("connected"))
+        await registry.shutdown()
+      } catch {
+        await registry.shutdown()
+        throw error
+      }
+    }
+  }
+
+  @Test(arguments: [false, true], ["fixture", ""])
+  func directRegistrySelectedReexportDoesNotStartAnotherRegistration(
+    asynchronous: Bool, prefix: String
+  ) async throws {
+    try await withProvider { client, original, work in
+      var server = original
+      server.exposure = .reexport
+      server.prefix = prefix
+      server.allowedTools = ["start", "inspect", "finish"]
+      server.toolRisks = ["start": .readOnly, "inspect": .readOnly, "finish": .readOnly]
+      var other = server
+      other.id = "other"
+      other.prefix = "other"
+      let script = try #require(server.args.first)
+      let root = URL(fileURLWithPath: script).deletingLastPathComponent()
+      var hostContext = MCPHostContext(
+        runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
+        workspaceID: "fixture", rootURL: root, readOnly: false)
+      hostContext.ownedWork = work
+      let registry = GatewayToolRegistry(
+        configuration: .init(mcp: .init(servers: [other, server]), workspaceDirectory: root),
+        mcpClient: client, hostContext: hostContext)
+      do {
+        let blocking = BlockingOperationExecutor(label: "registry-reexport-test")
+        _ = try await blocking.perform { try registry.listTools(context: .empty) }
+        let started = try await registry.mcpClient.callToolAsync(
+          server: server, name: "start", arguments: .object([:]), requestID: nil, context: .empty)
+        try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
+        let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
+        let target = try continuationTarget(work, server: server, arguments: arguments)
+        let context = InvocationContext(continuation: target)
+        let name = prefix.isEmpty ? "inspect" : "\(prefix).inspect"
+        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let discoveries = try String(
+          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+        let result: JSONValue
+        if asynchronous {
+          result = try await registry.callToolAsync(
+            name: name, arguments: arguments, context: context)
+        } else {
+          result = try await blocking.perform {
+            try registry.callTool(name: name, arguments: arguments, context: context)
+          }
+        }
+        #expect(result.objectValue?["isError"] != .bool(true))
+        #expect(
+          result.objectValue?["structuredContent"]?.objectValue?["pid"]
+            == started.objectValue?["structuredContent"]?.objectValue?["pid"])
+        #expect(
+          try registry.mcpClient.connectionStatus(server: other, context: .empty).objectValue?[
+            "state"] == .string("connected"))
+        #expect(starts == "started\nstarted\n")
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+        #expect(
+          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+            == discoveries)
+        _ = try await registry.mcpClient.callToolAsync(
+          server: server, name: "finish", arguments: .object([:]), requestID: nil, context: .empty)
+        try await wait { work.snapshot.isEmpty }
+        await registry.shutdown()
+      } catch {
+        await registry.shutdown()
+        throw error
+      }
     }
   }
 
@@ -158,26 +319,22 @@ struct MCPProviderWorkNativeTests {
       let changed = replacement
       await #expect(throws: GatewayToolError.self) {
         try await blocking.perform {
-          try MCPContinuationTarget.$current.withValue(target) {
-            try client.listTools(server: changed)
-          }
+          try client.listTools(server: changed, context: .init(continuation: target))
         }
       }
       let unchanged = try await call(client, server, "inspect")
       #expect(unchanged.objectValue?["pid"] == started.objectValue?["pid"])
       try await withProvider { other, otherServer, _ in
         await #expect(throws: GatewayToolError.self) {
-          try await MCPContinuationTarget.$current.withValue(target) {
-            try await other.callToolAsync(
-              server: otherServer, name: "inspect", arguments: arguments, requestID: nil)
-          }
+          try await other.callToolAsync(
+            server: otherServer, name: "inspect", arguments: arguments, requestID: nil,
+            context: .init(continuation: target))
         }
         await #expect(throws: GatewayToolError.self) {
           try await blocking.perform {
-            try MCPContinuationTarget.$current.withValue(target) {
-              try other.startToolCall(
-                server: otherServer, name: "inspect", arguments: arguments, requestID: "detached")
-            }
+            try other.startToolCall(
+              server: otherServer, name: "inspect", arguments: arguments, requestID: "detached",
+              context: .init(continuation: target))
           }
         }
         let script = try #require(otherServer.args.first)
@@ -290,7 +447,8 @@ struct MCPProviderWorkNativeTests {
   {
     let result = try await client.callToolAsync(
       server: server, name: name,
-      arguments: .object(["acquired_by": .string("caller-forged")]), requestID: nil)
+      arguments: .object(["acquired_by": .string("caller-forged")]), requestID: nil, context: .empty
+    )
     return result.objectValue?["structuredContent"] ?? .null
   }
 
@@ -331,6 +489,8 @@ struct MCPProviderWorkNativeTests {
         if method == "initialize":
             result = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "work-fixture", "version": "1"}}
         elif method == "tools/list":
+            with open(os.path.join(os.path.dirname(__file__), "discoveries"), "a") as marker:
+                marker.write("listed\n")
             result = {"tools": [{"name": name, "inputSchema": {"type": "object"}, "_meta": {"io.github.computer-mcp/work": {"format_version": 1, "uri": uri}}} for name in names]}
             for tool in result["tools"]:
                 if tool["name"] == "inspect":

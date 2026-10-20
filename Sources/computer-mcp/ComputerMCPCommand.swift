@@ -265,7 +265,7 @@ struct ToolsList: AsyncParsableCommand {
     }
     printJSON(
       try await withStandaloneToolSurface(connection) { surface in
-        .object(["tools": .array(try surface.listTools().map(\.json))])
+        .object(["tools": .array(try surface.listTools(context: .empty).map(\.json))])
       })
   }
 }
@@ -288,7 +288,8 @@ struct ToolsInspect: AsyncParsableCommand {
     }
     printJSON(
       try await withStandaloneToolSurface(connection) { surface in
-        guard let tool = try surface.listTools().first(where: { $0.name == name }) else {
+        guard let tool = try surface.listTools(context: .empty).first(where: { $0.name == name })
+        else {
           throw ValidationError("Unknown tool: \(name)")
         }
         return tool.json
@@ -320,7 +321,7 @@ struct ToolsCall: AsyncParsableCommand {
       return
     }
     let result = try await withStandaloneToolSurface(connection) { surface in
-      try await surface.callToolAsync(name: name, arguments: arguments)
+      try await surface.callToolAsync(name: name, arguments: arguments, context: .empty)
     }
     printJSON(result)
     if result.objectValue?["isError"]?.boolValue == true { throw ExitCode.failure }

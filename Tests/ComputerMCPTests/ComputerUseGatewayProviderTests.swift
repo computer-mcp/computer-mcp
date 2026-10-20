@@ -88,7 +88,8 @@ final class ComputerUseGatewayProviderTests {
     )
     let provider = ComputerUseGatewayProvider(service: ComputerUseService(adapter: adapter))
 
-    let response = try provider.callTool(name: "computer.permissions", arguments: nil)
+    let response = try provider.callTool(
+      .init(name: "computer.permissions", arguments: nil, context: .empty))
     let result = structuredResult(response)
 
     #expect((result.objectValue?["accessibility"]) == (.string("granted")))
@@ -109,9 +110,10 @@ final class ComputerUseGatewayProviderTests {
 
     expectThrows(
       try provider.callTool(
-        name: "computer.accessibility.action",
-        arguments: .object([:])
-      )
+        .init(
+          name: "computer.accessibility.action",
+          arguments: .object([:]), context: .empty
+        ))
     ) { error in
       #expect(
         (error as? ComputerUseGatewayProviderError)
@@ -144,9 +146,10 @@ final class ComputerUseGatewayProviderTests {
     ])
 
     let response = try await provider.callToolAsync(
-      name: "computer.screenshot",
-      arguments: arguments
-    )
+      .init(
+        name: "computer.screenshot",
+        arguments: arguments, context: .empty
+      ))
     let result = structuredResult(response)
     let content = response.objectValue?["content"]?.arrayValue
 
@@ -182,9 +185,10 @@ final class ComputerUseGatewayProviderTests {
 
     do {
       _ = try await provider.callToolAsync(
-        name: "computer.screenshot",
-        arguments: .object([:])
-      )
+        .init(
+          name: "computer.screenshot",
+          arguments: .object([:]), context: .empty
+        ))
       Issue.record("Expected screenshot permission failure.")
     } catch {
       guard let providerError = error as? ComputerUseGatewayProviderError else {
@@ -204,9 +208,10 @@ final class ComputerUseGatewayProviderTests {
     let provider = ComputerUseGatewayProvider(service: ComputerUseService(adapter: adapter))
 
     let response = try provider.callTool(
-      name: "computer.pointer.position",
-      arguments: .object([:])
-    )
+      .init(
+        name: "computer.pointer.position",
+        arguments: .object([:]), context: .empty
+      ))
 
     #expect(
       (structuredResult(response))
@@ -226,14 +231,15 @@ final class ComputerUseGatewayProviderTests {
     let point = ComputerUsePoint(x: 125, y: 250)
 
     let response = try provider.callTool(
-      name: "computer.pointer.move",
-      arguments: .object([
-        "point": .object([
-          "x": .number(point.x),
-          "y": .number(point.y),
-        ])
-      ])
-    )
+      .init(
+        name: "computer.pointer.move",
+        arguments: .object([
+          "point": .object([
+            "x": .number(point.x),
+            "y": .number(point.y),
+          ])
+        ]), context: .empty
+      ))
 
     #expect((structuredResult(response).objectValue?["action"]) == (.string("pointer.move")))
     #expect(
@@ -263,12 +269,13 @@ final class ComputerUseGatewayProviderTests {
     let provider = ComputerUseGatewayProvider(service: ComputerUseService(adapter: adapter))
 
     let response = try provider.callTool(
-      name: "computer.accessibility.query",
-      arguments: .object([
-        "process_id": .number(42),
-        "role": .string("AXButton"),
-      ])
-    )
+      .init(
+        name: "computer.accessibility.query",
+        arguments: .object([
+          "process_id": .number(42),
+          "role": .string("AXButton"),
+        ]), context: .empty
+      ))
     let observations = structuredResult(response).arrayValue
 
     #expect((observations?.count) == (1))
@@ -295,19 +302,20 @@ final class ComputerUseGatewayProviderTests {
     )
 
     _ = try provider.callTool(
-      name: "computer.windows",
-      arguments: .object([
-        "on_screen_only": .bool(false),
-        "exclude_desktop_elements": .bool(false),
-        "max_results": .number(5),
-        "owner_process_id": .number(1_433),
-        "owner_name_contains": .string("Safari"),
-        "title_contains": .string("ChatGPT"),
-        "layer": .number(0),
-        "minimum_alpha": .number(0.5),
-        "case_sensitive": .bool(true),
-      ])
-    )
+      .init(
+        name: "computer.windows",
+        arguments: .object([
+          "on_screen_only": .bool(false),
+          "exclude_desktop_elements": .bool(false),
+          "max_results": .number(5),
+          "owner_process_id": .number(1_433),
+          "owner_name_contains": .string("Safari"),
+          "title_contains": .string("ChatGPT"),
+          "layer": .number(0),
+          "minimum_alpha": .number(0.5),
+          "case_sensitive": .bool(true),
+        ]), context: .empty
+      ))
 
     #expect(
       (adapter.calls)
@@ -324,22 +332,23 @@ final class ComputerUseGatewayProviderTests {
     let provider = ComputerUseGatewayProvider(service: ComputerUseService(adapter: adapter))
 
     let response = try provider.callTool(
-      name: "computer.verify",
-      arguments: .object([
-        "verification": .object([
-          "type": .string("pointer-position"),
-          "point": .object([
-            "x": .number(10),
-            "y": .number(20),
+      .init(
+        name: "computer.verify",
+        arguments: .object([
+          "verification": .object([
+            "type": .string("pointer-position"),
+            "point": .object([
+              "x": .number(10),
+              "y": .number(20),
+            ]),
+            "tolerance": .number(0),
           ]),
-          "tolerance": .number(0),
-        ]),
-        "policy": .object([
-          "timeout_milliseconds": .number(0),
-          "poll_interval_milliseconds": .number(1),
-        ]),
-      ])
-    )
+          "policy": .object([
+            "timeout_milliseconds": .number(0),
+            "poll_interval_milliseconds": .number(1),
+          ]),
+        ]), context: .empty
+      ))
     let result = structuredResult(response)
 
     #expect((result.objectValue?["attempts"]) == (.number(1)))
@@ -357,9 +366,10 @@ final class ComputerUseGatewayProviderTests {
 
     expectThrows(
       try provider.callTool(
-        name: "computer.pointer.click",
-        arguments: .object(["button": .string("primary")])
-      )
+        .init(
+          name: "computer.pointer.click",
+          arguments: .object(["button": .string("primary")]), context: .empty
+        ))
     ) { error in
       guard let providerError = error as? ComputerUseGatewayProviderError else {
         Issue.record("Unexpected error: \(error)")

@@ -279,34 +279,29 @@ struct GatewayControlSessionServing: GatewayAsyncToolServing {
   let base: any GatewayAsyncToolServing
   let session: GatewayControlSession
 
-  func listToolsAsync() async throws -> [MCPTool] {
-    try await GatewaySessionScope.$current.withValue(session) {
-      try await base.listToolsAsync()
-    }
+  func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
+    try await base.listToolsAsync(context: sessionContext(context))
   }
 
-  func refreshTools() async throws {
-    try await GatewaySessionScope.$current.withValue(session) {
-      try await base.refreshTools()
-    }
+  func refreshTools(context: InvocationContext) async throws {
+    try await base.refreshTools(context: sessionContext(context))
   }
 
-  func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try await GatewaySessionScope.$current.withValue(session) {
-      try await base.callToolAsync(name: name, arguments: arguments)
-    }
+  func callToolAsync(name: String, arguments: JSONValue?, context: InvocationContext)
+    async throws -> JSONValue
+  {
+    try await base.callToolAsync(name: name, arguments: arguments, context: sessionContext(context))
   }
 
-  func callToolForMCPAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try await GatewaySessionScope.$current.withValue(session) {
-      try await base.callToolForMCPAsync(name: name, arguments: arguments)
-    }
+  func callToolForMCPAsync(name: String, arguments: JSONValue?, context: InvocationContext)
+    async throws -> JSONValue
+  {
+    try await base.callToolForMCPAsync(
+      name: name, arguments: arguments, context: sessionContext(context))
   }
 
-  func toolChanges() -> AsyncStream<Void> {
-    let sources = GatewaySessionScope.$current.withValue(session) {
-      [base.toolChanges(), session.changes.stream()]
-    }
+  func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
+    let sources = [base.toolChanges(context: sessionContext(context)), session.changes.stream()]
     let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let forwarding = Task {
       await withTaskGroup(of: Void.self) { group in
@@ -323,6 +318,10 @@ struct GatewayControlSessionServing: GatewayAsyncToolServing {
     }
     continuation.onTermination = { _ in forwarding.cancel() }
     return stream
+  }
+
+  private func sessionContext(_ context: InvocationContext) -> InvocationContext {
+    .init(admission: context.admission, session: session, continuation: context.continuation)
   }
 
   func shutdown() async { session.end() }

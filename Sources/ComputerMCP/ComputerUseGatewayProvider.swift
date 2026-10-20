@@ -57,14 +57,18 @@ package struct ComputerUseGatewayProvider: GatewayToolProvider, Sendable {
     toolDefinitions
   }
 
-  package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+  package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    let name = invocation.name
+    let arguments = invocation.arguments
     guard name != "computer.screenshot" && name != "computer.accessibility.action" else {
       throw ComputerUseGatewayProviderError.asyncToolRequired(name)
     }
     return try executeSync(name: name, arguments: arguments)
   }
 
-  package func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+  package func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    let name = invocation.name
+    let arguments = invocation.arguments
     if name == "computer.screenshot" {
       do {
         let input = try decode(ScreenshotArguments.self, arguments)

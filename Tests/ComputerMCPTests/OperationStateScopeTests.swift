@@ -46,7 +46,7 @@ struct OperationStateScopeTests {
         ? .object(["server": .string("external"), "tool": .string(tool), "arguments": input])
         : input
       do {
-        _ = try await runtime.callToolAsync(name: name, arguments: arguments)
+        _ = try await runtime.callToolAsync(name: name, arguments: arguments, context: .empty)
         Issue.record("Downstream dry_run must not bypass local approval.")
       } catch {
         #expect(error.localizedDescription.contains("operations.approval_required"))
@@ -56,7 +56,7 @@ struct OperationStateScopeTests {
         name: "operations.prepare",
         arguments: .object([
           "tool": .string(name), "arguments": arguments,
-        ]))
+        ]), context: .empty)
       let payload = try #require(
         prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
       let ticket = try #require(payload["ticket_id"]?.stringValue)
@@ -66,7 +66,7 @@ struct OperationStateScopeTests {
         name: "operations.commit",
         arguments: .object([
           "ticket_id": .string(ticket), "tool": .string(name), "arguments": arguments,
-        ]))
+        ]), context: .empty)
       #expect(client.callCount == 1)
       await runtime.shutdown()
     } catch {
@@ -109,7 +109,7 @@ struct OperationStateScopeTests {
         name: "operations.prepare",
         arguments: .object([
           "tool": .string(tool), "arguments": target,
-        ]))
+        ]), context: .empty)
       let payload = try #require(
         prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
       #expect(payload["state_digest"] == .null)
@@ -119,7 +119,7 @@ struct OperationStateScopeTests {
           name: "operations.prepare",
           arguments: .object([
             "tool": .string(tool), "arguments": target, "state_digest": .string("unverifiable"),
-          ]))
+          ]), context: .empty)
         Issue.record("A downstream operation claimed a local state binding.")
       } catch {
         #expect(error.localizedDescription.contains("operations.state_binding_unavailable"))
@@ -130,7 +130,7 @@ struct OperationStateScopeTests {
         name: "operations.commit",
         arguments: .object([
           "ticket_id": .string(ticketID), "tool": .string(tool), "arguments": target,
-        ]))
+        ]), context: .empty)
       #expect(result.objectValue?["isError"] != .bool(true))
       #expect(try database.operationTicket(id: ticketID)?.state == .succeeded)
       await runtime.shutdown()
@@ -161,27 +161,31 @@ struct OperationStateScopeTests {
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services)
     do {
-      #expect(try runtime.listTools().contains { $0.name == "file.read" })
+      #expect(try runtime.listTools(context: .empty).contains { $0.name == "file.read" })
       var revoked = try #require(database.profiles().first)
       revoked.workspaceIDs = []
       try database.saveProfile(revoked, expectedRevision: revoked.authorizationRevision)
-      #expect(try runtime.listTools().isEmpty)
+      #expect(try runtime.listTools(context: .empty).isEmpty)
       #expect(throws: (any Error).self) {
         try runtime.callTool(
-          name: "file.read", arguments: .object(["path": .string("private.txt")]))
+          name: "file.read", arguments: .object(["path": .string("private.txt")]), context: .empty)
       }
       var unbound = context
       unbound.workspaceID = nil
-      #expect(try runtime.listTools(context: unbound).contains { $0.name == "file.read" })
+      #expect(
+        try runtime.listTools(context: unbound, invocationContext: .empty).contains {
+          $0.name == "file.read"
+        })
       let list = try runtime.callTool(
-        name: "workspace.list", arguments: .object([:]), context: unbound)
+        name: "workspace.list", arguments: .object([:]), context: unbound, invocationContext: .empty
+      )
       #expect(
         list.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["workspaces"]
           == .array([]))
       #expect(throws: (any Error).self) {
         try runtime.callTool(
           name: "workspace.describe", arguments: .object(["workspace_id": .string("fixture")]),
-          context: unbound)
+          context: unbound, invocationContext: .empty)
       }
       await runtime.shutdown()
     } catch {
@@ -197,22 +201,34 @@ private final class StateScopeMCPClient: DownstreamMCPClient, Sendable {
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     ["mutate", "file.write", "archive.create"].map {
       MCPTool(
         name: $0, description: "Fixture mutation", inputSchema: .object(["type": .string("object")])
       )
     }
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     calls.withLockedValue { $0 += 1 }
     return .object(["content": .array([]), "isError": .bool(false)])
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

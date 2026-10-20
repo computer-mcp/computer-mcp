@@ -9,10 +9,11 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
     label: "computer-mcp.mcp-authorization-discovery", serial: false)
   let base: any DownstreamMCPClient
   let policy: MCPToolAccessPolicy
-  var policyProvider: (@Sendable () throws -> MCPToolAccessPolicy)? = nil
+  var policyProvider: (@Sendable ((any GatewaySessionAuthority)?) throws -> MCPToolAccessPolicy)? =
+    nil
 
-  private var currentPolicy: MCPToolAccessPolicy {
-    get throws { try policyProvider?() ?? policy }
+  private func currentPolicy(context: InvocationContext) throws -> MCPToolAccessPolicy {
+    try policyProvider?(context.session) ?? policy
   }
 
   func makeScopedClient(
@@ -29,169 +30,201 @@ struct AuthorizedMCPClient: DownstreamMCPClient {
   func toolChanges() -> AsyncStream<Void> { base.toolChanges() }
   func shutdown() async { await base.shutdown() }
 
-  func isServerVisible(_ server: MCPServerConfig) -> Bool {
-    (try? currentPolicy.isVisible(server)) ?? false
+  func isServerVisible(_ server: MCPServerConfig, context: InvocationContext) -> Bool {
+    (try? currentPolicy(context: context).isVisible(server)) ?? false
   }
 
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    let policy = try currentPolicy
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
+    let policy = try currentPolicy(context: context)
     guard policy.canDiscoverTools(on: server) else { return [] }
-    return try base.listTools(server: server).filter {
+    return try base.listTools(server: server, context: context).filter {
       let reference = MCPToolReference(serverID: server.id, toolName: $0.name)
       guard policy.allows(reference) else { return false }
       return try policy.allows(reference, riskFloor: $0.declaredRiskFloor)
     }
   }
 
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
-    try callTool(server: server, name: name, arguments: arguments, requestID: nil)
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
+    try callTool(server: server, name: name, arguments: arguments, requestID: nil, context: context)
   }
 
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?)
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
+    context: InvocationContext
+  )
     throws -> JSONValue
   {
-    try requireTool(name, server: server)
-    return try base.callTool(server: server, name: name, arguments: arguments, requestID: requestID)
+    try requireTool(name, server: server, context: context)
+    return try base.callTool(
+      server: server, name: name, arguments: arguments, requestID: requestID, context: context)
   }
 
-  func startToolCall(server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String)
+  func startToolCall(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String,
+    context: InvocationContext
+  )
     throws -> JSONValue
   {
-    try requireTool(name, server: server)
+    try requireTool(name, server: server, context: context)
     return try base.startToolCall(
-      server: server, name: name, arguments: arguments, requestID: requestID)
+      server: server, name: name, arguments: arguments, requestID: requestID, context: context)
   }
 
   func callToolAsync(
-    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
+    context: InvocationContext
   )
     async throws -> JSONValue
   {
     try Task.checkCancellation()
-    let authorization = MCPInvocationAdmission.current
-    let continuation = MCPContinuationTarget.current
-    let session = GatewaySessionScope.current
     try await Self.discovery.perform {
-      try MCPContinuationTarget.$current.withValue(continuation) {
-        try GatewaySessionScope.$current.withValue(session) {
-          try requireTool(name, server: server, authorization: authorization)
-        }
-      }
+      try requireTool(name, server: server, context: context)
     }
     try Task.checkCancellation()
     return try await base.callToolAsync(
-      server: server, name: name, arguments: arguments, requestID: requestID)
+      server: server, name: name, arguments: arguments, requestID: requestID, context: context)
   }
 
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.resources.list")
-    return try base.listResources(server: server, cursor: cursor)
-  }
-
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.resources.templates.list")
-    return try base.listResourceTemplates(server: server, cursor: cursor)
-  }
-
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.resources.read")
-    return try base.readResource(server: server, uri: uri)
-  }
-
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.prompts.list")
-    return try base.listPrompts(server: server, cursor: cursor)
-  }
-
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
     -> JSONValue
   {
-    try requireServer(server, capability: "mcp.prompts.get")
-    return try base.getPrompt(server: server, name: name, arguments: arguments)
+    try requireServer(server, capability: "mcp.resources.list", context: context)
+    return try base.listResources(server: server, cursor: cursor, context: context)
   }
 
-  func connectionStatus(server: MCPServerConfig) throws -> JSONValue {
-    guard isServerVisible(server) else { return .object(["state": .string("not_authorized")]) }
-    return try base.connectionStatus(server: server)
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  {
+    try requireServer(server, capability: "mcp.resources.templates.list", context: context)
+    return try base.listResourceTemplates(server: server, cursor: cursor, context: context)
   }
 
-  func closeConnection(server: MCPServerConfig) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.connections.close")
-    return try base.closeConnection(server: server)
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  {
+    try requireServer(server, capability: "mcp.resources.read", context: context)
+    return try base.readResource(server: server, uri: uri, context: context)
   }
 
-  func readEvents(server: MCPServerConfig, afterCursor: Int, maxResults: Int) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.events.read")
-    return try base.readEvents(server: server, afterCursor: afterCursor, maxResults: maxResults)
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  {
+    try requireServer(server, capability: "mcp.prompts.list", context: context)
+    return try base.listPrompts(server: server, cursor: cursor, context: context)
+  }
+
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
+    -> JSONValue
+  {
+    try requireServer(server, capability: "mcp.prompts.get", context: context)
+    return try base.getPrompt(server: server, name: name, arguments: arguments, context: context)
+  }
+
+  func connectionStatus(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
+    guard isServerVisible(server, context: context) else {
+      return .object(["state": .string("not_authorized")])
+    }
+    return try base.connectionStatus(server: server, context: context)
+  }
+
+  func closeConnection(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
+    try requireServer(server, capability: "mcp.connections.close", context: context)
+    return try base.closeConnection(server: server, context: context)
   }
 
   func readEvents(
-    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
+    server: MCPServerConfig, afterCursor: Int, maxResults: Int, context: InvocationContext
   ) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.events.read")
+    try requireServer(server, capability: "mcp.events.read", context: context)
     return try base.readEvents(
-      server: server, afterCursor: afterCursor, maxResults: maxResults, sessionID: sessionID)
+      server: server, afterCursor: afterCursor, maxResults: maxResults, context: context)
   }
 
-  func activeRequests(server: MCPServerConfig) throws -> JSONValue {
-    try requireServer(server, capability: "mcp.requests.list")
-    return try base.activeRequests(server: server)
+  func readEvents(
+    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?,
+    context: InvocationContext
+  ) throws -> JSONValue {
+    try requireServer(server, capability: "mcp.events.read", context: context)
+    return try base.readEvents(
+      server: server, afterCursor: afterCursor, maxResults: maxResults, sessionID: sessionID,
+      context: context)
   }
 
-  func cancelRequest(server: MCPServerConfig, requestID: String, reason: String?) throws
+  func activeRequests(server: MCPServerConfig, context: InvocationContext) throws -> JSONValue {
+    try requireServer(server, capability: "mcp.requests.list", context: context)
+    return try base.activeRequests(server: server, context: context)
+  }
+
+  func cancelRequest(
+    server: MCPServerConfig, requestID: String, reason: String?, context: InvocationContext
+  ) throws
     -> JSONValue
   {
-    try requireServer(server, capability: "mcp.requests.cancel")
-    return try base.cancelRequest(server: server, requestID: requestID, reason: reason)
+    try requireServer(server, capability: "mcp.requests.cancel", context: context)
+    return try base.cancelRequest(
+      server: server, requestID: requestID, reason: reason, context: context)
   }
 
   private func requireTool(
     _ name: String, server: MCPServerConfig,
-    authorization: MCPInvocationAdmission? = MCPInvocationAdmission.current
+    context: InvocationContext
   ) throws {
     let reference = MCPToolReference(serverID: server.id, toolName: name)
-    try requireToolGrant(reference)
-    guard let tool = try base.listTools(server: server).first(where: { $0.name == name }) else {
+    try requireToolGrant(reference, context: context)
+    guard
+      let tool = try base.listTools(server: server, context: context).first(where: {
+        $0.name == name
+      })
+    else {
       throw GatewayToolError.invalidArguments(
         "[mcp.tool_unavailable] The downstream tool is not in the current catalog.")
     }
     let floor = try tool.declaredRiskFloor
-    let policy = try currentPolicy
+    let policy = try currentPolicy(context: context)
     guard policy.allows(reference, riskFloor: floor) else {
       throw GatewayToolError.invalidArguments(
         "[policy.capability_denied] The profile does not grant the downstream tool's declared risk."
       )
     }
-    try authorization?.validate(
+    try context.admission?.validate(
       reference: reference, risk: policy.configuration.mcpRisk(for: reference).raised(to: floor),
       hostServiceAction: tool.hostServiceAction)
   }
 
-  func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int) throws
+  func readRequest(
+    server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int,
+    context: InvocationContext
+  ) throws
     -> JSONValue
   {
-    try requireServer(server, capability: "mcp.requests.read")
+    try requireServer(server, capability: "mcp.requests.read", context: context)
     let result = try base.readRequest(
-      server: server, requestID: requestID, offset: offset, maxBytes: maxBytes)
+      server: server, requestID: requestID, offset: offset, maxBytes: maxBytes, context: context)
     guard let tool = result.objectValue?["tool"]?.stringValue else {
       throw GatewayToolError.executionFailed(
         "Execution receipt is missing its original tool identity.")
     }
     // Receipt reads inspect host-owned output, not a new provider operation.
     // Rediscovery can wait behind the very operation whose receipt is being polled.
-    try requireToolGrant(.init(serverID: server.id, toolName: tool))
+    try requireToolGrant(.init(serverID: server.id, toolName: tool), context: context)
     return result
   }
 
-  private func requireToolGrant(_ reference: MCPToolReference) throws {
-    guard try currentPolicy.allows(reference) else {
+  private func requireToolGrant(_ reference: MCPToolReference, context: InvocationContext) throws {
+    guard try currentPolicy(context: context).allows(reference) else {
       throw GatewayToolError.invalidArguments(
         "[policy.capability_denied] The profile does not grant this downstream MCP tool.")
     }
   }
 
-  private func requireServer(_ server: MCPServerConfig, capability: String) throws {
-    guard try currentPolicy.permitsServer(server, capability: capability) else {
+  private func requireServer(
+    _ server: MCPServerConfig, capability: String, context: InvocationContext
+  ) throws {
+    guard try currentPolicy(context: context).permitsServer(server, capability: capability) else {
       throw GatewayToolError.invalidArguments(
         "[policy.capability_denied] The profile does not grant this downstream MCP surface.")
     }

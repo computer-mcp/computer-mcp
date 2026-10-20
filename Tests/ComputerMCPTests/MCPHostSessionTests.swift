@@ -413,18 +413,30 @@ private final class HostCatalogClient: DownstreamMCPClient, @unchecked Sendable 
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     [.init(name: "operation", description: "Fixture", inputSchema: .object([:]))]
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     lock.withLock { count += 1 }
     return .null
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

@@ -11,9 +11,10 @@ extension GatewayToolRegistry {
     }
   }
 
-  internal func mcpServerList() -> JSONValue {
+  internal func mcpServerList(context: InvocationContext) -> JSONValue {
     .array(
-      configuration.mcp.servers.filter { mcpClient.isServerVisible($0) }.map { server in
+      configuration.mcp.servers.filter { mcpClient.isServerVisible($0, context: context) }.map {
+        server in
         .object([
           "id": .string(server.id),
           "transport": .string(server.transport.rawValue),
@@ -23,21 +24,25 @@ extension GatewayToolRegistry {
       })
   }
 
-  internal func mcpServerStatus(arguments object: [String: JSONValue]) throws -> JSONValue {
+  internal func mcpServerStatus(arguments object: [String: JSONValue], context: InvocationContext)
+    throws -> JSONValue
+  {
     let id = try optionalString("server", in: object)
     let servers: [MCPServerConfig]
     if let id {
-      servers = [try mcpServer(id)]
+      servers = [try mcpServer(id, context: context)]
     } else {
-      servers = configuration.mcp.servers.filter { mcpClient.isServerVisible($0) }
+      servers = configuration.mcp.servers.filter { mcpClient.isServerVisible($0, context: context) }
     }
 
     return .object([
-      "servers": .array(try servers.map { try mcpServerStatus($0) })
+      "servers": .array(try servers.map { try mcpServerStatus($0, context: context) })
     ])
   }
 
-  internal func mcpServerStatus(_ server: MCPServerConfig) throws -> JSONValue {
+  internal func mcpServerStatus(_ server: MCPServerConfig, context: InvocationContext) throws
+    -> JSONValue
+  {
     var object: [String: JSONValue] = [
       "id": .string(server.id),
       "transport": .string(server.transport.rawValue),
@@ -73,22 +78,25 @@ extension GatewayToolRegistry {
       object["ready"] = .bool(server.url.flatMap(URL.init(string:)) != nil)
     }
 
-    object["connection"] = try mcpClient.connectionStatus(server: server)
+    object["connection"] = try mcpClient.connectionStatus(server: server, context: context)
     return .object(object)
   }
 
-  internal func listDownstreamMCPTools(arguments object: [String: JSONValue]) throws -> JSONValue {
+  internal func listDownstreamMCPTools(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
-    let server = try mcpServer(id)
-    return .array(try permittedDownstreamTools(server: server).map(\.json))
+    let server = try mcpServer(id, context: context)
+    return .array(try permittedDownstreamTools(server: server, context: context).map(\.json))
   }
 
-  internal func describeDownstreamMCPTool(arguments object: [String: JSONValue]) throws -> JSONValue
-  {
+  internal func describeDownstreamMCPTool(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let name = try requiredString("tool", in: object)
-    let server = try mcpServer(id)
-    let tools = try permittedDownstreamTools(server: server)
+    let server = try mcpServer(id, context: context)
+    let tools = try permittedDownstreamTools(server: server, context: context)
     guard let tool = tools.first(where: { $0.name == name }) else {
       throw GatewayToolError.invalidArguments(
         "Unknown downstream MCP tool '\(name)' on server '\(id)'.")
@@ -110,7 +118,9 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func findDownstreamMCPTools(arguments object: [String: JSONValue]) throws -> JSONValue {
+  internal func findDownstreamMCPTools(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let query = try requiredString("query", in: object)
     let matchMode = try fileNameMatchMode(try optionalString("match", in: object) ?? "contains")
@@ -119,8 +129,8 @@ extension GatewayToolRegistry {
     let maxResults = optionalInt("max_results", in: object) ?? 50
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 1_000)
 
-    let server = try mcpServer(id)
-    let tools = try permittedDownstreamTools(server: server)
+    let server = try mcpServer(id, context: context)
+    let tools = try permittedDownstreamTools(server: server, context: context)
     var results: [MCPTool] = []
     var truncated = false
     for tool in tools
@@ -147,10 +157,12 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func callDownstreamMCPTool(arguments object: [String: JSONValue]) throws -> JSONValue {
+  internal func callDownstreamMCPTool(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let name = try requiredString("tool", in: object)
-    let server = try mcpServer(id)
+    let server = try mcpServer(id, context: context)
     try requireDownstreamToolAllowed(name, server: server)
     let waitForResult = try optionalBool("wait_for_result", in: object) ?? true
     let requestID = try optionalString("request_id", in: object)
@@ -165,8 +177,7 @@ extension GatewayToolRegistry {
           server: server,
           name: name,
           arguments: object["arguments"] ?? .object([:]),
-          requestID: requestID
-        )
+          requestID: requestID, context: context)
       )
     }
     return try textResult(
@@ -174,12 +185,13 @@ extension GatewayToolRegistry {
         server: server,
         name: name,
         arguments: object["arguments"] ?? .object([:]),
-        requestID: requestID
-      )
+        requestID: requestID, context: context)
     )
   }
 
-  internal func readDownstreamMCPEvents(arguments object: [String: JSONValue]) throws -> JSONValue {
+  internal func readDownstreamMCPEvents(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let afterCursor = optionalInt("after_cursor", in: object) ?? 0
     let maxResults = optionalInt("max_results", in: object) ?? 100
@@ -188,48 +200,52 @@ extension GatewayToolRegistry {
     }
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 500)
     return try mcpClient.readEvents(
-      server: mcpServer(id),
+      server: mcpServer(id, context: context),
       afterCursor: afterCursor,
       maxResults: maxResults,
-      sessionID: try optionalString("session_id", in: object)
-    )
+      sessionID: try optionalString("session_id", in: object), context: context)
   }
 
-  internal func listDownstreamMCPRequests(arguments object: [String: JSONValue]) throws -> JSONValue
-  {
+  internal func listDownstreamMCPRequests(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
-    return try mcpClient.activeRequests(server: mcpServer(id))
+    return try mcpClient.activeRequests(server: mcpServer(id, context: context), context: context)
   }
 
-  internal func cancelDownstreamMCPRequest(arguments object: [String: JSONValue]) throws
+  internal func cancelDownstreamMCPRequest(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws
     -> JSONValue
   {
     let id = try requiredString("server", in: object)
     let requestID = try requiredString("request_id", in: object)
     return try mcpClient.cancelRequest(
-      server: mcpServer(id),
+      server: mcpServer(id, context: context),
       requestID: requestID,
-      reason: try optionalString("reason", in: object)
-    )
+      reason: try optionalString("reason", in: object), context: context)
   }
 
-  internal func readDownstreamMCPRequest(arguments object: [String: JSONValue]) throws -> JSONValue
-  {
+  internal func readDownstreamMCPRequest(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let requestID = try requiredString("request_id", in: object)
     return try mcpClient.readRequest(
-      server: mcpServer(id), requestID: requestID,
+      server: mcpServer(id, context: context), requestID: requestID,
       offset: optionalInt("offset", in: object) ?? 0,
-      maxBytes: optionalInt("max_bytes", in: object) ?? 32_768)
+      maxBytes: optionalInt("max_bytes", in: object) ?? 32_768, context: context)
   }
 
-  internal func listDownstreamMCPResources(arguments object: [String: JSONValue]) throws
+  internal func listDownstreamMCPResources(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws
     -> JSONValue
   {
     let id = try requiredString("server", in: object)
     let cursor = try optionalString("cursor", in: object)
-    let server = try mcpServer(id)
-    let result = try mcpClient.listResources(server: server, cursor: cursor)
+    let server = try mcpServer(id, context: context)
+    let result = try mcpClient.listResources(server: server, cursor: cursor, context: context)
     let resourceValues = result.objectValue?["resources"]?.arrayValue ?? []
     let resources = resourceValues.map { downstreamMCPResourceJSON($0, serverID: id) }
     let nextCursor =
@@ -245,13 +261,16 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func listDownstreamMCPResourceTemplates(arguments object: [String: JSONValue]) throws
+  internal func listDownstreamMCPResourceTemplates(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws
     -> JSONValue
   {
     let id = try requiredString("server", in: object)
     let cursor = try optionalString("cursor", in: object)
-    let server = try mcpServer(id)
-    let result = try mcpClient.listResourceTemplates(server: server, cursor: cursor)
+    let server = try mcpServer(id, context: context)
+    let result = try mcpClient.listResourceTemplates(
+      server: server, cursor: cursor, context: context)
     let templates =
       result.objectValue?["resourceTemplates"]?.arrayValue
       ?? result.objectValue?["templates"]?.arrayValue
@@ -269,12 +288,13 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func readDownstreamMCPResource(arguments object: [String: JSONValue]) throws -> JSONValue
-  {
+  internal func readDownstreamMCPResource(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let uri = try requiredString("uri", in: object)
-    let server = try mcpServer(id)
-    let result = try mcpClient.readResource(server: server, uri: uri)
+    let server = try mcpServer(id, context: context)
+    let result = try mcpClient.readResource(server: server, uri: uri, context: context)
     let contents = result.objectValue?["contents"]?.arrayValue ?? []
 
     return .object([
@@ -301,12 +321,13 @@ extension GatewayToolRegistry {
     return .object(object)
   }
 
-  internal func listDownstreamMCPPrompts(arguments object: [String: JSONValue]) throws -> JSONValue
-  {
+  internal func listDownstreamMCPPrompts(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let cursor = try optionalString("cursor", in: object)
-    let server = try mcpServer(id)
-    let result = try mcpClient.listPrompts(server: server, cursor: cursor)
+    let server = try mcpServer(id, context: context)
+    let result = try mcpClient.listPrompts(server: server, cursor: cursor, context: context)
     let promptValues = result.objectValue?["prompts"]?.arrayValue ?? []
     let prompts = promptValues.map { downstreamMCPPromptJSON($0, serverID: id) }
     let nextCursor =
@@ -322,12 +343,15 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func getDownstreamMCPPrompt(arguments object: [String: JSONValue]) throws -> JSONValue {
+  internal func getDownstreamMCPPrompt(
+    arguments object: [String: JSONValue], context: InvocationContext
+  ) throws -> JSONValue {
     let id = try requiredString("server", in: object)
     let name = try requiredString("name", in: object)
     let promptArguments = try optionalStringMap("arguments", in: object)
-    let server = try mcpServer(id)
-    let result = try mcpClient.getPrompt(server: server, name: name, arguments: promptArguments)
+    let server = try mcpServer(id, context: context)
+    let result = try mcpClient.getPrompt(
+      server: server, name: name, arguments: promptArguments, context: context)
     let messages = result.objectValue?["messages"]?.arrayValue ?? []
 
     return .object([
@@ -415,8 +439,10 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func permittedDownstreamTools(server: MCPServerConfig) throws -> [MCPTool] {
-    try mcpClient.listTools(server: server).filter { server.permitsTool($0.name) }
+  internal func permittedDownstreamTools(server: MCPServerConfig, context: InvocationContext) throws
+    -> [MCPTool]
+  {
+    try mcpClient.listTools(server: server, context: context).filter { server.permitsTool($0.name) }
   }
 
   internal func requireDownstreamToolAllowed(
@@ -431,9 +457,9 @@ extension GatewayToolRegistry {
     }
   }
 
-  internal func mcpServer(_ id: String) throws -> MCPServerConfig {
+  internal func mcpServer(_ id: String, context: InvocationContext) throws -> MCPServerConfig {
     guard let server = configuration.mcp.servers.first(where: { $0.id == id }),
-      mcpClient.isServerVisible(server)
+      mcpClient.isServerVisible(server, context: context)
     else {
       throw GatewayToolError.unknownMCPServer(id)
     }

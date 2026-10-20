@@ -8,15 +8,19 @@ struct HTTPClientControlRegistry: GatewayToolServing {
   let database: GatewayDatabase
   let identity: GatewaySocketConnectionIdentity
 
-  func listTools() throws -> [MCPTool] {
+  func listTools(context: InvocationContext) throws -> [MCPTool] {
     try GatewayClientControl.contracts.map { try $0.tool() }
   }
 
-  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+  func callTool(name: String, arguments: JSONValue?, context: InvocationContext) throws
+    -> JSONValue
+  {
     throw GatewayToolError.invalidArguments("Control operations require async dispatch.")
   }
 
-  func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
+  func callToolAsync(name: String, arguments: JSONValue?, context: InvocationContext)
+    async throws -> JSONValue
+  {
     let requestID = UUID().uuidString
     let started = ContinuousClock.now
     let inputDigest = try ControlToolResponse.digest(

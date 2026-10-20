@@ -42,11 +42,12 @@ struct CLITreeToolProvider: GatewayToolProvider {
     }
   }
 
-  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    let command = try command(named: name)
-    let invocation = try CLIArgumentEncoder.encode(arguments ?? .object([:]), command: command)
+  func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    let command = try command(named: invocation.name)
+    let commandInvocation = try CLIArgumentEncoder.encode(
+      invocation.arguments ?? .object([:]), command: command)
     let result = try execution.run(
-      executable: registration.executable, invocation: invocation,
+      executable: registration.executable, invocation: commandInvocation,
       cwd: registration.resolvedWorkingDirectory(base: workspace) ?? workspace,
       environment: registration.env, timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks,
@@ -54,11 +55,12 @@ struct CLITreeToolProvider: GatewayToolProvider {
     return try response(result, command: command)
   }
 
-  func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    let command = try command(named: name)
-    let invocation = try CLIArgumentEncoder.encode(arguments ?? .object([:]), command: command)
+  func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    let command = try command(named: invocation.name)
+    let commandInvocation = try CLIArgumentEncoder.encode(
+      invocation.arguments ?? .object([:]), command: command)
     let result = try await execution.runAsync(
-      executable: registration.executable, invocation: invocation,
+      executable: registration.executable, invocation: commandInvocation,
       cwd: registration.resolvedWorkingDirectory(base: workspace) ?? workspace,
       environment: registration.env, timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks,

@@ -21,18 +21,20 @@ struct CLIExecutionContextTests {
       environment: [
         "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "base",
       ])
-    let status = try payload(registry.callTool(name: "cli.status", arguments: .object([:])))
+    let status = try payload(
+      registry.callTool(name: "cli.status", arguments: .object([:]), context: .empty))
     #expect(
       status.objectValue?["commands"]?.arrayValue?.first?.objectValue?["resolved_path"]
         == .string(fixture.executable.path))
     let help = try payload(
-      registry.callTool(name: "cli.help", arguments: .object(["id": .string("probe")])))
+      registry.callTool(
+        name: "cli.help", arguments: .object(["id": .string("probe")]), context: .empty))
     let execution = try payload(
       registry.callTool(
         name: "cli.exec",
         arguments: .object([
           "id": .string("probe"), "argv": .array([.string("hello world"), .string("")]),
-        ])))
+        ]), context: .empty))
     #expect(help.objectValue?["stdout"] == .string("host|override|--help\n"))
     #expect(execution.objectValue?["stdout"] == .string("host|override|hello world\n"))
     #expect(execution.objectValue?["executable"] == .string(executable))
@@ -72,8 +74,9 @@ struct CLIExecutionContextTests {
         "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "base",
       ])
     let router = try GatewayProviderRouter(registry: registry)
-    let tool = try #require(router.listTools().first { $0.name.hasPrefix("cli_") })
-    let result = try await router.callToolAsync(name: tool.name, arguments: .object([:]))
+    let tool = try #require(router.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
+    let result = try await router.callToolAsync(
+      name: tool.name, arguments: .object([:]), context: .empty)
     #expect(
       CLITreeTests.output(result)?["stdout"]?.objectValue?["data"]
         == .string("host|override|call\n"))
@@ -106,16 +109,19 @@ struct CLIExecutionContextTests {
     let registry = GatewayToolRegistry(
       configuration: fixture.configuration(executable: "./probe", cwd: nil),
       environment: ["PATH": fixture.root.path])
-    let status = try payload(registry.callTool(name: "cli.status", arguments: .object([:])))
+    let status = try payload(
+      registry.callTool(name: "cli.status", arguments: .object([:]), context: .empty))
     #expect(
       status.objectValue?["commands"]?.arrayValue?.first?.objectValue?["resolution"]?.objectValue?[
         "status"] == .string("interpreter_unavailable"))
     #expect(throws: CommandRunnerError.self) {
-      try registry.callTool(name: "cli.help", arguments: .object(["id": .string("probe")]))
+      try registry.callTool(
+        name: "cli.help", arguments: .object(["id": .string("probe")]), context: .empty)
     }
     #expect(throws: CommandRunnerError.self) {
       try registry.callTool(
-        name: "cli.exec", arguments: .object(["id": .string("probe"), "argv": .array([])]))
+        name: "cli.exec", arguments: .object(["id": .string("probe"), "argv": .array([])]),
+        context: .empty)
     }
     await registry.shutdown()
   }

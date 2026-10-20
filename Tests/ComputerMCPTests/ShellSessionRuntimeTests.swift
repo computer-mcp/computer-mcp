@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 import Testing
 
@@ -322,12 +323,12 @@ final class ShellSessionRuntimeTests {
     let disabled = GatewayToolRegistry(
       configuration: .fixture(policy: PolicyConfig(shellEnabled: false))
     )
-    #expect(!(try disabled.listTools().contains { $0.name.hasPrefix("shell.") }))
+    #expect(!(try disabled.listTools(context: .empty).contains { $0.name.hasPrefix("shell.") }))
 
     let enabled = GatewayToolRegistry(
       configuration: .fixture(policy: PolicyConfig(shellEnabled: true))
     )
-    let names = Set(try enabled.listTools().map(\.name))
+    let names = Set(try enabled.listTools(context: .empty).map(\.name))
     #expect(
       Set([
         "shell.run",
@@ -345,7 +346,7 @@ final class ShellSessionRuntimeTests {
           "mode": .string("argv"),
           "executable": .string("/bin/cat"),
           "stdin_text": .string("gateway"),
-        ])
+        ]), context: .empty
       )
     }
     let envelope = try #require(result.objectValue)
@@ -358,7 +359,7 @@ final class ShellSessionRuntimeTests {
     #expect((payload["exitCode"]) == nil)
     #expect((payload["stdout"]?.objectValue?["text"]) == (.string("gateway")))
     #expect(
-      (try enabled.listTools()
+      (try enabled.listTools(context: .empty)
         .first(where: { $0.name == "shell.run" })?
         .inputSchema.objectValue?["properties"]?
         .objectValue?["stdin_text"]) != nil)

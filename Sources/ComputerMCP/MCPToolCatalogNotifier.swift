@@ -26,7 +26,8 @@ actor MCPToolCatalogNotifier {
       for await _ in changes {
         guard !Task.isCancelled else { break }
         let current: [String: JSONValue]
-        do { current = Self.fingerprint(try await registry.listToolsAsync()) } catch { continue }
+        do { current = Self.fingerprint(try await registry.listToolsAsync(context: .empty)) } catch
+        { continue }
         guard current != previous else { continue }
         guard let server else { break }
         do {

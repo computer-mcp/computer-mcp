@@ -149,14 +149,14 @@ struct CLITreeTests {
     ]
     let registry = GatewayToolRegistry(configuration: configuration)
     let router = try GatewayProviderRouter(registry: registry)
-    let tool = try #require(router.listTools().first { $0.name.hasPrefix("cli_") })
+    let tool = try #require(router.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
     #expect(tool.name.count <= 128)
-    #expect(try router.capability(named: tool.name).risk == .fullShell)
+    #expect(try router.capability(named: tool.name, context: .empty).risk == .fullShell)
     let result = try await router.callToolAsync(
       name: tool.name,
       arguments: .object([
         "values": .array([.string("你好 world"), .string("'\"$HOME"), .string("-42"), .string("")])
-      ]))
+      ]), context: .empty)
     #expect(
       Self.output(result)?["stdout"]?.objectValue?["data"] == .string("你好 world\n'\"$HOME\n-42\n\n")
     )
@@ -164,26 +164,30 @@ struct CLITreeTests {
     #expect(Self.output(result)?["arguments"] == nil)
     #expect(throws: GatewayToolError.self) {
       try registry.callTool(
-        name: "cli.exec", arguments: .object(["id": .string("printf"), "argv": .array([])]))
+        name: "cli.exec", arguments: .object(["id": .string("printf"), "argv": .array([])]),
+        context: .empty)
     }
     #expect(throws: GatewayToolError.self) {
       try registry.callTool(
         name: "cli.help",
-        arguments: .object(["id": .string("printf"), "path": .array([.string("--anything")])]))
+        arguments: .object(["id": .string("printf"), "path": .array([.string("--anything")])]),
+        context: .empty)
     }
     let help = try registry.callTool(
-      name: "cli.help", arguments: .object(["id": .string("printf")]))
+      name: "cli.help", arguments: .object(["id": .string("printf")]), context: .empty)
     #expect(Self.output(help)?["executed"] == .bool(false))
-    let events = router.toolChanges()
+    let events = router.toolChanges(context: .empty)
     var next = Self.printCommand()
     next.parameters = [.init(name: "values", schema: Self.strings)]
     try fixture.write(Self.tree(next))
-    try await router.refreshTools()
-    #expect(try router.listTools().first { $0.name == tool.name }?.inputSchema != tool.inputSchema)
+    try await router.refreshTools(context: .empty)
+    #expect(
+      try router.listTools(context: .empty).first { $0.name == tool.name }?.inputSchema
+        != tool.inputSchema)
     try Data("invalid".utf8).write(to: fixture.treeURL)
-    await #expect(throws: (any Error).self) { try await router.refreshTools() }
+    await #expect(throws: (any Error).self) { try await router.refreshTools(context: .empty) }
     #expect(router.lastRefreshError != nil)
-    #expect(try router.listTools().contains { $0.name == tool.name })
+    #expect(try router.listTools(context: .empty).contains { $0.name == tool.name })
     await router.shutdown()
     var iterator = events.makeAsyncIterator()
     #expect(await iterator.next() != nil)
@@ -216,7 +220,9 @@ struct CLITreeTests {
     let name = try #require(provider.definitions().first?.tool.name)
     let bytes = Data([0, 255, 13, 10, 192, 128])
     let result = try await provider.callToolAsync(
-      name: name, arguments: .object(["input": .string(bytes.base64EncodedString())]))
+      .init(
+        name: name, arguments: .object(["input": .string(bytes.base64EncodedString())]),
+        context: .empty))
     #expect(Self.output(result)?["stdout"]?.objectValue?["encoding"] == .string("base64"))
     #expect(
       Self.output(result)?["stdout"]?.objectValue?["data"] == .string(bytes.base64EncodedString()))
@@ -238,7 +244,8 @@ struct CLITreeTests {
     let provider = Self.provider(command, executable: "/bin/cat")
     let name = try #require(provider.definitions().first?.tool.name)
     let result = try await provider.callToolAsync(
-      name: name, arguments: .object(["input": .string(text)]))
+      .init(
+        name: name, arguments: .object(["input": .string(text)]), context: .empty))
     #expect(result.objectValue?["isError"] == .bool(fails))
     #expect(Self.output(result)?["stdout"]?.objectValue?["data"] == .string(text))
     await provider.execution.shutdown()
@@ -321,9 +328,10 @@ struct CLITreeTests {
     let runtime = try GatewayRuntime(
       configuration: configuration, registeredWorkspaces: workspaces,
       platform: MacOSPlatform.services, plugins: [plugin])
-    let tool = try #require(runtime.listTools().first { $0.name.hasPrefix("cli_") })
+    let tool = try #require(runtime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
     let result = try await runtime.callToolAsync(
-      name: tool.name, arguments: .object(["values": .array([.string("plugin value")])]))
+      name: tool.name, arguments: .object(["values": .array([.string("plugin value")])]),
+      context: .empty)
     #expect(Self.output(result)?["stdout"]?.objectValue?["data"] == .string("plugin value\n"))
     await runtime.shutdown()
 
@@ -336,17 +344,19 @@ struct CLITreeTests {
     let directRuntime = try GatewayRuntime(
       configuration: direct, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
       plugins: [])
-    let directTool = try #require(directRuntime.listTools().first { $0.name.hasPrefix("cli_") })
+    let directTool = try #require(
+      directRuntime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
     #expect(directTool == tool)
     await directRuntime.shutdown()
     let observeContext = ExecutionContext(caller: .secureTunnel, profileID: .chatGPTObserve)
     let observe = try GatewayRuntime(
       configuration: direct, context: observeContext, registeredWorkspaces: workspaces,
       platform: MacOSPlatform.services, plugins: [])
-    #expect(try !observe.listTools().contains { $0.name == tool.name })
+    #expect(try !observe.listTools(context: .empty).contains { $0.name == tool.name })
     await #expect(throws: (any Error).self) {
       try await observe.callToolAsync(
-        name: tool.name, arguments: .object(["values": .array([.string("denied")])]))
+        name: tool.name, arguments: .object(["values": .array([.string("denied")])]),
+        context: .empty)
     }
     await observe.shutdown()
   }
@@ -401,7 +411,9 @@ struct CLITreeTests {
     let provider = Self.provider(command, executable: "/usr/bin/printf")
     let name = try #require(provider.definitions().first?.tool.name)
     let response = try await provider.callToolAsync(
-      name: name, arguments: .object(["values": .array([.string("example works")])]))
+      .init(
+        name: name, arguments: .object(["values": .array([.string("example works")])]),
+        context: .empty))
     #expect(Self.output(response)?["stdout"]?.objectValue?["data"] == .string("example works\n"))
     await provider.execution.shutdown()
   }

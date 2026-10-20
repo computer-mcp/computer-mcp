@@ -26,7 +26,7 @@ struct MCPConnectionLifecycleTests {
             server: server, name: "first",
             arguments: .object([
               "exit_after_response": .bool(true)
-            ]))
+            ]), context: .empty)
         }
         #expect(result.objectValue?["isError"] != .bool(true))
         #expect(
@@ -34,14 +34,15 @@ struct MCPConnectionLifecycleTests {
         )
         try await fixture.expectAllExited()
         let deadline = ContinuousClock.now + .seconds(1)
-        while try client.connectionStatus(server: server).objectValue?["state"]
+        while try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
           == .string("connected"),
           ContinuousClock.now < deadline
         {
           try await Task.sleep(for: .milliseconds(10))
         }
         #expect(
-          try client.connectionStatus(server: server).objectValue?["state"] != .string("connected"))
+          try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
+            != .string("connected"))
         await client.shutdown()
       } catch {
         await client.shutdown()
@@ -163,7 +164,8 @@ struct MCPConnectionLifecycleTests {
     do {
       _ = try await blocking {
         try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling")
+          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+          context: .empty)
       }
       try await fixture.waitForCalls(1)
       await #expect(throws: (any Error).self) {
@@ -172,20 +174,24 @@ struct MCPConnectionLifecycleTests {
           case "duplicateID":
             return try client.startToolCall(
               server: server, name: "hang", arguments: .object(["changed": .bool(true)]),
-              requestID: "sibling")
+              requestID: "sibling", context: .empty)
           case "unknownCancel":
-            return try client.cancelRequest(server: server, requestID: "absent", reason: nil)
+            return try client.cancelRequest(
+              server: server, requestID: "absent", reason: nil, context: .empty)
           default:
-            return try client.readEvents(server: server, afterCursor: -1, maxResults: 10)
+            return try client.readEvents(
+              server: server, afterCursor: -1, maxResults: 10, context: .empty)
           }
         }
       }
-      let requests = try await blocking { try client.activeRequests(server: server) }
+      let requests = try await blocking {
+        try client.activeRequests(server: server, context: .empty)
+      }
       #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
       #expect(
         requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
           == .string("sibling"))
-      let tools = try await blocking { try client.listTools(server: server) }
+      let tools = try await blocking { try client.listTools(server: server, context: .empty) }
       #expect(tools.map(\.name) == ["first", "hang"])
       #expect(try fixture.starts().count == 1)
       #expect(try fixture.calls().count == 1)
@@ -207,18 +213,20 @@ struct MCPConnectionLifecycleTests {
     do {
       _ = try await blocking {
         try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling")
+          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+          context: .empty)
       }
       let waited = Task {
         try await blocking {
           try client.callTool(
-            server: server, name: "hang", arguments: .object([:]), requestID: "waited")
+            server: server, name: "hang", arguments: .object([:]), requestID: "waited",
+            context: .empty)
         }
       }
       try await fixture.waitForCalls(2)
       _ = try await blocking {
         try client.cancelRequest(
-          server: server, requestID: "waited", reason: "cancel only this request")
+          server: server, requestID: "waited", reason: "cancel only this request", context: .empty)
       }
       let outcome = await waited.result
       guard case .failure(let error) = outcome else {
@@ -228,24 +236,27 @@ struct MCPConnectionLifecycleTests {
       }
       #expect(error is CancellationError)
       let receipt = try client.readRequest(
-        server: server, requestID: "waited", offset: 0, maxBytes: 4096)
+        server: server, requestID: "waited", offset: 0, maxBytes: 4096, context: .empty)
       #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
       #expect(receipt.objectValue?["cancellation"] == .string("sent"))
       #expect(receipt.objectValue?["output_state"] == .string("unavailable"))
       #expect(throws: (any Error).self) {
         try client.callTool(
-          server: server, name: "hang", arguments: .object([:]), requestID: "waited")
+          server: server, name: "hang", arguments: .object([:]), requestID: "waited",
+          context: .empty)
       }
       let observed = try client.startToolCall(
-        server: server, name: "hang", arguments: .object([:]), requestID: "waited")
+        server: server, name: "hang", arguments: .object([:]), requestID: "waited", context: .empty)
       #expect(observed.objectValue?["state"] == .string("outcome_unknown"))
       #expect(try fixture.calls().count == 2)
-      let requests = try await blocking { try client.activeRequests(server: server) }
+      let requests = try await blocking {
+        try client.activeRequests(server: server, context: .empty)
+      }
       #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
       #expect(
         requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
           == .string("sibling"))
-      _ = try await blocking { try client.listTools(server: server) }
+      _ = try await blocking { try client.listTools(server: server, context: .empty) }
       #expect(try fixture.starts().count == 1)
       #expect(try fixture.cancellations().count == 1)
       await client.shutdown()
@@ -265,14 +276,15 @@ struct MCPConnectionLifecycleTests {
     do {
       _ = try await blocking {
         try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling")
+          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+          context: .empty)
       }
       try await fixture.waitForCalls(1)
       do {
         _ = try await blocking {
           try client.callTool(
-            server: server, name: "first", arguments: .object(["error_code": .number(Double(code))])
-          )
+            server: server, name: "first",
+            arguments: .object(["error_code": .number(Double(code))]), context: .empty)
         }
         Issue.record("The fixture's JSON-RPC error was not propagated.")
       } catch let error as MCPError {
@@ -289,12 +301,14 @@ struct MCPConnectionLifecycleTests {
           #expect(elicitations.first?.url == "https://example.invalid/confirm")
         }
       }
-      let requests = try await blocking { try client.activeRequests(server: server) }
+      let requests = try await blocking {
+        try client.activeRequests(server: server, context: .empty)
+      }
       #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
       #expect(
         requests.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"]
           == .string("sibling"))
-      _ = try await blocking { try client.listTools(server: server) }
+      _ = try await blocking { try client.listTools(server: server, context: .empty) }
       #expect(try fixture.starts().count == 1)
       #expect(try fixture.calls().count == 2)
       #expect(try fixture.cancellations().isEmpty)
@@ -315,21 +329,25 @@ struct MCPConnectionLifecycleTests {
     do {
       _ = try await blocking {
         try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "sibling")
+          server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+          context: .empty)
       }
       try await fixture.waitForCalls(1)
       let result = try await blocking {
         try client.callTool(
-          server: server, name: "first", arguments: .object(["tool_error": .bool(true)]))
+          server: server, name: "first", arguments: .object(["tool_error": .bool(true)]),
+          context: .empty)
       }
       #expect(result.objectValue?["isError"] == .bool(true))
       #expect(result.objectValue?["structuredContent"] == .object(["accepted": .bool(false)]))
       #expect(
         result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]
           == .string("operation rejected"))
-      let requests = try await blocking { try client.activeRequests(server: server) }
+      let requests = try await blocking {
+        try client.activeRequests(server: server, context: .empty)
+      }
       #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
-      _ = try await blocking { try client.listTools(server: server) }
+      _ = try await blocking { try client.listTools(server: server, context: .empty) }
       #expect(try fixture.starts().count == 1)
       #expect(try fixture.cancellations().isEmpty)
       await client.shutdown()
@@ -347,14 +365,15 @@ struct MCPConnectionLifecycleTests {
     let client = MCPProxyClient(workingDirectory: fixture.directory)
     let server = fixture.server(version: "first")
     do {
-      _ = try await blocking { try client.listTools(server: server) }
+      _ = try await blocking { try client.listTools(server: server, context: .empty) }
       let accepted = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
         for _ in 0..<32 {
           group.addTask {
             do {
               _ = try await blocking {
                 try client.startToolCall(
-                  server: server, name: "hang", arguments: .object([:]), requestID: "one-operation")
+                  server: server, name: "hang", arguments: .object([:]), requestID: "one-operation",
+                  context: .empty)
               }
               return true
             } catch {
@@ -368,7 +387,9 @@ struct MCPConnectionLifecycleTests {
       }
       #expect(accepted == 32)
       try await fixture.waitForCalls(1)
-      let requests = try await blocking { try client.activeRequests(server: server) }
+      let requests = try await blocking {
+        try client.activeRequests(server: server, context: .empty)
+      }
       #expect(requests.objectValue?["requests"]?.arrayValue?.count == 1)
       #expect(try fixture.calls().count == 1)
       #expect(try fixture.starts().count == 1)
@@ -387,15 +408,16 @@ struct MCPConnectionLifecycleTests {
     let client = MCPProxyClient(workingDirectory: fixture.directory)
     let original = fixture.server(version: "first")
     do {
-      let tools = try await blocking { try client.listTools(server: original) }
+      let tools = try await blocking { try client.listTools(server: original, context: .empty) }
       #expect(tools.map(\.name) == ["first", "hang"])
       _ = try await blocking {
         try client.startToolCall(
-          server: original, name: "hang", arguments: .object([:]), requestID: "owned-write")
+          server: original, name: "hang", arguments: .object([:]), requestID: "owned-write",
+          context: .empty)
       }
       try await fixture.waitForCalls(1)
       let replacement = fixture.server(version: "second")
-      let next = try await blocking { try client.listTools(server: replacement) }
+      let next = try await blocking { try client.listTools(server: replacement, context: .empty) }
       #expect(next.map(\.name) == ["second", "hang"])
       let starts = try fixture.starts()
       #expect(starts.count == 2)
@@ -418,9 +440,10 @@ struct MCPConnectionLifecycleTests {
     let server = fixture.server(version: "first", holdInitialize: startup, shortDeadline: true)
     let call = Task {
       try await blocking {
-        if startup { return try client.listTools(server: server).count }
+        if startup { return try client.listTools(server: server, context: .empty).count }
         _ = try client.callTool(
-          server: server, name: "hang", arguments: .object([:]), requestID: "timed-out")
+          server: server, name: "hang", arguments: .object([:]), requestID: "timed-out",
+          context: .empty)
         return 0
       }
     }
@@ -438,10 +461,10 @@ struct MCPConnectionLifecycleTests {
     #expect(try fixture.starts().count == 1)
     #expect(try fixture.calls().count == (startup ? 0 : 1))
     #expect(try fixture.cancellations().count == (startup ? 0 : 1))
-    let status = try client.connectionStatus(server: server)
+    let status = try client.connectionStatus(server: server, context: .empty)
     #expect(status.objectValue?["state"] == .string("stopped"))
     await #expect(throws: (any Error).self) {
-      try await blocking { try client.listTools(server: server) }
+      try await blocking { try client.listTools(server: server, context: .empty) }
     }
     #expect(try fixture.starts().count == 1)
   }
@@ -456,11 +479,12 @@ struct MCPConnectionLifecycleTests {
       await #expect(throws: (any Error).self) {
         try await blocking {
           try client.callTool(
-            server: server, name: "hang", arguments: .object([:]), requestID: "one-write")
+            server: server, name: "hang", arguments: .object([:]), requestID: "one-write",
+            context: .empty)
         }
       }
       try Data("refreshed".utf8).write(to: fixture.directory.appendingPathComponent("version"))
-      let tools = try await blocking { try client.listTools(server: server) }
+      let tools = try await blocking { try client.listTools(server: server, context: .empty) }
       #expect(tools.map(\.name) == ["refreshed", "hang"])
       #expect(try fixture.starts().count == 2)
       #expect(try fixture.starts().last?.objectValue?["overlap"] == .bool(false))
@@ -479,7 +503,9 @@ struct MCPConnectionLifecycleTests {
     defer { fixture.remove() }
     let client = MCPProxyClient(workingDirectory: fixture.directory)
     let server = fixture.server(version: "first", holdInitialize: true)
-    let starting = Task { try await blocking { try client.listTools(server: server) } }
+    let starting = Task {
+      try await blocking { try client.listTools(server: server, context: .empty) }
+    }
     try await fixture.waitForStarts(1)
     async let first: Void = client.shutdown()
     async let second: Void = client.shutdown()
@@ -490,7 +516,9 @@ struct MCPConnectionLifecycleTests {
     }
     try await fixture.expectAllExited()
     #expect(try fixture.starts().count == 1)
-    #expect(try client.connectionStatus(server: server).objectValue?["state"] == .string("stopped"))
+    #expect(
+      try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
+        == .string("stopped"))
   }
 
   @Test

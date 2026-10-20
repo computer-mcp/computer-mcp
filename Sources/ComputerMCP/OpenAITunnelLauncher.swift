@@ -68,7 +68,8 @@ internal struct ChatGPTProfileAuditor: Sendable {
     registry: any GatewayToolServing,
     allowWriteTools: Bool
   ) throws -> ChatGPTProfileAudit {
-    let tools = try GatewayMCPToolSurface(registry: registry).listTools()
+    // Profile auditing inventories the host catalog outside any caller invocation.
+    let tools = try GatewayMCPToolSurface(registry: registry).listTools(context: .empty)
     guard !tools.isEmpty else {
       throw ChatGPTProfileAuditError.noTools
     }

@@ -61,7 +61,7 @@ struct NativeCLITreeIntegrationTests {
       configuration: configuration, registeredWorkspaces: workspaces,
       platform: MacOSPlatform.services, plugins: [plugin])
     do {
-      let tools = try runtime.listTools().filter { $0.name.hasPrefix("cli_") }
+      let tools = try runtime.listTools(context: .empty).filter { $0.name.hasPrefix("cli_") }
       #expect(tools.count == 5)
       var direct = configuration
       direct.cli.commands = [
@@ -72,7 +72,9 @@ struct NativeCLITreeIntegrationTests {
       let directRuntime = try GatewayRuntime(
         configuration: direct, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
         plugins: [])
-      let directTools = try directRuntime.listTools().filter { $0.name.hasPrefix("cli_") }
+      let directTools = try directRuntime.listTools(context: .empty).filter {
+        $0.name.hasPrefix("cli_")
+      }
       #expect(directTools == tools)
       await directRuntime.shutdown()
       let format = try #require(tools.first { $0.name.hasSuffix("_format") })
@@ -83,7 +85,8 @@ struct NativeCLITreeIntegrationTests {
         "paths": .array([.string("-")]), "source": .string("let value=1\n"),
         "configuration": .string("{}"), "color_diagnostics": .bool(false),
       ])
-      let formatted = try await runtime.callToolAsync(name: format.name, arguments: arguments)
+      let formatted = try await runtime.callToolAsync(
+        name: format.name, arguments: arguments, context: .empty)
       #expect(formatted.objectValue?["isError"] == .bool(false))
       #expect(Self.result(formatted)?["stdout"]?.objectValue?["data"] == .string("let value = 1\n"))
       #expect(Self.result(formatted)?["stderr"]?.objectValue?["data"] == .string(""))
@@ -97,13 +100,14 @@ struct NativeCLITreeIntegrationTests {
         workspace: root, execution: CLIProcessExecution(),
         timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
       await #expect(throws: CLITreeError.self) {
-        try await incompatible.callToolAsync(name: format.name, arguments: arguments)
+        try await incompatible.callToolAsync(
+          .init(name: format.name, arguments: arguments, context: .empty))
       }
       await incompatible.execution.shutdown()
       var lintArguments = try #require(arguments.objectValue)
       lintArguments["strict"] = .bool(true)
       let linted = try await runtime.callToolAsync(
-        name: lint.name, arguments: .object(lintArguments))
+        name: lint.name, arguments: .object(lintArguments), context: .empty)
       #expect(linted.objectValue?["isError"] == .bool(true))
       #expect(Self.result(linted)?["exit_code"] == .number(1))
       #expect(
@@ -117,14 +121,14 @@ struct NativeCLITreeIntegrationTests {
           name: "cli.exec",
           arguments: .object([
             "id": .string("native-formatter"), "argv": .array([.string("--version")]),
-          ]))
+          ]), context: .empty)
       }
       let observe = try GatewayRuntime(
         configuration: direct, context: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         registeredWorkspaces: workspaces, platform: MacOSPlatform.services, plugins: [])
-      #expect(try !observe.listTools().contains { $0.name == format.name })
+      #expect(try !observe.listTools(context: .empty).contains { $0.name == format.name })
       await #expect(throws: (any Error).self) {
-        try await observe.callToolAsync(name: format.name, arguments: arguments)
+        try await observe.callToolAsync(name: format.name, arguments: arguments, context: .empty)
       }
       await observe.shutdown()
     } catch {

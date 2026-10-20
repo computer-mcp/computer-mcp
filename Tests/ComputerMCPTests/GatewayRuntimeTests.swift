@@ -41,10 +41,10 @@ final class GatewayRuntimeTests {
       ]
     )
 
-    let listedNames = try gateway.listTools().map(\.name)
+    let listedNames = try gateway.listTools(context: .empty).map(\.name)
     #expect((Set(listedNames)) == (["workspace.list", "workspace.describe", "file.read"]))
     let fileRead = try #require(
-      gateway.listTools().first(where: { $0.name == "file.read" })
+      gateway.listTools(context: .empty).first(where: { $0.name == "file.read" })
     )
     #expect(
       (fileRead.inputSchema.objectValue?["properties"]?.objectValue?["workspace_id"]?
@@ -53,7 +53,7 @@ final class GatewayRuntimeTests {
     expectThrows(
       try gateway.callTool(
         name: "file.read",
-        arguments: .object(["path": .string("value.txt")])
+        arguments: .object(["path": .string("value.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("workspace_id"))
@@ -64,7 +64,7 @@ final class GatewayRuntimeTests {
       arguments: .object([
         "workspace_id": .string("first"),
         "path": .string("value.txt"),
-      ])
+      ]), context: .empty
     )
     #expect((try payload(result).objectValue?["content"]) == (.string("first")))
 
@@ -74,13 +74,14 @@ final class GatewayRuntimeTests {
         arguments: .object([
           "workspace_id": .string("second"),
           "path": .string("value.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains(PolicyDenialCode.workspaceDenied.rawValue))
     }
 
-    let workspaceList = try gateway.callTool(name: "workspace.list", arguments: .object([:]))
+    let workspaceList = try gateway.callTool(
+      name: "workspace.list", arguments: .object([:]), context: .empty)
     let rows = try #require(payload(workspaceList).objectValue?["workspaces"]?.arrayValue)
     #expect((rows.count) == (1))
     #expect((rows.first?.objectValue?["id"]) == (.string("first")))
@@ -104,7 +105,7 @@ final class GatewayRuntimeTests {
       profileID: .localAdmin,
       mode: .localFullAccess
     )
-    #expect(!(try disabled.listTools().contains(where: { $0.name == "shell.run" })))
+    #expect(!(try disabled.listTools(context: .empty).contains(where: { $0.name == "shell.run" })))
 
     let enabled = try makeGateway(
       capabilities: ["operations.prepare", "operations.commit", "shell.run"],
@@ -118,12 +119,12 @@ final class GatewayRuntimeTests {
       profileID: .localAdmin,
       mode: .localFullAccess
     )
-    #expect(try enabled.listTools().contains(where: { $0.name == "shell.run" }))
+    #expect(try enabled.listTools(context: .empty).contains(where: { $0.name == "shell.run" }))
     let result = try await enabled.callToolAsync(
       name: "operations.commit",
       arguments: approvedOperationArguments(
         gateway: enabled, database: database, workspaceID: "root", tool: "shell.run",
-        arguments: .object(["command": .string("printf gateway-shell")]))
+        arguments: .object(["command": .string("printf gateway-shell")])), context: .empty
     )
     #expect(
       (try payload(result).objectValue?["stdout"]?.objectValue?["text"])
@@ -148,12 +149,12 @@ final class GatewayRuntimeTests {
       mode: .localFullAccess
     )
 
-    #expect(try gateway.listTools().contains { $0.name == "shell.run" })
+    #expect(try gateway.listTools(context: .empty).contains { $0.name == "shell.run" })
     let result = try await gateway.callToolAsync(
       name: "operations.commit",
       arguments: approvedOperationArguments(
         gateway: gateway, database: database, workspaceID: "root", tool: "shell.run",
-        arguments: .object(["command": .string("printf approved-shell")]))
+        arguments: .object(["command": .string("printf approved-shell")])), context: .empty
     )
     #expect(
       try payload(result).objectValue?["stdout"]?.objectValue?["text"]
@@ -197,7 +198,7 @@ final class GatewayRuntimeTests {
         arguments: .object([
           "workspace_id": .string("root"),
           "path": .string("obsolete.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("operations.approval_required"))
@@ -210,7 +211,7 @@ final class GatewayRuntimeTests {
         "tool": .string("file.trash"),
         "arguments": targetArguments,
       ]),
-      context: prepareContext
+      context: prepareContext, invocationContext: .empty
     )
     let ticketID = try #require(payload(prepared).objectValue?["ticket_id"]?.stringValue)
     #expect((try payload(prepared).objectValue?["state_digest"]?.stringValue) != nil)
@@ -229,7 +230,7 @@ final class GatewayRuntimeTests {
           caller: .localApp,
           profileID: .chatGPTOperate,
           workspaceID: "root"
-        )
+        ), invocationContext: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("operations.ticket_context_mismatch"))
@@ -246,7 +247,7 @@ final class GatewayRuntimeTests {
           "tool": .string("file.trash"),
           "arguments": .object(["path": .string("different.txt")]),
         ]),
-        context: commitContext
+        context: commitContext, invocationContext: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("ticket_arguments_mismatch"))
@@ -262,7 +263,7 @@ final class GatewayRuntimeTests {
         "tool": .string("file.trash"),
         "arguments": targetArguments,
       ]),
-      context: commitContext
+      context: commitContext, invocationContext: .empty
     )
     let trashedPath = try #require(payload(committed).objectValue?["trashed_path"]?.stringValue)
     defer { try? FileManager.default.removeItem(atPath: trashedPath) }
@@ -282,7 +283,7 @@ final class GatewayRuntimeTests {
           caller: .secureTunnel,
           profileID: .chatGPTOperate,
           workspaceID: "root"
-        )
+        ), invocationContext: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("operations.ticket_expired_or_used"))
@@ -362,7 +363,7 @@ final class GatewayRuntimeTests {
             "path": .string("escape/written.txt"),
             "content": .string("must not escape"),
           ]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("operations.state_path_escape"))
@@ -398,7 +399,7 @@ final class GatewayRuntimeTests {
         "workspace_id": .string("root"),
         "tool": .string("file.trash"),
         "arguments": targetArguments,
-      ])
+      ]), context: .empty
     )
     let ticketID = try #require(payload(prepared).objectValue?["ticket_id"]?.stringValue)
 
@@ -412,7 +413,7 @@ final class GatewayRuntimeTests {
           "ticket_id": .string(ticketID),
           "tool": .string("file.trash"),
           "arguments": targetArguments,
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("operations.ticket_state_changed"))
@@ -457,7 +458,7 @@ final class GatewayRuntimeTests {
         caller: .secureTunnel,
         profileID: .chatGPTOperate,
         workspaceID: "root"
-      )
+      ), invocationContext: .empty
     )
     let ticketID = try #require(payload(prepared).objectValue?["ticket_id"]?.stringValue)
     try database.resolveOperationApproval(id: ticketID, approved: true, resolver: .localCLI)
@@ -477,7 +478,7 @@ final class GatewayRuntimeTests {
           "tool": .string("file.remove_xattr"),
           "arguments": targetArguments,
         ]),
-        context: commitContext
+        context: commitContext, invocationContext: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Extended attribute does not exist"))
@@ -523,7 +524,7 @@ final class GatewayRuntimeTests {
 
     let result = try gateway.callTool(
       name: "file.read",
-      arguments: .object(["path": .string("value.txt")])
+      arguments: .object(["path": .string("value.txt")]), context: .empty
     )
     #expect((try payload(result).objectValue?["content"]) == (.string("single")))
   }
@@ -550,11 +551,11 @@ final class GatewayRuntimeTests {
     )
 
     #expect(
-      (Set(try restricted.listTools().map(\.name)))
+      (Set(try restricted.listTools(context: .empty).map(\.name)))
         == (["cli.help", "policy.probe", "process.list"]))
     let processList = try restricted.callTool(
       name: "process.list",
-      arguments: .object(["workspace_id": .string("root")])
+      arguments: .object(["workspace_id": .string("root")]), context: .empty
     )
     #expect((try payload(processList).objectValue?["processes"]) == (.array([])))
     expectThrows(
@@ -567,7 +568,7 @@ final class GatewayRuntimeTests {
             "id": .string("echo"),
             "argv": .array([.string("blocked")]),
           ]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains(PolicyDenialCode.fullShellDisabled.rawValue))
@@ -596,7 +597,8 @@ final class GatewayRuntimeTests {
       profileID: .localAdmin,
       mode: .localFullAccess
     )
-    #expect((Set(try enabled.listTools().map(\.name))) == (["cli.exec", "process.spawn"]))
+    #expect(
+      (Set(try enabled.listTools(context: .empty).map(\.name))) == (["cli.exec", "process.spawn"]))
   }
 
   @Test
@@ -614,10 +616,11 @@ final class GatewayRuntimeTests {
       mode: .workspaceOperations
     )
     #expect(
-      (Set(try gateway.listTools().map(\.name)))
+      (Set(try gateway.listTools(context: .empty).map(\.name)))
         == (["computer.permissions", "computer.displays", "computer.pointer.click"]))
 
-    let permissions = try gateway.callTool(name: "computer.permissions", arguments: .object([:]))
+    let permissions = try gateway.callTool(
+      name: "computer.permissions", arguments: .object([:]), context: .empty)
     #expect((try payload(permissions).objectValue?["accessibility"]) != nil)
   }
 
@@ -634,8 +637,8 @@ final class GatewayRuntimeTests {
       workspaces: [workspace(id: "root", root: root)]
     )
 
-    _ = try gateway.callTool(name: "computer.permissions", arguments: .object([:]))
-    _ = try gateway.callTool(name: "computer.permissions", arguments: .object([:]))
+    _ = try gateway.callTool(name: "computer.permissions", arguments: .object([:]), context: .empty)
+    _ = try gateway.callTool(name: "computer.permissions", arguments: .object([:]), context: .empty)
 
     let events = try database.auditEvents()
     #expect((events.count) == (2))
@@ -655,7 +658,8 @@ final class GatewayRuntimeTests {
       workspaces: [workspace(id: "root", root: root)]
     )
 
-    let result = try gateway.callTool(name: "workspace.list", arguments: .object([:]))
+    let result = try gateway.callTool(
+      name: "workspace.list", arguments: .object([:]), context: .empty)
     let structuredContent = try #require(
       result.objectValue?["structuredContent"]?.objectValue
     )
@@ -696,7 +700,7 @@ final class GatewayRuntimeTests {
     )
 
     expectThrows(
-      try gateway.callTool(name: "unknown.tool", arguments: .object([:]))
+      try gateway.callTool(name: "unknown.tool", arguments: .object([:]), context: .empty)
     )
     expectThrows(
       try gateway.callTool(
@@ -704,7 +708,7 @@ final class GatewayRuntimeTests {
         arguments: .object([
           "workspace_id": .string("second"),
           "path": .string("value.txt"),
-        ])
+        ]), context: .empty
       )
     )
 
@@ -752,7 +756,7 @@ final class GatewayRuntimeTests {
         arguments: .object([
           "workspace_id": .string("root"),
           "path": .string("../outside.txt"),
-        ])
+        ]), context: .empty
       )
     )
     let event = try #require(try database.auditEvents().first)
@@ -789,7 +793,7 @@ final class GatewayRuntimeTests {
 
     let result = try await gateway.callToolForMCPAsync(
       name: "unknown.tool",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let event = try #require(try database.auditEvents().first)
     let data = try canonicalEncoder().encode(result)
@@ -835,7 +839,7 @@ final class GatewayRuntimeTests {
           "mode": .string("argv"),
           "executable": .string("/bin/sh"),
           "argv": .array([.string("-c"), .string("sleep 30")]),
-        ]))
+        ])), context: .empty
     )
     let sessionID = try #require(payload(spawned).objectValue?["session_id"]?.stringValue)
     let owner = try #require(gateway.ownedWork.snapshot.first)
@@ -848,7 +852,7 @@ final class GatewayRuntimeTests {
         name: "operations.commit",
         arguments: approvedOperationArguments(
           gateway: gateway, database: database, workspaceID: "first", tool: "shell.cancel",
-          arguments: .object(["session_id": .string(sessionID)]))
+          arguments: .object(["session_id": .string(sessionID)])), context: .empty
       )
     }
 
@@ -857,7 +861,7 @@ final class GatewayRuntimeTests {
         name: "operations.commit",
         arguments: approvedOperationArguments(
           gateway: gateway, database: database, workspaceID: "second", tool: "shell.read",
-          arguments: .object(["session_id": .string(sessionID)]))
+          arguments: .object(["session_id": .string(sessionID)])), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown shell session"))
@@ -922,7 +926,7 @@ final class GatewayRuntimeTests {
         "workspace_id": .string(workspaceID),
         "tool": .string(tool),
         "arguments": arguments,
-      ]))
+      ]), context: .empty)
     let ticketID = try #require(payload(prepared).objectValue?["ticket_id"]?.stringValue)
     #expect(try database.operationTicket(id: ticketID)?.state == .pendingApproval)
     try database.resolveOperationApproval(id: ticketID, approved: true, resolver: .localCLI)

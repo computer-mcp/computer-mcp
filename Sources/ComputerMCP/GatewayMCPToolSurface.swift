@@ -9,19 +9,23 @@ package struct GatewayMCPToolSurface: Sendable {
     self.gateway = registry
   }
 
-  package func listTools() throws -> [MCPTool] {
-    try gateway.listTools()
+  package func listTools(context: InvocationContext) throws -> [MCPTool] {
+    try gateway.listTools(context: context)
   }
 
-  package func listToolsAsync() async throws -> [MCPTool] {
-    try await gateway.listToolsAsync()
+  package func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
+    try await gateway.listToolsAsync(context: context)
   }
 
-  package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    try gateway.callTool(name: name, arguments: arguments)
+  package func callTool(name: String, arguments: JSONValue?, context: InvocationContext)
+    throws -> JSONValue
+  {
+    try gateway.callTool(name: name, arguments: arguments, context: context)
   }
 
-  package func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try await gateway.callToolAsync(name: name, arguments: arguments)
+  package func callToolAsync(
+    name: String, arguments: JSONValue?, context: InvocationContext
+  ) async throws -> JSONValue {
+    try await gateway.callToolAsync(name: name, arguments: arguments, context: context)
   }
 }

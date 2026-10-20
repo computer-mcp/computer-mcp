@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
 import Foundation

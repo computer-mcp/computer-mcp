@@ -19,7 +19,8 @@ struct GatewayPermissionLifecycleTests {
       #expect(
         try fixture.gateway.capabilityDescriptor(named: "file.remove_xattr").risk == .destructive)
       do {
-        _ = try fixture.gateway.callTool(name: "file.remove_xattr", arguments: fixture.target)
+        _ = try fixture.gateway.callTool(
+          name: "file.remove_xattr", arguments: fixture.target, context: .empty)
         Issue.record("A model-supplied confirmation must not authorize a destructive operation.")
       } catch {
         #expect(error.localizedDescription.contains("operations.approval_required"))
@@ -28,7 +29,9 @@ struct GatewayPermissionLifecycleTests {
       #expect(ticket.state == .pendingApproval)
       #expect(
         ticket.reviewTitle
-          == (try fixture.gateway.listTools().first { $0.name == "file.remove_xattr" }?.title))
+          == (try fixture.gateway.listTools(context: .empty).first {
+            $0.name == "file.remove_xattr"
+          }?.title))
       #expect(ticket.reviewTitle != nil && ticket.reviewTitle != ticket.capabilityID)
       #expect(fixture.hasAttribute())
       #expect(throws: (any Error).self) { try fixture.commit(ticket.id) }
@@ -118,14 +121,15 @@ struct GatewayPermissionLifecycleTests {
     defer { fixture.removeFiles() }
     do {
       let ticketID = try fixture.prepare()
-      #expect(try fixture.gateway.listTools().contains { $0.name == "file.write" })
+      #expect(try fixture.gateway.listTools(context: .empty).contains { $0.name == "file.write" })
       var grant = try #require(fixture.database.profiles().first)
       let revision = grant.authorizationRevision
       grant.capabilityIDs.remove("file.write")
       grant.capabilityIDs.remove("file.remove_xattr")
       try fixture.database.saveProfile(grant, expectedRevision: revision)
-      #expect(try !fixture.gateway.listTools().contains { $0.name == "file.write" })
-      #expect(try !fixture.gateway.listTools().contains { $0.name == "file.remove_xattr" })
+      #expect(try !fixture.gateway.listTools(context: .empty).contains { $0.name == "file.write" })
+      #expect(
+        try !fixture.gateway.listTools(context: .empty).contains { $0.name == "file.remove_xattr" })
       #expect(try fixture.database.operationTicket(id: ticketID)?.state == .denied)
       #expect(throws: (any Error).self) {
         try fixture.gateway.callTool(
@@ -133,7 +137,7 @@ struct GatewayPermissionLifecycleTests {
           arguments: .object([
             "workspace_id": .string("fixture"), "path": .string("value.txt"),
             "content": .string("unauthorized overwrite"), "confirm": .bool(true),
-          ]))
+          ]), context: .empty)
       }
       #expect(throws: (any Error).self) {
         try fixture.database.resolveOperationApproval(
@@ -195,13 +199,15 @@ struct GatewayPermissionLifecycleTests {
     let reconnected = MCPProxyClient(hostContext: context(principal: "verified-first"))
     do {
       let result = try first.readRequest(
-        server: server, requestID: "owned", offset: 0, maxBytes: 4096)
+        server: server, requestID: "owned", offset: 0, maxBytes: 4096, context: .empty)
       #expect(result.objectValue?["state"] == .string("succeeded"))
       #expect(
-        try reconnected.readRequest(server: server, requestID: "owned", offset: 0, maxBytes: 4096)
+        try reconnected.readRequest(
+          server: server, requestID: "owned", offset: 0, maxBytes: 4096, context: .empty)
           == result)
       #expect(throws: (any Error).self) {
-        try second.readRequest(server: server, requestID: "owned", offset: 0, maxBytes: 4096)
+        try second.readRequest(
+          server: server, requestID: "owned", offset: 0, maxBytes: 4096, context: .empty)
       }
       await first.shutdown()
       await second.shutdown()
@@ -265,7 +271,7 @@ private struct PermissionFixture {
       arguments: .object([
         "workspace_id": .string("fixture"), "tool": .string("file.remove_xattr"),
         "arguments": target,
-      ]))
+      ]), context: .empty)
     return try #require(
       result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
         .stringValue)
@@ -282,7 +288,8 @@ private struct PermissionFixture {
         "tool": .string(tool), "arguments": target ?? self.target,
       ]),
       context: .init(
-        caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: principal))
+        caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: principal),
+      invocationContext: .empty)
   }
 
   func hasAttribute() -> Bool { getxattr(file.path, Self.attribute, nil, 0, 0, 0) >= 0 }

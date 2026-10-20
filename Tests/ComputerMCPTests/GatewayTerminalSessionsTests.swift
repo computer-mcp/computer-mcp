@@ -229,7 +229,7 @@ struct GatewayTerminalSessionsTests {
       name: "shell.spawn",
       arguments: .object([
         "mode": .string("argv"), "executable": .string("/bin/cat"),
-      ]))
+      ]), context: .empty)
     let id = try #require(
       spawned.objectValue?["structuredContent"]?.objectValue?["result"]?
         .objectValue?["session_id"]?.stringValue)
@@ -245,12 +245,12 @@ struct GatewayTerminalSessionsTests {
         name: "shell.write",
         arguments: .object([
           "session_id": .string(id), "text": .string("retained-at-gateway"), "close": .bool(true),
-        ]))
+        ]), context: .empty)
       try await drained(old.ownedWork)
       let cleanup = try #require(old.beginRetirementIfDrained())
       await cleanup.value
       let result = try await current.callToolAsync(
-        name: "shell.read", arguments: .object(["session_id": .string(id)]))
+        name: "shell.read", arguments: .object(["session_id": .string(id)]), context: .empty)
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["stdout"]?.objectValue?["text"] == .string("retained-at-gateway"))
@@ -259,7 +259,7 @@ struct GatewayTerminalSessionsTests {
       grant.fullShellEnabled = false
       try database.saveProfile(grant, expectedRevision: revision)
       let denied = try await current.callToolForMCPAsync(
-        name: "shell.read", arguments: .object(["session_id": .string(id)]))
+        name: "shell.read", arguments: .object(["session_id": .string(id)]), context: .empty)
       #expect(denied.objectValue?["isError"] == .bool(true))
       #expect(!String(describing: denied).contains("retained-at-gateway"))
       await current.shutdown()
@@ -289,7 +289,8 @@ struct GatewayTerminalSessionsTests {
       bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     let completed = try await first.callToolAsync(
-      name: "shell.run", arguments: .object(["command": .string("printf manifest-result")]))
+      name: "shell.run", arguments: .object(["command": .string("printf manifest-result")]),
+      context: .empty)
     let id = try #require(
       completed.objectValue?["structuredContent"]?.objectValue?["result"]?
         .objectValue?["session_id"]?.stringValue)
@@ -300,7 +301,7 @@ struct GatewayTerminalSessionsTests {
       terminalSessions: storage)
     do {
       let result = try await next.callToolAsync(
-        name: "shell.read", arguments: .object(["session_id": .string(id)]))
+        name: "shell.read", arguments: .object(["session_id": .string(id)]), context: .empty)
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["stdout"]?.objectValue?["text"] == .string("manifest-result"))
@@ -336,12 +337,12 @@ struct GatewayTerminalSessionsTests {
         name: "shell.spawn",
         arguments: .object([
           "mode": .string("argv"), "executable": .string("/bin/cat"),
-        ]))
+        ]), context: .empty)
       let id = try #require(
         started.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["session_id"]?.stringValue)
       let read = try await gateway.callToolAsync(
-        name: "shell.read", arguments: .object(["session_id": .string(id)]))
+        name: "shell.read", arguments: .object(["session_id": .string(id)]), context: .empty)
       let rawPID = try #require(
         read.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["process_id"]?.int64Value)

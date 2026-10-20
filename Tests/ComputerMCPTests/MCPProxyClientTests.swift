@@ -19,16 +19,18 @@ final class MCPProxyClientTests {
       args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
     let client = MCPProxyClient()
     let inspection = BlockingOperationExecutor(label: "retiring-call-test")
-    _ = try await inspection.perform { try client.listTools(server: server) }
+    _ = try await inspection.perform { try client.listTools(server: server, context: .empty) }
     let call = Task {
       try await client.callToolAsync(
-        server: server, name: "hang", arguments: .object([:]), requestID: "awaited")
+        server: server, name: "hang", arguments: .object([:]), requestID: "awaited", context: .empty
+      )
     }
     let deadline = ContinuousClock.now + .seconds(3)
     var observed = false
     repeat {
       observed = try await inspection.perform {
-        try client.activeRequests(server: server).objectValue?["requests"]?.arrayValue?.count == 1
+        try client.activeRequests(server: server, context: .empty).objectValue?["requests"]?
+          .arrayValue?.count == 1
       }
       if !observed { try await Task.sleep(for: .milliseconds(10)) }
     } while !observed && ContinuousClock.now < deadline
@@ -47,7 +49,7 @@ final class MCPProxyClientTests {
         exposure: .reexport, prefix: "paged", allowedTools: ["sample"],
         requestTimeoutMs: 5_000)
       let client = MCPProxyClient()
-      let discovered = try client.listTools(server: server)
+      let discovered = try client.listTools(server: server, context: .empty)
       #expect(discovered.map(\.name) == ["hidden", "sample"])
       #expect(discovered.last?.title == "Sample Tool")
       #expect(discovered.last?.annotations?.readOnlyHint == true)
@@ -55,18 +57,20 @@ final class MCPProxyClientTests {
 
       let registry = GatewayToolRegistry(
         configuration: .fixture(mcp: MCPSectionConfig(servers: [server])), mcpClient: client)
-      let exposed = try registry.listTools().map(\.name)
+      let exposed = try registry.listTools(context: .empty).map(\.name)
       #expect(exposed.contains("paged.sample"))
       #expect(!exposed.contains("paged.hidden"))
-      let result = try registry.callTool(name: "paged.sample", arguments: .object([:]))
+      let result = try registry.callTool(
+        name: "paged.sample", arguments: .object([:]), context: .empty)
       #expect(result.objectValue?["structuredContent"] == .object(["answer": .string("called")]))
       expectThrows(
         try registry.callTool(
           name: "mcp.tools.call",
           arguments: .object([
             "server": .string("paged"), "tool": .string("hidden"), "arguments": .object([:]),
-          ])))
-      expectThrows(try registry.callTool(name: "paged.hidden", arguments: .object([:])))
+          ]), context: .empty))
+      expectThrows(
+        try registry.callTool(name: "paged.hidden", arguments: .object([:]), context: .empty))
     }
   }
 
@@ -82,7 +86,7 @@ final class MCPProxyClientTests {
       )
       let client = MCPProxyClient()
 
-      let tools = try client.listTools(server: server)
+      let tools = try client.listTools(server: server, context: .empty)
       #expect((tools.map(\.name)) == (["sample"]))
       #expect((tools.first?.title) == ("Sample Tool"))
       #expect(
@@ -98,8 +102,7 @@ final class MCPProxyClientTests {
       let result = try client.callTool(
         server: server,
         name: "sample",
-        arguments: .object(["value": .string("x")])
-      )
+        arguments: .object(["value": .string("x")]), context: .empty)
       #expect(
         (result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"])
           == (.string("called")))
@@ -122,37 +125,39 @@ final class MCPProxyClientTests {
       )
       let client = MCPProxyClient()
 
-      #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
+      #expect(
+        (try client.listTools(server: server, context: .empty).map(\.name)) == (["sample", "hang"]))
 
-      let resources = try client.listResources(server: server, cursor: nil)
+      let resources = try client.listResources(server: server, cursor: nil, context: .empty)
       #expect(
         (resources.objectValue?["resources"]?.arrayValue?.first?.objectValue?["uri"])
           == (.string("memory://sample")))
-      let templates = try client.listResourceTemplates(server: server, cursor: nil)
+      let templates = try client.listResourceTemplates(server: server, cursor: nil, context: .empty)
       #expect(
         (templates.objectValue?["resourceTemplates"]?.arrayValue?.first?.objectValue?[
           "uriTemplate"
         ]) == (.string("memory://{name}")))
-      let resource = try client.readResource(server: server, uri: "memory://sample")
+      let resource = try client.readResource(
+        server: server, uri: "memory://sample", context: .empty)
       #expect(
         (resource.objectValue?["contents"]?.arrayValue?.first?.objectValue?["text"])
           == (.string("resource-body")))
 
-      let prompts = try client.listPrompts(server: server, cursor: nil)
+      let prompts = try client.listPrompts(server: server, cursor: nil, context: .empty)
       #expect(
         (prompts.objectValue?["prompts"]?.arrayValue?.first?.objectValue?["name"])
           == (.string("sample-prompt")))
       let prompt = try client.getPrompt(
         server: server,
         name: "sample-prompt",
-        arguments: ["value": "x"]
-      )
+        arguments: ["value": "x"], context: .empty)
       #expect(
         (prompt.objectValue?["messages"]?.arrayValue?.first?.objectValue?["role"])
           == (.string("user")))
 
       for _ in 0..<20 {
-        let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+        let events = try client.readEvents(
+          server: server, afterCursor: 0, maxResults: 100, context: .empty)
         if events.objectValue?["events"]?.arrayValue?.contains(where: {
           $0.objectValue?["kind"] == .string("notifications/tools/list_changed")
         }) == true {
@@ -160,13 +165,14 @@ final class MCPProxyClientTests {
         }
         Thread.sleep(forTimeInterval: 0.01)
       }
-      let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+      let events = try client.readEvents(
+        server: server, afterCursor: 0, maxResults: 100, context: .empty)
       #expect(
         events.objectValue?["events"]?.arrayValue?.contains(where: {
           $0.objectValue?["kind"] == .string("notifications/tools/list_changed")
         }) == true)
 
-      let status = try client.connectionStatus(server: server)
+      let status = try client.connectionStatus(server: server, context: .empty)
       #expect((status.objectValue?["state"]) == (.string("connected")))
       #expect((status.objectValue?["persistent_session"]) == (.bool(true)))
 
@@ -194,8 +200,7 @@ final class MCPProxyClientTests {
           server: server,
           name: "hang",
           arguments: .object([:]),
-          requestID: "cancel-me"
-        )
+          requestID: "cancel-me", context: .empty)
       }
 
       #expect(
@@ -205,7 +210,9 @@ final class MCPProxyClientTests {
 
       var recoveryServer = server
       recoveryServer.requestTimeoutMs = 5_000
-      #expect((try client.listTools(server: recoveryServer).map(\.name)) == (["sample", "hang"]))
+      #expect(
+        (try client.listTools(server: recoveryServer, context: .empty).map(\.name))
+          == (["sample", "hang"]))
       let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
       #expect((starts) == ("started\nstarted\n"))
     }
@@ -228,12 +235,11 @@ final class MCPProxyClientTests {
         server: server,
         name: "hang",
         arguments: .object([:]),
-        requestID: "started-cancel-me"
-      )
+        requestID: "started-cancel-me", context: .empty)
       #expect((started.objectValue?["state"]) == (.string("running")))
       #expect((started.objectValue?["request_id"]) == (.string("started-cancel-me")))
 
-      let active = try client.activeRequests(server: server)
+      let active = try client.activeRequests(server: server, context: .empty)
       #expect(
         (active.objectValue?["requests"]?.arrayValue?.first?.objectValue?["request_id"])
           == (.string("started-cancel-me")))
@@ -241,17 +247,18 @@ final class MCPProxyClientTests {
       let cancelled = try client.cancelRequest(
         server: server,
         requestID: "started-cancel-me",
-        reason: "test cancellation"
-      )
+        reason: "test cancellation", context: .empty)
       #expect(cancelled.objectValue?["cancellation_requested"] == .bool(true))
       #expect(cancelled.objectValue?["execution_stopped"] == .null)
       #expect(cancelled.objectValue?["cancelled"] == nil)
-      let pending = try client.activeRequests(server: server).objectValue?["requests"]?.arrayValue
+      let pending = try client.activeRequests(server: server, context: .empty).objectValue?[
+        "requests"]?.arrayValue
       #expect(pending?.count == 1)
       #expect(pending?.first?.objectValue?["state"] == .string("cancellation_requested"))
       #expect(throws: (any Error).self) {
         try client.startToolCall(
-          server: server, name: "sample", arguments: .object([:]), requestID: "started-cancel-me")
+          server: server, name: "sample", arguments: .object([:]), requestID: "started-cancel-me",
+          context: .empty)
       }
 
       #expect(
@@ -259,7 +266,8 @@ final class MCPProxyClientTests {
           .trimmingCharacters(in: .whitespacesAndNewlines)
           .isEmpty))
 
-      let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+      let events = try client.readEvents(
+        server: server, afterCursor: 0, maxResults: 100, context: .empty)
       let kinds = events.objectValue?["events"]?.arrayValue?.compactMap {
         $0.objectValue?["kind"]?.stringValue
       }
@@ -271,7 +279,8 @@ final class MCPProxyClientTests {
         events.objectValue?["events"]?.arrayValue?.filter {
           $0.objectValue?["kind"]?.stringValue?.hasPrefix("request.") == true
         }.allSatisfy { $0.objectValue?["request_id"] == .string("started-cancel-me") } == true)
-      #expect((try client.listTools(server: server).map(\.name)) == (["sample", "hang"]))
+      #expect(
+        (try client.listTools(server: server, context: .empty).map(\.name)) == (["sample", "hang"]))
       #expect((try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\n"))
     }
   }
@@ -287,20 +296,25 @@ final class MCPProxyClientTests {
     do {
       try await runBlockingTest {
         _ = try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "late")
-        _ = try client.cancelRequest(server: server, requestID: "late", reason: "stop")
-        _ = try client.cancelRequest(server: server, requestID: "late", reason: "stop again")
+          server: server, name: "hang", arguments: .object([:]), requestID: "late", context: .empty)
+        _ = try client.cancelRequest(
+          server: server, requestID: "late", reason: "stop", context: .empty)
+        _ = try client.cancelRequest(
+          server: server, requestID: "late", reason: "stop again", context: .empty)
         #expect(
-          try client.activeRequests(server: server).objectValue?["requests"]?.arrayValue?.count == 1
+          try client.activeRequests(server: server, context: .empty).objectValue?["requests"]?
+            .arrayValue?.count == 1
         )
 
         // The fixture only sends the original result after this explicit checkpoint.
         _ = try client.callTool(
-          server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]))
+          server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]),
+          context: .empty)
         let deadline = ContinuousClock.now + .seconds(2)
         var completed = false
         repeat {
-          let events = try client.readEvents(server: server, afterCursor: 0, maxResults: 100)
+          let events = try client.readEvents(
+            server: server, afterCursor: 0, maxResults: 100, context: .empty)
           completed =
             events.objectValue?["events"]?.arrayValue?.contains {
               $0.objectValue?["kind"] == .string("request.completed")
@@ -310,22 +324,27 @@ final class MCPProxyClientTests {
         } while !completed && ContinuousClock.now < deadline
         #expect(completed)
         let receipt = try client.readRequest(
-          server: server, requestID: "late", offset: 0, maxBytes: 4096)
+          server: server, requestID: "late", offset: 0, maxBytes: 4096, context: .empty)
         #expect(receipt.objectValue?["state"] == .string("succeeded"))
         #expect(receipt.objectValue?["output_state"] == .string("available"))
         #expect(receipt.objectValue?["result"] != nil)
         #expect(
           try client.startToolCall(
-            server: server, name: "hang", arguments: .object([:]), requestID: "late") == receipt)
+            server: server, name: "hang", arguments: .object([:]), requestID: "late",
+            context: .empty) == receipt)
         #expect(
           try client.callTool(
-            server: server, name: "hang", arguments: .object([:]), requestID: "late")
+            server: server, name: "hang", arguments: .object([:]), requestID: "late",
+            context: .empty)
             == receipt.objectValue?["result"])
         #expect(throws: (any Error).self) {
           try client.callTool(
-            server: server, name: "sample", arguments: .object([:]), requestID: "late")
+            server: server, name: "sample", arguments: .object([:]), requestID: "late",
+            context: .empty)
         }
-        #expect(try client.activeRequests(server: server).objectValue?["requests"] == .array([]))
+        #expect(
+          try client.activeRequests(server: server, context: .empty).objectValue?["requests"]
+            == .array([]))
         #expect(
           try String(contentsOf: fixture.cancelMarker, encoding: .utf8).split(separator: "\n").count
             == 1)
@@ -357,17 +376,20 @@ final class MCPProxyClientTests {
     do {
       try await runBlockingTest {
         _ = try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "owned-call")
+          server: server, name: "hang", arguments: .object([:]), requestID: "owned-call",
+          context: .empty)
         let record = try #require(ownedWork.snapshot.first { $0.kind == .mcpRequest })
         #expect(record.kind == .mcpRequest)
         #expect(record.workspaceID == "fixture")
         #expect(record.registrationID == "owned")
         #expect(record.resourceID == "owned-call")
-        _ = try client.cancelRequest(server: server, requestID: "owned-call", reason: "stop")
+        _ = try client.cancelRequest(
+          server: server, requestID: "owned-call", reason: "stop", context: .empty)
         #expect(ownedWork.snapshot.filter { $0.kind == .mcpRequest } == [record])
         if completeBeforeShutdown {
           _ = try client.callTool(
-            server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]))
+            server: server, name: "sample", arguments: .object(["complete_pending": .bool(true)]),
+            context: .empty)
           let deadline = ContinuousClock.now + .seconds(2)
           while ownedWork.snapshot.contains(where: { $0.kind == .mcpRequest })
             && ContinuousClock.now < deadline
@@ -379,7 +401,7 @@ final class MCPProxyClientTests {
           #expect(unknown.uncertain)
           #expect(!ownedWork.closeAdmissionIfDrained())
           #expect(
-            try client.connectionStatus(server: server).objectValue?["state"]
+            try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
               == .string("connected"))
         }
       }
@@ -403,9 +425,9 @@ final class MCPProxyClientTests {
       #expect(
         throws: GatewayToolError.executionFailed("MCP server 'slow-startup' startup timed out.")
       ) {
-        try client.listTools(server: server)
+        try client.listTools(server: server, context: .empty)
       }
-      let state = try client.connectionStatus(server: server).objectValue?["state"]
+      let state = try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
       #expect(state == .string("retiring") || state == .string("not_started"))
       #expect(!FileManager.default.fileExists(atPath: fixture.cancelMarker.path))
     }
@@ -425,20 +447,25 @@ final class MCPProxyClientTests {
     do {
       try await runBlockingTest {
         let result = try client.callTool(
-          server: server, name: "counter", arguments: .object([:]), requestID: "once")
+          server: server, name: "counter", arguments: .object([:]), requestID: "once",
+          context: .empty)
         #expect(result.objectValue?["structuredContent"]?.objectValue?["dispatches"] == .number(1))
         #expect(
           try client.callTool(
-            server: server, name: "counter", arguments: .object([:]), requestID: "once") == result)
+            server: server, name: "counter", arguments: .object([:]), requestID: "once",
+            context: .empty) == result)
         #expect(
           try client.startToolCall(
-            server: server, name: "counter", arguments: .object([:]), requestID: "once"
+            server: server, name: "counter", arguments: .object([:]), requestID: "once",
+            context: .empty
           ).objectValue?["result"] == result)
         let next = try client.callTool(
-          server: server, name: "counter", arguments: .object([:]), requestID: "second")
+          server: server, name: "counter", arguments: .object([:]), requestID: "second",
+          context: .empty)
         #expect(next.objectValue?["structuredContent"]?.objectValue?["dispatches"] == .number(2))
         _ = try client.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "unresolved")
+          server: server, name: "hang", arguments: .object([:]), requestID: "unresolved",
+          context: .empty)
       }
     } catch {
       await client.shutdown()
@@ -450,18 +477,20 @@ final class MCPProxyClientTests {
     do {
       try await runBlockingTest {
         let read = try restored.readRequest(
-          server: server, requestID: "once", offset: 0, maxBytes: 4096)
+          server: server, requestID: "once", offset: 0, maxBytes: 4096, context: .empty)
         #expect(read.objectValue?["state"] == .string("succeeded"))
         #expect(
           try restored.callTool(
-            server: server, name: "counter", arguments: .object([:]), requestID: "once")
+            server: server, name: "counter", arguments: .object([:]), requestID: "once",
+            context: .empty)
             == read.objectValue?["result"])
         let unknown = try restored.startToolCall(
-          server: server, name: "hang", arguments: .object([:]), requestID: "unresolved")
+          server: server, name: "hang", arguments: .object([:]), requestID: "unresolved",
+          context: .empty)
         #expect(unknown.objectValue?["state"] == .string("outcome_unknown"))
         #expect(unknown.objectValue?["cleanup"] == .string("confirmed"))
         #expect(
-          try restored.connectionStatus(server: server).objectValue?["state"]
+          try restored.connectionStatus(server: server, context: .empty).objectValue?["state"]
             == .string("not_started"))
         #expect(try String(contentsOf: fixture.startMarker, encoding: .utf8) == "started\n")
       }
@@ -492,25 +521,29 @@ final class MCPProxyClientTests {
       let server = MCPServerConfig(
         id: "http", transport: .http,
         url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
-      _ = try client.callTool(server: server, name: "http-sample", arguments: .object([:]))
+      _ = try client.callTool(
+        server: server, name: "http-sample", arguments: .object([:]), context: .empty)
       let record = try #require(work.snapshot.first { $0.kind == .mcpUnreportedWork })
       let target = MCPContinuationTarget(
         workspaceID: "fixture",
         reference: .init(serverID: "http", toolName: "mcp.connections.close"),
         connectionID: try #require(record.connectionID), instanceID: nil, resources: [:],
         selectedOwnershipID: record.id)
-      #expect(throws: GatewayToolError.self) { try client.closeConnection(server: server) }
-      try MCPContinuationTarget.$current.withValue(target) {
-        let result = try client.closeConnection(server: server)
-        #expect(result.objectValue?["transport_closed"] == .bool(true))
-        #expect(result.objectValue?["managed_process_exit_confirmed"] == .null)
-        #expect(result.objectValue?["work_cleanup"] == .string("unknown"))
-        #expect(work.snapshot.contains { $0.id == record.id && $0.uncertain })
-        #expect(fixture.process.isRunning)
-        let before = try String(contentsOf: fixture.sessionMarker, encoding: .utf8)
-        #expect(throws: GatewayToolError.self) { try client.closeConnection(server: server) }
-        #expect(try String(contentsOf: fixture.sessionMarker, encoding: .utf8) == before)
+      #expect(throws: GatewayToolError.self) {
+        try client.closeConnection(server: server, context: .empty)
       }
+      let result = try client.closeConnection(
+        server: server, context: .init(continuation: target))
+      #expect(result.objectValue?["transport_closed"] == .bool(true))
+      #expect(result.objectValue?["managed_process_exit_confirmed"] == .null)
+      #expect(result.objectValue?["work_cleanup"] == .string("unknown"))
+      #expect(work.snapshot.contains { $0.id == record.id && $0.uncertain })
+      #expect(fixture.process.isRunning)
+      let before = try String(contentsOf: fixture.sessionMarker, encoding: .utf8)
+      #expect(throws: GatewayToolError.self) {
+        try client.closeConnection(server: server, context: .init(continuation: target))
+      }
+      #expect(try String(contentsOf: fixture.sessionMarker, encoding: .utf8) == before)
     }
   }
 
@@ -530,12 +563,12 @@ final class MCPProxyClientTests {
       )
       let client = MCPProxyClient()
 
-      #expect((try client.listTools(server: server).map(\.name)) == (["http-sample"]))
+      #expect(
+        (try client.listTools(server: server, context: .empty).map(\.name)) == (["http-sample"]))
       let result = try client.callTool(
         server: server,
         name: "http-sample",
-        arguments: .object([:])
-      )
+        arguments: .object([:]), context: .empty)
       #expect(
         (result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"])
           == (.string("http-called")))
@@ -545,7 +578,7 @@ final class MCPProxyClientTests {
       #expect((sessions.count) >= (2))
       #expect(sessions.allSatisfy { $0 == "session-1" })
       #expect(
-        (try client.connectionStatus(server: server).objectValue?["state"])
+        (try client.connectionStatus(server: server, context: .empty).objectValue?["state"])
           == (.string("connected")))
     }
   }
@@ -564,15 +597,17 @@ final class MCPProxyClientTests {
         requestTimeoutMs: 5_000
       )
       let evidence = try await BlockingOperationExecutor(label: "exiting-provider-test").perform {
-        let initialCatalog = try client.listTools(server: server).map(\.name)
-        let response = try client.callTool(server: server, name: "crash", arguments: .object([:]))
+        let initialCatalog = try client.listTools(server: server, context: .empty).map(\.name)
+        let response = try client.callTool(
+          server: server, name: "crash", arguments: .object([:]), context: .empty)
         let deadline = ContinuousClock.now + .seconds(2)
-        var state = try client.connectionStatus(server: server).objectValue?["state"]
+        var state = try client.connectionStatus(server: server, context: .empty).objectValue?[
+          "state"]
         while state == .string("connected"), ContinuousClock.now < deadline {
           Thread.sleep(forTimeInterval: 0.02)
-          state = try client.connectionStatus(server: server).objectValue?["state"]
+          state = try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
         }
-        let reconnectedCatalog = try client.listTools(server: server).map(\.name)
+        let reconnectedCatalog = try client.listTools(server: server, context: .empty).map(\.name)
         let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
         return (initialCatalog, response, state, reconnectedCatalog, starts)
       }
@@ -847,7 +882,8 @@ final class MCPProxyClientTests {
         url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
       let waiting = Task {
         try await client.callToolAsync(
-          server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+          server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once",
+          context: .empty)
       }
       do {
         let marker = directory.appendingPathComponent("call-started.txt")
@@ -859,7 +895,7 @@ final class MCPProxyClientTests {
         waiting.cancel()
         await #expect(throws: (any Error).self) { _ = try await waiting.value }
         let receipt = try client.readRequest(
-          server: server, requestID: "write-once", offset: 0, maxBytes: 4096)
+          server: server, requestID: "write-once", offset: 0, maxBytes: 4096, context: .empty)
         #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
         #expect(receipt.objectValue?["cancellation"] == .string("failed"))
         #expect(receipt.objectValue?["cleanup"] != .string("confirmed"))
@@ -868,10 +904,12 @@ final class MCPProxyClientTests {
         #expect(ownedWork.snapshot.allSatisfy { $0.uncertain })
         #expect(throws: (any Error).self) {
           try client.callTool(
-            server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+            server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once",
+            context: .empty)
         }
         let repeated = try client.startToolCall(
-          server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once")
+          server: server, name: "http-sample", arguments: .object([:]), requestID: "write-once",
+          context: .empty)
         #expect(repeated.objectValue?["state"] == .string("outcome_unknown"))
         #expect(try String(contentsOf: marker, encoding: .utf8) == "called\n")
         try Data().write(to: directory.appendingPathComponent("release.txt"))

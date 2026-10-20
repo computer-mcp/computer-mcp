@@ -423,7 +423,8 @@ package actor AppControlPlaneService {
         inputs: inputs, caller: caller, profileID: profileID, persistentState: false)
       let tools: [MCPTool]
       do {
-        tools = try gateway.listTools()
+        // Profile administration inventories the host catalog without a caller invocation.
+        tools = try gateway.listTools(context: .empty)
       } catch {
         await gateway.shutdown()
         throw error

@@ -415,7 +415,7 @@ struct PluginResolverTests {
       name: "cli.exec",
       arguments: .object([
         "id": .string("commands"), "argv": .array([.string("%s"), .string("空 格;$(no-execution)")]),
-      ]))
+      ]), context: .empty)
     let payload = try #require(output.objectValue?["structuredContent"]?.objectValue?["result"])
     #expect(payload.objectValue?["stdout"] == .string("空 格;$(no-execution)"))
     #expect(payload.objectValue?["exit_code"] == .number(0))
@@ -452,21 +452,21 @@ struct PluginResolverTests {
       ],
       platform: MacOSPlatform.services, mcpClient: CompositionCatalogClient(), plugins: [plugin])
     do {
-      let tools = try runtime.listTools().map(\.name)
+      let tools = try runtime.listTools(context: .empty).map(\.name)
       #expect(tools.contains("package.inspect"))
       #expect(tools.contains("package.future") == all)
-      _ = try runtime.callTool(name: "package.inspect", arguments: .object([:]))
+      _ = try runtime.callTool(name: "package.inspect", arguments: .object([:]), context: .empty)
       _ = try runtime.callTool(
         name: "mcp.tools.call",
         arguments: .object([
           "server": .string("native"), "tool": .string("inspect"), "arguments": .object([:]),
-        ]))
+        ]), context: .empty)
       #expect(throws: (any Error).self) {
         try runtime.callTool(
           name: "mcp.tools.call",
           arguments: .object([
             "server": .string("private"), "tool": .string("inspect"), "arguments": .object([:]),
-          ]))
+          ]), context: .empty)
       }
       #expect(runtime.pluginOrigins.count == 3)
       #expect(runtime.pluginDiagnostics.isEmpty)
@@ -501,23 +501,35 @@ private struct CompositionCatalogClient: DownstreamMCPClient {
     -> any DownstreamMCPClient
   { self }
 
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     ["inspect", "future"].map {
       MCPTool(name: $0, description: $0, inputSchema: .object(["type": .string("object")]))
     }
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     .object([
       "content": .array([
         .object(["type": .string("text"), "text": .string("\(server.id):\(name)")])
       ])
     ])
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

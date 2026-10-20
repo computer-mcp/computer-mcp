@@ -71,7 +71,7 @@ struct ToolsInventory: AsyncParsableCommand {
       platform: MacOSPlatform.services
     )
     do {
-      let tools = try runtime.listTools().sorted { $0.name < $1.name }
+      let tools = try runtime.listTools(context: .empty).sorted { $0.name < $1.name }
 
       printJSON(
         .object([

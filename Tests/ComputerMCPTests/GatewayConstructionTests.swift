@@ -56,7 +56,7 @@ struct GatewayConstructionTests {
     configuration.mcp.servers[0].args = [script.path, root.path, "inspect"]
     let runtime = try await GatewayRuntime.make(
       configuration: configuration, registeredWorkspaces: [first], platform: MacOSPlatform.services)
-    #expect(try runtime.listTools().contains { $0.name == "inspect" })
+    #expect(try runtime.listTools(context: .empty).contains { $0.name == "inspect" })
     await runtime.shutdown()
     try expectProcessesExited(root)
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("overlap").path))
@@ -202,22 +202,34 @@ private final class ConstructionMCPClient: DownstreamMCPClient, Sendable {
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: MCPHostContext?
   ) -> any DownstreamMCPClient { self }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     if pauseDiscovery {
       discovery.send()
       _ = releaseDiscovery.wait(timeout: .now() + .seconds(5))
     }
     return []
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     .null
   }
   func shutdown() async { await gate.close() }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

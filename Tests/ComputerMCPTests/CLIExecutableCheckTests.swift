@@ -337,11 +337,12 @@ struct CLIExecutableCheckTests {
     let registry = GatewayToolRegistry(configuration: configuration)
     let router = try GatewayProviderRouter(registry: registry)
     do {
-      let tool = try #require(router.listTools().first { $0.name.hasPrefix("cli_") })
+      let tool = try #require(router.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
       #expect(
         tool.meta?.objectValue?["cli"]?.objectValue?["compatibility"]
           == .string("required_before_call"))
-      _ = try registry.callTool(name: "cli.help", arguments: .object(["id": .string("checked")]))
+      _ = try registry.callTool(
+        name: "cli.help", arguments: .object(["id": .string("checked")]), context: .empty)
       #expect(!fixture.exists("probes"))
       let observe = try GatewayRuntime(
         configuration: configuration,
@@ -349,30 +350,30 @@ struct CLIExecutableCheckTests {
         registeredWorkspaces: [
           .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
         ], platform: MacOSPlatform.services)
-      #expect(try !observe.listTools().contains { $0.name == tool.name })
+      #expect(try !observe.listTools(context: .empty).contains { $0.name == tool.name })
       await #expect(throws: (any Error).self) {
-        try await observe.callToolAsync(name: tool.name, arguments: .object([:]))
+        try await observe.callToolAsync(name: tool.name, arguments: .object([:]), context: .empty)
       }
       await observe.shutdown()
       #expect(!fixture.exists("probes"))
-      _ = try await router.callToolAsync(name: tool.name, arguments: .object([:]))
+      _ = try await router.callToolAsync(name: tool.name, arguments: .object([:]), context: .empty)
       try #require(fixture.exists("action"))
       try FileManager.default.removeItem(at: fixture.file("action"))
       try Data("two".utf8).write(to: fixture.file("version"))
       await #expect(throws: CLITreeError.self) {
-        try await router.callToolAsync(name: tool.name, arguments: .object([:]))
+        try await router.callToolAsync(name: tool.name, arguments: .object([:]), context: .empty)
       }
       #expect(!fixture.exists("action"))
       try Data("invalid".utf8).write(to: fixture.file("tree.json"))
-      await #expect(throws: (any Error).self) { try await router.refreshTools() }
+      await #expect(throws: (any Error).self) { try await router.refreshTools(context: .empty) }
       await #expect(throws: CLITreeError.self) {
-        try await router.callToolAsync(name: tool.name, arguments: .object([:]))
+        try await router.callToolAsync(name: tool.name, arguments: .object([:]), context: .empty)
       }
       #expect(!fixture.exists("action"))
       try JSONEncoder().encode(Self.tree([.init(args: ["--version"], stdout: "two")]))
         .write(to: fixture.file("tree.json"))
-      try await router.refreshTools()
-      _ = try await router.callToolAsync(name: tool.name, arguments: .object([:]))
+      try await router.refreshTools(context: .empty)
+      _ = try await router.callToolAsync(name: tool.name, arguments: .object([:]), context: .empty)
       #expect(try String(contentsOf: fixture.file("action"), encoding: .utf8) == "target")
       #expect(
         try String(contentsOf: fixture.file("probes"), encoding: .utf8) == "probeprobeprobeprobe")

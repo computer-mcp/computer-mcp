@@ -37,7 +37,7 @@ Dependencies inside a layer are limited to these:
 
 - `Core`: JSON values, gateway models, policy and capability descriptors, tool
   definitions and the provider protocol, workspace identity, product version
-  metadata and the invocation context protocols.
+  metadata, invocation values and protocols, and the blocking executor.
 - `Platform`: the platform service protocols listed below and their value types.
 - `Configuration`: manifest model and defaults, including MCP HTTP
   authentication values.
@@ -81,13 +81,19 @@ the control plane.
 
 ### Invocation context
 
-Admission, the control session and the continuation route reach providers and
-downstream clients as an explicit invocation context. Its members are protocols
-defined in `Core`; the control session member is the live session, so
-restriction and revocation checks read current state. Transport tracing and
-execution-owner routing are used only inside `Gateway` and do not leave it.
-Blocking work runs on the blocking executor with the context passed as an
-argument; context is never re-propagated by hand across a dispatch hop.
+Providers receive a `ToolInvocation` containing the tool name, arguments and
+an `InvocationContext`. Downstream methods that authorize, discover, execute or
+observe work receive that context explicitly. `Core` defines the
+`InvocationAdmission` value and the `GatewaySessionAuthority` and
+`ContinuationRoute` protocols carried by the context; `InvocationContext.empty`
+has none of them. The session member is the live authority, so restriction,
+revocation and revision checks read current state. Builtin tools have nil
+admission. Gateway constructs downstream admission after authorization and
+interprets its `MCPContinuationTarget` through the continuation protocol.
+Transport tracing and execution-owner routing stay inside `Gateway`.
+Blocking work uses `BlockingOperationExecutor` from `Core`, passing the invocation
+as an argument. Exact continuation selection is captured before detached work
+and cannot start a replacement connection.
 
 ### Injected interfaces
 

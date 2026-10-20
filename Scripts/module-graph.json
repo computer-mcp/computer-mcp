@@ -167,7 +167,6 @@
     "GatewayToolCounts": "ComputerMCPGateway",
     "GatewayToolProviderFactory": "ComputerMCPGateway",
     "HTTPClientControlRegistry": "ComputerMCPGateway",
-    "MCPInvocationAdmission": "ComputerMCPDownstream",
     "MCPRuntimeAdapter": "ComputerMCPGateway",
     "MCPToolAccessPolicy": "ComputerMCPDownstream",
     "ManifestFileTransaction": "ComputerMCPControlPlane",
@@ -179,7 +178,8 @@
     "CloudflareTunnel.swift:AppControlPlaneService": "ComputerMCPControlPlane",
     "GatewayDatabase.swift:GatewayClientTrust": "ComputerMCPGateway",
     "GatewayDatabase.swift:GatewayDatabase": "ComputerMCPGateway",
-    "MCPToolRisk.swift:GatewayConfiguration": "ComputerMCPDownstream"
+    "MCPToolRisk.swift:GatewayConfiguration": "ComputerMCPDownstream",
+    "MCPToolRisk.swift:InvocationAdmission": "ComputerMCPDownstream"
   },
   "files": {
     "^PlatformServices": "ComputerMCPGateway",

@@ -16,9 +16,10 @@ struct GatewayWorkspaceAvailabilityTests {
     defer { try? FileManager.default.removeItem(at: root) }
     try Data("healthy".utf8).write(to: root.appendingPathComponent("value.txt"))
     let gateway = try await makeGateway(root: root, caller: caller)
-    let names = try gateway.listTools().map(\.name)
+    let names = try gateway.listTools(context: .empty).map(\.name)
     #expect(names.contains("file.read"))
-    let listed = try result(gateway.callTool(name: "workspace.list", arguments: .object([:])))
+    let listed = try result(
+      gateway.callTool(name: "workspace.list", arguments: .object([:]), context: .empty))
     let rows = try #require(listed.objectValue?["workspaces"]?.arrayValue)
     #expect(rows.count == 2)
     #expect(rows[0].objectValue?["access"]?.objectValue?["status"] == .string("unavailable"))
@@ -28,7 +29,7 @@ struct GatewayWorkspaceAvailabilityTests {
         name: "file.read",
         arguments: .object([
           "workspace_id": .string("healthy"), "path": .string("value.txt"),
-        ])))
+        ]), context: .empty))
     #expect(read.objectValue?["content"] == .string("healthy"))
     await gateway.shutdown()
   }
@@ -44,7 +45,7 @@ struct GatewayWorkspaceAvailabilityTests {
         name: "file.read",
         arguments: .object([
           "workspace_id": .string("missing"), "path": .string("value.txt"),
-        ]))
+        ]), context: .empty)
       Issue.record("An inaccessible workspace cannot execute a file operation")
     } catch {
       #expect(
@@ -52,10 +53,12 @@ struct GatewayWorkspaceAvailabilityTests {
           == (grantMissing ? "workspace.root_missing" : "policy.workspace_denied"))
       if !grantMissing { #expect(!error.localizedDescription.contains(root.path)) }
     }
-    let listed = try result(gateway.callTool(name: "workspace.list", arguments: .object([:])))
+    let listed = try result(
+      gateway.callTool(name: "workspace.list", arguments: .object([:]), context: .empty))
     #expect(listed.objectValue?["workspaces"]?.arrayValue?.count == (grantMissing ? 2 : 1))
     #expect(throws: (any Error).self) {
-      try gateway.callTool(name: "file.read", arguments: .object(["path": .string("value.txt")]))
+      try gateway.callTool(
+        name: "file.read", arguments: .object(["path": .string("value.txt")]), context: .empty)
     }
     await gateway.shutdown()
   }
@@ -66,23 +69,29 @@ struct GatewayWorkspaceAvailabilityTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let missing = root.appendingPathComponent("missing", isDirectory: true)
     let gateway = try await makeGateway(root: root, includeHealthy: false)
-    #expect(Set(try gateway.listTools().map(\.name)) == ["workspace.list", "workspace.describe"])
+    #expect(
+      Set(try gateway.listTools(context: .empty).map(\.name)) == [
+        "workspace.list", "workspace.describe",
+      ])
     let described = try result(
       gateway.callTool(
-        name: "workspace.describe", arguments: .object(["workspace_id": .string("missing")]))
+        name: "workspace.describe", arguments: .object(["workspace_id": .string("missing")]),
+        context: .empty)
     )
     #expect(
       described.objectValue?["access"]?.objectValue?["error"]?.objectValue?["code"]
         == .string("workspace.root_missing"))
     #expect(throws: (any Error).self) {
-      try gateway.callTool(name: "file.read", arguments: .object(["path": .string("value.txt")]))
+      try gateway.callTool(
+        name: "file.read", arguments: .object(["path": .string("value.txt")]), context: .empty)
     }
     await gateway.shutdown()
     try FileManager.default.createDirectory(at: missing, withIntermediateDirectories: true)
     try Data("restored".utf8).write(to: missing.appendingPathComponent("value.txt"))
     let restored = try await makeGateway(root: root, includeHealthy: false)
     let read = try result(
-      restored.callTool(name: "file.read", arguments: .object(["path": .string("value.txt")]))
+      restored.callTool(
+        name: "file.read", arguments: .object(["path": .string("value.txt")]), context: .empty)
     )
     #expect(read.objectValue?["content"] == .string("restored"))
     await restored.shutdown()
@@ -113,7 +122,7 @@ struct GatewayWorkspaceAvailabilityTests {
         builtin: .init(enabled: ["file.read"]), workspaceDirectory: root),
       registeredWorkspaces: workspaces(root: root), platform: MacOSPlatform.services,
       bundledPlugins: .load(directory: nil))
-    #expect(try gateway.listTools().contains { $0.name == "file.read" })
+    #expect(try gateway.listTools(context: .empty).contains { $0.name == "file.read" })
     await gateway.shutdown()
   }
 

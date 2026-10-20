@@ -41,10 +41,11 @@ struct MCPRiskFloorTests {
     args["request_id"] = .string("semantic-request")
     do {
       if path == "sync" {
-        _ = try fixture.runtime.callTool(name: "mcp.tools.call", arguments: .object(args))
+        _ = try fixture.runtime.callTool(
+          name: "mcp.tools.call", arguments: .object(args), context: .empty)
       } else {
         _ = try await fixture.runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(args))
+          name: "mcp.tools.call", arguments: .object(args), context: .empty)
       }
       Issue.record("An action changed after host admission reached the downstream provider.")
     } catch {
@@ -63,7 +64,7 @@ struct MCPRiskFloorTests {
       name: "operations.prepare",
       arguments: .object([
         "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-      ]))
+      ]), context: .empty)
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
         .objectValue?["ticket_id"]?.stringValue)
@@ -75,7 +76,7 @@ struct MCPRiskFloorTests {
         arguments: .object([
           "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
           "arguments": arguments(for: "mcp.tools.call"),
-        ]))
+        ]), context: .empty)
       Issue.record("An unchanged risk must not let an approval change its semantic action.")
     } catch {
       #expect(error.localizedDescription.contains("operations.ticket_arguments_mismatch"))
@@ -94,7 +95,7 @@ struct MCPRiskFloorTests {
       name: "operations.prepare",
       arguments: .object([
         "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-      ]))
+      ]), context: .empty)
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
         .objectValue?["ticket_id"]?.stringValue)
@@ -105,9 +106,11 @@ struct MCPRiskFloorTests {
     ])
     do {
       if asynchronous {
-        _ = try await fixture.runtime.callToolAsync(name: "operations.commit", arguments: args)
+        _ = try await fixture.runtime.callToolAsync(
+          name: "operations.commit", arguments: args, context: .empty)
       } else {
-        _ = try fixture.runtime.callTool(name: "operations.commit", arguments: args)
+        _ = try fixture.runtime.callTool(
+          name: "operations.commit", arguments: args, context: .empty)
       }
       Issue.record("A consumed ticket changed its reviewed action before target admission.")
     } catch {
@@ -137,14 +140,16 @@ struct MCPRiskFloorTests {
     let base = RiskCatalogClient(risk: .string("read-only"))
     base.suspendDiscovery()
     let client = AuthorizedMCPClient(
-      base: base, policy: policy(tools: true), policyProvider: { current.withLockedValue { $0 } })
+      base: base, policy: policy(tools: true),
+      policyProvider: { _ in current.withLockedValue { $0 } })
     let receipt = try client.readRequest(
-      server: server, requestID: "pending", offset: 0, maxBytes: 1024)
+      server: server, requestID: "pending", offset: 0, maxBytes: 1024, context: .empty)
     #expect(receipt.objectValue?["tool"] == .string("inspect"))
     let revoked = policy(tools: false)
     current.withLockedValue { $0 = revoked }
     do {
-      _ = try client.readRequest(server: server, requestID: "pending", offset: 0, maxBytes: 1024)
+      _ = try client.readRequest(
+        server: server, requestID: "pending", offset: 0, maxBytes: 1024, context: .empty)
       Issue.record("A revoked tool grant must deny its execution receipt.")
     } catch {
       #expect(error.localizedDescription.contains("policy.capability_denied"))
@@ -194,11 +199,12 @@ struct MCPRiskFloorTests {
     defer { fixture.remove() }
     do {
       #expect(
-        try !fixture.runtime.listTools().contains {
+        try !fixture.runtime.listTools(context: .empty).contains {
           $0.name == "vendor.inspect" || $0.name == "review.inspect"
         })
       await #expect(throws: (any Error).self) {
-        try await fixture.runtime.callToolAsync(name: tool, arguments: arguments(for: tool))
+        try await fixture.runtime.callToolAsync(
+          name: tool, arguments: arguments(for: tool), context: .empty)
       }
       #expect(fixture.client.calls == 0)
       await fixture.runtime.shutdown()
@@ -214,7 +220,8 @@ struct MCPRiskFloorTests {
     defer { fixture.remove() }
     do {
       do {
-        _ = try await fixture.runtime.callToolAsync(name: tool, arguments: arguments(for: tool))
+        _ = try await fixture.runtime.callToolAsync(
+          name: tool, arguments: arguments(for: tool), context: .empty)
         Issue.record("A configured read-only override must not bypass publisher risk consent.")
       } catch {
         #expect(error.localizedDescription.contains("operations.approval_required"))
@@ -224,7 +231,7 @@ struct MCPRiskFloorTests {
         name: "operations.prepare",
         arguments: .object([
           "tool": .string(tool), "arguments": arguments(for: tool),
-        ]))
+        ]), context: .empty)
       let ticket = try #require(
         prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["ticket_id"]?.stringValue)
@@ -234,7 +241,7 @@ struct MCPRiskFloorTests {
         name: "operations.commit",
         arguments: .object([
           "ticket_id": .string(ticket), "tool": .string(tool), "arguments": arguments(for: tool),
-        ]))
+        ]), context: .empty)
       #expect(fixture.client.calls == 1)
       await fixture.runtime.shutdown()
     } catch {
@@ -253,10 +260,11 @@ struct MCPRiskFloorTests {
     arguments["request_id"] = .string("fixture-request")
     do {
       if path == "sync" {
-        _ = try fixture.runtime.callTool(name: "mcp.tools.call", arguments: .object(arguments))
+        _ = try fixture.runtime.callTool(
+          name: "mcp.tools.call", arguments: .object(arguments), context: .empty)
       } else {
         _ = try await fixture.runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(arguments))
+          name: "mcp.tools.call", arguments: .object(arguments), context: .empty)
       }
       Issue.record("An unreviewed risk increase reached execution.")
     } catch {
@@ -271,10 +279,13 @@ struct MCPRiskFloorTests {
     let fixture = try RiskFixture(fullAccess: true, risk: .string("read-only"))
     defer { fixture.remove() }
     fixture.client.setRisk(.string("unknown-risk"))
-    await #expect(throws: (any Error).self) { try await fixture.runtime.refreshTools() }
+    await #expect(throws: (any Error).self) {
+      try await fixture.runtime.refreshTools(context: .empty)
+    }
     for tool in ["mcp.tools.call", "vendor.inspect", "review.inspect"] {
       await #expect(throws: (any Error).self) {
-        try await fixture.runtime.callToolAsync(name: tool, arguments: arguments(for: tool))
+        try await fixture.runtime.callToolAsync(
+          name: tool, arguments: arguments(for: tool), context: .empty)
       }
     }
     #expect(fixture.client.calls == 0)
@@ -294,7 +305,7 @@ struct MCPRiskFloorTests {
             arguments: .object([
               "workspace_id": .string(workspace), "capability_id": .string(tool),
               "arguments": arguments(for: tool),
-            ]))
+            ]), context: .empty)
           #expect(
             response.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["risk"]
               == .string(risk))
@@ -317,7 +328,7 @@ struct MCPRiskFloorTests {
         name: "operations.prepare",
         arguments: .object([
           "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-        ]))
+        ]), context: .empty)
       let ticket = try #require(
         prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["ticket_id"]?.stringValue)
@@ -329,7 +340,7 @@ struct MCPRiskFloorTests {
           arguments: .object([
             "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
             "arguments": arguments(for: "mcp.tools.call"),
-          ]))
+          ]), context: .empty)
       }
       #expect(fixture.client.calls == 0)
       await fixture.runtime.shutdown()
@@ -418,7 +429,7 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
   ) -> any DownstreamMCPClient {
     workingDirectory.path == scopedHighRisk ? RiskCatalogClient(risk: .string("full-shell")) : self
   }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     try state.withLockedValue { state in
       guard !state.discoverySuspended else {
         throw GatewayToolError.executionFailed("Provider is waiting for an active operation.")
@@ -442,25 +453,43 @@ private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
       ]
     }
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     state.withLockedValue { $0.calls += 1 }
     return .object(["content": .array([]), "isError": .bool(false)])
   }
-  func startToolCall(server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String)
+  func startToolCall(
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String,
+    context: InvocationContext
+  )
     throws -> JSONValue
   {
-    try callTool(server: server, name: name, arguments: arguments)
+    try callTool(server: server, name: name, arguments: arguments, context: context)
   }
-  func readRequest(server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int) throws
+  func readRequest(
+    server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int,
+    context: InvocationContext
+  ) throws
     -> JSONValue
   {
     .object(["tool": .string("inspect"), "state": .string("running")])
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

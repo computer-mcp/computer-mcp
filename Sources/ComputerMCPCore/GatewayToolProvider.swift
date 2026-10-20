@@ -1,24 +1,22 @@
-import Foundation
-
 package protocol GatewayToolProvider: Sendable {
   var id: String { get }
   func definitions() throws -> [ToolDefinition]
-  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue
-  func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue
+  func callTool(_ invocation: ToolInvocation) throws -> JSONValue
+  func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue
   func shutdown() async
 }
 
 extension GatewayToolProvider {
-  package func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        continuation.resume(
-          with: Result {
-            try self.callTool(name: name, arguments: arguments)
-          })
-      }
+  package func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    try await GatewayProviderExecution.blocking.perform {
+      try self.callTool(invocation)
     }
   }
 
   package func shutdown() async {}
+}
+
+private enum GatewayProviderExecution {
+  static let blocking = BlockingOperationExecutor(
+    label: "computer-mcp.provider-calls", serial: false)
 }

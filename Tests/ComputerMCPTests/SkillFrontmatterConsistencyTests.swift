@@ -72,7 +72,8 @@ final class SkillFrontmatterConsistencyTests {
     )
     let registry = registry(root: root)
 
-    let list = try payload(registry.callTool(name: "skills.list", arguments: .object([:])))
+    let list = try payload(
+      registry.callTool(name: "skills.list", arguments: .object([:]), context: .empty))
     let listed = try #require(
       list.objectValue?["skills"]?.arrayValue?.first {
         $0.objectValue?["directory_name"] == .string("malformed-skill")
@@ -104,7 +105,8 @@ final class SkillFrontmatterConsistencyTests {
     name: String,
     expected: String
   ) throws {
-    let list = try payload(registry.callTool(name: "skills.list", arguments: .object([:])))
+    let list = try payload(
+      registry.callTool(name: "skills.list", arguments: .object([:]), context: .empty))
     let listed = try #require(
       list.objectValue?["skills"]?.arrayValue?.first {
         $0.objectValue?["name"] == .string(name)
@@ -148,7 +150,7 @@ final class SkillFrontmatterConsistencyTests {
         arguments: .object([
           "root_id": .string("fixtures"),
           "name": .string(name),
-        ])
+        ]), context: .empty
       )
     )
   }

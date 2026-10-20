@@ -2286,7 +2286,7 @@ final class AppControlPlaneServiceTests {
       database: fixture.database,
       registeredWorkspaces: [workspace], platform: MacOSPlatform.services
     )
-    let toolNames = Set(try gateway.listTools().map(\.name))
+    let toolNames = Set(try gateway.listTools(context: .empty).map(\.name))
     #expect(!toolNames.contains("file.read"))
     #expect(toolNames.contains("file.exists"))
     let changed = try await fixture.controlPlane.updateProfilePermissions(
@@ -2294,7 +2294,7 @@ final class AppControlPlaneServiceTests {
       capabilityIDs: ["workspace.list", "workspace.describe", "file.read"],
       allowedCallers: [.localApp], expectedRevision: grant.authorizationRevision)
     #expect(changed.authorizationRevision > grant.authorizationRevision)
-    #expect(try gateway.listTools().isEmpty)
+    #expect(try gateway.listTools(context: .empty).isEmpty)
     await gateway.shutdown()
   }
 

@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPTestSupport
 import Foundation
 import MCP
@@ -130,7 +131,7 @@ struct MCPHTTPAuthenticationTests {
         id: "remote", transport: .http, url: binding.endpoint, authentication: binding)
       await #expect(throws: (any Error).self) {
         try await BlockingOperationExecutor(label: "missing-mcp-credential").perform {
-          try client.listTools(server: server)
+          try client.listTools(server: server, context: .empty)
         }
       }
       await client.shutdown()

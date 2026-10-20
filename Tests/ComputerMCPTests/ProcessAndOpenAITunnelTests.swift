@@ -459,11 +459,13 @@ final class ProcessAndOpenAITunnelTests {
 }
 
 private struct MissingAnnotationToolRegistry: GatewayToolServing {
-  func listTools() throws -> [MCPTool] {
+  func listTools(context: InvocationContext) throws -> [MCPTool] {
     [.init(name: "fake.sample", description: "Fixture", inputSchema: .object([:]))]
   }
 
-  func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
+  func callTool(name: String, arguments: JSONValue?, context: InvocationContext) throws
+    -> JSONValue
+  {
     throw GatewayToolError.unknownTool(name)
   }
 }

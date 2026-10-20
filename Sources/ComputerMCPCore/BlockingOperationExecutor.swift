@@ -1,6 +1,6 @@
 import Foundation
 
-/// Runs synchronous system APIs away from Swift's cooperative executor.
+/// Runs synchronous operations away from Swift's cooperative executor.
 ///
 /// Callers remain responsible for exposing an asynchronous, cancellation-aware
 /// API around the blocking operation.

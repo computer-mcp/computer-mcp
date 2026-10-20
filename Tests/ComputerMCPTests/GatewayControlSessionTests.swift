@@ -37,35 +37,36 @@ struct GatewayControlSessionTests {
       let first = makeSession()
       let second = makeSession()
       try first.limitAccess(to: .readOnly, expectedRevision: 0)
-      let firstTools = try await GatewaySessionScope.$current.withValue(first) {
-        try await fixture.gateway.listToolsAsync()
-      }
-      let secondTools = try await GatewaySessionScope.$current.withValue(second) {
-        try await fixture.gateway.listToolsAsync()
-      }
+      let firstTools = try await fixture.gateway.listToolsAsync(context: .init(session: first))
+      let secondTools = try await fixture.gateway.listToolsAsync(context: .init(session: second))
       #expect(firstTools.contains { $0.name == "file.read" })
       #expect(!firstTools.contains { $0.name == "file.write" })
       #expect(secondTools.contains { $0.name == "file.write" })
       await #expect(throws: (any Error).self) {
         try await fixture.gateway.callToolAsync(
-          name: "file.write", arguments: fixture.write, context: context(first))
+          name: "file.write", arguments: fixture.write, context: context(first),
+          invocationContext: .empty)
       }
       #expect(try fixture.content() == "original")
       _ = try await fixture.gateway.callToolAsync(
-        name: "file.write", arguments: fixture.write, context: context(second))
+        name: "file.write", arguments: fixture.write, context: context(second),
+        invocationContext: .empty)
       #expect(try fixture.content() == "authorized")
       first.end()
       await #expect(throws: (any Error).self) {
         try await fixture.gateway.callToolAsync(
-          name: "file.read", arguments: fixture.read, context: context(first))
+          name: "file.read", arguments: fixture.read, context: context(first),
+          invocationContext: .empty)
       }
       _ = try await fixture.gateway.callToolAsync(
-        name: "file.read", arguments: fixture.read, context: context(second))
+        name: "file.read", arguments: fixture.read, context: context(second),
+        invocationContext: .empty)
       let detached = try JSONDecoder().decode(
         ExecutionContext.self, from: JSONEncoder().encode(context(second)))
       await #expect(throws: (any Error).self) {
         try await fixture.gateway.callToolAsync(
-          name: "file.write", arguments: fixture.write, context: detached)
+          name: "file.write", arguments: fixture.write, context: detached, invocationContext: .empty
+        )
       }
       #expect(try fixture.database.profiles().first?.mode == .localFullAccess)
       await fixture.gateway.shutdown()
@@ -176,7 +177,7 @@ private struct Fixture {
       name: "operations.prepare",
       arguments: .object([
         "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": write,
-      ]), context: context)
+      ]), context: context, invocationContext: .empty)
     let id = try #require(
       result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
         .stringValue)
@@ -189,7 +190,7 @@ private struct Fixture {
       arguments: .object([
         "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": write,
         "ticket_id": .string(id),
-      ]), context: context)
+      ]), context: context, invocationContext: .empty)
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

@@ -131,7 +131,7 @@ final class DefaultGatewayConfigurationTests {
       ),
       registeredWorkspaces: [workspace], platform: MacOSPlatform.services
     )
-    let observeTools = try observeGateway.listTools()
+    let observeTools = try observeGateway.listTools(context: .empty)
     #expect(
       (Set(observeTools.map(\.name))) == (Set(DefaultGatewayConfiguration.observeCapabilities)))
     #expect(observeTools.allSatisfy { $0.annotations?.readOnlyHint == true })
@@ -151,7 +151,7 @@ final class DefaultGatewayConfigurationTests {
       ),
       registeredWorkspaces: [workspace], platform: MacOSPlatform.services
     )
-    let operateNames = Set(try operateGateway.listTools().map(\.name))
+    let operateNames = Set(try operateGateway.listTools(context: .empty).map(\.name))
     #expect(operateNames.isSuperset(of: Set(observeTools.map(\.name))))
     #expect(operateNames.contains("file.write"))
     #expect(operateNames.contains("computer.keyboard.text"))
@@ -184,7 +184,7 @@ final class DefaultGatewayConfigurationTests {
       configuration: localAdmin,
       database: GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services
     )
-    let localNames = Set(try localGateway.listTools().map(\.name))
+    let localNames = Set(try localGateway.listTools(context: .empty).map(\.name))
     #expect(localNames.contains("cli.exec"))
     #expect(localNames.contains("process.spawn"))
     #expect(!(localNames.contains("shell.run")))

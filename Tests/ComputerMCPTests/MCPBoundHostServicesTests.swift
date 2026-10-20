@@ -22,15 +22,15 @@ struct MCPBoundHostServicesTests {
     let directory = try #require(fixture.peer.context?.tools)
     let retained = RetainedControlInvocation()
     do {
-      _ = try await GatewaySessionScope.$current.withValue(session) {
-        try await fixture.during("fixture.audit", ["limit": .integer(1)]) { _ in
-          let invocation = try #require(
-            directory.active(workspaceID: "scope", origin: "probe").first)
-          let lease = try directory.retainWork(
-            id: invocation.id, workspaceID: "scope", origin: "probe")
-          await retained.hold(id: invocation.id, lease: lease)
-          return .object([:])
-        }
+      _ = try await fixture.during(
+        "fixture.audit", ["limit": .integer(1)], context: .init(session: session)
+      ) { _, _ in
+        let invocation = try #require(
+          directory.active(workspaceID: "scope", origin: "probe").first)
+        let lease = try directory.retainWork(
+          id: invocation.id, workspaceID: "scope", origin: "probe")
+        await retained.hold(id: invocation.id, lease: lease)
+        return .object([:])
       }
       let id = try #require(await retained.id)
       #expect(directory.active(workspaceID: "scope", origin: "probe").isEmpty)
@@ -84,7 +84,7 @@ struct MCPBoundHostServicesTests {
     let entered = HostServicePairBarrier()
     let finished = HostServicePairBarrier()
     fixture.peer.allowConcurrentDiscovery()
-    fixture.peer.setHandler {
+    fixture.peer.setHandler { _ in
       await entered.arrive()
       let result = try await fixture.runtime.callHostTool(
         name: "workspace.list", arguments: [:], workspaceID: "scope", origin: "probe",
@@ -94,12 +94,10 @@ struct MCPBoundHostServicesTests {
     }
     let args = JSONValue.object(["workspace_id": .string("scope"), "limit": .integer(1)])
     do {
-      async let first = GatewaySessionScope.$current.withValue(firstSession) {
-        try await fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
-      }
-      async let second = GatewaySessionScope.$current.withValue(secondSession) {
-        try await fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
-      }
+      async let first = try await fixture.runtime.callToolAsync(
+        name: "adapter.fixture.audit", arguments: args, context: .init(session: firstSession))
+      async let second = try await fixture.runtime.callToolAsync(
+        name: "adapter.fixture.audit", arguments: args, context: .init(session: secondSession))
       let results = try await [first, second]
       #expect(results.allSatisfy { $0.objectValue?["isError"] == .bool(!sameSession) })
       await fixture.close()
@@ -113,7 +111,8 @@ struct MCPBoundHostServicesTests {
   func vendorNeutralDiagnosticsUseTheAdmittedSemanticAction() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let result = try await fixture.during("fixture.audit", ["limit": .integer(1)]) { service in
+    let result = try await fixture.during("fixture.audit", ["limit": .integer(1)]) {
+      service, _ in
       try await .encoded(
         service.call(name: "host.diagnostics.snapshot", arguments: ["limit": .integer(1)]))
     }
@@ -125,7 +124,7 @@ struct MCPBoundHostServicesTests {
   func privateActionsRequireExplicitMetadata(method: String) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let result = try await fixture.during(method, ["limit": .integer(1)]) { service in
+    let result = try await fixture.during(method, ["limit": .integer(1)]) { service, _ in
       try await .encoded(
         service.call(name: "host.diagnostics.snapshot", arguments: ["limit": .integer(1)]))
     }
@@ -140,7 +139,7 @@ struct MCPBoundHostServicesTests {
     let entered = HostServicePairBarrier()
     let finished = HostServicePairBarrier()
     fixture.peer.allowConcurrentDiscovery()
-    fixture.peer.setHandler {
+    fixture.peer.setHandler { _ in
       await entered.arrive()
       let result = try await fixture.service.call(
         name: "host.diagnostics.snapshot", arguments: ["limit": .integer(1)])
@@ -148,8 +147,10 @@ struct MCPBoundHostServicesTests {
       return try .encoded(result)
     }
     let args = JSONValue.object(["workspace_id": .string("scope"), "limit": .integer(1)])
-    async let first = fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
-    async let second = fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
+    async let first = fixture.runtime.callToolAsync(
+      name: "adapter.fixture.audit", arguments: args, context: .empty)
+    async let second = fixture.runtime.callToolAsync(
+      name: "adapter.fixture.audit", arguments: args, context: .empty)
     let results = try await [first, second]
     #expect(results.allSatisfy { $0.objectValue?["isError"] == .bool(true) })
     await fixture.close()
@@ -168,7 +169,7 @@ struct MCPBoundHostServicesTests {
         "plan_id": receipt["id"]!, "expected_revision": .integer(1),
         "confirm_provision": .bool(true),
       ]
-    ) { service in
+    ) { service, _ in
       try await .encoded(
         service.call(
           name: "host.workspaces.register", arguments: ["worktree": .object(wireReceipt)]))
@@ -193,7 +194,7 @@ struct MCPBoundHostServicesTests {
         "plan_id": receipt["id"]!, "expected_revision": .integer(1),
         "confirm_provision": .bool(true),
       ]
-    ) { service in
+    ) { service, _ in
       let result = try await service.call(
         name: "host.workspaces.register", arguments: ["worktree": .object(provisioning)])
       try #require(result.isError == false)
@@ -208,7 +209,7 @@ struct MCPBoundHostServicesTests {
         "managed_worktree_id": receipt["id"]!, "expected_revision": .integer(4),
         "confirm_remove": .bool(true),
       ]
-    ) { service in
+    ) { service, _ in
       let authorized = try await service.call(
         name: "host.workspaces.authorize_removal", arguments: ["worktree": .object(planned)])
       try #require(authorized.isError == false)
@@ -242,7 +243,7 @@ struct MCPBoundHostServicesTests {
     if attack == "not-confirmed" { arguments["confirm_provision"] = .bool(false) }
     let result = try await fixture.during(
       attack == "wrong-action" ? "fixture.audit" : "fixture.provision", arguments
-    ) { service in
+    ) { service, _ in
       if attack == "revoked" {
         var grant = try #require(fixture.database.profiles().first)
         grant.workspaceIDs = []
@@ -260,7 +261,8 @@ struct MCPBoundHostServicesTests {
   func genericHostCallbackRequiresWorkspaceWhenSelectionIsAmbiguous() async throws {
     let fixture = try HostAuthorityFixture(additionalWorkspace: true)
     defer { fixture.remove() }
-    let tool = try #require(fixture.runtime.listTools().first { $0.name == "mcp.tools.call" })
+    let tool = try #require(
+      fixture.runtime.listTools(context: .empty).first { $0.name == "mcp.tools.call" })
     let properties = try #require(tool.inputSchema.objectValue?["properties"]?.objectValue)
     #expect(properties["workspace_id"]?.objectValue?["type"] == .string("string"))
     do {
@@ -298,7 +300,7 @@ struct MCPBoundHostServicesTests {
       result = try await fixture.during(
         attack == "wrong-method" ? "fixture.read" : "fixture.audit",
         ["limit": .number(1)]
-      ) { service in
+      ) { service, _ in
         try await .encoded(service.call(name: "host.diagnostics.snapshot", arguments: args))
       }
     }
@@ -313,12 +315,12 @@ struct MCPBoundHostServicesTests {
     for fails in [false, true] {
       if fails {
         await #expect(throws: (any Error).self) {
-          try await fixture.during("fixture.audit") { _ in
+          try await fixture.during("fixture.audit") { _, _ in
             throw MCPHostServiceError.denied("Fixture failure")
           }
         }
       } else {
-        _ = try await fixture.during("fixture.audit") { _ in .object([:]) }
+        _ = try await fixture.during("fixture.audit") { _, _ in .object([:]) }
       }
       let result = try await fixture.direct("host.diagnostics.snapshot", ["limit": .number(1)])
       #expect(result.objectValue?["isError"] == .bool(true))
@@ -330,7 +332,7 @@ struct MCPBoundHostServicesTests {
   func privateServiceSurfaceIsNotExposedUpstream() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    #expect(try !fixture.runtime.listTools().contains { $0.name.hasPrefix("host.") })
+    #expect(try !fixture.runtime.listTools(context: .empty).contains { $0.name.hasPrefix("host.") })
     #expect(
       Set(MCPBoundHostServices.tools.map(\.name)) == [
         "host.workspaces.register", "host.workspaces.authorize_removal",
@@ -351,8 +353,8 @@ struct MCPBoundHostServicesTests {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     let response = try await fixture.during("fixture.read", ["item": .string("sample")]) {
-      service in
-      let id = try #require(MCPInvocationAdmission.current?.hostInvocationID)
+      service, context in
+      let id = try #require(context.admission?.hostInvocationID)
       return try await .encoded(
         service.call(
           name: "host.invocations.describe", arguments: ["invocation_id": .string(id.uuidString)]))
@@ -384,8 +386,8 @@ struct MCPBoundHostServicesTests {
       fixture.remove()
       other.remove()
     }
-    let response = try await fixture.during("fixture.read") { service in
-      let id = try #require(MCPInvocationAdmission.current?.hostInvocationID)
+    let response = try await fixture.during("fixture.read") { service, context in
+      let id = try #require(context.admission?.hostInvocationID)
       var arguments: [String: JSONValue] = ["invocation_id": .string(id.uuidString)]
       if attack == "forged-id" { arguments["invocation_id"] = .string(UUID().uuidString) }
       if attack == "forged-owner" { arguments["principal_id"] = .string("other") }
@@ -415,7 +417,7 @@ struct MCPBoundHostServicesTests {
           "plan_id": receipt["id"]!, "expected_revision": .number(1),
           "confirm_provision": .bool(true),
         ]
-      ) { service in
+      ) { service, _ in
         try await .encoded(
           service.call(name: "host.workspaces.register", arguments: ["worktree": .object(receipt)]))
       }
@@ -436,7 +438,7 @@ struct MCPBoundHostServicesTests {
       "plan_id": receipt["id"]!, "expected_revision": .number(1),
       "confirm_provision": .bool(true),
     ]
-    let registered = try await fixture.during("fixture.provision", args) { service in
+    let registered = try await fixture.during("fixture.provision", args) { service, _ in
       let result = try await service.call(
         name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
       try #require(result.isError == false)
@@ -446,7 +448,7 @@ struct MCPBoundHostServicesTests {
     }
     #expect(registered.objectValue?["isError"] == .bool(false))
     if laterInvocation {
-      let replay = try await fixture.during("fixture.provision", args) { service in
+      let replay = try await fixture.during("fixture.provision", args) { service, _ in
         try await .encoded(
           service.call(
             name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)]))
@@ -471,7 +473,7 @@ struct MCPBoundHostServicesTests {
         "plan_id": receipt["id"]!, "expected_revision": .number(1),
         "confirm_provision": .bool(true),
       ]
-    ) { service in
+    ) { service, _ in
       try await .encoded(
         service.call(
           name: "host.workspaces.register", arguments: ["worktree": .object(wireReceipt)]))
@@ -496,7 +498,7 @@ struct MCPBoundHostServicesTests {
         "plan_id": receipt["id"]!, "expected_revision": .number(1),
         "confirm_provision": .bool(true),
       ]
-    ) { service in
+    ) { service, _ in
       try await .encoded(
         service.call(
           name: "host.workspaces.register", arguments: ["worktree": .object(wireReceipt)]))
@@ -647,31 +649,33 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   }
   func during(
     _ method: String, _ arguments: [String: JSONValue] = [:],
-    _ body: @escaping @Sendable (MCPBoundHostServices) async throws -> JSONValue
+    context: InvocationContext = .empty,
+    _ body: @escaping @Sendable (MCPBoundHostServices, InvocationContext) async throws -> JSONValue
   ) async throws -> JSONValue {
     let service = service
-    peer.setHandler { try await body(service) }
+    peer.setHandler { context in try await body(service, context) }
     defer { peer.setHandler(nil) }
     var args = arguments
     args["workspace_id"] = .string("scope")
-    return try await runtime.callToolAsync(name: "adapter." + method, arguments: .object(args))
+    return try await runtime.callToolAsync(
+      name: "adapter." + method, arguments: .object(args), context: context)
   }
   func direct(_ name: String, _ arguments: [String: JSONValue]) async throws -> JSONValue {
     try await .encoded(service.call(name: name, arguments: arguments))
   }
   func duringApproved(
     _ method: String, _ arguments: [String: JSONValue],
-    _ body: @escaping @Sendable (MCPBoundHostServices) async throws -> JSONValue
+    _ body: @escaping @Sendable (MCPBoundHostServices, InvocationContext) async throws -> JSONValue
   ) async throws -> JSONValue {
     let service = service
-    peer.setHandler { try await body(service) }
+    peer.setHandler { context in try await body(service, context) }
     defer { peer.setHandler(nil) }
     var args = arguments
     args["workspace_id"] = .string("scope")
     let tool = "adapter." + method
     let prepared = try await runtime.callToolAsync(
       name: "operations.prepare",
-      arguments: .object(["tool": .string(tool), "arguments": .object(args)]))
+      arguments: .object(["tool": .string(tool), "arguments": .object(args)]), context: .empty)
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
         .stringValue)
@@ -680,11 +684,11 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       name: "operations.commit",
       arguments: .object([
         "ticket_id": .string(ticket), "tool": .string(tool), "arguments": .object(args),
-      ]))
+      ]), context: .empty)
   }
   func genericDiagnostics(workspaceID: String?) async throws -> JSONValue {
     let service = service
-    peer.setHandler {
+    peer.setHandler { _ in
       try await .encoded(
         service.call(
           name: "host.diagnostics.snapshot",
@@ -696,7 +700,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       "arguments": .object(["limit": .number(1)]),
     ]
     if let workspaceID { arguments["workspace_id"] = .string(workspaceID) }
-    return try await runtime.callToolAsync(name: "mcp.tools.call", arguments: .object(arguments))
+    return try await runtime.callToolAsync(
+      name: "mcp.tools.call", arguments: .object(arguments), context: .empty)
   }
   func payload(_ value: JSONValue) -> [String: JSONValue] {
     let downstream = value.objectValue?["structuredContent"]?.objectValue?["result"]
@@ -716,12 +721,12 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
   ]
   private let lock = NSLock()
   private var captured: MCPHostContext?
-  private var handler: (@Sendable () async throws -> JSONValue)?
+  private var handler: (@Sendable (InvocationContext) async throws -> JSONValue)?
   private var activeCalls = 0
   private var concurrentDiscovery = false
   var context: MCPHostContext? { lock.withLock { captured } }
   func allowConcurrentDiscovery() { lock.withLock { concurrentDiscovery = true } }
-  func setHandler(_ value: (@Sendable () async throws -> JSONValue)?) {
+  func setHandler(_ value: (@Sendable (InvocationContext) async throws -> JSONValue)?) {
     lock.withLock { handler = value }
   }
   func makeScopedClient(
@@ -730,7 +735,7 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     lock.withLock { captured = hostContext }
     return self
   }
-  func listTools(server: MCPServerConfig) throws -> [MCPTool] {
+  func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     // A serial provider cannot answer discovery while waiting for its host callback.
     guard lock.withLock({ activeCalls == 0 || concurrentDiscovery }) else {
       throw MCPHostServiceError.denied("Catalog queried while the parent call is suspended.")
@@ -745,7 +750,9 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
         meta: action.map { .object(["io.github.computer-mcp/host-action": .string($0)]) })
     }
   }
-  func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws -> JSONValue {
+  func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws -> JSONValue {
     guard let handler = lock.withLock({ handler }) else {
       throw MCPHostServiceError.denied("Fixture handler absent.")
     }
@@ -753,8 +760,8 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     defer { lock.withLock { activeCalls -= 1 } }
     let box = HostProbeResult()
     let ready = DispatchSemaphore(value: 0)
-    let task = Task {
-      do { box.set(.success(try await handler())) } catch { box.set(.failure(error)) }
+    let task = Task.detached {
+      do { box.set(.success(try await handler(context))) } catch { box.set(.failure(error)) }
       ready.signal()
     }
     guard ready.wait(timeout: .now() + 10) == .success else {
@@ -763,11 +770,21 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     }
     return try box.get()
   }
-  func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue { .null }
-  func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue { .null }
-  func getPrompt(server: MCPServerConfig, name: String, arguments: [String: String]?) throws
+  func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listResourceTemplates(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  { .null }
+  func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
+    -> JSONValue
+  { .null }
+  func getPrompt(
+    server: MCPServerConfig, name: String, arguments: [String: String]?, context: InvocationContext
+  ) throws
     -> JSONValue
   { .null }
 }

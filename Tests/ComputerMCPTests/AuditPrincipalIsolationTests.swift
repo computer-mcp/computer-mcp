@@ -136,7 +136,7 @@ private struct AuditPrincipalFixture {
     request.requestID = requestID
     _ = try runtime.callTool(
       name: "workspace.describe", arguments: .object(["workspace_id": .string("fixture")]),
-      context: request)
+      context: request, invocationContext: .empty)
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

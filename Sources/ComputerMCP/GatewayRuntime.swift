@@ -37,14 +37,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private static func performAdmission<Value: Sendable>(
     _ operation: @escaping @Sendable () throws -> Value
   ) async throws -> Value {
-    let target = MCPContinuationTarget.current
     let owner = GatewayOwnerRouting.selection
-    let session = GatewaySessionScope.current
     return try await admission.perform {
       try GatewayOwnerRouting.$selection.withValue(owner) {
-        try GatewaySessionScope.$current.withValue(session) {
-          try MCPContinuationTarget.$current.withValue(target, operation: operation)
-        }
+        try operation()
       }
     }
   }
@@ -225,14 +221,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         configuration: configuration,
         grant: persistedGrant.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
         derivesObserveGrant: derivesObserveGrant),
-      policyProvider: {
+      policyProvider: { session in
         let persisted = try database?.profiles().first { $0.id == effectiveContext.profileID }
         guard persistedGrant == nil || persisted != nil else {
           throw GatewayToolError.disabled("The profile authorization was revoked.")
         }
         return MCPToolAccessPolicy(
           configuration: configuration,
-          grant: try GatewaySessionScope.current?.apply(
+          grant: try session?.apply(
             to: persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant,
             context: effectiveContext)
             ?? (persisted.map(mcpGrant.applyingPersistedRuntimeState) ?? mcpGrant),
@@ -338,10 +334,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       if let providerRouter = configuredWorkspaces.lazy.compactMap({ providerRouterByID[$0.id] })
         .first
       {
+        // Initial profile derivation precedes caller invocations.
         readOnlyCapabilities.formUnion(
-          try providerRouter.listTools()
+          try providerRouter.listTools(context: .empty)
             .filter {
-              try providerRouter.capability(named: $0.name).risk == .readOnly
+              try providerRouter.capability(named: $0.name, context: .empty).risk == .readOnly
             }
             .map(\.name)
         )
@@ -415,10 +412,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       return []
     }
     let currentGrant = try currentHostGrant(context: bound)
-    return try GatewaySessionScope.$current.withValue(bound.controlSession) {
-      try listTools(context: bound)
-    }.filter { tool in
-      guard let descriptor = try? descriptor(named: tool.name),
+    let invocationContext = InvocationContext(session: bound.controlSession)
+    return try listTools(context: bound, invocationContext: invocationContext).filter { tool in
+      guard
+        let descriptor = try? descriptor(named: tool.name, invocationContext: invocationContext),
         !descriptor.localOnly,
         descriptor.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true
       else { return false }
@@ -442,7 +439,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       try validateHostOrigin(workspaceID: workspaceID, origin: origin)
       bound = try hostCallContext(workspaceID: workspaceID, origin: origin)
       bound.requestID = requestID
-      try validateHostTarget(name: name, arguments: arguments, context: bound, depth: 0)
+      let invocationContext = InvocationContext(session: bound.controlSession)
+      try validateHostTarget(
+        name: name, arguments: arguments, context: bound, depth: 0,
+        invocationContext: invocationContext)
       if name == "workspace.list" {
         let rows = workspaceList(context: bound).objectValue?["workspaces"]?.arrayValue ?? []
         let result = Self.attachExecutionMetadata(
@@ -461,7 +461,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         return result
       }
       dispatched = true
-      return try await callToolAsync(name: name, arguments: .object(arguments), context: bound)
+      return try await callToolAsync(
+        name: name, arguments: .object(arguments), context: bound,
+        invocationContext: invocationContext)
     } catch {
       let result = Self.attachExecutionMetadata(
         to: Self.errorEnvelope(error), context: bound, capabilityID: name, operationLinkage: nil)
@@ -598,7 +600,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private func validateHostTarget(
-    name: String, arguments: [String: JSONValue], context: ExecutionContext, depth: Int
+    name: String, arguments: [String: JSONValue], context: ExecutionContext, depth: Int,
+    invocationContext: InvocationContext
   ) throws {
     guard depth < 8, !name.hasPrefix("host.") else {
       throw Self.invalid(
@@ -606,7 +609,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message: "A host callback cannot enter a domain runtime recursively.")
     }
     let target = try descriptor(
-      named: name, workspaceID: arguments["workspace_id"]?.stringValue ?? context.workspaceID)
+      named: name, workspaceID: arguments["workspace_id"]?.stringValue ?? context.workspaceID,
+      invocationContext: invocationContext)
     guard !target.localOnly,
       target.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true,
       !(name.hasPrefix("mcp.")
@@ -617,7 +621,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message:
           "Host administration and callback-enabled MCP registrations are not callback targets.")
     }
-    let descriptor = try invocationDescriptor(named: name, arguments: arguments, context: context)
+    let descriptor = try invocationDescriptor(
+      named: name, arguments: arguments, context: context, invocationContext: invocationContext)
     let routed = try route(descriptor: descriptor, arguments: arguments, context: context)
     try authorize(descriptor, context: routed.context)
     let current = try currentHostGrant(context: routed.context)
@@ -641,7 +646,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       }
       try validateHostTarget(
         name: target, arguments: arguments["arguments"]?.objectValue ?? [:],
-        context: routed.context, depth: depth + 1)
+        context: routed.context, depth: depth + 1, invocationContext: invocationContext)
     }
   }
 
@@ -754,26 +759,28 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return session
   }
 
-  package func listTools() throws -> [MCPTool] {
-    try listTools(context: contextForCall())
+  package func listTools(context: InvocationContext) throws -> [MCPTool] {
+    try listTools(context: contextForCall(context), invocationContext: context)
   }
 
-  package func listToolsAsync() async throws -> [MCPTool] {
-    try await Self.performAdmission { try self.listTools() }
+  package func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
+    try await Self.performAdmission { try self.listTools(context: context) }
   }
 
-  package func toolChanges() -> AsyncStream<Void> {
+  package func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
     guard let database else {
-      return firstProviderRouter?.toolChanges() ?? AsyncStream { $0.finish() }
+      return firstProviderRouter?.toolChanges(context: context) ?? AsyncStream { $0.finish() }
     }
-    let sources = [firstProviderRouter?.toolChanges(), database.profileChanges(for: grant.id)]
+    let sources = [
+      firstProviderRouter?.toolChanges(context: context), database.profileChanges(for: grant.id),
+    ]
     let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let tasks = sources.enumerated().compactMap { index, source -> Task<Void, Never>? in
       guard let source else { return nil }
       return Task { [weak self] in
         for await _ in source {
           guard !Task.isCancelled else { break }
-          if index == 1 { try? await self?.refreshTools() }
+          if index == 1 { try? await self?.refreshTools(context: context) }
           continuation.yield(())
         }
       }
@@ -784,18 +791,22 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return stream
   }
 
-  package func refreshTools() async throws {
-    for workspaceID in workspaceOrder { try await providerRouters[workspaceID]?.refreshTools() }
+  package func refreshTools(context: InvocationContext) async throws {
+    for workspaceID in workspaceOrder {
+      try await providerRouters[workspaceID]?.refreshTools(context: context)
+    }
   }
 
-  package func listTools(context: ExecutionContext) throws -> [MCPTool] {
+  package func listTools(context: ExecutionContext, invocationContext: InvocationContext)
+    throws -> [MCPTool]
+  {
     guard (try? currentHostGrant(context: context)) != nil else { return [] }
     let coreDefinitions = Self.coreDefinitions(
       databaseEnabled: database != nil, managementEnabled: remoteManagement != nil)
     let routedDefinitions: [ToolDefinition] =
       try firstProviderRouter.map { router in
-        try router.listTools().map { tool in
-          let capability = try router.capability(named: tool.name)
+        try router.listTools(context: invocationContext).map { tool in
+          let capability = try router.capability(named: tool.name, context: invocationContext)
           return ToolDefinition(
             tool: Self.addWorkspaceID(to: tool, descriptor: capability), capability: capability)
         }
@@ -805,7 +816,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func capabilityDescriptor(named name: String) throws -> CapabilityDescriptor {
-    try descriptor(named: name)
+    try descriptor(named: name, invocationContext: .empty)
   }
 
   struct ContinuationLookup: Sendable {
@@ -819,7 +830,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   func callOwnedTool(
-    owner: GatewayOwnerSelection, name: String, arguments: JSONValue
+    owner: GatewayOwnerSelection, name: String, arguments: JSONValue,
+    context: InvocationContext
   ) async throws -> JSONValue {
     guard owner.runtimeID == generationID,
       let record = ownedWork.snapshot.first(where: {
@@ -900,9 +912,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       workspaceID: owner.workspaceID, resourceID: name)
     defer { reservation.finish() }
     return try await GatewayOwnerRouting.$selection.withValue(owner) {
-      try await MCPContinuationTarget.$current.withValue(target) {
-        try await callToolAsync(name: name, arguments: .object(object))
-      }
+      try await callToolAsync(
+        name: name, arguments: .object(object),
+        context: .init(session: context.session, continuation: target))
     }
   }
 
@@ -984,7 +996,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     ])
   }
 
-  private func selectedOwnerCall(arguments: [String: JSONValue], context: ExecutionContext)
+  private func selectedOwnerCall(
+    arguments: [String: JSONValue], context: ExecutionContext, invocationContext: InvocationContext
+  )
     async throws -> JSONValue
   {
     guard Set(arguments.keys).isSubset(of: ["owner", "tool", "arguments"]) else {
@@ -997,7 +1011,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let name = try Self.requiredString("tool", in: arguments)
     let target = arguments["arguments"] ?? .object([:])
     if let call = GatewayOwnerRouting.call { return try await call(owner, name, target) }
-    return try await callOwnedTool(owner: owner, name: name, arguments: target)
+    return try await callOwnedTool(
+      owner: owner, name: name, arguments: target,
+      context: .init(
+        admission: invocationContext.admission, session: context.controlSession,
+        continuation: invocationContext.continuation))
   }
 
   /// Resolves cached routing and accepted ownership without starting a provider.
@@ -1042,12 +1060,20 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         tool: reference.toolName, arguments: nativeArguments))
   }
 
-  package func callTool(name: String, arguments: JSONValue?) throws -> JSONValue {
-    try callTool(name: name, arguments: arguments, context: contextForCall())
+  package func callTool(name: String, arguments: JSONValue?, context: InvocationContext)
+    throws -> JSONValue
+  {
+    try callTool(
+      name: name, arguments: arguments, context: contextForCall(context), invocationContext: context
+    )
   }
 
-  package func callToolAsync(name: String, arguments: JSONValue?) async throws -> JSONValue {
-    try await callToolAsync(name: name, arguments: arguments, context: contextForCall())
+  package func callToolAsync(
+    name: String, arguments: JSONValue?, context: InvocationContext
+  ) async throws -> JSONValue {
+    try await callToolAsync(
+      name: name, arguments: arguments, context: contextForCall(context), invocationContext: context
+    )
   }
 
   private func effectiveOperationDescriptor(
@@ -1113,23 +1139,26 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   package func callToolForMCPAsync(
     name: String,
-    arguments: JSONValue?
+    arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
-    let callContext = contextForMCP(arguments: arguments)
+    let callContext = contextForMCP(arguments: arguments, invocationContext: context)
     do {
-      return try await callToolAsync(name: name, arguments: arguments, context: callContext)
+      return try await callToolAsync(
+        name: name, arguments: arguments, context: callContext, invocationContext: context)
     } catch is CancellationError {
       throw CancellationError()
     } catch {
-      return routingErrorForMCP(error, name: name, arguments: arguments, context: callContext)
+      return routingErrorForMCP(
+        error, name: name, arguments: arguments, context: callContext, invocationContext: context)
     }
   }
 
   func routingErrorForMCP(
     _ error: any Error, name: String, arguments: JSONValue?, context: ExecutionContext? = nil,
-    recordFailure: Bool = false
+    invocationContext: InvocationContext, recordFailure: Bool = false
   ) -> JSONValue {
-    let context = context ?? contextForMCP(arguments: arguments)
+    let context =
+      context ?? contextForMCP(arguments: arguments, invocationContext: invocationContext)
     let linkage = Self.operationLinkageFromArguments(
       name: name, arguments: arguments?.objectValue ?? [:])
     let result = Self.attachExecutionMetadata(
@@ -1145,8 +1174,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return result
   }
 
-  private func contextForMCP(arguments: JSONValue?) -> ExecutionContext {
-    var callContext = contextForCall()
+  private func contextForMCP(arguments: JSONValue?, invocationContext: InvocationContext)
+    -> ExecutionContext
+  {
+    var callContext = contextForCall(invocationContext)
     let object = arguments?.objectValue ?? [:]
     if let workspaceID = object["workspace_id"]?.stringValue {
       callContext.workspaceID = workspaceID
@@ -1159,33 +1190,31 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   package func callTool(
     name: String,
     arguments: JSONValue?,
-    context: ExecutionContext
+    context: ExecutionContext,
+    invocationContext: InvocationContext
   ) throws -> JSONValue {
     let ownership = try ownedWork.admitInvocation(
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
-    return try GatewaySessionScope.$current.withValue(context.controlSession) {
-      try perform(
-        name: name, arguments: arguments?.objectValue ?? [:], context: context,
-        bypassOperationTicket: false, operationLinkage: nil)
-    }
+    return try perform(
+      name: name, arguments: arguments?.objectValue ?? [:], context: context,
+      bypassOperationTicket: false, operationLinkage: nil, invocationContext: invocationContext)
   }
 
   package func callToolAsync(
     name: String,
     arguments: JSONValue?,
-    context: ExecutionContext
+    context: ExecutionContext,
+    invocationContext: InvocationContext
   ) async throws -> JSONValue {
     let ownership = try ownedWork.admitInvocation(
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
       resourceID: name)
     defer { ownership.finish() }
-    return try await GatewaySessionScope.$current.withValue(context.controlSession) {
-      try await performAsync(
-        name: name, arguments: arguments?.objectValue ?? [:], context: context,
-        bypassOperationTicket: false, operationLinkage: nil)
-    }
+    return try await performAsync(
+      name: name, arguments: arguments?.objectValue ?? [:], context: context,
+      bypassOperationTicket: false, operationLinkage: nil, invocationContext: invocationContext)
   }
 
   private func perform(
@@ -1193,7 +1222,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: [String: JSONValue],
     context originalContext: ExecutionContext,
     bypassOperationTicket: Bool,
-    operationLinkage initialOperationLinkage: OperationAuditLinkage?
+    operationLinkage initialOperationLinkage: OperationAuditLinkage?,
+    invocationContext: InvocationContext
   ) throws -> JSONValue {
     let start = ContinuousClock.now
     var auditContext = originalContext
@@ -1204,7 +1234,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
     do {
       let descriptor = try invocationDescriptor(
-        named: name, arguments: arguments, context: originalContext)
+        named: name, arguments: arguments, context: originalContext,
+        invocationContext: invocationContext)
       let routed = try route(
         descriptor: descriptor,
         arguments: arguments,
@@ -1224,7 +1255,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       {
         let pending = try prepareOperation(
           arguments: ["tool": .string(name), "arguments": .object(routed.arguments)],
-          context: routed.context)
+          context: routed.context, invocationContext: invocationContext)
         throw Self.invalid(
           code: "operations.approval_required",
           message:
@@ -1246,22 +1277,22 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
       case "policy.probe":
         rawResult = try resultEnvelope(
-          policyProbe(arguments: routed.arguments, context: routed.context)
+          policyProbe(
+            arguments: routed.arguments, context: routed.context,
+            invocationContext: invocationContext)
         )
       case "operations.prepare":
         let preparation = try prepareOperation(
           arguments: routed.arguments,
-          context: routed.context
-        )
+          context: routed.context, invocationContext: invocationContext)
         operationLinkage = OperationAuditLinkage(ticketID: preparation.ticketID)
         rawResult = try resultEnvelope(preparation.result)
       case "operations.commit":
         let invocation = try beginOperationCommit(
           arguments: routed.arguments,
-          context: routed.context
-        )
+          context: routed.context, invocationContext: invocationContext)
         operationLinkage = invocation.linkage
-        rawResult = try executeCommittedOperation(invocation)
+        rawResult = try executeCommittedOperation(invocation, invocationContext: invocationContext)
       case let name where GatewayRemoteManagement.byName[name] != nil:
         throw GatewayToolError.invalidArguments("Management tools require asynchronous dispatch.")
       default:
@@ -1276,15 +1307,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           context: routed.context, linkage: operationLinkage,
           authorizationRevision: authorizedGrant.authorizationRevision)
         defer { hostToolDirectory.end(hostInvocation) }
-        rawResult = try MCPInvocationAdmission.$current.withValue(
-          MCPInvocationAdmission(descriptor: descriptor, hostInvocationID: hostInvocation?.id)
-        ) {
-          try providerRouter.callTool(
-            name: name,
-            arguments: .object(routed.arguments),
-            expectedCapability: name == "mcp.tools.call" ? nil : descriptor
-          )
-        }
+        let invocation = ToolInvocation(
+          name: name, arguments: .object(routed.arguments),
+          context: InvocationContext(
+            admission: InvocationAdmission(
+              descriptor: descriptor, hostInvocationID: hostInvocation?.id),
+            session: routed.context.controlSession, continuation: invocationContext.continuation))
+        rawResult = try providerRouter.callTool(
+          name: invocation.name, arguments: invocation.arguments,
+          expectedCapability: name == "mcp.tools.call" ? nil : descriptor,
+          context: invocation.context)
       }
       let result = Self.attachExecutionMetadata(
         to: rawResult,
@@ -1330,7 +1362,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     arguments: [String: JSONValue],
     context originalContext: ExecutionContext,
     bypassOperationTicket: Bool,
-    operationLinkage initialOperationLinkage: OperationAuditLinkage?
+    operationLinkage initialOperationLinkage: OperationAuditLinkage?,
+    invocationContext: InvocationContext
   ) async throws -> JSONValue {
     let start = ContinuousClock.now
     var auditContext = originalContext
@@ -1341,7 +1374,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
     do {
       let descriptor = try await Self.performAdmission {
-        try self.invocationDescriptor(named: name, arguments: arguments, context: originalContext)
+        try self.invocationDescriptor(
+          named: name, arguments: arguments, context: originalContext,
+          invocationContext: invocationContext)
       }
       let routed = try route(
         descriptor: descriptor,
@@ -1363,7 +1398,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         let pending = try await Self.performAdmission {
           try self.prepareOperation(
             arguments: ["tool": .string(name), "arguments": .object(routed.arguments)],
-            context: routed.context)
+            context: routed.context, invocationContext: invocationContext)
         }
         throw Self.invalid(
           code: "operations.approval_required",
@@ -1381,26 +1416,34 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           executionOwners(arguments: routed.arguments, context: routed.context))
       case "runtime.owners.call":
         rawResult = try await selectedOwnerCall(
-          arguments: routed.arguments, context: routed.context)
+          arguments: routed.arguments, context: routed.context, invocationContext: invocationContext
+        )
       case "workspace.describe":
         rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
       case "policy.probe":
         rawResult = try await Self.performAdmission {
           try self.resultEnvelope(
-            self.policyProbe(arguments: routed.arguments, context: routed.context))
+            self.policyProbe(
+              arguments: routed.arguments, context: routed.context,
+              invocationContext: invocationContext))
         }
       case "operations.prepare":
         let preparation = try await Self.performAdmission {
-          try self.prepareOperation(arguments: routed.arguments, context: routed.context)
+          try self.prepareOperation(
+            arguments: routed.arguments, context: routed.context,
+            invocationContext: invocationContext)
         }
         operationLinkage = OperationAuditLinkage(ticketID: preparation.ticketID)
         rawResult = try resultEnvelope(preparation.result)
       case "operations.commit":
         let invocation = try await Self.performAdmission {
-          try self.beginOperationCommit(arguments: routed.arguments, context: routed.context)
+          try self.beginOperationCommit(
+            arguments: routed.arguments, context: routed.context,
+            invocationContext: invocationContext)
         }
         operationLinkage = invocation.linkage
-        rawResult = try await executeCommittedOperationAsync(invocation)
+        rawResult = try await executeCommittedOperationAsync(
+          invocation, invocationContext: invocationContext)
       case let name where GatewayRemoteManagement.byName[name] != nil:
         guard let remoteManagement else { throw GatewayToolError.unknownTool(name) }
         rawResult = try resultEnvelope(
@@ -1417,15 +1460,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           context: routed.context, linkage: operationLinkage,
           authorizationRevision: authorizedGrant.authorizationRevision)
         defer { hostToolDirectory.end(hostInvocation) }
-        rawResult = try await MCPInvocationAdmission.$current.withValue(
-          MCPInvocationAdmission(descriptor: descriptor, hostInvocationID: hostInvocation?.id)
-        ) {
-          try await providerRouter.callToolAsync(
-            name: name,
-            arguments: .object(routed.arguments),
-            expectedCapability: name == "mcp.tools.call" ? nil : descriptor
-          )
-        }
+        let invocation = ToolInvocation(
+          name: name, arguments: .object(routed.arguments),
+          context: InvocationContext(
+            admission: InvocationAdmission(
+              descriptor: descriptor, hostInvocationID: hostInvocation?.id),
+            session: routed.context.controlSession, continuation: invocationContext.continuation))
+        rawResult = try await providerRouter.callToolAsync(
+          name: invocation.name, arguments: invocation.arguments,
+          expectedCapability: name == "mcp.tools.call" ? nil : descriptor,
+          context: invocation.context)
       }
       let result = Self.attachExecutionMetadata(
         to: rawResult,
@@ -1468,7 +1512,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private func prepareOperation(
     arguments: [String: JSONValue],
-    context: ExecutionContext
+    context: ExecutionContext, invocationContext: InvocationContext
   ) throws -> PreparedOperation {
     guard let database else {
       throw Self.invalid(
@@ -1487,7 +1531,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let sessionRevision = session?.revision
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
     let targetDescriptor = try invocationDescriptor(
-      named: toolName, arguments: targetArguments, context: context)
+      named: toolName, arguments: targetArguments, context: context,
+      invocationContext: invocationContext)
     let effectiveRisk = effectiveOperationDescriptor(
       targetDescriptor, arguments: targetArguments
     ).risk
@@ -1512,7 +1557,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let stateDigest = try currentStateDigest(
       tool: toolName,
       arguments: routed.arguments,
-      context: routed.context
+      context: routed.context, invocationContext: invocationContext
     )
     if let expectedStateDigest = arguments["state_digest"]?.stringValue {
       guard let stateDigest else {
@@ -1547,7 +1592,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         GatewayOwnerRouting.selection.map {
           ["execution_owner": $0.json, "arguments": .object(routed.arguments)]
         } ?? routed.arguments),
-      reviewTitle: try listTools(context: routed.context).first { $0.name == toolName }?.title
+      reviewTitle: try listTools(context: routed.context, invocationContext: invocationContext)
+        .first { $0.name == toolName }?.title
     )
     try context.controlSession?.requireRevision(sessionRevision)
     try database.saveOperationTicket(ticket)
@@ -1568,7 +1614,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private func policyProbe(
     arguments: [String: JSONValue],
-    context: ExecutionContext
+    context: ExecutionContext, invocationContext: InvocationContext
   ) throws -> JSONValue {
     let capabilityID = try Self.requiredString("capability_id", in: arguments)
     guard capabilityID != "policy.probe" else {
@@ -1579,7 +1625,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     let targetArguments = arguments["arguments"]?.objectValue ?? [:]
     let targetDescriptor = try invocationDescriptor(
-      named: capabilityID, arguments: targetArguments, context: context)
+      named: capabilityID, arguments: targetArguments, context: context,
+      invocationContext: invocationContext)
     let routed = try route(
       descriptor: targetDescriptor,
       arguments: targetArguments,
@@ -1599,7 +1646,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private func beginOperationCommit(
     arguments: [String: JSONValue],
-    context: ExecutionContext
+    context: ExecutionContext, invocationContext: InvocationContext
   ) throws -> OperationInvocation {
     guard let database else {
       throw Self.invalid(
@@ -1626,7 +1673,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       )
     }
     let targetDescriptor = try invocationDescriptor(
-      named: toolName, arguments: targetArguments, context: context)
+      named: toolName, arguments: targetArguments, context: context,
+      invocationContext: invocationContext)
     let routed = try route(
       descriptor: targetDescriptor,
       arguments: targetArguments,
@@ -1652,7 +1700,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let observedStateDigest = try currentStateDigest(
         tool: toolName,
         arguments: routed.arguments,
-        context: routed.context
+        context: routed.context, invocationContext: invocationContext
       )
       guard observedStateDigest == expectedStateDigest else {
         do {
@@ -1736,7 +1784,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private func executeCommittedOperation(
-    _ invocation: OperationInvocation
+    _ invocation: OperationInvocation, invocationContext: InvocationContext
   ) throws -> JSONValue {
     let result: JSONValue
     do {
@@ -1745,8 +1793,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         arguments: invocation.arguments,
         context: invocation.targetContext,
         bypassOperationTicket: true,
-        operationLinkage: invocation.linkage
-      )
+        operationLinkage: invocation.linkage, invocationContext: invocationContext)
     } catch {
       if let database {
         _ = try? database.finishOperationTicket(
@@ -1769,7 +1816,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private func executeCommittedOperationAsync(
-    _ invocation: OperationInvocation
+    _ invocation: OperationInvocation, invocationContext: InvocationContext
   ) async throws -> JSONValue {
     let result: JSONValue
     do {
@@ -1778,8 +1825,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         arguments: invocation.arguments,
         context: invocation.targetContext,
         bypassOperationTicket: true,
-        operationLinkage: invocation.linkage
-      )
+        operationLinkage: invocation.linkage, invocationContext: invocationContext)
     } catch {
       if let database {
         _ = try? database.finishOperationTicket(
@@ -1999,7 +2045,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return true
   }
 
-  private func descriptor(named name: String, workspaceID: String? = nil) throws
+  private func descriptor(
+    named name: String, workspaceID: String? = nil, invocationContext: InvocationContext
+  ) throws
     -> CapabilityDescriptor
   {
     if let definition = Self.coreDefinitions(
@@ -2009,22 +2057,26 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       return definition.capability
     }
     if let router = workspaceID.flatMap({ providerRouters[$0] }) ?? firstProviderRouter {
-      return try router.capability(named: name)
+      return try router.capability(named: name, context: invocationContext)
     }
     throw GatewayToolError.unknownTool(name)
   }
 
   private func invocationDescriptor(
-    named name: String, arguments: [String: JSONValue], context: ExecutionContext
+    named name: String, arguments: [String: JSONValue], context: ExecutionContext,
+    invocationContext: InvocationContext
   ) throws -> CapabilityDescriptor {
-    if name == "mcp.connections.close", MCPContinuationTarget.current?.selectedOwnershipID == nil {
+    if name == "mcp.connections.close",
+      invocationContext.continuationTarget?.selectedOwnershipID == nil
+    {
       throw Self.invalid(
         code: "mcp.connection_owner_required",
         message:
           "Select a live execution owner with runtime.owners.call before closing its connection.")
     }
     let workspaceID = arguments["workspace_id"]?.stringValue ?? context.workspaceID
-    var descriptor = try descriptor(named: name, workspaceID: workspaceID)
+    var descriptor = try descriptor(
+      named: name, workspaceID: workspaceID, invocationContext: invocationContext)
     if name == "mcp.tools.call" {
       let serverID = try Self.requiredString("server", in: arguments)
       let toolName = try Self.requiredString("tool", in: arguments)
@@ -2055,7 +2107,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let workspaceID = routed.registryWorkspaceID,
       let router = providerRouters[workspaceID]
     else { throw GatewayRuntimeError.noWorkspaces }
-    let admission = try router.downstreamPolicy(for: reference)
+    let admission = try router.downstreamPolicy(
+      for: reference,
+      context: .init(session: context.controlSession, continuation: invocationContext.continuation))
     descriptor.risk = admission.risk
     descriptor.hostServiceAction = admission.hostServiceAction
     return descriptor
@@ -2065,10 +2119,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     workspaceOrder.lazy.compactMap { self.providerRouters[$0] }.first
   }
 
-  private func contextForCall() -> ExecutionContext {
+  private func contextForCall(_ invocationContext: InvocationContext) -> ExecutionContext {
     var callContext = context
     callContext.requestID = UUID().uuidString
-    if let session = GatewaySessionScope.current { callContext.controlSession = session }
+    if let session = invocationContext.session { callContext.controlSession = session }
     if let trace = MCPRuntimeAdapter.requestTrace { callContext.transportTrace = trace }
     return callContext
   }
@@ -2413,7 +2467,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func currentStateDigest(
     tool: String,
     arguments: [String: JSONValue],
-    context: ExecutionContext
+    context: ExecutionContext, invocationContext: InvocationContext
   ) throws -> String? {
     let reviewedTargets: Set<String> = [
       "archive.create", "archive.extract", "file.append", "file.chmod", "file.copy",
@@ -2426,7 +2480,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     ]
     guard reviewedTargets.contains(tool), configuration.builtin.enabled.contains(tool),
       !configuration.tools.contains(where: { $0.name == tool }),
-      try invocationDescriptor(named: tool, arguments: arguments, context: context).mcpReference
+      try invocationDescriptor(
+        named: tool, arguments: arguments, context: context, invocationContext: invocationContext
+      ).mcpReference
         == nil
     else { return nil }
     guard let workspaceID = context.workspaceID,

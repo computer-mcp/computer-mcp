@@ -22,7 +22,7 @@ package enum ComputerMCPProductContracts {
                 "checked": .bool(false), "tools": .array([]),
               ])
             }
-            let tools = try client.listTools(server: server)
+            let tools = try client.listTools(server: server, context: .empty)
             return .object([
               "id": .string(server.id), "ok": .bool(true),
               "tools": .array(tools.map(\.json)),

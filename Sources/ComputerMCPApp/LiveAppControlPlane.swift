@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCP
+import ComputerMCPComputerUse
 import ComputerMCPCore
 import ComputerMCPMacOS
 import ComputerMCPPlatform

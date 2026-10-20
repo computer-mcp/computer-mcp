@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPComputerUse
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream

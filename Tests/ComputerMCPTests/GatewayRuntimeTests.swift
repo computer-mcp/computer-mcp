@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import ComputerMCP
+@testable import ComputerMCPComputerUse
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 

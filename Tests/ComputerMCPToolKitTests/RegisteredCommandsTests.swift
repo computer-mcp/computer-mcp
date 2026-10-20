@@ -105,7 +105,8 @@ struct RegisteredCommandsTests {
     for directory in [first, second] {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       try FileManager.default.copyItem(
-        at: URL(fileURLWithPath: "/bin/sh"), to: directory.appendingPathComponent("tool"))
+        at: URL(fileURLWithPath: "/bin/sh").resolvingSymlinksInPath(),
+        to: directory.appendingPathComponent("tool"))
     }
     let environment = ["PATH": "\(first.path):\(first.path):\(second.path)"]
     #expect(

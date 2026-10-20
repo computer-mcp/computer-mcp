@@ -37,7 +37,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MODIFIERS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:package|public|internal|private|fileprivate|final|indirect|nonisolated|open|static)\s+)*"
 DECL = re.compile(r"^" + MODIFIERS + r"(struct|class|enum|actor|protocol|typealias)\s+([A-Z]\w*)")
-EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z][\w.]*)")
+EXT = re.compile(r"^" + MODIFIERS + r"extension\s+([A-Z]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)")
 FREE = re.compile(r"^" + MODIFIERS + r"(?:func|let|var)\s+(\w+)")
 IMPORT = re.compile(r"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*import\s+(?:(?:struct|class|enum|protocol|func|var|let|typealias)\s+)?(\w+)", re.M)
 REFERENCE = re.compile(r"\b[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*")
@@ -123,6 +123,18 @@ SCOPE = re.compile(r"[{}]|\b(?:let|var)\s+([A-Za-z_]\w*)|(?<![.\w])([A-Za-z_]\w*
 TYPE_TOKEN = re.compile(r"\bfunc\s+([A-Za-z_]\w*)|->|==|[A-Za-z_]\w*|[^\s]")
 
 
+def closure_signature(text, index):
+    """Whether the parenthesized group starting before index is a closure's parameters."""
+    index = skip_group(text, index)
+    while match := re.match(r"\s*(async|throws|rethrows)\b", text[index:]):
+        index += match.end()
+        if match.group(1) == "throws":
+            typed = re.match(r"\s*\(", text[index:])
+            if typed:
+                index = skip_group(text, index + typed.end())
+    return re.match(r"\s*(?:->[^{}]*?)?\bin\b", text[index:]) is not None
+
+
 def type_contexts(text):
     """Function declaration names and identifiers in lexical type syntax, by offset.
 
@@ -145,10 +157,9 @@ def type_contexts(text):
                 binding = word
         elif word in ("(", "[", "<"):
             groups.append((word, in_type, declaration))
-            in_type |= word == "<" or declaration == "case"
+            in_type |= word == "<" or declaration == "case" or (word == "(" and previous == "throws")
             if word == "(" and previous in {"{", "]"}:
-                end = skip_group(text, token.end())
-                if re.match(r"\s*(?:(?:async|throws|rethrows)\s*)*(?:->[^{}]*?)?\bin\b", text[end:]):
+                if closure_signature(text, token.end()):
                     declaration = "func"
                     groups[-1] = (word, in_type, declaration)
         elif word in closing:
@@ -159,13 +170,16 @@ def type_contexts(text):
                 opening, in_type, declaration = groups[-1]
                 in_type |= opening == "<" or declaration == "case"
             else:
-                declaration, in_type = declaration if declaration == "case" else binding, False
+                declaration = declaration if declaration in {"case", "where"} else binding
+                in_type = declaration == "where"
         elif word == ":":
             in_type |= declaration is not None
         elif word == "=":
             in_type = declaration in {"typealias", "associatedtype"}
             declaration = None
-        elif word in {"->", "as", "is", "where"}:
+        elif word == "where":
+            declaration, in_type = "where", True
+        elif word in {"->", "as", "is"}:
             in_type = True
         elif word in {"{", "}", ";", "in"}:
             declaration, binding, in_type = None, None, False
@@ -278,7 +292,7 @@ def chunks(path, directory):
             if decl:
                 current = {"kind": "decl", "name": decl.group(2), "lines": [line]}
             elif ext:
-                current = {"kind": "ext", "name": ext.group(1).split(".")[0], "path": ext.group(1), "lines": [line]}
+                current = {"kind": "ext", "name": ext.group(1).split(".")[0].strip(), "lines": [line]}
             else:
                 current = {"kind": "free", "name": free.group(1), "lines": [line]}
         elif current is not None:
@@ -289,10 +303,18 @@ def chunks(path, directory):
         out.append(current)
     for chunk in out:
         chunk["text"] = code_text("\n".join(chunk.pop("lines")))
+        if chunk["kind"] == "ext":
+            chunk["path"] = re.sub(r"\s+", "", EXT.match(chunk["text"]).group(1))
         chunk["file"] = path.name
         chunk["directory"] = directory
         chunk["source"] = text
     return out
+
+
+def type_reference(path, modules):
+    """Top-level type name and optional module qualifier of a dotted reference."""
+    names = re.split(r"\s*\.\s*", path)
+    return (names[1], names[0]) if len(names) > 1 and names[0] in modules else (names[0], None)
 
 
 class Rules:
@@ -438,12 +460,10 @@ def plan(graph, sources, tests=None):
         declarations, type_positions = type_contexts(chunk["text"])
         references = collections.defaultdict(set)
         for match in REFERENCE.finditer(chunk["text"]):
-            names, start = re.split(r"\s*\.\s*", match.group(0)), match.start()
+            start = match.start()
             if start in declarations or re.search(r"\.\s*$", chunk["text"][max(0, start - 80):start]):
                 continue
-            name, qualifier = names[0], None
-            if len(names) > 1 and name in modules:
-                qualifier, name = names[:2]
+            name, qualifier = type_reference(match.group(0), modules)
             if name not in types:
                 continue
             if qualifier is None and (name in local_types or source in types[name]
@@ -451,8 +471,12 @@ def plan(graph, sources, tests=None):
                 continue
             owners = types[name] if qualifier is None else types[name] & {qualifier}
             references[(name, qualifier)].update(owners)
-        if chunk["kind"] == "ext" and chunk["name"] in types:
-            references[(chunk["name"], None)].update(types[chunk["name"]])
+        if chunk["kind"] == "ext":
+            name, qualifier = type_reference(chunk["path"], modules)
+            owners = types.get(name, set())
+            if qualifier is not None:
+                owners = owners & {qualifier}
+            references[(name, qualifier)].update(owners)
         for name in free_references(chunk["text"], functions.keys() - local_types - local_functions):
             if source not in functions[name]:
                 references[(name, None)].update(functions[name])

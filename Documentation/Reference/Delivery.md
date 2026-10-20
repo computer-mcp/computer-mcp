@@ -65,7 +65,10 @@ with `id`, `repository`, `paths`, `default_branch`, `worktree_root`, `sparse`, `
 The first message line is a Conventional Commit: a type, optional `(scope)` and
 `!`, then `: ` and a nonempty subject. Types are `feat`, `fix`, `docs`, `style`,
 `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. A body is allowed;
-Git trailers (`Key: value` in the final paragraph) are rejected. The slug matches
+Line endings are normalized before validation and committing. The registered Git
+command parses the message with `interpret-trailers --parse`; any trailer output
+rejects the message, including `Key:value`, `Key : value`, empty values and
+repository-configured trailer separators. The slug matches
 `[a-z0-9]+(-[a-z0-9]+)*` and is at most 48 characters. The branch is `<type>/<slug>`;
 an existing branch aborts the operation.
 

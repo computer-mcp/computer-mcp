@@ -28,24 +28,28 @@ internal struct DeliveryGit: Sendable {
   }
 
   @discardableResult
-  func run(_ arguments: [String], at directory: URL, accepting: Set<Int32> = [0]) throws -> Result {
+  func run(
+    _ arguments: [String], at directory: URL, accepting: Set<Int32> = [0],
+    input: Data = Data()
+  ) throws -> Result {
     do {
       let command = arguments.drop(while: { $0 == "--no-optional-locks" }).first ?? ""
       let pathOptions = ["add", "status", "diff"].contains(command) ? ["--literal-pathspecs"] : []
-      let result = try runner.run(
-        executable: executable, arguments: prefix + pathOptions + arguments,
+      let result = try runner.runData(
+        executable: executable,
+        invocation: .init(arguments: prefix + pathOptions + arguments, standardInput: input),
         workingDirectory: directory, environment: environment,
         timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
       guard !result.timedOut, let code = result.exitCode, accepting.contains(code),
         !result.stdoutTruncated
       else {
         throw DeliveryFailure(
-          reason: .gitFailed, detail: "Git command failed: \(arguments.first ?? "git").",
-          exitCode: result.exitCode, stderr: boundedDeliveryText(result.stderr))
+          reason: .gitFailed, detail: "Git command failed: \(command).",
+          exitCode: result.exitCode, stderr: boundedDeliveryText(result.stderrString))
       }
       return Result(
-        stdout: result.stdout, exitCode: result.exitCode,
-        stderr: boundedDeliveryText(result.stderr))
+        stdout: result.stdoutString, exitCode: result.exitCode,
+        stderr: boundedDeliveryText(result.stderrString))
     } catch let failure as DeliveryFailure { throw failure } catch {
       throw DeliveryFailure(
         reason: .gitFailed, detail: boundedDeliveryText(error.localizedDescription))

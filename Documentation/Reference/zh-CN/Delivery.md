@@ -52,8 +52,10 @@ profile 的直接文件写入能力。
 ```
 
 `message` 首行遵循 Conventional Commits，类型为 `feat fix docs style refactor
-perf test build ci chore revert`，可带 `(scope)`、`!` 与正文，不能带末段
-`Key: value` 形式的 Git 尾注。`slug` 匹配 `[a-z0-9]+(-[a-z0-9]+)*`，最多
+perf test build ci chore revert`，可带 `(scope)`、`!` 与正文。换行符在校验与提交前
+统一；已注册的 Git 通过 `interpret-trailers --parse` 解析说明，有任何尾注输出即
+拒绝，包括 `Key:value`、`Key : value`、空值及仓库配置的分隔符。`slug` 匹配
+`[a-z0-9]+(-[a-z0-9]+)*`，最多
 48 字符；分支为 `<type>/<slug>`，同名分支存在则放弃。
 
 `edits` 为 1–64 项，按序应用。每项提供相对仓库根的 `path`，以及二选一的

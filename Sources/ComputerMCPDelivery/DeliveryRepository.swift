@@ -83,6 +83,14 @@ internal struct DeliveryRepository: Sendable {
 
   func preflight(_ request: DeliveryRequest) throws -> String {
     try cancellation.check()
+    guard
+      try git.run(
+        ["--no-optional-locks", "interpret-trailers", "--parse"], at: root,
+        input: Data(request.message.utf8)
+      ).stdout.isEmpty
+    else {
+      throw DeliveryFailure(reason: .messageInvalid, detail: "Git trailers are not allowed.")
+    }
     for path in request.paths {
       guard scope.contains(path: path) else {
         throw DeliveryFailure(

@@ -108,22 +108,12 @@ internal struct DeliveryRequest: Sendable {
           "Use a Conventional Commit message and a lowercase hyphenated slug of at most 48 characters."
       )
     }
-    let lines = message.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(
-      of: "\r", with: "\n"
-    )
-    .trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
-    let lastBlank = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? 0
-    let trailerLines = lines.dropFirst(max(1, lastBlank + 1))
-    guard
-      !trailerLines.contains(where: {
-        $0.range(of: "^[A-Za-z0-9][A-Za-z0-9-]*:[ \\t]+\\S", options: .regularExpression) != nil
-      })
-    else { throw DeliveryFailure(reason: .messageInvalid, detail: "Git trailers are not allowed.") }
     guard let items = object["edits"]?.arrayValue, (1...64).contains(items.count) else {
       throw DeliveryFailure(reason: .pathInvalid, detail: "edits must contain 1 to 64 entries.")
     }
     self.scope = scope
-    self.message = message
+    self.message = message.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(
+      of: "\r", with: "\n")
     self.branch = "\(type)/\(slug)"
     self.edits = try items.map { item in
       guard let fields = item.objectValue,

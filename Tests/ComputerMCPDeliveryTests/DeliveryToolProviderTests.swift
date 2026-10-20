@@ -254,6 +254,9 @@ struct DeliveryToolProviderTests {
     "docs: entry\n\nCo-Authored-By: Person <person@example.invalid>",
     "docs: entry\n\nBody\n\nSigned-off-by: Person", "docs: entry\n\nReviewed-by: Person",
     "docs: entry\r\rSigned-off-by: Person", "docs: entry\r\n\r\nReviewed-by: Person",
+    "docs: entry\n\nKey:value", "docs: entry\n\nKey : value", "docs: entry\n\nKey:",
+    "docs: entry\n\nSigned-off-by:Person", "docs: entry\n\nSigned-off-by : Person",
+    "docs: entry\n\nSigned-off-by:", "docs: entry\n\nReviewed-by: Person\n continued value",
   ])
   func invalidMessages(message: String) async throws {
     try await deliveryTest {
@@ -263,6 +266,19 @@ struct DeliveryToolProviderTests {
         try fixture.apply(fixture.request(message: message))["reason"] == .string("message_invalid")
       )
       #expect(try fixture.journals().isEmpty)
+    }
+  }
+
+  @Test
+  func repositoryConfiguredTrailersAreRejected() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      try fixture.git(["config", "trailer.separators", "="])
+      let result = try fixture.apply(fixture.request(message: "docs: entry\n\nReviewed-by=Person"))
+      #expect(result["state"] == .string("aborted"))
+      #expect(result["reason"] == .string("message_invalid"))
+      #expect(try fixture.journals().isEmpty)
+      try fixture.assertClean()
     }
   }
 

@@ -61,6 +61,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsSystem/` | Platform-neutral System and Network providers with explicit definitions, bounded command execution, POSIX observation and injected native memory, CPU and thermal readings |
 | `Sources/ComputerMCPToolsMCP/` | Platform-neutral MCP builtin and configured providers, downstream discovery, validated catalogs, host risk descriptors and context-preserving calls |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
+| `Sources/ComputerMCPDelivery/` | Platform-neutral delivery provider, scoped worktree edits, repository locks, atomic file journals, landing and recovery |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
 | `Sources/ComputerMCPPlugins/` | Platform-neutral plugin manifests, bundled inventory and distribution, catalogs, installation/recovery, contribution resolution, archive preparation and the injected plugin state store contract |
 | `Sources/ComputerMCPComputerUse/` | macOS Computer Use provider, observation and action service, native Accessibility and screen capture adapter, and permission readings |
@@ -120,7 +121,14 @@ its CLI process lifecycle. `ToolEnvironment` shares a workspace's configuration,
 scope, command execution, environment, process/shell runtimes and injected platform
 services across providers; the host owns shutdown.
 
-`GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`, `ProcessToolProvider`,
+`ComputerMCPDelivery` is a neutral capabilities target using Core, Configuration,
+Process, PlatformPOSIX and ToolKit. It owns scoped edit/commit/land execution,
+repository locks and durable file journals in the Git common directory. Its
+registered Git executable is injected through the workspace environment. Neutral
+`ComputerMCPDeliveryTests` uses real Git in temporary repositories and exercises
+execution, fault injection, concurrent calls and interrupted-state recovery.
+
+`DeliveryToolProvider`, `GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`, `ProcessToolProvider`,
 `StructuredToolProvider`, `SkillsToolProvider`, `FilesToolProvider`,
 `WorkspaceToolProvider`, `SystemToolProvider`, `NetworkToolProvider` and
 `MCPToolProvider` own explicit builtin definitions, annotations, descriptors and

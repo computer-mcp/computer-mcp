@@ -1,6 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Delivery" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Delivery"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "交付"}}}},
+    "%@ delivery scope(s)" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "%@ delivery scope(s)"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@ 个交付范围"}}}},
     "Operation request" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Operation request"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"操作请求"}}}},
     "Empty text" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Empty text"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"空文本"}}}},
     "Not set" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not set"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未设置"}}}},

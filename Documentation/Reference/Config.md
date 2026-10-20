@@ -329,3 +329,11 @@ path = "/mcp"
 health_path = "/health"
 access_token_env = "COMPUTER_MCP_HTTP_ACCESS_TOKEN"
 ```
+
+## Delivery scopes
+
+`[[delivery.scopes]]` declares isolated repository edits for one registered workspace.
+It is part of both the App-managed and standalone manifests, with unique IDs,
+relative repository/worktree paths, path globs, a default branch, optional sparse
+checkout and `land` or `commit-only` mode. See [Isolated delivery](Delivery.md#configuration)
+for the complete shape, defaults and validation.

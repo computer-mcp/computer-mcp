@@ -1,6 +1,7 @@
 import ComputerMCPComputerUse
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDelivery
 import ComputerMCPDownstream
 import ComputerMCPGateway
 import ComputerMCPPlatform
@@ -62,7 +63,9 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       hostContext: hostContext)
     let mcp = MCPToolProvider(environment: environment, mcpClient: client)
     let cli = CLIToolProvider(environment: environment)
+    let delivery = DeliveryToolProvider(environment: environment)
     let providers: [any GatewayToolProvider] = [
+      delivery,
       cli, ProcessToolProvider(environment: environment),
       ShellToolProvider(environment: environment),
       mcp, SkillsToolProvider(environment: environment),
@@ -85,6 +88,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
         || configuration.cli.commands.contains { $0.tree != nil } ? .seconds(30) : nil,
       downstreamPolicy: { try mcp.downstreamPolicy(for: $0, context: $1) },
       shutdown: {
+        await delivery.shutdown()
         await environment.shellManager.shutdown()
         await environment.registeredCommands.execution.shutdown()
         await client.shutdown()

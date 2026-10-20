@@ -28,7 +28,7 @@ Dependencies inside a layer are limited to these:
 - Services: `Process`, `Transport`, `Downstream` and `Tunnels` may use
   `Configuration`; `Downstream` and `Tunnels` may use `Process`; `Downstream` may use
   `Transport`.
-- Capabilities: tool domains may use `ToolKit`; `ToolsWorkspace`,
+- Capabilities: tool domains and `Delivery` may use `ToolKit`; `ToolsWorkspace`,
   `ToolsStructured`, `ToolsSkills` and `ToolsSystem` may use `ToolsFiles`;
   `ToolsSkills` may use `ToolsStructured`; `Plugins` composes contributions and
   may use `ToolsCLI`.

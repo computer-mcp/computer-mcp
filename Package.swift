@@ -147,6 +147,19 @@ let neutralTargets: [Target] =
         "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPDelivery",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPToolKit",
+      ]),
+    .testTarget(
+      name: "ComputerMCPDeliveryTests",
+      dependencies: [
+        "ComputerMCPDelivery", "ComputerMCPCore", "ComputerMCPConfiguration",
+        "ComputerMCPProcess", "ComputerMCPPlatformPOSIX", "ComputerMCPToolKit",
+        "ComputerMCPTestSupport",
+      ]),
+    .target(
       name: "ComputerMCPToolsGit",
       dependencies: [
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -427,6 +440,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsShell",
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
+          "ComputerMCPDelivery",
           "ComputerMCPToolsStructured",
           "ComputerMCPToolsSkills",
           "ComputerMCPToolsFiles",
@@ -499,6 +513,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsFiles",
           "ComputerMCPToolsSystem",
           "ComputerMCPToolsGit",
+          "ComputerMCPDelivery",
           "ComputerMCPToolsMCP",
           "ComputerMCPToolsShell",
           "ComputerMCPToolsSkills",

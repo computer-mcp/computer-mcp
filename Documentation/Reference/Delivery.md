@@ -1,0 +1,172 @@
+# Isolated delivery
+
+`delivery.scopes.list` and `delivery.apply` expose host-declared repository edits
+within a selected `workspace_id`. Both require a workspace and use no network
+operations. Listing is read-only; apply has `workspace-write` risk. Profile grants,
+workspace access and action confirmation follow the ordinary gateway policy.
+The provider ID and namespace are `delivery`.
+
+## Configuration
+
+Declare scopes in the App-managed manifest, or in the standalone TOML manifest.
+The App uses its existing manifest read/write and validation path; repository files
+do not define scopes. App workspace paths come from bookmarks; standalone paths
+resolve from the manifest directory. Each workspace runtime receives only its own
+scopes. Scope editing in the App is not yet available.
+
+```toml
+[[workspaces]]
+id = "journal"
+path = "../journal" # Standalone only; omit for an App-managed workspace.
+
+[[delivery.scopes]]
+id = "training"
+workspace = "journal"
+repository = "."
+paths = ["training/**/*.md", "exports/*.csv"]
+default_branch = "main"
+worktree_root = ".claude/worktrees"
+sparse = false
+mode = "land"
+```
+
+Scope IDs are unique. `workspace` names a registered workspace. `repository`
+defaults to `.` and `worktree_root` defaults to `.claude/worktrees`; both are
+relative paths without traversal or `.git` components. The worktree root must be
+inside the repository and ignored by Git. `paths` is a nonempty list of relative
+globs: `*` stays within a path component; `**` crosses directories and `**/` also
+matches zero directories. Other glob operators are unsupported. `default_branch`
+is required. `sparse` defaults to false. `mode` is `land` (default) or `commit-only`.
+
+Enable the two names in `[builtin].enabled`, register a CLI command with ID `git`,
+and grant the tools and workspace to the calling profile. Once scopes are enabled,
+users can withdraw a profile's direct file-writing capabilities through existing
+profile permissions.
+
+## Tools
+
+`delivery.scopes.list` accepts no provider arguments. It returns `scopes`, each
+with `id`, `repository`, `paths`, `default_branch`, `worktree_root`, `sparse`, `mode`.
+
+`delivery.apply` requires these four arguments:
+
+```json
+{
+  "scope": "training",
+  "message": "docs: record training session",
+  "slug": "training-session",
+  "edits": [
+    {"path": "training/2026-10.md", "replace": {"old": "Sessions: 2", "new": "Sessions: 3"}},
+    {"path": "exports/session.csv", "create": {"content": "exercise,reps\nsquat,5\n"}}
+  ]
+}
+```
+
+The first message line is a Conventional Commit: a type, optional `(scope)` and
+`!`, then `: ` and a nonempty subject. Types are `feat`, `fix`, `docs`, `style`,
+`refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. A body is allowed;
+Git trailers (`Key: value` in the final paragraph) are rejected. The slug matches
+`[a-z0-9]+(-[a-z0-9]+)*` and is at most 48 characters. The branch is `<type>/<slug>`;
+an existing branch aborts the operation.
+
+Edits contain 1–64 entries, applied in order, with exactly one `replace` or
+`create`. Paths are normalized relative repository paths with forward slashes,
+without `..`, absolute paths, `.git` components or symlinks. Every path must match
+the scope. Replacement requires an existing UTF-8 file and a nonempty `old` string
+occurring exactly once. `new` may be empty. Creation requires an absent file and
+creates missing parents. Each edit is limited to 1 MiB of UTF-8 content: combined `old` and `new`, or
+`create.content`.
+Later edits see the results of earlier edits, including on the same file.
+All files are read back before staging only the requested paths and committing.
+
+Results use the normal readable JSON and `structuredContent.result` envelope:
+
+| Field | Meaning |
+| --- | --- |
+| `state` | `aborted`, `merged`, `committed`, or `cleanup_pending` |
+| `commit` | Commit ID, when a commit exists |
+| `branch` | Branch name, when retained |
+| `reason` | Reason code, except for `merged` |
+| `files` | Objects with `path` and `snippets` from the final edited content |
+
+Replacement snippets include three lines before and after the changed text;
+creation snippets include the first 20 lines. Each snippet is bounded to 4 KiB
+without splitting a UTF-8 character. Aborted results set `isError = true` and
+include `code = "delivery.<reason>"` and `message`; Git errors also include the
+exit code and truncated stderr. Other states are successful tool results.
+
+## Execution and recovery
+
+The repository-wide POSIX lock is `<git-common-dir>/computer-mcp/delivery.lock`.
+It is shared by App and standalone processes and held throughout recovery,
+preflight, execution and cleanup. Lock acquisition waits up to 60 seconds, then
+returns `busy`. Each Git command uses the registered executable/interpreter and
+its configured timeout (or the policy default). Inherited and command-configured
+`GIT_*` variables are removed and `GIT_TERMINAL_PROMPT=0` is set. Repository
+configuration and hooks remain active.
+
+Preflight checks scopes, path containment, the ignored worktree root, a clean
+main-checkout state for target files, branch availability and the message. Land
+mode also requires the main checkout to be on the default branch. The isolated
+worktree starts at the current default-branch commit. Sparse mode uses non-cone,
+exact-path sparse checkout.
+
+Land first attempts `merge --ff-only` in the main checkout. If the default branch
+has advanced, delivery rebases its worktree and retries once. A failed rebase is
+aborted and the saved commit retained. Commit-only mode keeps the branch without
+landing. Cleanup removes the worktree; it deletes the branch only when no delivery
+commit exists or that commit is reachable from the default branch. An undelivered
+commit's branch is always preserved.
+
+Journals live at `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`.
+Schema 1 records `operation_id`, `workspace`, `scope`, `repository`,
+`default_branch`, `branch`, `worktree`, baseline `base`, `phase`, optional `commit`,
+`merged`, optional terminal `state` and `reason`, and `files`. Each write uses a
+same-directory temporary file, file fsync, rename and directory fsync.
+
+| Phase | Durable meaning |
+| --- | --- |
+| `started` | Identity and baseline recorded before worktree creation |
+| `committed` | Commit ID recorded before any landing attempt |
+| `cleanup_pending` | Cleanup or final journal persistence needs retry; `commit` and `merged` preserve outcome facts |
+| `finished` | Cleanup complete; `state` records `aborted`, `committed`, or `merged` |
+
+A failed post-commit journal update returns `committed` / `journal_failed`, retains
+the branch and never attempts landing. Final journal persistence is then best
+effort; recovery can reconcile the retained branch from the started record.
+Cleanup failures return `cleanup_pending`
+with `cleanup_failed` and retain a retryable journal.
+
+On provider construction, background recovery processes configured repositories;
+provider shutdown cancels and joins that work. Every apply also recovers under
+the repository lock before its preflight. Recovery first aborts an in-progress
+rebase and reconciles actual refs, including a commit created before its journal
+update. No commit means cleanup and `aborted`; a commit reachable from the default
+branch means cleanup and `merged`; an unmerged commit means worktree removal,
+branch retention and `committed` / `interrupted`. Failed cleanup remains pending
+for the next recovery.
+
+## Reason codes
+
+Error IDs prefix these codes with `delivery.`:
+
+| Code | Meaning |
+| --- | --- |
+| `scope_unknown` | Missing or unknown scope |
+| `path_outside_scope` | Valid path does not match scope globs |
+| `path_invalid` | Invalid path, symlink traversal, edit shape or edit size/count |
+| `match_missing`, `match_ambiguous` | Replacement has zero or multiple matches |
+| `file_exists`, `file_missing`, `not_text` | File precondition or UTF-8/readback failure |
+| `main_checkout_dirty` | Target path has uncommitted main-checkout changes |
+| `main_checkout_branch` | Land requires the main checkout on the default branch |
+| `worktree_root_not_ignored` | Worktree root is not ignored by Git |
+| `branch_exists` | Delivery branch already exists |
+| `message_invalid` | Invalid commit message, trailer or slug |
+| `busy` | Repository lock wait exceeded 60 seconds |
+| `git_failed` | Git launch, timeout or command failure |
+| `commit_only` | Commit retained under commit-only mode |
+| `not_fast_forward` | Second fast-forward attempt failed |
+| `rebase_conflict` | Rebase failed and was aborted to the saved commit |
+| `journal_failed` | Journal could not be persisted; an existing commit remains on its branch |
+| `interrupted` | Recovery classified an interrupted operation |
+| `cleanup_failed` | Cleanup or final journal persistence requires retry |

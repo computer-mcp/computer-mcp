@@ -2,10 +2,17 @@ import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPProcess
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
 import MCP
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// Private services on the inherited MCP channel. Durable authority stays with the
 /// host; an active forwarded invocation, not plugin-supplied identity, selects scope.

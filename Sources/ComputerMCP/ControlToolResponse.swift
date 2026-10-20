@@ -3,7 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPTransport
-import CryptoKit
+import Crypto
 import Foundation
 
 enum ControlToolResponse {

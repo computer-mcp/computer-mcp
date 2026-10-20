@@ -392,6 +392,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolKit",
           "ComputerMCPTransport",
           "ComputerMCPTunnels",
+          .product(name: "Crypto", package: "swift-crypto"),
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),

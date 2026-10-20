@@ -7,9 +7,16 @@ import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPTransport
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let configuration: GatewayConfiguration

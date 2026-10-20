@@ -5,7 +5,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPToolsWorkspace
-import CryptoKit
+import Crypto
 import Foundation
 import GRDB
 

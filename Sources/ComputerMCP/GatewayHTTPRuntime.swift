@@ -2,7 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPTransport
 import ComputerMCPTunnels
-import CryptoKit
+import Crypto
 import Foundation
 import Logging
 import MCP

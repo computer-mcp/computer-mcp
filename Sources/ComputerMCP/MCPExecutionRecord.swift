@@ -1,6 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
-import CryptoKit
+import Crypto
 import Foundation
 
 /// A receipt is observation of one dispatch, never authority to replay it.

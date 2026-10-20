@@ -3,6 +3,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
 import ComputerMCPProcess
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
@@ -25,7 +26,8 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
   ) {
     let environment = ToolEnvironment(
       configuration: configuration, commandRunner: commandRunner,
-      processManager: processManager, shellManager: shellManager)
+      processManager: processManager, shellManager: shellManager,
+      mediaInspector: DarwinMediaInspector())
     let cli = CLIToolProvider(environment: environment)
     let providers: [any GatewayToolProvider] = [
       GitToolProvider(environment: environment), cli, ProcessToolProvider(environment: environment),

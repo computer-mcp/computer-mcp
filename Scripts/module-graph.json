@@ -112,6 +112,7 @@
     "computer-mcp"
   ],
   "macos_imports": [
+    "AVFoundation",
     "AppKit",
     "ApplicationServices",
     "CSystemArchive",

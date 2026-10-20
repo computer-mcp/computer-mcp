@@ -18,7 +18,9 @@ struct GatewayHTTPLifecycleTests {
     let runtime = GatewayHTTPRuntime(
       configuration: .init(), registry: registry, host: "127.0.0.1", port: 0,
       publicBaseURL: nil,
-      control: .init(socketURL: socket, database: try GatewayDatabase(inMemory: ())))
+      control: .init(
+        socketURL: socket, database: try GatewayDatabase(inMemory: ()),
+        clientControl: LifecycleClientControl()))
     try await runtime.startListening()
     let port = try #require(await runtime.boundPort())
     let discovery = registry.discoveryEntered.stream()
@@ -167,5 +169,14 @@ private actor HTTPShutdownGate {
     let pending = waiters
     waiters.removeAll()
     for waiter in pending { waiter.resume() }
+  }
+}
+
+private struct LifecycleClientControl: GatewayClientControlProvider {
+  func listTools() throws -> [MCPTool] { [] }
+  func callTool(
+    name: String, arguments: JSONValue?, owner: GatewayHTTPApp, generation: UUID
+  ) async throws -> JSONValue {
+    throw GatewayToolError.unknownTool(name)
   }
 }

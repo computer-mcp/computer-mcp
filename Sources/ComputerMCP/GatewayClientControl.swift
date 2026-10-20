@@ -163,3 +163,22 @@ enum GatewayClientControl: Sendable {
     ])
   }
 }
+
+package struct GatewayHTTPClientControl: GatewayClientControlProvider {
+  package init() {}
+
+  package func listTools() throws -> [MCPTool] {
+    try GatewayClientControl.contracts.map { try $0.tool() }
+  }
+
+  package func callTool(
+    name: String, arguments: JSONValue?, owner: GatewayHTTPApp, generation: UUID
+  ) async throws -> JSONValue {
+    guard let contract = GatewayClientControl.contracts.first(where: { $0.name == name }) else {
+      throw GatewayToolError.unknownTool(name)
+    }
+    let object = try contract.validate(arguments)
+    return try await GatewayClientControl.http(owner, generation: generation)
+      .call(name: name, arguments: object)
+  }
+}

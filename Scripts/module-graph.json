@@ -170,6 +170,7 @@
     "ComputerMCPProductContracts": "ComputerMCPControlPlane",
     "ControlToolContract": "ComputerMCPControlPlane",
     "ControlToolResponse": "ComputerMCPGateway",
+    "GatewayClientControlProvider": "ComputerMCPGateway",
     "GatewayDatabase": "ComputerMCPGateway",
     "GatewayManagementAuthorization": "ComputerMCPGateway",
     "GatewayToolProviderFactory": "ComputerMCPGateway",
@@ -207,7 +208,6 @@
     "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
     "ControlToolResponse->AppControlPlaneServiceError",
     "GatewayHTTPApp->AppControlPlaneServiceError",
-    "HTTPClientControlRegistry->GatewayClientControl",
     "MCPConnectionPool->KeychainSecretStore",
     "MCPProxyClient->KeychainSecretStore",
     "MCPProxyConnection->KeychainSecretStore"

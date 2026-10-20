@@ -280,7 +280,8 @@ private struct HTTPClientControlFixture: Sendable {
     runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway,
       host: "127.0.0.1", port: port, publicBaseURL: nil, accessToken: token,
-      control: .init(socketURL: socket, database: database))
+      control: .init(
+        socketURL: socket, database: database, clientControl: GatewayHTTPClientControl()))
   }
 
   func connect() async throws -> GatewayClientSession {

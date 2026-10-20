@@ -147,7 +147,9 @@ struct ServeHTTP: AsyncParsableCommand {
       port: port,
       publicBaseURL: publicBaseURL,
       control: controlSocket.map {
-        GatewayHTTPControlConfiguration(socketURL: URL(fileURLWithPath: $0), database: database)
+        GatewayHTTPControlConfiguration(
+          socketURL: URL(fileURLWithPath: $0), database: database,
+          clientControl: GatewayHTTPClientControl())
       }
     )
   }

@@ -4,13 +4,14 @@ import Foundation
 
 /// Each accepted socket retains the HTTP generation that admitted it.
 struct HTTPClientControlRegistry: GatewayToolServing {
+  let clientControl: any GatewayClientControlProvider
   let owner: GatewayHTTPApp
   let generation: UUID
   let database: GatewayDatabase
   let identity: GatewaySocketConnectionIdentity
 
   func listTools(context: InvocationContext) throws -> [MCPTool] {
-    try GatewayClientControl.contracts.map { try $0.tool() }
+    try clientControl.listTools()
   }
 
   func callTool(name: String, arguments: JSONValue?, context: InvocationContext) throws
@@ -30,12 +31,8 @@ struct HTTPClientControlRegistry: GatewayToolServing {
     let decision: AuditDecision
     let isError: Bool
     do {
-      guard let contract = GatewayClientControl.contracts.first(where: { $0.name == name }) else {
-        throw GatewayToolError.unknownTool(name)
-      }
-      let object = try contract.validate(arguments)
-      payload = try await GatewayClientControl.http(owner, generation: generation)
-        .call(name: name, arguments: object)
+      payload = try await clientControl.callTool(
+        name: name, arguments: arguments, owner: owner, generation: generation)
       decision = .allowed
       isError = false
     } catch {

@@ -60,10 +60,14 @@ enum GatewayHTTPSessionSource: Sendable {
 package struct GatewayHTTPControlConfiguration: Sendable {
   let socketURL: URL
   let database: GatewayDatabase
+  let clientControl: any GatewayClientControlProvider
 
-  package init(socketURL: URL, database: GatewayDatabase) {
+  package init(
+    socketURL: URL, database: GatewayDatabase, clientControl: any GatewayClientControlProvider
+  ) {
     self.socketURL = socketURL
     self.database = database
+    self.clientControl = clientControl
   }
 }
 
@@ -165,7 +169,7 @@ internal final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendabl
   }
 }
 
-actor GatewayHTTPApp {
+package actor GatewayHTTPApp {
   private struct SessionContext {
     let principalID: String
     let controlSession: GatewayControlSession?
@@ -291,7 +295,8 @@ actor GatewayHTTPApp {
               configuration: GatewayConfiguration(
                 server: ServerConfig(name: "computer-mcp-control")),
               registry: HTTPClientControlRegistry(
-                owner: self, generation: generation, database: control.database, identity: identity)
+                clientControl: control.clientControl, owner: self, generation: generation,
+                database: control.database, identity: identity)
             )
           })
         controlServer = server

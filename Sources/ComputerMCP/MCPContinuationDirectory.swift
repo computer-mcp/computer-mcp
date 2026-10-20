@@ -101,7 +101,7 @@ final class MCPContinuationDirectory: Sendable {
 }
 
 /// Host-selected routing evidence is private to a call; it does not confer authority.
-struct MCPContinuationTarget: Sendable {
+struct MCPContinuationTarget: ContinuationRoute {
   @TaskLocal static var current: MCPContinuationTarget?
 
   let workspaceID: String?
@@ -116,4 +116,8 @@ struct MCPContinuationTarget: Sendable {
       "[mcp.continuation_unavailable] The selected work owner is unavailable or has changed. No replacement connection was started."
     )
   }
+}
+
+extension InvocationContext {
+  var continuationTarget: MCPContinuationTarget? { continuation as? MCPContinuationTarget }
 }

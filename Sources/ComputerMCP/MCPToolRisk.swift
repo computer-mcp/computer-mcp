@@ -8,23 +8,7 @@ extension GatewayConfiguration {
   }
 }
 
-/// Bound by the host after authorization and consent, never accepted from MCP arguments.
-struct MCPInvocationAdmission: Sendable {
-  @TaskLocal static var current: MCPInvocationAdmission?
-
-  let reference: MCPToolReference
-  let risk: CapabilityRisk
-  let hostServiceAction: MCPHostServiceAction?
-  let hostInvocationID: UUID?
-
-  init?(descriptor: CapabilityDescriptor, hostInvocationID: UUID? = nil) {
-    guard let reference = descriptor.mcpReference else { return nil }
-    self.reference = reference
-    risk = descriptor.risk
-    hostServiceAction = descriptor.hostServiceAction
-    self.hostInvocationID = hostInvocationID
-  }
-
+extension InvocationAdmission {
   func validate(
     reference: MCPToolReference, risk: CapabilityRisk,
     hostServiceAction: MCPHostServiceAction?

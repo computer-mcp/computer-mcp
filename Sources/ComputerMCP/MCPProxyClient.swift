@@ -68,47 +68,45 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     _ = pool.shutdown()
   }
 
-  package func listTools(server: MCPServerConfig) throws -> [MCPTool] {
-    try run(server: server, notifyToolsOnConnect: false) { connection in
+  package func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
+    try run(server: server, notifyToolsOnConnect: false, context: context) { connection in
       try await connection.listTools()
     }
   }
 
-  package func callTool(server: MCPServerConfig, name: String, arguments: JSONValue) throws
+  package func callTool(
+    server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
+  ) throws
     -> JSONValue
   {
-    try callTool(server: server, name: name, arguments: arguments, requestID: nil)
+    try callTool(server: server, name: name, arguments: arguments, requestID: nil, context: context)
   }
 
   package func callTool(
     server: MCPServerConfig,
     name: String,
     arguments: JSONValue,
-    requestID: String?
+    requestID: String?, context: InvocationContext
   ) throws -> JSONValue {
     try callTool(
-      server: server, name: name, arguments: arguments, requestID: requestID, cancellation: nil)
+      server: server, name: name, arguments: arguments, requestID: requestID, cancellation: nil,
+      context: context)
   }
 
   package func callToolAsync(
-    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?
+    server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
+    context: InvocationContext
   ) async throws -> JSONValue {
     let cancellation = MCPCallCancellation(
       deliveryTimeout: .milliseconds(server.requestTimeoutMs ?? 30_000))
-    let admission = MCPInvocationAdmission.current
-    let continuation = MCPContinuationTarget.current
     return try await withTaskCancellationHandler {
       do {
         try Task.checkCancellation()
         let result = try await calls.perform {
           try cancellation.checkCancellation()
-          return try MCPInvocationAdmission.$current.withValue(admission) {
-            try MCPContinuationTarget.$current.withValue(continuation) {
-              try self.callTool(
-                server: server, name: name, arguments: arguments, requestID: requestID,
-                cancellation: cancellation)
-            }
-          }
+          return try self.callTool(
+            server: server, name: name, arguments: arguments, requestID: requestID,
+            cancellation: cancellation, context: context)
         }
         await cancellation.finish()
         try Task.checkCancellation()
@@ -133,7 +131,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
 
   private func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
-    cancellation: MCPCallCancellation?
+    cancellation: MCPCallCancellation?, context: InvocationContext
   ) throws -> JSONValue {
     guard let object = arguments.objectValue else {
       throw GatewayToolError.invalidArguments(
@@ -142,7 +140,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
 
     let retainsResult = requestID != nil
-    let continuation = MCPContinuationTarget.current
+    let continuation = context.continuationTarget
     if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
     let requestID = requestID ?? UUID().uuidString
     if retainsResult {
@@ -164,9 +162,9 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         return try JSONDecoder().decode(JSONValue.self, from: Data(output.utf8))
       }
     }
-    let hostInvocationID = MCPInvocationAdmission.current?.correlationID(for: server, tool: name)
+    let hostInvocationID = context.admission?.correlationID(for: server, tool: name)
     do {
-      return try run(server: server) { connection in
+      return try run(server: server, context: context) { connection in
         try await connection.callTool(
           name: name, arguments: object, gatewayRequestID: requestID, cancellation: cancellation,
           retainsResult: retainsResult, hostInvocationID: hostInvocationID,
@@ -192,7 +190,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     server: MCPServerConfig,
     name: String,
     arguments: JSONValue,
-    requestID: String
+    requestID: String, context: InvocationContext
   ) throws -> JSONValue {
     guard let object = arguments.objectValue else {
       throw GatewayToolError.invalidArguments(
@@ -205,16 +203,16 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       )
     }
 
-    let continuation = MCPContinuationTarget.current
+    let continuation = context.continuationTarget
     if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
     let reservation = try journal.reserve(
       server: server, tool: name, arguments: arguments, requestID: requestID)
     if !reservation.inserted {
       return try reservation.record.snapshot(instance: journal.instanceID)
     }
-    let hostInvocationID = MCPInvocationAdmission.current?.correlationID(for: server, tool: name)
+    let hostInvocationID = context.admission?.correlationID(for: server, tool: name)
     do {
-      return try run(server: server) { connection in
+      return try run(server: server, context: context) { connection in
         try await connection.startToolCall(
           name: name, arguments: object, gatewayRequestID: requestID,
           hostInvocationID: hostInvocationID, continuation: continuation)
@@ -229,32 +227,41 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   }
 
   package func readRequest(
-    server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int
+    server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int,
+    context: InvocationContext
   ) throws -> JSONValue {
     try journal.read(serverID: server.id, requestID: requestID)
       .snapshot(instance: journal.instanceID, offset: offset, maxBytes: maxBytes)
   }
 
-  package func listResources(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
-    try run(server: server) { connection in
+  package func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  {
+    try run(server: server, context: context) { connection in
       try await connection.listResources(cursor: cursor)
     }
   }
 
-  package func listResourceTemplates(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
-    try run(server: server) { connection in
+  package func listResourceTemplates(
+    server: MCPServerConfig, cursor: String?, context: InvocationContext
+  ) throws -> JSONValue {
+    try run(server: server, context: context) { connection in
       try await connection.listResourceTemplates(cursor: cursor)
     }
   }
 
-  package func readResource(server: MCPServerConfig, uri: String) throws -> JSONValue {
-    try run(server: server) { connection in
+  package func readResource(server: MCPServerConfig, uri: String, context: InvocationContext) throws
+    -> JSONValue
+  {
+    try run(server: server, context: context) { connection in
       try await connection.readResource(uri: uri)
     }
   }
 
-  package func listPrompts(server: MCPServerConfig, cursor: String?) throws -> JSONValue {
-    try run(server: server) { connection in
+  package func listPrompts(server: MCPServerConfig, cursor: String?, context: InvocationContext)
+    throws -> JSONValue
+  {
+    try run(server: server, context: context) { connection in
       try await connection.listPrompts(cursor: cursor)
     }
   }
@@ -262,16 +269,21 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   package func getPrompt(
     server: MCPServerConfig,
     name: String,
-    arguments: [String: String]?
+    arguments: [String: String]?, context: InvocationContext
   ) throws -> JSONValue {
-    try run(server: server) { connection in
+    try run(server: server, context: context) { connection in
       try await connection.getPrompt(name: name, arguments: arguments)
     }
   }
 
-  package func connectionStatus(server: MCPServerConfig) throws -> JSONValue {
+  package func connectionStatus(server: MCPServerConfig, context: InvocationContext) throws
+    -> JSONValue
+  {
     guard server.enabled else { return .object(["state": .string("disabled")]) }
-    guard let connection = pool.existingConnection(for: server) else {
+    guard
+      let connection = pool.existingConnection(
+        for: server, continuation: context.continuationTarget)
+    else {
       return .object([
         "state": .string(pool.inactiveState(serverID: server.id)),
         "persistent_session": .bool(true),
@@ -279,7 +291,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         "latest_event_cursor": .number(0),
       ])
     }
-    return try runExisting(server: server, connection: connection) { connection in
+    return try runExisting(server: server, connection: connection, context: context) { connection in
       await connection.status()
     }
   }
@@ -287,20 +299,26 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   package func readEvents(
     server: MCPServerConfig,
     afterCursor: Int,
-    maxResults: Int
+    maxResults: Int, context: InvocationContext
   ) throws -> JSONValue {
-    try readEvents(server: server, afterCursor: afterCursor, maxResults: maxResults, sessionID: nil)
+    try readEvents(
+      server: server, afterCursor: afterCursor, maxResults: maxResults, sessionID: nil,
+      context: context)
   }
 
   package func readEvents(
-    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?
+    server: MCPServerConfig, afterCursor: Int, maxResults: Int, sessionID: String?,
+    context: InvocationContext
   ) throws -> JSONValue {
     guard afterCursor >= 0, (1...500).contains(maxResults), sessionID?.isEmpty != true else {
       throw GatewayToolError.invalidArguments(
         "after_cursor must be nonnegative, max_results must be 1...500, and session_id must not be empty."
       )
     }
-    guard let connection = pool.existingConnection(for: server) else {
+    guard
+      let connection = pool.existingConnection(
+        for: server, continuation: context.continuationTarget)
+    else {
       guard afterCursor == 0, sessionID == nil else {
         throw GatewayToolError.invalidArguments(
           "[cursor.session_unavailable] The original MCP event session is unavailable. No connection was started and the missing event count is unknown."
@@ -318,31 +336,40 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         "persistent_session": .bool(true),
       ])
     }
-    return try runExisting(server: server, connection: connection) { connection in
+    return try runExisting(server: server, connection: connection, context: context) { connection in
       try await connection.readEvents(
         afterCursor: afterCursor, maxResults: maxResults, sessionID: sessionID)
     }
   }
 
-  package func activeRequests(server: MCPServerConfig) throws -> JSONValue {
-    guard let connection = pool.existingConnection(for: server) else {
+  package func activeRequests(server: MCPServerConfig, context: InvocationContext) throws
+    -> JSONValue
+  {
+    guard
+      let connection = pool.existingConnection(
+        for: server, continuation: context.continuationTarget)
+    else {
       return .object([
         "server": .string(server.id),
         "requests": .array([]),
         "persistent_session": .bool(true),
       ])
     }
-    return try runExisting(server: server, connection: connection) { connection in
+    return try runExisting(server: server, connection: connection, context: context) { connection in
       await connection.activeRequestsJSON()
     }
   }
 
-  package func closeConnection(server: MCPServerConfig) throws -> JSONValue {
-    guard let target = MCPContinuationTarget.current, target.selectedOwnershipID != nil,
+  package func closeConnection(server: MCPServerConfig, context: InvocationContext) throws
+    -> JSONValue
+  {
+    guard let target = context.continuationTarget, target.selectedOwnershipID != nil,
       target.reference == .init(serverID: server.id, toolName: "mcp.connections.close"),
-      let connection = pool.existingConnection(for: server)
+      let connection = pool.existingConnection(
+        for: server, continuation: context.continuationTarget)
     else { throw MCPContinuationTarget.unavailable() }
-    let result = try runExisting(server: server, connection: connection) { connection in
+    let result = try runExisting(server: server, connection: connection, context: context) {
+      connection in
       try await connection.closeSelected(target)
     }
     // Failed selection must leave the original pool entry intact. Teardown and the
@@ -354,14 +381,17 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   package func cancelRequest(
     server: MCPServerConfig,
     requestID: String,
-    reason: String?
+    reason: String?, context: InvocationContext
   ) throws -> JSONValue {
-    guard let connection = pool.existingConnection(for: server) else {
+    guard
+      let connection = pool.existingConnection(
+        for: server, continuation: context.continuationTarget)
+    else {
       throw GatewayToolError.invalidArguments(
         "Downstream MCP server '\(server.id)' has no active session."
       )
     }
-    return try runExisting(server: server, connection: connection) { connection in
+    return try runExisting(server: server, connection: connection, context: context) { connection in
       try await connection.cancelRequest(
         gatewayRequestID: requestID,
         reason: reason ?? "Cancelled by computer-mcp caller."
@@ -372,17 +402,19 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private func run<T: Sendable>(
     server: MCPServerConfig,
     notifyToolsOnConnect: Bool = true,
+    context: InvocationContext,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
-    let connection = try pool.connection(for: server, continuation: MCPContinuationTarget.current)
+    let connection = try pool.connection(for: server, continuation: context.continuationTarget)
     try runExisting(
       server: server, connection: connection,
       timeoutMilliseconds: server.startupTimeoutMs ?? 30_000,
-      phase: "startup"
+      phase: "startup", context: context
     ) { connection in
       try await connection.ensureConnected(notifyTools: notifyToolsOnConnect)
     }
-    return try runExisting(server: server, connection: connection, operation: operation)
+    return try runExisting(
+      server: server, connection: connection, context: context, operation: operation)
   }
 
   private func runExisting<T: Sendable>(
@@ -390,11 +422,12 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     connection: MCPProxyConnection,
     timeoutMilliseconds: Int? = nil,
     phase: String = "request",
+    context: InvocationContext,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
     let timeout = timeoutMilliseconds ?? server.requestTimeoutMs ?? 30_000
     let box = AsyncOperationBox<T>()
-    let selected = MCPContinuationTarget.current
+    let selected = context.continuationTarget
     let task = Task.detached {
       do {
         try Task.checkCancellation()
@@ -518,13 +551,15 @@ private final class MCPConnectionPool: @unchecked Sendable {
     return connection
   }
 
-  func existingConnection(for server: MCPServerConfig) -> MCPProxyConnection? {
+  func existingConnection(for server: MCPServerConfig, continuation: MCPContinuationTarget?)
+    -> MCPProxyConnection?
+  {
     lock.lock()
     defer { lock.unlock() }
     guard !stopped, let entry = entries[server.id], entry.configuration == server else {
       return nil
     }
-    if let target = MCPContinuationTarget.current,
+    if let target = continuation,
       target.connectionID != entry.connection.connectionID || target.reference.serverID != server.id
         || target.workspaceID != hostContext?.workspace.id
     {

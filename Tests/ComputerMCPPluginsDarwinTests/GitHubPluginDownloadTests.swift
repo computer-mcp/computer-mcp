@@ -1,22 +1,11 @@
 import ComputerMCPTestSupport
+import Darwin
 import Foundation
 import Testing
 
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlugins
-
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#elseif canImport(Musl)
-  import Musl
-#endif
-
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 
 @Suite(.timeLimit(.minutes(1)))
 struct GitHubPluginDownloadTests {

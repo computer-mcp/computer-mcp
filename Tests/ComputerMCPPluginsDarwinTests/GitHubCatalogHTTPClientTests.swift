@@ -5,10 +5,6 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlugins
 
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
-
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct GitHubCatalogHTTPClientTests {
   @Test

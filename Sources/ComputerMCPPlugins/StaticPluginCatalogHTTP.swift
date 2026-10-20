@@ -48,53 +48,55 @@ package final class StaticPluginCatalogHTTP: StaticPluginCatalogFetching, Sendab
   package func fetch(validators: StaticPluginCatalogValidators) async throws
     -> PluginCatalogHTTPResponse
   {
-    // Validate again because decoded cache values do not pass through the member initializer.
-    let validators = StaticPluginCatalogValidators(
-      etag: validators.etag, lastModified: validators.lastModified)
-    var request = URLRequest(url: endpoint)
-    request.httpMethod = "GET"
-    request.setValue("application/json", forHTTPHeaderField: "Accept")
-    request.setValue("Computer-MCP-Plugin-Catalog", forHTTPHeaderField: "User-Agent")
-    if let etag = validators.etag {
-      request.setValue(etag, forHTTPHeaderField: "If-None-Match")
-    } else if let modified = validators.lastModified {
-      request.setValue(modified, forHTTPHeaderField: "If-Modified-Since")
-    }
-    try Task.checkCancellation()
-    let delegate = GitHubPublicSessionDelegate()
-    let bytes: PluginHTTPResponseStream.Bytes
-    let raw: URLResponse
-    do {
-      (bytes, raw) = try await PluginHTTPResponseStream.open(
-        for: request, session: session, delegate: delegate,
-        maximumBytes: StaticPluginCatalogDocument.maximumBytes)
-    } catch {
-      try Task.checkCancellation()
-      if let failure = delegate.authenticationFailure { throw failure }
-      throw error
-    }
-    defer { bytes.task.cancel() }
-    guard let response = raw as? HTTPURLResponse, response.url == endpoint else {
-      throw PluginCatalogError.invalidResponse
-    }
-    var headers: [String: String] = [:]
-    for (key, value) in response.allHeaderFields {
-      if let key = key as? String, let value = value as? String {
-        headers[key.lowercased()] = value
+    #if canImport(Darwin)
+      // Validate again because decoded cache values do not pass through the member initializer.
+      let validators = StaticPluginCatalogValidators(
+        etag: validators.etag, lastModified: validators.lastModified)
+      var request = URLRequest(url: endpoint)
+      request.httpMethod = "GET"
+      request.setValue("application/json", forHTTPHeaderField: "Accept")
+      request.setValue("Computer-MCP-Plugin-Catalog", forHTTPHeaderField: "User-Agent")
+      if let etag = validators.etag {
+        request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+      } else if let modified = validators.lastModified {
+        request.setValue(modified, forHTTPHeaderField: "If-Modified-Since")
       }
-    }
-    guard response.statusCode == 200 else {
-      return .init(status: response.statusCode, headers: headers, body: Data())
-    }
-    let limit = StaticPluginCatalogDocument.maximumBytes
-    guard response.expectedContentLength <= limit else { throw PluginCatalogError.responseTooLarge }
-    var body = Data()
-    for try await byte in bytes {
       try Task.checkCancellation()
-      guard body.count < limit else { throw PluginCatalogError.responseTooLarge }
-      body.append(byte)
-    }
-    return .init(status: response.statusCode, headers: headers, body: body)
+      let delegate = GitHubPublicSessionDelegate()
+      let bytes: URLSession.AsyncBytes
+      let raw: URLResponse
+      do { (bytes, raw) = try await session.bytes(for: request, delegate: delegate) } catch {
+        try Task.checkCancellation()
+        if let failure = delegate.authenticationFailure { throw failure }
+        throw error
+      }
+      defer { bytes.task.cancel() }
+      guard let response = raw as? HTTPURLResponse, response.url == endpoint else {
+        throw PluginCatalogError.invalidResponse
+      }
+      var headers: [String: String] = [:]
+      for (key, value) in response.allHeaderFields {
+        if let key = key as? String, let value = value as? String {
+          headers[key.lowercased()] = value
+        }
+      }
+      guard response.statusCode == 200 else {
+        return .init(status: response.statusCode, headers: headers, body: Data())
+      }
+      let limit = StaticPluginCatalogDocument.maximumBytes
+      guard response.expectedContentLength <= limit else {
+        throw PluginCatalogError.responseTooLarge
+      }
+      var body = Data()
+      for try await byte in bytes {
+        try Task.checkCancellation()
+        guard body.count < limit else { throw PluginCatalogError.responseTooLarge }
+        body.append(byte)
+      }
+      return .init(status: response.statusCode, headers: headers, body: body)
+    #else
+      throw PluginCatalogError.networkUnavailable
+    #endif
   }
 
   deinit { session.invalidateAndCancel() }

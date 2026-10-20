@@ -16,6 +16,7 @@ package struct ToolEnvironment: Sendable {
   package let extendedAttributes: (any ExtendedAttributes)?
   package let fileTrasher: (any FileTrashing)?
   package let workspaceOpener: (any WorkspaceOpener)?
+  package let systemProbe: (any SystemProbe)?
   package let mediaInspector: (any MediaInspector)?
 
   package init(
@@ -29,7 +30,8 @@ package struct ToolEnvironment: Sendable {
     builtinExecutables: [String: String] = [:],
     extendedAttributes: (any ExtendedAttributes)? = nil,
     fileTrasher: (any FileTrashing)? = nil,
-    workspaceOpener: (any WorkspaceOpener)? = nil
+    workspaceOpener: (any WorkspaceOpener)? = nil,
+    systemProbe: (any SystemProbe)? = nil
   ) {
     self.configuration = configuration
     let toolMeta: JSONValue? =
@@ -44,6 +46,7 @@ package struct ToolEnvironment: Sendable {
     self.environment = environment
     self.processManager = processManager
     self.shellManager = shellManager
+    self.systemProbe = systemProbe
     self.mediaInspector = mediaInspector
     self.extendedAttributes = extendedAttributes
     self.fileTrasher = fileTrasher

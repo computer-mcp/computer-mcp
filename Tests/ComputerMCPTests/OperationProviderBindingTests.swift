@@ -152,7 +152,7 @@ private struct ProviderBindingFixture {
         "workspace_id": .string("fixture"),
         "tool": .string(generic ? "mcp.tools.call" : "review.mutate"),
         "arguments": arguments(generic: generic),
-      ]))
+      ]), context: .empty)
     return try #require(
       result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
         .stringValue)
@@ -171,7 +171,7 @@ private struct ProviderBindingFixture {
         "workspace_id": .string("fixture"), "ticket_id": .string(ticket),
         "tool": .string(generic ? "mcp.tools.call" : "review.mutate"),
         "arguments": arguments(generic: generic),
-      ]))
+      ]), context: .empty)
   }
 
   private func arguments(generic: Bool) -> JSONValue {

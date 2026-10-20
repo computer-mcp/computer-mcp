@@ -28,7 +28,8 @@ struct MCPProviderWorkNativeTests {
         platform: MacOSPlatform.services, plugins: [],
         bundledPlugins: .init(packages: [], issues: []))
       do {
-        _ = try await runtime.callToolAsync(name: "fixture.start", arguments: .object([:]))
+        _ = try await runtime.callToolAsync(
+          name: "fixture.start", arguments: .object([:]), context: .empty)
         try await wait { runtime.ownedWork.snapshot.contains { $0.kind == .mcpResource } }
         let native = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
         let generic = JSONValue.object([
@@ -62,15 +63,18 @@ struct MCPProviderWorkNativeTests {
         #expect(
           try runtime.continuationLookup(
             name: "workspace.list", arguments: nil, workspaceID: "fixture") == nil)
-        let inspected = try await runtime.callToolAsync(name: "fixture.inspect", arguments: native)
+        let inspected = try await runtime.callToolAsync(
+          name: "fixture.inspect", arguments: native, context: .empty)
         #expect(
           inspected.objectValue?["structuredContent"]?.objectValue?["call_count"] == .integer(2))
-        _ = try await runtime.callToolAsync(name: "fixture.finish", arguments: .object([:]))
+        _ = try await runtime.callToolAsync(
+          name: "fixture.finish", arguments: .object([:]), context: .empty)
         try await wait { runtime.ownedWork.snapshot.isEmpty }
         let retirement = try #require(runtime.beginRetirementIfDrained())
         await retirement.value
         await #expect(throws: GatewayToolError.self) {
-          try await runtime.callToolAsync(name: "fixture.start", arguments: .object([:]))
+          try await runtime.callToolAsync(
+            name: "fixture.start", arguments: .object([:]), context: .empty)
         }
       } catch {
         await runtime.shutdown()

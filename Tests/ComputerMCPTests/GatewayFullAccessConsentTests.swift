@@ -325,7 +325,7 @@ private struct ConsentFixture {
           .string(output.path),
         ]),
         "cwd": .string(root.path),
-      ]), context: context)
+      ]), context: context, invocationContext: .empty)
     #expect(result.objectValue?["isError"] != .bool(true))
     #expect(
       result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["exit_code"]

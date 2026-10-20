@@ -138,7 +138,7 @@ struct GatewayRuntimePreparationTests {
         try prepared.runtime.requirePreparedPublication()
         prepared.runtime.publishPrepared()
         _ = try await prepared.runtime.callToolAsync(
-          name: "workspace.list", arguments: .object([:]))
+          name: "workspace.list", arguments: .object([:]), context: .empty)
       }
       #expect(fixture.adapter.startCount - fixture.adapter.stopCount == 1)
       await prepared.runtime.shutdown()
@@ -176,7 +176,8 @@ struct GatewayRuntimePreparationTests {
           try prepared.runtime.authenticatedSession(principalID: "another", transportTrace: nil)
         }
         await #expect(throws: GatewayToolError.self) {
-          try await prepared.runtime.callToolAsync(name: "workspace.list", arguments: .object([:]))
+          try await prepared.runtime.callToolAsync(
+            name: "workspace.list", arguments: .object([:]), context: .empty)
         }
         #expect(fixture.adapter.stopCount == 0)
         await prepared.runtime.shutdown()

@@ -88,7 +88,8 @@ final class ComputerUseGatewayProviderTests {
     )
     let provider = ComputerUseGatewayProvider(service: ComputerUseService(adapter: adapter))
 
-    let response = try provider.callTool(.init(name: "computer.permissions", arguments: nil))
+    let response = try provider.callTool(
+      .init(name: "computer.permissions", arguments: nil, context: .empty))
     let result = structuredResult(response)
 
     #expect((result.objectValue?["accessibility"]) == (.string("granted")))
@@ -111,7 +112,7 @@ final class ComputerUseGatewayProviderTests {
       try provider.callTool(
         .init(
           name: "computer.accessibility.action",
-          arguments: .object([:])
+          arguments: .object([:]), context: .empty
         ))
     ) { error in
       #expect(
@@ -147,7 +148,7 @@ final class ComputerUseGatewayProviderTests {
     let response = try await provider.callToolAsync(
       .init(
         name: "computer.screenshot",
-        arguments: arguments
+        arguments: arguments, context: .empty
       ))
     let result = structuredResult(response)
     let content = response.objectValue?["content"]?.arrayValue
@@ -186,7 +187,7 @@ final class ComputerUseGatewayProviderTests {
       _ = try await provider.callToolAsync(
         .init(
           name: "computer.screenshot",
-          arguments: .object([:])
+          arguments: .object([:]), context: .empty
         ))
       Issue.record("Expected screenshot permission failure.")
     } catch {
@@ -209,7 +210,7 @@ final class ComputerUseGatewayProviderTests {
     let response = try provider.callTool(
       .init(
         name: "computer.pointer.position",
-        arguments: .object([:])
+        arguments: .object([:]), context: .empty
       ))
 
     #expect(
@@ -237,7 +238,7 @@ final class ComputerUseGatewayProviderTests {
             "x": .number(point.x),
             "y": .number(point.y),
           ])
-        ])
+        ]), context: .empty
       ))
 
     #expect((structuredResult(response).objectValue?["action"]) == (.string("pointer.move")))
@@ -273,7 +274,7 @@ final class ComputerUseGatewayProviderTests {
         arguments: .object([
           "process_id": .number(42),
           "role": .string("AXButton"),
-        ])
+        ]), context: .empty
       ))
     let observations = structuredResult(response).arrayValue
 
@@ -313,7 +314,7 @@ final class ComputerUseGatewayProviderTests {
           "layer": .number(0),
           "minimum_alpha": .number(0.5),
           "case_sensitive": .bool(true),
-        ])
+        ]), context: .empty
       ))
 
     #expect(
@@ -346,7 +347,7 @@ final class ComputerUseGatewayProviderTests {
             "timeout_milliseconds": .number(0),
             "poll_interval_milliseconds": .number(1),
           ]),
-        ])
+        ]), context: .empty
       ))
     let result = structuredResult(response)
 
@@ -367,7 +368,7 @@ final class ComputerUseGatewayProviderTests {
       try provider.callTool(
         .init(
           name: "computer.pointer.click",
-          arguments: .object(["button": .string("primary")])
+          arguments: .object(["button": .string("primary")]), context: .empty
         ))
     ) { error in
       guard let providerError = error as? ComputerUseGatewayProviderError else {

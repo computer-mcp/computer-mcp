@@ -45,13 +45,13 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("numbers.plist"), "value": .object(values),
         "dry_run": .bool(false), "confirm_write": .bool(true),
-      ]))
+      ]), context: .empty)
     for format in ["json", "toml", "yaml", "plist"] {
       let result = try registry.callTool(
         name: "\(format).read",
         arguments: .object([
           "path": .string("numbers.\(format)")
-        ]))
+        ]), context: .empty)
       let payload = try decodeTextPayload(result)
       let decoded =
         payload.objectValue?["value"]
@@ -63,7 +63,7 @@ final class GatewayToolRegistryTests {
   @Test
   func testGatewayToolsExposeCLIAndMCPTools() throws {
     let registry = GatewayToolRegistry(configuration: .fixture())
-    let names = try registry.listTools().map(\.name)
+    let names = try registry.listTools(context: .empty).map(\.name)
 
     #expect(names.contains("cli.list"))
     #expect(names.contains("cli.describe"))
@@ -92,18 +92,18 @@ final class GatewayToolRegistryTests {
       builtin: BuiltinConfig(enabled: ["system.time"])
     )
     let registry = GatewayToolRegistry(configuration: config)
-    let tools = try registry.listTools()
+    let tools = try registry.listTools(context: .empty)
 
     #expect((tools.map(\.name)) == (["system.time"]))
     #expect((tools.first?.annotations?.readOnlyHint) == (true))
     #expect((tools.first?.annotations?.destructiveHint) == (false))
     expectThrows(
-      try registry.callTool(name: "cli.list", arguments: .object([:]))
+      try registry.callTool(name: "cli.list", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("at least one configured provider"))
     }
     expectThrows(
-      try registry.callTool(name: "mcp.servers.list", arguments: .object([:]))
+      try registry.callTool(name: "mcp.servers.list", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("at least one configured server"))
     }
@@ -116,7 +116,7 @@ final class GatewayToolRegistryTests {
         enabled: ["system.time", "file.write", "file.mkdir", "git.commit"])
     )
     let registry = GatewayToolRegistry(configuration: config)
-    let tools = try registry.listTools()
+    let tools = try registry.listTools(context: .empty)
     let cliList = try #require(tools.first { $0.name == "cli.list" })
     let cliExec = try #require(tools.first { $0.name == "cli.exec" })
     let systemTime = try #require(tools.first { $0.name == "system.time" })
@@ -153,7 +153,8 @@ final class GatewayToolRegistryTests {
     )
     let registry = GatewayToolRegistry(configuration: config)
 
-    let result = try registry.callTool(name: "system.time", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.time", arguments: .object([:]), context: .empty)
     let textPayload = try decodeTextPayload(result)
 
     #expect((result.objectValue?["structuredContent"]?.objectValue?["result"]) == (textPayload))
@@ -162,7 +163,7 @@ final class GatewayToolRegistryTests {
   @Test
   func testNoAuthToolsAdvertiseNoAuthSecurityScheme() throws {
     let registry = GatewayToolRegistry(configuration: .fixture())
-    let tool = try #require(try registry.listTools().first { $0.name == "cli.list" })
+    let tool = try #require(try registry.listTools(context: .empty).first { $0.name == "cli.list" })
 
     #expect(
       (tool.meta?.objectValue?["securitySchemes"])
@@ -182,7 +183,7 @@ final class GatewayToolRegistryTests {
         ))
     )
     let registry = GatewayToolRegistry(configuration: config)
-    let tool = try #require(try registry.listTools().first { $0.name == "cli.list" })
+    let tool = try #require(try registry.listTools(context: .empty).first { $0.name == "cli.list" })
 
     #expect((tool.meta) == nil)
   }
@@ -200,7 +201,7 @@ final class GatewayToolRegistryTests {
     )
     let registry = GatewayToolRegistry(configuration: config)
 
-    let result = try registry.callTool(name: "cli.list", arguments: .object([:]))
+    let result = try registry.callTool(name: "cli.list", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.arrayValue?.first?.objectValue?["id"]) == (.string("echo")))
@@ -225,7 +226,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "cli.describe",
-      arguments: .object(["id": .string("echo")])
+      arguments: .object(["id": .string("echo")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -253,7 +254,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "cli.status",
-      arguments: .object(["id": .string("tool")])
+      arguments: .object(["id": .string("tool")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let command = try #require(payload.objectValue?["commands"]?.arrayValue?.first?.objectValue)
@@ -263,7 +264,8 @@ final class GatewayToolRegistryTests {
     #expect((command["is_executable"]) == (.bool(true)))
     #expect((command["resolved_path"]) == (.string(executable.path)))
 
-    let allResult = try registry.callTool(name: "cli.status", arguments: .object([:]))
+    let allResult = try registry.callTool(
+      name: "cli.status", arguments: .object([:]), context: .empty)
     let allPayload = try decodeTextPayload(allResult)
     #expect((allPayload.objectValue?["commands"]?.arrayValue?.count) == (2))
   }
@@ -291,14 +293,15 @@ final class GatewayToolRegistryTests {
           env: ["PATH": directory.path, "TOKEN": "never-emit-this"], cwd: directory.path)
       ]))
     let registry = GatewayToolRegistry(configuration: config, environment: ["PATH": "/bin"])
-    let cli = try decodeTextPayload(registry.callTool(name: "cli.status", arguments: .object([:])))
+    let cli = try decodeTextPayload(
+      registry.callTool(name: "cli.status", arguments: .object([:]), context: .empty))
     let commands = try #require(cli.objectValue?["commands"]?.arrayValue)
     #expect(
       commands[0].objectValue?["resolution"]?.objectValue?["status"]
         == .string("interpreter_unavailable"))
     #expect(commands[1].objectValue?["resolution"]?.objectValue?["status"] == .string("passed"))
     let mcp = try decodeTextPayload(
-      registry.callTool(name: "mcp.servers.status", arguments: .object([:])))
+      registry.callTool(name: "mcp.servers.status", arguments: .object([:]), context: .empty))
     let server = try #require(mcp.objectValue?["servers"]?.arrayValue?.first?.objectValue)
     #expect(server["ready"] == .bool(false))
     #expect(server["readiness_scope"] == .string("file_and_interpreter_checks"))
@@ -319,7 +322,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "cli.status",
-        arguments: .object(["id": .string("missing")])
+        arguments: .object(["id": .string("missing")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown CLI command id"))
@@ -345,7 +348,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "id": .string("echo"),
         "path": .array([.string("sub")]),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -373,7 +376,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "id": .string("echo"),
         "argv": .array([.string("hello")]),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -385,7 +388,7 @@ final class GatewayToolRegistryTests {
   @Test
   func testCLIExecSchemaRequiresArgv() throws {
     let registry = GatewayToolRegistry(configuration: .fixture())
-    let tools = try registry.listTools()
+    let tools = try registry.listTools(context: .empty)
 
     let cliExec = try #require(tools.first { $0.name == "cli.exec" })
 
@@ -400,7 +403,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "cli.exec",
-        arguments: .object(["id": .string("echo")])
+        arguments: .object(["id": .string("echo")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Missing required array argument: argv"))
@@ -410,11 +413,11 @@ final class GatewayToolRegistryTests {
   @Test
   func testSkillsToolsExposeOnlyWhenEnabled() throws {
     let disabledRegistry = GatewayToolRegistry(configuration: .fixture())
-    let disabledNames = try disabledRegistry.listTools().map(\.name)
+    let disabledNames = try disabledRegistry.listTools(context: .empty).map(\.name)
 
     #expect(!(disabledNames.contains("skills.list")))
     expectThrows(
-      try disabledRegistry.callTool(name: "skills.list", arguments: .object([:]))
+      try disabledRegistry.callTool(name: "skills.list", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("skills tools are disabled"))
     }
@@ -427,7 +430,7 @@ final class GatewayToolRegistryTests {
           roots: [SkillRootConfig(id: "local", path: root.path, description: "Local skills")]
         ))
     )
-    let enabledTools = try enabledRegistry.listTools()
+    let enabledTools = try enabledRegistry.listTools(context: .empty)
     let enabledNames = enabledTools.map(\.name)
 
     #expect(enabledNames.contains("skills.roots"))
@@ -537,7 +540,8 @@ final class GatewayToolRegistryTests {
         ))
     )
 
-    let rootsResult = try registry.callTool(name: "skills.roots", arguments: .object([:]))
+    let rootsResult = try registry.callTool(
+      name: "skills.roots", arguments: .object([:]), context: .empty)
     let rootsPayload = try decodeTextPayload(rootsResult)
     let rootPayload = try #require(rootsPayload.objectValue?["roots"]?.arrayValue?.first)
       .objectValue
@@ -547,7 +551,7 @@ final class GatewayToolRegistryTests {
 
     let listResult = try registry.callTool(
       name: "skills.list",
-      arguments: .object(["root_id": .string("local")])
+      arguments: .object(["root_id": .string("local")]), context: .empty
     )
     let listPayload = try decodeTextPayload(listResult)
     let skills = try #require(listPayload.objectValue?["skills"]?.arrayValue)
@@ -568,7 +572,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "root_id": .string("local"),
         "name": .string("alpha-skill"),
-      ])
+      ]), context: .empty
     )
     let readPayload = try decodeTextPayload(readResult)
 
@@ -582,7 +586,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "root_id": .string("local"),
         "query": .string("alpha"),
-      ])
+      ]), context: .empty
     )
     let metadataPayload = try decodeTextPayload(metadataSearch)
     let metadataMatch = try #require(metadataPayload.objectValue?["matches"]?.arrayValue?.first)
@@ -598,7 +602,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "query": .string("cli.exec"),
         "search_content": .bool(true),
-      ])
+      ]), context: .empty
     )
     let contentPayload = try decodeTextPayload(contentSearch)
     let contentMatch = try #require(contentPayload.objectValue?["matches"]?.arrayValue?.first)
@@ -698,7 +702,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("skill-creator-lite"),
         "max_depth": .number(3),
-      ])
+      ]), context: .empty
     )
     let describePayload = try decodeTextPayload(describeResult)
     let resourcePayloads = try #require(describePayload.objectValue?["resources"]?.arrayValue)
@@ -733,7 +737,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "root_id": .string("local"),
         "name": .string("skill-creator-lite"),
-      ])
+      ]), context: .empty
     )
     let validatePayload = try decodeTextPayload(validateResult)
     #expect((validatePayload.objectValue?["operation"]) == (.string("skills.validate")))
@@ -755,7 +759,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("skill-creator-lite"),
         "query": .string("blob"),
-      ])
+      ]), context: .empty
     )
     let pathSearchPayload = try decodeTextPayload(pathSearchResult)
     let pathMatch = try #require(pathSearchPayload.objectValue?["matches"]?.arrayValue?.first)
@@ -774,7 +778,7 @@ final class GatewayToolRegistryTests {
         "name": .string("skill-creator-lite"),
         "query": .string("references"),
         "search_content": .bool(true),
-      ])
+      ]), context: .empty
     )
     let contentSearchPayload = try decodeTextPayload(contentSearchResult)
     let contentMatches = try #require(contentSearchPayload.objectValue?["matches"]?.arrayValue)
@@ -791,7 +795,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("skill-creator-lite"),
         "max_depth": .number(3),
-      ])
+      ]), context: .empty
     )
     let filesPayload = try decodeTextPayload(filesResult)
     let files = try #require(filesPayload.objectValue?["files"]?.arrayValue)
@@ -867,7 +871,7 @@ final class GatewayToolRegistryTests {
         "name": .string("skill-creator-lite"),
         "path": .string(""),
         "max_depth": .number(1),
-      ])
+      ]), context: .empty
     )
     let rootFilesPayload = try decodeTextPayload(rootFilesResult)
     #expect((rootFilesPayload.objectValue?["path"]) == (.string(".")))
@@ -878,7 +882,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("skill-creator-lite"),
         "path": .string("references/guide.md"),
-      ])
+      ]), context: .empty
     )
     let referencePayload = try decodeTextPayload(referenceResult)
     #expect((referencePayload.objectValue?["encoding"]) == (.string("utf8")))
@@ -893,7 +897,7 @@ final class GatewayToolRegistryTests {
         "name": .string("skill-creator-lite"),
         "path": .string("assets/blob.bin"),
         "encoding": .string("base64"),
-      ])
+      ]), context: .empty
     )
     let binaryPayload = try decodeTextPayload(binaryResult)
     #expect((binaryPayload.objectValue?["encoding"]) == (.string("base64")))
@@ -909,7 +913,7 @@ final class GatewayToolRegistryTests {
         "name": .string("skill-creator-lite"),
         "path": .string("assets/blob.bin"),
         "encoding": .string("auto"),
-      ])
+      ]), context: .empty
     )
     let autoBinaryPayload = try decodeTextPayload(autoBinaryResult)
     #expect((autoBinaryPayload.objectValue?["encoding"]) == (.string("base64")))
@@ -927,7 +931,7 @@ final class GatewayToolRegistryTests {
           .string("references/guide.md"),
         ]),
         "max_bytes_per_file": .number(1024),
-      ])
+      ]), context: .empty
     )
     let batchPayload = try decodeTextPayload(batchResult)
     let batchFiles = try #require(batchPayload.objectValue?["files"]?.arrayValue)
@@ -954,7 +958,7 @@ final class GatewayToolRegistryTests {
           .string("assets/blob.bin"),
         ]),
         "encoding": .string("auto"),
-      ])
+      ]), context: .empty
     )
     let autoBatchPayload = try decodeTextPayload(autoBatchResult)
     let autoBatchFiles = try #require(autoBatchPayload.objectValue?["files"]?.arrayValue)
@@ -971,7 +975,7 @@ final class GatewayToolRegistryTests {
         "max_depth": .number(3),
         "max_files": .number(10),
         "max_total_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let packagePayload = try decodeTextPayload(packageResult)
     let packageFiles = try #require(packagePayload.objectValue?["files"]?.arrayValue)
@@ -1014,7 +1018,7 @@ final class GatewayToolRegistryTests {
         "encoding": .string("auto"),
         "max_depth": .number(1),
         "max_files": .number(2),
-      ])
+      ]), context: .empty
     )
     let rootPackagePayload = try decodeTextPayload(rootPackageResult)
     #expect((rootPackagePayload.objectValue?["path"]) == (.string(".")))
@@ -1029,7 +1033,7 @@ final class GatewayToolRegistryTests {
         "max_files": .number(10),
         "max_bytes_per_file": .number(30),
         "max_total_bytes": .number(30),
-      ])
+      ]), context: .empty
     )
     let smallPackagePayload = try decodeTextPayload(smallPackageResult)
     let smallPackageFiles = try #require(smallPackagePayload.objectValue?["files"]?.arrayValue)
@@ -1044,7 +1048,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("skill-creator-lite"),
           "path": .string("../outside.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escape"))
@@ -1108,7 +1112,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "root_id": .string("local"),
         "name": .string("skill-frontmatter"),
-      ])
+      ]), context: .empty
     )
     let skillPayload = try decodeTextPayload(skillResult)
     let skillValue = try #require(skillPayload.objectValue?["value"]?.objectValue)
@@ -1138,7 +1142,7 @@ final class GatewayToolRegistryTests {
         "name": .string("skill-frontmatter"),
         "path": .string("references/page.md"),
         "format": .string("toml"),
-      ])
+      ]), context: .empty
     )
     let tomlPayload = try decodeTextPayload(tomlResult)
     let tomlValue = try #require(tomlPayload.objectValue?["value"]?.objectValue)
@@ -1154,7 +1158,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("skill-frontmatter"),
         "path": .string("references/plain.md"),
-      ])
+      ]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missingResult)
     #expect((missingPayload.objectValue?["found"]) == (.bool(false)))
@@ -1168,7 +1172,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("skill-frontmatter"),
         "path": .string("references/bad.md"),
-      ])
+      ]), context: .empty
     )
     let badPayload = try decodeTextPayload(badResult)
     #expect((badPayload.objectValue?["found"]) == (.bool(true)))
@@ -1213,7 +1217,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("skill-frontmatter"),
           "path": .string("../outside.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escape"))
@@ -1226,7 +1230,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("skill-frontmatter"),
           "path": .string("references"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -1239,7 +1243,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("skill-frontmatter"),
           "path": .string("bad.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -1252,7 +1256,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("skill-frontmatter"),
           "format": .string("json"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("format"))
@@ -1314,7 +1318,7 @@ final class GatewayToolRegistryTests {
         "path": .string("references/table.md"),
         "max_tables": .number(10),
         "max_rows_per_table": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let tables = try #require(payload.objectValue?["tables"]?.arrayValue)
@@ -1355,7 +1359,7 @@ final class GatewayToolRegistryTests {
         "name": .string("table-skill"),
         "path": .string("references/table.md"),
         "include_code_blocks": .bool(true),
-      ])
+      ]), context: .empty
     )
     let codeBlockPayload = try decodeTextPayload(codeBlockResult)
     #expect((codeBlockPayload.objectValue?["table_count"]) == (.number(2)))
@@ -1367,7 +1371,7 @@ final class GatewayToolRegistryTests {
         "name": .string("table-skill"),
         "path": .string("references/table.md"),
         "max_rows_per_table": .number(1),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedTable = try #require(
@@ -1418,7 +1422,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("table-bad-skill"),
           "path": .string("../outside.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escape"))
@@ -1431,7 +1435,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("table-bad-skill"),
           "path": .string("references"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -1444,7 +1448,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("table-bad-skill"),
           "path": .string("references/binary.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("valid UTF-8"))
@@ -1457,7 +1461,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("table-bad-skill"),
           "max_tables": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_tables"))
@@ -1519,7 +1523,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("link-skill"),
         "max_links": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let links = try #require(payload.objectValue?["links"]?.arrayValue)
@@ -1580,7 +1584,7 @@ final class GatewayToolRegistryTests {
         "name": .string("link-skill"),
         "include_images": .bool(false),
         "max_links": .number(1),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["include_images"]) == (.bool(false)))
@@ -1595,7 +1599,7 @@ final class GatewayToolRegistryTests {
         "name": .string("link-skill"),
         "include_code_blocks": .bool(true),
         "max_links": .number(10),
-      ])
+      ]), context: .empty
     )
     let codeBlockPayload = try decodeTextPayload(codeBlockResult)
     #expect((codeBlockPayload.objectValue?["link_count"]) == (.number(7)))
@@ -1641,7 +1645,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("link-bad-skill"),
           "path": .string("../outside.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escape"))
@@ -1654,7 +1658,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("link-bad-skill"),
           "path": .string("references"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -1667,7 +1671,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("link-bad-skill"),
           "path": .string("references/binary.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("valid UTF-8"))
@@ -1680,7 +1684,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("link-bad-skill"),
           "max_links": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_links"))
@@ -1693,7 +1697,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("link-bad-skill"),
           "max_bytes": .number(1024),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("skills.max_bytes_per_skill"))
@@ -1771,7 +1775,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("doc-skill"),
         "max_target_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let checks = try #require(payload.objectValue?["checks"]?.arrayValue)
@@ -1815,7 +1819,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("doc-skill"),
         "include_reference_definitions": .bool(false),
-      ])
+      ]), context: .empty
     )
     let withoutDefinitionsPayload = try decodeTextPayload(withoutDefinitionsResult)
     #expect((withoutDefinitionsPayload.objectValue?["check_count"]) == (.number(10)))
@@ -1876,7 +1880,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("outline-skill"),
         "max_results": .number(2),
-      ])
+      ]), context: .empty
     )
     let markdownPayload = try decodeTextPayload(markdownResult)
     let markdownItems = try #require(markdownPayload.objectValue?["items"]?.arrayValue)
@@ -1904,7 +1908,7 @@ final class GatewayToolRegistryTests {
         "name": .string("outline-skill"),
         "path": .string("scripts/runner.swift"),
         "include_imports": .bool(true),
-      ])
+      ]), context: .empty
     )
     let sourcePayload = try decodeTextPayload(sourceResult)
     let sourceItems = try #require(sourcePayload.objectValue?["items"]?.arrayValue)
@@ -1958,7 +1962,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("outline-bad-skill"),
           "path": .string("../outside.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escape"))
@@ -1971,7 +1975,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("outline-bad-skill"),
           "path": .string("references"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -1984,7 +1988,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("outline-bad-skill"),
           "path": .string("references/binary.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("valid UTF-8"))
@@ -1997,7 +2001,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("outline-bad-skill"),
           "max_bytes": .number(1024),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("skills.max_bytes_per_skill"))
@@ -2048,7 +2052,7 @@ final class GatewayToolRegistryTests {
         "name": .string("section-skill"),
         "heading": .string("Install"),
         "level": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let section = try #require(payload.objectValue?["section"]?.objectValue)
@@ -2087,7 +2091,7 @@ final class GatewayToolRegistryTests {
         "level": .number(2),
         "occurrence": .number(2),
         "include_heading": .bool(false),
-      ])
+      ]), context: .empty
     )
     let secondPayload = try decodeTextPayload(secondResult)
     let secondSection = try #require(secondPayload.objectValue?["section"]?.objectValue)
@@ -2104,7 +2108,7 @@ final class GatewayToolRegistryTests {
         "name": .string("section-skill"),
         "heading": .string("Install"),
         "max_section_bytes": .number(8),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedSection = try #require(truncatedPayload.objectValue?["section"]?.objectValue)
@@ -2116,7 +2120,7 @@ final class GatewayToolRegistryTests {
         "root_id": .string("local"),
         "name": .string("section-skill"),
         "heading": .string("Missing"),
-      ])
+      ]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missingResult)
     #expect((missingPayload.objectValue?["matched"]) == (.bool(false)))
@@ -2167,7 +2171,7 @@ final class GatewayToolRegistryTests {
           "name": .string("section-bad-skill"),
           "path": .string("../outside.md"),
           "heading": .string("Intro"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escape"))
@@ -2181,7 +2185,7 @@ final class GatewayToolRegistryTests {
           "name": .string("section-bad-skill"),
           "path": .string("references"),
           "heading": .string("Intro"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -2195,7 +2199,7 @@ final class GatewayToolRegistryTests {
           "name": .string("section-bad-skill"),
           "path": .string("references/binary.md"),
           "heading": .string("Intro"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("valid UTF-8"))
@@ -2209,7 +2213,7 @@ final class GatewayToolRegistryTests {
           "name": .string("section-bad-skill"),
           "heading": .string("Intro"),
           "level": .number(7),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("level"))
@@ -2223,7 +2227,7 @@ final class GatewayToolRegistryTests {
           "name": .string("section-bad-skill"),
           "heading": .string("Intro"),
           "occurrence": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("occurrence"))
@@ -2237,7 +2241,7 @@ final class GatewayToolRegistryTests {
           "name": .string("section-bad-skill"),
           "heading": .string("Intro"),
           "max_section_bytes": .number(1024),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("skills.max_bytes_per_skill"))
@@ -2283,7 +2287,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("bad-link-skill"),
           "path": .string("../outside.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escape"))
@@ -2296,7 +2300,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("bad-link-skill"),
           "path": .string("references"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -2309,7 +2313,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("bad-link-skill"),
           "path": .string("references/binary.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("valid UTF-8"))
@@ -2322,7 +2326,7 @@ final class GatewayToolRegistryTests {
           "root_id": .string("local"),
           "name": .string("bad-link-skill"),
           "max_bytes": .number(1024),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("skills.max_bytes_per_skill"))
@@ -2364,7 +2368,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "root_id": .string("local"),
         "name": .string("bad-skill"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let issues = try #require(payload.objectValue?["issues"]?.arrayValue)
@@ -2404,7 +2408,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "skills.read",
-        arguments: .object(["name": .string("shared")])
+        arguments: .object(["name": .string("shared")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("ambiguous"))
@@ -2415,7 +2419,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "root_id": .string("two"),
         "name": .string("shared"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -2425,7 +2429,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "skills.read",
-        arguments: .object(["name": .string("missing")])
+        arguments: .object(["name": .string("missing")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown skill"))
@@ -2463,7 +2467,7 @@ final class GatewayToolRegistryTests {
 
     let readResult = try registry.callTool(
       name: "skills.read",
-      arguments: .object(["name": .string("long-skill")])
+      arguments: .object(["name": .string("long-skill")]), context: .empty
     )
     let readPayload = try decodeTextPayload(readResult)
 
@@ -2471,7 +2475,8 @@ final class GatewayToolRegistryTests {
     #expect((readPayload.objectValue?["content_truncated"]) == (.bool(true)))
     #expect((readPayload.objectValue?["valid_utf8"]) == (.bool(true)))
 
-    let listResult = try registry.callTool(name: "skills.list", arguments: .object([:]))
+    let listResult = try registry.callTool(
+      name: "skills.list", arguments: .object([:]), context: .empty)
     let listPayload = try decodeTextPayload(listResult)
     let names = listPayload.objectValue?["skills"]?.arrayValue?.map { $0.objectValue?["name"] }
 
@@ -2483,7 +2488,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("long-skill"),
           "max_bytes": .number(33),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("skills.max_bytes_per_skill"))
@@ -2509,7 +2514,8 @@ final class GatewayToolRegistryTests {
       processManager: processManager
     )
 
-    let result = try registry.callTool(name: "process.list", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "process.list", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
     let process = try #require(payload.objectValue?["processes"]?.arrayValue?.first?.objectValue)
 
@@ -2528,7 +2534,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "id": .string("missing"),
           "argv": .array([.string("--version")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown CLI command id"))
@@ -2551,7 +2557,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "id": .string("echo"),
           "argv": .array([.string("hello")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not allow arbitrary args"))
@@ -2574,7 +2580,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "id": .string("echo"),
           "argv": .array([.string("hello")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not allow arbitrary args"))
@@ -2599,15 +2605,15 @@ final class GatewayToolRegistryTests {
     )
     let registry = GatewayToolRegistry(configuration: config, mcpClient: mcp)
 
-    let names = try registry.listTools().map(\.name)
+    let names = try registry.listTools(context: .empty).map(\.name)
     #expect(names.contains("fake.sample_typed"))
     let configuredTool = try #require(
-      try registry.listTools().first { $0.name == "fake.sample_typed" })
+      try registry.listTools(context: .empty).first { $0.name == "fake.sample_typed" })
     #expect((configuredTool.outputSchema) == nil)
 
     let result = try registry.callTool(
       name: "fake.sample_typed",
-      arguments: .object(["value": .string("typed")])
+      arguments: .object(["value": .string("typed")]), context: .empty
     )
 
     #expect((result.objectValue?["isError"]) == (.bool(false)))
@@ -2622,7 +2628,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "shell.run",
-        arguments: .object(["command": .string("echo nope")])
+        arguments: .object(["command": .string("echo nope")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("disabled"))
@@ -2639,7 +2645,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("blocked.txt"),
           "content": .string("blocked"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("disabled"))
@@ -2653,7 +2659,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "mcp.tools.list",
-        arguments: .object(["server": .string("figma")])
+        arguments: .object(["server": .string("figma")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -2666,7 +2672,7 @@ final class GatewayToolRegistryTests {
           "server": .string("figma"),
           "tool": .string("get_screenshot"),
           "arguments": .object([:]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -2678,7 +2684,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "server": .string("figma"),
           "tool": .string("get_screenshot"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -2687,7 +2693,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "mcp.resources.list",
-        arguments: .object(["server": .string("figma")])
+        arguments: .object(["server": .string("figma")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -2699,7 +2705,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "server": .string("figma"),
           "uri": .string("file:///missing"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -2708,7 +2714,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "mcp.prompts.list",
-        arguments: .object(["server": .string("figma")])
+        arguments: .object(["server": .string("figma")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -2720,7 +2726,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "server": .string("figma"),
           "name": .string("review"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -2734,7 +2740,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "figma.get_screenshot",
-        arguments: .object([:])
+        arguments: .object([:]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown tool"))
@@ -2760,7 +2766,7 @@ final class GatewayToolRegistryTests {
 
     _ = try registry.callTool(
       name: "fake.sample",
-      arguments: .object(["value": .string("direct")])
+      arguments: .object(["value": .string("direct")]), context: .empty
     )
 
     #expect((mcp.calls.first?.tool) == ("sample"))
@@ -2774,7 +2780,7 @@ final class GatewayToolRegistryTests {
 
     let listResult = try registry.callTool(
       name: "mcp.tools.list",
-      arguments: .object(["server": .string("fake")])
+      arguments: .object(["server": .string("fake")]), context: .empty
     )
     let listPayload = try decodeTextPayload(listResult)
 
@@ -2787,7 +2793,7 @@ final class GatewayToolRegistryTests {
         "tool": .string("sample"),
         "request_id": .string("request-1"),
         "arguments": .object(["value": .string("x")]),
-      ])
+      ]), context: .empty
     )
     let callPayload = try decodeTextPayload(callResult)
 
@@ -2811,7 +2817,7 @@ final class GatewayToolRegistryTests {
         "request_id": .string("request-started"),
         "wait_for_result": .bool(false),
         "arguments": .object(["value": .string("x")]),
-      ])
+      ]), context: .empty
     )
 
     #expect((try decodeTextPayload(result).objectValue?["state"]) == (.string("running")))
@@ -2833,7 +2839,7 @@ final class GatewayToolRegistryTests {
           "server": .string("fake"),
           "tool": .string("sample"),
           "wait_for_result": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("request_id is required"))
@@ -2870,7 +2876,7 @@ final class GatewayToolRegistryTests {
     let listed = try decodeTextPayload(
       registry.callTool(
         name: "mcp.tools.list",
-        arguments: .object(["server": .string("fake")])
+        arguments: .object(["server": .string("fake")]), context: .empty
       )
     )
     #expect(
@@ -2883,7 +2889,7 @@ final class GatewayToolRegistryTests {
           "server": .string("fake"),
           "tool": .string("shell"),
           "arguments": .object([:]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not approved"))
@@ -2918,14 +2924,14 @@ final class GatewayToolRegistryTests {
         "server": .string("fake"),
         "after_cursor": .number(3),
         "max_results": .number(25),
-      ])
+      ]), context: .empty
     )
     #expect((try decodeTextPayload(eventsResult).objectValue?["next_cursor"]) == (.number(8)))
     #expect((mcp.eventReads) == ([.init(afterCursor: 3, maxResults: 25)]))
 
     let requestsResult = try registry.callTool(
       name: "mcp.requests.list",
-      arguments: .object(["server": .string("fake")])
+      arguments: .object(["server": .string("fake")]), context: .empty
     )
     #expect(
       (try decodeTextPayload(requestsResult).objectValue?["requests"]?.arrayValue?.count) == (1))
@@ -2936,7 +2942,7 @@ final class GatewayToolRegistryTests {
         "server": .string("fake"),
         "request_id": .string("request-1"),
         "reason": .string("test"),
-      ])
+      ]), context: .empty
     )
     #expect((try decodeTextPayload(cancelResult).objectValue?["cancelled"]) == (.bool(true)))
     #expect((mcp.cancellations) == ([.init(requestID: "request-1", reason: "test")]))
@@ -2967,7 +2973,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "server": .string("fake"),
         "tool": .string("sample"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let definition = try #require(payload.objectValue?["definition"]?.objectValue)
@@ -2999,7 +3005,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "server": .string("fake"),
           "tool": .string("missing"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown downstream MCP tool"))
@@ -3039,7 +3045,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "server": .string("fake"),
         "cursor": .string("page-1"),
-      ])
+      ]), context: .empty
     )
     let listPayload = try decodeTextPayload(listResult)
     let resources = try #require(listPayload.objectValue?["resources"]?.arrayValue)
@@ -3057,7 +3063,7 @@ final class GatewayToolRegistryTests {
 
     let templatesResult = try registry.callTool(
       name: "mcp.resources.templates.list",
-      arguments: .object(["server": .string("fake")])
+      arguments: .object(["server": .string("fake")]), context: .empty
     )
     let templatesPayload = try decodeTextPayload(templatesResult)
     let templates = try #require(templatesPayload.objectValue?["resource_templates"]?.arrayValue)
@@ -3070,7 +3076,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "server": .string("fake"),
         "uri": .string("file:///workspace/README.md"),
-      ])
+      ]), context: .empty
     )
     let readPayload = try decodeTextPayload(readResult)
     let contents = try #require(readPayload.objectValue?["contents"]?.arrayValue)
@@ -3119,7 +3125,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "server": .string("fake"),
         "cursor": .string("page-1"),
-      ])
+      ]), context: .empty
     )
     let listPayload = try decodeTextPayload(listResult)
     let prompts = try #require(listPayload.objectValue?["prompts"]?.arrayValue)
@@ -3140,7 +3146,7 @@ final class GatewayToolRegistryTests {
         "server": .string("fake"),
         "name": .string("review"),
         "arguments": .object(["path": .string("Sources")]),
-      ])
+      ]), context: .empty
     )
     let getPayload = try decodeTextPayload(getResult)
     let messages = try #require(getPayload.objectValue?["messages"]?.arrayValue)
@@ -3173,7 +3179,7 @@ final class GatewayToolRegistryTests {
           "server": .string("fake"),
           "name": .string("review"),
           "arguments": .object(["path": .number(1)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("arguments.path must be a string"))
@@ -3209,7 +3215,7 @@ final class GatewayToolRegistryTests {
         "query": .string("video_"),
         "match": .string("prefix"),
         "field": .string("name"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let tools = try #require(payload.objectValue?["tools"]?.arrayValue)
@@ -3238,7 +3244,7 @@ final class GatewayToolRegistryTests {
         "query": .string("export"),
         "field": .string("description"),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -3258,7 +3264,7 @@ final class GatewayToolRegistryTests {
           "server": .string("fake"),
           "query": .string("video"),
           "field": .string("schema"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("field"))
@@ -3271,7 +3277,7 @@ final class GatewayToolRegistryTests {
           "server": .string("fake"),
           "query": .string("video"),
           "match": .string("regex"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("match"))
@@ -3307,7 +3313,8 @@ final class GatewayToolRegistryTests {
     )
     let registry = GatewayToolRegistry(configuration: config)
 
-    let result = try registry.callTool(name: "mcp.servers.status", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "mcp.servers.status", arguments: .object([:]), context: .empty)
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
     let payload = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
@@ -3347,7 +3354,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "mcp.servers.status",
-      arguments: .object(["server": .string("missing")])
+      arguments: .object(["server": .string("missing")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let server = try #require(payload.objectValue?["servers"]?.arrayValue?.first?.objectValue)
@@ -3359,7 +3366,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "mcp.servers.status",
-        arguments: .object(["server": .string("unknown")])
+        arguments: .object(["server": .string("unknown")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unknown MCP server id"))
@@ -3383,12 +3390,12 @@ final class GatewayToolRegistryTests {
     )
     let registry = GatewayToolRegistry(configuration: config, mcpClient: mcp)
 
-    let names = try registry.listTools().map(\.name)
+    let names = try registry.listTools(context: .empty).map(\.name)
     #expect(names.contains("fake.sample"))
 
     let result = try registry.callTool(
       name: "fake.sample",
-      arguments: .object(["arguments": .object(["value": .string("x")])])
+      arguments: .object(["arguments": .object(["value": .string("x")])]), context: .empty
     )
 
     #expect((result.objectValue?["isError"]) == (.bool(false)))
@@ -3405,7 +3412,7 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let names = try registry.listTools().map(\.name)
+    let names = try registry.listTools(context: .empty).map(\.name)
     #expect(names.contains("file.read"))
     #expect(names.contains("file.read_files"))
     #expect(names.contains("file.write"))
@@ -3416,14 +3423,14 @@ final class GatewayToolRegistryTests {
         "path": .string("notes/debug.txt"),
         "content": .string("codex ready"),
         "create_directories": .bool(true),
-      ])
+      ]), context: .empty
     )
     let writePayload = try decodeTextPayload(writeResult)
     #expect((writePayload.objectValue?["bytes_written"]) == (.number(11)))
 
     let readResult = try registry.callTool(
       name: "file.read",
-      arguments: .object(["path": .string("notes/debug.txt")])
+      arguments: .object(["path": .string("notes/debug.txt")]), context: .empty
     )
     let readPayload = try decodeTextPayload(readResult)
     #expect((readPayload.objectValue?["content"]) == (.string("codex ready")))
@@ -3439,7 +3446,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "paths": .array([.string("notes/debug.txt"), .string("notes/todo.md")]),
         "max_bytes_per_file": .number(64),
-      ])
+      ]), context: .empty
     )
     let batchPayload = try decodeTextPayload(batchResult)
     let files = try #require(batchPayload.objectValue?["files"]?.arrayValue)
@@ -3470,7 +3477,7 @@ final class GatewayToolRegistryTests {
         "paths": .array([.string("blob.bin")]),
         "encoding": .string("base64"),
         "max_bytes_per_file": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let file = try #require(payload.objectValue?["files"]?.arrayValue?.first?.objectValue)
@@ -3487,7 +3494,7 @@ final class GatewayToolRegistryTests {
         name: "file.read_files",
         arguments: .object([
           "paths": .array([.string(".")])
-        ])
+        ]), context: .empty
       )
     )
   }
@@ -3510,7 +3517,7 @@ final class GatewayToolRegistryTests {
         "content": .string("codex ready"),
         "create_directories": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -3566,7 +3573,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("escape/written.txt"),
           "content": .string("must not escape"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("policy.workspace_denied"))
@@ -3600,7 +3607,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("new-link"),
           "destination": .string("escape/future.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("policy.workspace_denied"))
@@ -3629,7 +3636,7 @@ final class GatewayToolRegistryTests {
         ]),
         "create_directories": .bool(true),
         "preview_max_bytes": .number(5),
-      ])
+      ]), context: .empty
     )
     let dryRunPayload = try decodeTextPayload(dryRunResult)
     let dryRunFiles = try #require(dryRunPayload.objectValue?["files"]?.arrayValue)
@@ -3655,7 +3662,7 @@ final class GatewayToolRegistryTests {
           ]),
           "create_directories": .bool(true),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     )
 
@@ -3669,7 +3676,7 @@ final class GatewayToolRegistryTests {
         "create_directories": .bool(true),
         "dry_run": .bool(false),
         "confirm_write": .bool(true),
-      ])
+      ]), context: .empty
     )
     let writePayload = try decodeTextPayload(writeResult)
     #expect((writePayload.objectValue?["written"]) == (.bool(true)))
@@ -3684,7 +3691,7 @@ final class GatewayToolRegistryTests {
           "files": .array([
             .object(["path": .string("notes/one.txt"), "content": .string("again")])
           ])
-        ])
+        ]), context: .empty
       )
     )
     expectThrows(
@@ -3696,7 +3703,7 @@ final class GatewayToolRegistryTests {
             .object(["path": .string("notes/three.txt"), "content": .string("b")]),
           ]),
           "create_directories": .bool(true),
-        ])
+        ]), context: .empty
       )
     )
   }
@@ -3719,7 +3726,7 @@ final class GatewayToolRegistryTests {
 
     let fileResult = try registry.callTool(
       name: "file.exists",
-      arguments: .object(["path": .string("notes.txt")])
+      arguments: .object(["path": .string("notes.txt")]), context: .empty
     )
     let filePayload = try decodeTextPayload(fileResult)
     #expect((filePayload.objectValue?["exists"]) == (.bool(true)))
@@ -3728,7 +3735,7 @@ final class GatewayToolRegistryTests {
 
     let directoryResult = try registry.callTool(
       name: "file.exists",
-      arguments: .object(["path": .string("logs")])
+      arguments: .object(["path": .string("logs")]), context: .empty
     )
     let directoryPayload = try decodeTextPayload(directoryResult)
     #expect((directoryPayload.objectValue?["exists"]) == (.bool(true)))
@@ -3736,7 +3743,7 @@ final class GatewayToolRegistryTests {
 
     let missingResult = try registry.callTool(
       name: "file.exists",
-      arguments: .object(["path": .string("missing.txt")])
+      arguments: .object(["path": .string("missing.txt")]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missingResult)
     #expect((missingPayload.objectValue?["exists"]) == (.bool(false)))
@@ -3756,7 +3763,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.exists",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -3780,7 +3787,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes.txt"),
         "content": .string(" second"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -3810,7 +3817,7 @@ final class GatewayToolRegistryTests {
         "content": .string("created"),
         "create_directories": .bool(true),
         "append_newline": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -3840,7 +3847,7 @@ final class GatewayToolRegistryTests {
         "create_directories": .bool(true),
         "append_newline": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -3876,7 +3883,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.append",
-        arguments: .object(["path": .string("logs"), "content": .string("x")])
+        arguments: .object(["path": .string("logs"), "content": .string("x")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -3885,7 +3892,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.append",
-        arguments: .object(["path": .string("../outside"), "content": .string("x")])
+        arguments: .object(["path": .string("../outside"), "content": .string("x")]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -3894,7 +3902,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.append",
-        arguments: .object(["path": .string("notes.txt"), "content": .string("long")])
+        arguments: .object(["path": .string("notes.txt"), "content": .string("long")]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -3919,7 +3928,7 @@ final class GatewayToolRegistryTests {
         "path": .string("notes.txt"),
         "search": .string("beta"),
         "replacement": .string("gamma"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -3950,7 +3959,7 @@ final class GatewayToolRegistryTests {
         "replacement": .string(""),
         "replace_all": .bool(true),
         "expected_replacements": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -3982,7 +3991,7 @@ final class GatewayToolRegistryTests {
         "replace_all": .bool(true),
         "expected_replacements": .number(2),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -4020,7 +4029,7 @@ final class GatewayToolRegistryTests {
         "replacement": .string("uvwxyz"),
         "include_preview": .bool(true),
         "preview_max_bytes": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -4057,7 +4066,7 @@ final class GatewayToolRegistryTests {
           "replacement": .string("three"),
           "replace_all": .bool(true),
           "expected_replacements": .number(1),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Expected 1 replacements"))
@@ -4085,7 +4094,7 @@ final class GatewayToolRegistryTests {
           "path": .string("../outside"),
           "search": .string("a"),
           "replacement": .string("b"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -4099,7 +4108,7 @@ final class GatewayToolRegistryTests {
           "search": .string("a"),
           "replacement": .string("b"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_bytes"))
@@ -4125,7 +4134,7 @@ final class GatewayToolRegistryTests {
         "line": .number(2),
         "content": .string("inserted"),
         "expected_line": .string("two"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -4156,7 +4165,7 @@ final class GatewayToolRegistryTests {
         "line": .number(2),
         "position": .string("after"),
         "content": .string("three"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -4186,7 +4195,7 @@ final class GatewayToolRegistryTests {
         "position": .string("after"),
         "content": .string("three"),
         "expected_line": .string("two"),
-      ])
+      ]), context: .empty
     )
 
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -4213,7 +4222,7 @@ final class GatewayToolRegistryTests {
         "content": .string("inserted"),
         "expected_line": .string("two"),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -4250,7 +4259,7 @@ final class GatewayToolRegistryTests {
         "append_newline": .bool(false),
         "include_preview": .bool(true),
         "preview_max_bytes": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -4286,7 +4295,7 @@ final class GatewayToolRegistryTests {
           "line": .number(2),
           "content": .string("inserted"),
           "expected_line": .string("wrong"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("expected_line"))
@@ -4315,7 +4324,7 @@ final class GatewayToolRegistryTests {
           "line": .number(1),
           "position": .string("middle"),
           "content": .string("x"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("position"))
@@ -4328,7 +4337,7 @@ final class GatewayToolRegistryTests {
           "path": .string("notes.txt"),
           "line": .number(3),
           "content": .string("x"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("line must be between"))
@@ -4341,7 +4350,7 @@ final class GatewayToolRegistryTests {
           "path": .string("../outside"),
           "line": .number(1),
           "content": .string("x"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -4355,7 +4364,7 @@ final class GatewayToolRegistryTests {
           "line": .number(1),
           "content": .string("x"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_bytes"))
@@ -4382,7 +4391,7 @@ final class GatewayToolRegistryTests {
         "end_line": .number(3),
         "content": .string("middle"),
         "expected_content": .string("two\nthree\n"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -4416,7 +4425,7 @@ final class GatewayToolRegistryTests {
         "end_line": .number(3),
         "content": .string(""),
         "expected_content": .string("three"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let content = try String(contentsOf: file, encoding: .utf8)
@@ -4447,7 +4456,7 @@ final class GatewayToolRegistryTests {
         "end_line": .number(2),
         "content": .string("updated"),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -4485,7 +4494,7 @@ final class GatewayToolRegistryTests {
         "append_newline": .bool(false),
         "include_preview": .bool(true),
         "preview_max_bytes": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let preview = payload.objectValue?["preview"]?.objectValue
@@ -4522,7 +4531,7 @@ final class GatewayToolRegistryTests {
           "end_line": .number(2),
           "content": .string("updated"),
           "expected_content": .string("wrong\n"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("expected_content"))
@@ -4538,7 +4547,7 @@ final class GatewayToolRegistryTests {
           "start_line": .number(3),
           "end_line": .number(2),
           "content": .string("x"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("end_line"))
@@ -4552,7 +4561,7 @@ final class GatewayToolRegistryTests {
           "start_line": .number(1),
           "end_line": .number(1),
           "content": .string("x"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -4567,7 +4576,7 @@ final class GatewayToolRegistryTests {
           "end_line": .number(1),
           "content": .string("x"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_bytes"))
@@ -4592,7 +4601,7 @@ final class GatewayToolRegistryTests {
         "path": .string("notes.txt"),
         "start_line": .number(2),
         "max_lines": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
@@ -4624,7 +4633,7 @@ final class GatewayToolRegistryTests {
         "line": .number(3),
         "before": .number(1),
         "after": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
@@ -4653,7 +4662,7 @@ final class GatewayToolRegistryTests {
         "line": .number(1),
         "before": .number(5),
         "after": .number(1),
-      ])
+      ]), context: .empty
     )
     let clampedPayload = try decodeTextPayload(clampedResult)
     #expect((clampedPayload.objectValue?["start_line"]) == (.number(1)))
@@ -4681,7 +4690,7 @@ final class GatewayToolRegistryTests {
         "before": .number(0),
         "after": .number(0),
         "max_bytes": .number(4),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["file_truncated"]) == (.bool(true)))
@@ -4695,7 +4704,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("notes.txt"),
           "line": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("line"))
@@ -4708,7 +4717,7 @@ final class GatewayToolRegistryTests {
           "path": .string("notes.txt"),
           "line": .number(1),
           "before": .number(-1),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("before"))
@@ -4720,7 +4729,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("."),
           "line": .number(1),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -4745,7 +4754,7 @@ final class GatewayToolRegistryTests {
         "path": .string("notes.txt"),
         "offset_bytes": .number(5),
         "max_bytes": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -4766,7 +4775,7 @@ final class GatewayToolRegistryTests {
         "path": .string("notes.txt"),
         "offset_bytes": .number(10_000),
         "max_bytes": .number(10),
-      ])
+      ]), context: .empty
     )
     let eofPayload = try decodeTextPayload(eofResult)
     #expect((eofPayload.objectValue?["bytes_read"]) == (.number(0)))
@@ -4776,7 +4785,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.read_window",
-        arguments: .object(["path": .string(".")])
+        arguments: .object(["path": .string(".")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -4801,7 +4810,7 @@ final class GatewayToolRegistryTests {
         "path": .string("unicode.txt"),
         "offset_bytes": .number(2),
         "max_bytes": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -4826,7 +4835,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes.txt"),
         "max_bytes": .number(5),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -4851,7 +4860,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes.txt"),
         "max_lines": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
@@ -4887,7 +4896,7 @@ final class GatewayToolRegistryTests {
         "path": .string("notes.txt"),
         "max_lines": .number(5),
         "max_bytes": .number(5),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
@@ -4903,7 +4912,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.head",
-        arguments: .object(["path": .string(".")])
+        arguments: .object(["path": .string(".")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -4945,7 +4954,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("README.md"),
         "max_results": .number(2),
-      ])
+      ]), context: .empty
     )
     let markdownPayload = try decodeTextPayload(markdownResult)
     let markdownItems = try #require(markdownPayload.objectValue?["items"]?.arrayValue)
@@ -4966,7 +4975,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("App.swift"),
         "include_imports": .bool(true),
-      ])
+      ]), context: .empty
     )
     let sourcePayload = try decodeTextPayload(sourceResult)
     let sourceItems = try #require(sourcePayload.objectValue?["items"]?.arrayValue)
@@ -4985,7 +4994,7 @@ final class GatewayToolRegistryTests {
       name: "file.outline",
       arguments: .object([
         "path": .string("tool.js")
-      ])
+      ]), context: .empty
     )
     let scriptPayload = try decodeTextPayload(scriptResult)
     let scriptItems = try #require(scriptPayload.objectValue?["items"]?.arrayValue)
@@ -5028,7 +5037,7 @@ final class GatewayToolRegistryTests {
       name: "markdown.links",
       arguments: .object([
         "path": .string("docs/README.md")
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let links = try #require(payload.objectValue?["links"]?.arrayValue)
@@ -5088,7 +5097,7 @@ final class GatewayToolRegistryTests {
         "path": .string("README.md"),
         "include_images": .bool(false),
         "max_links": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let links = try #require(payload.objectValue?["links"]?.arrayValue)
@@ -5106,7 +5115,7 @@ final class GatewayToolRegistryTests {
         "path": .string("README.md"),
         "include_code_blocks": .bool(true),
         "max_links": .number(10),
-      ])
+      ]), context: .empty
     )
     let codeBlockPayload = try decodeTextPayload(codeBlockResult)
     #expect((codeBlockPayload.objectValue?["link_count"]) == (.number(4)))
@@ -5149,7 +5158,7 @@ final class GatewayToolRegistryTests {
         "path": .string("README.md"),
         "max_tables": .number(10),
         "max_rows_per_table": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let tables = try #require(payload.objectValue?["tables"]?.arrayValue)
@@ -5186,7 +5195,7 @@ final class GatewayToolRegistryTests {
         "path": .string("README.md"),
         "max_tables": .number(1),
         "max_rows_per_table": .number(2),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedTable = try #require(truncatedPayload.objectValue?["tables"]?.arrayValue?.first)
@@ -5203,7 +5212,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("README.md"),
         "include_code_blocks": .bool(true),
-      ])
+      ]), context: .empty
     )
     let codeBlockPayload = try decodeTextPayload(codeBlockResult)
     #expect((codeBlockPayload.objectValue?["table_count"]) == (.number(3)))
@@ -5227,7 +5236,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.tables",
-        arguments: .object(["path": .string("../outside.md")])
+        arguments: .object(["path": .string("../outside.md")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -5236,7 +5245,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.tables",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -5245,7 +5254,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.tables",
-        arguments: .object(["path": .string("bad.md")])
+        arguments: .object(["path": .string("bad.md")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -5257,7 +5266,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bad.md"),
           "max_tables": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_tables"))
@@ -5299,7 +5308,7 @@ final class GatewayToolRegistryTests {
         "path": .string("README.md"),
         "heading": .string("Install"),
         "level": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let section = try #require(payload.objectValue?["section"]?.objectValue)
@@ -5331,7 +5340,7 @@ final class GatewayToolRegistryTests {
         "level": .number(2),
         "occurrence": .number(2),
         "include_heading": .bool(false),
-      ])
+      ]), context: .empty
     )
     let secondPayload = try decodeTextPayload(secondResult)
     let secondSection = try #require(secondPayload.objectValue?["section"]?.objectValue)
@@ -5347,7 +5356,7 @@ final class GatewayToolRegistryTests {
         "path": .string("README.md"),
         "heading": .string("Install"),
         "max_section_bytes": .number(8),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedSection = try #require(truncatedPayload.objectValue?["section"]?.objectValue)
@@ -5358,7 +5367,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("README.md"),
         "heading": .string("Missing"),
-      ])
+      ]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missingResult)
     #expect((missingPayload.objectValue?["matched"]) == (.bool(false)))
@@ -5389,7 +5398,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside.md"),
           "heading": .string("Intro"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -5401,7 +5410,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("folder"),
           "heading": .string("Intro"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -5413,7 +5422,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bad.md"),
           "heading": .string("Intro"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -5426,7 +5435,7 @@ final class GatewayToolRegistryTests {
           "path": .string("bad.md"),
           "heading": .string("Intro"),
           "level": .number(7),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("level"))
@@ -5439,7 +5448,7 @@ final class GatewayToolRegistryTests {
           "path": .string("bad.md"),
           "heading": .string("Intro"),
           "occurrence": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("occurrence"))
@@ -5475,7 +5484,7 @@ final class GatewayToolRegistryTests {
 
     let yamlResult = try registry.callTool(
       name: "markdown.frontmatter",
-      arguments: .object(["path": .string("README.md")])
+      arguments: .object(["path": .string("README.md")]), context: .empty
     )
     let yamlPayload = try decodeTextPayload(yamlResult)
     let yamlValue = try #require(yamlPayload.objectValue?["value"]?.objectValue)
@@ -5501,7 +5510,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("page.md"),
         "format": .string("toml"),
-      ])
+      ]), context: .empty
     )
     let tomlPayload = try decodeTextPayload(tomlResult)
     let tomlValue = try #require(tomlPayload.objectValue?["value"]?.objectValue)
@@ -5542,7 +5551,7 @@ final class GatewayToolRegistryTests {
 
     let plainResult = try registry.callTool(
       name: "markdown.frontmatter",
-      arguments: .object(["path": .string("plain.md")])
+      arguments: .object(["path": .string("plain.md")]), context: .empty
     )
     let plainPayload = try decodeTextPayload(plainResult)
     #expect((plainPayload.objectValue?["found"]) == (.bool(false)))
@@ -5553,7 +5562,7 @@ final class GatewayToolRegistryTests {
 
     let unterminatedResult = try registry.callTool(
       name: "markdown.frontmatter",
-      arguments: .object(["path": .string("unterminated.md")])
+      arguments: .object(["path": .string("unterminated.md")]), context: .empty
     )
     let unterminatedPayload = try decodeTextPayload(unterminatedResult)
     #expect((unterminatedPayload.objectValue?["found"]) == (.bool(false)))
@@ -5565,7 +5574,7 @@ final class GatewayToolRegistryTests {
 
     let badResult = try registry.callTool(
       name: "markdown.frontmatter",
-      arguments: .object(["path": .string("bad.md")])
+      arguments: .object(["path": .string("bad.md")]), context: .empty
     )
     let badPayload = try decodeTextPayload(badResult)
     #expect((badPayload.objectValue?["found"]) == (.bool(true)))
@@ -5592,7 +5601,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.frontmatter",
-        arguments: .object(["path": .string("../outside.md")])
+        arguments: .object(["path": .string("../outside.md")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -5601,7 +5610,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.frontmatter",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -5610,7 +5619,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.frontmatter",
-        arguments: .object(["path": .string("bad.md")])
+        arguments: .object(["path": .string("bad.md")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -5622,7 +5631,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bad.md"),
           "format": .string("json"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("format"))
@@ -5647,7 +5656,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.links",
-        arguments: .object(["path": .string("../outside.md")])
+        arguments: .object(["path": .string("../outside.md")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -5656,7 +5665,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.links",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -5668,7 +5677,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bad.md"),
           "max_bytes": .number(2),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -5680,7 +5689,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bad.md"),
           "max_links": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_links"))
@@ -5731,7 +5740,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("docs/README.md"),
         "max_links": .number(50),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let checks = try #require(payload.objectValue?["checks"]?.arrayValue)
@@ -5774,7 +5783,7 @@ final class GatewayToolRegistryTests {
         "path": .string("docs/README.md"),
         "include_reference_definitions": .bool(false),
         "max_links": .number(50),
-      ])
+      ]), context: .empty
     )
     let noDefinitionsPayload = try decodeTextPayload(noDefinitionsResult)
     #expect((noDefinitionsPayload.objectValue?["check_count"]) == (.number(11)))
@@ -5799,7 +5808,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.link_check",
-        arguments: .object(["path": .string("../outside.md")])
+        arguments: .object(["path": .string("../outside.md")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -5808,7 +5817,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "markdown.link_check",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -5820,7 +5829,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bad.md"),
           "max_bytes": .number(2),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -5844,7 +5853,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes.txt"),
         "max_lines": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
@@ -5878,7 +5887,7 @@ final class GatewayToolRegistryTests {
         "path": .string("notes.txt"),
         "max_lines": .number(3),
         "max_bytes": .number(9),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
@@ -5914,7 +5923,7 @@ final class GatewayToolRegistryTests {
         "path": .string("blob.bin"),
         "offset_bytes": .number(1),
         "max_bytes": .number(18),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
@@ -5954,7 +5963,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("blob.bin"),
         "offset_bytes": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -5982,7 +5991,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.hexdump",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -5991,7 +6000,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.hexdump",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -6003,7 +6012,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("folder"),
           "max_bytes": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_bytes"))
@@ -6034,7 +6043,7 @@ final class GatewayToolRegistryTests {
 
     let listResult = try registry.callTool(
       name: "file.xattrs",
-      arguments: .object(["path": .string("download.txt")])
+      arguments: .object(["path": .string("download.txt")]), context: .empty
     )
     let listPayload = try decodeTextPayload(listResult)
     let listedAttributes = try #require(listPayload.objectValue?["attributes"]?.arrayValue)
@@ -6053,7 +6062,7 @@ final class GatewayToolRegistryTests {
         "path": .string("download.txt"),
         "include_values": .bool(true),
         "max_value_bytes": .number(16),
-      ])
+      ]), context: .empty
     )
     let valuePayload = try decodeTextPayload(valueResult)
     let valueAttributes = try #require(valuePayload.objectValue?["attributes"]?.arrayValue)
@@ -6083,7 +6092,7 @@ final class GatewayToolRegistryTests {
         "path": .string("download.txt"),
         "include_values": .bool(true),
         "max_value_bytes": .number(5),
-      ])
+      ]), context: .empty
     )
     let limitedPayload = try decodeTextPayload(limitedResult)
     let limitedAttributes = try #require(limitedPayload.objectValue?["attributes"]?.arrayValue)
@@ -6118,7 +6127,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.xattrs",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6127,7 +6136,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.xattrs",
-        arguments: .object(["path": .string("missing.txt")])
+        arguments: .object(["path": .string("missing.txt")]), context: .empty
       )
     ) { error in
       #expect(!(error.localizedDescription.isEmpty))
@@ -6139,7 +6148,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("download.txt"),
           "max_value_bytes": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_value_bytes"))
@@ -6173,7 +6182,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("download.txt"),
         "name": .string("com.showxu.metadata:test"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -6190,7 +6199,7 @@ final class GatewayToolRegistryTests {
 
     let readback = try registry.callTool(
       name: "file.xattrs",
-      arguments: .object(["path": .string("download.txt")])
+      arguments: .object(["path": .string("download.txt")]), context: .empty
     )
     let readbackPayload = try decodeTextPayload(readback)
     let attributes = try #require(readbackPayload.objectValue?["attributes"]?.arrayValue)
@@ -6222,7 +6231,7 @@ final class GatewayToolRegistryTests {
         "path": .string("download.txt"),
         "name": .string("com.showxu.metadata:test"),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -6238,7 +6247,7 @@ final class GatewayToolRegistryTests {
 
     let readback = try registry.callTool(
       name: "file.xattrs",
-      arguments: .object(["path": .string("download.txt")])
+      arguments: .object(["path": .string("download.txt")]), context: .empty
     )
     let readbackPayload = try decodeTextPayload(readback)
     let attributes = try #require(readbackPayload.objectValue?["attributes"]?.arrayValue)
@@ -6264,7 +6273,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("download.txt"),
           "name": .string("com.showxu.missing"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -6276,7 +6285,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("download.txt"),
           "name": .string("bad\nname"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("control"))
@@ -6288,7 +6297,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside.txt"),
           "name": .string("com.showxu.alpha"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6337,7 +6346,7 @@ final class GatewayToolRegistryTests {
           .string("kMDItemFSSize"),
         ]),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let metadata = try #require(payload.objectValue?["metadata"]?.objectValue)
@@ -6380,7 +6389,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.metadata",
-      arguments: .object(["path": .string("document.txt")])
+      arguments: .object(["path": .string("document.txt")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     #expect((payload.objectValue?["metadata"]) == (.null))
@@ -6389,7 +6398,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.metadata",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6401,7 +6410,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("document.txt"),
           "attributes": .array([.string("-bad")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("attribute must not be an option"))
@@ -6413,7 +6422,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("document.txt"),
           "attributes": .array([.string("bad attribute")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("attribute may contain only"))
@@ -6441,7 +6450,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.readlink",
-      arguments: .object(["path": .string("target-link")])
+      arguments: .object(["path": .string("target-link")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -6458,7 +6467,7 @@ final class GatewayToolRegistryTests {
 
     let outside = try registry.callTool(
       name: "file.readlink",
-      arguments: .object(["path": .string("outside-link")])
+      arguments: .object(["path": .string("outside-link")]), context: .empty
     )
     let outsidePayload = try decodeTextPayload(outside)
     #expect((outsidePayload.objectValue?["destination_is_absolute"]) == (.bool(true)))
@@ -6490,7 +6499,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.readlink",
-        arguments: .object(["path": .string("regular.txt")])
+        arguments: .object(["path": .string("regular.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a symbolic link"))
@@ -6499,7 +6508,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.readlink",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6508,7 +6517,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.readlink",
-        arguments: .object(["path": .string("outside-parent/link")])
+        arguments: .object(["path": .string("outside-parent/link")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("parent symlink"))
@@ -6531,7 +6540,7 @@ final class GatewayToolRegistryTests {
 
     let fileResult = try registry.callTool(
       name: "file.resolve",
-      arguments: .object(["path": .string("./target.txt")])
+      arguments: .object(["path": .string("./target.txt")]), context: .empty
     )
     let filePayload = try decodeTextPayload(fileResult)
     #expect((filePayload.objectValue?["operation"]) == (.string("file.resolve")))
@@ -6547,7 +6556,7 @@ final class GatewayToolRegistryTests {
 
     let linkResult = try registry.callTool(
       name: "file.resolve",
-      arguments: .object(["path": .string("target-link")])
+      arguments: .object(["path": .string("target-link")]), context: .empty
     )
     let linkPayload = try decodeTextPayload(linkResult)
     #expect((linkPayload.objectValue?["path"]) == (.string(link.path)))
@@ -6561,7 +6570,7 @@ final class GatewayToolRegistryTests {
 
     let missingResult = try registry.callTool(
       name: "file.resolve",
-      arguments: .object(["path": .string("missing/new.txt")])
+      arguments: .object(["path": .string("missing/new.txt")]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missingResult)
     #expect((missingPayload.objectValue?["exists"]) == (.bool(false)))
@@ -6589,7 +6598,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.resolve",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6598,7 +6607,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.resolve",
-        arguments: .object(["path": .string("outside-parent/file")])
+        arguments: .object(["path": .string("outside-parent/file")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("parent symlink"))
@@ -6629,7 +6638,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "json.read",
-      arguments: .object(["path": .string("config.json")])
+      arguments: .object(["path": .string("config.json")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let value = try #require(payload.objectValue?["value"]?.objectValue)
@@ -6673,7 +6682,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "json.read",
-        arguments: .object(["path": .string("../outside.json")])
+        arguments: .object(["path": .string("../outside.json")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6682,7 +6691,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "json.read",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -6694,7 +6703,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("large.json"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("File exceeds max_bytes"))
@@ -6703,7 +6712,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "json.read",
-        arguments: .object(["path": .string("bad.json")])
+        arguments: .object(["path": .string("bad.json")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to parse JSON"))
@@ -6737,7 +6746,7 @@ final class GatewayToolRegistryTests {
         "path": .string("events.jsonl"),
         "max_records": .number(2),
         "max_errors": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let records = try #require(payload.objectValue?["records"]?.arrayValue)
@@ -6786,7 +6795,7 @@ final class GatewayToolRegistryTests {
         "path": .string("events.ndjson"),
         "start_line": .number(2),
         "max_bytes": .number(18),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let records = try #require(payload.objectValue?["records"]?.arrayValue)
@@ -6805,7 +6814,7 @@ final class GatewayToolRegistryTests {
         "path": .string("events.ndjson"),
         "max_bytes": .number(10),
         "include_partial_line": .bool(true),
-      ])
+      ]), context: .empty
     )
     let partialPayload = try decodeTextPayload(partialResult)
     #expect((partialPayload.objectValue?["partial_line_dropped"]) == (.bool(false)))
@@ -6830,7 +6839,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "jsonl.read",
-        arguments: .object(["path": .string("../outside.jsonl")])
+        arguments: .object(["path": .string("../outside.jsonl")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6839,7 +6848,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "jsonl.read",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -6848,7 +6857,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "jsonl.read",
-        arguments: .object(["path": .string("bad.jsonl")])
+        arguments: .object(["path": .string("bad.jsonl")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -6860,7 +6869,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bad.jsonl"),
           "max_records": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_records"))
@@ -6887,7 +6896,7 @@ final class GatewayToolRegistryTests {
           "z": .number(1),
           "a": .array([.string("x")]),
         ]),
-      ])
+      ]), context: .empty
     )
     let dryRunPayload = try decodeTextPayload(dryRunResult)
     let preview = try #require(
@@ -6913,7 +6922,7 @@ final class GatewayToolRegistryTests {
           "create_directories": .bool(true),
           "dry_run": .bool(false),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_write=true"))
@@ -6930,7 +6939,7 @@ final class GatewayToolRegistryTests {
           "z": .number(1),
           "a": .array([.string("x")]),
         ]),
-      ])
+      ]), context: .empty
     )
     let writePayload = try decodeTextPayload(writeResult)
 
@@ -6942,7 +6951,7 @@ final class GatewayToolRegistryTests {
 
     let readResult = try registry.callTool(
       name: "json.read",
-      arguments: .object(["path": .string("config/out.json")])
+      arguments: .object(["path": .string("config/out.json")]), context: .empty
     )
     let readPayload = try decodeTextPayload(readResult)
     let value = try #require(readPayload.objectValue?["value"]?.objectValue)
@@ -6975,7 +6984,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside.json"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -6987,7 +6996,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("missing/out.json"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Parent directory does not exist"))
@@ -6999,7 +7008,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("folder"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is a directory"))
@@ -7011,7 +7020,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("existing.json"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Refusing to overwrite"))
@@ -7024,7 +7033,7 @@ final class GatewayToolRegistryTests {
           "path": .string("too-large.json"),
           "max_bytes": .number(4),
           "value": .object(["large": .string("value")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Encoded JSON exceeds max_bytes"))
@@ -7056,7 +7065,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "toml.read",
-      arguments: .object(["path": .string("config.toml")])
+      arguments: .object(["path": .string("config.toml")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let value = try #require(payload.objectValue?["value"]?.objectValue)
@@ -7105,7 +7114,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "toml.read",
-        arguments: .object(["path": .string("../outside.toml")])
+        arguments: .object(["path": .string("../outside.toml")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -7114,7 +7123,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "toml.read",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -7126,7 +7135,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("large.toml"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("File exceeds max_bytes"))
@@ -7135,7 +7144,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "toml.read",
-        arguments: .object(["path": .string("bad.toml")])
+        arguments: .object(["path": .string("bad.toml")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to parse TOML"))
@@ -7175,7 +7184,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("config.yaml"),
         "max_documents": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let documents = try #require(payload.objectValue?["documents"]?.arrayValue)
@@ -7240,7 +7249,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("multi.yaml"),
         "max_documents": .number(1),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["document_count"]) == (.number(2)))
@@ -7250,7 +7259,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "yaml.read",
-        arguments: .object(["path": .string("../outside.yaml")])
+        arguments: .object(["path": .string("../outside.yaml")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -7259,7 +7268,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "yaml.read",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -7271,7 +7280,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("large.yaml"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("File exceeds max_bytes"))
@@ -7280,7 +7289,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "yaml.read",
-        arguments: .object(["path": .string("bad.yaml")])
+        arguments: .object(["path": .string("bad.yaml")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to parse YAML"))
@@ -7307,7 +7316,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "xml.read",
-      arguments: .object(["path": .string("config.xml")])
+      arguments: .object(["path": .string("config.xml")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let root = try #require(payload.objectValue?["root"]?.objectValue)
@@ -7363,7 +7372,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("many.xml"),
         "max_nodes": .number(2),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedRoot = try #require(truncatedPayload.objectValue?["root"]?.objectValue)
@@ -7379,7 +7388,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("text.xml"),
         "max_text_bytes": .number(3),
-      ])
+      ]), context: .empty
     )
     let textPayload = try decodeTextPayload(textResult)
     let textRoot = try #require(textPayload.objectValue?["root"]?.objectValue)
@@ -7390,7 +7399,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "xml.read",
-        arguments: .object(["path": .string("../outside.xml")])
+        arguments: .object(["path": .string("../outside.xml")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -7399,7 +7408,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "xml.read",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -7411,7 +7420,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("large.xml"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("File exceeds max_bytes"))
@@ -7420,7 +7429,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "xml.read",
-        arguments: .object(["path": .string("bad.xml")])
+        arguments: .object(["path": .string("bad.xml")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to parse XML"))
@@ -7454,7 +7463,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "plist.read",
-      arguments: .object(["path": .string("Info.plist")])
+      arguments: .object(["path": .string("Info.plist")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let value = try #require(payload.objectValue?["value"]?.objectValue)
@@ -7502,7 +7511,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "plist.read",
-        arguments: .object(["path": .string("../outside.plist")])
+        arguments: .object(["path": .string("../outside.plist")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -7511,7 +7520,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "plist.read",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -7523,7 +7532,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("large.plist"),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("File exceeds max_bytes"))
@@ -7532,7 +7541,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "plist.read",
-        arguments: .object(["path": .string("bad.plist")])
+        arguments: .object(["path": .string("bad.plist")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to parse property list"))
@@ -7618,7 +7627,7 @@ final class GatewayToolRegistryTests {
           .number(1),
           .string("name"),
         ]),
-      ])
+      ]), context: .empty
     )
     let jsonPayload = try decodeTextPayload(jsonResult)
     #expect((jsonPayload.objectValue?["operation"]) == (.string("structured.get")))
@@ -7641,7 +7650,7 @@ final class GatewayToolRegistryTests {
           .number(0),
           .string("name"),
         ]),
-      ])
+      ]), context: .empty
     )
     let yamlPayload = try decodeTextPayload(yamlResult)
     let yamlMetadata = try #require(yamlPayload.objectValue?["document_metadata"]?.objectValue)
@@ -7659,7 +7668,7 @@ final class GatewayToolRegistryTests {
           .string("ports"),
           .number(0),
         ]),
-      ])
+      ]), context: .empty
     )
     let tomlPayload = try decodeTextPayload(tomlResult)
     #expect((tomlPayload.objectValue?["format"]) == (.string("toml")))
@@ -7674,7 +7683,7 @@ final class GatewayToolRegistryTests {
           .string("Items"),
           .number(1),
         ]),
-      ])
+      ]), context: .empty
     )
     let plistPayload = try decodeTextPayload(plistResult)
     #expect((plistPayload.objectValue?["format"]) == (.string("plist")))
@@ -7688,7 +7697,7 @@ final class GatewayToolRegistryTests {
           .string("scripts"),
           .string("missing"),
         ]),
-      ])
+      ]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missingResult)
     let failure = try #require(missingPayload.objectValue?["failure"]?.objectValue)
@@ -7724,7 +7733,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../data.json"),
           "query_path": .array([]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -7736,7 +7745,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("folder"),
           "query_path": .array([]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -7748,7 +7757,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("data.json"),
           "query_path": .string("items"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("query_path must be an array"))
@@ -7760,7 +7769,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("data.json"),
           "query_path": .array([.number(-1)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("zero or greater"))
@@ -7773,7 +7782,7 @@ final class GatewayToolRegistryTests {
           "path": .string("data.json"),
           "format": .string("jsonpath"),
           "query_path": .array([]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("format must be one of"))
@@ -7786,7 +7795,7 @@ final class GatewayToolRegistryTests {
           "path": .string("data.json"),
           "query_path": .array([]),
           "max_bytes": .number(3),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("File exceeds max_bytes"))
@@ -7825,7 +7834,7 @@ final class GatewayToolRegistryTests {
         "create_directories": .bool(true),
         "preview_max_bytes": .number(512),
         "value": value,
-      ])
+      ]), context: .empty
     )
     let dryRunPayload = try decodeTextPayload(dryRunResult)
     let preview = try #require(dryRunPayload.objectValue?["preview"]?.objectValue)
@@ -7849,7 +7858,7 @@ final class GatewayToolRegistryTests {
           "create_directories": .bool(true),
           "dry_run": .bool(false),
           "value": value,
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_write=true"))
@@ -7863,7 +7872,7 @@ final class GatewayToolRegistryTests {
         "dry_run": .bool(false),
         "confirm_write": .bool(true),
         "value": value,
-      ])
+      ]), context: .empty
     )
     let writePayload = try decodeTextPayload(writeResult)
 
@@ -7875,7 +7884,7 @@ final class GatewayToolRegistryTests {
 
     let readResult = try registry.callTool(
       name: "plist.read",
-      arguments: .object(["path": .string("generated/Info.plist")])
+      arguments: .object(["path": .string("generated/Info.plist")]), context: .empty
     )
     let readPayload = try decodeTextPayload(readResult)
     let readValue = try #require(readPayload.objectValue?["value"]?.objectValue)
@@ -7913,7 +7922,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside.plist"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -7925,7 +7934,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("missing/out.plist"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Parent directory does not exist"))
@@ -7937,7 +7946,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("folder"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is a directory"))
@@ -7949,7 +7958,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("existing.plist"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Refusing to overwrite"))
@@ -7962,7 +7971,7 @@ final class GatewayToolRegistryTests {
           "path": .string("bad.plist"),
           "format": .string("openstep"),
           "value": .object(["ok": .bool(true)]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("format must be xml or binary"))
@@ -7974,7 +7983,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("null.plist"),
           "value": .object(["bad": .null]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("do not support null"))
@@ -7991,7 +8000,7 @@ final class GatewayToolRegistryTests {
               "iso8601": .string("not-a-date"),
             ])
           ]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Invalid property list date"))
@@ -8004,7 +8013,7 @@ final class GatewayToolRegistryTests {
           "path": .string("too-large.plist"),
           "max_bytes": .number(8),
           "value": .object(["large": .string("value")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Encoded property list exceeds max_bytes"))
@@ -8035,7 +8044,7 @@ final class GatewayToolRegistryTests {
         "path": .string("data.csv"),
         "max_rows": .number(2),
         "max_columns": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let headers = try #require(payload.objectValue?["headers"]?.arrayValue)
@@ -8081,7 +8090,7 @@ final class GatewayToolRegistryTests {
         "path": .string("data.tsv"),
         "delimiter": .string("tab"),
         "has_header": .bool(false),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let rows = try #require(payload.objectValue?["rows"]?.arrayValue)
@@ -8118,7 +8127,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "csv.read",
-        arguments: .object(["path": .string("../outside.csv")])
+        arguments: .object(["path": .string("../outside.csv")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -8127,7 +8136,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "csv.read",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -8139,7 +8148,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("partial.csv"),
           "delimiter": .string("\n"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("delimiter must be"))
@@ -8151,7 +8160,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("partial.csv"),
           "max_rows": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_rows"))
@@ -8163,7 +8172,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("partial.csv"),
           "max_columns": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_columns"))
@@ -8172,7 +8181,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "csv.read",
-        arguments: .object(["path": .string("invalid.csv")])
+        arguments: .object(["path": .string("invalid.csv")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -8183,7 +8192,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("partial.csv"),
         "max_bytes": .number(6),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
 
@@ -8237,7 +8246,7 @@ final class GatewayToolRegistryTests {
         "path": .string("app.db"),
         "max_entries": .number(10),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -8277,7 +8286,7 @@ final class GatewayToolRegistryTests {
         "include_triggers": .bool(false),
         "include_sql": .bool(false),
         "max_entries": .number(1),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedEntries = try #require(truncatedPayload.objectValue?["entries"]?.arrayValue)
@@ -8315,7 +8324,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "sqlite.schema",
-        arguments: .object(["path": .string("../outside.db")])
+        arguments: .object(["path": .string("../outside.db")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -8324,7 +8333,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "sqlite.schema",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -8336,7 +8345,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("app.db"),
           "max_entries": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_entries"))
@@ -8355,7 +8364,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try failingRegistry.callTool(
         name: "sqlite.schema",
-        arguments: .object(["path": .string("app.db")])
+        arguments: .object(["path": .string("app.db")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("sqlite.schema failed"))
@@ -8375,7 +8384,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try truncatedRegistry.callTool(
         name: "sqlite.schema",
-        arguments: .object(["path": .string("app.db")])
+        arguments: .object(["path": .string("app.db")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("exceeded max_output_bytes"))
@@ -8393,7 +8402,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try badJSONRegistry.callTool(
         name: "sqlite.schema",
-        arguments: .object(["path": .string("app.db")])
+        arguments: .object(["path": .string("app.db")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to parse sqlite schema JSON"))
@@ -8432,7 +8441,7 @@ final class GatewayToolRegistryTests {
         "query": .string("SELECT id, name FROM items ORDER BY id;"),
         "max_rows": .number(2),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let rows = try #require(payload.objectValue?["rows"]?.arrayValue)
@@ -8458,7 +8467,7 @@ final class GatewayToolRegistryTests {
         "path": .string("app.db"),
         "query": .string("PRAGMA table_info(items);"),
         "max_rows": .number(10),
-      ])
+      ]), context: .empty
     )
     let pragmaPayload = try decodeTextPayload(pragmaResult)
     let secondSQL = try #require(runner.calls.last?.arguments.last)
@@ -8491,7 +8500,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside.db"),
           "query": .string("SELECT 1"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -8503,7 +8512,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("folder"),
           "query": .string("SELECT 1"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -8515,7 +8524,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("app.db"),
           "query": .string("UPDATE items SET name = 'x'"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("read-only"))
@@ -8527,7 +8536,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("app.db"),
           "query": .string("SELECT 1; SELECT 2"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("one SQL statement"))
@@ -8539,7 +8548,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("app.db"),
           "query": .string("PRAGMA user_version = 1"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("without assignment"))
@@ -8559,7 +8568,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("app.db"),
         "query": .string("SELECT 'drop table users' AS text"),
-      ])
+      ]), context: .empty
     )
 
     let failingRunner = FakeCommandRunner()
@@ -8578,7 +8587,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("app.db"),
           "query": .string("SELECT 1"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("sqlite.query failed"))
@@ -8601,7 +8610,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("app.db"),
           "query": .string("SELECT 1"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("exceeded max_output_bytes"))
@@ -8622,7 +8631,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("app.db"),
           "query": .string("SELECT 1"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to parse sqlite query JSON"))
@@ -8643,7 +8652,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.hash",
-      arguments: .object(["path": .string("notes.txt")])
+      arguments: .object(["path": .string("notes.txt")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -8672,7 +8681,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("notes.txt"),
           "algorithm": .string("md5"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("sha256"))
@@ -8699,7 +8708,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes.txt"),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -8746,7 +8755,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("Images/tile.png"),
         "include_properties": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -8779,7 +8788,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "image.info",
-        arguments: .object(["path": .string("notes.txt")])
+        arguments: .object(["path": .string("notes.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to read image metadata"))
@@ -8788,7 +8797,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "image.info",
-        arguments: .object(["path": .string(".")])
+        arguments: .object(["path": .string(".")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -8823,7 +8832,7 @@ final class GatewayToolRegistryTests {
         "path": .string("Docs/report.pdf"),
         "max_pages": .number(1),
         "include_attributes": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let page = try #require(payload.objectValue?["pages"]?.arrayValue?.first?.objectValue)
@@ -8862,7 +8871,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "pdf.info",
-        arguments: .object(["path": .string("notes.txt")])
+        arguments: .object(["path": .string("notes.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to read PDF metadata"))
@@ -8871,7 +8880,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "pdf.info",
-        arguments: .object(["path": .string(".")])
+        arguments: .object(["path": .string(".")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -8904,7 +8913,7 @@ final class GatewayToolRegistryTests {
         "path": .string("Docs/report.pdf"),
         "max_pages": .number(1),
         "max_characters": .number(1_000),
-      ])
+      ]), context: .empty
     )
     let firstPagePayload = try decodeTextPayload(firstPageResult)
     let firstPage = try #require(firstPagePayload.objectValue?["pages"]?.arrayValue?.first)
@@ -8929,7 +8938,7 @@ final class GatewayToolRegistryTests {
         "start_page": .number(2),
         "max_pages": .number(1),
         "max_characters": .number(8),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedPage = try #require(truncatedPayload.objectValue?["pages"]?.arrayValue?.first)
@@ -8966,7 +8975,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "pdf.text",
-        arguments: .object(["path": .string("notes.txt")])
+        arguments: .object(["path": .string("notes.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to read PDF text"))
@@ -8975,7 +8984,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "pdf.text",
-        arguments: .object(["path": .string(".")])
+        arguments: .object(["path": .string(".")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -8987,7 +8996,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("blank.pdf"),
           "start_page": .number(2),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("start_page exceeds PDF page_count"))
@@ -8999,7 +9008,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("blank.pdf"),
           "max_characters": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_characters"))
@@ -9026,7 +9035,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("Media/tone.wav"),
         "max_tracks": .number(5),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let track = try #require(payload.objectValue?["tracks"]?.arrayValue?.first?.objectValue)
@@ -9065,7 +9074,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "media.info",
-        arguments: .object(["path": .string("notes.txt")])
+        arguments: .object(["path": .string("notes.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unable to read media metadata"))
@@ -9074,7 +9083,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "media.info",
-        arguments: .object(["path": .string(".")])
+        arguments: .object(["path": .string(".")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -9098,7 +9107,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.count",
-      arguments: .object(["path": .string("notes.txt")])
+      arguments: .object(["path": .string("notes.txt")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9130,7 +9139,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.disk_usage",
-      arguments: .object(["path": .string("nested")])
+      arguments: .object(["path": .string("nested")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9160,7 +9169,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.volume_info",
-      arguments: .object(["path": .string("notes.txt")])
+      arguments: .object(["path": .string("notes.txt")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let volume = try #require(payload.objectValue?["volume"]?.objectValue)
@@ -9189,7 +9198,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.volume_info",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -9198,7 +9207,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.volume_info",
-        arguments: .object(["path": .string("missing")])
+        arguments: .object(["path": .string("missing")]), context: .empty
       )
     )
   }
@@ -9220,7 +9229,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.type",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -9229,7 +9238,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.count",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
@@ -9241,7 +9250,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("folder"),
           "timeout_ms": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -9261,7 +9270,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.disk_usage",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -9270,7 +9279,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.disk_usage",
-        arguments: .object(["path": .string("missing")])
+        arguments: .object(["path": .string("missing")]), context: .empty
       )
     )
 
@@ -9280,7 +9289,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("."),
           "timeout_ms": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -9310,7 +9319,7 @@ final class GatewayToolRegistryTests {
         "target": .string("after.txt"),
         "context_lines": .number(1),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9354,7 +9363,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "source": .string("../outside"),
           "target": .string("one.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -9366,7 +9375,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "source": .string("folder"),
           "target": .string("one.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Source is not a file"))
@@ -9379,7 +9388,7 @@ final class GatewayToolRegistryTests {
           "source": .string("one.txt"),
           "target": .string("one.txt"),
           "context_lines": .number(-1),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("context_lines"))
@@ -9435,7 +9444,7 @@ final class GatewayToolRegistryTests {
         "right": .string("right"),
         "max_depth": .number(3),
         "max_results": .number(20),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let counts = try #require(payload.objectValue?["difference_counts"]?.objectValue)
@@ -9488,7 +9497,7 @@ final class GatewayToolRegistryTests {
         "left": .string("left"),
         "right": .string("right"),
         "compare_hashes": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let counts = try #require(payload.objectValue?["difference_counts"]?.objectValue)
@@ -9525,7 +9534,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "left": .string("../outside"),
           "right": .string("left"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -9537,7 +9546,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "left": .string("file.txt"),
           "right": .string("left"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a directory"))
@@ -9550,7 +9559,7 @@ final class GatewayToolRegistryTests {
           "left": .string("left"),
           "right": .string("left"),
           "max_depth": .number(-1),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_depth"))
@@ -9596,7 +9605,7 @@ final class GatewayToolRegistryTests {
         "max_depth": .number(3),
         "max_groups": .number(10),
         "max_files_per_group": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let groups = try #require(payload.objectValue?["groups"]?.arrayValue)
@@ -9644,7 +9653,7 @@ final class GatewayToolRegistryTests {
       name: "file.duplicates",
       arguments: .object([
         "max_hash_files": .number(1)
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9672,7 +9681,7 @@ final class GatewayToolRegistryTests {
         name: "file.duplicates",
         arguments: .object([
           "path": .string("../outside")
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -9683,7 +9692,7 @@ final class GatewayToolRegistryTests {
         name: "file.duplicates",
         arguments: .object([
           "path": .string("file.txt")
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a directory"))
@@ -9694,7 +9703,7 @@ final class GatewayToolRegistryTests {
         name: "file.duplicates",
         arguments: .object([
           "max_depth": .number(-1)
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_depth"))
@@ -9722,7 +9731,7 @@ final class GatewayToolRegistryTests {
         "path": .string("bundle.zip"),
         "max_entries": .number(2),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -9761,7 +9770,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "archive.list",
-      arguments: .object(["path": .string("bundle.tar.gz")])
+      arguments: .object(["path": .string("bundle.tar.gz")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9772,7 +9781,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "archive.list",
-        arguments: .object(["path": .string("notes.txt")])
+        arguments: .object(["path": .string("notes.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unsupported archive format"))
@@ -9781,7 +9790,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "archive.list",
-        arguments: .object(["path": .string("../outside.zip")])
+        arguments: .object(["path": .string("../outside.zip")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -9793,7 +9802,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bundle.tar.gz"),
           "max_entries": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_entries"))
@@ -9824,7 +9833,7 @@ final class GatewayToolRegistryTests {
         "entry": .string("dir/file.txt"),
         "max_bytes": .number(32),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9872,7 +9881,7 @@ final class GatewayToolRegistryTests {
         "path": .string("bundle.zip"),
         "entry": .string("image.bin"),
         "encoding": .string("auto"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9891,7 +9900,7 @@ final class GatewayToolRegistryTests {
         "path": .string("bundle.zip"),
         "entry": .string("image.bin"),
         "encoding": .string("base64"),
-      ])
+      ]), context: .empty
     )
     let forcedPayload = try decodeTextPayload(forcedBase64Result)
     #expect((forcedPayload.objectValue?["encoding"]) == (.string("base64")))
@@ -9920,7 +9929,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bundle.zip"),
           "entry": .string("image.bin"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not valid UTF-8"))
@@ -9948,7 +9957,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("bundle.tar.gz"),
         "entry": .string("./src/main.swift"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -9984,7 +9993,7 @@ final class GatewayToolRegistryTests {
           arguments: .object([
             "path": .string("bundle.zip"),
             "entry": .string(entry),
-          ])
+          ]), context: .empty
         )
       )
     }
@@ -9996,7 +10005,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("notes.txt"),
           "entry": .string("README.md"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Unsupported archive format"))
@@ -10009,7 +10018,7 @@ final class GatewayToolRegistryTests {
           "path": .string("bundle.zip"),
           "entry": .string("README.md"),
           "max_bytes": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_bytes"))
@@ -10030,7 +10039,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bundle.zip"),
           "entry": .string("missing.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("failed with exit code 11"))
@@ -10072,7 +10081,7 @@ final class GatewayToolRegistryTests {
         "destination": .string("out"),
         "create_directories": .bool(true),
         "max_preview_entries": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -10139,7 +10148,7 @@ final class GatewayToolRegistryTests {
         "destination": .string("out"),
         "dry_run": .bool(false),
         "confirm_extract": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -10177,7 +10186,7 @@ final class GatewayToolRegistryTests {
           "path": .string("bundle.zip"),
           "destination": .string("out"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_extract"))
@@ -10203,7 +10212,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bundle.zip"),
           "destination": .string("out"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes destination"))
@@ -10227,7 +10236,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bundle.zip"),
           "destination": .string("out"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("link entries"))
@@ -10251,7 +10260,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bundle.zip"),
           "destination": .string("out"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("overwrite existing path"))
@@ -10290,7 +10299,7 @@ final class GatewayToolRegistryTests {
         "sources": .array([.string("src"), .string("README.md")]),
         "create_directories": .bool(true),
         "max_preview_entries": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -10351,7 +10360,7 @@ final class GatewayToolRegistryTests {
         "create_directories": .bool(true),
         "dry_run": .bool(false),
         "confirm_create": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -10387,7 +10396,7 @@ final class GatewayToolRegistryTests {
           "path": .string("bundle.zip"),
           "sources": .array([.string("src")]),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_create"))
@@ -10408,7 +10417,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("bundle.zip"),
           "sources": .array([.string("src")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("already exists"))
@@ -10426,7 +10435,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("src/bundle.zip"),
           "sources": .array([.string("src")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("inside a source path"))
@@ -10446,7 +10455,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("new-bundle.zip"),
           "sources": .array([.string("src")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("symbolic link entries"))
@@ -10458,7 +10467,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("new-bundle.zip"),
           "sources": .array([]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("sources must not be empty"))
@@ -10479,7 +10488,7 @@ final class GatewayToolRegistryTests {
 
     let mkdirResult = try registry.callTool(
       name: "file.mkdir",
-      arguments: .object(["path": .string("notes/nested")])
+      arguments: .object(["path": .string("notes/nested")]), context: .empty
     )
     let mkdirPayload = try decodeTextPayload(mkdirResult)
     #expect((mkdirPayload.objectValue?["workspace_relative_path"]) == (.string("notes/nested")))
@@ -10487,7 +10496,7 @@ final class GatewayToolRegistryTests {
 
     let existingResult = try registry.callTool(
       name: "file.mkdir",
-      arguments: .object(["path": .string("notes/nested")])
+      arguments: .object(["path": .string("notes/nested")]), context: .empty
     )
     let existingPayload = try decodeTextPayload(existingResult)
     #expect((existingPayload.objectValue?["created"]) == (.bool(false)))
@@ -10497,7 +10506,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "source": .string("source.txt"),
         "destination": .string("notes/nested/copy.txt"),
-      ])
+      ]), context: .empty
     )
     let copyPayload = try decodeTextPayload(copyResult)
     #expect((copyPayload.objectValue?["operation"]) == (.string("file.copy")))
@@ -10511,7 +10520,7 @@ final class GatewayToolRegistryTests {
         "source": .string("notes/nested/copy.txt"),
         "destination": .string("moved/copy.txt"),
         "create_directories": .bool(true),
-      ])
+      ]), context: .empty
     )
     let movePayload = try decodeTextPayload(moveResult)
     #expect((movePayload.objectValue?["operation"]) == (.string("file.move")))
@@ -10542,7 +10551,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "source": .string("source.txt"),
           "destination": .string("target.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Destination already exists"))
@@ -10554,7 +10563,7 @@ final class GatewayToolRegistryTests {
         "source": .string("source.txt"),
         "destination": .string("target.txt"),
         "overwrite": .bool(true),
-      ])
+      ]), context: .empty
     )
 
     #expect((try String(contentsOf: directory.appendingPathComponent("target.txt"))) == ("source"))
@@ -10572,7 +10581,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.mkdir",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -10584,7 +10593,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "source": .string("missing.txt"),
           "destination": .string("../outside"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -10616,7 +10625,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes/nested"),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let mkdirPayload = try decodeTextPayload(mkdirResult)
     #expect((mkdirPayload.objectValue?["dry_run"]) == (.bool(true)))
@@ -10631,7 +10640,7 @@ final class GatewayToolRegistryTests {
         "path": .string("logs/session.txt"),
         "create_directories": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let touchPayload = try decodeTextPayload(touchResult)
     #expect((touchPayload.objectValue?["dry_run"]) == (.bool(true)))
@@ -10647,7 +10656,7 @@ final class GatewayToolRegistryTests {
         "destination": .string("target.txt"),
         "overwrite": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let copyPayload = try decodeTextPayload(copyResult)
     #expect((copyPayload.objectValue?["dry_run"]) == (.bool(true)))
@@ -10663,7 +10672,7 @@ final class GatewayToolRegistryTests {
         "destination": .string("moved/source.txt"),
         "create_directories": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let movePayload = try decodeTextPayload(moveResult)
     #expect((movePayload.objectValue?["dry_run"]) == (.bool(true)))
@@ -10681,7 +10690,7 @@ final class GatewayToolRegistryTests {
         "destination": .string("../source.txt"),
         "create_directories": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let symlinkPayload = try decodeTextPayload(symlinkResult)
     #expect((symlinkPayload.objectValue?["dry_run"]) == (.bool(true)))
@@ -10696,7 +10705,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("obsolete.txt"),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let trashPayload = try decodeTextPayload(trashResult)
     #expect((trashPayload.objectValue?["dry_run"]) == (.bool(true)))
@@ -10721,7 +10730,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes/touched.txt"),
         "create_directories": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let file = directory.appendingPathComponent("notes/touched.txt")
@@ -10741,7 +10750,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("notes/touched.txt"),
         "create_if_missing": .bool(false),
-      ])
+      ]), context: .empty
     )
     let updatePayload = try decodeTextPayload(updateResult)
     let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
@@ -10772,7 +10781,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("missing.txt"),
           "create_if_missing": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -10781,7 +10790,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.touch",
-        arguments: .object(["path": .string("nested/missing.txt")])
+        arguments: .object(["path": .string("nested/missing.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Parent directory"))
@@ -10790,7 +10799,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.touch",
-        arguments: .object(["path": .string("folder")])
+        arguments: .object(["path": .string("folder")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("directory"))
@@ -10799,7 +10808,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.touch",
-        arguments: .object(["path": .string("../outside.txt")])
+        arguments: .object(["path": .string("../outside.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -10824,7 +10833,7 @@ final class GatewayToolRegistryTests {
         "path": .string("links/current"),
         "destination": .string("../target.txt"),
         "create_directories": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let link = directory.appendingPathComponent("links/current")
@@ -10858,7 +10867,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("external-link"),
           "destination": .string("/tmp/computer-mcp-external-target"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("outside workspace"))
@@ -10871,7 +10880,7 @@ final class GatewayToolRegistryTests {
         "destination": .string("/tmp/computer-mcp-external-target"),
         "allow_external_destination": .bool(true),
         "overwrite": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -10904,7 +10913,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside-link"),
           "destination": .string("target"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -10916,7 +10925,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("outside-parent/link"),
           "destination": .string("target"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("parent symlink"))
@@ -10928,7 +10937,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("empty-link"),
           "destination": .string(""),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("destination"))
@@ -10949,7 +10958,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.trash",
-      arguments: .object(["path": .string("obsolete.txt")])
+      arguments: .object(["path": .string("obsolete.txt")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -10971,7 +10980,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.trash",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -11002,7 +11011,8 @@ final class GatewayToolRegistryTests {
     )
     let registry = GatewayToolRegistry(configuration: config)
 
-    let result = try registry.callTool(name: "workspace.info", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "workspace.info", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["server"]?.objectValue?["name"]) == (.string("test-computer")))
@@ -11052,7 +11062,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.status",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let workspace = try #require(payload.objectValue?["workspace"]?.objectValue)
@@ -11078,7 +11088,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_entries": .number(1),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedTopLevel = try #require(truncatedPayload.objectValue?["top_level"]?.objectValue)
@@ -11109,7 +11119,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.manifests",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let workspace = try #require(payload.objectValue?["workspace"]?.objectValue)
@@ -11131,7 +11141,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_missing": .bool(true),
         "max_results": .number(2),
-      ])
+      ]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missingResult)
     let missingManifests = try #require(missingPayload.objectValue?["manifests"]?.arrayValue)
@@ -11171,7 +11181,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.recent_files",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -11190,7 +11200,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenFiles = try #require(hiddenPayload.objectValue?["files"]?.arrayValue)
@@ -11255,7 +11265,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.directory_stats",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let groups = try #require(payload.objectValue?["groups"]?.arrayValue)
@@ -11288,7 +11298,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
 
@@ -11336,7 +11346,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.artifact_directories",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let directories = try #require(payload.objectValue?["directories"]?.arrayValue)
@@ -11378,7 +11388,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(false),
         "max_depth": .number(4),
-      ])
+      ]), context: .empty
     )
     let visibleOnlyPayload = try decodeTextPayload(visibleOnlyResult)
     let visibleOnlyDirectories = try #require(
@@ -11392,7 +11402,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.artifact_directories",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -11401,7 +11411,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "workspace.artifact_directories",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -11410,7 +11420,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "workspace.artifact_directories",
-        arguments: .object(["path": .string("Docs/guide.md")])
+        arguments: .object(["path": .string("Docs/guide.md")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a directory"))
@@ -11448,7 +11458,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.empty_directories",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let directories = try #require(payload.objectValue?["directories"]?.arrayValue)
@@ -11484,7 +11494,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenDirectories = try #require(hiddenPayload.objectValue?["directories"]?.arrayValue)
@@ -11499,7 +11509,7 @@ final class GatewayToolRegistryTests {
 
     let scopedResult = try registry.callTool(
       name: "workspace.empty_directories",
-      arguments: .object(["path": .string("empty")])
+      arguments: .object(["path": .string("empty")]), context: .empty
     )
     let scopedPayload = try decodeTextPayload(scopedResult)
     let scopedDirectory = try #require(
@@ -11512,7 +11522,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "workspace.empty_directories",
-        arguments: .object(["path": .string("non-empty/file.txt")])
+        arguments: .object(["path": .string("non-empty/file.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a directory"))
@@ -11537,7 +11547,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "paths": .array([.string("Sources")]),
         "max_results": .number(3),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let changes = try #require(payload.objectValue?["changes"]?.arrayValue)
@@ -11589,7 +11599,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.file_types",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let groups = try #require(payload.objectValue?["file_types"]?.arrayValue)
@@ -11612,7 +11622,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_groups": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenGroups = try #require(hiddenPayload.objectValue?["file_types"]?.arrayValue)
@@ -11647,7 +11657,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.large_files",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -11666,7 +11676,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenFiles = try #require(hiddenPayload.objectValue?["files"]?.arrayValue)
@@ -11712,7 +11722,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.symlinks",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let symlinks = try #require(payload.objectValue?["symlinks"]?.arrayValue)
@@ -11741,7 +11751,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenSymlinks = try #require(hiddenPayload.objectValue?["symlinks"]?.arrayValue)
@@ -11779,7 +11789,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.executable_files",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -11798,7 +11808,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenFiles = try #require(hiddenPayload.objectValue?["files"]?.arrayValue)
@@ -11837,7 +11847,7 @@ final class GatewayToolRegistryTests {
       name: "workspace.todos",
       arguments: .object([
         "max_matches": .number(2)
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let matches = try #require(payload.objectValue?["matches"]?.arrayValue)
@@ -11863,7 +11873,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_matches": .number(10),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenMatches = try #require(hiddenPayload.objectValue?["matches"]?.arrayValue)
@@ -11879,7 +11889,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("Sources"),
         "markers": .array([.string("NOTE")]),
-      ])
+      ]), context: .empty
     )
     let customPayload = try decodeTextPayload(customResult)
     let customMatch = try #require(
@@ -11893,7 +11903,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "workspace.todos",
-        arguments: .object(["markers": .array([.string("")])])
+        arguments: .object(["markers": .array([.string("")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("markers must not contain empty strings"))
@@ -11932,7 +11942,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.env_files",
-      arguments: .object([:])
+      arguments: .object([:]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -11976,7 +11986,7 @@ final class GatewayToolRegistryTests {
 
     let hiddenResult = try registry.callTool(
       name: "workspace.env_files",
-      arguments: .object(["include_hidden_directories": .bool(true)])
+      arguments: .object(["include_hidden_directories": .bool(true)]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenFiles = try #require(hiddenPayload.objectValue?["env_files"]?.arrayValue)
@@ -11990,7 +12000,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string(".env"),
         "max_keys_per_file": .number(1),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     let truncatedFile = try #require(truncatedPayload.objectValue?["env_files"]?.arrayValue?.first)
@@ -12035,7 +12045,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.dependency_files",
-      arguments: .object(["max_depth": .number(1)])
+      arguments: .object(["max_depth": .number(1)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -12069,7 +12079,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -12079,7 +12089,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.dependency_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12087,7 +12097,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.dependency_files",
-      arguments: .object(["path": .string("package.json")])
+      arguments: .object(["path": .string("package.json")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["dependency_file_count"]) == (.number(1)))
@@ -12132,7 +12142,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.project_roots",
-      arguments: .object(["max_depth": .number(3)])
+      arguments: .object(["max_depth": .number(3)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let roots = try #require(payload.objectValue?["project_roots"]?.arrayValue)
@@ -12170,7 +12180,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenRoots = try #require(hiddenPayload.objectValue?["project_roots"]?.arrayValue)
@@ -12181,7 +12191,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.project_roots",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12189,7 +12199,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.project_roots",
-      arguments: .object(["path": .string("package.json")])
+      arguments: .object(["path": .string("package.json")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["project_root_count"]) == (.number(1)))
@@ -12239,7 +12249,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.documentation_files",
-      arguments: .object(["max_depth": .number(2)])
+      arguments: .object(["max_depth": .number(2)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -12292,7 +12302,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -12302,7 +12312,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.documentation_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12310,7 +12320,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.documentation_files",
-      arguments: .object(["path": .string("AGENTS.md")])
+      arguments: .object(["path": .string("AGENTS.md")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["documentation_file_count"]) == (.number(1)))
@@ -12361,7 +12371,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "workspace.agent_files", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "workspace.agent_files", arguments: .object([:]), context: .empty)
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
     let payload = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
@@ -12399,7 +12410,7 @@ final class GatewayToolRegistryTests {
 
     let visibleOnlyResult = try registry.callTool(
       name: "workspace.agent_files",
-      arguments: .object(["include_hidden": .bool(false)])
+      arguments: .object(["include_hidden": .bool(false)]), context: .empty
     )
     let visibleOnlyPayload = try decodeTextPayload(visibleOnlyResult)
     let visibleOnlyFiles = try #require(
@@ -12415,7 +12426,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.agent_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12423,7 +12434,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.agent_files",
-      arguments: .object(["path": .string("AGENTS.md")])
+      arguments: .object(["path": .string("AGENTS.md")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["agent_file_count"]) == (.number(1)))
@@ -12472,7 +12483,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.instructions",
-      arguments: .object(["path": .string("app/feature/Sources/Feature.swift")])
+      arguments: .object(["path": .string("app/feature/Sources/Feature.swift")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -12503,7 +12514,7 @@ final class GatewayToolRegistryTests {
 
     let futureResult = try registry.callTool(
       name: "workspace.instructions",
-      arguments: .object(["path": .string("app/feature/NewFile.swift")])
+      arguments: .object(["path": .string("app/feature/NewFile.swift")]), context: .empty
     )
     let futurePayload = try decodeTextPayload(futureResult)
     #expect((futurePayload.objectValue?["target_exists"]) == (.bool(false)))
@@ -12515,7 +12526,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("app/feature/Sources/Feature.swift"),
         "include_content": .bool(false),
-      ])
+      ]), context: .empty
     )
     let metadataOnlyPayload = try decodeTextPayload(metadataOnlyResult)
     let metadataOnlyFile = try #require(
@@ -12528,7 +12539,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("app/feature/Sources/Feature.swift"),
         "max_bytes_per_file": .number(4),
-      ])
+      ]), context: .empty
     )
     let truncatedContentPayload = try decodeTextPayload(truncatedContentResult)
     let truncatedFile = try #require(
@@ -12541,7 +12552,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("app/feature/Sources/Feature.swift"),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12550,7 +12561,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "workspace.instructions",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path escapes workspace"))
@@ -12595,7 +12606,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.test_files",
-      arguments: .object(["max_depth": .number(3)])
+      arguments: .object(["max_depth": .number(3)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -12636,7 +12647,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(1),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -12646,7 +12657,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.test_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12654,7 +12665,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.test_files",
-      arguments: .object(["path": .string("Sources/App/user.spec.ts")])
+      arguments: .object(["path": .string("Sources/App/user.spec.ts")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["test_file_count"]) == (.number(1)))
@@ -12702,7 +12713,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.ci_files",
-      arguments: .object(["max_depth": .number(3)])
+      arguments: .object(["max_depth": .number(3)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -12743,7 +12754,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(false),
         "max_depth": .number(3),
-      ])
+      ]), context: .empty
     )
     let visibleOnlyPayload = try decodeTextPayload(visibleOnlyResult)
     let visibleOnlyPaths = try #require(visibleOnlyPayload.objectValue?["files"]?.arrayValue)
@@ -12757,7 +12768,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.ci_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12765,7 +12776,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.ci_files",
-      arguments: .object(["path": .string(".github/workflows/build.yml")])
+      arguments: .object(["path": .string(".github/workflows/build.yml")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["ci_file_count"]) == (.number(1)))
@@ -12838,7 +12849,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.infra_files",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -12904,7 +12915,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(2),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -12915,7 +12926,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.infra_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -12923,7 +12934,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.infra_files",
-      arguments: .object(["path": .string("wrangler.toml")])
+      arguments: .object(["path": .string("wrangler.toml")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["infra_file_count"]) == (.number(1)))
@@ -12972,7 +12983,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.config_files",
-      arguments: .object(["max_depth": .number(3)])
+      arguments: .object(["max_depth": .number(3)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13020,7 +13031,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(false),
         "max_depth": .number(3),
-      ])
+      ]), context: .empty
     )
     let visibleOnlyPayload = try decodeTextPayload(visibleOnlyResult)
     let visibleOnlyPaths = try #require(visibleOnlyPayload.objectValue?["files"]?.arrayValue)
@@ -13036,7 +13047,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.config_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13044,7 +13055,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.config_files",
-      arguments: .object(["path": .string(".vscode/settings.json")])
+      arguments: .object(["path": .string(".vscode/settings.json")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["config_file_count"]) == (.number(1)))
@@ -13089,7 +13100,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.ignore_files",
-      arguments: .object(["max_depth": .number(3)])
+      arguments: .object(["max_depth": .number(3)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13132,7 +13143,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(false),
         "max_depth": .number(3),
-      ])
+      ]), context: .empty
     )
     let visibleOnlyPayload = try decodeTextPayload(visibleOnlyResult)
     let visibleOnlyFiles = try #require(visibleOnlyPayload.objectValue?["files"]?.arrayValue)
@@ -13140,7 +13151,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.ignore_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13148,7 +13159,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.ignore_files",
-      arguments: .object(["path": .string(".git/info/exclude")])
+      arguments: .object(["path": .string(".git/info/exclude")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["ignore_file_count"]) == (.number(1)))
@@ -13201,7 +13212,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.asset_files",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13278,7 +13289,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(2),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -13288,7 +13299,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.asset_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13296,7 +13307,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.asset_files",
-      arguments: .object(["path": .string("Resources/Fonts/Inter.woff2")])
+      arguments: .object(["path": .string("Resources/Fonts/Inter.woff2")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["asset_file_count"]) == (.number(1)))
@@ -13353,7 +13364,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.archive_files",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13416,7 +13427,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(2),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -13426,7 +13437,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.archive_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13434,7 +13445,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.archive_files",
-      arguments: .object(["path": .string("Archives/source.tar.gz")])
+      arguments: .object(["path": .string("Archives/source.tar.gz")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["archive_file_count"]) == (.number(1)))
@@ -13491,7 +13502,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.log_files",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13547,7 +13558,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(2),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -13557,7 +13568,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.log_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13565,7 +13576,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.log_files",
-      arguments: .object(["path": .string("logs/current")])
+      arguments: .object(["path": .string("logs/current")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["log_file_count"]) == (.number(1)))
@@ -13624,7 +13635,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.data_files",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13697,7 +13708,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(2),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -13707,7 +13718,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.data_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13715,7 +13726,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.data_files",
-      arguments: .object(["path": .string("app.sqlite")])
+      arguments: .object(["path": .string("app.sqlite")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["data_file_count"]) == (.number(1)))
@@ -13788,7 +13799,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.schema_files",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13857,7 +13868,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_hidden": .bool(true),
         "max_depth": .number(2),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
     let hiddenPaths = try #require(hiddenPayload.objectValue?["files"]?.arrayValue).compactMap {
@@ -13867,7 +13878,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.schema_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13875,7 +13886,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.schema_files",
-      arguments: .object(["path": .string("api/openapi.yaml")])
+      arguments: .object(["path": .string("api/openapi.yaml")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["schema_file_count"]) == (.number(1)))
@@ -13926,7 +13937,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.source_files",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
@@ -13972,7 +13983,7 @@ final class GatewayToolRegistryTests {
         "include_tests": .bool(true),
         "include_hidden": .bool(true),
         "max_depth": .number(4),
-      ])
+      ]), context: .empty
     )
     let withTestsPayload = try decodeTextPayload(withTestsResult)
     let withTestsPaths = try #require(withTestsPayload.objectValue?["files"]?.arrayValue)
@@ -13985,7 +13996,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.source_files",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(1)))
@@ -13993,7 +14004,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.source_files",
-      arguments: .object(["path": .string("Sources/App/view.tsx")])
+      arguments: .object(["path": .string("Sources/App/view.tsx")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["source_file_count"]) == (.number(1)))
@@ -14046,7 +14057,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.outline",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let items = try #require(payload.objectValue?["items"]?.arrayValue)
@@ -14083,7 +14094,7 @@ final class GatewayToolRegistryTests {
         "include_tests": .bool(true),
         "include_imports": .bool(true),
         "max_depth": .number(4),
-      ])
+      ]), context: .empty
     )
     let expandedPayload = try decodeTextPayload(expandedResult)
     let expandedNames = try #require(expandedPayload.objectValue?["items"]?.arrayValue)
@@ -14099,7 +14110,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "max_depth": .number(4),
         "max_items": .number(3),
-      ])
+      ]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(3)))
@@ -14107,7 +14118,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.outline",
-      arguments: .object(["path": .string("Sources/App/App.swift")])
+      arguments: .object(["path": .string("Sources/App/App.swift")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["outline_file_count"]) == (.number(1)))
@@ -14115,7 +14126,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "workspace.outline",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -14175,7 +14186,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "workspace.commands",
-      arguments: .object(["max_depth": .number(4)])
+      arguments: .object(["max_depth": .number(4)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let commands = try #require(payload.objectValue?["commands"]?.arrayValue)
@@ -14227,7 +14238,7 @@ final class GatewayToolRegistryTests {
 
     let truncatedResult = try registry.callTool(
       name: "workspace.commands",
-      arguments: .object(["max_results": .number(2)])
+      arguments: .object(["max_results": .number(2)]), context: .empty
     )
     let truncatedPayload = try decodeTextPayload(truncatedResult)
     #expect((truncatedPayload.objectValue?["returned_count"]) == (.number(2)))
@@ -14235,7 +14246,7 @@ final class GatewayToolRegistryTests {
 
     let singleFileResult = try registry.callTool(
       name: "workspace.commands",
-      arguments: .object(["path": .string("Package.swift")])
+      arguments: .object(["path": .string("Package.swift")]), context: .empty
     )
     let singleFilePayload = try decodeTextPayload(singleFileResult)
     #expect((singleFilePayload.objectValue?["manifest_count"]) == (.number(1)))
@@ -14250,7 +14261,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.info", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.info", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operating_system"]?.objectValue?["name"]) == (.string("macOS")))
@@ -14267,7 +14279,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.kernel", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.kernel", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operation"]) == (.string("system.kernel")))
@@ -14304,7 +14317,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "system.software",
-      arguments: .object(["timeout_ms": .number(1234)])
+      arguments: .object(["timeout_ms": .number(1234)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -14330,7 +14343,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.locale", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.locale", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operation"]) == (.string("system.locale")))
@@ -14358,7 +14372,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.memory", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.memory", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operation"]) == (.string("system.memory")))
@@ -14382,7 +14397,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.load", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.load", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operation"]) == (.string("system.load")))
@@ -14408,7 +14424,7 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.cpu", arguments: .object([:]))
+    let result = try registry.callTool(name: "system.cpu", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
     let processInfo = try #require(payload.objectValue?["process_info"]?.objectValue)
     let hardware = try #require(payload.objectValue?["hardware"]?.objectValue)
@@ -14437,7 +14453,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.thermal", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.thermal", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
     let thermalState = try #require(payload.objectValue?["thermal_state"]?.stringValue)
 
@@ -14460,7 +14477,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.time", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.time", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["now"]?.objectValue?["iso8601"]?.stringValue) != nil)
@@ -14482,7 +14500,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.uptime", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.uptime", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
     let uptime = try #require(payload.objectValue?["uptime_seconds"]?.numberValue)
     let bootTime = try #require(payload.objectValue?["boot_time"]?.objectValue)
@@ -14511,7 +14530,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.user", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.user", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
     let ids = try #require(payload.objectValue?["ids"]?.objectValue)
     let user = try #require(payload.objectValue?["user"]?.objectValue)
@@ -14553,7 +14573,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "system.groups", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "system.groups", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
     let groupCount = getgroups(0, nil)
     let groups = try #require(payload.objectValue?["supplementary_groups"]?.arrayValue)
@@ -14594,7 +14615,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "system.power",
-      arguments: .object(["timeout_ms": .number(1234)])
+      arguments: .object(["timeout_ms": .number(1234)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -14613,7 +14634,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "system.volumes",
-      arguments: .object(["include_hidden": .bool(false)])
+      arguments: .object(["include_hidden": .bool(false)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -14643,7 +14664,7 @@ final class GatewayToolRegistryTests {
         "query": .string("terminal"),
         "max_results": .number(5),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let processes = try #require(payload.objectValue?["processes"]?.arrayValue)
@@ -14684,7 +14705,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "system.processes",
-      arguments: .object(["max_results": .number(1)])
+      arguments: .object(["max_results": .number(1)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let processes = try #require(payload.objectValue?["processes"]?.arrayValue)
@@ -14696,7 +14717,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "system.processes",
-        arguments: .object(["max_results": .number(0)])
+        arguments: .object(["max_results": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -14722,7 +14743,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("sample-tool"),
         "all_matches": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -14738,7 +14759,7 @@ final class GatewayToolRegistryTests {
 
     let missing = try registry.callTool(
       name: "system.which",
-      arguments: .object(["name": .string("missing-tool")])
+      arguments: .object(["name": .string("missing-tool")]), context: .empty
     )
     let missingPayload = try decodeTextPayload(missing)
     #expect((missingPayload.objectValue?["found"]) == (.bool(false)))
@@ -14757,7 +14778,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "system.which",
-          arguments: .object(["name": .string(name)])
+          arguments: .object(["name": .string(name)]), context: .empty
         )
       ) { error in
         #expect(error.localizedDescription.contains("name"))
@@ -14781,7 +14802,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_missing": .bool(true),
         "max_entries": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -14806,7 +14827,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_missing": .bool(false),
         "max_entries": .number(1),
-      ])
+      ]), context: .empty
     )
     let existingPayload = try decodeTextPayload(existingOnly)
     let existingEntries = try #require(existingPayload.objectValue?["entries"]?.arrayValue)
@@ -14826,7 +14847,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "system.path",
-        arguments: .object(["max_entries": .number(0)])
+        arguments: .object(["max_entries": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_entries"))
@@ -14859,7 +14880,7 @@ final class GatewayToolRegistryTests {
         "include_debug": .bool(true),
         "timeout_ms": .number(12_345),
         "max_output_bytes": .number(65_536),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let events = try #require(payload.objectValue?["events"]?.arrayValue)
@@ -14896,7 +14917,7 @@ final class GatewayToolRegistryTests {
     )
 
     expectThrows(
-      try registry.callTool(name: "logs.query", arguments: .object([:]))
+      try registry.callTool(name: "logs.query", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("last_seconds"))
     }
@@ -14906,7 +14927,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "last_seconds": .number(1),
           "max_entries": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_entries"))
@@ -14918,7 +14939,7 @@ final class GatewayToolRegistryTests {
           "last_seconds": .number(1),
           "max_entries": .number(1),
           "predicate": .string(""),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("predicate"))
@@ -14954,7 +14975,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "domain": .string("gui"),
         "label": .string("com.example.worker"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let fields = try #require(payload.objectValue?["fields"]?.objectValue)
@@ -14993,7 +15014,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "domain": .string("system"),
         "label": .string("com.example.missing"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     #expect((runner.calls.first?.arguments) == (["print", "system/com.example.missing"]))
@@ -15007,7 +15028,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "domain": .string("login"),
           "label": .string("com.example.worker"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("domain"))
@@ -15018,7 +15039,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "domain": .string("gui"),
           "label": .string("../com.example.worker"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("label"))
@@ -15037,7 +15058,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "network.interfaces",
-      arguments: .object(["interface": .string("lo0")])
+      arguments: .object(["interface": .string("lo0")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15046,7 +15067,7 @@ final class GatewayToolRegistryTests {
     #expect((payload.objectValue?["operation"]) == (.string("network.interfaces")))
     #expect((payload.objectValue?["interface"]) == (.string("lo0")))
 
-    _ = try registry.callTool(name: "network.interfaces", arguments: .object([:]))
+    _ = try registry.callTool(name: "network.interfaces", arguments: .object([:]), context: .empty)
     #expect((runner.calls.last?.arguments) == (["-a"]))
   }
 
@@ -15061,7 +15082,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.interfaces",
-        arguments: .object(["interface": .string("-a")])
+        arguments: .object(["interface": .string("-a")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("option"))
@@ -15078,7 +15099,8 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "network.dns", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "network.dns", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.first?.executable) == ("/usr/sbin/scutil"))
@@ -15099,7 +15121,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "host": .string("localhost"),
         "family": .string("ipv4"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let addresses = try #require(payload.objectValue?["addresses"]?.arrayValue)
@@ -15131,7 +15153,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "host": .string("::1"),
         "family": .string("ipv4"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15153,7 +15175,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.resolve",
-        arguments: .object(["host": .string("https://example.com")])
+        arguments: .object(["host": .string("https://example.com")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("URL"))
@@ -15165,7 +15187,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "host": .string("localhost"),
           "family": .string("link"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("family"))
@@ -15177,7 +15199,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "host": .string("localhost"),
           "max_results": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -15202,7 +15224,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "network.proxy",
-      arguments: .object(["timeout_ms": .number(1234)])
+      arguments: .object(["timeout_ms": .number(1234)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15224,7 +15246,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.proxy",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15251,7 +15273,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15276,7 +15298,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.services",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15285,7 +15307,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.services",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15312,7 +15334,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15337,7 +15359,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.hardware_ports",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15346,7 +15368,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.hardware_ports",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15382,7 +15404,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15420,7 +15442,8 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "network.wifi", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "network.wifi", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.count) == (1))
@@ -15444,7 +15467,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.wifi",
-        arguments: .object(["device": .string("-bad")])
+        arguments: .object(["device": .string("-bad")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("interface"))
@@ -15453,7 +15476,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.wifi",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15462,7 +15485,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.wifi",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15490,7 +15513,7 @@ final class GatewayToolRegistryTests {
         "max_results": .number(1),
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let services = try #require(payload.objectValue?["services"]?.arrayValue)
@@ -15527,7 +15550,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.vpn",
-        arguments: .object(["max_results": .number(0)])
+        arguments: .object(["max_results": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -15536,7 +15559,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.vpn",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15545,7 +15568,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.vpn",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15568,7 +15591,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15600,7 +15623,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.locations",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15609,7 +15632,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.locations",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15639,7 +15662,7 @@ final class GatewayToolRegistryTests {
         "family": .string("inet"),
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15651,7 +15674,7 @@ final class GatewayToolRegistryTests {
     #expect((payload.objectValue?["family"]) == (.string("inet")))
     #expect((payload.objectValue?["result"]?.objectValue?["stdout"]) == (.string(runner.stdout)))
 
-    _ = try registry.callTool(name: "network.routes", arguments: .object([:]))
+    _ = try registry.callTool(name: "network.routes", arguments: .object([:]), context: .empty)
     #expect((runner.calls.last?.arguments) == (["-rn"]))
   }
 
@@ -15666,7 +15689,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.routes",
-        arguments: .object(["family": .string("link")])
+        arguments: .object(["family": .string("link")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("family"))
@@ -15675,7 +15698,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.routes",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15684,7 +15707,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.routes",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15712,7 +15735,7 @@ final class GatewayToolRegistryTests {
         "family": .string("inet"),
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15726,7 +15749,7 @@ final class GatewayToolRegistryTests {
       (payload.objectValue?["argv"]) == (.array([.string("-an"), .string("-f"), .string("inet")])))
     #expect((payload.objectValue?["result"]?.objectValue?["stdout"]) == (.string(runner.stdout)))
 
-    _ = try registry.callTool(name: "network.connections", arguments: .object([:]))
+    _ = try registry.callTool(name: "network.connections", arguments: .object([:]), context: .empty)
     #expect((runner.calls.last?.arguments) == (["-an"]))
   }
 
@@ -15741,7 +15764,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.connections",
-        arguments: .object(["family": .string("link")])
+        arguments: .object(["family": .string("link")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("family"))
@@ -15750,7 +15773,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.connections",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15759,7 +15782,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.connections",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15784,7 +15807,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15808,7 +15831,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.arp",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -15817,7 +15840,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.arp",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15845,7 +15868,7 @@ final class GatewayToolRegistryTests {
         "count": .number(2),
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15873,7 +15896,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.ping",
-        arguments: .object(["host": .string("-c")])
+        arguments: .object(["host": .string("-c")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("option"))
@@ -15882,7 +15905,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.ping",
-        arguments: .object(["host": .string("https://example.com")])
+        arguments: .object(["host": .string("https://example.com")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("URL"))
@@ -15894,7 +15917,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "host": .string("localhost"),
           "count": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("count"))
@@ -15906,7 +15929,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "host": .string("localhost"),
           "max_output_bytes": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -15932,7 +15955,7 @@ final class GatewayToolRegistryTests {
         "connect_timeout_seconds": .number(2),
         "timeout_ms": .number(3456),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -15963,7 +15986,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.tcp_check",
-        arguments: .object(["host": .string("localhost")])
+        arguments: .object(["host": .string("localhost")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("port"))
@@ -15975,7 +15998,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "host": .string("-example.com"),
           "port": .number(443),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("option"))
@@ -15987,7 +16010,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "host": .string("https://example.com"),
           "port": .number(443),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("URL"))
@@ -15999,7 +16022,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "host": .string("localhost"),
           "port": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("port"))
@@ -16012,7 +16035,7 @@ final class GatewayToolRegistryTests {
           "host": .string("localhost"),
           "port": .number(443),
           "connect_timeout_seconds": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("connect_timeout_seconds"))
@@ -16025,7 +16048,7 @@ final class GatewayToolRegistryTests {
           "host": .string("localhost"),
           "port": .number(443),
           "max_output_bytes": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -16064,7 +16087,7 @@ final class GatewayToolRegistryTests {
         "timeout_ms": .number(3456),
         "max_body_bytes": .number(128),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -16117,7 +16140,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "network.http_check",
-      arguments: .object(["url": .string("http://127.0.0.1:8080/mcp")])
+      arguments: .object(["url": .string("http://127.0.0.1:8080/mcp")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -16131,7 +16154,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.http_check",
-        arguments: .object(["url": .string("ftp://example.com")])
+        arguments: .object(["url": .string("ftp://example.com")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("http or https"))
@@ -16140,7 +16163,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.http_check",
-        arguments: .object(["url": .string("https://user:pass@example.com")])
+        arguments: .object(["url": .string("https://user:pass@example.com")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("userinfo"))
@@ -16152,7 +16175,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "url": .string("https://example.com"),
           "method": .string("POST"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("HEAD or GET"))
@@ -16164,7 +16187,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "url": .string("https://example.com"),
           "max_body_bytes": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_body_bytes"))
@@ -16197,7 +16220,7 @@ final class GatewayToolRegistryTests {
         "timeout_ms": .number(4_000),
         "max_download_bytes": .number(512),
         "max_output_bytes": .number(2_048),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -16284,7 +16307,7 @@ final class GatewayToolRegistryTests {
         "create_directories": .bool(true),
         "dry_run": .bool(false),
         "confirm_download": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -16337,7 +16360,7 @@ final class GatewayToolRegistryTests {
           "url": .string("https://example.com/report.txt"),
           "path": .string("downloads/new.txt"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_download"))
@@ -16350,7 +16373,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "url": .string("https://user:pass@example.com/report.txt"),
           "path": .string("downloads/new.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("userinfo"))
@@ -16362,7 +16385,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "url": .string("ftp://example.com/report.txt"),
           "path": .string("downloads/new.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("http or https"))
@@ -16374,7 +16397,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "url": .string("https://example.com/report.txt"),
           "path": .string("downloads/report.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("already exists"))
@@ -16386,7 +16409,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "url": .string("https://example.com/temp.txt"),
           "path": .string("downloads/temp.txt"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Temporary download path already exists"))
@@ -16412,7 +16435,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "timeout_ms": .number(1234),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -16438,7 +16461,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.listeners",
-        arguments: .object(["timeout_ms": .number(0)])
+        arguments: .object(["timeout_ms": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("timeout_ms"))
@@ -16447,7 +16470,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "network.listeners",
-        arguments: .object(["max_output_bytes": .number(0)])
+        arguments: .object(["max_output_bytes": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_output_bytes"))
@@ -16469,7 +16492,7 @@ final class GatewayToolRegistryTests {
         "include_user": .bool(false),
         "max_results": .number(5),
         "max_depth": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -16494,7 +16517,7 @@ final class GatewayToolRegistryTests {
         "include_missing": .bool(true),
         "include_system": .bool(true),
         "include_temporary": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let directories = try #require(payload.objectValue?["directories"]?.arrayValue)
@@ -16526,7 +16549,7 @@ final class GatewayToolRegistryTests {
         "include_missing": .bool(false),
         "include_system": .bool(false),
         "include_temporary": .bool(false),
-      ])
+      ]), context: .empty
     )
     let filteredPayload = try decodeTextPayload(filteredResult)
     let filteredDirectories = try #require(
@@ -16557,7 +16580,7 @@ final class GatewayToolRegistryTests {
         "path": .string("note.txt"),
         "include_candidates": .bool(true),
         "max_candidates": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let target = try #require(payload.objectValue?["target"]?.objectValue)
@@ -16573,7 +16596,7 @@ final class GatewayToolRegistryTests {
 
     let urlResult = try registry.callTool(
       name: "macos.default_application",
-      arguments: .object(["url": .string("https://example.com")])
+      arguments: .object(["url": .string("https://example.com")]), context: .empty
     )
     let urlPayload = try decodeTextPayload(urlResult)
     let urlTarget = try #require(urlPayload.objectValue?["target"]?.objectValue)
@@ -16586,7 +16609,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("note.txt"),
           "url": .string("https://example.com"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("exactly one"))
@@ -16595,7 +16618,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "macos.default_application",
-        arguments: .object(["url": .string("file:///tmp/example.txt")])
+        arguments: .object(["url": .string("file:///tmp/example.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("url scheme"))
@@ -16610,7 +16633,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "macos.screens", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "macos.screens", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["screen_count"]) != nil)
@@ -16643,7 +16667,7 @@ final class GatewayToolRegistryTests {
         "query": .string("alpha"),
         "max_results": .number(5),
         "max_output_bytes": .number(4096),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let results = try #require(payload.objectValue?["results"]?.arrayValue)
@@ -16677,7 +16701,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside"),
           "query": .string("alpha"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -16689,7 +16713,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "query": .string("alpha"),
           "max_results": .number(0),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -16709,7 +16733,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "include_background": .bool(true),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let applications = try #require(payload.objectValue?["applications"]?.arrayValue)
@@ -16729,7 +16753,8 @@ final class GatewayToolRegistryTests {
       )
     )
 
-    let result = try registry.callTool(name: "macos.frontmost_application", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "macos.frontmost_application", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["available"]) != nil)
@@ -16764,7 +16789,8 @@ final class GatewayToolRegistryTests {
     )
     let registry = GatewayToolRegistry(configuration: config)
 
-    let result = try registry.callTool(name: "env.describe", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "env.describe", arguments: .object([:]), context: .empty)
     let text = try #require(
       result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
     let payload = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
@@ -16807,7 +16833,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.list",
-      arguments: .object(["path": .string(".")])
+      arguments: .object(["path": .string(".")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -16820,7 +16846,7 @@ final class GatewayToolRegistryTests {
 
     let emptyPathResult = try registry.callTool(
       name: "file.list",
-      arguments: .object(["path": .string("")])
+      arguments: .object(["path": .string("")]), context: .empty
     )
     let emptyPathPayload = try decodeTextPayload(emptyPathResult)
     #expect((emptyPathPayload.objectValue?["workspace_relative_path"]) == (.string(".")))
@@ -16833,7 +16859,7 @@ final class GatewayToolRegistryTests {
         "include_hidden": .bool(true),
         "recursive_depth": .number(1),
         "max_entries": .number(2),
-      ])
+      ]), context: .empty
     )
     let recursivePayload = try decodeTextPayload(recursiveResult)
 
@@ -16877,7 +16903,7 @@ final class GatewayToolRegistryTests {
         "path": .string("."),
         "max_depth": .number(2),
         "max_entries": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let tree = try #require(payload.objectValue?["tree"]?.objectValue)
@@ -16945,7 +16971,7 @@ final class GatewayToolRegistryTests {
         "include_hidden": .bool(true),
         "recursive_depth": .number(2),
         "max_entries": .number(100),
-      ])
+      ]), context: .empty
     )
     let listPayload = try decodeTextPayload(listResult)
     let entries = try #require(listPayload.objectValue?["entries"]?.arrayValue)
@@ -16966,7 +16992,7 @@ final class GatewayToolRegistryTests {
         "include_hidden": .bool(true),
         "max_depth": .number(3),
         "max_entries": .number(100),
-      ])
+      ]), context: .empty
     )
     let treePayload = try decodeTextPayload(treeResult)
     #expect((treePayload.objectValue?["truncated"]) == (.bool(false)))
@@ -16978,7 +17004,7 @@ final class GatewayToolRegistryTests {
         "path": .string("."),
         "query": .string("missing"),
         "include_hidden": .bool(true),
-      ])
+      ]), context: .empty
     )
     let findPayload = try decodeTextPayload(findResult)
     let findResults = try #require(findPayload.objectValue?["results"]?.arrayValue)
@@ -16994,7 +17020,7 @@ final class GatewayToolRegistryTests {
         "path": .string("."),
         "query": .string("OUTSIDE_SCAN_SECRET"),
         "include_hidden": .bool(true),
-      ])
+      ]), context: .empty
     )
     let searchPayload = try decodeTextPayload(searchResult)
     #expect((searchPayload.objectValue?["match_count"]) == (.number(0)))
@@ -17005,7 +17031,7 @@ final class GatewayToolRegistryTests {
         "path": .string("."),
         "markers": .array([.string("OUTSIDE_SCAN_SECRET")]),
         "include_hidden": .bool(true),
-      ])
+      ]), context: .empty
     )
     let todosPayload = try decodeTextPayload(todosResult)
     #expect((todosPayload.objectValue?["match_count"]) == (.number(0)))
@@ -17015,7 +17041,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("."),
         "include_hidden_directories": .bool(true),
-      ])
+      ]), context: .empty
     )
     let envPayload = try decodeTextPayload(envResult)
     let envFiles = try #require(envPayload.objectValue?["env_files"]?.arrayValue)
@@ -17054,7 +17080,7 @@ final class GatewayToolRegistryTests {
         "directories_only": .bool(true),
         "max_depth": .number(2),
         "max_entries": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let tree = try #require(payload.objectValue?["tree"]?.objectValue)
@@ -17081,7 +17107,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.tree",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -17090,7 +17116,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.tree",
-        arguments: .object(["path": .string("file.txt")])
+        arguments: .object(["path": .string("file.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a directory"))
@@ -17112,7 +17138,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.stat",
-      arguments: .object(["path": .string("Package.swift")])
+      arguments: .object(["path": .string("Package.swift")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -17141,7 +17167,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "file.permissions",
-      arguments: .object(["path": .string("script.sh")])
+      arguments: .object(["path": .string("script.sh")]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let permissions = try #require(payload.objectValue?["permissions"]?.objectValue)
@@ -17189,7 +17215,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.permissions",
-        arguments: .object(["path": .string("../outside")])
+        arguments: .object(["path": .string("../outside")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -17198,7 +17224,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.permissions",
-        arguments: .object(["path": .string("missing.txt")])
+        arguments: .object(["path": .string("missing.txt")]), context: .empty
       )
     ) { error in
       #expect(!(error.localizedDescription.isEmpty))
@@ -17227,7 +17253,7 @@ final class GatewayToolRegistryTests {
         "path": .string("script.sh"),
         "mode": .string("0755"),
         "expected_current_mode": .string("0644"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
@@ -17247,7 +17273,7 @@ final class GatewayToolRegistryTests {
           "path": .string("script.sh"),
           "mode": .string("0644"),
           "expected_current_mode": .string("0600"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("expected_current_mode"))
@@ -17277,7 +17303,7 @@ final class GatewayToolRegistryTests {
         "mode": .string("0755"),
         "expected_current_mode": .string("0644"),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
@@ -17312,7 +17338,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("script.sh"),
           "mode": .string("888"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("octal"))
@@ -17324,7 +17350,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("missing.sh"),
           "mode": .string("0644"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -17336,7 +17362,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside.sh"),
           "mode": .string("0644"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -17377,7 +17403,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "query": .string(".swift"),
         "match": .string("suffix"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let results = try #require(payload.objectValue?["results"]?.arrayValue)
@@ -17393,7 +17419,7 @@ final class GatewayToolRegistryTests {
         "query": .string("Hidden.swift"),
         "match": .string("exact"),
         "include_hidden": .bool(true),
-      ])
+      ]), context: .empty
     )
     let hiddenPayload = try decodeTextPayload(hiddenResult)
 
@@ -17423,7 +17449,7 @@ final class GatewayToolRegistryTests {
         "query": .string(".txt"),
         "match": .string("suffix"),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -17458,7 +17484,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "query": .string("hello"),
         "max_matches": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let match = try #require(payload.objectValue?["matches"]?.arrayValue?.first?.objectValue)
@@ -17486,7 +17512,7 @@ final class GatewayToolRegistryTests {
 
     let hiddenDisabled = try registry.callTool(
       name: "file.search",
-      arguments: .object(["query": .string("needle")])
+      arguments: .object(["query": .string("needle")]), context: .empty
     )
     let hiddenDisabledPayload = try decodeTextPayload(hiddenDisabled)
     #expect((hiddenDisabledPayload.objectValue?["match_count"]) == (.number(0)))
@@ -17496,7 +17522,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "query": .string("needle"),
         "include_hidden": .bool(true),
-      ])
+      ]), context: .empty
     )
     let hiddenEnabledPayload = try decodeTextPayload(hiddenEnabled)
     #expect((hiddenEnabledPayload.objectValue?["match_count"]) == (.number(1)))
@@ -17533,7 +17559,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "modified_after": .string("1970-01-01T00:25:00Z"),
         "modified_before": .string("1970-01-01T00:41:40Z"),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -17555,7 +17581,7 @@ final class GatewayToolRegistryTests {
         "include_hidden": .bool(true),
         "sort": .string("modified_asc"),
         "max_results": .number(2),
-      ])
+      ]), context: .empty
     )
     let sortedPayload = try decodeTextPayload(sortedResult)
     let sortedFiles = try #require(sortedPayload.objectValue?["files"]?.arrayValue)
@@ -17584,7 +17610,7 @@ final class GatewayToolRegistryTests {
         name: "file.timeline",
         arguments: .object([
           "path": .string("../outside")
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -17595,7 +17621,7 @@ final class GatewayToolRegistryTests {
         name: "file.timeline",
         arguments: .object([
           "path": .string("file.txt")
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a directory"))
@@ -17606,7 +17632,7 @@ final class GatewayToolRegistryTests {
         name: "file.timeline",
         arguments: .object([
           "sort": .string("recent")
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("sort"))
@@ -17617,7 +17643,7 @@ final class GatewayToolRegistryTests {
         name: "file.timeline",
         arguments: .object([
           "modified_after": .string("not-a-date")
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("ISO8601"))
@@ -17629,7 +17655,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "modified_after": .string("1970-01-01T00:00:02Z"),
           "modified_before": .string("1970-01-01T00:00:01Z"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("modified_after"))
@@ -17648,7 +17674,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "file.read",
-        arguments: .object(["path": .string("../outside.txt")])
+        arguments: .object(["path": .string("../outside.txt")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -17670,7 +17696,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside"),
           "query": .string("x"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -17682,7 +17708,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("../outside"),
           "query": .string("x"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("escapes workspace"))
@@ -17703,7 +17729,7 @@ final class GatewayToolRegistryTests {
 
     _ = try registry.callTool(
       name: "workspace.open",
-      arguments: .object(["path": .string(".")])
+      arguments: .object(["path": .string(".")]), context: .empty
     )
 
     #expect((runner.calls.first?.executable) == ("/usr/bin/open"))
@@ -17728,7 +17754,7 @@ final class GatewayToolRegistryTests {
 
     _ = try registry.callTool(
       name: "workspace.reveal",
-      arguments: .object(["path": .string("note.txt")])
+      arguments: .object(["path": .string("note.txt")]), context: .empty
     )
 
     #expect((runner.calls.first?.executable) == ("/usr/bin/open"))
@@ -17738,8 +17764,9 @@ final class GatewayToolRegistryTests {
   @Test
   func testGitBuiltinsAreExposedOnlyWhenEnabled() throws {
     let disabled = GatewayToolRegistry(configuration: .fixture())
-    #expect(!(try disabled.listTools().map(\.name).contains("git.status")))
-    #expect(!(try disabled.listTools().map(\.name).contains("workspace.git_changes")))
+    #expect(!(try disabled.listTools(context: .empty).map(\.name).contains("git.status")))
+    #expect(
+      !(try disabled.listTools(context: .empty).map(\.name).contains("workspace.git_changes")))
 
     let enabled = GatewayToolRegistry(
       configuration: GatewayConfiguration.fixture(
@@ -17759,7 +17786,7 @@ final class GatewayToolRegistryTests {
         ])
       )
     )
-    let names = try enabled.listTools().map(\.name)
+    let names = try enabled.listTools(context: .empty).map(\.name)
 
     #expect(names.contains("workspace.git_changes"))
     #expect(names.contains("git.root"))
@@ -17808,26 +17835,34 @@ final class GatewayToolRegistryTests {
     #expect(names.contains("git.restore_worktree"))
     #expect(names.contains("git.commit"))
 
-    let gitAdd = try #require(enabled.listTools().first { $0.name == "git.add" })
-    let gitUnstage = try #require(enabled.listTools().first { $0.name == "git.unstage" })
+    let gitAdd = try #require(enabled.listTools(context: .empty).first { $0.name == "git.add" })
+    let gitUnstage = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.unstage" })
     let gitRestoreWorktree = try #require(
-      enabled.listTools().first { $0.name == "git.restore_worktree" })
-    let gitCommit = try #require(enabled.listTools().first { $0.name == "git.commit" })
-    let gitClean = try #require(enabled.listTools().first { $0.name == "git.clean" })
-    let gitStashShow = try #require(enabled.listTools().first { $0.name == "git.stash_show" })
-    let gitStashPush = try #require(enabled.listTools().first { $0.name == "git.stash_push" })
-    let gitTagShow = try #require(enabled.listTools().first { $0.name == "git.tag_show" })
-    let gitTagCreate = try #require(enabled.listTools().first { $0.name == "git.tag_create" })
-    let gitTagDelete = try #require(enabled.listTools().first { $0.name == "git.tag_delete" })
+      enabled.listTools(context: .empty).first { $0.name == "git.restore_worktree" })
+    let gitCommit = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.commit" })
+    let gitClean = try #require(enabled.listTools(context: .empty).first { $0.name == "git.clean" })
+    let gitStashShow = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.stash_show" })
+    let gitStashPush = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.stash_push" })
+    let gitTagShow = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.tag_show" })
+    let gitTagCreate = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.tag_create" })
+    let gitTagDelete = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.tag_delete" })
     let gitBranchCreate = try #require(
-      enabled.listTools().first { $0.name == "git.branch_create" })
+      enabled.listTools(context: .empty).first { $0.name == "git.branch_create" })
     let gitBranchDelete = try #require(
-      enabled.listTools().first { $0.name == "git.branch_delete" })
+      enabled.listTools(context: .empty).first { $0.name == "git.branch_delete" })
     let gitBranchRename = try #require(
-      enabled.listTools().first { $0.name == "git.branch_rename" })
+      enabled.listTools(context: .empty).first { $0.name == "git.branch_rename" })
     let gitBranchSwitch = try #require(
-      enabled.listTools().first { $0.name == "git.branch_switch" })
-    let gitConfig = try #require(enabled.listTools().first { $0.name == "git.config" })
+      enabled.listTools(context: .empty).first { $0.name == "git.branch_switch" })
+    let gitConfig = try #require(
+      enabled.listTools(context: .empty).first { $0.name == "git.config" })
     let addProperties = gitAdd.inputSchema.objectValue?["properties"]?.objectValue
     let unstageProperties = gitUnstage.inputSchema.objectValue?["properties"]?.objectValue
     let restoreWorktreeProperties =
@@ -17904,7 +17939,7 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "git.root", arguments: .object([:]))
+    let result = try registry.callTool(name: "git.root", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.first?.executable) == ("/bin/echo"))
@@ -17956,7 +17991,7 @@ final class GatewayToolRegistryTests {
         "include_values": .bool(true),
         "max_results": .number(10),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -18013,7 +18048,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "scope": .string("global"),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -18028,7 +18063,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.config",
-        arguments: .object(["scope": .string("repo")])
+        arguments: .object(["scope": .string("repo")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("scope"))
@@ -18037,7 +18072,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.config",
-        arguments: .object(["max_results": .number(0)])
+        arguments: .object(["max_results": .number(0)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -18055,7 +18090,8 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "git.remotes", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "git.remotes", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.first?.executable) == ("/bin/echo"))
@@ -18075,7 +18111,8 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "git.worktrees", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "git.worktrees", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.first?.executable) == ("/bin/echo"))
@@ -18097,7 +18134,8 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "git.stashes", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "git.stashes", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.first?.executable) == ("/bin/echo"))
@@ -18127,7 +18165,7 @@ final class GatewayToolRegistryTests {
         "patch": .bool(true),
         "context_lines": .number(1),
         "paths": .array([.string("Sources"), .string("README.md")]),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18159,13 +18197,13 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    _ = try registry.callTool(name: "git.stash_show", arguments: .object([:]))
+    _ = try registry.callTool(name: "git.stash_show", arguments: .object([:]), context: .empty)
     _ = try registry.callTool(
       name: "git.stash_show",
       arguments: .object([
         "stat": .bool(false),
         "patch": .bool(false),
-      ])
+      ]), context: .empty
     )
 
     #expect((runner.calls[0].arguments) == (["stash", "show", "--stat", "stash@{0}"]))
@@ -18195,7 +18233,7 @@ final class GatewayToolRegistryTests {
         "paths": .array([.string("Sources"), .string("README.md")]),
         "include_untracked": .bool(true),
         "keep_index": .bool(true),
-      ])
+      ]), context: .empty
     )
     let writePayload = try decodeTextPayload(writeResult)
 
@@ -18205,7 +18243,7 @@ final class GatewayToolRegistryTests {
         "message": .string("preview all work"),
         "all_paths": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let dryRunPayload = try decodeTextPayload(dryRunResult)
 
@@ -18250,7 +18288,7 @@ final class GatewayToolRegistryTests {
         "paths": .array([.string("untracked.txt")]),
         "include_untracked": .bool(true),
         "keep_index": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18284,7 +18322,7 @@ final class GatewayToolRegistryTests {
         "paths": .array([.string("Sources")]),
         "include_untracked": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18307,7 +18345,7 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "git.tags", arguments: .object([:]))
+    let result = try registry.callTool(name: "git.tags", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
     let format =
       "--format=%(refname:short)%09%(objecttype)%09%(objectname:short)%09%(creatordate:iso-strict)%09%(subject)"
@@ -18342,7 +18380,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("v1.0.0"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18389,7 +18427,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("v1.0.0"),
         "stat": .bool(false),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18416,7 +18454,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try unsafeRegistry.callTool(
         name: "git.tag_show",
-        arguments: .object(["name": .string("refs/tags/v1.0.0")])
+        arguments: .object(["name": .string("refs/tags/v1.0.0")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a full ref"))
@@ -18436,7 +18474,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingTagRegistry.callTool(
         name: "git.tag_show",
-        arguments: .object(["name": .string("v1.0.0")])
+        arguments: .object(["name": .string("v1.0.0")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -18465,7 +18503,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("v1.0.0"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18513,7 +18551,7 @@ final class GatewayToolRegistryTests {
         "target": .string("main"),
         "dry_run": .bool(false),
         "confirm_create": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18550,7 +18588,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("v1.0.0"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_create"))
@@ -18560,7 +18598,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingConfirmRegistry.callTool(
         name: "git.tag_create",
-        arguments: .object(["name": .string("refs/tags/v1.0.0")])
+        arguments: .object(["name": .string("refs/tags/v1.0.0")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a full ref"))
@@ -18584,7 +18622,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try existingTagRegistry.callTool(
         name: "git.tag_create",
-        arguments: .object(["name": .string("v1.0.0")])
+        arguments: .object(["name": .string("v1.0.0")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("already exists"))
@@ -18610,7 +18648,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("v1.0.0"),
           "target": .string("missing-ref"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("target"))
@@ -18638,7 +18676,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("v1.0.0"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18682,7 +18720,7 @@ final class GatewayToolRegistryTests {
         "name": .string("v1.0.0"),
         "dry_run": .bool(false),
         "confirm_delete": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18718,7 +18756,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("v1.0.0"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_delete"))
@@ -18728,7 +18766,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingConfirmRegistry.callTool(
         name: "git.tag_delete",
-        arguments: .object(["name": .string("refs/tags/v1.0.0")])
+        arguments: .object(["name": .string("refs/tags/v1.0.0")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a full ref"))
@@ -18748,7 +18786,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingTagRegistry.callTool(
         name: "git.tag_delete",
-        arguments: .object(["name": .string("v1.0.0")])
+        arguments: .object(["name": .string("v1.0.0")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -18771,7 +18809,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try unresolvedTagRegistry.callTool(
         name: "git.tag_delete",
-        arguments: .object(["name": .string("v1.0.0")])
+        arguments: .object(["name": .string("v1.0.0")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("cannot be resolved"))
@@ -18792,7 +18830,8 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "git.ignored",
-      arguments: .object(["paths": .array([.string("build/output.log"), .string(".env")])])
+      arguments: .object(["paths": .array([.string("build/output.log"), .string(".env")])]),
+      context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18820,7 +18859,8 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let result = try registry.callTool(name: "git.submodules", arguments: .object([:]))
+    let result = try registry.callTool(
+      name: "git.submodules", arguments: .object([:]), context: .empty)
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.first?.executable) == ("/bin/echo"))
@@ -18844,7 +18884,8 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "git.files",
-      arguments: .object(["paths": .array([.string("Sources"), .string("Package.swift")])])
+      arguments: .object(["paths": .array([.string("Sources"), .string("Package.swift")])]),
+      context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18885,7 +18926,7 @@ final class GatewayToolRegistryTests {
         "paths": .array([.string("Sources"), .string("Tests")]),
         "case_sensitive": .bool(false),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let matches = try #require(payload.objectValue?["matches"]?.arrayValue)
@@ -18928,7 +18969,7 @@ final class GatewayToolRegistryTests {
         "path": .string("Sources/main.swift"),
         "start_line": .number(10),
         "max_lines": .number(25),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -18966,7 +19007,7 @@ final class GatewayToolRegistryTests {
         "max_results": .number(1),
         "follow": .bool(true),
         "include_merges": .bool(false),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -19017,7 +19058,7 @@ final class GatewayToolRegistryTests {
         "revision": .string("HEAD"),
         "path": .string("Sources/main.swift"),
         "max_bytes": .number(8),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -19050,7 +19091,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "path": .string("Sources/main.swift"),
         "max_bytes": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -19079,7 +19120,8 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "git.conflicts",
-      arguments: .object(["paths": .array([.string("Sources"), .string("Package.swift")])])
+      arguments: .object(["paths": .array([.string("Sources"), .string("Package.swift")])]),
+      context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -19109,7 +19151,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "git.status",
-      arguments: .object(["paths": .array([.string("Sources")])])
+      arguments: .object(["paths": .array([.string("Sources")])]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -19143,19 +19185,23 @@ final class GatewayToolRegistryTests {
       commandRunner: runner
     )
 
-    let divergedResult = try registry.callTool(name: "git.tracking_status", arguments: .object([:]))
+    let divergedResult = try registry.callTool(
+      name: "git.tracking_status", arguments: .object([:]), context: .empty)
     let divergedPayload = try decodeTextPayload(divergedResult)
     let diverged = try #require(divergedPayload.objectValue?["status"]?.objectValue)
 
-    let detachedResult = try registry.callTool(name: "git.tracking_status", arguments: .object([:]))
+    let detachedResult = try registry.callTool(
+      name: "git.tracking_status", arguments: .object([:]), context: .empty)
     let detachedPayload = try decodeTextPayload(detachedResult)
     let detached = try #require(detachedPayload.objectValue?["status"]?.objectValue)
 
-    let unbornResult = try registry.callTool(name: "git.tracking_status", arguments: .object([:]))
+    let unbornResult = try registry.callTool(
+      name: "git.tracking_status", arguments: .object([:]), context: .empty)
     let unbornPayload = try decodeTextPayload(unbornResult)
     let unborn = try #require(unbornPayload.objectValue?["status"]?.objectValue)
 
-    let goneResult = try registry.callTool(name: "git.tracking_status", arguments: .object([:]))
+    let goneResult = try registry.callTool(
+      name: "git.tracking_status", arguments: .object([:]), context: .empty)
     let gonePayload = try decodeTextPayload(goneResult)
     let gone = try #require(gonePayload.objectValue?["status"]?.objectValue)
 
@@ -19197,7 +19243,7 @@ final class GatewayToolRegistryTests {
         "include_ignored": .bool(true),
         "paths": .array([.string("Sources")]),
         "max_results": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let items = try #require(payload.objectValue?["items"]?.arrayValue)
@@ -19232,7 +19278,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "paths": .array([.string("build"), .string("scratch.txt")]),
         "include_ignored": .bool(true),
-      ])
+      ]), context: .empty
     )
     let dryRunPayload = try decodeTextPayload(dryRunResult)
 
@@ -19243,7 +19289,7 @@ final class GatewayToolRegistryTests {
         "ignored_only": .bool(true),
         "dry_run": .bool(false),
         "confirm_delete": .bool(true),
-      ])
+      ]), context: .empty
     )
     let writePayload = try decodeTextPayload(writeResult)
 
@@ -19277,7 +19323,7 @@ final class GatewayToolRegistryTests {
 
     let result = try registry.callTool(
       name: "git.reflog",
-      arguments: .object(["limit": .number(10), "max_results": .number(1)])
+      arguments: .object(["limit": .number(10), "max_results": .number(1)]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
@@ -19323,7 +19369,7 @@ final class GatewayToolRegistryTests {
         "include_tags": .bool(true),
         "limit": .number(20),
         "max_results": .number(2),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let refs = try #require(payload.objectValue?["refs"]?.arrayValue)
@@ -19386,7 +19432,7 @@ final class GatewayToolRegistryTests {
         "limit": .number(10),
         "max_results": .number(1),
         "cherry_pick": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let commits = try #require(payload.objectValue?["commits"]?.arrayValue)
@@ -19448,7 +19494,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "ref": .string("HEAD"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -19486,7 +19532,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try invalidRegistry.callTool(
         name: "git.resolve_ref",
-        arguments: .object(["ref": .string("-bad")])
+        arguments: .object(["ref": .string("-bad")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("ref"))
@@ -19508,7 +19554,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try revParseFailureRegistry.callTool(
         name: "git.resolve_ref",
-        arguments: .object(["ref": .string("missing")])
+        arguments: .object(["ref": .string("missing")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("failed"))
@@ -19531,7 +19577,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try typeFailureRegistry.callTool(
         name: "git.resolve_ref",
-        arguments: .object(["ref": .string("HEAD")])
+        arguments: .object(["ref": .string("HEAD")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("object type"))
@@ -19562,13 +19608,13 @@ final class GatewayToolRegistryTests {
         "refs": .array([.string("main"), .string("topic")]),
         "all": .bool(true),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let noBaseResult = try registry.callTool(
       name: "git.merge_base",
       arguments: .object([
         "refs": .array([.string("unrelated-a"), .string("unrelated-b")])
-      ])
+      ]), context: .empty
     )
     let mergeBasePayload = try decodeTextPayload(mergeBaseResult)
     let noBasePayload = try decodeTextPayload(noBaseResult)
@@ -19611,7 +19657,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try invalidRegistry.callTool(
         name: "git.merge_base",
-        arguments: .object(["refs": .array([.string("main")])])
+        arguments: .object(["refs": .array([.string("main")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("at least 2"))
@@ -19621,7 +19667,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try invalidRegistry.callTool(
         name: "git.merge_base",
-        arguments: .object(["refs": .array([.string("main"), .string("-bad")])])
+        arguments: .object(["refs": .array([.string("main"), .string("-bad")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("refs[1]"))
@@ -19643,7 +19689,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try failureRegistry.callTool(
         name: "git.merge_base",
-        arguments: .object(["refs": .array([.string("missing"), .string("main")])])
+        arguments: .object(["refs": .array([.string("missing"), .string("main")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("failed"))
@@ -19672,14 +19718,14 @@ final class GatewayToolRegistryTests {
         "ancestor": .string("main"),
         "descendant": .string("origin/main"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let falseResult = try registry.callTool(
       name: "git.is_ancestor",
       arguments: .object([
         "ancestor": .string("feature"),
         "descendant": .string("main"),
-      ])
+      ]), context: .empty
     )
     let truePayload = try decodeTextPayload(trueResult)
     let falsePayload = try decodeTextPayload(falseResult)
@@ -19722,7 +19768,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "ancestor": .string("-bad"),
           "descendant": .string("main"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("ancestor"))
@@ -19747,7 +19793,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "ancestor": .string("missing"),
           "descendant": .string("main"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("failed"))
@@ -19773,7 +19819,7 @@ final class GatewayToolRegistryTests {
         "stat": .bool(true),
         "context_lines": .number(3),
         "paths": .array([.string("README.md")]),
-      ])
+      ]), context: .empty
     )
 
     #expect(
@@ -19810,7 +19856,7 @@ final class GatewayToolRegistryTests {
         "staged": .bool(true),
         "paths": .array([.string("Sources")]),
         "max_results": .number(10),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -19867,7 +19913,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "staged": .bool(true),
         "paths": .array([.string("Sources")]),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let issues = try #require(payload.objectValue?["issues"]?.arrayValue)
@@ -19912,7 +19958,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "revision": .string("HEAD"),
         "max_results": .number(1),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
     let files = try #require(payload.objectValue?["files"]?.arrayValue)
@@ -19958,14 +20004,14 @@ final class GatewayToolRegistryTests {
 
     _ = try registry.callTool(
       name: "git.branch",
-      arguments: .object(["all": .bool(true), "verbose": .bool(true)])
+      arguments: .object(["all": .bool(true), "verbose": .bool(true)]), context: .empty
     )
     _ = try registry.callTool(
       name: "git.log",
       arguments: .object([
         "limit": .number(5),
         "paths": .array([.string("Sources")]),
-      ])
+      ]), context: .empty
     )
     _ = try registry.callTool(
       name: "git.show",
@@ -19974,7 +20020,7 @@ final class GatewayToolRegistryTests {
         "patch": .bool(true),
         "context_lines": .number(1),
         "paths": .array([.string("Package.swift")]),
-      ])
+      ]), context: .empty
     )
 
     #expect(
@@ -20002,7 +20048,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "revision": .string("HEAD"),
         "stat": .bool(true),
-      ])
+      ]), context: .empty
     )
 
     #expect((runner.calls[3].arguments) == (["show", "--date=iso-strict", "--stat", "HEAD"]))
@@ -20029,7 +20075,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("feature/test"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20080,7 +20126,7 @@ final class GatewayToolRegistryTests {
         "start_point": .string("main"),
         "dry_run": .bool(false),
         "confirm_create": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20121,7 +20167,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("feature/old"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20170,7 +20216,7 @@ final class GatewayToolRegistryTests {
         "force": .bool(true),
         "dry_run": .bool(false),
         "confirm_delete": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20208,7 +20254,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("feature/delete"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_delete"))
@@ -20218,7 +20264,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingConfirmRegistry.callTool(
         name: "git.branch_delete",
-        arguments: .object(["name": .string("refs/heads/main")])
+        arguments: .object(["name": .string("refs/heads/main")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a full ref"))
@@ -20241,7 +20287,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingBranchRegistry.callTool(
         name: "git.branch_delete",
-        arguments: .object(["name": .string("feature/missing")])
+        arguments: .object(["name": .string("feature/missing")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -20265,7 +20311,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try currentBranchRegistry.callTool(
         name: "git.branch_delete",
-        arguments: .object(["name": .string("feature/current")])
+        arguments: .object(["name": .string("feature/current")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("current branch"))
@@ -20297,7 +20343,7 @@ final class GatewayToolRegistryTests {
         "old_name": .string("feature/old"),
         "new_name": .string("feature/new"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20356,7 +20402,7 @@ final class GatewayToolRegistryTests {
         "force": .bool(true),
         "dry_run": .bool(false),
         "confirm_rename": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20401,7 +20447,7 @@ final class GatewayToolRegistryTests {
           "old_name": .string("feature/old"),
           "new_name": .string("feature/new"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_rename"))
@@ -20414,7 +20460,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "old_name": .string("feature/same"),
           "new_name": .string("feature/same"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("must be different"))
@@ -20427,7 +20473,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "old_name": .string("feature/old"),
           "new_name": .string("refs/heads/new"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a full ref"))
@@ -20454,7 +20500,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "old_name": .string("feature/missing"),
           "new_name": .string("feature/new"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -20482,7 +20528,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "old_name": .string("feature/old"),
           "new_name": .string("feature/new"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("already exists"))
@@ -20512,7 +20558,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "name": .string("feature/target"),
         "timeout_ms": .number(1234),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20565,7 +20611,7 @@ final class GatewayToolRegistryTests {
         "name": .string("feature/target"),
         "dry_run": .bool(false),
         "confirm_switch": .bool(true),
-      ])
+      ]), context: .empty
     )
     let payload = try decodeTextPayload(result)
 
@@ -20604,7 +20650,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("feature/target"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_switch"))
@@ -20614,7 +20660,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingConfirmRegistry.callTool(
         name: "git.branch_switch",
-        arguments: .object(["name": .string("refs/heads/main")])
+        arguments: .object(["name": .string("refs/heads/main")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a full ref"))
@@ -20637,7 +20683,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingBranchRegistry.callTool(
         name: "git.branch_switch",
-        arguments: .object(["name": .string("feature/missing")])
+        arguments: .object(["name": .string("feature/missing")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("does not exist"))
@@ -20666,7 +20712,7 @@ final class GatewayToolRegistryTests {
           "name": .string("feature/target"),
           "dry_run": .bool(false),
           "confirm_switch": .bool(true),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("allow_dirty"))
@@ -20699,7 +20745,7 @@ final class GatewayToolRegistryTests {
         "dry_run": .bool(false),
         "confirm_switch": .bool(true),
         "allow_dirty": .bool(true),
-      ])
+      ]), context: .empty
     )
     let dirtyPayload = try decodeTextPayload(dirtyResult)
 
@@ -20730,7 +20776,7 @@ final class GatewayToolRegistryTests {
         "name": .string("feature/current"),
         "dry_run": .bool(false),
         "confirm_switch": .bool(true),
-      ])
+      ]), context: .empty
     )
     let currentPayload = try decodeTextPayload(currentResult)
 
@@ -20757,7 +20803,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("feature/new"),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_create"))
@@ -20767,7 +20813,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingConfirmRegistry.callTool(
         name: "git.branch_create",
-        arguments: .object(["name": .string("refs/heads/main")])
+        arguments: .object(["name": .string("refs/heads/main")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("not a full ref"))
@@ -20777,7 +20823,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try missingConfirmRegistry.callTool(
         name: "git.branch_create",
-        arguments: .object(["name": .string("HEAD")])
+        arguments: .object(["name": .string("HEAD")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("must not be HEAD"))
@@ -20790,7 +20836,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "name": .string("feature/new"),
           "start_point": .string("bad^{ref}"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("start_point"))
@@ -20813,7 +20859,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try existingRegistry.callTool(
         name: "git.branch_create",
-        arguments: .object(["name": .string("feature/existing")])
+        arguments: .object(["name": .string("feature/existing")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("already exists"))
@@ -20836,7 +20882,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try failedExistsRegistry.callTool(
         name: "git.branch_create",
-        arguments: .object(["name": .string("feature/fail")])
+        arguments: .object(["name": .string("feature/fail")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("existence check failed"))
@@ -20862,7 +20908,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "paths": .array([.string("Sources"), .string("README.md")]),
         "intent_to_add": .bool(true),
-      ])
+      ]), context: .empty
     )
     let addPayload = try decodeTextPayload(addResult)
 
@@ -20870,7 +20916,7 @@ final class GatewayToolRegistryTests {
       name: "git.unstage",
       arguments: .object([
         "paths": .array([.string("Sources"), .string("README.md")])
-      ])
+      ]), context: .empty
     )
     let unstagePayload = try decodeTextPayload(unstageResult)
 
@@ -20880,7 +20926,7 @@ final class GatewayToolRegistryTests {
         "paths": .array([.string("Sources"), .string("README.md")]),
         "dry_run": .bool(false),
         "confirm_discard": .bool(true),
-      ])
+      ]), context: .empty
     )
     let restoreWorktreePayload = try decodeTextPayload(restoreWorktreeResult)
 
@@ -20890,7 +20936,7 @@ final class GatewayToolRegistryTests {
         "message": .string("Update gateway atomics"),
         "all": .bool(true),
         "allow_empty": .bool(true),
-      ])
+      ]), context: .empty
     )
     let commitPayload = try decodeTextPayload(commitResult)
 
@@ -20932,7 +20978,7 @@ final class GatewayToolRegistryTests {
         "paths": .array([.string("Sources"), .string("README.md")]),
         "intent_to_add": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let addPayload = try decodeTextPayload(addResult)
 
@@ -20941,7 +20987,7 @@ final class GatewayToolRegistryTests {
       arguments: .object([
         "paths": .array([.string("Sources"), .string("README.md")]),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let unstagePayload = try decodeTextPayload(unstageResult)
 
@@ -20949,7 +20995,7 @@ final class GatewayToolRegistryTests {
       name: "git.restore_worktree",
       arguments: .object([
         "paths": .array([.string("Sources"), .string("README.md")])
-      ])
+      ]), context: .empty
     )
     let restoreWorktreePayload = try decodeTextPayload(restoreWorktreeResult)
 
@@ -20960,7 +21006,7 @@ final class GatewayToolRegistryTests {
         "all": .bool(true),
         "allow_empty": .bool(true),
         "dry_run": .bool(true),
-      ])
+      ]), context: .empty
     )
     let commitPayload = try decodeTextPayload(commitResult)
 
@@ -21007,61 +21053,64 @@ final class GatewayToolRegistryTests {
     )
 
     expectThrows(
-      try registry.callTool(name: "workspace.git_changes", arguments: .object([:]))
+      try registry.callTool(name: "workspace.git_changes", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.root", arguments: .object([:]))
+      try registry.callTool(name: "git.root", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.remotes", arguments: .object([:]))
+      try registry.callTool(name: "git.remotes", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.worktrees", arguments: .object([:]))
+      try registry.callTool(name: "git.worktrees", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.stashes", arguments: .object([:]))
+      try registry.callTool(name: "git.stashes", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.stash_show", arguments: .object([:]))
+      try registry.callTool(name: "git.stash_show", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.tags", arguments: .object([:]))
+      try registry.callTool(name: "git.tags", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.tag_show", arguments: .object(["name": .string("v1.0.0")]))
+      try registry.callTool(
+        name: "git.tag_show", arguments: .object(["name": .string("v1.0.0")]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.tag_create", arguments: .object(["name": .string("v1.0.0")]))
+      try registry.callTool(
+        name: "git.tag_create", arguments: .object(["name": .string("v1.0.0")]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.tag_delete", arguments: .object(["name": .string("v1.0.0")]))
+      try registry.callTool(
+        name: "git.tag_delete", arguments: .object(["name": .string("v1.0.0")]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
@@ -21069,20 +21118,20 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.ignored",
-        arguments: .object(["paths": .array([.string("build/output.log")])])
+        arguments: .object(["paths": .array([.string("build/output.log")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.submodules", arguments: .object([:]))
+      try registry.callTool(name: "git.submodules", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.files", arguments: .object([:]))
+      try registry.callTool(name: "git.files", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
@@ -21090,7 +21139,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.grep",
-        arguments: .object(["query": .string("needle")])
+        arguments: .object(["query": .string("needle")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21099,7 +21148,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.blame",
-        arguments: .object(["path": .string("Sources/main.swift")])
+        arguments: .object(["path": .string("Sources/main.swift")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21108,7 +21157,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.file_history",
-        arguments: .object(["path": .string("Sources/main.swift")])
+        arguments: .object(["path": .string("Sources/main.swift")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21117,7 +21166,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.file_at_revision",
-        arguments: .object(["revision": .string("HEAD"), "path": .string("Sources/main.swift")])
+        arguments: .object(["revision": .string("HEAD"), "path": .string("Sources/main.swift")]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21126,32 +21176,32 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.staged_file",
-        arguments: .object(["path": .string("Sources/main.swift")])
+        arguments: .object(["path": .string("Sources/main.swift")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.conflicts", arguments: .object([:]))
+      try registry.callTool(name: "git.conflicts", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.status", arguments: .object([:]))
+      try registry.callTool(name: "git.status", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.tracking_status", arguments: .object([:]))
+      try registry.callTool(name: "git.tracking_status", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.clean_preview", arguments: .object([:]))
+      try registry.callTool(name: "git.clean_preview", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
@@ -21159,7 +21209,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.clean",
-        arguments: .object(["paths": .array([.string("build")])])
+        arguments: .object(["paths": .array([.string("build")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21168,20 +21218,20 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.commit_files",
-        arguments: .object(["revision": .string("HEAD")])
+        arguments: .object(["revision": .string("HEAD")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.reflog", arguments: .object([:]))
+      try registry.callTool(name: "git.reflog", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.refs", arguments: .object([:]))
+      try registry.callTool(name: "git.refs", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
@@ -21189,7 +21239,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.resolve_ref",
-        arguments: .object(["ref": .string("HEAD")])
+        arguments: .object(["ref": .string("HEAD")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21198,7 +21248,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.merge_base",
-        arguments: .object(["refs": .array([.string("main"), .string("topic")])])
+        arguments: .object(["refs": .array([.string("main"), .string("topic")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21207,7 +21257,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.compare_refs",
-        arguments: .object(["base": .string("main"), "head": .string("topic")])
+        arguments: .object(["base": .string("main"), "head": .string("topic")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21219,20 +21269,20 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "ancestor": .string("main"),
           "descendant": .string("topic"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.diff_summary", arguments: .object([:]))
+      try registry.callTool(name: "git.diff_summary", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.diff_check", arguments: .object([:]))
+      try registry.callTool(name: "git.diff_check", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
     }
@@ -21240,7 +21290,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.branch_create",
-        arguments: .object(["name": .string("feature/new")])
+        arguments: .object(["name": .string("feature/new")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21249,7 +21299,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.branch_delete",
-        arguments: .object(["name": .string("feature/old")])
+        arguments: .object(["name": .string("feature/old")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21261,7 +21311,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "old_name": .string("feature/old"),
           "new_name": .string("feature/new"),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21270,7 +21320,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.branch_switch",
-        arguments: .object(["name": .string("feature/target")])
+        arguments: .object(["name": .string("feature/target")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21279,7 +21329,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.add",
-        arguments: .object(["paths": .array([.string("README.md")])])
+        arguments: .object(["paths": .array([.string("README.md")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21288,7 +21338,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.unstage",
-        arguments: .object(["paths": .array([.string("README.md")])])
+        arguments: .object(["paths": .array([.string("README.md")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21297,7 +21347,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.restore_worktree",
-        arguments: .object(["paths": .array([.string("README.md")])])
+        arguments: .object(["paths": .array([.string("README.md")])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21309,7 +21359,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "message": .string("save work"),
           "paths": .array([.string("README.md")]),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
@@ -21334,7 +21384,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.diff",
-        arguments: .object(["context_lines": .number(101)])
+        arguments: .object(["context_lines": .number(101)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("context_lines"))
@@ -21343,7 +21393,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.stash_show",
-        arguments: .object(["context_lines": .number(101)])
+        arguments: .object(["context_lines": .number(101)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("context_lines"))
@@ -21352,7 +21402,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.stash_show",
-        arguments: .object(["stash": .string("main")])
+        arguments: .object(["stash": .string("main")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("stash@{N}"))
@@ -21361,7 +21411,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.stash_show",
-        arguments: .object(["stash": .string("stash@{-1}")])
+        arguments: .object(["stash": .string("stash@{-1}")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("non-negative integer"))
@@ -21370,7 +21420,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.log",
-        arguments: .object(["limit": .number(201)])
+        arguments: .object(["limit": .number(201)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("limit"))
@@ -21379,7 +21429,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.diff_summary",
-        arguments: .object(["max_results": .number(5_001)])
+        arguments: .object(["max_results": .number(5_001)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -21388,7 +21438,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.diff_check",
-        arguments: .object(["max_results": .number(5_001)])
+        arguments: .object(["max_results": .number(5_001)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -21397,7 +21447,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.clean_preview",
-        arguments: .object(["max_results": .number(5_001)])
+        arguments: .object(["max_results": .number(5_001)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -21406,14 +21456,15 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.clean_preview",
-        arguments: .object(["include_ignored": .bool(true), "ignored_only": .bool(true)])
+        arguments: .object(["include_ignored": .bool(true), "ignored_only": .bool(true)]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("cannot both be true"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.clean", arguments: .object([:]))
+      try registry.callTool(name: "git.clean", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("paths or all_paths"))
     }
@@ -21424,7 +21475,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "paths": .array([.string("build")]),
           "all_paths": .bool(true),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("cannot combine paths"))
@@ -21436,7 +21487,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "paths": .array([.string("build")]),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_delete"))
@@ -21449,7 +21500,7 @@ final class GatewayToolRegistryTests {
           "all_paths": .bool(true),
           "include_ignored": .bool(true),
           "ignored_only": .bool(true),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("cannot both be true"))
@@ -21458,7 +21509,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.reflog",
-        arguments: .object(["limit": .number(201)])
+        arguments: .object(["limit": .number(201)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("limit"))
@@ -21467,7 +21518,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.reflog",
-        arguments: .object(["max_results": .number(201)])
+        arguments: .object(["max_results": .number(201)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -21476,7 +21527,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.refs",
-        arguments: .object(["limit": .number(1_001)])
+        arguments: .object(["limit": .number(1_001)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("limit"))
@@ -21485,7 +21536,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.refs",
-        arguments: .object(["max_results": .number(1_001)])
+        arguments: .object(["max_results": .number(1_001)]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -21498,7 +21549,7 @@ final class GatewayToolRegistryTests {
           "include_branches": .bool(false),
           "include_remotes": .bool(false),
           "include_tags": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("At least one"))
@@ -21511,7 +21562,7 @@ final class GatewayToolRegistryTests {
           "base": .string("main"),
           "head": .string("topic"),
           "limit": .number(201),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("limit"))
@@ -21524,7 +21575,7 @@ final class GatewayToolRegistryTests {
           "base": .string("main"),
           "head": .string("topic"),
           "max_results": .number(201),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -21533,7 +21584,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.compare_refs",
-        arguments: .object(["base": .string("-main"), "head": .string("topic")])
+        arguments: .object(["base": .string("-main"), "head": .string("topic")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("base"))
@@ -21542,7 +21593,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.compare_refs",
-        arguments: .object(["base": .string("main..topic"), "head": .string("topic")])
+        arguments: .object(["base": .string("main..topic"), "head": .string("topic")]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("unsupported Git ref syntax"))
@@ -21551,7 +21603,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.commit_files",
-        arguments: .object(["revision": .string("HEAD"), "max_results": .number(5_001)])
+        arguments: .object(["revision": .string("HEAD"), "max_results": .number(5_001)]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
@@ -21560,14 +21613,14 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.commit_files",
-        arguments: .object(["revision": .string("HEAD~1")])
+        arguments: .object(["revision": .string("HEAD~1")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("revision"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.commit_files", arguments: .object([:]))
+      try registry.callTool(name: "git.commit_files", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("revision"))
     }
@@ -21575,20 +21628,23 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.grep",
-        arguments: .object(["query": .string("needle"), "max_results": .number(5_001)])
+        arguments: .object(["query": .string("needle"), "max_results": .number(5_001)]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.grep", arguments: .object(["query": .string("")]))
+      try registry.callTool(
+        name: "git.grep", arguments: .object(["query": .string("")]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("query"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.grep", arguments: .object(["query": .string("a\nb")]))
+      try registry.callTool(
+        name: "git.grep", arguments: .object(["query": .string("a\nb")]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("newlines"))
     }
@@ -21596,7 +21652,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.add",
-        arguments: .object(["paths": .array([])])
+        arguments: .object(["paths": .array([])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("requires at least one path"))
@@ -21605,7 +21661,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.unstage",
-        arguments: .object(["paths": .array([])])
+        arguments: .object(["paths": .array([])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("requires at least one path"))
@@ -21614,7 +21670,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.restore_worktree",
-        arguments: .object(["paths": .array([])])
+        arguments: .object(["paths": .array([])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("requires at least one path"))
@@ -21626,7 +21682,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "paths": .array([.string("README.md")]),
           "dry_run": .bool(false),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("confirm_discard"))
@@ -21635,7 +21691,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.ignored",
-        arguments: .object(["paths": .array([])])
+        arguments: .object(["paths": .array([])]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("requires at least one path"))
@@ -21644,7 +21700,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.blame",
-        arguments: .object(["path": .string("Sources/main.swift"), "max_lines": .number(1_001)])
+        arguments: .object(["path": .string("Sources/main.swift"), "max_lines": .number(1_001)]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_lines"))
@@ -21653,14 +21710,15 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.blame",
-        arguments: .object(["path": .string("Sources/main.swift"), "start_line": .number(0)])
+        arguments: .object(["path": .string("Sources/main.swift"), "start_line": .number(0)]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("start_line"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.blame", arguments: .object([:]))
+      try registry.callTool(name: "git.blame", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("requires path"))
     }
@@ -21668,7 +21726,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.file_history",
-        arguments: .object(["path": .string("Sources/main.swift"), "limit": .number(201)])
+        arguments: .object(["path": .string("Sources/main.swift"), "limit": .number(201)]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("limit"))
@@ -21677,14 +21736,15 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.file_history",
-        arguments: .object(["path": .string("Sources/main.swift"), "max_results": .number(201)])
+        arguments: .object(["path": .string("Sources/main.swift"), "max_results": .number(201)]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("max_results"))
     }
 
     expectThrows(
-      try registry.callTool(name: "git.file_history", arguments: .object([:]))
+      try registry.callTool(name: "git.file_history", arguments: .object([:]), context: .empty)
     ) { error in
       #expect(error.localizedDescription.contains("requires path"))
     }
@@ -21696,7 +21756,7 @@ final class GatewayToolRegistryTests {
           "revision": .string("HEAD"),
           "path": .string("Sources/main.swift"),
           "max_bytes": .number(1_048_577),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("policy.max_output_bytes"))
@@ -21705,7 +21765,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.file_at_revision",
-        arguments: .object(["revision": .string("HEAD~1"), "path": .string("Sources/main.swift")])
+        arguments: .object(["revision": .string("HEAD~1"), "path": .string("Sources/main.swift")]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("revision"))
@@ -21714,7 +21775,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.file_at_revision",
-        arguments: .object(["revision": .string("HEAD")])
+        arguments: .object(["revision": .string("HEAD")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("requires path"))
@@ -21726,7 +21787,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "path": .string("Sources/main.swift"),
           "max_bytes": .number(1_048_577),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("policy.max_output_bytes"))
@@ -21735,7 +21796,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.staged_file",
-        arguments: .object([:])
+        arguments: .object([:]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("requires path"))
@@ -21744,7 +21805,8 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.commit",
-        arguments: .object(["message": .string(String(repeating: "x", count: 10_001))])
+        arguments: .object(["message": .string(String(repeating: "x", count: 10_001))]),
+        context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("10000 characters"))
@@ -21753,7 +21815,7 @@ final class GatewayToolRegistryTests {
     expectThrows(
       try registry.callTool(
         name: "git.stash_push",
-        arguments: .object(["message": .string("save work")])
+        arguments: .object(["message": .string("save work")]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("paths or all_paths"))
@@ -21765,7 +21827,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "message": .string(""),
           "all_paths": .bool(true),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("message"))
@@ -21777,7 +21839,7 @@ final class GatewayToolRegistryTests {
         arguments: .object([
           "message": .string(String(repeating: "x", count: 10_001)),
           "all_paths": .bool(true),
-        ])
+        ]), context: .empty
       )
     ) { error in
       #expect(error.localizedDescription.contains("10000 characters"))
@@ -21802,7 +21864,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.status",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21811,7 +21873,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.add",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21820,7 +21882,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.unstage",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21829,7 +21891,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.restore_worktree",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21841,7 +21903,7 @@ final class GatewayToolRegistryTests {
           arguments: .object([
             "message": .string("save work"),
             "paths": .array([.string(path)]),
-          ])
+          ]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21850,7 +21912,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.clean",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21859,7 +21921,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.stash_show",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21868,7 +21930,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.diff_summary",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21877,7 +21939,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.diff_check",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21886,7 +21948,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.clean_preview",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21895,7 +21957,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.ignored",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21904,7 +21966,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.files",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21916,7 +21978,7 @@ final class GatewayToolRegistryTests {
           arguments: .object([
             "query": .string("needle"),
             "paths": .array([.string(path)]),
-          ])
+          ]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21925,7 +21987,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.blame",
-          arguments: .object(["path": .string(path)])
+          arguments: .object(["path": .string(path)]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21934,7 +21996,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.file_history",
-          arguments: .object(["path": .string(path)])
+          arguments: .object(["path": .string(path)]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21943,7 +22005,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.file_at_revision",
-          arguments: .object(["revision": .string("HEAD"), "path": .string(path)])
+          arguments: .object(["revision": .string("HEAD"), "path": .string(path)]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21952,7 +22014,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.staged_file",
-          arguments: .object(["path": .string(path)])
+          arguments: .object(["path": .string(path)]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))
@@ -21961,7 +22023,7 @@ final class GatewayToolRegistryTests {
       expectThrows(
         try registry.callTool(
           name: "git.conflicts",
-          arguments: .object(["paths": .array([.string(path)])])
+          arguments: .object(["paths": .array([.string(path)])]), context: .empty
         )
       ) { error in
         #expect(!(error.localizedDescription.isEmpty))

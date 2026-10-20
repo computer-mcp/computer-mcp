@@ -57,18 +57,20 @@ final class MCPProxyClientTests {
 
       let registry = GatewayToolRegistry(
         configuration: .fixture(mcp: MCPSectionConfig(servers: [server])), mcpClient: client)
-      let exposed = try registry.listTools().map(\.name)
+      let exposed = try registry.listTools(context: .empty).map(\.name)
       #expect(exposed.contains("paged.sample"))
       #expect(!exposed.contains("paged.hidden"))
-      let result = try registry.callTool(name: "paged.sample", arguments: .object([:]))
+      let result = try registry.callTool(
+        name: "paged.sample", arguments: .object([:]), context: .empty)
       #expect(result.objectValue?["structuredContent"] == .object(["answer": .string("called")]))
       expectThrows(
         try registry.callTool(
           name: "mcp.tools.call",
           arguments: .object([
             "server": .string("paged"), "tool": .string("hidden"), "arguments": .object([:]),
-          ])))
-      expectThrows(try registry.callTool(name: "paged.hidden", arguments: .object([:])))
+          ]), context: .empty))
+      expectThrows(
+        try registry.callTool(name: "paged.hidden", arguments: .object([:]), context: .empty))
     }
   }
 

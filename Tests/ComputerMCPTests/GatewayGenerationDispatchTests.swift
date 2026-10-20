@@ -26,13 +26,14 @@ struct GatewayGenerationDispatchTests {
       let handle = JSONValue.string("selected")
       _ = try await serving.callToolAsync(
         name: cachedOwner ? "fixture.start" : "fixture.identity",
-        arguments: .object(["handle": handle]))
+        arguments: .object(["handle": handle]), context: .empty)
       if cachedOwner {
         let deadline = ContinuousClock.now + .seconds(5)
         var acquired = false
         repeat {
           let result = try await serving.callToolAsync(
-            name: "runtime.owners.list", arguments: .object(["workspace_id": .string("fixture")]))
+            name: "runtime.owners.list", arguments: .object(["workspace_id": .string("fixture")]),
+            context: .empty)
           acquired =
             result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
               "owners"]?

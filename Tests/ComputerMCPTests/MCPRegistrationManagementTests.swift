@@ -58,7 +58,7 @@ struct MCPRegistrationManagementTests {
     let registry = GatewayToolRegistry(
       configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
-    #expect(try !router.listTools().contains { $0.name.hasPrefix("manual.") })
+    #expect(try !router.listTools(context: .empty).contains { $0.name.hasPrefix("manual.") })
     await client.shutdown()
     let validation = try await ComputerMCPProductContracts.validateMCPConnections(
       configuration: .init(mcp: .init(servers: [server])))

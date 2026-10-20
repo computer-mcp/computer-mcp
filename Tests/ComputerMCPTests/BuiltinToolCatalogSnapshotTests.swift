@@ -58,7 +58,7 @@ struct BuiltinToolCatalogSnapshotTests {
       }))
     let actual: [String: JSONValue]
     do {
-      let tools = try runtime.listTools()
+      let tools = try runtime.listTools(context: .empty)
       try #require(Set(tools.map(\.name)).count == tools.count)
       actual = try Dictionary(
         uniqueKeysWithValues: tools.map { tool in

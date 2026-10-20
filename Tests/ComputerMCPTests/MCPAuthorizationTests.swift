@@ -28,21 +28,27 @@ struct MCPAuthorizationTests {
     let arguments: JSONValue = .object([
       "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
     ])
-    expectThrows(try runtime.callTool(name: "mcp.tools.call", arguments: arguments)) { error in
+    expectThrows(
+      try runtime.callTool(name: "mcp.tools.call", arguments: arguments, context: .empty)
+    ) { error in
       #expect(error.localizedDescription.contains("operations.approval_required"))
     }
-    expectThrows(try runtime.callTool(name: "remote.inspect", arguments: .object([:]))) { error in
+    expectThrows(
+      try runtime.callTool(name: "remote.inspect", arguments: .object([:]), context: .empty)
+    ) { error in
       #expect(error.localizedDescription.contains("operations.approval_required"))
     }
     for name in ["mcp.tools.call", "remote.inspect"] {
       await #expect(throws: (any Error).self) {
         try await runtime.callToolAsync(
-          name: name, arguments: name == "mcp.tools.call" ? arguments : .object([:]))
+          name: name, arguments: name == "mcp.tools.call" ? arguments : .object([:]),
+          context: .empty)
       }
     }
     let prepared = try runtime.callTool(
       name: "operations.prepare",
-      arguments: .object(["tool": .string("mcp.tools.call"), "arguments": arguments]))
+      arguments: .object(["tool": .string("mcp.tools.call"), "arguments": arguments]),
+      context: .empty)
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
         .stringValue)
@@ -52,7 +58,7 @@ struct MCPAuthorizationTests {
         name: "operations.commit",
         arguments: .object([
           "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
-        ]))
+        ]), context: .empty)
     }
     #expect(client.callCount == 0)
     try database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
@@ -60,7 +66,7 @@ struct MCPAuthorizationTests {
       name: "operations.commit",
       arguments: .object([
         "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
-      ]))
+      ]), context: .empty)
     #expect(client.callCount == 1)
     await runtime.shutdown()
   }
@@ -80,16 +86,20 @@ struct MCPAuthorizationTests {
         mcp: .init(servers: [server])),
       registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, mcpClient: CatalogClient())
-    #expect(try runtime.listTools().contains { $0.name == "remote.inspect" } == hostReadOnly)
+    #expect(
+      try runtime.listTools(context: .empty).contains { $0.name == "remote.inspect" }
+        == hostReadOnly)
     if !hostReadOnly {
       #expect(throws: (any Error).self) {
-        try runtime.callTool(name: "remote.inspect", arguments: .object([:]))
+        try runtime.callTool(name: "remote.inspect", arguments: .object([:]), context: .empty)
       }
       await #expect(throws: (any Error).self) {
-        try await runtime.callToolAsync(name: "remote.inspect", arguments: .object([:]))
+        try await runtime.callToolAsync(
+          name: "remote.inspect", arguments: .object([:]), context: .empty)
       }
     } else {
-      _ = try await runtime.callToolAsync(name: "remote.inspect", arguments: .object([:]))
+      _ = try await runtime.callToolAsync(
+        name: "remote.inspect", arguments: .object([:]), context: .empty)
     }
     await runtime.shutdown()
   }
@@ -103,10 +113,11 @@ struct MCPAuthorizationTests {
     let registry = GatewayToolRegistry(
       configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
-    let definition = try #require(router.listTools().first { $0.name == "mcp.inspect" })
+    let definition = try #require(
+      router.listTools(context: .empty).first { $0.name == "mcp.inspect" })
     #expect(definition.annotations?.readOnlyHint == true)
     #expect(definition.json.objectValue?["mcpReference"] == nil)
-    let capability = try router.capability(named: "mcp.inspect")
+    let capability = try router.capability(named: "mcp.inspect", context: .empty)
     #expect(capability.risk == .externalWrite)
     #expect(capability.mcpReference == .init(serverID: "remote", toolName: "inspect"))
   }
@@ -122,8 +133,8 @@ struct MCPAuthorizationTests {
         tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")]),
       mcpClient: CatalogClient())
     let router = try GatewayProviderRouter(registry: registry)
-    #expect(try router.capability(named: "remote.inspect").risk == .readOnly)
-    #expect(try router.capability(named: "alias.inspect").risk == .readOnly)
+    #expect(try router.capability(named: "remote.inspect", context: .empty).risk == .readOnly)
+    #expect(try router.capability(named: "alias.inspect", context: .empty).risk == .readOnly)
   }
 
   @Test
@@ -134,14 +145,15 @@ struct MCPAuthorizationTests {
         ),
         tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")]),
       mcpClient: CatalogClient())
-    #expect(try !registry.listTools().contains { $0.name == "alias.inspect" })
+    #expect(try !registry.listTools(context: .empty).contains { $0.name == "alias.inspect" })
     #expect(throws: (any Error).self) {
-      try registry.callTool(name: "alias.inspect", arguments: .object([:]))
+      try registry.callTool(name: "alias.inspect", arguments: .object([:]), context: .empty)
     }
     #expect(throws: (any Error).self) {
       try registry.callTool(
         name: "mcp.tools.call",
-        arguments: .object(["server": .string("remote"), "tool": .string("inspect")]))
+        arguments: .object(["server": .string("remote"), "tool": .string("inspect")]),
+        context: .empty)
     }
   }
 

@@ -78,7 +78,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     }
   }
 
-  package func toolChanges(context: InvocationContext = .empty) -> AsyncStream<Void> {
+  package func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
     mcpClient.toolChanges()
   }
 
@@ -89,11 +89,11 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   /// Registered gateway and optionally reexported downstream MCP tools.
-  package func listTools(context: InvocationContext = .empty) throws -> [MCPTool] {
+  package func listTools(context: InvocationContext) throws -> [MCPTool] {
     try definitions(context: context).map(\.tool)
   }
 
-  package func definitions(context: InvocationContext = .empty) throws -> [ToolDefinition] {
+  package func definitions(context: InvocationContext) throws -> [ToolDefinition] {
     var definitions = Self.gatewayDefinitions(
       shellEnabled: configuration.policy.shellEnabled,
       builtins: Set(configuration.builtin.enabled),
@@ -137,7 +137,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   }
 
   /// Validates arguments, executes a tool, and returns MCP tool content.
-  package func callTool(name: String, arguments: JSONValue?, context: InvocationContext = .empty)
+  package func callTool(name: String, arguments: JSONValue?, context: InvocationContext)
     throws -> JSONValue
   {
     let object = arguments?.objectValue ?? [:]

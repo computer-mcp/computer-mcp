@@ -19,11 +19,11 @@ final class GatewayMCPToolSurfaceTests {
       registry: GatewayToolRegistry(configuration: configuration)
     )
 
-    #expect((try surface.listTools().map(\.name)) == (["system.time"]))
-    let result = try surface.callTool(name: "system.time", arguments: .object([:]))
+    #expect((try surface.listTools(context: .empty).map(\.name)) == (["system.time"]))
+    let result = try surface.callTool(name: "system.time", arguments: .object([:]), context: .empty)
     #expect((result.objectValue?["structuredContent"]) != nil)
     expectThrows(
-      try surface.callTool(name: "system_time", arguments: .object([:]))
+      try surface.callTool(name: "system_time", arguments: .object([:]), context: .empty)
     )
   }
 }

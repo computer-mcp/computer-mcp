@@ -43,7 +43,7 @@ package struct ToolInvocation: Sendable {
   package let arguments: JSONValue?
   package let context: InvocationContext
 
-  package init(name: String, arguments: JSONValue?, context: InvocationContext = .empty) {
+  package init(name: String, arguments: JSONValue?, context: InvocationContext) {
     self.name = name
     self.arguments = arguments
     self.context = context

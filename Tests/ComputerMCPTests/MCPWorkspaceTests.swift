@@ -114,9 +114,10 @@ struct MCPWorkspaceTests {
         arguments: .object([
           "workspace_id": .string("first"), "caller": .string("local-admin"),
           "hostContext": .object(["readOnly": .bool(false)]),
-        ]))
+        ]), context: .empty)
       async let second = gateway.callToolAsync(
-        name: "fixture.context", arguments: .object(["workspace_id": .string("second")]))
+        name: "fixture.context", arguments: .object(["workspace_id": .string("second")]),
+        context: .empty)
       let values = try await [first, second].map { result in
         #expect(result.objectValue?["isError"] != .bool(true))
         return try #require(result.objectValue?["structuredContent"]?.objectValue)
@@ -153,7 +154,7 @@ struct MCPWorkspaceTests {
       reconnected.transportTrace?.socketConnectionID = "new-connection"
       let retained = try await gateway.callToolAsync(
         name: "fixture.context", arguments: .object(["workspace_id": .string("first")]),
-        context: reconnected)
+        context: reconnected, invocationContext: .empty)
       #expect(retained.objectValue?["structuredContent"]?.objectValue?["pid"] == values[0]["pid"])
       for changedPrincipal in [false, true] {
         var changedContext = context
@@ -165,7 +166,7 @@ struct MCPWorkspaceTests {
         await expectThrowsAsync(
           try await gateway.callToolAsync(
             name: "fixture.context", arguments: .object(["workspace_id": .string("first")]),
-            context: changedContext)
+            context: changedContext, invocationContext: .empty)
         ) { error in
           #expect(error.localizedDescription.contains("policy.caller_denied"))
         }
@@ -254,9 +255,9 @@ private struct MCPWorkspaceFixture: Sendable {
   }
 
   func read(_ registry: GatewayToolRegistry) throws -> [String: JSONValue] {
-    _ = try registry.listTools()
+    _ = try registry.listTools(context: .empty)
     return try #require(
-      registry.callTool(name: "fixture.context", arguments: .object([:]))
+      registry.callTool(name: "fixture.context", arguments: .object([:]), context: .empty)
         .objectValue?["structuredContent"]?.objectValue)
   }
 

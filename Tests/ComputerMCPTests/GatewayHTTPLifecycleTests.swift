@@ -129,7 +129,7 @@ private final class HTTPLifecycleRegistry: GatewayToolServing, Sendable {
   var shutdownCount: Int { state.withLockedValue { $0.shutdownCount } }
   var shutdownDuringDiscovery: Bool { state.withLockedValue { $0.shutdownDuringDiscovery } }
 
-  func listTools(context: InvocationContext = .empty) throws -> [MCPTool] {
+  func listTools(context: InvocationContext) throws -> [MCPTool] {
     if pauseDiscovery {
       state.withLockedValue { $0.discovering = true }
       defer { state.withLockedValue { $0.discovering = false } }
@@ -140,7 +140,7 @@ private final class HTTPLifecycleRegistry: GatewayToolServing, Sendable {
     }
     return []
   }
-  func callTool(name: String, arguments: JSONValue?, context: InvocationContext = .empty) throws
+  func callTool(name: String, arguments: JSONValue?, context: InvocationContext) throws
     -> JSONValue
   { .null }
   func releaseDiscovery() { discoveryGate.signal() }

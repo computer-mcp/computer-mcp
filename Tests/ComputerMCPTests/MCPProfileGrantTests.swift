@@ -41,43 +41,48 @@ struct MCPProfileGrantTests {
       ],
       platform: MacOSPlatform.services, mcpClient: client)
     do {
-      #expect(try runtime.listTools().contains { $0.name == publicName })
-      _ = try runtime.callTool(name: publicName, arguments: .object([:]))
-      _ = try runtime.callTool(name: "review.inspect", arguments: .object([:]))
+      #expect(try runtime.listTools(context: .empty).contains { $0.name == publicName })
+      _ = try runtime.callTool(name: publicName, arguments: .object([:]), context: .empty)
+      _ = try runtime.callTool(name: "review.inspect", arguments: .object([:]), context: .empty)
       _ = try runtime.callTool(
-        name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "inspect"))
+        name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "inspect"),
+        context: .empty)
 
       client.replace(server: "beta", revision: 2)
-      try await runtime.refreshTools()
-      #expect(try !runtime.listTools().contains { $0.name == publicName })
+      try await runtime.refreshTools(context: .empty)
+      #expect(try !runtime.listTools(context: .empty).contains { $0.name == publicName })
       #expect(throws: (any Error).self) {
-        try runtime.callTool(name: publicName, arguments: .object([:]))
+        try runtime.callTool(name: publicName, arguments: .object([:]), context: .empty)
       }
       #expect(throws: (any Error).self) {
         try runtime.callTool(
-          name: "mcp.tools.call", arguments: Self.callArguments(server: "beta", tool: "inspect"))
+          name: "mcp.tools.call", arguments: Self.callArguments(server: "beta", tool: "inspect"),
+          context: .empty)
       }
       do {
         let listed = try Self.result(
           runtime.callTool(
-            name: "mcp.tools.list", arguments: .object(["server": .string("beta")])))
+            name: "mcp.tools.list", arguments: .object(["server": .string("beta")]), context: .empty
+          ))
         #expect(listed == .array([]))
       } catch {
         #expect(error.localizedDescription == "Unknown MCP server id: beta")
       }
       #expect(throws: (any Error).self) {
-        try runtime.callTool(name: "review.inspect", arguments: .object([:]))
+        try runtime.callTool(name: "review.inspect", arguments: .object([:]), context: .empty)
       }
       #expect(client.calledServers.allSatisfy { $0 == "alpha" })
 
       client.replace(server: "alpha", revision: 3)
-      try await runtime.refreshTools()
-      let restored = try #require(try runtime.listTools().first { $0.name == publicName })
+      try await runtime.refreshTools(context: .empty)
+      let restored = try #require(
+        try runtime.listTools(context: .empty).first { $0.name == publicName })
       #expect(restored.description == "revision 3")
       #expect(
         restored.inputSchema.objectValue?["properties"]?.objectValue?["value"]?.objectValue?[
           "const"] == .number(3))
-      _ = try runtime.callTool(name: publicName, arguments: .object(["value": .number(3)]))
+      _ = try runtime.callTool(
+        name: publicName, arguments: .object(["value": .number(3)]), context: .empty)
       #expect(client.calledServers.allSatisfy { $0 == "alpha" })
       await runtime.shutdown()
     } catch {
@@ -115,32 +120,36 @@ struct MCPProfileGrantTests {
         mcpServers: ["alpha"])
     ]
     let runtime = try fixture.runtime(configuration: configuration)
-    let names = Set(try runtime.listTools().map(\.name))
+    let names = Set(try runtime.listTools(context: .empty).map(\.name))
     #expect(names.contains("alpha.future"))
     #expect(names.contains("alpha_alias.inspect"))
     #expect(!names.contains("beta.inspect"))
     #expect(!names.contains("beta_alias.inspect"))
     let servers = try Self.result(
-      runtime.callTool(name: "mcp.servers.list", arguments: .object([:])))
+      runtime.callTool(name: "mcp.servers.list", arguments: .object([:]), context: .empty))
     #expect(servers.arrayValue?.compactMap { $0.objectValue?["id"]?.stringValue } == ["alpha"])
     let listed = try Self.result(
-      runtime.callTool(name: "mcp.tools.list", arguments: .object(["server": .string("alpha")])))
+      runtime.callTool(
+        name: "mcp.tools.list", arguments: .object(["server": .string("alpha")]), context: .empty))
     #expect(
       listed.arrayValue?.compactMap { $0.objectValue?["name"]?.stringValue } == [
         "inspect", "future",
       ])
-    _ = try runtime.callTool(name: "alpha.future", arguments: .object([:]))
+    _ = try runtime.callTool(name: "alpha.future", arguments: .object([:]), context: .empty)
     _ = try runtime.callTool(
-      name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "future"))
+      name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "future"),
+      context: .empty)
     #expect(throws: (any Error).self) {
       try runtime.callTool(
-        name: "mcp.tools.call", arguments: Self.callArguments(server: "beta", tool: "inspect"))
+        name: "mcp.tools.call", arguments: Self.callArguments(server: "beta", tool: "inspect"),
+        context: .empty)
     }
     #expect(throws: (any Error).self) {
-      try runtime.callTool(name: "mcp.tools.list", arguments: .object(["server": .string("beta")]))
+      try runtime.callTool(
+        name: "mcp.tools.list", arguments: .object(["server": .string("beta")]), context: .empty)
     }
     #expect(throws: (any Error).self) {
-      try runtime.callTool(name: "beta_alias.inspect", arguments: .object([:]))
+      try runtime.callTool(name: "beta_alias.inspect", arguments: .object([:]), context: .empty)
     }
     await runtime.shutdown()
   }
@@ -158,7 +167,7 @@ struct MCPProfileGrantTests {
         ], workspaces: ["fixture"], allowedCallers: [.secureTunnel])
     ]
     let runtime = try fixture.runtime(configuration: configuration)
-    let names = Set(try runtime.listTools().map(\.name))
+    let names = Set(try runtime.listTools(context: .empty).map(\.name))
     #expect(names.contains("alpha.inspect"))
     #expect(!names.contains("alpha.future"))
     #expect(!names.contains("beta_alias.inspect"))
@@ -167,7 +176,7 @@ struct MCPProfileGrantTests {
         name: "mcp.tools.find",
         arguments: .object([
           "server": .string("alpha"), "query": .string("secret"),
-        ])))
+        ]), context: .empty))
     #expect(found.objectValue?["tool_count"] == .number(1))
     #expect(found.objectValue?["result_count"] == .number(0))
     #expect(found.objectValue?["tools"] == .array([]))
@@ -176,22 +185,24 @@ struct MCPProfileGrantTests {
         name: "mcp.tools.describe",
         arguments: .object([
           "server": .string("alpha"), "tool": .string("inspect"),
-        ])))
+        ]), context: .empty))
     #expect(described.objectValue?["tool_count"] == .number(1))
     #expect(throws: (any Error).self) {
       try runtime.callTool(
         name: "mcp.tools.describe",
         arguments: .object([
           "server": .string("alpha"), "tool": .string("future"),
-        ]))
+        ]), context: .empty)
     }
-    _ = try runtime.callTool(name: "alpha_alias.inspect", arguments: .object([:]))
-    _ = try runtime.callTool(name: "alpha.inspect", arguments: .object([:]))
+    _ = try runtime.callTool(name: "alpha_alias.inspect", arguments: .object([:]), context: .empty)
+    _ = try runtime.callTool(name: "alpha.inspect", arguments: .object([:]), context: .empty)
     _ = try runtime.callTool(
-      name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "inspect"))
+      name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "inspect"),
+      context: .empty)
     #expect(throws: (any Error).self) {
       try runtime.callTool(
-        name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "future"))
+        name: "mcp.tools.call", arguments: Self.callArguments(server: "alpha", tool: "future"),
+        context: .empty)
     }
     await runtime.shutdown()
   }
@@ -211,7 +222,8 @@ struct MCPProfileGrantTests {
     for (server, tool) in [("beta", "inspect"), ("beta", "future"), ("missing", "inspect")] {
       expectThrows(
         try runtime.callTool(
-          name: "mcp.tools.call", arguments: Self.callArguments(server: server, tool: tool))
+          name: "mcp.tools.call", arguments: Self.callArguments(server: server, tool: tool),
+          context: .empty)
       ) { error in
         errors.append(error.localizedDescription)
         #expect(error.localizedDescription.contains("policy.capability_denied"))
@@ -322,19 +334,20 @@ struct MCPProfileGrantTests {
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
       platform: MacOSPlatform.services, mcpClient: client)
-    #expect(try !runtime.listTools().contains { $0.name == "alpha.inspect" })
-    #expect(try runtime.listTools().contains { $0.name == "beta.inspect" })
+    #expect(try !runtime.listTools(context: .empty).contains { $0.name == "alpha.inspect" })
+    #expect(try runtime.listTools(context: .empty).contains { $0.name == "beta.inspect" })
     for (name, arguments) in [
       ("beta.inspect", JSONValue.object([:])),
       ("mcp.tools.call", Self.callArguments(server: "beta", tool: "inspect")),
     ] {
-      expectThrows(try runtime.callTool(name: name, arguments: arguments)) { error in
+      expectThrows(try runtime.callTool(name: name, arguments: arguments, context: .empty)) {
+        error in
         #expect(error.localizedDescription.contains("operations.approval_required"))
       }
       let prepared = try Self.result(
         runtime.callTool(
           name: "operations.prepare",
-          arguments: .object(["tool": .string(name), "arguments": arguments])))
+          arguments: .object(["tool": .string(name), "arguments": arguments]), context: .empty))
       let ticket = try #require(prepared.objectValue?["ticket_id"]?.stringValue)
       #expect(try database.operationTicket(id: ticket)?.state == .pendingApproval)
       let callsBeforeApproval = client.calledServers.count
@@ -343,7 +356,7 @@ struct MCPProfileGrantTests {
           name: "operations.commit",
           arguments: .object([
             "ticket_id": .string(ticket), "tool": .string(name), "arguments": arguments,
-          ]))
+          ]), context: .empty)
       }
       #expect(client.calledServers.count == callsBeforeApproval)
       try database.resolveOperationApproval(id: ticket, approved: true, resolver: .localApp)
@@ -351,7 +364,7 @@ struct MCPProfileGrantTests {
         name: "operations.commit",
         arguments: .object([
           "ticket_id": .string(ticket), "tool": .string(name), "arguments": arguments,
-        ]))
+        ]), context: .empty)
       #expect(client.calledServers.count == callsBeforeApproval + 1)
     }
     #expect(client.calledServers == ["beta", "beta"])

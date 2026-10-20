@@ -63,23 +63,25 @@ struct GatewayToolCatalogTests {
   func refreshPublishesDefinitionsCapabilitiesAndRoutesTogether() async throws {
     let source = CatalogSourceFixture()
     let router = try GatewayProviderRouter(source: source.providers)
-    let oldCapability = try router.capability(named: "sample")
+    let oldCapability = try router.capability(named: "sample", context: .empty)
     source.replace(names: ["sample", "added"], revision: 2, risk: .destructive)
-    try await router.refreshTools()
-    #expect(try router.listTools().map(\.name) == ["sample", "added"])
-    #expect(try router.listTools().first?.description == "revision 2")
+    try await router.refreshTools(context: .empty)
+    #expect(try router.listTools(context: .empty).map(\.name) == ["sample", "added"])
+    #expect(try router.listTools(context: .empty).first?.description == "revision 2")
     #expect(
-      try router.listTools().first?.inputSchema.objectValue?["properties"]?.objectValue?[
-        "revision"]?.objectValue?["const"] == .number(2))
-    #expect(try router.capability(named: "sample").risk == .destructive)
-    #expect(try router.callTool(name: "added", arguments: nil) == .number(2))
+      try router.listTools(context: .empty).first?.inputSchema.objectValue?["properties"]?
+        .objectValue?[
+          "revision"]?.objectValue?["const"] == .number(2))
+    #expect(try router.capability(named: "sample", context: .empty).risk == .destructive)
+    #expect(try router.callTool(name: "added", arguments: nil, context: .empty) == .number(2))
     #expect(throws: GatewayProviderRouterError.capabilityChanged("sample")) {
-      try router.callTool(name: "sample", arguments: nil, expectedCapability: oldCapability)
+      try router.callTool(
+        name: "sample", arguments: nil, expectedCapability: oldCapability, context: .empty)
     }
     source.replace(names: ["added"], revision: 3)
-    try await router.refreshTools()
+    try await router.refreshTools(context: .empty)
     #expect(throws: GatewayToolError.unknownTool("sample")) {
-      try router.callTool(name: "sample", arguments: nil)
+      try router.callTool(name: "sample", arguments: nil, context: .empty)
     }
     await router.shutdown()
   }
@@ -88,16 +90,16 @@ struct GatewayToolCatalogTests {
   func failedRefreshKeepsLastValidatedSnapshotAndCanRecover() async throws {
     let source = CatalogSourceFixture()
     let router = try GatewayProviderRouter(source: source.providers)
-    let events = router.toolChanges()
+    let events = router.toolChanges(context: .empty)
     source.replace(names: ["collision", "collision"], revision: 2)
     await #expect(throws: GatewayProviderRouterError.duplicateTool("collision")) {
-      try await router.refreshTools()
+      try await router.refreshTools(context: .empty)
     }
-    #expect(try router.listTools().map(\.name) == ["sample"])
-    #expect(try router.callTool(name: "sample", arguments: nil) == .number(1))
+    #expect(try router.listTools(context: .empty).map(\.name) == ["sample"])
+    #expect(try router.callTool(name: "sample", arguments: nil, context: .empty) == .number(1))
     #expect(router.lastRefreshError != nil)
     source.replace(names: ["sample"], revision: 1)
-    try await router.refreshTools()
+    try await router.refreshTools(context: .empty)
     #expect(router.lastRefreshError == nil)
     await router.shutdown()
     var iterator = events.makeAsyncIterator()
@@ -108,17 +110,19 @@ struct GatewayToolCatalogTests {
   func everySubscriberReceivesTheSameChangeAndClosesOnShutdown() async throws {
     let source = CatalogSourceFixture()
     let router = try GatewayProviderRouter(source: source.providers)
-    let first = router.toolChanges()
-    let second = router.toolChanges()
+    let first = router.toolChanges(context: .empty)
+    let second = router.toolChanges(context: .empty)
     source.replace(names: ["sample", "added"], revision: 2)
-    try await router.refreshTools()
+    try await router.refreshTools(context: .empty)
     #expect(try await Self.nextEvent(first))
     #expect(try await Self.nextEvent(second))
-    let closing = router.toolChanges()
+    let closing = router.toolChanges(context: .empty)
     await router.shutdown()
     var iterator = closing.makeAsyncIterator()
     #expect(await iterator.next() == nil)
-    await #expect(throws: GatewayProviderRouterError.stopped) { try await router.refreshTools() }
+    await #expect(throws: GatewayProviderRouterError.stopped) {
+      try await router.refreshTools(context: .empty)
+    }
   }
 
   @Test
@@ -126,9 +130,9 @@ struct GatewayToolCatalogTests {
     let source = CatalogSourceFixture()
     source.replace(names: ["first", "second"], revision: 1)
     let router = try GatewayProviderRouter(source: source.providers)
-    let events = router.toolChanges()
+    let events = router.toolChanges(context: .empty)
     source.replace(names: ["second", "first"], revision: 1)
-    try await router.refreshTools()
+    try await router.refreshTools(context: .empty)
     await router.shutdown()
     var iterator = events.makeAsyncIterator()
     #expect(await iterator.next() == nil)
@@ -143,24 +147,25 @@ struct GatewayToolCatalogTests {
       group.addTask {
         for revision in 2...100 {
           source.replace(names: ["left", "right"], revision: revision)
-          try await router.refreshTools()
+          try await router.refreshTools(context: .empty)
         }
       }
       for _ in 0..<8 {
         group.addTask {
           for _ in 0..<250 {
-            let tools = try router.listTools()
+            let tools = try router.listTools(context: .empty)
             #expect(tools.map(\.name) == ["left", "right"])
             #expect(tools[0].description == tools[1].description)
             #expect(tools[0].inputSchema == tools[1].inputSchema)
-            #expect(try router.callTool(name: "left", arguments: nil).numberValue != nil)
+            #expect(
+              try router.callTool(name: "left", arguments: nil, context: .empty).numberValue != nil)
             await Task.yield()
           }
         }
       }
       try await group.waitForAll()
     }
-    #expect(try router.callTool(name: "right", arguments: nil) == .number(100))
+    #expect(try router.callTool(name: "right", arguments: nil, context: .empty) == .number(100))
     await router.shutdown()
   }
 
@@ -169,10 +174,10 @@ struct GatewayToolCatalogTests {
     let source = CatalogSourceFixture()
     let router = try GatewayProviderRouter(
       source: source.providers, refreshInterval: .milliseconds(20))
-    let events = router.toolChanges()
+    let events = router.toolChanges(context: .empty)
     source.replace(names: ["new"], revision: 2)
     #expect(try await Self.nextEvent(events))
-    #expect(try router.listTools().map(\.name) == ["new"])
+    #expect(try router.listTools(context: .empty).map(\.name) == ["new"])
     await router.shutdown()
   }
 
@@ -218,7 +223,7 @@ struct GatewayToolCatalogTests {
     let router = try GatewayProviderRouter(source: {
       [CatalogSingleToolFixture(tool: current.withLockedValue { $0 })]
     })
-    let events = router.toolChanges()
+    let events = router.toolChanges(context: .empty)
     let replacement = MCPTool(
       name: initial.name,
       description: field == "description" ? "changed" : initial.description,
@@ -228,9 +233,9 @@ struct GatewayToolCatalogTests {
       outputSchema: field == "outputSchema" ? .object(["type": .string("object")]) : nil,
       annotations: field == "annotations" ? .init(readOnlyHint: true) : nil)
     current.withLockedValue { $0 = replacement }
-    try await router.refreshTools()
+    try await router.refreshTools(context: .empty)
     #expect(try await Self.nextEvent(events))
-    #expect(try router.listTools() == [replacement])
+    #expect(try router.listTools(context: .empty) == [replacement])
     await router.shutdown()
   }
 
@@ -248,7 +253,7 @@ struct GatewayToolCatalogTests {
       #expect(try await client.listTools().tools.map(\.name) == ["current"])
       source.replace(names: ["duplicate", "duplicate"], revision: 3)
       await #expect(throws: (any Error).self) { _ = try await client.listTools() }
-      #expect(try router.listTools().map(\.name) == ["current"])
+      #expect(try router.listTools(context: .empty).map(\.name) == ["current"])
       #expect(router.lastRefreshError != nil)
       source.replace(names: ["recovered"], revision: 4)
       #expect(try await client.listTools().tools.map(\.name) == ["recovered"])
@@ -272,11 +277,11 @@ struct GatewayToolCatalogTests {
       source: source.providers, invalidations: invalidations.stream())
     weak var weakRouter: GatewayProviderRouter?
     weakRouter = router
-    let events = try #require(router).toolChanges()
+    let events = try #require(router).toolChanges(context: .empty)
     source.replace(names: ["new"], revision: 2)
     invalidations.send()
     #expect(try await Self.nextEvent(events))
-    #expect(try router?.listTools().map(\.name) == ["new"])
+    #expect(try router?.listTools(context: .empty).map(\.name) == ["new"])
     await router?.shutdown()
     router = nil
     #expect(weakRouter == nil)
@@ -304,7 +309,7 @@ struct GatewayToolCatalogTests {
         }
         return snapshot
       }, invalidations: invalidations.stream())
-    let changes = router.toolChanges()
+    let changes = router.toolChanges(context: .empty)
     source.replace(names: ["intermediate"], revision: 2)
     pauseNext.withLockedValue { $0 = true }
     invalidations.send()
@@ -316,7 +321,7 @@ struct GatewayToolCatalogTests {
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
           for await _ in changes {
-            if try router.listTools().map(\.name) == ["latest"] { return }
+            if try router.listTools(context: .empty).map(\.name) == ["latest"] { return }
           }
           throw CatalogTestError.timeout
         }
@@ -327,7 +332,7 @@ struct GatewayToolCatalogTests {
         defer { group.cancelAll() }
         _ = try await group.next()
       }
-      #expect(try router.callTool(name: "latest", arguments: nil) == .number(3))
+      #expect(try router.callTool(name: "latest", arguments: nil, context: .empty) == .number(3))
       await router.shutdown()
     } catch {
       resume.signal()
@@ -347,11 +352,11 @@ struct GatewayToolCatalogTests {
       ]))
     let router = try GatewayProviderRouter(
       registry: .init(configuration: configuration, mcpClient: client))
-    let events = router.toolChanges()
+    let events = router.toolChanges(context: .empty)
     client.replace(names: ["sample", "hidden"], revision: 1)
-    try await router.refreshTools()
-    #expect(try router.listTools().contains { $0.name == "fixture.sample" })
-    #expect(try !router.listTools().contains { $0.name == "fixture.hidden" })
+    try await router.refreshTools(context: .empty)
+    #expect(try router.listTools(context: .empty).contains { $0.name == "fixture.sample" })
+    #expect(try !router.listTools(context: .empty).contains { $0.name == "fixture.hidden" })
     await router.shutdown()
     var iterator = events.makeAsyncIterator()
     #expect(await iterator.next() == nil)

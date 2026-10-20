@@ -56,7 +56,7 @@ struct GatewayConstructionTests {
     configuration.mcp.servers[0].args = [script.path, root.path, "inspect"]
     let runtime = try await GatewayRuntime.make(
       configuration: configuration, registeredWorkspaces: [first], platform: MacOSPlatform.services)
-    #expect(try runtime.listTools().contains { $0.name == "inspect" })
+    #expect(try runtime.listTools(context: .empty).contains { $0.name == "inspect" })
     await runtime.shutdown()
     try expectProcessesExited(root)
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("overlap").path))

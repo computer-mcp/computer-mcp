@@ -334,10 +334,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       if let providerRouter = configuredWorkspaces.lazy.compactMap({ providerRouterByID[$0.id] })
         .first
       {
+        // Initial profile derivation precedes caller invocations.
         readOnlyCapabilities.formUnion(
-          try providerRouter.listTools()
+          try providerRouter.listTools(context: .empty)
             .filter {
-              try providerRouter.capability(named: $0.name).risk == .readOnly
+              try providerRouter.capability(named: $0.name, context: .empty).risk == .readOnly
             }
             .map(\.name)
         )
@@ -758,15 +759,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return session
   }
 
-  package func listTools(context: InvocationContext = .empty) throws -> [MCPTool] {
+  package func listTools(context: InvocationContext) throws -> [MCPTool] {
     try listTools(context: contextForCall(context), invocationContext: context)
   }
 
-  package func listToolsAsync(context: InvocationContext = .empty) async throws -> [MCPTool] {
+  package func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
     try await Self.performAdmission { try self.listTools(context: context) }
   }
 
-  package func toolChanges(context: InvocationContext = .empty) -> AsyncStream<Void> {
+  package func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
     guard let database else {
       return firstProviderRouter?.toolChanges(context: context) ?? AsyncStream { $0.finish() }
     }
@@ -790,13 +791,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return stream
   }
 
-  package func refreshTools(context: InvocationContext = .empty) async throws {
+  package func refreshTools(context: InvocationContext) async throws {
     for workspaceID in workspaceOrder {
       try await providerRouters[workspaceID]?.refreshTools(context: context)
     }
   }
 
-  package func listTools(context: ExecutionContext, invocationContext: InvocationContext = .empty)
+  package func listTools(context: ExecutionContext, invocationContext: InvocationContext)
     throws -> [MCPTool]
   {
     guard (try? currentHostGrant(context: context)) != nil else { return [] }
@@ -1059,7 +1060,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         tool: reference.toolName, arguments: nativeArguments))
   }
 
-  package func callTool(name: String, arguments: JSONValue?, context: InvocationContext = .empty)
+  package func callTool(name: String, arguments: JSONValue?, context: InvocationContext)
     throws -> JSONValue
   {
     try callTool(
@@ -1068,7 +1069,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func callToolAsync(
-    name: String, arguments: JSONValue?, context: InvocationContext = .empty
+    name: String, arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
     try await callToolAsync(
       name: name, arguments: arguments, context: contextForCall(context), invocationContext: context
@@ -1138,7 +1139,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   package func callToolForMCPAsync(
     name: String,
-    arguments: JSONValue?, context: InvocationContext = .empty
+    arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
     let callContext = contextForMCP(arguments: arguments, invocationContext: context)
     do {
@@ -1190,7 +1191,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     name: String,
     arguments: JSONValue?,
     context: ExecutionContext,
-    invocationContext: InvocationContext = .empty
+    invocationContext: InvocationContext
   ) throws -> JSONValue {
     let ownership = try ownedWork.admitInvocation(
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
@@ -1205,7 +1206,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     name: String,
     arguments: JSONValue?,
     context: ExecutionContext,
-    invocationContext: InvocationContext = .empty
+    invocationContext: InvocationContext
   ) async throws -> JSONValue {
     let ownership = try ownedWork.admitInvocation(
       workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,

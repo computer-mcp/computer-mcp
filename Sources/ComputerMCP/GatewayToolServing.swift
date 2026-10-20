@@ -14,14 +14,14 @@ package protocol GatewayAsyncToolServing: Sendable {
 }
 
 extension GatewayAsyncToolServing {
-  package func toolChanges(context: InvocationContext = .empty) -> AsyncStream<Void> {
+  package func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
     AsyncStream { $0.finish() }
   }
-  package func refreshTools(context: InvocationContext = .empty) async throws {}
+  package func refreshTools(context: InvocationContext) async throws {}
 
   package func callToolForMCPAsync(
     name: String,
-    arguments: JSONValue?, context: InvocationContext = .empty
+    arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
     try await callToolAsync(name: name, arguments: arguments, context: context)
   }
@@ -36,7 +36,7 @@ package protocol GatewayToolServing: GatewayAsyncToolServing {
 }
 
 extension GatewayToolServing {
-  package func listToolsAsync(context: InvocationContext = .empty) async throws -> [MCPTool] {
+  package func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
     try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         continuation.resume(with: Result { try self.listTools(context: context) })
@@ -45,7 +45,7 @@ extension GatewayToolServing {
   }
 
   package func callToolAsync(
-    name: String, arguments: JSONValue?, context: InvocationContext = .empty
+    name: String, arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
     try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {

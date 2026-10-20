@@ -121,9 +121,9 @@ extension AppControlPlaneService {
     ])
     do {
       let catalog = try await runtime.callToolForMCPAsync(
-        name: "mcp.tools.list", arguments: arguments)
+        name: "mcp.tools.list", arguments: arguments, context: .empty)
       let status = try await runtime.callToolForMCPAsync(
-        name: "mcp.servers.status", arguments: arguments)
+        name: "mcp.servers.status", arguments: arguments, context: .empty)
       let statusResult = status.objectValue?["structuredContent"]?.objectValue?["result"]
       let payload = statusResult?.objectValue?["servers"]?.arrayValue?.first?.objectValue
       let connection = payload?["connection"]?.objectValue

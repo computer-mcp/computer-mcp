@@ -86,14 +86,15 @@ struct GatewayExecutionOwnersTests {
           #expect(throws: GatewayToolError.self) {
             try current.callTool(
               name: "runtime.owners.list",
-              arguments: .object(["workspace_id": .string("root")]), context: foreign)
+              arguments: .object(["workspace_id": .string("root")]), context: foreign,
+              invocationContext: .empty)
           }
         }
         func page(_ extra: [String: JSONValue] = [:]) throws -> [String: JSONValue] {
           var arguments = extra
           arguments["workspace_id"] = .string("root")
           let result = try current.callTool(
-            name: "runtime.owners.list", arguments: .object(arguments))
+            name: "runtime.owners.list", arguments: .object(arguments), context: .empty)
           return try #require(
             result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
         }
@@ -140,7 +141,7 @@ struct GatewayExecutionOwnersTests {
             "workspace_id": .string("root"), "owner": foreignOwner.json,
             "tool": .string("shell.read"),
             "arguments": .object(["session_id": .string("private")]),
-          ]))
+          ]), context: .empty)
         #expect(rejected.objectValue?["isError"] == .bool(true))
         #expect(String(describing: rejected).contains("runtime.owner_unavailable"))
       }

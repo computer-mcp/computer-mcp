@@ -31,8 +31,10 @@ final class GatewayToolProviderTests {
     )
     let router = try GatewayProviderRouter(providers: [first, second])
 
-    #expect((try router.listTools().map(\.name)) == (["first.read", "second.read"]))
-    #expect((try router.callTool(name: "second.read", arguments: nil)) == (.string("second")))
+    #expect((try router.listTools(context: .empty).map(\.name)) == (["first.read", "second.read"]))
+    #expect(
+      (try router.callTool(name: "second.read", arguments: nil, context: .empty))
+        == (.string("second")))
   }
 
   @Test
@@ -54,7 +56,7 @@ final class GatewayToolProviderTests {
     )
     let router = try GatewayProviderRouter(providers: [provider])
 
-    let descriptor = try router.capability(named: "local.admin")
+    let descriptor = try router.capability(named: "local.admin", context: .empty)
     #expect((descriptor.id) == ("local.admin"))
     #expect((descriptor.risk) == (.externalWrite))
     #expect((descriptor.workspaceRequirement) == (.required))
@@ -78,11 +80,11 @@ final class GatewayToolProviderTests {
         candidate == reference && visibility.withLockedValue { $0.owned }
       })
     visibility.withLockedValue { $0.visible = false }
-    try await router.refreshTools()
-    #expect(try router.listTools().isEmpty)
+    try await router.refreshTools(context: .empty)
+    #expect(try router.listTools(context: .empty).isEmpty)
     #expect(router.continuationReference(named: "fixture.inspect") == reference)
     #expect(throws: GatewayToolError.self) {
-      try router.callTool(name: "fixture.inspect", arguments: nil)
+      try router.callTool(name: "fixture.inspect", arguments: nil, context: .empty)
     }
     func target(_ reference: MCPToolReference) -> MCPContinuationTarget {
       .init(
@@ -98,7 +100,7 @@ final class GatewayToolProviderTests {
         context: .init(continuation: target(.init(serverID: "other", toolName: "inspect"))))
     }
     visibility.withLockedValue { $0.owned = false }
-    try await router.refreshTools()
+    try await router.refreshTools(context: .empty)
     #expect(router.continuationReference(named: "fixture.inspect") == nil)
     #expect(throws: GatewayToolError.self) {
       try router.callTool(

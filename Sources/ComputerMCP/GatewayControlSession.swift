@@ -279,28 +279,28 @@ struct GatewayControlSessionServing: GatewayAsyncToolServing {
   let base: any GatewayAsyncToolServing
   let session: GatewayControlSession
 
-  func listToolsAsync(context: InvocationContext = .empty) async throws -> [MCPTool] {
+  func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
     try await base.listToolsAsync(context: sessionContext(context))
   }
 
-  func refreshTools(context: InvocationContext = .empty) async throws {
+  func refreshTools(context: InvocationContext) async throws {
     try await base.refreshTools(context: sessionContext(context))
   }
 
-  func callToolAsync(name: String, arguments: JSONValue?, context: InvocationContext = .empty)
+  func callToolAsync(name: String, arguments: JSONValue?, context: InvocationContext)
     async throws -> JSONValue
   {
     try await base.callToolAsync(name: name, arguments: arguments, context: sessionContext(context))
   }
 
-  func callToolForMCPAsync(name: String, arguments: JSONValue?, context: InvocationContext = .empty)
+  func callToolForMCPAsync(name: String, arguments: JSONValue?, context: InvocationContext)
     async throws -> JSONValue
   {
     try await base.callToolForMCPAsync(
       name: name, arguments: arguments, context: sessionContext(context))
   }
 
-  func toolChanges(context: InvocationContext = .empty) -> AsyncStream<Void> {
+  func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
     let sources = [base.toolChanges(context: sessionContext(context)), session.changes.stream()]
     let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let forwarding = Task {

@@ -42,7 +42,7 @@ struct GatewayWorkspaceScopeTests {
       let arguments: JSONValue = .object([
         "workspace_id": .string(workspace.id), "path": .string("value.txt"),
       ])
-      let read = try runtime.callTool(name: "file.read", arguments: arguments)
+      let read = try runtime.callTool(name: "file.read", arguments: arguments, context: .empty)
       #expect(
         read.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["content"] == .string("original"))
@@ -75,13 +75,14 @@ struct GatewayWorkspaceScopeTests {
         }
       }
       do {
-        _ = try runtime.callTool(name: "file.read", arguments: arguments)
+        _ = try runtime.callTool(name: "file.read", arguments: arguments, context: .empty)
         Issue.record("Changed workspace scope executed a new read: \(change)")
       } catch {
         #expect(GatewayRuntime.auditErrorCode(for: error) == expectedCode)
       }
       let described = try runtime.callTool(
-        name: "workspace.describe", arguments: .object(["workspace_id": .string(workspace.id)]))
+        name: "workspace.describe", arguments: .object(["workspace_id": .string(workspace.id)]),
+        context: .empty)
       let access = described.objectValue?["structuredContent"]?.objectValue?["result"]?
         .objectValue?["access"]?.objectValue
       #expect(access?["status"] == .string("unavailable"))
@@ -96,7 +97,9 @@ struct GatewayWorkspaceScopeTests {
         try FileManager.default.moveItem(at: moved, to: root)
       }
       adapter.set(root: root)
-      #expect(throws: Never.self) { try runtime.callTool(name: "file.read", arguments: arguments) }
+      #expect(throws: Never.self) {
+        try runtime.callTool(name: "file.read", arguments: arguments, context: .empty)
+      }
       await runtime.shutdown()
       #expect(adapter.activeScopes == 0)
     } catch {
@@ -134,13 +137,14 @@ struct GatewayWorkspaceScopeTests {
       let stored = try database.configurationState()
       do {
         _ = try runtime.callTool(
-          name: "file.read", arguments: .object(["path": .string("value.txt")]))
+          name: "file.read", arguments: .object(["path": .string("value.txt")]), context: .empty)
         Issue.record("A stale in-memory bookmark authorized execution")
       } catch {
         #expect(GatewayRuntime.auditErrorCode(for: error) == "workspace.bookmark_resolution_failed")
       }
       let described = try runtime.callTool(
-        name: "workspace.describe", arguments: .object(["workspace_id": .string(workspace.id)]))
+        name: "workspace.describe", arguments: .object(["workspace_id": .string(workspace.id)]),
+        context: .empty)
       #expect(
         described.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["access"]?.objectValue?["error"]?.objectValue?["code"]

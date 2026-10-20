@@ -75,7 +75,10 @@ extension AppControlPlaneService {
       inputs: inputs, caller: .localApp, profileID: .localAdmin, persistentState: false)
     let capabilities: [ProfilePermissionCapability]
     do {
-      capabilities = try (gateway.listTools() + GatewayRemoteManagement.definitions.map(\.tool))
+      // Permission options enumerate the host catalog outside any caller invocation.
+      capabilities = try
+        (gateway.listTools(context: .empty)
+        + GatewayRemoteManagement.definitions.map(\.tool))
         .compactMap { tool in
           let descriptor =
             try GatewayRemoteManagement.byName[tool.name]?.definition.capability

@@ -415,7 +415,7 @@ struct PluginResolverTests {
       name: "cli.exec",
       arguments: .object([
         "id": .string("commands"), "argv": .array([.string("%s"), .string("空 格;$(no-execution)")]),
-      ]))
+      ]), context: .empty)
     let payload = try #require(output.objectValue?["structuredContent"]?.objectValue?["result"])
     #expect(payload.objectValue?["stdout"] == .string("空 格;$(no-execution)"))
     #expect(payload.objectValue?["exit_code"] == .number(0))
@@ -452,21 +452,21 @@ struct PluginResolverTests {
       ],
       platform: MacOSPlatform.services, mcpClient: CompositionCatalogClient(), plugins: [plugin])
     do {
-      let tools = try runtime.listTools().map(\.name)
+      let tools = try runtime.listTools(context: .empty).map(\.name)
       #expect(tools.contains("package.inspect"))
       #expect(tools.contains("package.future") == all)
-      _ = try runtime.callTool(name: "package.inspect", arguments: .object([:]))
+      _ = try runtime.callTool(name: "package.inspect", arguments: .object([:]), context: .empty)
       _ = try runtime.callTool(
         name: "mcp.tools.call",
         arguments: .object([
           "server": .string("native"), "tool": .string("inspect"), "arguments": .object([:]),
-        ]))
+        ]), context: .empty)
       #expect(throws: (any Error).self) {
         try runtime.callTool(
           name: "mcp.tools.call",
           arguments: .object([
             "server": .string("private"), "tool": .string("inspect"), "arguments": .object([:]),
-          ]))
+          ]), context: .empty)
       }
       #expect(runtime.pluginOrigins.count == 3)
       #expect(runtime.pluginDiagnostics.isEmpty)

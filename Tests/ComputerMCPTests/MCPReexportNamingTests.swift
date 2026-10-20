@@ -18,13 +18,13 @@ struct MCPReexportNamingTests {
     let registry = GatewayToolRegistry(
       configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
     let exposed = prefix.isEmpty ? "codex.app.status" : "namespace.codex.app.status"
-    let tool = try #require(registry.listTools().first { $0.name == exposed })
+    let tool = try #require(registry.listTools(context: .empty).first { $0.name == exposed })
     let original = try #require(client.listTools(server: server, context: .empty).first)
     #expect(tool.inputSchema == original.inputSchema && tool.outputSchema == original.outputSchema)
     #expect(tool.title == original.title && tool.annotations == original.annotations)
     #expect(tool.mcpReference == .init(serverID: "first", toolName: "codex.app.status"))
     #expect(
-      try registry.callTool(name: exposed, arguments: .object([:]))
+      try registry.callTool(name: exposed, arguments: .object([:]), context: .empty)
         == .string("first:codex.app.status"))
   }
 
@@ -74,15 +74,19 @@ struct MCPReexportNamingTests {
     let registry = GatewayToolRegistry(configuration: configuration, mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     do {
-      #expect(try router.callTool(name: "left", arguments: nil) == .string("first:left"))
+      #expect(
+        try router.callTool(name: "left", arguments: nil, context: .empty) == .string("first:left"))
       client.replace("second", names: ["left"])
-      await #expect(throws: (any Error).self) { try await router.refreshTools() }
-      #expect(try router.callTool(name: "left", arguments: nil) == .string("first:left"))
-      #expect(try router.listTools().contains { $0.name == "right" })
+      await #expect(throws: (any Error).self) { try await router.refreshTools(context: .empty) }
+      #expect(
+        try router.callTool(name: "left", arguments: nil, context: .empty) == .string("first:left"))
+      #expect(try router.listTools(context: .empty).contains { $0.name == "right" })
       client.replace("second", names: ["fresh"])
-      try await router.refreshTools()
-      #expect(try router.callTool(name: "fresh", arguments: nil) == .string("second:fresh"))
-      #expect(try !router.listTools().contains { $0.name == "right" })
+      try await router.refreshTools(context: .empty)
+      #expect(
+        try router.callTool(name: "fresh", arguments: nil, context: .empty)
+          == .string("second:fresh"))
+      #expect(try !router.listTools(context: .empty).contains { $0.name == "right" })
       await router.shutdown()
     } catch {
       await router.shutdown()
@@ -96,7 +100,7 @@ struct MCPReexportNamingTests {
       mcp: .init(servers: [Self.server("first", prefix: "")]))
     let registry = GatewayToolRegistry(
       configuration: configuration, mcpClient: ReexportNamingClient(["first": ["cli.list"]]))
-    #expect(throws: (any Error).self) { _ = try registry.listTools() }
+    #expect(throws: (any Error).self) { _ = try registry.listTools(context: .empty) }
   }
 
   @Test(arguments: [
@@ -128,13 +132,15 @@ struct MCPReexportNamingTests {
     do {
       client.replace("first", names: ["workspace.list"])
       await #expect(throws: GatewayProviderRouterError.duplicateTool("workspace.list")) {
-        try await router.refreshTools()
+        try await router.refreshTools(context: .empty)
       }
-      #expect(try router.listTools().contains { $0.name == "available" })
-      #expect(try !router.listTools().contains { $0.name == "workspace.list" })
+      #expect(try router.listTools(context: .empty).contains { $0.name == "available" })
+      #expect(try !router.listTools(context: .empty).contains { $0.name == "workspace.list" })
       client.replace("first", names: ["recovered"])
-      try await router.refreshTools()
-      #expect(try router.callTool(name: "recovered", arguments: nil) == .string("first:recovered"))
+      try await router.refreshTools(context: .empty)
+      #expect(
+        try router.callTool(name: "recovered", arguments: nil, context: .empty)
+          == .string("first:recovered"))
       await router.shutdown()
     } catch {
       await router.shutdown()

@@ -654,7 +654,8 @@ package actor AppGatewayService {
   private func observe(_ runtime: GatewayRuntime, key: RuntimeKey, epoch: UUID) {
     let id = runtime.generationID
     let work = runtime.ownedWork.updates()
-    let tools = runtime.toolChanges()
+    // The host observes each runtime's catalog independently of caller invocations.
+    let tools = runtime.toolChanges(context: .empty)
     runtimeObservers[id] = [
       Task { [weak self] in
         for await _ in work {

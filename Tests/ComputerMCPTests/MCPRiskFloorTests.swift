@@ -41,10 +41,11 @@ struct MCPRiskFloorTests {
     args["request_id"] = .string("semantic-request")
     do {
       if path == "sync" {
-        _ = try fixture.runtime.callTool(name: "mcp.tools.call", arguments: .object(args))
+        _ = try fixture.runtime.callTool(
+          name: "mcp.tools.call", arguments: .object(args), context: .empty)
       } else {
         _ = try await fixture.runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(args))
+          name: "mcp.tools.call", arguments: .object(args), context: .empty)
       }
       Issue.record("An action changed after host admission reached the downstream provider.")
     } catch {
@@ -63,7 +64,7 @@ struct MCPRiskFloorTests {
       name: "operations.prepare",
       arguments: .object([
         "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-      ]))
+      ]), context: .empty)
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
         .objectValue?["ticket_id"]?.stringValue)
@@ -75,7 +76,7 @@ struct MCPRiskFloorTests {
         arguments: .object([
           "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
           "arguments": arguments(for: "mcp.tools.call"),
-        ]))
+        ]), context: .empty)
       Issue.record("An unchanged risk must not let an approval change its semantic action.")
     } catch {
       #expect(error.localizedDescription.contains("operations.ticket_arguments_mismatch"))
@@ -94,7 +95,7 @@ struct MCPRiskFloorTests {
       name: "operations.prepare",
       arguments: .object([
         "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-      ]))
+      ]), context: .empty)
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
         .objectValue?["ticket_id"]?.stringValue)
@@ -105,9 +106,11 @@ struct MCPRiskFloorTests {
     ])
     do {
       if asynchronous {
-        _ = try await fixture.runtime.callToolAsync(name: "operations.commit", arguments: args)
+        _ = try await fixture.runtime.callToolAsync(
+          name: "operations.commit", arguments: args, context: .empty)
       } else {
-        _ = try fixture.runtime.callTool(name: "operations.commit", arguments: args)
+        _ = try fixture.runtime.callTool(
+          name: "operations.commit", arguments: args, context: .empty)
       }
       Issue.record("A consumed ticket changed its reviewed action before target admission.")
     } catch {
@@ -196,11 +199,12 @@ struct MCPRiskFloorTests {
     defer { fixture.remove() }
     do {
       #expect(
-        try !fixture.runtime.listTools().contains {
+        try !fixture.runtime.listTools(context: .empty).contains {
           $0.name == "vendor.inspect" || $0.name == "review.inspect"
         })
       await #expect(throws: (any Error).self) {
-        try await fixture.runtime.callToolAsync(name: tool, arguments: arguments(for: tool))
+        try await fixture.runtime.callToolAsync(
+          name: tool, arguments: arguments(for: tool), context: .empty)
       }
       #expect(fixture.client.calls == 0)
       await fixture.runtime.shutdown()
@@ -216,7 +220,8 @@ struct MCPRiskFloorTests {
     defer { fixture.remove() }
     do {
       do {
-        _ = try await fixture.runtime.callToolAsync(name: tool, arguments: arguments(for: tool))
+        _ = try await fixture.runtime.callToolAsync(
+          name: tool, arguments: arguments(for: tool), context: .empty)
         Issue.record("A configured read-only override must not bypass publisher risk consent.")
       } catch {
         #expect(error.localizedDescription.contains("operations.approval_required"))
@@ -226,7 +231,7 @@ struct MCPRiskFloorTests {
         name: "operations.prepare",
         arguments: .object([
           "tool": .string(tool), "arguments": arguments(for: tool),
-        ]))
+        ]), context: .empty)
       let ticket = try #require(
         prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["ticket_id"]?.stringValue)
@@ -236,7 +241,7 @@ struct MCPRiskFloorTests {
         name: "operations.commit",
         arguments: .object([
           "ticket_id": .string(ticket), "tool": .string(tool), "arguments": arguments(for: tool),
-        ]))
+        ]), context: .empty)
       #expect(fixture.client.calls == 1)
       await fixture.runtime.shutdown()
     } catch {
@@ -255,10 +260,11 @@ struct MCPRiskFloorTests {
     arguments["request_id"] = .string("fixture-request")
     do {
       if path == "sync" {
-        _ = try fixture.runtime.callTool(name: "mcp.tools.call", arguments: .object(arguments))
+        _ = try fixture.runtime.callTool(
+          name: "mcp.tools.call", arguments: .object(arguments), context: .empty)
       } else {
         _ = try await fixture.runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(arguments))
+          name: "mcp.tools.call", arguments: .object(arguments), context: .empty)
       }
       Issue.record("An unreviewed risk increase reached execution.")
     } catch {
@@ -273,10 +279,13 @@ struct MCPRiskFloorTests {
     let fixture = try RiskFixture(fullAccess: true, risk: .string("read-only"))
     defer { fixture.remove() }
     fixture.client.setRisk(.string("unknown-risk"))
-    await #expect(throws: (any Error).self) { try await fixture.runtime.refreshTools() }
+    await #expect(throws: (any Error).self) {
+      try await fixture.runtime.refreshTools(context: .empty)
+    }
     for tool in ["mcp.tools.call", "vendor.inspect", "review.inspect"] {
       await #expect(throws: (any Error).self) {
-        try await fixture.runtime.callToolAsync(name: tool, arguments: arguments(for: tool))
+        try await fixture.runtime.callToolAsync(
+          name: tool, arguments: arguments(for: tool), context: .empty)
       }
     }
     #expect(fixture.client.calls == 0)
@@ -296,7 +305,7 @@ struct MCPRiskFloorTests {
             arguments: .object([
               "workspace_id": .string(workspace), "capability_id": .string(tool),
               "arguments": arguments(for: tool),
-            ]))
+            ]), context: .empty)
           #expect(
             response.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["risk"]
               == .string(risk))
@@ -319,7 +328,7 @@ struct MCPRiskFloorTests {
         name: "operations.prepare",
         arguments: .object([
           "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-        ]))
+        ]), context: .empty)
       let ticket = try #require(
         prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["ticket_id"]?.stringValue)
@@ -331,7 +340,7 @@ struct MCPRiskFloorTests {
           arguments: .object([
             "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
             "arguments": arguments(for: "mcp.tools.call"),
-          ]))
+          ]), context: .empty)
       }
       #expect(fixture.client.calls == 0)
       await fixture.runtime.shutdown()

@@ -27,9 +27,10 @@ struct GatewayInvocationContextTests {
       ])
       if envelope {
         return try await serving.callToolForMCPAsync(
-          name: "runtime.owners.call", arguments: arguments)
+          name: "runtime.owners.call", arguments: arguments, context: .empty)
       }
-      return try await serving.callToolAsync(name: "runtime.owners.call", arguments: arguments)
+      return try await serving.callToolAsync(
+        name: "runtime.owners.call", arguments: arguments, context: .empty)
     }
     do {
       #expect(GatewayOwnerRouting.call == nil)
@@ -219,7 +220,7 @@ struct GatewayInvocationContextTests {
   }
 
   @Test(arguments: [false, true])
-  func missingContextCannotInheritThePreviousCallSession(asynchronous: Bool) async throws {
+  func emptyContextCannotInheritThePreviousCallSession(asynchronous: Bool) async throws {
     let fixture = try InvocationFixture(requiresControlSession: true)
     let context = InvocationContext(session: fixture.session)
     let arguments = JSONValue.object(fixture.arguments(tool: "inspect"))
@@ -229,9 +230,11 @@ struct GatewayInvocationContextTests {
       #expect(fixture.client.calls.count == 1)
       do {
         if asynchronous {
-          _ = try await fixture.runtime.callToolAsync(name: "mcp.tools.call", arguments: arguments)
+          _ = try await fixture.runtime.callToolAsync(
+            name: "mcp.tools.call", arguments: arguments, context: .empty)
         } else {
-          _ = try fixture.runtime.callTool(name: "mcp.tools.call", arguments: arguments)
+          _ = try fixture.runtime.callTool(
+            name: "mcp.tools.call", arguments: arguments, context: .empty)
         }
         Issue.record("A call without its required session reached the provider.")
       } catch {
@@ -260,11 +263,15 @@ struct GatewayInvocationContextTests {
         principalID: "context-client", profileID: .localAdmin, caller: .localMCP))
     do {
       let change = try #require(
-        try await other.listToolsAsync().first { $0.mcpReference?.toolName == "change" })
+        try await other.listToolsAsync(context: .empty).first {
+          $0.mcpReference?.toolName == "change"
+        })
       try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
-      try await restricted.refreshTools()
-      #expect(try await restricted.listToolsAsync().contains { $0.name == change.name } == false)
-      #expect(try await other.listToolsAsync().contains { $0.name == change.name })
+      try await restricted.refreshTools(context: .empty)
+      #expect(
+        try await restricted.listToolsAsync(context: .empty).contains { $0.name == change.name }
+          == false)
+      #expect(try await other.listToolsAsync(context: .empty).contains { $0.name == change.name })
       let catalogContext = try #require(fixture.client.discoveries.last)
       #expect(
         catalogContext.admission == nil && catalogContext.session == nil
@@ -282,21 +289,25 @@ struct GatewayInvocationContextTests {
     let serving = GatewayControlSessionServing(base: fixture.runtime, session: fixture.session)
     do {
       _ = try await serving.callToolAsync(
-        name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "change")))
+        name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "change")),
+        context: .empty)
       #expect(fixture.client.calls.count == 1)
       try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
       await #expect(throws: (any Error).self) {
         try await serving.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "change")))
+          name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "change")),
+          context: .empty)
       }
       #expect(fixture.client.calls.count == 1)
       _ = try await serving.callToolAsync(
-        name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "inspect")))
+        name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "inspect")),
+        context: .empty)
       #expect(fixture.client.calls.count == 2)
       fixture.session.end()
       await #expect(throws: (any Error).self) {
         try await serving.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "inspect")))
+          name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "inspect")),
+          context: .empty)
       }
       #expect(fixture.client.calls.count == 2)
       #expect(fixture.client.calls.allSatisfy { $0.session === fixture.session })
@@ -316,9 +327,10 @@ struct GatewayInvocationContextTests {
     do {
       let result = try await MCPRuntimeAdapter.$requestTrace.withValue(trace) {
         if asynchronous {
-          return try await fixture.runtime.callToolAsync(name: "workspace.list", arguments: nil)
+          return try await fixture.runtime.callToolAsync(
+            name: "workspace.list", arguments: nil, context: .empty)
         }
-        return try fixture.runtime.callTool(name: "workspace.list", arguments: nil)
+        return try fixture.runtime.callTool(name: "workspace.list", arguments: nil, context: .empty)
       }
       let requestID = try #require(
         result.objectValue?["_meta"]?.objectValue?["computer_mcp"]?.objectValue?["request_id"]?
@@ -328,7 +340,8 @@ struct GatewayInvocationContextTests {
       #expect(audit.socketConnectionID == trace.socketConnectionID)
       #expect(audit.tunnelInstanceID == trace.tunnelInstanceID)
       #expect(audit.tunnelProfileID == trace.tunnelProfileID)
-      _ = try await fixture.runtime.callToolAsync(name: "workspace.list", arguments: nil)
+      _ = try await fixture.runtime.callToolAsync(
+        name: "workspace.list", arguments: nil, context: .empty)
       let next = try #require(fixture.database.auditEvents().first { $0.requestID != requestID })
       #expect(next.transport == nil)
       #expect(next.socketConnectionID == nil)

@@ -41,21 +41,21 @@ struct MCPHostInvocationTests {
       // Retained contexts must not exhaust the independent 256 active-call slots.
       for _ in 0..<257 {
         _ = try await runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: Self.arguments(tool: "background"))
+          name: "mcp.tools.call", arguments: Self.arguments(tool: "background"), context: .empty)
       }
       try await Self.waitForResourceCount(257, runtime: runtime)
       let replay = try await runtime.callToolAsync(
-        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"))
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"), context: .empty)
       let original = try #require(
         Self.payload(replay).objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
       #expect(original["tool"] == .string("background"))
       #expect(original["registration_id"] == .string("provider"))
       #expect(original["host_action"] == .string("diagnostics.snapshot"))
       _ = try await runtime.callToolAsync(
-        name: "mcp.tools.call", arguments: Self.arguments(tool: "derive"))
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "derive"), context: .empty)
       try await Self.waitForResourceCount(1, runtime: runtime)
       let derived = try await runtime.callToolAsync(
-        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"))
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"), context: .empty)
       #expect(
         Self.payload(derived).objectValue?["structuredContent"]?.objectValue?["result"]
           == .object(original))
@@ -88,10 +88,10 @@ struct MCPHostInvocationTests {
           workspaceID: "fixture", origin: "provider", id: retainedID
         ).id == retainedID)
       _ = try await runtime.callToolAsync(
-        name: "mcp.tools.call", arguments: Self.arguments(tool: "finish"))
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "finish"), context: .empty)
       try await Self.waitForResourceCount(0, runtime: runtime)
       let expired = try await runtime.callToolAsync(
-        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"))
+        name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"), context: .empty)
       #expect(Self.payload(expired).objectValue?["isError"] == .bool(true))
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(
@@ -154,23 +154,24 @@ struct MCPHostInvocationTests {
       let result: JSONValue
       if mode == "sync" {
         result = try await BlockingOperationExecutor(label: "host-invocation-test").perform {
-          try runtime.callTool(name: "mcp.tools.call", arguments: arguments)
+          try runtime.callTool(name: "mcp.tools.call", arguments: arguments, context: .empty)
         }
       } else if mode == "async" {
-        result = try await runtime.callToolAsync(name: "mcp.tools.call", arguments: arguments)
+        result = try await runtime.callToolAsync(
+          name: "mcp.tools.call", arguments: arguments, context: .empty)
       } else {
         var startedArguments = try #require(arguments.objectValue)
         startedArguments["wait_for_result"] = .bool(false)
         startedArguments["request_id"] = .string("detached")
         let started = try await runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(startedArguments))
+          name: "mcp.tools.call", arguments: .object(startedArguments), context: .empty)
         #expect(Self.payload(started).objectValue?["state"] == .string("running"))
         startedArguments["request_id"] = .string("second")
         _ = try await runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: .object(startedArguments))
+          name: "mcp.tools.call", arguments: .object(startedArguments), context: .empty)
         #expect(runtime.ownedWork.snapshot.filter { $0.kind == .mcpRequest }.count == 2)
         _ = try await runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: Self.arguments(tool: "release"))
+          name: "mcp.tools.call", arguments: Self.arguments(tool: "release"), context: .empty)
         let first = try await Self.readResult(runtime, id: "detached")
         let second = try await Self.readResult(runtime, id: "second")
         if hostServices {
@@ -196,7 +197,7 @@ struct MCPHostInvocationTests {
         #expect(bound["capability_id"] == .string("mcp.tools.call"))
         #expect(bound["invocation_id"]?.stringValue.flatMap(UUID.init(uuidString:)) != nil)
         let replay = try await runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"))
+          name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"), context: .empty)
         #expect(Self.payload(replay).objectValue?["isError"] == .bool(true))
       } else {
         #expect(context["host_metadata"] == .null)
@@ -225,7 +226,7 @@ struct MCPHostInvocationTests {
         arguments: .object([
           "workspace_id": .string("fixture"), "server": .string("provider"),
           "request_id": .string(id),
-        ]))
+        ]), context: .empty)
       if Self.payload(receipt).objectValue?["state"] == .string("succeeded") { break }
       try await Task.sleep(for: .milliseconds(10))
     } while ContinuousClock.now < deadline

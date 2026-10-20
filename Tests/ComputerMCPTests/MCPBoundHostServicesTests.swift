@@ -147,8 +147,10 @@ struct MCPBoundHostServicesTests {
       return try .encoded(result)
     }
     let args = JSONValue.object(["workspace_id": .string("scope"), "limit": .integer(1)])
-    async let first = fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
-    async let second = fixture.runtime.callToolAsync(name: "adapter.fixture.audit", arguments: args)
+    async let first = fixture.runtime.callToolAsync(
+      name: "adapter.fixture.audit", arguments: args, context: .empty)
+    async let second = fixture.runtime.callToolAsync(
+      name: "adapter.fixture.audit", arguments: args, context: .empty)
     let results = try await [first, second]
     #expect(results.allSatisfy { $0.objectValue?["isError"] == .bool(true) })
     await fixture.close()
@@ -259,7 +261,8 @@ struct MCPBoundHostServicesTests {
   func genericHostCallbackRequiresWorkspaceWhenSelectionIsAmbiguous() async throws {
     let fixture = try HostAuthorityFixture(additionalWorkspace: true)
     defer { fixture.remove() }
-    let tool = try #require(fixture.runtime.listTools().first { $0.name == "mcp.tools.call" })
+    let tool = try #require(
+      fixture.runtime.listTools(context: .empty).first { $0.name == "mcp.tools.call" })
     let properties = try #require(tool.inputSchema.objectValue?["properties"]?.objectValue)
     #expect(properties["workspace_id"]?.objectValue?["type"] == .string("string"))
     do {
@@ -329,7 +332,7 @@ struct MCPBoundHostServicesTests {
   func privateServiceSurfaceIsNotExposedUpstream() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    #expect(try !fixture.runtime.listTools().contains { $0.name.hasPrefix("host.") })
+    #expect(try !fixture.runtime.listTools(context: .empty).contains { $0.name.hasPrefix("host.") })
     #expect(
       Set(MCPBoundHostServices.tools.map(\.name)) == [
         "host.workspaces.register", "host.workspaces.authorize_removal",
@@ -672,7 +675,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     let tool = "adapter." + method
     let prepared = try await runtime.callToolAsync(
       name: "operations.prepare",
-      arguments: .object(["tool": .string(tool), "arguments": .object(args)]))
+      arguments: .object(["tool": .string(tool), "arguments": .object(args)]), context: .empty)
     let ticket = try #require(
       prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
         .stringValue)
@@ -681,7 +684,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       name: "operations.commit",
       arguments: .object([
         "ticket_id": .string(ticket), "tool": .string(tool), "arguments": .object(args),
-      ]))
+      ]), context: .empty)
   }
   func genericDiagnostics(workspaceID: String?) async throws -> JSONValue {
     let service = service
@@ -697,7 +700,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       "arguments": .object(["limit": .number(1)]),
     ]
     if let workspaceID { arguments["workspace_id"] = .string(workspaceID) }
-    return try await runtime.callToolAsync(name: "mcp.tools.call", arguments: .object(arguments))
+    return try await runtime.callToolAsync(
+      name: "mcp.tools.call", arguments: .object(arguments), context: .empty)
   }
   func payload(_ value: JSONValue) -> [String: JSONValue] {
     let downstream = value.objectValue?["structuredContent"]?.objectValue?["result"]

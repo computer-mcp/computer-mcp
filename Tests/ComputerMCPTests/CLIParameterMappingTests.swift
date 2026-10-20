@@ -35,7 +35,7 @@ struct CLIParameterMappingTests {
     ])
     let result = try await provider.callToolAsync(
       .init(
-        name: tool, arguments: .object(["values": values])))
+        name: tool, arguments: .object(["values": values]), context: .empty))
     #expect(result.objectValue?["isError"] == .bool(false))
     #expect(CLITreeTests.output(result)?["data"] == .array(expected.map(JSONValue.string)))
     await provider.execution.shutdown()
@@ -56,7 +56,7 @@ struct CLIParameterMappingTests {
     let tool = try #require(provider.definitions().first?.tool.name)
     let result = try await provider.callToolAsync(
       .init(
-        name: tool, arguments: .object(["value": .integer(integer)])))
+        name: tool, arguments: .object(["value": .integer(integer)]), context: .empty))
     await provider.execution.shutdown()
     #expect(result.objectValue?["isError"] == .bool(false))
     #expect(CLITreeTests.output(result)?["data"]?.int64Value == integer)

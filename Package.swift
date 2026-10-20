@@ -55,6 +55,13 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPToolKit",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+      ]
+    ),
+    .target(
       name: "ComputerMCPTestSupport", dependencies: ["ComputerMCPPlatform"],
       path: "Tests/ComputerMCPTestSupport"),
     .testTarget(
@@ -143,6 +150,7 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatformDarwin",
           "ComputerMCPPlatformPOSIX",
           "ComputerMCPProcess",
+          "ComputerMCPToolKit",
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "Logging", package: "swift-log"),

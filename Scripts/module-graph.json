@@ -175,7 +175,6 @@
     "ManifestFileTransaction": "ComputerMCPControlPlane",
     "ManifestRecoveryRecord": "ComputerMCPControlPlane",
     "PlatformServices": "ComputerMCPGateway",
-    "StructuredPathSegment": "ComputerMCPToolKit",
     "WorkspaceDeduplicationDigestInput": "ComputerMCPToolsWorkspace"
   },
   "extensions": {
@@ -200,7 +199,7 @@
     "^GatewayToolRegistry\\+(StructuredData|Markdown|Media)": "ComputerMCPToolsStructured",
     "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
     "^GatewayToolRegistry\\+(Workspace|WorkspaceInventory)\\.swift|^Workspace(Deduplication|ConfigurationChange)": "ComputerMCPToolsWorkspace",
-    "^GatewayToolRegistry\\+(Arguments|WorkspacePaths)": "ComputerMCPToolKit",
+    "^GatewayToolRegistry\\+WorkspacePaths": "ComputerMCPToolKit",
     "^GatewayToolRegistry\\+(Shell|Process)": "ComputerMCPToolsShell",
     "^GatewayToolRegistry\\+CLI|^CLI(Tree|ArgumentEncoder|ValueValidation|Executable|ProcessExecution)": "ComputerMCPToolsCLI",
     "^MCPRegistration": "ComputerMCPControlPlane",

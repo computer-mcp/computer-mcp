@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPToolKit
 import Foundation
 
 extension GatewayToolRegistry {

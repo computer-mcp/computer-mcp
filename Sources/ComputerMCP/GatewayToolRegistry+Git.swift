@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPToolKit
 import Foundation
 
 extension GatewayToolRegistry {

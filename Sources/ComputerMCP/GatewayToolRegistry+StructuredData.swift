@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPToolKit
 import Foundation
 import TOML
 import Yams
@@ -2060,20 +2061,6 @@ private struct DynamicCodingKey: CodingKey {
   init?(intValue: Int) {
     stringValue = "\(intValue)"
     self.intValue = intValue
-  }
-}
-
-internal enum StructuredPathSegment {
-  case key(String)
-  case index(Int)
-
-  var json: JSONValue {
-    switch self {
-    case .key(let key):
-      return .string(key)
-    case .index(let index):
-      return .integer(Int64(index))
-    }
   }
 }
 

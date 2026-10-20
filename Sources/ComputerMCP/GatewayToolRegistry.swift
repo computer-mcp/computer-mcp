@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import ComputerMCPToolKit
 import Foundation
 
 /// Owns configured source definitions, gateway tool schemas, and dispatch.
@@ -17,8 +18,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
   internal let mcpClient: DownstreamMCPClient
 
   internal let environment: [String: String]
-
-  internal let encoder: JSONEncoder
 
   internal let cliExecution: CLIProcessExecution
 
@@ -45,8 +44,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       workingDirectory: configuration.workspaceDirectory, environment: environment,
       hostContext: hostContext)
     self.environment = environment
-    self.encoder = JSONEncoder()
-    self.encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
   }
 
   internal var hasReexportedMCPServers: Bool {

@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import Foundation
 

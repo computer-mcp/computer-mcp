@@ -1,6 +1,7 @@
 import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPPlugins
 import ComputerMCPToolsWorkspace
 import ComputerMCPTunnels
 import Foundation

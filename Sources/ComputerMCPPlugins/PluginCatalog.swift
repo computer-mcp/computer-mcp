@@ -32,6 +32,36 @@ package struct PluginCatalogEntry: Codable, Equatable, Identifiable, Sendable {
     let text = [repository, pluginID, name, summary ?? ""].joined(separator: "\n").lowercased()
     return query.lowercased().split(whereSeparator: \.isWhitespace).allSatisfy { text.contains($0) }
   }
+
+  package init(
+    repositoryID: Int64,
+    repository: String,
+    publisherID: Int64,
+    revision: String,
+    manifestBlobSHA: String,
+    manifestSHA256: String,
+    pluginID: String,
+    name: String,
+    version: PluginVersion,
+    summary: String?,
+    mcp: [String],
+    cli: [String],
+    skills: [String]
+  ) {
+    self.repositoryID = repositoryID
+    self.repository = repository
+    self.publisherID = publisherID
+    self.revision = revision
+    self.manifestBlobSHA = manifestBlobSHA
+    self.manifestSHA256 = manifestSHA256
+    self.pluginID = pluginID
+    self.name = name
+    self.version = version
+    self.summary = summary
+    self.mcp = mcp
+    self.cli = cli
+    self.skills = skills
+  }
 }
 
 package struct PluginCatalogIssue: Codable, Equatable, Sendable {

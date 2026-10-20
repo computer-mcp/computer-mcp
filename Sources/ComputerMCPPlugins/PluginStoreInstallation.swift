@@ -1,10 +1,16 @@
 import ComputerMCPDownstream
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 extension PluginStore {
   /// The host must quiesce affected runtimes before changing their selected files.
@@ -22,7 +28,7 @@ extension PluginStore {
       prepareArchive: { _ in archive })
   }
 
-  func installGitHubArtifact(
+  package func installGitHubArtifact(
     _ artifact: GitHubPluginArtifact,
     hostVersion: PluginVersion, architecture: String, storageRoot: URL,
     workerExecutable: URL, expectedRevision: Int64,
@@ -42,10 +48,11 @@ extension PluginStore {
       githubRelease: artifact,
       prepareArchive: { identity in
         try await releases.revalidate(artifact)
-        let directory = try PluginArchiveDirectory(recovering: identity)
+        let directory = try self.directoryFactory.recover(identity)
         var descriptor: Int32 = -1
-        defer { if descriptor >= 0 { Darwin.close(descriptor) } }
-        try directory.createFile(["staging", "download"], executable: false) { file in
+        defer { if descriptor >= 0 { close(descriptor) } }
+        try directory.createFile(["staging", "download"], executable: false, readOnly: false) {
+          file in
           descriptor = fcntl(file, F_DUPFD_CLOEXEC, 0)
           guard descriptor >= 0 else { throw PluginArchiveError.fileSystemFailure }
         }
@@ -82,7 +89,7 @@ extension PluginStore {
     try validatePluginID(pluginID)
     try PluginArchiveSnapshot.validateDigest(expectedSHA256)
     _ = try checkedSnapshot(expectedRevision)
-    let storage = try PluginInstallationStorage(at: storageRoot)
+    let storage = try PluginInstallationStorage(at: storageRoot, directoryFactory: directoryFactory)
     defer { storage.finishTransaction() }
     let identity = try storage.createInstallation()
     let owned = PluginOwnedDirectory(
@@ -98,7 +105,8 @@ extension PluginStore {
     let preparation = PluginArchivePreparation(
       workerExecutable: workerExecutable,
       stagingParent: identity.url.appendingPathComponent("staging"),
-      inheritedLockDescriptor: storage.lockDescriptor)
+      inheritedLockDescriptor: storage.lockDescriptor,
+      directoryFactory: directoryFactory)
     do {
       let archive = try await prepareArchive(identity)
       let state = try await preparation.withPreparedPackage(
@@ -160,7 +168,7 @@ extension PluginStore {
   package func uninstallArtifact(
     installationID: String, storageRoot: URL, expectedRevision: Int64
   ) async throws -> PluginStoreMutation {
-    let storage = try PluginInstallationStorage(at: storageRoot)
+    let storage = try PluginInstallationStorage(at: storageRoot, directoryFactory: directoryFactory)
     defer { storage.finishTransaction() }
     var state = try checkedSnapshot(expectedRevision)
     guard let record = state.installations.first(where: { $0.id == installationID }),
@@ -195,7 +203,7 @@ extension PluginStore {
   package func recoverInstallations(storageRoot: URL, expectedRevision: Int64? = nil) throws
     -> [PluginStoreIssue]
   {
-    let storage = try PluginInstallationStorage(at: storageRoot)
+    let storage = try PluginInstallationStorage(at: storageRoot, directoryFactory: directoryFactory)
     defer { storage.finishTransaction() }
     let state = try expectedRevision.map(checkedSnapshot) ?? snapshot()
     var issues: [PluginStoreIssue] = []

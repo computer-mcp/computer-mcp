@@ -1,24 +1,36 @@
 import ComputerMCPDownstream
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
-import Darwin
 import Foundation
 import NIOConcurrencyHelpers
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+
+  // Glibc also exports a struct named flock; bind the function by its C symbol.
+  @_silgen_name("flock") private func flock(_ descriptor: Int32, _ operation: Int32) -> Int32
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// Serializes filesystem transactions across store instances and host restarts.
 /// A worker inherits the same open lock reference; closing the host reference
 /// must not unlock a worker that is still writing after its parent exits.
 package final class PluginInstallationStorage: Sendable {
-  let root: URL
+  package let root: URL
   let lockDescriptor: Int32
   private let descriptor: Int32
   private let parent: Int32
-  private let device: Int32
+  private let device: dev_t
   private let inode: UInt64
   private let closed = NIOLockedValueBox(false)
 
-  init(at requestedURL: URL) throws {
+  private let directoryFactory: any PluginArchiveDirectoryFactory
+
+  package init(at requestedURL: URL, directoryFactory: any PluginArchiveDirectoryFactory) throws {
+    self.directoryFactory = directoryFactory
     guard requestedURL.isFileURL, requestedURL.path.hasPrefix("/"),
       requestedURL.host.map({ $0.isEmpty || $0 == "localhost" }) != false,
       requestedURL.query == nil, requestedURL.fragment == nil,
@@ -27,22 +39,22 @@ package final class PluginInstallationStorage: Sendable {
     else { throw PluginStoreError.invalidState }
     let parentURL = try WorkspacePathResolver.canonicalWorkspace(
       requestedURL.deletingLastPathComponent())
-    let parent = Darwin.open(parentURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    let parent = open(parentURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard parent >= 0 else { throw PluginArchiveError.fileSystemFailure }
     var status = stat()
     guard fstat(parent, &status) == 0, status.st_uid == geteuid(), status.st_mode & 0o022 == 0
     else {
-      Darwin.close(parent)
+      closeDescriptor(parent)
       throw PluginArchiveError.invalidInput
     }
     let name = requestedURL.lastPathComponent
     if mkdirat(parent, name, 0o700) != 0, errno != EEXIST {
-      Darwin.close(parent)
+      closeDescriptor(parent)
       throw PluginArchiveError.fileSystemFailure
     }
     let descriptor = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard descriptor >= 0 else {
-      Darwin.close(parent)
+      closeDescriptor(parent)
       throw PluginArchiveError.fileSystemFailure
     }
     do {
@@ -71,7 +83,7 @@ package final class PluginInstallationStorage: Sendable {
           fsync(descriptor) == 0, fsync(parent) == 0
         else { throw PluginArchiveError.fileSystemFailure }
       } catch {
-        Darwin.close(lock)
+        closeDescriptor(lock)
         throw error
       }
       self.root = root
@@ -81,8 +93,8 @@ package final class PluginInstallationStorage: Sendable {
       self.device = device
       self.inode = inode
     } catch {
-      Darwin.close(descriptor)
-      Darwin.close(parent)
+      closeDescriptor(descriptor)
+      closeDescriptor(parent)
       throw error
     }
   }
@@ -92,7 +104,7 @@ package final class PluginInstallationStorage: Sendable {
   }
 
   /// Drops only this reference, preserving protection for an orphan worker.
-  func close() {
+  package func close() {
     close(unlock: false)
   }
 
@@ -100,7 +112,7 @@ package final class PluginInstallationStorage: Sendable {
   /// Explicit unlock also retires copies temporarily held by unrelated forked
   /// children before their exec closes inherited descriptors. A crashed host
   /// never calls this method; the orphan worker retains the shared lock.
-  func finishTransaction() {
+  package func finishTransaction() {
     close(unlock: true)
   }
 
@@ -109,9 +121,9 @@ package final class PluginInstallationStorage: Sendable {
       guard !closed else { return }
       closed = true
       if unlock { flock(lockDescriptor, LOCK_UN) }
-      Darwin.close(lockDescriptor)
-      Darwin.close(descriptor)
-      Darwin.close(parent)
+      closeDescriptor(lockDescriptor)
+      closeDescriptor(descriptor)
+      closeDescriptor(parent)
     }
   }
 
@@ -124,7 +136,7 @@ package final class PluginInstallationStorage: Sendable {
     }
   }
 
-  func validate(_ owned: PluginDirectoryIdentity) throws {
+  package func validate(_ owned: PluginDirectoryIdentity) throws {
     try withOpenStorage { try validateLocation(owned) }
   }
 
@@ -140,7 +152,7 @@ package final class PluginInstallationStorage: Sendable {
   func createInstallation() throws -> PluginDirectoryIdentity {
     try withOpenStorage {
       let url = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
-      let directory = try PluginArchiveDirectory(at: url)
+      let directory = try directoryFactory.create(at: url)
       do {
         let identity = try directory.identity()
         try validateLocation(identity)
@@ -158,7 +170,7 @@ package final class PluginInstallationStorage: Sendable {
   func promote(_ package: PluginPackage, into owned: PluginDirectoryIdentity) throws -> URL {
     try withOpenStorage {
       try validateLocation(owned)
-      let container = try PluginArchiveDirectory(recovering: owned)
+      let container = try directoryFactory.recover(owned)
       let jobURL = package.root.deletingLastPathComponent()
       guard package.root.lastPathComponent == "payload",
         jobURL.deletingLastPathComponent().path == owned.url.appendingPathComponent("staging").path,
@@ -167,36 +179,36 @@ package final class PluginInstallationStorage: Sendable {
       let staging = openat(
         container.descriptor, "staging", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
       guard staging >= 0 else { throw PluginArchiveError.fileSystemFailure }
-      defer { Darwin.close(staging) }
+      defer { closeDescriptor(staging) }
       let job = openat(
         staging, jobURL.lastPathComponent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
       guard job >= 0 else { throw PluginArchiveError.fileSystemFailure }
-      defer { Darwin.close(job) }
-      guard renameatx_np(job, "payload", container.descriptor, "package", UInt32(RENAME_EXCL)) == 0,
-        fsync(job) == 0
-      else { throw PluginArchiveError.fileSystemFailure }
+      defer { closeDescriptor(job) }
+      try directoryFactory.renameExclusively(
+        from: "payload", in: job, to: "package", in: container.descriptor)
+      guard fsync(job) == 0 else { throw PluginArchiveError.fileSystemFailure }
       try container.finish()
       return owned.url.appendingPathComponent("package", isDirectory: true)
     }
   }
 
-  func retainArtifact(_ owned: PluginDirectoryIdentity) throws -> PluginArtifactLease {
+  package func retainArtifact(_ owned: PluginDirectoryIdentity) throws -> PluginArtifactLease {
     try withOpenStorage {
       try validateLocation(owned)
-      let directory = try PluginArchiveDirectory(recovering: owned)
+      let directory = try directoryFactory.recover(owned)
       return try PluginArtifactLease(directory: directory, exclusive: false)
     }
   }
 
   /// Reopens using the recorded provenance before capturing a durable identity.
-  func currentIdentity(_ owned: PluginDirectoryIdentity) throws -> PluginDirectoryIdentity {
+  package func currentIdentity(_ owned: PluginDirectoryIdentity) throws -> PluginDirectoryIdentity {
     try withOpenStorage {
       try validateLocation(owned)
-      return try PluginArchiveDirectory(recovering: owned).identity()
+      return try directoryFactory.recover(owned).identity()
     }
   }
 
-  func clean(
+  package func clean(
     _ owned: PluginDirectoryIdentity, keepingPackage: Bool,
     processOwnershipRoot: URL? = nil
   ) throws {
@@ -207,7 +219,7 @@ package final class PluginInstallationStorage: Sendable {
         if errno == ENOENT && !keepingPackage { return }
         throw PluginArchiveError.fileSystemFailure
       }
-      let directory = try PluginArchiveDirectory(recovering: owned)
+      let directory = try directoryFactory.recover(owned)
       if keepingPackage {
         try directory.removeStaging()
       } else {
@@ -225,4 +237,14 @@ package final class PluginInstallationStorage: Sendable {
       }
     }
   }
+}
+
+private func closeDescriptor(_ descriptor: Int32) {
+  #if canImport(Darwin)
+    Darwin.close(descriptor)
+  #elseif canImport(Glibc)
+    Glibc.close(descriptor)
+  #elseif canImport(Musl)
+    Musl.close(descriptor)
+  #endif
 }

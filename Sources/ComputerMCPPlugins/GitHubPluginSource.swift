@@ -1,4 +1,4 @@
-import CryptoKit
+import Crypto
 import Foundation
 
 /// Selected-release source verification. Discovery uses the publisher's static snapshot.

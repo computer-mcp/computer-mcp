@@ -13,14 +13,18 @@ package enum PluginHost {
     #endif
   }
 
-  package static func resolve(_ state: PluginStoreSnapshot, bundled: BundledPlugins = .current)
+  package static func resolve(
+    _ state: PluginStoreSnapshot, bundled: BundledPlugins = .current,
+    applications: any ApplicationBundleLocating
+  )
     throws -> PluginStoreResolution
   {
     let resolution = try PluginStore.resolve(
       snapshot: state.includingBundledDefaults(bundled.packages.map(\.manifest)),
       bundled: bundled.packages,
       hostVersion: PluginVersion(ComputerMCPCLI.version), architecture: architecture,
-      searchDirectories: searchDirectories(environment: ProcessInfo.processInfo.environment))
+      searchDirectories: searchDirectories(environment: ProcessInfo.processInfo.environment),
+      applications: applications)
     return PluginStoreResolution(
       revision: resolution.revision, plugins: resolution.plugins,
       issues: bundled.issues + resolution.issues)
@@ -45,9 +49,9 @@ package struct PluginHostSnapshot: Codable, Sendable {
 
   package init(
     state: PluginStoreSnapshot, issues: [PluginStoreIssue] = [], recoveryError: String? = nil,
-    bundled: BundledPlugins = .current
+    bundled: BundledPlugins = .current, applications: any ApplicationBundleLocating
   ) throws {
-    let resolution = try PluginHost.resolve(state, bundled: bundled)
+    let resolution = try PluginHost.resolve(state, bundled: bundled, applications: applications)
     self.state = state
     self.bundled = bundled.packages.map {
       BundledPluginDescription(root: $0.root, manifest: $0.manifest)
@@ -65,7 +69,7 @@ package struct PluginHostSnapshot: Codable, Sendable {
     effectiveSettings[pluginID] ?? PluginSettings()
   }
 
-  init(filtering snapshot: Self, pluginID: String) {
+  package init(filtering snapshot: Self, pluginID: String) {
     var state = snapshot.state
     state.installations.removeAll { $0.pluginID != pluginID }
     state.selectedInstallations = state.selectedInstallations.filter { $0.key == pluginID }

@@ -1,8 +1,14 @@
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// Binds verification and decoding to one private copy, even if the original
 /// file changes during the copy. The borrowed descriptor is never closed here.
@@ -23,6 +29,7 @@ struct PluginArchiveSnapshot {
     from input: Int32, inNewDirectory root: URL, expectedSHA256: String,
     limits: PluginArchiveLimits = PluginArchiveLimits(),
     checkCancellation: () throws -> Void = { try Task.checkCancellation() },
+    directoryFactory: any PluginArchiveDirectoryFactory,
     body: (Contents) throws -> Result
   ) throws -> Result {
     try validateDigest(expectedSHA256)
@@ -35,7 +42,7 @@ struct PluginArchiveSnapshot {
     guard status.st_size <= limits.archiveBytes else { throw PluginArchiveError.limitExceeded }
     guard lseek(input, 0, SEEK_SET) == 0 else { throw PluginArchiveError.invalidInput }
 
-    let directory = try PluginArchiveDirectory(at: root)
+    let directory = try directoryFactory.create(at: root)
     let result: Result
     do {
       var hasher = SHA256()
@@ -45,7 +52,7 @@ struct PluginArchiveSnapshot {
         while true {
           try checkCancellation()
           let count = buffer.withUnsafeMutableBytes {
-            Darwin.read(input, $0.baseAddress, min($0.count, limits.archiveBytes - total + 1))
+            read(input, $0.baseAddress, min($0.count, limits.archiveBytes - total + 1))
           }
           if count < 0, errno == EINTR { continue }
           guard count >= 0 else { throw PluginArchiveError.fileSystemFailure }
@@ -55,7 +62,7 @@ struct PluginArchiveSnapshot {
             hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: bytes[..<count]))
             var offset = 0
             while offset < count {
-              let written = Darwin.write(
+              let written = write(
                 output, bytes.baseAddress?.advanced(by: offset), count - offset)
               if written < 0, errno == EINTR { continue }
               guard written > 0 else { throw PluginArchiveError.fileSystemFailure }

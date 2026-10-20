@@ -1,6 +1,7 @@
 import ArgumentParser
 import ComputerMCP
 import ComputerMCPCore
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import Foundation
 

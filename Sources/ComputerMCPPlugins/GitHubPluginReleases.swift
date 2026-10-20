@@ -1,6 +1,10 @@
 import ComputerMCPPlatform
 import Foundation
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 /// A publisher-bound release selection, not an artifact signature or tool grant.
 /// Installers revalidate this snapshot and check the downloaded bytes before use.
 package struct GitHubPluginArtifact: Codable, Equatable, Identifiable, Sendable {
@@ -17,7 +21,7 @@ package struct GitHubPluginArtifact: Codable, Equatable, Identifiable, Sendable 
 
   var apiPath: String { "/repos/\(declaration.repository)/releases/assets/\(assetID)" }
 
-  func validate() throws {
+  package func validate() throws {
     try GitHubPluginSource.Repository.validateName(declaration.repository)
     try validatePluginID(declaration.pluginID)
     guard declaration.publisherID == GitHubPluginSource.publisherID,
@@ -35,10 +39,34 @@ package struct GitHubPluginArtifact: Codable, Equatable, Identifiable, Sendable 
     try PluginArchiveSnapshot.validateDigest(declaration.manifestSHA256)
   }
 
-  static func validID(_ value: Int64) -> Bool { (1...9_007_199_254_740_991).contains(value) }
+  package static func validID(_ value: Int64) -> Bool {
+    (1...9_007_199_254_740_991).contains(value)
+  }
 
   static func isArchive(_ name: String) -> Bool {
     [".zip", ".tar", ".tar.gz", ".tgz"].contains { name.lowercased().hasSuffix($0) }
+  }
+
+  package init(
+    declaration: PluginCatalogEntry,
+    releaseID: Int64,
+    tag: String,
+    prerelease: Bool,
+    assetID: Int64,
+    name: String,
+    size: Int64,
+    sha256: String,
+    compatibility: PluginPlatformCompatibility? = nil
+  ) {
+    self.declaration = declaration
+    self.releaseID = releaseID
+    self.tag = tag
+    self.prerelease = prerelease
+    self.assetID = assetID
+    self.name = name
+    self.size = size
+    self.sha256 = sha256
+    self.compatibility = compatibility
   }
 }
 
@@ -71,7 +99,7 @@ package struct GitHubPluginReleases: Sendable {
 
   private let timeout: Duration
 
-  init(
+  package init(
     http: any PluginCatalogHTTPFetching = GitHubCatalogHTTPClient(),
     timeout: Duration = .seconds(30)
   ) {

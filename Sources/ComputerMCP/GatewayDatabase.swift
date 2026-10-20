@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPPlugins
 import ComputerMCPToolsWorkspace
 import CryptoKit
 import Foundation

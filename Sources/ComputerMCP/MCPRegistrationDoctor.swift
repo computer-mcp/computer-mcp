@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPPlugins
 import Foundation
 
 /// A fresh connection observation, not proof of tool execution or a caller profile's permissions.

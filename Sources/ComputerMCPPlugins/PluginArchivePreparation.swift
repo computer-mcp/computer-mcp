@@ -1,23 +1,46 @@
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
-import Darwin
 import Foundation
 import Subprocess
-import System
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
+#if canImport(System)
+  import System
+#else
+  import SystemPackage
+#endif
 
 /// Prepares an artifact without activating it or changing configuration.
 /// `workerExecutable` must be the host's own CLI, never a package contribution.
-struct PluginArchivePreparation: Sendable {
-  let workerExecutable: URL
-  let stagingParent: URL
-  var timeout: Duration = .seconds(60)
+package struct PluginArchivePreparation: Sendable {
+  package let workerExecutable: URL
+  package let stagingParent: URL
+  let directoryFactory: any PluginArchiveDirectoryFactory
+  package var timeout: Duration = .seconds(60)
   /// Borrowed until this preparation finishes, including cancellation/reaping.
-  var inheritedLockDescriptor: Int32?
+  package var inheritedLockDescriptor: Int32?
+
+  package init(
+    workerExecutable: URL, stagingParent: URL,
+    timeout: Duration = .seconds(60), inheritedLockDescriptor: Int32? = nil,
+    directoryFactory: any PluginArchiveDirectoryFactory
+  ) {
+    self.workerExecutable = workerExecutable
+    self.stagingParent = stagingParent
+    self.directoryFactory = directoryFactory
+    self.timeout = timeout
+    self.inheritedLockDescriptor = inheritedLockDescriptor
+  }
 
   /// The package is valid only within `operation`. An installation transaction
   /// may move its payload to an owned final location before committing the DB.
   /// On return or failure only the newly created job root is reclaimed.
-  func withPreparedPackage<Result: Sendable>(
+  package func withPreparedPackage<Result: Sendable>(
     archive: URL, expectedSHA256: String, pluginID: String, version: PluginVersion,
     hostVersion: PluginVersion, architecture: String, artifactName: String? = nil,
     operation: @Sendable (PluginPackage, PluginArchiveReceipt) async throws -> Result
@@ -31,9 +54,9 @@ struct PluginArchivePreparation: Sendable {
       workerExecutable.isFileURL, workerExecutable.path.hasPrefix("/"),
       !workerExecutable.path.contains("\0")
     else { throw PluginArchiveError.invalidInput }
-    let input = Darwin.open(archive.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+    let input = open(archive.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
     guard input >= 0 else { throw PluginArchiveError.invalidInput }
-    defer { Darwin.close(input) }
+    defer { close(input) }
     var status = stat()
     guard fstat(input, &status) == 0, status.st_mode & S_IFMT == S_IFREG, status.st_size > 0 else {
       throw PluginArchiveError.invalidInput
@@ -41,7 +64,7 @@ struct PluginArchivePreparation: Sendable {
     guard status.st_size <= PluginArchiveLimits().archiveBytes else {
       throw PluginArchiveError.limitExceeded
     }
-    let job = try PluginArchiveDirectory(
+    let job = try directoryFactory.create(
       at: stagingParent.appendingPathComponent(UUID().uuidString, isDirectory: true))
     let result: Result
     do {
@@ -96,10 +119,14 @@ struct PluginArchivePreparation: Sendable {
             guard inheritedLockDescriptor > STDERR_FILENO else {
               throw PluginArchiveError.invalidInput
             }
-            options.preSpawnProcessConfigurator = { _, actions in
-              guard posix_spawn_file_actions_addinherit_np(&actions, inheritedLockDescriptor) == 0
-              else { throw PluginArchiveError.workerFailed }
-            }
+            #if canImport(Darwin)
+              options.preSpawnProcessConfigurator = { _, actions in
+                guard posix_spawn_file_actions_addinherit_np(&actions, inheritedLockDescriptor) == 0
+                else { throw PluginArchiveError.workerFailed }
+              }
+            #elseif canImport(Glibc) || canImport(Musl)
+              throw PluginArchiveError.workerFailed
+            #endif
           }
           let execution = try await Subprocess.run(
             .path(FilePath(workerExecutable.path)),

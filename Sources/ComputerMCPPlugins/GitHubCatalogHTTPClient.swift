@@ -1,14 +1,18 @@
 import Foundation
 
-protocol PluginCatalogHTTPFetching: Sendable {
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
+package protocol PluginCatalogHTTPFetching: Sendable {
   func fetch(path: String, query: [String: String], accept: String, maxBytes: Int) async throws
     -> PluginCatalogHTTPResponse
 }
 
-struct PluginCatalogHTTPResponse: Sendable {
-  let status: Int
-  let headers: [String: String]
-  let body: Data
+package struct PluginCatalogHTTPResponse: Sendable {
+  package let status: Int
+  package let headers: [String: String]
+  package let body: Data
 
   func requireSuccess() throws {
     if status == 429
@@ -32,14 +36,24 @@ struct PluginCatalogHTTPResponse: Sendable {
       throw PluginCatalogError.invalidResponse
     }
   }
+
+  package init(
+    status: Int,
+    headers: [String: String],
+    body: Data
+  ) {
+    self.status = status
+    self.headers = headers
+    self.body = body
+  }
 }
 
 /// An isolated, credential-free session. Redirects cannot extend the catalog's network scope.
-final class GitHubCatalogHTTPClient: PluginCatalogHTTPFetching, Sendable {
+package final class GitHubCatalogHTTPClient: PluginCatalogHTTPFetching, Sendable {
   private let session: URLSession
   private let origin: URL
 
-  init(
+  package init(
     configuration: URLSessionConfiguration = .ephemeral,
     origin: URL = URL(string: "https://api.github.com")!
   ) {
@@ -56,7 +70,8 @@ final class GitHubCatalogHTTPClient: PluginCatalogHTTPFetching, Sendable {
     session = URLSession(configuration: configuration)
   }
 
-  func fetch(path: String, query: [String: String], accept: String, maxBytes: Int) async throws
+  package func fetch(path: String, query: [String: String], accept: String, maxBytes: Int)
+    async throws
     -> PluginCatalogHTTPResponse
   {
     guard path.hasPrefix("/"), !path.hasPrefix("//"), !path.contains("\0"),
@@ -78,9 +93,12 @@ final class GitHubCatalogHTTPClient: PluginCatalogHTTPFetching, Sendable {
     request.setValue("Computer-MCP-Plugin-Catalog", forHTTPHeaderField: "User-Agent")
     try Task.checkCancellation()
     let delegate = GitHubPublicSessionDelegate()
-    let bytes: URLSession.AsyncBytes
+    let bytes: PluginHTTPResponseStream.Bytes
     let rawResponse: URLResponse
-    do { (bytes, rawResponse) = try await session.bytes(for: request, delegate: delegate) } catch {
+    do {
+      (bytes, rawResponse) = try await PluginHTTPResponseStream.open(
+        for: request, session: session, delegate: delegate, maximumBytes: maxBytes)
+    } catch {
       try Task.checkCancellation()
       if let authenticationFailure = delegate.authenticationFailure { throw authenticationFailure }
       throw error
@@ -134,17 +152,19 @@ final class GitHubPublicSessionDelegate: NSObject, URLSessionTaskDelegate,
     completionHandler:
       @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
   ) {
-    if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
-      completionHandler(.performDefaultHandling, nil)
-    } else {
-      // Challenge cancellation can surface as a generic URL error. Preserve the cause per request.
-      lock.withLock {
-        failure =
-          (challenge.failureResponse as? HTTPURLResponse).map {
-            PluginCatalogError.httpStatus($0.statusCode)
-          } ?? .authenticationRequired
+    #if !canImport(FoundationNetworking)
+      if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
+        completionHandler(.performDefaultHandling, nil)
+        return
       }
-      completionHandler(.cancelAuthenticationChallenge, nil)
+    #endif
+    // Challenge cancellation can surface as a generic URL error. Preserve the cause per request.
+    lock.withLock {
+      failure =
+        (challenge.failureResponse as? HTTPURLResponse).map {
+          PluginCatalogError.httpStatus($0.statusCode)
+        } ?? .authenticationRequired
     }
+    completionHandler(.cancelAuthenticationChallenge, nil)
   }
 }

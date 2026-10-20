@@ -1,8 +1,11 @@
+import ComputerMCPPlatform
+import ComputerMCPPlugins
 import Foundation
 
 extension GatewayRuntime {
   static func retainPluginArtifacts(
     state: PluginStoreSnapshot, plugins: [ResolvedPlugin]?, database: GatewayDatabase?,
+    directoryFactory: any PluginArchiveDirectoryFactory,
     transaction: PluginInstallationStorage? = nil
   ) throws -> [PluginArtifactLease] {
     let records: [PluginInstallationRecord]
@@ -31,7 +34,7 @@ extension GatewayRuntime {
       if let transaction, transaction.root.path == root.path {
         leases.append(try transaction.retainArtifact(directory.identity))
       } else {
-        let storage = try PluginInstallationStorage(at: root)
+        let storage = try PluginInstallationStorage(at: root, directoryFactory: directoryFactory)
         defer { storage.finishTransaction() }
         leases.append(try storage.retainArtifact(directory.identity))
       }

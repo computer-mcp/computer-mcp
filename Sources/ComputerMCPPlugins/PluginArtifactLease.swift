@@ -1,18 +1,27 @@
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
-import Darwin
 import Foundation
 import NIOConcurrencyHelpers
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+
+  // Glibc also exports a struct named flock; bind the function by its C symbol.
+  @_silgen_name("flock") private func flock(_ descriptor: Int32, _ operation: Int32) -> Int32
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// Pins an owned installation independently of its current selection in the store.
 /// Acquisition and deletion both hold the installation transaction lock, so a
 /// reader cannot create a replacement lock while cleanup removes the directory.
-final class PluginArtifactLease: Sendable {
-  let identity: PluginDirectoryIdentity
+package final class PluginArtifactLease: Sendable {
+  package let identity: PluginDirectoryIdentity
   private let descriptor: Int32
   private let closed = NIOLockedValueBox(false)
 
-  init(directory: PluginArchiveDirectory, exclusive: Bool) throws {
+  init(directory: any PluginArchiveStagingDirectory, exclusive: Bool) throws {
     let descriptor = openat(
       directory.descriptor, "artifact.lock",
       O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
@@ -33,7 +42,7 @@ final class PluginArtifactLease: Sendable {
       self.identity = try directory.identity()
       self.descriptor = descriptor
     } catch {
-      Darwin.close(descriptor)
+      closeDescriptor(descriptor)
       throw error
     }
   }
@@ -43,12 +52,22 @@ final class PluginArtifactLease: Sendable {
   /// This descriptor is private to one runtime; child ownership uses separate
   /// process receipts. End its lock explicitly so incidental fork-before-exec
   /// copies cannot extend a finished runtime's lease.
-  func close() {
+  package func close() {
     closed.withLockedValue { closed in
       guard !closed else { return }
       closed = true
       flock(descriptor, LOCK_UN)
-      Darwin.close(descriptor)
+      closeDescriptor(descriptor)
     }
   }
+}
+
+private func closeDescriptor(_ descriptor: Int32) {
+  #if canImport(Darwin)
+    Darwin.close(descriptor)
+  #elseif canImport(Glibc)
+    Glibc.close(descriptor)
+  #elseif canImport(Musl)
+    Musl.close(descriptor)
+  #endif
 }

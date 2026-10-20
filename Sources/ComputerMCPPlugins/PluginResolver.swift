@@ -8,6 +8,11 @@ package enum IntegrationKind: String, Codable, Hashable, Sendable { case mcp, cl
 package struct IntegrationRegistration: Codable, Hashable, Sendable {
   package let kind: IntegrationKind
   package let id: String
+
+  package init(kind: IntegrationKind, id: String) {
+    self.kind = kind
+    self.id = id
+  }
 }
 
 package struct PluginContributionOrigin: Codable, Equatable, Sendable {

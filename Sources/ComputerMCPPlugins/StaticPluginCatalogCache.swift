@@ -1,7 +1,17 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+
+  // Glibc also exports a struct named flock; bind the function by its C symbol.
+  @_silgen_name("flock") private func flock(_ descriptor: Int32, _ operation: Int32) -> Int32
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// The body and HTTP validators belong to the same successful validation of the fixed endpoint.
 struct StaticPluginCatalogCacheRecord: Codable, Sendable {

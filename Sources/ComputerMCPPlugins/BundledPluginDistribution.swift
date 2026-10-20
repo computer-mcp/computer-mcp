@@ -1,8 +1,14 @@
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// Build-time inputs pinned by the App repository, not a runtime registry or a publisher claim.
 package struct BundledPluginArtifact: Codable, Equatable, Sendable {
@@ -17,7 +23,8 @@ package enum BundledPluginDistribution {
   /// Only verified package bytes are moved; no contribution or install script is executed.
   package static func prepare(
     index: URL, destination: URL, workerExecutable: URL,
-    hostVersion: PluginVersion, architectures: [String]
+    hostVersion: PluginVersion, architectures: [String],
+    directoryFactory: any PluginArchiveDirectoryFactory
   ) async throws -> [BundledPluginArtifact] {
     guard !architectures.isEmpty, Set(architectures).count == architectures.count,
       architectures.allSatisfy({ ["arm64", "x86_64"].contains($0) })
@@ -31,12 +38,13 @@ package enum BundledPluginDistribution {
       throw PluginManifestError.invalid(reason)
     }
     try Task.checkCancellation()
-    let output = try PluginArchiveDirectory(at: destination)
+    let output = try directoryFactory.create(at: destination)
     let outputDescriptor = output.descriptor
     do {
       for artifact in artifacts {
         let preparation = PluginArchivePreparation(
-          workerExecutable: workerExecutable, stagingParent: output.url)
+          workerExecutable: workerExecutable, stagingParent: output.url,
+          directoryFactory: directoryFactory)
         try output.finish()
         try await preparation.withPreparedPackage(
           archive: inputs.root.appendingPathComponent(artifact.archive),
@@ -54,7 +62,9 @@ package enum BundledPluginDistribution {
                   platform: PluginPlatformCompatibility.currentPlatform, architecture: $0) == true
             })
           else { throw PluginArchiveError.incompatiblePackage }
-          try adopt(package: package, name: artifact.id, destination: outputDescriptor)
+          try adopt(
+            package: package, name: artifact.id, destination: outputDescriptor,
+            directoryFactory: directoryFactory)
         }
         try output.finish()
       }
@@ -93,19 +103,22 @@ package enum BundledPluginDistribution {
     return artifacts
   }
 
-  private static func adopt(package: PluginPackage, name: String, destination: Int32) throws {
-    let parent = Darwin.open(
+  private static func adopt(
+    package: PluginPackage, name: String, destination: Int32,
+    directoryFactory: any PluginArchiveDirectoryFactory
+  ) throws {
+    let parent = open(
       package.root.deletingLastPathComponent().path,
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard parent >= 0 else { throw PluginArchiveError.fileSystemFailure }
-    defer { Darwin.close(parent) }
+    defer { close(parent) }
     var status = stat()
     guard fstatat(parent, package.root.lastPathComponent, &status, AT_SYMLINK_NOFOLLOW) == 0,
       status.st_mode & S_IFMT == S_IFDIR, status.st_uid == geteuid(),
-      status.st_mode & 0o077 == 0,
-      renameatx_np(parent, package.root.lastPathComponent, destination, name, UInt32(RENAME_EXCL))
-        == 0
+      status.st_mode & 0o077 == 0
     else { throw PluginArchiveError.fileSystemFailure }
+    try directoryFactory.renameExclusively(
+      from: package.root.lastPathComponent, in: parent, to: name, in: destination)
   }
 
   private static func makeDistributable(_ directory: Int32) throws {
@@ -113,7 +126,7 @@ package enum BundledPluginDistribution {
     let duplicate = openat(directory, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard duplicate >= 0 else { throw PluginArchiveError.fileSystemFailure }
     guard let stream = fdopendir(duplicate) else {
-      Darwin.close(duplicate)
+      close(duplicate)
       throw PluginArchiveError.fileSystemFailure
     }
     defer { closedir(stream) }
@@ -129,7 +142,7 @@ package enum BundledPluginDistribution {
       if name == "." || name == ".." { continue }
       let child = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
       guard child >= 0 else { throw PluginArchiveError.fileSystemFailure }
-      defer { Darwin.close(child) }
+      defer { close(child) }
       var status = stat()
       guard fstat(child, &status) == 0, status.st_uid == geteuid() else {
         throw PluginArchiveError.fileSystemFailure

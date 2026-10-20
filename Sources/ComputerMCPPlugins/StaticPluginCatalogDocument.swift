@@ -1,10 +1,10 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
-import CryptoKit
+import Crypto
 import Foundation
 
 /// Discovery metadata from the publisher. Installation independently revalidates GitHub authority.
-struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
+package struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
   static let maximumBytes = 4 * 1_024 * 1_024
   let schemaVersion: Int
   let publisher: Publisher
@@ -297,7 +297,7 @@ struct StaticPluginCatalogDocument: Decodable, Equatable, Sendable {
   }
 
   /// Matches the schema 1 publisher's sorted, two-space UTF-8 JSON representation.
-  static func canonical(_ value: JSONValue) throws -> Data {
+  package static func canonical(_ value: JSONValue) throws -> Data {
     let encoder = JSONEncoder()
     encoder.outputFormatting = .withoutEscapingSlashes
     func render(_ value: JSONValue, depth: Int) throws -> String {

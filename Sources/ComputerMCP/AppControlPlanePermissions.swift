@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPersistence
+import ComputerMCPPlugins
 import Foundation
 
 package struct ProfilePermissionCapability: Equatable, Sendable, Identifiable {
@@ -60,7 +61,8 @@ extension AppControlPlaneService {
     guard let grant = try await profileGrants().first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
-    let resolved = try PluginHost.resolve(inputs.plugins, bundled: bundledPlugins)
+    let resolved = try PluginHost.resolve(
+      inputs.plugins, bundled: bundledPlugins, applications: platform.applications)
     let composition = try GatewayPluginComposition(
       configuration: inputs.configuration, plugins: resolved.plugins)
     let integrations = composition.runtimeConfiguration.mcp.servers.map { server in

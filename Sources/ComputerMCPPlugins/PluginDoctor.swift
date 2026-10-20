@@ -46,7 +46,7 @@ package struct PluginDoctorReport: Codable, Sendable {
     hostVersion: PluginVersion, architecture: String,
     environment: [String: String] = ProcessInfo.processInfo.environment,
     workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
-    applicationURL: (String) -> URL? = PluginDependencyResolver.applicationURL
+    applications: any ApplicationBundleLocating
   ) throws -> Self {
     try Task.checkCancellation()
     try state.validate()
@@ -112,7 +112,9 @@ package struct PluginDoctorReport: Codable, Sendable {
     let resolvedDependencies = PluginDependencyResolver.resolve(
       for: plugin, settings: settings,
       searchDirectories: PluginHost.searchDirectories(environment: environment),
-      applicationURL: applicationURL)
+      applicationURL: {
+        PluginDependencyResolver.applicationURL(bundleIdentifier: $0, applications: applications)
+      })
     let bindings = resolvedDependencies.mapValues(\.executable)
     dependencies = plugin.manifest.dependencies.map {
       PluginDoctorDependency(

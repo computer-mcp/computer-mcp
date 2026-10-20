@@ -1,5 +1,4 @@
 import ComputerMCPPlatform
-import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
 import Foundation
 
@@ -10,8 +9,10 @@ package enum PluginDependencyResolver {
     let source: String
   }
 
-  package static func applicationURL(bundleIdentifier: String) -> URL? {
-    switch ApplicationBundleLookup().locate(bundleIdentifier: bundleIdentifier) {
+  static func applicationURL(
+    bundleIdentifier: String, applications: any ApplicationBundleLocating
+  ) -> URL? {
+    switch applications.locate(bundleIdentifier: bundleIdentifier) {
     case .found(let url): url
     case .notFound: nil
     }
@@ -20,7 +21,7 @@ package enum PluginDependencyResolver {
   static func resolve(
     for plugin: PluginPackage, settings: PluginSettings, overrides: [String: URL] = [:],
     searchDirectories: [URL],
-    applicationURL: (String) -> URL? = Self.applicationURL
+    applicationURL: (String) -> URL?
   ) -> [String: Binding] {
     var bindings = overrides.mapValues { Binding(executable: $0, source: "host_override") }
     let environment = ["PATH": searchDirectories.map(\.path).joined(separator: ":")]

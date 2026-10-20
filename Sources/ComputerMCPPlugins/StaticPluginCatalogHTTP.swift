@@ -1,10 +1,14 @@
 import Foundation
 
-struct StaticPluginCatalogValidators: Codable, Equatable, Sendable {
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
+package struct StaticPluginCatalogValidators: Codable, Equatable, Sendable {
   let etag: String?
   let lastModified: String?
 
-  init(etag: String? = nil, lastModified: String? = nil) {
+  package init(etag: String? = nil, lastModified: String? = nil) {
     self.etag = Self.header(etag, limit: 2_048)
     self.lastModified = Self.header(lastModified, limit: 128)
   }
@@ -17,17 +21,17 @@ struct StaticPluginCatalogValidators: Codable, Equatable, Sendable {
   }
 }
 
-protocol StaticPluginCatalogFetching: Sendable {
+package protocol StaticPluginCatalogFetching: Sendable {
   func fetch(validators: StaticPluginCatalogValidators) async throws -> PluginCatalogHTTPResponse
 }
 
 /// One fixed public endpoint, with no cookies, credentials, URL cache or redirect authority.
-final class StaticPluginCatalogHTTP: StaticPluginCatalogFetching, Sendable {
+package final class StaticPluginCatalogHTTP: StaticPluginCatalogFetching, Sendable {
   static let endpoint = URL(string: "https://computer-mcp.github.io/plugins/index.json")!
   private let endpoint: URL
   private let session: URLSession
 
-  init(configuration: URLSessionConfiguration = .ephemeral, endpoint: URL = endpoint) {
+  package init(configuration: URLSessionConfiguration = .ephemeral, endpoint: URL = endpoint) {
     let configuration = configuration.copy() as! URLSessionConfiguration
     configuration.urlCredentialStorage = nil
     configuration.httpCookieStorage = nil
@@ -41,7 +45,9 @@ final class StaticPluginCatalogHTTP: StaticPluginCatalogFetching, Sendable {
     self.endpoint = endpoint
   }
 
-  func fetch(validators: StaticPluginCatalogValidators) async throws -> PluginCatalogHTTPResponse {
+  package func fetch(validators: StaticPluginCatalogValidators) async throws
+    -> PluginCatalogHTTPResponse
+  {
     // Validate again because decoded cache values do not pass through the member initializer.
     let validators = StaticPluginCatalogValidators(
       etag: validators.etag, lastModified: validators.lastModified)
@@ -56,9 +62,13 @@ final class StaticPluginCatalogHTTP: StaticPluginCatalogFetching, Sendable {
     }
     try Task.checkCancellation()
     let delegate = GitHubPublicSessionDelegate()
-    let bytes: URLSession.AsyncBytes
+    let bytes: PluginHTTPResponseStream.Bytes
     let raw: URLResponse
-    do { (bytes, raw) = try await session.bytes(for: request, delegate: delegate) } catch {
+    do {
+      (bytes, raw) = try await PluginHTTPResponseStream.open(
+        for: request, session: session, delegate: delegate,
+        maximumBytes: StaticPluginCatalogDocument.maximumBytes)
+    } catch {
       try Task.checkCancellation()
       if let failure = delegate.authenticationFailure { throw failure }
       throw error

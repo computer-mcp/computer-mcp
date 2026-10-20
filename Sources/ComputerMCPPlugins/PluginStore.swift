@@ -1,6 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPPlatform
-import CryptoKit
+import Crypto
 import Foundation
 
 package enum PluginStoreError: Error, Equatable, LocalizedError, Sendable {
@@ -94,11 +94,31 @@ package struct PluginStoreSnapshot: Codable, Equatable, Sendable {
       }
     }
   }
+
+  package init(
+    revision: Int64 = 0,
+    installations: [PluginInstallationRecord] = [],
+    selectedInstallations: [String: String] = [:],
+    settings: [String: PluginSettings] = [:]
+  ) {
+    self.revision = revision
+    self.installations = installations
+    self.selectedInstallations = selectedInstallations
+    self.settings = settings
+  }
 }
 
 package struct PluginStoreIssue: Codable, Equatable, Sendable {
   package let pluginID: String
   package let message: String
+
+  package init(
+    pluginID: String,
+    message: String
+  ) {
+    self.pluginID = pluginID
+    self.message = message
+  }
 }
 
 /// A committed mutation can succeed while owned-file cleanup remains pending.
@@ -139,13 +159,19 @@ package struct PluginStoreResolution: Sendable {
 /// Revision comparison in the database also protects against other store instances/processes.
 package actor PluginStore {
   let stateStore: any PluginStateStore
+  let directoryFactory: any PluginArchiveDirectoryFactory
+  let applications: any ApplicationBundleLocating
   private let validateSnapshot: @Sendable (PluginStoreSnapshot) throws -> Void
 
   package init(
     stateStore: any PluginStateStore,
+    directoryFactory: any PluginArchiveDirectoryFactory,
+    applications: any ApplicationBundleLocating,
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
     self.stateStore = stateStore
+    self.directoryFactory = directoryFactory
+    self.applications = applications
     self.validateSnapshot = validateSnapshot
   }
 
@@ -257,7 +283,7 @@ package actor PluginStore {
     let state = try snapshot()
     return try Self.resolve(
       snapshot: state, bundled: bundled, dependencyExecutables: dependencyExecutables,
-      hostVersion: hostVersion, architecture: architecture)
+      hostVersion: hostVersion, architecture: architecture, applications: applications)
   }
 
   package static func resolve(
@@ -267,7 +293,8 @@ package actor PluginStore {
     hostVersion: PluginVersion,
     architecture: String,
     searchDirectories: [URL] = [],
-    environment: [String: String] = ProcessInfo.processInfo.environment
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    applications: any ApplicationBundleLocating
   ) throws -> PluginStoreResolution {
     try state.validate()
     let byID = Dictionary(grouping: bundled, by: { $0.manifest.id })
@@ -291,7 +318,7 @@ package actor PluginStore {
         }
         let bindings = dependencyBindings(
           for: plugin, settings: settings, overrides: dependencyExecutables[id] ?? [:],
-          searchDirectories: searchDirectories)
+          searchDirectories: searchDirectories, applications: applications)
         plugins.append(
           try PluginResolver.resolve(
             package: plugin, source: source, settings: settings,
@@ -306,7 +333,7 @@ package actor PluginStore {
   }
 
   /// Source precedence and declaration identity are shared by activation and non-activating diagnostics.
-  static func selectedPackage(
+  package static func selectedPackage(
     _ id: String, in state: PluginStoreSnapshot, bundled: [PluginPackage]
   ) throws -> (PluginPackage, PluginSource)? {
     if let selected = state.selectedInstallations[id] {
@@ -334,10 +361,13 @@ package actor PluginStore {
 
   static func dependencyBindings(
     for plugin: PluginPackage, settings: PluginSettings, overrides: [String: URL] = [:],
-    searchDirectories: [URL]
+    searchDirectories: [URL], applications: any ApplicationBundleLocating
   ) -> [String: URL] {
     PluginDependencyResolver.resolve(
-      for: plugin, settings: settings, overrides: overrides, searchDirectories: searchDirectories
+      for: plugin, settings: settings, overrides: overrides, searchDirectories: searchDirectories,
+      applicationURL: {
+        PluginDependencyResolver.applicationURL(bundleIdentifier: $0, applications: applications)
+      }
     ).mapValues(\.executable)
   }
 

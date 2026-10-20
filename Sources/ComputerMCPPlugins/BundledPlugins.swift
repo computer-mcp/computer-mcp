@@ -1,10 +1,22 @@
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 
 /// Read-only package inventory from the running product, separate from user installations and grants.
 package struct BundledPlugins: Sendable {
   package let packages: [PluginPackage]
   package let issues: [PluginStoreIssue]
+
+  package init(packages: [PluginPackage], issues: [PluginStoreIssue]) {
+    self.packages = packages
+    self.issues = issues
+  }
 
   package static var current: Self {
     load(directory: directory(for: Bundle.main.executableURL))
@@ -82,7 +94,9 @@ package struct BundledPlugins: Sendable {
         break
       }
       let name = withUnsafePointer(to: &entry.pointee.d_name) {
-        $0.withMemoryRebound(to: CChar.self, capacity: Int(entry.pointee.d_namlen) + 1) {
+        $0.withMemoryRebound(
+          to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)
+        ) {
           String(validatingCString: $0)
         }
       }
@@ -116,7 +130,7 @@ package struct BundledPluginDescription: Codable, Sendable {
 
 extension PluginStoreSnapshot {
   /// Missing component settings use deny-by-default host values, never manifest recommendations.
-  func includingBundledDefaults(_ manifests: [PluginManifest]) -> Self {
+  package func includingBundledDefaults(_ manifests: [PluginManifest]) -> Self {
     var result = self
     for manifest in manifests where selectedInstallations[manifest.id] == nil {
       PluginStore.addMissingSettings(for: manifest, to: &result)

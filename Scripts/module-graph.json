@@ -193,7 +193,6 @@
     "^ComputerUse": "ComputerMCPComputerUse",
     "^MCPRegistration": "ComputerMCPControlPlane",
     "^MCPRuntimeAdapter": "ComputerMCPGateway",
-    "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
     "^GatewayDatabase": "ComputerMCPGateway",
     "^DefaultGatewayConfiguration\\+macOS": "ComputerMCPMacOS",
     "^ManifestFile": "ComputerMCPControlPlane",
@@ -207,7 +206,6 @@
     "AppControlPlaneService->KeychainSecretStore",
     "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
     "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
-    "BundledPluginDistribution->PluginArchiveDirectory",
     "ControlToolResponse->AppControlPlaneServiceError",
     "GatewayHTTPApp->AppControlPlaneServiceError",
     "GatewayRuntime->ComputerUseGatewayProviderError",
@@ -216,15 +214,7 @@
     "HTTPClientControlRegistry->GatewayClientControl",
     "MCPConnectionPool->KeychainSecretStore",
     "MCPProxyClient->KeychainSecretStore",
-    "MCPProxyConnection->KeychainSecretStore",
-    "PluginArchivePreparation->PluginArchiveDirectory",
-    "PluginArchiveSnapshot->PluginArchiveDirectory",
-    "PluginArchiveWorker->PluginArchiveExtractor",
-    "PluginArtifactLease->PluginArchiveDirectory",
-    "PluginDependencyResolver->ApplicationBundleLookup",
-    "PluginInstallationStorage->PluginArchiveDirectory",
-    "PluginStore->GatewayDatabase",
-    "PluginStore->PluginArchiveDirectory"
+    "MCPProxyConnection->KeychainSecretStore"
   ],
   "tests": {
     "AppControlPlaneServiceTests.swift": "ComputerMCPControlPlaneTests",

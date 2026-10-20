@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPToolsWorkspace
 import ComputerMCPTransport

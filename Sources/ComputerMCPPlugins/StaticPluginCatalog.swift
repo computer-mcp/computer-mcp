@@ -1,8 +1,12 @@
 import ComputerMCPCore
 import Foundation
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 /// Owns one bounded discovery snapshot. Searches and release choices never enumerate GitHub.
-actor StaticPluginCatalog: PluginCatalogBrowsing {
+package actor StaticPluginCatalog: PluginCatalogBrowsing {
   static let refreshInterval: TimeInterval = 600
   static let manualRefreshInterval: TimeInterval = 30
   private let http: any StaticPluginCatalogFetching
@@ -44,7 +48,7 @@ actor StaticPluginCatalog: PluginCatalogBrowsing {
     let retryAt: Date
   }
 
-  init(
+  package init(
     cacheURL: URL? = nil,
     http: any StaticPluginCatalogFetching = StaticPluginCatalogHTTP(),
     now: @escaping @Sendable () -> Date = { .now }
@@ -54,7 +58,7 @@ actor StaticPluginCatalog: PluginCatalogBrowsing {
     self.now = now
   }
 
-  func search(
+  package func search(
     query: String = "", kind: IntegrationKind? = nil, page: Int = 1, refresh: Bool = false
   )
     async throws -> PluginCatalogSearchResult
@@ -95,7 +99,7 @@ actor StaticPluginCatalog: PluginCatalogBrowsing {
       entries: values, issues: snapshot.issues, catalog: snapshot.status)
   }
 
-  func artifacts(repository: String, repositoryID: Int64, tag: String? = nil, page: Int = 1)
+  package func artifacts(repository: String, repositoryID: Int64, tag: String? = nil, page: Int = 1)
     async throws -> GitHubPluginReleaseArtifacts
   {
     try await artifacts(

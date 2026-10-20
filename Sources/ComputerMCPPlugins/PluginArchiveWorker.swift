@@ -1,4 +1,4 @@
-import ComputerMCPPlatformDarwin
+import ComputerMCPPlatform
 import Foundation
 
 package struct PluginArchiveReceipt: Codable, Equatable, Sendable {
@@ -19,14 +19,16 @@ package struct PluginArchiveReceipt: Codable, Equatable, Sendable {
 /// including when termination prevents normal Swift cleanup from running.
 package enum PluginArchiveWorker {
   package static func prepare(
-    input: Int32, inJobDirectory root: URL, expectedSHA256: String
+    input: Int32, inJobDirectory root: URL, expectedSHA256: String,
+    directoryFactory: any PluginArchiveDirectoryFactory, extractor: any PluginArchiveExtracting
   ) throws -> PluginArchiveReceipt {
     try PluginArchiveSnapshot.withVerifiedCopy(
       from: input, inNewDirectory: root.appendingPathComponent("input"),
-      expectedSHA256: expectedSHA256
+      expectedSHA256: expectedSHA256, directoryFactory: directoryFactory
     ) { snapshot in
-      let extracted = try PluginArchiveExtractor().extract(
-        snapshot.url, toNewDirectory: root.appendingPathComponent("payload"))
+      let extracted = try extractor.extract(
+        snapshot.url, toNewDirectory: root.appendingPathComponent("payload"),
+        checkCancellation: { try Task.checkCancellation() })
       return PluginArchiveReceipt(
         sha256: snapshot.sha256, archiveBytes: snapshot.bytes,
         extractedBytes: extracted.bytes, entries: extracted.entries)

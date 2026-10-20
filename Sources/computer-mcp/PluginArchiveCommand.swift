@@ -1,6 +1,8 @@
 import ArgumentParser
 import ComputerMCP
 import ComputerMCPPlatform
+import ComputerMCPPlatformDarwin
+import ComputerMCPPlugins
 import Darwin
 import Foundation
 
@@ -19,7 +21,8 @@ struct PluginArchiveCommand: ParsableCommand {
       let receipt = try PluginArchiveWorker.prepare(
         input: STDIN_FILENO,
         inJobDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
-        expectedSHA256: sha256)
+        expectedSHA256: sha256, directoryFactory: DarwinPluginArchiveDirectoryFactory(),
+        extractor: PluginArchiveExtractor())
       try FileHandle.standardOutput.write(contentsOf: JSONEncoder().encode(receipt))
     } catch {
       let failure = error as? PluginArchiveError ?? .workerFailed

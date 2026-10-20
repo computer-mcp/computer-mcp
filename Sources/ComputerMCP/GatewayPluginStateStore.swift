@@ -1,4 +1,5 @@
 import ComputerMCPPlatform
+import ComputerMCPPlugins
 import Foundation
 
 /// Binds a plugin commit to the gateway configuration and its optional runtime publication.
@@ -52,9 +53,19 @@ struct GatewayPluginStateStore: PluginStateStore {
 }
 
 extension PluginStore {
-  package init(
-    database: GatewayDatabase,
-    expectedConfiguration: GatewayDatabase.ConfigurationState? = nil,
+  init(
+    database: GatewayDatabase, platform: PlatformServices,
+    validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
+  ) {
+    self.init(
+      stateStore: GatewayPluginStateStore(database: database),
+      directoryFactory: platform.pluginDirectories, applications: platform.applications,
+      validateSnapshot: validateSnapshot)
+  }
+
+  init(
+    database: GatewayDatabase, platform: PlatformServices,
+    expectedConfiguration: GatewayDatabase.ConfigurationState,
     publishSnapshot: GatewayPluginStateStore.PublishSnapshot? = nil,
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
@@ -62,6 +73,7 @@ extension PluginStore {
       stateStore: GatewayPluginStateStore(
         database: database, expectedConfiguration: expectedConfiguration,
         publishSnapshot: publishSnapshot),
+      directoryFactory: platform.pluginDirectories, applications: platform.applications,
       validateSnapshot: validateSnapshot)
   }
 }

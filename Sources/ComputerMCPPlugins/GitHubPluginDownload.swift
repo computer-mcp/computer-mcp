@@ -1,7 +1,18 @@
 import ComputerMCPPlatform
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
+
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
 
 /// Streams a selected public asset into an empty, caller-owned private file.
 /// The caller retains the descriptor until this operation, including cancellation, has joined.
@@ -11,7 +22,7 @@ package final class GitHubPluginDownload: Sendable {
   private let redirectOrigins: Set<URL>
   private let timeout: Duration
 
-  init(
+  package init(
     configuration: URLSessionConfiguration = .ephemeral,
     origin: URL = URL(string: "https://api.github.com")!,
     redirectOrigins: Set<URL> = [URL(string: "https://release-assets.githubusercontent.com")!],
@@ -80,10 +91,12 @@ package final class GitHubPluginDownload: Sendable {
       request.setValue("Computer-MCP-Plugin-Download", forHTTPHeaderField: "User-Agent")
       if hop == 0 { request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version") }
       let delegate = GitHubPublicSessionDelegate()
-      let bytes: URLSession.AsyncBytes
+      let bytes: PluginHTTPResponseStream.Bytes
       let rawResponse: URLResponse
-      do { (bytes, rawResponse) = try await session.bytes(for: request, delegate: delegate) } catch
-      {
+      do {
+        (bytes, rawResponse) = try await PluginHTTPResponseStream.open(
+          for: request, session: session, delegate: delegate, maximumBytes: Int(artifact.size))
+      } catch {
         try Task.checkCancellation()
         if let failure = delegate.authenticationFailure { throw failure }
         throw error
@@ -154,8 +167,16 @@ package final class GitHubPluginDownload: Sendable {
     try bytes.withUnsafeBytes { buffer in
       var offset = 0
       while offset < buffer.count {
-        let count = Darwin.write(
-          descriptor, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+        #if canImport(Darwin)
+          let count = Darwin.write(
+            descriptor, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+        #elseif canImport(Glibc)
+          let count = Glibc.write(
+            descriptor, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+        #elseif canImport(Musl)
+          let count = Musl.write(
+            descriptor, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+        #endif
         if count < 0, errno == EINTR { continue }
         guard count > 0 else { throw PluginArchiveError.fileSystemFailure }
         offset += count

@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPPlugins
 import SwiftUI
 
 struct PluginReleaseView: View {

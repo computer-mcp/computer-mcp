@@ -7,6 +7,43 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct DeliveryConcurrencyTests {
+  @Test
+  func abortedCleanupRequiresConsistentDefaultAndHeadSamples() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let parent = try fixture.git(["rev-parse", "HEAD"])
+      try fixture.write("outside.txt", "baseline work\n")
+      try fixture.git(["commit", "-am", "test: unique baseline"])
+      let baseline = try fixture.git(["rev-parse", "HEAD"])
+      let marker = quote(fixture.root.appendingPathComponent(".git/cleanup-head-check").path)
+      let git = quote(fixture.executable)
+      let provider = try fixture.provider(
+        wrappingGit: """
+          if test "$1" = worktree && test "$2" = remove; then
+            \(git) "$@" || exit $?
+            touch \(marker)
+            exit 0
+          fi
+          if test -f \(marker); then
+            for argument do
+              if test "$argument" = 'HEAD^{commit}'; then
+                \(git) reset --hard \(quote(parent)) >/dev/null || exit $?
+                rm \(marker)
+              fi
+            done
+          fi
+          """)
+      let result = try fixture.apply(fixture.request(old: "absent"), provider: provider)
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["reason"] == .string("cleanup_failed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.git(["rev-parse", "main"]) == parent)
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == baseline)
+      #expect(try fixture.git(["show", "docs/entry:outside.txt"]) == "baseline work")
+      try fixture.assertClean(retained: true)
+    }
+  }
+
   @Test(arguments: [false, true])
   func abortedCleanupRetainsBaselineAfterDefaultRewind(beforeDeletion: Bool) async throws {
     try await deliveryTest {

@@ -458,6 +458,10 @@ internal struct DeliveryRepository: Sendable {
       ["--no-optional-locks", "symbolic-ref", "--quiet", "HEAD"], at: main,
       accepting: [0, 1]
     ).stdout.trimmingCharacters(in: .newlines)
+    guard headRef != "refs/heads/\(journal.defaultBranch)" || head == defaultTip else {
+      throw DeliveryFailure(
+        reason: .cleanupFailed, detail: "Default branch and main HEAD changed during cleanup.")
+    }
     try io.beforeBranchDeletion(journal.branch, expected)
     let currentHeadRef = try git.run(
       ["--no-optional-locks", "symbolic-ref", "--quiet", "HEAD"], at: main,

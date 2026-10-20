@@ -4,6 +4,7 @@ import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import ComputerMCPToolKit
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
   package init() {}
@@ -16,12 +17,12 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
     mcpClient: any DownstreamMCPClient,
     hostContext: MCPHostContext
   ) -> (registry: GatewayToolRegistry, additionalProviders: [any GatewayToolProvider]) {
-    (
+    let environment = ToolEnvironment(
+      configuration: configuration, commandRunner: commandRunner,
+      processManager: processManager, shellManager: shellManager)
+    return (
       registry: GatewayToolRegistry(
-        configuration: configuration,
-        commandRunner: commandRunner,
-        processManager: processManager,
-        shellManager: shellManager,
+        toolEnvironment: environment,
         mcpClient: mcpClient,
         hostContext: hostContext),
       additionalProviders: [ComputerUseGatewayProvider()]

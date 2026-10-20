@@ -210,7 +210,7 @@ let neutralTargets: [Target] =
           "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
-          "ComputerMCPTunnels",
+          "ComputerMCPTunnels", "ComputerMCPToolKit",
         ]
       ),
       .target(

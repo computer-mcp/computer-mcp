@@ -31,7 +31,7 @@ package final class GatewayToolRegistry: @unchecked Sendable {
 
   internal let registeredCommands: RegisteredCommands
 
-  package init(
+  package convenience init(
     configuration: GatewayConfiguration,
     commandRunner: CommandRunning? = nil,
     processManager: ProcessManaging = ManagedProcessRegistry(),
@@ -40,25 +40,33 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     hostContext: MCPHostContext? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
+    self.init(
+      toolEnvironment: ToolEnvironment(
+        configuration: configuration, commandRunner: commandRunner,
+        processManager: processManager, shellManager: shellManager, environment: environment),
+      mcpClient: mcpClient, hostContext: hostContext)
+  }
+
+  package init(
+    toolEnvironment: ToolEnvironment,
+    mcpClient: DownstreamMCPClient = MCPProxyClient(),
+    hostContext: MCPHostContext? = nil
+  ) {
+    let configuration = toolEnvironment.configuration
     var enabledConfiguration = configuration
     let disabledMCPIDs = Set(configuration.mcp.servers.filter { !$0.enabled }.map(\.id))
     enabledConfiguration.mcp.servers.removeAll { !$0.enabled }
     enabledConfiguration.tools.removeAll { disabledMCPIDs.contains($0.source) }
     self.configuration = enabledConfiguration
-    let toolMeta: JSONValue? =
-      enabledConfiguration.server.http.accessTokenEnv == nil
-      ? .object(["securitySchemes": .array([.object(["type": .string("noauth")])])]) : nil
-    self.workspaceScope = WorkspaceScope(configuration: enabledConfiguration, toolMeta: toolMeta)
-    let commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
-    self.commandRunner = commandRunner
-    self.registeredCommands = RegisteredCommands(
-      configuration: enabledConfiguration, commandRunner: commandRunner, environment: environment)
-    self.processManager = processManager
-    self.shellManager = shellManager
+    self.workspaceScope = toolEnvironment.workspaceScope
+    self.commandRunner = toolEnvironment.commandRunner
+    self.registeredCommands = toolEnvironment.registeredCommands
+    self.processManager = toolEnvironment.processManager
+    self.shellManager = toolEnvironment.shellManager
+    self.environment = toolEnvironment.environment
     self.mcpClient = mcpClient.makeScopedClient(
-      workingDirectory: configuration.workspaceDirectory, environment: environment,
+      workingDirectory: configuration.workspaceDirectory, environment: toolEnvironment.environment,
       hostContext: hostContext)
-    self.environment = environment
   }
 
   internal var hasReexportedMCPServers: Bool {

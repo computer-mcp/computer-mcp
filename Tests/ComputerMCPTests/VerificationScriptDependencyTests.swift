@@ -2,7 +2,7 @@ import ComputerMCPTestSupport
 import Foundation
 import Testing
 
-@testable import ComputerMCP
+@testable import ComputerMCPControlPlane
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 

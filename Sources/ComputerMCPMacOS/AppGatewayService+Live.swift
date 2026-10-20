@@ -1,4 +1,4 @@
-import ComputerMCP
+import ComputerMCPControlPlane
 import ComputerMCPTransport
 
 extension AppGatewayService {

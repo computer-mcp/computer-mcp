@@ -1,5 +1,5 @@
-import ComputerMCP
 import ComputerMCPConfiguration
+import ComputerMCPControlPlane
 import SwiftUI
 
 struct MCPHTTPAuthenticationFields: View {

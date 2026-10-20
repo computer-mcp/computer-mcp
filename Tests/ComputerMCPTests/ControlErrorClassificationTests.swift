@@ -1,7 +1,7 @@
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPComputerUse
+@testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 

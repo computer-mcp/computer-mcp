@@ -7,8 +7,8 @@ import Foundation
 import GRDB
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPConfiguration
+@testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 

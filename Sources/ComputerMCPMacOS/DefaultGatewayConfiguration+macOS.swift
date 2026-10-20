@@ -9,7 +9,7 @@ extension DefaultGatewayConfiguration {
 
   /// Resolves the Codex CLI from `PATH`, then from the ChatGPT and Codex App bundles and
   /// the usual macOS install locations.
-  static func makeManifest(environment: [String: String], homeDirectory: URL) -> String {
+  package static func makeManifest(environment: [String: String], homeDirectory: URL) -> String {
     let candidates = [
       URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
       URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex"),

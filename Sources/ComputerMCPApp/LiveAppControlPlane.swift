@@ -1,6 +1,6 @@
 import AppKit
-import ComputerMCP
 import ComputerMCPComputerUse
+import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPMacOS

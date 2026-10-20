@@ -282,6 +282,17 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPControlPlane",
+      dependencies: [
+        "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsWorkspace",
+        "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
+        "ComputerMCPPersistence", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        "ComputerMCPProcess", "ComputerMCPTransport", "ComputerMCPTunnels",
+        .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "MCP", package: "swift-sdk"),
+      ]
+    ),
+    .target(
       name: "ComputerMCPTunnels",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -415,7 +426,8 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsSystem",
           "ComputerMCPToolsMCP",
           "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPGateway", "ComputerMCPConfiguration", "ComputerMCPCore",
+          "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPConfiguration",
+          "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
@@ -424,14 +436,7 @@ let neutralTargets: [Target] =
       ),
       .target(
         name: "ComputerMCP",
-        dependencies: [
-          "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsWorkspace",
-          "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
-          "ComputerMCPPersistence", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
-          "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTransport",
-          "ComputerMCPTunnels", .product(name: "Crypto", package: "swift-crypto"),
-          .product(name: "MCP", package: "swift-sdk"),
-        ],
+        dependencies: ["ComputerMCPControlPlane"],
         exclude: ["ComputerMCP.docc"]
       ),
       .executableTarget(
@@ -439,7 +444,7 @@ let neutralTargets: [Target] =
         dependencies: [
           "ComputerMCPPlugins", "ComputerMCPPlatformDarwin",
           "ComputerMCPToolsCLI",
-          "ComputerMCP", "ComputerMCPGateway",
+          "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway",
           "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
@@ -457,7 +462,8 @@ let neutralTargets: [Target] =
           "ComputerMCPComputerUse",
           "ComputerMCPToolsSkills",
           "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPGateway", "ComputerMCPMacOS", "ComputerMCPConfiguration",
+          "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPMacOS",
+          "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
@@ -565,7 +571,8 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsSystem",
           "ComputerMCPToolsMCP",
           "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPGateway", "ComputerMCPMacOS", "ComputerMCPConfiguration",
+          "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPMacOS",
+          "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",
@@ -582,7 +589,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPAppTests",
         dependencies: [
           "ComputerMCPPlugins",
-          "ComputerMCPApp", "ComputerMCP", "ComputerMCPGateway", "ComputerMCPMacOS",
+          "ComputerMCPApp", "ComputerMCP", "ComputerMCPControlPlane", "ComputerMCPGateway",
+          "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",

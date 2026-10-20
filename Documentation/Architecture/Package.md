@@ -45,7 +45,7 @@ package product and does not install or bundle vendor binaries.
 | --- | --- |
 | `Package.swift` | App/CLI products, internal targets, tests, and dependency graph |
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors and the session authority interface |
-| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash and workspace opening |
+| `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for secrets, workspaces, plugin archives, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
@@ -58,12 +58,14 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsWorkspace/` | Platform-neutral workspace provider with explicit definitions, bounded inventories, configuration-change values, deduplication values and injected desktop opening |
 | `Sources/ComputerMCPToolsFiles/` | Platform-neutral file and archive provider with explicit definitions, scoped filesystem operations, injected commands, extended attributes and Trash |
 | `Sources/ComputerMCPToolsStructured/` | Platform-neutral Markdown and structured-data provider with explicit definitions, bounded parsing helpers, registered SQLite commands and injected media inspection |
+| `Sources/ComputerMCPToolsSystem/` | Platform-neutral System and Network providers with explicit definitions, bounded command execution, POSIX observation and injected native memory, CPU and thermal readings |
+| `Sources/ComputerMCPToolsMCP/` | Platform-neutral MCP builtin and configured providers, downstream discovery, validated catalogs, host risk descriptors and context-preserving calls |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
-| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction and staging, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash and workspace opening |
+| `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction and staging, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCP/` | Shared target for the gateway, providers, persistence, tunnel administration, and App Control Plane; see [Module Architecture](../Decisions/ModuleArchitecture.md) |
-| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, executable search directories, file change monitors, tunnel proxy resolution and live App services to the shared target |
+| `Sources/ComputerMCPMacOS/` | macOS composition root that supplies workspace grants, tool providers, executable search directories, file change monitors, tunnel proxy resolution, native macOS tool definitions and dispatch, and live App services to the shared target |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
 | `Sources/computer-mcp/` | Thin CLI and stdio bridge entry point |
 | `Sources/ComputerMCPApp/` | SwiftUI control center and menu-bar lifecycle |
@@ -75,23 +77,28 @@ package product and does not install or bundle vendor binaries.
 | `Examples/` | Standalone development and dogfood manifests |
 | `Scripts/` | App build, DMG, notarization, and distribution verification workflows |
 
-`GatewayToolRegistry` retains configuration, runtime ownership and tool dispatch.
-Its domain extensions contain the MCP and platform
-implementations. Its catalog extension owns the definitions and annotations
-for those domains. `ComputerMCPToolKit` owns shared
-argument/result helpers, `WorkspaceScope` path checks and file metadata, and
-`RegisteredCommands` resolution and execution with its CLI process lifecycle.
-`ToolEnvironment` shares a workspace's configuration, scope, command execution,
-environment, process/shell runtimes and injected platform services across providers; the
-host owns shutdown.
-`MCPTool` and `DownstreamMCPClient` own their definitions
-and client contract. `GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`,
-`ProcessToolProvider`, `StructuredToolProvider`, `SkillsToolProvider`, `FilesToolProvider` and
-`WorkspaceToolProvider` own their definitions and dispatch using the shared tool environment.
-The composition root registers them alongside the remaining registry providers, which
-retain the shared runtime lifecycle. Each
-catalog refresh loads CLI tree providers from the CLI module and publishes them
-with their validated immutable definitions.
+`GatewayToolRegistry` carries the workspace provider source, catalog invalidations,
+refresh policy, downstream admission resolver and runtime shutdown. The macOS
+composition root creates the shared `ToolEnvironment`, scopes the downstream client
+and assembles the domain providers in catalog order. The router publishes definitions,
+capabilities and provider ownership together, preserving its validated generation
+when discovery fails.
+
+`ComputerMCPToolKit` owns shared argument/result helpers, `WorkspaceScope` path
+checks and file metadata, and `RegisteredCommands` resolution and execution with
+its CLI process lifecycle. `ToolEnvironment` shares a workspace's configuration,
+scope, command execution, environment, process/shell runtimes and injected platform
+services across providers; the host owns shutdown.
+
+`GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`, `ProcessToolProvider`,
+`StructuredToolProvider`, `SkillsToolProvider`, `FilesToolProvider`,
+`WorkspaceToolProvider`, `SystemToolProvider`, `NetworkToolProvider` and
+`MCPToolProvider` own explicit builtin definitions, annotations, descriptors and
+invocation dispatch. `MacOSToolProvider` in the composition root owns the seven
+native macOS tools. Each catalog generation creates a `ConfiguredMCPToolProvider`
+with validated configured and reexported downstream bindings, and loads CLI tree
+providers from their immutable definitions. `MCPTool` and `DownstreamMCPClient`
+own the downstream definition values and client contract.
 
 `StructuredToolProvider` owns the shared Markdown and structured parsing operations
 used by Skills. `MediaInspector` returns neutral, bounded metadata and PDF text;
@@ -112,6 +119,13 @@ helpers with the Files dependency. `WorkspaceOpener` isolates desktop open/revea
 configuration changes and deduplication values belong to the Workspace domain;
 prepared changes carry opaque host snapshots, while the gateway database owns
 SQL transactions and commit validation.
+
+`SystemProbe` returns neutral memory statistics, CPU hardware values and thermal
+conditions. `DarwinSystemProbe` owns Mach, sysctl and native power/thermal reads;
+the composition root supplies it and the fixed system/network command paths.
+`ComputerMCPToolsSystemDarwinTests` verifies the real probe-backed tools, while
+`ComputerMCPMacOSTests` exercises native application, directory, screen and Spotlight
+tools. Portable tests inject command paths and native readings.
 
 The neutral domain test targets are included on macOS and Linux; `ComputerMCPToolsStructuredDarwinTests` exercises the real media
 frameworks and their native fixtures on macOS.

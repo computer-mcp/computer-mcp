@@ -117,19 +117,6 @@ package struct MCPTool: Equatable, Sendable {
     )
   }
 
-  package func withAnnotations(_ annotations: MCPToolAnnotations) -> MCPTool {
-    MCPTool(
-      name: name,
-      title: title,
-      description: description,
-      inputSchema: inputSchema,
-      outputSchema: outputSchema,
-      annotations: annotations,
-      meta: meta,
-      mcpReference: mcpReference
-    )
-  }
-
   internal static let resultEnvelopeSchema: JSONValue = .object([
     "type": .string("object"),
     "properties": .object([

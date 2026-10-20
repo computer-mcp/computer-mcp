@@ -24,9 +24,9 @@ struct CLITreeGatewayTests {
     ]
     let environment = ToolEnvironment(configuration: configuration)
     let provider = CLIToolProvider(environment: environment)
-    let registry = GatewayToolRegistry(toolEnvironment: environment)
     let router = try GatewayProviderRouter(
-      registry: registry, additionalProviders: { [provider] + (try provider.treeProviders()) })
+      source: { [provider] + (try provider.treeProviders()) },
+      shutdownSource: { await environment.registeredCommands.execution.shutdown() })
     let tool = try #require(router.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
     #expect(tool.name.count <= 128)
     #expect(try router.capability(named: tool.name, context: .empty).risk == .fullShell)

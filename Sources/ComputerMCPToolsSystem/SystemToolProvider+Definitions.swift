@@ -427,11 +427,4 @@ extension SystemToolProvider {
     .object(["type": .string("boolean"), "description": .string(description)])
   }
 
-  private static func stringArraySchema(_ description: String) -> JSONValue {
-    .object([
-      "type": .string("array"),
-      "items": .object(["type": .string("string")]),
-      "description": .string(description),
-    ])
-  }
 }

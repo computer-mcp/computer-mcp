@@ -8,6 +8,7 @@ import Foundation
 package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked Sendable {
   package let id = "configured"
   private let mcp: MCPToolProvider
+  private let toolDefinitions: [ToolDefinition]?
   private let catalogLock = NSLock()
   private var catalog: [ToolDefinition]?
   private static let calls = BlockingOperationExecutor(
@@ -15,6 +16,17 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
 
   package init(environment: ToolEnvironment, mcpClient: any DownstreamMCPClient) {
     self.mcp = MCPToolProvider(environment: environment, mcpClient: mcpClient)
+    self.toolDefinitions = nil
+  }
+
+  private init(mcp: MCPToolProvider, definitions: [ToolDefinition]) {
+    self.mcp = mcp
+    self.toolDefinitions = definitions
+  }
+
+  /// Retains one generation's bindings independently of later discovery and validation failures.
+  package func snapshot() throws -> ConfiguredMCPToolProvider {
+    try ConfiguredMCPToolProvider(mcp: mcp, definitions: catalogDefinitions(refresh: true))
   }
 
   package func definitions() throws -> [ToolDefinition] {
@@ -22,7 +34,8 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
   }
 
   private func catalogDefinitions(refresh: Bool) throws -> [ToolDefinition] {
-    try catalogLock.withLock {
+    if let toolDefinitions { return toolDefinitions }
+    return try catalogLock.withLock {
       if !refresh, let catalog { return catalog }
       let definitions = try discoverDefinitions()
       catalog = definitions

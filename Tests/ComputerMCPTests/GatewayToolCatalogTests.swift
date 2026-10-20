@@ -1,6 +1,7 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import ComputerMCPTransport
 import Foundation
 import Logging
@@ -353,7 +354,8 @@ struct GatewayToolCatalogTests {
           prefix: "fixture", allowedTools: ["sample"])
       ]))
     let router = try GatewayProviderRouter(
-      registry: .init(configuration: configuration, mcpClient: client))
+      registry: MacOSToolProviders().makeProviders(
+        toolEnvironment: ToolEnvironment(configuration: configuration), mcpClient: client))
     let events = router.toolChanges(context: .empty)
     client.replace(names: ["sample", "hidden"], revision: 1)
     try await router.refreshTools(context: .empty)

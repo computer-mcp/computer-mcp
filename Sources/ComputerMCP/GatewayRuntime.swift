@@ -291,7 +291,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           hostContext.pluginArtifacts[registration.id] = lease.identity
         }
       }
-      let (registry, additionalProviders) = platform.toolProviders.makeProviders(
+      let registry = platform.toolProviders.makeProviders(
         configuration: workspaceConfiguration,
         commandRunner: commandRunner,
         processManager: processManager,
@@ -302,7 +302,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let registryCleanup = lifetime.onShutdown { await registry.shutdown() }
       let router = try GatewayProviderRouter(
         registry: registry,
-        additionalProviders: additionalProviders,
         reservedToolNames: Set(
           Self.coreDefinitions(databaseEnabled: true, managementEnabled: true).map(\.tool.name)),
         retainsContinuation: { [ownedWork, workspaceID = workspace.id] reference in

@@ -1,5 +1,7 @@
 import ComputerMCPDownstream
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import Foundation
 import Testing
 
@@ -57,8 +59,9 @@ struct MCPRegistrationManagementTests {
       try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
         == .string("disabled"))
     #expect(throws: (any Error).self) { try client.listTools(server: server, context: .empty) }
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: ToolEnvironment(
+        configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     #expect(try !router.listTools(context: .empty).contains { $0.name.hasPrefix("manual.") })
     await client.shutdown()

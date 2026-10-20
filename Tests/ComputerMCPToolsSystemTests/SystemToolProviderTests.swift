@@ -357,7 +357,7 @@ final class SystemToolProviderTests {
     let runner = RecordingCommandRunner()
     runner.stdout = """
         123     1 root     Ss     0.0  0.1 01:02:03 /sbin/launchd
-        456   123 exampleuser S      12.5 1.2 00:00:05 /Applications/Terminal.app/Terminal
+        456   123 exampleuser S      12.5 1.2 00:00:05 /fixture/apps/Terminal
       broken line
       """
     let provider = SystemToolProvider(
@@ -396,7 +396,7 @@ final class SystemToolProviderTests {
     #expect((first["cpu_percent"]) == (.number(12.5)))
     #expect((first["memory_percent"]) == (.number(1.2)))
     #expect((first["elapsed"]) == (.string("00:00:05")))
-    #expect((first["command"]) == (.string("/Applications/Terminal.app/Terminal")))
+    #expect((first["command"]) == (.string("/fixture/apps/Terminal")))
   }
 
   @Test
@@ -404,7 +404,7 @@ final class SystemToolProviderTests {
     let runner = RecordingCommandRunner()
     runner.stdout = """
         123     1 root     Ss     0.0  0.1 01:02:03 /sbin/launchd
-        456   123 exampleuser S      12.5 1.2 00:00:05 /Applications/Terminal.app/Terminal
+        456   123 exampleuser S      12.5 1.2 00:00:05 /fixture/apps/Terminal
       """
     runner.stdoutTruncated = true
     let provider = SystemToolProvider(
@@ -583,7 +583,7 @@ final class SystemToolProviderTests {
     let runner = RecordingCommandRunner()
     runner.stdout =
       """
-      {"eventMessage":"first","processImagePath":"/usr/bin/example"}
+      {"eventMessage":"first","processImagePath":"/fixture/bin/example"}
       not-json
       {"eventMessage":"third"}
       """

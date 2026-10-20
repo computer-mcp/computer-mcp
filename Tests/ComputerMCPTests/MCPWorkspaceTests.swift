@@ -1,6 +1,7 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import Darwin
 import Foundation
 import Testing
@@ -50,7 +51,8 @@ struct MCPWorkspaceTests {
   }
 
   @Test(arguments: [false, true])
-  func registriesOwnSessionsAndStoppingOnePreservesItsPeer(_ authorized: Bool) async throws {
+  func workspaceProvidersOwnSessionsAndStoppingOnePreservesItsPeer(_ authorized: Bool) async throws
+  {
     let fixture = try MCPWorkspaceFixture()
     defer { fixture.remove() }
     let configuration = fixture.configuration()
@@ -67,8 +69,12 @@ struct MCPWorkspaceTests {
     firstConfiguration.workspaceDirectory = fixture.first
     var secondConfiguration = configuration
     secondConfiguration.workspaceDirectory = fixture.second
-    let first = GatewayToolRegistry(configuration: firstConfiguration, mcpClient: client)
-    let second = GatewayToolRegistry(configuration: secondConfiguration, mcpClient: client)
+    let first = try GatewayProviderRouter(
+      registry: MacOSToolProviders().makeProviders(
+        toolEnvironment: ToolEnvironment(configuration: firstConfiguration), mcpClient: client))
+    let second = try GatewayProviderRouter(
+      registry: MacOSToolProviders().makeProviders(
+        toolEnvironment: ToolEnvironment(configuration: secondConfiguration), mcpClient: client))
     let executor = BlockingOperationExecutor(label: "test.mcp-workspace")
     do {
       let firstValue = try await executor.perform { try fixture.read(first) }
@@ -200,12 +206,14 @@ struct MCPWorkspaceTests {
     configuration.mcp.servers[0].cwd = cwd
     configuration.mcp.servers[0].env = ["PATH": "bin", "SCOPE_VALUE": "child", "EMPTY": ""]
     configuration.mcp.servers[0].env[MCPHostLaunchMetadata.environmentKey] = "forged registration"
-    let registry = GatewayToolRegistry(
-      configuration: configuration,
-      environment: [
-        "PATH": "/unrelated", "SCOPE_VALUE": "parent", "EMPTY": "parent",
-        MCPHostLaunchMetadata.environmentKey: "forged ancestor",
-      ])
+    let registry = try GatewayProviderRouter(
+      registry: MacOSToolProviders().makeProviders(
+        toolEnvironment: ToolEnvironment(
+          configuration: configuration,
+          environment: [
+            "PATH": "/unrelated", "SCOPE_VALUE": "parent", "EMPTY": "parent",
+            MCPHostLaunchMetadata.environmentKey: "forged ancestor",
+          ]), mcpClient: MCPProxyClient()))
     do {
       let value = try await BlockingOperationExecutor(label: "test.mcp-launch").perform {
         try fixture.read(registry)
@@ -255,7 +263,7 @@ private struct MCPWorkspaceFixture: Sendable {
       ]), workspaceDirectory: root)
   }
 
-  func read(_ registry: GatewayToolRegistry) throws -> [String: JSONValue] {
+  func read(_ registry: any GatewayToolServing) throws -> [String: JSONValue] {
     _ = try registry.listTools(context: .empty)
     return try #require(
       registry.callTool(name: "fixture.context", arguments: .object([:]), context: .empty)

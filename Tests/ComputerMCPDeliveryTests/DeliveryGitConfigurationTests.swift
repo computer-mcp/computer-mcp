@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct DeliveryGitConfigurationTests {
-  @Test(arguments: ["main", "worktree", "retry"])
+  @Test(arguments: ["main", "worktree", "retry", "landed"])
   func symbolicOrigHeadPreservesTargetBranch(checkout: String) async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
@@ -15,12 +15,13 @@ struct DeliveryGitConfigurationTests {
       ])
       try fixture.git(["branch", "other", other])
       let reflog = try fixture.read(".git/logs/refs/heads/other")
-      if checkout != "main" { try fixture.advanceDuringCommit() }
+      if ["worktree", "retry"].contains(checkout) { try fixture.advanceDuringCommit() }
       let snapshot = fixture.root.appendingPathComponent(".git/before-orig-head-check")
       let io = DeliveryIO(beforeMergeCheck: { journal in
         guard !FileManager.default.fileExists(atPath: snapshot.path),
           checkout != "retry" || journal.rebase != nil
         else { return }
+        if checkout == "landed" { try fixture.git(["merge", "--ff-only", journal.commit!]) }
         let directory =
           checkout == "worktree" ? URL(fileURLWithPath: journal.worktree) : fixture.root
         try fixture.git(["symbolic-ref", "ORIG_HEAD", "refs/heads/other"], at: directory)
@@ -32,7 +33,8 @@ struct DeliveryGitConfigurationTests {
       #expect(result["branch"] == .string("docs/entry"))
       let commit = try #require(result["commit"]?.stringValue)
       let journal = try #require(fixture.journals().first)
-      #expect((journal.rebase != nil) == (checkout != "main"))
+      #expect((journal.rebase != nil) == ["worktree", "retry"].contains(checkout))
+      #expect(journal.merged == (checkout == "landed"))
       if checkout == "worktree" { #expect(commit == journal.rebase?.original) }
       let repository = try fixture.repository()
       for _ in 0..<2 {
@@ -41,7 +43,9 @@ struct DeliveryGitConfigurationTests {
         #expect(try fixture.git(["rev-parse", "docs/entry"]) == commit)
         #expect(
           try fixture.git(["rev-parse", "HEAD"]) == fixture.read(".git/before-orig-head-check"))
-        #expect(try fixture.read("notes/log.md") == "alpha\nstable\n")
+        #expect(
+          try fixture.read("notes/log.md")
+            == (checkout == "landed" ? "beta\nstable\n" : "alpha\nstable\n"))
         if checkout != "worktree" {
           #expect(try fixture.git(["symbolic-ref", "ORIG_HEAD"]) == "refs/heads/other")
         }

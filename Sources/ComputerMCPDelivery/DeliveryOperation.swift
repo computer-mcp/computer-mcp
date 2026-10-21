@@ -134,8 +134,13 @@ extension DeliveryRepository {
           try? io.write(journal, to: journals)
           return (retainedResult(journal), nil)
         }
-        journal.state = journal.merged ? .merged : (journal.commit == nil ? .aborted : .committed)
-        journal.reason = journal.merged ? nil : failure?.reason
+        if failure?.reason == .origHeadSymbolic {
+          journal.state = .committed
+          journal.reason = .origHeadSymbolic
+        } else {
+          journal.state = journal.merged ? .merged : (journal.commit == nil ? .aborted : .committed)
+          journal.reason = journal.merged ? nil : failure?.reason
+        }
       }
       let result = finish(&journal)
       return (result, result.reason == failure?.reason ? failure : nil)

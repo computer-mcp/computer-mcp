@@ -172,6 +172,8 @@ delivery worktree, `ORIG_HEAD` must be absent or a regular ref. Git follows a
 symbolic `ORIG_HEAD` when updating it, which could overwrite another branch.
 Delivery refuses the command and returns `committed` / `orig_head_symbolic`
 with the delivery branch retained and the symbolic target unchanged.
+This state and reason also apply when another writer has already landed the
+delivery commit in the main checkout.
 Every rebase is followed by the same exact-path validation
 against its new baseline. A mismatch, including an empty diff when the default branch already
 contains the patch, returns `committed` / `scope_changed` with the branch retained.

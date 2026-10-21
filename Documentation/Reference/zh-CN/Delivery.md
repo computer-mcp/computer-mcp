@@ -120,6 +120,7 @@ rebase 使用 `--no-update-refs --no-autostash --no-rebase-merges`，避免仓�
 待处理的 stash。每次在主检出合并或在交付 worktree 中 rebase 之前，紧挨着确认该检出的
 `ORIG_HEAD` 不存在或是普通引用。Git 更新符号 `ORIG_HEAD` 时会跟随它，可能改写另一分支；
 此时不执行命令，以 `committed` / `orig_head_symbolic` 保留交付分支，所指引用保持不变。
+即使其他写入者已将交付提交合入主检出，也使用这一状态和原因并保留交付分支。
 每次 rebase 后都按同样规则核对新提交相对新基线的改动路径；不符则以
 `committed` / `scope_changed` 保留分支，包括默认分支已含相同补丁而产生空 diff 的
 情况。发起 rebase 前，日志记录原提交与目标提交。

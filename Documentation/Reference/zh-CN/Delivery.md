@@ -121,8 +121,12 @@ merge 也带 `--no-autostash`。主检出已有 `MERGE_AUTOSTASH` 时停止合�
 情况。发起 rebase 前，日志记录原提交与目标提交。
 实际发起前还会核对索引可见性标记，要求整个 worktree 干净（包括未跟踪和被忽略的文件），
 因为 rebase 内部检出可能覆盖被忽略的文件。中止自己的 rebase 前，再次核对索引可见性，
-并拒绝有任何未跟踪或被忽略文件的 worktree；已跟踪的冲突文件仍可按日志中止。
-拒绝时以 `cleanup_pending` 保留 worktree 与分支。运行中的调用在自己的 rebase 失败时，只有其
+并拒绝有任何未跟踪或被忽略文件的 worktree。已跟踪文件的工作内容须仍等于 Git 的
+`AUTO_MERGE` 冲突快照，暂存差异须仅限于仍未合并的路径；冲突索引的模式、blob 对象号和
+阶段须分别与记录的基线、rebase 目标和原提交的树完全一致。`HEAD` 须仍为 rebase 目标，
+待重放提交须为保存的原提交，其第一父提交须为记录的基线。resolve-undo 记录、外部已跟踪
+改动、已暂存的冲突解决、缺少冲突快照或无法证明的复杂 rebase 均阻止中止，以 `cleanup_pending` /
+`rebase_in_progress` 保留 worktree 与分支给用户处理。运行中的调用在自己的 rebase 失败时，只有其
 实际已发起该命令且 `orig-head` 与 `onto` 均与记录相同时才中止到保存的原提交；否则保留为
 `cleanup_pending`。rebase 命令报错或超时但已无
 进行中的 rebase 时，以交付分支实际顶端重新核对并记录提交号，命令失败后不再尝试合并。

@@ -174,8 +174,15 @@ It then checks index visibility flags and requires a clean entire worktree,
 including untracked and ignored files, because rebase's internal checkout can
 overwrite ignored files. Before aborting its own rebase, delivery again checks
 index visibility and refuses any untracked or ignored files; tracked conflict
-files remain eligible for the recorded abort. Refusal retains the worktree and
-branch as `cleanup_pending`.
+files remain eligible for the recorded abort only while their working contents
+match Git's `AUTO_MERGE` conflict snapshot and staged differences are limited to
+still-unmerged paths. Conflict index modes, blob IDs and stages must exactly match
+the recorded baseline, rebase target and original commit trees. `HEAD` must still
+be the rebase target, the pending pick must be the saved original commit, and that
+commit's first parent must be the recorded baseline. Resolve-undo records,
+external tracked edits or staged resolutions prevent abort. A missing snapshot
+or an unprovable complex rebase also prevents abort. Refusal retains the worktree
+and branch as `cleanup_pending` / `rebase_in_progress` for user handling.
 The running call immediately aborts its own failed rebase to the saved commit only
 after actually invoking it and when its `orig-head` and `onto` match that record;
 otherwise it is retained as

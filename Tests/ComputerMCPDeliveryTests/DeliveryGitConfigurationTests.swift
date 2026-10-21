@@ -6,6 +6,106 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct DeliveryGitConfigurationTests {
+  @Test(arguments: [
+    "worktree", "index", "conflict", "resolved", "partial-resolution", "unmerged-index",
+    "detached-commit", "missing-snapshot",
+  ])
+  func rebaseAbortPreservesExternalTrackedChanges(state: String) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      if state == "partial-resolution" {
+        try fixture.write("notes/second.md", "alpha\nstable\n")
+        try fixture.git(["add", "--", "notes/second.md"])
+        try fixture.git(["commit", "-m", "test: second conflict path"])
+      }
+      let snapshot = fixture.root.appendingPathComponent(".git/external-index")
+      let io = DeliveryIO(
+        beforeMergeCheck: { _ in
+          try fixture.write("notes/log.md", "gamma\nstable\n")
+          if state == "partial-resolution" {
+            try fixture.write("notes/second.md", "gamma\nstable\n")
+          }
+          try fixture.git(["commit", "-am", "test: advance with conflict"])
+        },
+        afterWorktreeVerification: { journal in
+          guard journal.rebase != nil, !FileManager.default.fileExists(atPath: snapshot.path),
+            let identity = journal.creation?.worktree
+          else { return }
+          let directory = URL(fileURLWithPath: identity.directory)
+          guard
+            ["rebase-merge", "rebase-apply"].contains(where: {
+              FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path)
+            })
+          else { return }
+          let worktree = URL(fileURLWithPath: journal.worktree)
+          switch state {
+          case "worktree", "index":
+            try fixture.write("outside.txt", "external tracked work\n", at: worktree)
+            if state == "index" {
+              try fixture.git(["add", "--", "outside.txt"], at: worktree)
+              try fixture.write("outside.txt", "untouched\n", at: worktree)
+            }
+          case "conflict", "resolved":
+            try fixture.write("notes/log.md", "external conflict resolution\n", at: worktree)
+            if state == "resolved" { try fixture.git(["add", "--", "notes/log.md"], at: worktree) }
+          case "partial-resolution":
+            try fixture.git(["add", "--", "notes/log.md"], at: worktree)
+          case "unmerged-index":
+            let blob = try fixture.git(["rev-parse", "HEAD:outside.txt"], at: worktree)
+            let repository = try fixture.repository()
+            let verified = try repository.verifiedWorktree(journal)
+            let pinned = try #require(verified)
+            try pinned.run(
+              ["update-index", "--index-info"], at: worktree,
+              input: Data("100644 \(blob) 3\tnotes/log.md\n".utf8))
+            try fixture.git(["update-index", "--clear-resolve-undo"], at: worktree)
+          case "detached-commit":
+            let commit = try fixture.git(
+              ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "test: external detached commit"],
+              at: worktree)
+            try fixture.git(["update-ref", "--no-deref", "HEAD", commit], at: worktree)
+          default:
+            try FileManager.default.removeItem(at: directory.appendingPathComponent("AUTO_MERGE"))
+          }
+          try Data(contentsOf: directory.appendingPathComponent("index")).write(to: snapshot)
+          try fixture.write(".git/external-outside", try fixture.read("outside.txt", at: worktree))
+          try fixture.write(".git/external-notes", try fixture.read("notes/log.md", at: worktree))
+          try fixture.write(
+            ".git/external-head", try fixture.git(["rev-parse", "HEAD"], at: worktree))
+        })
+      var request = try #require(fixture.request().objectValue)
+      if state == "partial-resolution" {
+        request["edits"] = .array([
+          fixture.replace("notes/log.md", "alpha", "beta"),
+          fixture.replace("notes/second.md", "alpha", "beta"),
+        ])
+      }
+      let result = try fixture.apply(.object(request), provider: fixture.provider(io: io))
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["reason"] == .string("rebase_in_progress"))
+      let journal = try #require(fixture.journals().first)
+      let directory = URL(fileURLWithPath: try #require(journal.creation?.worktree.directory))
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      let repository = try fixture.repository()
+      for _ in 0..<2 {
+        #expect(
+          try fixture.read("outside.txt", at: worktree) == fixture.read(".git/external-outside"))
+        #expect(
+          try fixture.read("notes/log.md", at: worktree) == fixture.read(".git/external-notes"))
+        #expect(
+          try Data(contentsOf: directory.appendingPathComponent("index"))
+            == Data(contentsOf: snapshot))
+        #expect(repository.rebaseDirectory(journal) != nil)
+        #expect(try fixture.git(["rev-parse", journal.branch]) == journal.rebase?.original)
+        #expect(
+          try fixture.git(["rev-parse", "HEAD"], at: worktree) == fixture.read(".git/external-head")
+        )
+        try repository.withLock { try repository.recover() }
+        #expect(try fixture.journals().first?.reason == .rebaseInProgress)
+      }
+    }
+  }
+
   @Test(arguments: ["untracked", "ignored", "--assume-unchanged", "--skip-worktree"])
   func rebasePreservesExternalWorkBeforeCheckout(state: String) async throws {
     try await deliveryTest {

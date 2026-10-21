@@ -452,6 +452,66 @@ internal struct DeliveryRepository: Sendable {
             detail: "Untracked worktree files retained before rebase abort: \(journal.worktree)")
         }
       }
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      let snapshot = try pinned.run(
+        ["--no-optional-locks", "rev-parse", "--verify", "--quiet", "AUTO_MERGE^{tree}"],
+        at: worktree, accepting: [0, 1])
+      guard snapshot.exitCode == 0 else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed,
+          detail: "Rebase conflict snapshot unavailable: \(journal.worktree)")
+      }
+      let tree = snapshot.stdout.trimmingCharacters(in: .newlines)
+      let unmergedEntries = try pinned.run(
+        ["--no-optional-locks", "ls-files", "--unmerged", "-z"], at: worktree
+      ).stdout.split(separator: "\0").map(String.init)
+      let unmerged = unmergedEntries.compactMap {
+        $0.split(separator: "\t", maxSplits: 1).last.map(String.init)
+      }
+      guard !unmerged.isEmpty, try pinned.revision("HEAD", at: worktree) == rebase.onto,
+        try pinned.revision("REBASE_HEAD", at: worktree) == rebase.original,
+        try pinned.revision("\(rebase.original)^1", at: worktree) == journal.base,
+        try pinned.run(
+          ["--no-optional-locks", "ls-files", "--resolve-undo", "-z"], at: worktree
+        ).stdout.isEmpty
+      else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed, detail: "Rebase index ownership is unproven: \(journal.worktree)")
+      }
+      var expectedEntries: Set<String> = []
+      // A single picked commit uses parent, target HEAD and picked tree as stages 1–3.
+      for (stage, commit) in [journal.base, rebase.onto, rebase.original].enumerated() {
+        let entries = try pinned.run(
+          ["--no-optional-locks", "ls-tree", "-r", "--full-tree", "-z", commit, "--"]
+            + Array(Set(unmerged)).sorted(), at: worktree
+        ).stdout.split(separator: "\0")
+        for entry in entries {
+          let fields = entry.split(separator: "\t", maxSplits: 1)
+          let metadata = fields[0].split(separator: " ")
+          guard fields.count == 2, metadata.count == 3 else {
+            throw DeliveryFailure(
+              reason: .cleanupFailed, detail: "Cannot verify rebase index entries.")
+          }
+          expectedEntries.insert("\(metadata[0]) \(metadata[2]) \(stage + 1)\t\(fields[1])")
+        }
+      }
+      let staged = try pinned.run(
+        [
+          "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--cached",
+          "--no-renames", "--name-only", "-z", tree, "--",
+        ], at: worktree
+      ).stdout.split(separator: "\0").map(String.init)
+      guard Set(unmergedEntries) == expectedEntries,
+        Set(staged).isSubset(of: Set(unmerged)),
+        try pinned.run(
+          ["--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--quiet", tree, "--"],
+          at: worktree, accepting: [0, 1]
+        ).exitCode == 0
+      else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed,
+          detail: "Rebase conflict state changed; retained: \(journal.worktree)")
+      }
       // Action modes require config overrides; they reject the rebase start options.
       try pinned.run(["rebase", "--abort"], at: URL(fileURLWithPath: journal.worktree))
     }

@@ -45,7 +45,7 @@ internal struct DeliveryGit: Sendable {
     do {
       let command = arguments.drop(while: { $0 == "--no-optional-locks" }).first ?? ""
       let pathOptions =
-        ["add", "status", "diff", "restore", "ls-files"].contains(command)
+        ["add", "status", "diff", "restore", "ls-files", "ls-tree"].contains(command)
         ? ["--literal-pathspecs"] : []
       let binding =
         worktree.map { ["--git-dir=\($0.directory.path)", "--work-tree=\($0.root.path)"] }

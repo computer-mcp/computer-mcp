@@ -21,29 +21,41 @@ struct ClientRegistrationOptions: ParsableArguments {
     client: RegistrationClient, operation: ClientRegistrationOperation,
     server: ClientRegistrationCommand
   ) throws {
-    guard client != .claudeDesktop || clientCLI == nil else {
-      throw ValidationError("--client-cli is unavailable for Claude Desktop.")
-    }
     let environment = ProcessInfo.processInfo.environment
     let home =
       environment["HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
       ?? FileManager.default.homeDirectoryForCurrentUser
     let service = MacOSPlatform.clientRegistrationService(
       homeDirectory: home, environment: environment)
+    try run(client: client, operation: operation, server: server, service: service)
+  }
+
+  func run(
+    client: RegistrationClient, operation: ClientRegistrationOperation,
+    server: ClientRegistrationCommand, service: ClientRegistrationService,
+    output: (JSONValue) -> Void = printJSON
+  ) throws {
+    guard client != .claudeDesktop || clientCLI == nil else {
+      throw ValidationError("--client-cli is unavailable for Claude Desktop.")
+    }
     do {
       let plan = try service.preview(
         client: client, operation: operation, server: server, name: name, clientCLI: clientCLI)
       if dryRun {
-        printJSON(try JSONValue.encoded(plan.display))
+        output(try JSONValue.encoded(plan.display))
         if let refusal = plan.display.refusalCode { throw ExitCode(refusal == .uncertain ? 2 : 1) }
         return
+      }
+      if let uncertain = plan.uncertainResult {
+        output(try JSONValue.encoded(uncertain))
+        throw ExitCode(2)
       }
       if let expect, expect != plan.fingerprint {
         throw ClientRegistrationError(.changedSincePreview)
       }
       if let refusal = plan.display.refusalCode { throw ClientRegistrationError(refusal) }
       if plan.display.requiresConfirmation, expect == nil {
-        printJSON(
+        output(
           .object([
             "error_code": .string("confirmation_required"),
             "plan": try JSONValue.encoded(plan.display),
@@ -51,11 +63,11 @@ struct ClientRegistrationOptions: ParsableArguments {
         throw ExitCode.failure
       }
       let result = try service.apply(plan)
-      printJSON(try JSONValue.encoded(result))
+      output(try JSONValue.encoded(result))
       if result.outcome == .uncertain { throw ExitCode(2) }
       if result.outcome != .succeeded { throw ExitCode.failure }
     } catch let error as ClientRegistrationError {
-      printJSON(.object(["error_code": .string(error.code.rawValue)]))
+      output(.object(["error_code": .string(error.code.rawValue)]))
       throw ExitCode(error.code == .uncertain ? 2 : 1)
     }
   }

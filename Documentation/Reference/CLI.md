@@ -493,6 +493,11 @@ lock and rechecks the bound location before writing.
 
 Claude Code replacement requires a restorable stdio entry containing only
 `type`, `command`, `args`, `env`, or HTTP/SSE with only `type`, `url`, `headers`.
+An absent `type` implies stdio; a present value must be `"stdio"`, `"http"` or
+`"sse"`. The complete serialized recovery invocation must fit the runtime
+`ARG_MAX`, including the child environment and argument/environment pointers,
+with a 2 KiB safety margin. Otherwise replacement is refused as
+`unsupported_entry` before planning removal.
 A failed step with confirmed process exit is reconciled against the file;
 recovery never removes another writer's entry. Desktop rejects symbolic links,
 nonregular files, malformed/nonobject JSON and a running Desktop App. Its final
@@ -507,6 +512,10 @@ with the client executable's directory followed by host search directories and
 stream. On timeout the process group receives SIGKILL and its direct child is
 reaped before reconciliation. Failure to confirm exit within two seconds
 returns `uncertain` and runs no later step. Raw client stdout/stderr are private.
+An unconfirmed probe or read takes precedence over fingerprint comparison in
+apply and the CLI's `--expect` check. Its result names the step and the last
+observed state; apply retains the reviewed observation when its recheck is
+unconfirmed.
 
 Exit codes: **0** for a successful preview/apply or no-op, **1** for refusal or
 failure, **2** for an uncertain process outcome, **64** for invalid CLI options.

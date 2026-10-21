@@ -80,6 +80,64 @@ struct ClientRegistrationTests {
     #expect(!String(describing: plan).contains("PRIVATE_SENTINEL"))
   }
 
+  @Test(arguments: ["codex_probe", "codex_read", "claude_probe"], [false, true])
+  func applyRecheckUncertaintyPrecedesStaleness(scenario: String, existing: Bool) throws {
+    let fixture = try RegistrationFixture()
+    let client: RegistrationClient = scenario.hasPrefix("codex") ? .codex : .claudeCode
+    let step = scenario.hasSuffix("probe") ? "probe" : "read"
+    if existing {
+      try fixture.setEntry(
+        .object([
+          "type": .string("stdio"), "command": .string("old-server"),
+          "args": .array([.string("PRIVATE_SENTINEL")]),
+        ]), client: client)
+    }
+    let service = fixture.service()
+    let plan = try fixture.preview(client, service: service)
+    let before = try? Data(contentsOf: fixture.file(client))
+    let count = fixture.runner.calls.count
+    fixture.runner.intercept = { call in
+      if step == "probe" ? call.arguments == ["--version"] : call.arguments.contains("get") {
+        return .init(code: nil, stderr: "PRIVATE_SENTINEL", timedOut: true)
+      }
+      return nil
+    }
+    let result = try service.apply(plan)
+    #expect(result.outcome == .uncertain && result.errorCode == .uncertain)
+    #expect(result.steps == [.init(step: step, outcome: .uncertain, exitCode: nil)])
+    #expect(result.finalState == plan.display.state)
+    #expect(result.finalEntry == plan.display.observedEntry)
+    #expect(fixture.runner.calls.count - count == (step == "probe" ? 1 : 2))
+    #expect((try? Data(contentsOf: fixture.file(client))) == before)
+    #expect(
+      !String(decoding: try JSONEncoder().encode(result), as: UTF8.self).contains(
+        "PRIVATE_SENTINEL"))
+  }
+
+  @Test(arguments: ["codex_probe", "codex_read", "claude_probe"])
+  func uncertainPreviewIsTerminal(scenario: String) throws {
+    let fixture = try RegistrationFixture()
+    let client: RegistrationClient = scenario.hasPrefix("codex") ? .codex : .claudeCode
+    let step = scenario.hasSuffix("probe") ? "probe" : "read"
+    fixture.runner.intercept = { call in
+      if step == "probe" ? call.arguments == ["--version"] : call.arguments.contains("get") {
+        return .init(code: nil, timedOut: true)
+      }
+      return nil
+    }
+    let service = fixture.service()
+    let plan = try fixture.preview(client, service: service)
+    #expect(plan.display.refusalCode == .uncertain)
+    let count = fixture.runner.calls.count
+    let result = try service.apply(plan)
+    #expect(result.outcome == .uncertain && result.errorCode == .uncertain)
+    #expect(result.steps == [.init(step: step, outcome: .uncertain, exitCode: nil)])
+    #expect(result.finalState == plan.display.state)
+    #expect(fixture.runner.calls.count == count)
+    #expect(
+      !FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("state").path))
+  }
+
   @Test(
     arguments: [RegistrationClient.codex, .claudeCode],
     ["probe", "interpreter", "directory", "missing"])
@@ -404,6 +462,100 @@ struct ClientRegistrationTests {
     #expect(try service.apply(removal).finalState == .notRegistered)
   }
 
+  @Test(arguments: [JSONValue.integer(42), .null, .object([:]), .string("unknown")])
+  func invalidClaudeEntryTypesRefuseReplacement(type: JSONValue) throws {
+    let fixture = try RegistrationFixture()
+    let entry: JSONValue = .object([
+      "type": type, "command": .string("old-server"), "args": .array([]),
+    ])
+    try fixture.setEntry(entry, client: .claudeCode)
+    let service = fixture.service()
+    let plan = try fixture.preview(.claudeCode, service: service)
+    #expect(plan.display.state == .different)
+    #expect(plan.display.refusalCode == .unsupportedEntry && plan.display.actions.isEmpty)
+    do {
+      _ = try service.apply(plan)
+      Issue.record("Replaced an entry with an invalid type")
+    } catch let error as ClientRegistrationError { #expect(error.code == .unsupportedEntry) }
+    #expect(fixture.runner.calls.allSatisfy { $0.arguments == ["--version"] })
+    #expect(
+      try RegistrationJSONFile.read(fixture.file(.claudeCode).path).entry(named: "computer-mcp")
+        == entry)
+  }
+
+  @Test(arguments: [nil, .string("stdio"), .string("http"), .string("sse")] as [JSONValue?])
+  func supportedClaudeEntryTypesCanBeRestored(type: JSONValue?) throws {
+    let fixture = try RegistrationFixture()
+    var object: [String: JSONValue] =
+      type == .string("http") || type == .string("sse")
+      ? ["url": .string("https://example.test/private")]
+      : ["command": .string("old-server"), "args": .array([])]
+    object["type"] = type
+    let entry = JSONValue.object(object)
+    try fixture.setEntry(entry, client: .claudeCode)
+    fixture.runner.intercept = { call in call.arguments.contains("add") ? .init(code: 1) : nil }
+    let service = fixture.service()
+    let plan = try fixture.preview(.claudeCode, service: service)
+    #expect(plan.display.refusalCode == nil)
+    #expect(plan.display.actions.map(\.step) == ["remove", "add"])
+    let result = try service.apply(plan)
+    #expect(result.steps.map(\.step) == ["remove", "add", "restore"])
+    #expect(result.steps.last?.outcome == .succeeded)
+    #expect(
+      try RegistrationJSONFile.read(fixture.file(.claudeCode).path).entry(named: "computer-mcp")
+        == entry)
+  }
+
+  @Test(arguments: [-1, 0, 1], [false, true])
+  func claudeRecoveryInvocationMustFitArgumentBudget(offset: Int, largeEnvironment: Bool) throws {
+    let fixture = try RegistrationFixture()
+    let entry: JSONValue = .object([
+      "command": .string("old-server"),
+      "args": .array([.string(String(repeating: "é\"\\\n", count: 32))]),
+      "env": .object(["TOKEN": .string("PRIVATE_SENTINEL")]),
+    ])
+    try fixture.setEntry(entry, client: .claudeCode)
+    let environment = [
+      "LANG": largeEnvironment ? String(repeating: "é", count: 1_024) : "C",
+      "UNUSED": String(repeating: "not inherited", count: 1_024),
+    ]
+    let baseline = try fixture.preview(
+      .claudeCode, service: fixture.service(environment: environment))
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let payload = String(decoding: try encoder.encode(entry), as: UTF8.self)
+    let arguments = ["mcp", "add-json", "--scope", "user", "computer-mcp", payload]
+    let argv = [fixture.clientExecutable.path] + arguments
+    let envp = baseline.contents.environment.map { "\($0.key)=\($0.value)" }
+    let bytes = (argv + envp).reduce(0) { $0 + $1.utf8.count + 1 }
+    let pointers = (argv.count + envp.count + 2) * MemoryLayout<UnsafeRawPointer?>.stride
+    let service = fixture.service(
+      environment: environment, argumentLimit: bytes + pointers + 2_048 + offset)
+    fixture.runner.intercept = { call in call.arguments.contains("add") ? .init(code: 1) : nil }
+    let plan = try fixture.preview(.claudeCode, service: service)
+    if offset < 0 {
+      #expect(plan.display.refusalCode == .unsupportedEntry && plan.display.actions.isEmpty)
+      do {
+        _ = try service.apply(plan)
+        Issue.record("Replaced an entry whose recovery invocation exceeds the argument budget")
+      } catch let error as ClientRegistrationError { #expect(error.code == .unsupportedEntry) }
+      #expect(fixture.runner.calls.allSatisfy { $0.arguments == ["--version"] })
+    } else {
+      #expect(plan.display.refusalCode == nil)
+      #expect(plan.display.actions.map(\.step) == ["remove", "add"])
+      let result = try service.apply(plan)
+      #expect(result.steps.map(\.step) == ["remove", "add", "restore"])
+      #expect(result.steps.last?.outcome == .succeeded)
+      #expect(fixture.runner.calls.last?.arguments == arguments)
+    }
+    #expect(
+      try RegistrationJSONFile.read(fixture.file(.claudeCode).path).entry(named: "computer-mcp")
+        == entry)
+    #expect(
+      !String(decoding: try JSONEncoder().encode(plan.display), as: UTF8.self).contains(
+        "PRIVATE_SENTINEL"))
+  }
+
   @Test(arguments: [
     "[]", "null", "{\"mcpServers\":[]}", "{\"mcpServers\":null}",
     "{\"mcpServers\":{\"computer-mcp\":false}}", "malformed",
@@ -520,11 +672,21 @@ struct ClientRegistrationTests {
         } else if change == "inode" {
           let data = try Data(contentsOf: path)
           try data.write(to: path, options: .atomic)
+        } else if change == "bytes" {
+          let before = try RegistrationJSONFile.read(path.path)
+          let bytes = try #require(before.bytes)
+          let range = try #require(bytes.range(of: Data("unrelated".utf8)))
+          let handle = try FileHandle(forWritingTo: path)
+          defer { try? handle.close() }
+          try handle.seek(toOffset: UInt64(range.lowerBound))
+          try handle.write(contentsOf: Data("different".utf8))
+          let after = try RegistrationJSONFile.read(path.path)
+          #expect(after.bytes != before.bytes)
+          #expect(after.inode == before.inode)
+          #expect(after.mode == before.mode)
+          #expect(after.size == before.size)
         } else {
-          try Data(
-            change == "bytes"
-              ? "{\"mcpServers\":{},\"outside\":\"updated\"}".utf8 : "{\"writer\":true}".utf8
-          ).write(to: path)
+          try Data("{\"writer\":true}".utf8).write(to: path)
         }
       }
       if change == "appearance" {
@@ -659,7 +821,10 @@ private final class RegistrationFixture: @unchecked Sendable {
       ])
     try JSONEncoder().encode(value).write(to: file)
   }
-  func service(environment: [String: String] = [:], installed: Bool = true, running: Bool = false)
+  func service(
+    environment: [String: String] = [:], installed: Bool = true, running: Bool = false,
+    argumentLimit: Int? = nil
+  )
     -> ClientRegistrationService
   {
     let runner: any RegistrationProcessRunning =
@@ -668,7 +833,8 @@ private final class RegistrationFixture: @unchecked Sendable {
       homeDirectory: root, stateDirectory: root.appendingPathComponent("state"),
       executableSearchDirectories: [root.path], environment: environment, processRunner: runner,
       desktop: .init(
-        configurationFile: file(.claudeDesktop), isInstalled: { installed }, isRunning: { running })
+        configurationFile: file(.claudeDesktop), isInstalled: { installed }, isRunning: { running }),
+      argumentLimit: argumentLimit
     )
   }
   func preview(_ client: RegistrationClient, service: ClientRegistrationService? = nil) throws

@@ -32,6 +32,7 @@ package struct ClientRegistrationService: Sendable {
   private let desktop: ClaudeDesktopRegistration?
   private let timeoutMilliseconds: Int
   private let maxOutputBytes: Int
+  private let argumentLimit: Int
   var desktopWriter = DesktopRegistrationFileWriter()
 
   package init(
@@ -39,7 +40,7 @@ package struct ClientRegistrationService: Sendable {
     environment: [String: String],
     processRunner: any RegistrationProcessRunning = RegistrationProcessRunner(),
     desktop: ClaudeDesktopRegistration? = nil, timeoutMilliseconds: Int = 30_000,
-    maxOutputBytes: Int = 1_048_576
+    maxOutputBytes: Int = 1_048_576, argumentLimit: Int? = nil
   ) {
     self.homeDirectory = homeDirectory.standardizedFileURL
     self.stateDirectory = stateDirectory.standardizedFileURL
@@ -50,6 +51,7 @@ package struct ClientRegistrationService: Sendable {
     self.desktop = desktop
     self.timeoutMilliseconds = timeoutMilliseconds
     self.maxOutputBytes = maxOutputBytes
+    self.argumentLimit = argumentLimit ?? Int(sysconf(_SC_ARG_MAX))
   }
 
   package func statuses(server: ClientRegistrationCommand, name: String = "computer-mcp") throws
@@ -76,9 +78,15 @@ package struct ClientRegistrationService: Sendable {
 
   /// Rechecks the bound location under the writer lock. No private client data leaves this API.
   package func apply(_ plan: ClientRegistrationPlan) throws -> ClientRegistrationResult {
+    if let uncertain = plan.uncertainResult { return uncertain }
     let lock = try acquireWriterLock()
     defer { lock.release() }
     let fresh = try makePlan(plan.contents)
+    if let uncertain = fresh.uncertainResult {
+      return result(
+        .uncertain, plan: fresh.contents, steps: uncertain.steps,
+        observation: plan.contents.observation, error: .uncertain)
+    }
     guard fresh.fingerprint == plan.fingerprint else {
       throw ClientRegistrationError(.changedSincePreview)
     }
@@ -112,8 +120,8 @@ package struct ClientRegistrationService: Sendable {
       if step.outcome != .succeeded { break }
     }
     let final = read(contents)
-    if final.uncertain {
-      steps.append(.init(step: "read", outcome: .uncertain, exitCode: nil))
+    if let step = final.uncertainStep {
+      steps.append(.init(step: step, outcome: .uncertain, exitCode: nil))
       return result(
         .uncertain, plan: contents, steps: steps, observation: contents.observation,
         error: .uncertain)
@@ -181,7 +189,7 @@ package struct ClientRegistrationService: Sendable {
       do {
         let probe = try run(executable, ["--version"], bound.environment)
         if probe.exitCode == nil {
-          observed = .init(state: .unavailable, entry: nil, uncertain: true)
+          observed = .init(state: .unavailable, entry: nil, uncertainStep: "probe")
         } else if probe.exitCode == 0, !probe.timedOut, !probe.stdoutTruncated,
           !probe.stderrTruncated
         {
@@ -194,7 +202,7 @@ package struct ClientRegistrationService: Sendable {
       observed = .init(state: .unavailable, entry: nil)
     }
     var refusal: ClientRegistrationErrorCode?
-    if observed.uncertain {
+    if observed.uncertainStep != nil {
       refusal = .uncertain
     } else if observed.state == .unavailable {
       refusal = .unavailable
@@ -202,7 +210,8 @@ package struct ClientRegistrationService: Sendable {
       refusal = .unreadable
     } else if bound.client == .claudeCode, bound.operation == .register,
       observed.state == .different,
-      !ClaudeCodeClientRegistrar().canRestore(observed.entry)
+      !ClaudeCodeClientRegistrar().canRestore(
+        observed.entry, plan: bound, argumentLimit: argumentLimit)
     {
       refusal = .unsupportedEntry
     }

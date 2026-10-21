@@ -14,7 +14,7 @@ struct CodexClientRegistrar {
       let result = try service.run(
         executable, ["mcp", "get", plan.serverName, "--json"], plan.environment)
       guard result.exitCode != nil else {
-        return .init(state: .unreadable, entry: nil, uncertain: true)
+        return .init(state: .unreadable, entry: nil, uncertainStep: "read")
       }
       guard !result.timedOut, !result.stdoutTruncated, !result.stderrTruncated else {
         return .init(state: .unreadable, entry: nil)
@@ -80,9 +80,31 @@ struct ClaudeCodeClientRegistrar {
     return actions
   }
 
-  func canRestore(_ entry: JSONValue?) -> Bool {
-    guard let object = entry?.objectValue else { return false }
-    let type = object["type"]?.stringValue ?? (object["command"] != nil ? "stdio" : "")
+  func canRestore(
+    _ entry: JSONValue?, plan: RegistrationPlanContents, argumentLimit: Int
+  ) -> Bool {
+    guard let entry, supports(entry), let executable = plan.clientExecutable,
+      let arguments = recoveryArguments(entry, name: plan.serverName), argumentLimit > 2_048
+    else { return false }
+    let argumentBytes = ([executable] + arguments).reduce(0) { $0 + $1.utf8.count + 1 }
+    let environmentBytes = plan.environment.reduce(0) {
+      $0 + $1.key.utf8.count + $1.value.utf8.count + 2
+    }
+    let pointerBytes =
+      (arguments.count + plan.environment.count + 3) * MemoryLayout<UnsafeRawPointer?>.stride
+    // Reserve 2 KiB for platform execution overhead beyond argv, envp and their terminators.
+    return argumentBytes + environmentBytes + pointerBytes <= argumentLimit - 2_048
+  }
+
+  private func supports(_ entry: JSONValue) -> Bool {
+    guard let object = entry.objectValue else { return false }
+    let type: String
+    if let value = object["type"] {
+      guard let string = value.stringValue else { return false }
+      type = string
+    } else {
+      type = "stdio"
+    }
     switch type {
     case "stdio":
       return Set(object.keys).isSubset(of: ["type", "command", "args", "env"])
@@ -99,6 +121,14 @@ struct ClaudeCodeClientRegistrar {
 
   private func stringMap(_ value: JSONValue?) -> Bool {
     value == nil || value?.objectValue?.values.allSatisfy { $0.stringValue != nil } == true
+  }
+
+  private func recoveryArguments(_ entry: JSONValue, name: String) -> [String]? {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    guard let data = try? encoder.encode(entry), let payload = String(data: data, encoding: .utf8)
+    else { return nil }
+    return ["mcp", "add-json", "--scope", "user", name, payload]
   }
 
   func apply(_ plan: RegistrationPlanContents, using service: ClientRegistrationService)
@@ -135,20 +165,17 @@ struct ClaudeCodeClientRegistrar {
     {
       // A separate read gates recovery: another writer's entry must never be removed.
       final = read(plan, using: service)
-      if final.state == .notRegistered {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        if let data = try? encoder.encode(old), let payload = String(data: data, encoding: .utf8) {
-          let step = service.executePrivate(
-            step: "restore", executable: executable,
-            arguments: ["mcp", "add-json", "--scope", "user", plan.serverName, payload], plan: plan)
-          steps.append(step)
-          if step.outcome == .uncertain {
-            return service.result(
-              .uncertain, plan: plan, steps: steps, observation: final, error: .uncertain)
-          }
-          final = read(plan, using: service)
+      if final.state == .notRegistered,
+        let arguments = recoveryArguments(old, name: plan.serverName)
+      {
+        let step = service.executePrivate(
+          step: "restore", executable: executable, arguments: arguments, plan: plan)
+        steps.append(step)
+        if step.outcome == .uncertain {
+          return service.result(
+            .uncertain, plan: plan, steps: steps, observation: final, error: .uncertain)
         }
+        final = read(plan, using: service)
       }
     }
     let succeeded = service.goalReached(plan, final)

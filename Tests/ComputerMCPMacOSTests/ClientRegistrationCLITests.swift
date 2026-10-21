@@ -1,9 +1,13 @@
+import ArgumentParser
+import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import Foundation
 import Testing
+
+@testable import computer_mcp
 
 @Suite(.timeLimit(.minutes(2)))
 struct ClientRegistrationCLITests {
@@ -53,6 +57,50 @@ struct ClientRegistrationCLITests {
     #expect(result.exitCode == 1 && result.stdout.contains("changed_since_preview"))
     #expect(try Data(contentsOf: fixture.configurationFile(client)).count > 0)
     #expect(!result.stdout.contains("second-private"))
+  }
+
+  @Test(arguments: ["codex_probe", "codex_read", "claude_probe"], ["reviewed", "uncertain"])
+  func expectReportsUncertaintyBeforeComparingFingerprints(
+    scenario: String, fingerprintSource: String
+  ) throws {
+    let fixture = try RegistrationCLIFixture()
+    let client: RegistrationClient = scenario.hasPrefix("codex") ? .codex : .claudeCode
+    let step = scenario.hasSuffix("probe") ? "probe" : "read"
+    try fixture.setEntry(client.rawValue, command: "user-server", argument: "PRIVATE_SENTINEL")
+    let runner = UnconfirmedCLIRegistrationRunner(step: step)
+    let service = fixture.service(processRunner: runner)
+    let server = ClientRegistrationCommand.app(
+      executable: fixture.executable.path,
+      socket: fixture.root.appendingPathComponent("gateway.sock").path)
+    let reviewed = try (fingerprintSource == "reviewed" ? fixture.service() : service).preview(
+      client: client, operation: .register, server: server, clientCLI: fixture.client.path)
+    let options = try ClientRegistrationOptions.parse([
+      "--client-cli", fixture.client.path, "--expect", reviewed.fingerprint,
+    ])
+    let before = try Data(contentsOf: fixture.configurationFile(client.rawValue))
+    let count = runner.calls.count
+    var output: [JSONValue] = []
+    do {
+      try options.run(
+        client: client, operation: .register, server: server, service: service,
+        output: { output.append($0) })
+      Issue.record("An unconfirmed client process did not exit with code 2")
+    } catch let code as ExitCode { #expect(code.rawValue == 2) }
+    #expect(output.count == 1)
+    let result = try #require(output.first?.objectValue)
+    #expect(result["outcome"] == .string("uncertain"))
+    #expect(result["error_code"] == .string("uncertain"))
+    #expect(result["final_state"] == .string(step == "probe" ? "unavailable" : "unreadable"))
+    #expect(
+      result["steps"]
+        == .array([.object(["step": .string(step), "outcome": .string("uncertain")])]))
+    #expect(runner.calls.count - count == (step == "probe" ? 1 : 2))
+    #expect(try Data(contentsOf: fixture.configurationFile(client.rawValue)) == before)
+    #expect(
+      !FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("state").path))
+    #expect(
+      !String(decoding: try JSONEncoder().encode(output), as: UTF8.self).contains(
+        "PRIVATE_SENTINEL"))
   }
 
   @Test(arguments: ["codex", "claude-code"])
@@ -130,6 +178,18 @@ private struct RegistrationCLIFixture {
     root.appendingPathComponent(
       client == "codex" ? "codex/fixture-mcp.json" : "claude/.claude.json")
   }
+  func service(processRunner: any RegistrationProcessRunning = RegistrationProcessRunner())
+    -> ClientRegistrationService
+  {
+    ClientRegistrationService(
+      homeDirectory: root, stateDirectory: root.appendingPathComponent("state"),
+      executableSearchDirectories: [],
+      environment: [
+        "CODEX_HOME": root.appendingPathComponent("codex").path,
+        "CLAUDE_CONFIG_DIR": root.appendingPathComponent("claude").path,
+        "USER": "fixture", "TMPDIR": root.path,
+      ], processRunner: processRunner)
+  }
   func setEntry(_ client: String, command: String, argument: String) throws {
     let file = configurationFile(client)
     try FileManager.default.createDirectory(
@@ -159,5 +219,32 @@ private struct RegistrationCLIFixture {
   }
   func json(_ result: CommandResult) throws -> [String: JSONValue] {
     try #require(JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8)).objectValue)
+  }
+}
+
+private final class UnconfirmedCLIRegistrationRunner: RegistrationProcessRunning,
+  @unchecked Sendable
+{
+  let step: String
+  private let lock = NSLock()
+  private var recorded: [[String]] = []
+  var calls: [[String]] { lock.withLock { recorded } }
+
+  init(step: String) { self.step = step }
+
+  func run(
+    executable: String, arguments: [String], environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    lock.withLock { recorded.append(arguments) }
+    if step == "probe" ? arguments == ["--version"] : arguments.contains("get") {
+      return .init(
+        executable: executable, arguments: arguments, exitCode: nil, timedOut: true,
+        stdout: "PRIVATE_SENTINEL", stderr: "PRIVATE_SENTINEL", stdoutTruncated: false,
+        stderrTruncated: false)
+    }
+    return try RegistrationProcessRunner().run(
+      executable: executable, arguments: arguments, environment: environment,
+      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
   }
 }

@@ -516,6 +516,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPMacOSTests",
         dependencies: [
+          "computer-mcp",
           "ComputerMCPComputerUse",
           "ComputerMCPControlPlane",
           "ComputerMCPConfiguration",
@@ -547,6 +548,7 @@ let neutralTargets: [Target] =
           .product(name: "GRDB", package: "GRDB.swift"),
           .product(name: "MCP", package: "swift-sdk"),
           .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+          .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ],
         resources: [.copy("Fixtures")]
       ),

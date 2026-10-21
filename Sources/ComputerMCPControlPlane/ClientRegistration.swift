@@ -189,6 +189,15 @@ package struct ClientRegistrationPlan: Sendable, CustomStringConvertible,
   let contents: RegistrationPlanContents
   package let display: ClientRegistrationDisplayPlan
   package var fingerprint: String { display.fingerprint }
+  package var uncertainResult: ClientRegistrationResult? {
+    guard let step = contents.observation.uncertainStep else { return nil }
+    return .init(
+      outcome: .uncertain, errorCode: .uncertain,
+      steps: [.init(step: step, outcome: .uncertain, exitCode: nil)],
+      finalState: contents.observation.state,
+      finalEntry: contents.observation.entry.map { .init($0, client: contents.client) },
+      appliesAfter: contents.client.appliesAfter)
+  }
   package var description: String {
     "ClientRegistrationPlan(\(display.client.rawValue), \(fingerprint))"
   }
@@ -199,8 +208,8 @@ package struct ClientRegistrationPlan: Sendable, CustomStringConvertible,
 struct RegistrationObservation: Codable, Equatable, Sendable {
   let state: ClientRegistrationState
   let entry: JSONValue?
-  /// An unconfirmed read process is also terminal: it must not be followed by another step.
-  var uncertain: Bool = false
+  /// The process whose exit was unconfirmed; no subsequent step may run.
+  var uncertainStep: String?
 }
 
 struct RegistrationPlanContents: Codable, Sendable {

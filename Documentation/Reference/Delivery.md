@@ -167,6 +167,11 @@ write and delete label refs under `refs/rewritten/`. Merge also
 uses `--no-autostash`. An existing main-checkout `MERGE_AUTOSTASH` prevents landing
 and returns `committed` / `git_failed` with the branch retained, because Git would
 otherwise apply that pending stash even with autostash creation disabled.
+Immediately before each merge in the main checkout and each rebase in the
+delivery worktree, `ORIG_HEAD` must be absent or a regular ref. Git follows a
+symbolic `ORIG_HEAD` when updating it, which could overwrite another branch.
+Delivery refuses the command and returns `committed` / `orig_head_symbolic`
+with the delivery branch retained and the symbolic target unchanged.
 Every rebase is followed by the same exact-path validation
 against its new baseline. A mismatch, including an empty diff when the default branch already
 contains the patch, returns `committed` / `scope_changed` with the branch retained.
@@ -205,8 +210,10 @@ prevent rollback and removal and retain the worktree as `cleanup_pending` /
 `cleanup_failed`. Worktree-local `*.lock` files, including `index.lock`, also
 prevent both operations so that pending external Git writes remain intact.
 Other pseudoref state, including `FETCH_HEAD` and `BISECT_HEAD`, also prevents
-removal. `ORIG_HEAD` is accepted only when it names the recorded original commit
+removal. A regular `ORIG_HEAD` is accepted only when it names the recorded original commit
 of delivery's rebase or a commit reachable from the retained delivery branch.
+A symbolic `ORIG_HEAD` targeting a shared ref may be removed with the owned
+worktree: removal unlinks the symbolic entry without updating its target ref.
 `AUTO_MERGE` must equal the recorded commit's tree object, so removing it cannot
 lose unique content. Index entries marked assume-unchanged prevent removal. Skip-worktree entries are
 accepted only for delivery's recorded sparse checkout and only when the physical
@@ -246,7 +253,8 @@ Against those writers, delivery preserves committed work reachable from refs
 under `refs/` or any checkout's `HEAD`: both newly delivered and previously
 existing work remains reachable from those refs or is identified in the result.
 Git's transient pseudorefs, such as `ORIG_HEAD` and `FETCH_HEAD`, are outside
-this guarantee; merge and rebase may replace them. Delivery also preserves
+this guarantee; merge and rebase may replace their direct values. Symbolic
+`ORIG_HEAD` checks protect the refs they target. Delivery also preserves
 files, uncommitted changes and worktrees it does not own,
 checks state immediately before each guarded Git mutation, and uses Git's atomic
 reference transactions where available. Detected interference converges to a
@@ -361,6 +369,7 @@ Error IDs prefix these codes with `delivery.`:
 | `not_fast_forward` | Fast-forward attempt did not leave HEAD at the delivery commit |
 | `rebase_conflict` | Rebase failed and was aborted to the saved commit |
 | `rebase_in_progress` | Recovery or cleanup retained an in-progress rebase for user handling |
+| `orig_head_symbolic` | Merge or rebase refused a symbolic `ORIG_HEAD`; delivery branch retained, target ref unchanged |
 | `scope_changed` | Committed or rebased diff does not change exactly the requested in-scope paths; branch retained |
 | `worktree_unrecognized` | Recorded worktree is not the repository's registered worktree; nonempty directory retained for inspection |
 | `branch_unproven` | Branch exists without persisted creation evidence; retained for user handling |

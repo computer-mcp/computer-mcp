@@ -6,6 +6,52 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct DeliveryGitConfigurationTests {
+  @Test(arguments: ["main", "worktree", "retry"])
+  func symbolicOrigHeadPreservesTargetBranch(checkout: String) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let other = try fixture.git([
+        "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "test: unique external commit",
+      ])
+      try fixture.git(["branch", "other", other])
+      let reflog = try fixture.read(".git/logs/refs/heads/other")
+      if checkout != "main" { try fixture.advanceDuringCommit() }
+      let snapshot = fixture.root.appendingPathComponent(".git/before-orig-head-check")
+      let io = DeliveryIO(beforeMergeCheck: { journal in
+        guard !FileManager.default.fileExists(atPath: snapshot.path),
+          checkout != "retry" || journal.rebase != nil
+        else { return }
+        let directory =
+          checkout == "worktree" ? URL(fileURLWithPath: journal.worktree) : fixture.root
+        try fixture.git(["symbolic-ref", "ORIG_HEAD", "refs/heads/other"], at: directory)
+        try fixture.write(".git/before-orig-head-check", try fixture.git(["rev-parse", "HEAD"]))
+      })
+      let result = try fixture.apply(provider: fixture.provider(io: io))
+      #expect(result["state"] == .string("committed"))
+      #expect(result["reason"] == .string("orig_head_symbolic"))
+      #expect(result["branch"] == .string("docs/entry"))
+      let commit = try #require(result["commit"]?.stringValue)
+      let journal = try #require(fixture.journals().first)
+      #expect((journal.rebase != nil) == (checkout != "main"))
+      if checkout == "worktree" { #expect(commit == journal.rebase?.original) }
+      let repository = try fixture.repository()
+      for _ in 0..<2 {
+        #expect(try fixture.git(["rev-parse", "other"]) == other)
+        #expect(try fixture.read(".git/logs/refs/heads/other") == reflog)
+        #expect(try fixture.git(["rev-parse", "docs/entry"]) == commit)
+        #expect(
+          try fixture.git(["rev-parse", "HEAD"]) == fixture.read(".git/before-orig-head-check"))
+        #expect(try fixture.read("notes/log.md") == "alpha\nstable\n")
+        if checkout != "worktree" {
+          #expect(try fixture.git(["symbolic-ref", "ORIG_HEAD"]) == "refs/heads/other")
+        }
+        try fixture.assertClean(retained: true)
+        try repository.withLock { try repository.recover() }
+        #expect(try fixture.journals().first?.reason?.rawValue == "orig_head_symbolic")
+      }
+    }
+  }
+
   @Test(arguments: ["advanced", "symbolic", "symbolic-advanced"])
   func rebaseAbortPreservesChangedDeliveryBranch(state: String) async throws {
     try await deliveryTest {

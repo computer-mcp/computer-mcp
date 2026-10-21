@@ -117,7 +117,10 @@ rebase 使用 `--no-update-refs --no-autostash --no-rebase-merges`，避免仓�
 暂存用户改动或写入及删除 `refs/rewritten/` 下的标签引用。merge 也带 `--no-autostash`。
 主检出已有 `MERGE_AUTOSTASH` 时停止合并，以
 `committed` / `git_failed` 保留交付分支；Git 即使禁用了 autostash 创建，仍会应用这个
-待处理的 stash。每次 rebase 后都按同样规则核对新提交相对新基线的改动路径；不符则以
+待处理的 stash。每次在主检出合并或在交付 worktree 中 rebase 之前，紧挨着确认该检出的
+`ORIG_HEAD` 不存在或是普通引用。Git 更新符号 `ORIG_HEAD` 时会跟随它，可能改写另一分支；
+此时不执行命令，以 `committed` / `orig_head_symbolic` 保留交付分支，所指引用保持不变。
+每次 rebase 后都按同样规则核对新提交相对新基线的改动路径；不符则以
 `committed` / `scope_changed` 保留分支，包括默认分支已含相同补丁而产生空 diff 的
 情况。发起 rebase 前，日志记录原提交与目标提交。
 实际发起前还会核对索引可见性标记，要求整个 worktree 干净（包括未跟踪和被忽略的文件），
@@ -142,8 +145,9 @@ commit-only 只提交并保留分支。
 `CHERRY_PICK_HEAD`、`REVERT_HEAD`、`BISECT_LOG` 或 `sequencer`），均阻止撤销和删除，
 以 `cleanup_pending` / `cleanup_failed` 保留 worktree。worktree 管理目录中的 `*.lock`
 文件（包括 `index.lock`）也阻止两种操作，保留其他 Git 写入者尚未发布的状态。其他伪引用状态（包括
-`FETCH_HEAD` 与 `BISECT_HEAD`）也阻止删除；`ORIG_HEAD` 只有指向本次 rebase
-记录的原提交，或可从保留的交付分支到达时才允许清理。`AUTO_MERGE` 必须恰好为
+`FETCH_HEAD` 与 `BISECT_HEAD`）也阻止删除；普通 `ORIG_HEAD` 只有指向本次 rebase
+记录的原提交，或可从保留的交付分支到达时才允许清理。指向共享引用的符号 `ORIG_HEAD`
+可随已核对所有权的 worktree 删除；删除只移除符号引用条目，不更新其目标引用。`AUTO_MERGE` 必须恰好为
 已记录提交的 tree 对象，删除它不会丢失独有内容。标记 assume-unchanged 的索引
 条目阻止删除；skip-worktree 条目只有属于本次记录的稀疏检出且实际路径不存在时才允许
 清理。仅凭 status 干净不能证明被隐藏的文件不存在。
@@ -168,7 +172,7 @@ worktree 中。`committed` 始终保留分支，即使提交
 此锁约束。对它们的保证是：不丢失可从 `refs/` 下的引用或任一检出的 `HEAD` 到达的
 已提交工作（本次交付和此前已有的工作仍能从这些引用到达，或在结果中给出）。Git 的
 瞬态伪引用（如 `ORIG_HEAD`、`FETCH_HEAD`）不在此保证范围内；merge 与 rebase
-可能替换它们。不删除不属于本次操作的文件、未提交改动或 worktree；
+可能替换其直接值；符号 `ORIG_HEAD` 的检查保护其所指引用。不删除不属于本次操作的文件、未提交改动或 worktree；
 每个守护 Git 改动的状态核对紧挨着该改动执行；Git 提供原子引用事务的地方使用事务；
 检测到干扰时保留分支，以 `committed` 或 `cleanup_pending` 与原因收敛。恢复与清理
 只撤销能证明属于本次操作的状态：日志证明已写入的文件，以及身份与记录一致的
@@ -231,7 +235,7 @@ Git 命令（包括核对命令）都显式传入 `--git-dir` 与 `--work-tree`�
 `match_missing`、`match_ambiguous`、`file_exists`、`file_missing`、`not_text`、
 `main_checkout_dirty`、`main_checkout_branch`、`worktree_root_not_ignored`、
 `branch_exists`、`message_invalid`、`busy`、`git_failed`、`commit_only`、
-`not_fast_forward`、`rebase_conflict`、`scope_changed`、`journal_failed`、`interrupted`、
+`not_fast_forward`、`rebase_conflict`、`orig_head_symbolic`（合并或 rebase 前发现符号 `ORIG_HEAD`，保留交付分支且所指引用不变）、`scope_changed`、`journal_failed`、`interrupted`、
 `worktree_unrecognized`、`rebase_in_progress`（保留进行中的 rebase 给用户处理）、
 `branch_unproven`（缺少持久化创建证据，保留分支）、`worktree_registration_retained`（工作目录缺失，保留管理状态给用户处理）、`cleanup_failed`。错误 ID 加 `delivery.` 前缀。完整字段和逐项原因释义见
 [英文参考](../Delivery.md)。

@@ -94,6 +94,20 @@ internal struct DeliveryGit: Sendable {
       == 0
   }
 
+  func requireRegularOriginalHead(at directory: URL) throws {
+    // Merge and rebase follow symbolic ORIG_HEAD updates into the target ref.
+    guard
+      try run(
+        ["--no-optional-locks", "symbolic-ref", "--quiet", "ORIG_HEAD"], at: directory,
+        accepting: [0, 1]
+      ).exitCode == 1
+    else {
+      throw DeliveryFailure(
+        reason: .origHeadSymbolic,
+        detail: "Symbolic ORIG_HEAD retained before merge or rebase: \(directory.path)")
+    }
+  }
+
   func blobID(_ content: Data, at directory: URL) throws -> String {
     try run(["--no-optional-locks", "hash-object", "--stdin"], at: directory, input: content)
       .stdout.trimmingCharacters(in: .newlines)

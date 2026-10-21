@@ -28,6 +28,7 @@ internal enum DeliveryReason: String, Codable, Sendable {
   case notFastForward = "not_fast_forward"
   case rebaseConflict = "rebase_conflict"
   case rebaseInProgress = "rebase_in_progress"
+  case origHeadSymbolic = "orig_head_symbolic"
   case scopeChanged = "scope_changed"
   case worktreeUnrecognized = "worktree_unrecognized"
   case worktreeRegistrationRetained = "worktree_registration_retained"

@@ -637,12 +637,25 @@ internal struct DeliveryRepository: Sendable {
     }
     var originalHeadIsOwned = true
     if FileManager.default.fileExists(atPath: directory.appendingPathComponent("ORIG_HEAD").path) {
-      let original = try pinned.revision("ORIG_HEAD", at: worktree)
-      originalHeadIsOwned = original != nil && original == journal.rebase?.original
-      if !originalHeadIsOwned, let original,
-        let branch = try git.revision("refs/heads/\(journal.branch)", at: root)
-      {
-        originalHeadIsOwned = try git.isAncestor(original, of: branch, at: root)
+      let symbolic = try pinned.run(
+        ["--no-optional-locks", "symbolic-ref", "--quiet", "ORIG_HEAD"], at: worktree,
+        accepting: [0, 1])
+      if symbolic.exitCode == 0 {
+        // Removing the owned worktree unlinks this entry; its shared target ref remains intact.
+        let target = symbolic.stdout.trimmingCharacters(in: .newlines)
+        originalHeadIsOwned =
+          target.hasPrefix("refs/")
+          && !["refs/worktree/", "refs/bisect/", "refs/rewritten/"].contains {
+            target.hasPrefix($0)
+          }
+      } else {
+        let original = try pinned.revision("ORIG_HEAD", at: worktree)
+        originalHeadIsOwned = original != nil && original == journal.rebase?.original
+        if !originalHeadIsOwned, let original,
+          let branch = try git.revision("refs/heads/\(journal.branch)", at: root)
+        {
+          originalHeadIsOwned = try git.isAncestor(original, of: branch, at: root)
+        }
       }
     }
     guard privateRefs.isEmpty, !otherOperation, pseudorefs.isEmpty, originalHeadIsOwned,

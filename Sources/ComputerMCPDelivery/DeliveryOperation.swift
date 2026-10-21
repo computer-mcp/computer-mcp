@@ -150,6 +150,7 @@ extension DeliveryRepository {
       try cancellation.check()
       try io.beforeMergeCheck(journal)
       try requireMainBranch(scope.defaultBranch)
+      try git.requireRegularOriginalHead(at: main)
       // No intervening Git command may separate this baseline check from the merge it guards.
       if try git.revision("HEAD", at: main) == validatedBase {
         // Git applies an existing merge autostash even when creation is disabled.
@@ -220,6 +221,7 @@ extension DeliveryRepository {
         throw DeliveryFailure(
           reason: .cleanupFailed, detail: "Delivery worktree changed before rebase.")
       }
+      try pinned.requireRegularOriginalHead(at: worktree)
       invoked = true
       let result = try pinned.run(
         ["rebase", "--no-update-refs", "--no-autostash", "--no-rebase-merges", base], at: worktree,

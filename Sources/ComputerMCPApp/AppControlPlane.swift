@@ -418,7 +418,7 @@ struct DiagnosticsSnapshot: Sendable {
 
 @MainActor
 protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging,
-  ProfilePermissionManaging
+  ProfilePermissionManaging, LocalClientRegistering
 {
   func startApplication() async throws
   func maintainApplication() async
@@ -478,11 +478,6 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func installCommandLineTool() async throws -> EmbeddedCLIInstallationStatus
   func commandLineToolStatus() async throws -> EmbeddedCLIInstallationStatus
   func localMCPConnection() async throws -> LocalMCPConnectionSummary
-  func fetchClientRegistrations() async throws -> [ClientRegistrationStatus]
-  func previewClientRegistration(client: RegistrationClient, operation: ClientRegistrationOperation)
-    async throws -> ClientRegistrationPlan
-  func applyClientRegistration(_ plan: ClientRegistrationPlan) async throws
-    -> ClientRegistrationResult
 
   func saveManifest(_ content: String, expectedDigest: String) async throws
   func rollbackManifest(to revisionID: String) async throws

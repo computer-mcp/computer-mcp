@@ -38,11 +38,6 @@ struct ProfileConfirmation: Identifiable {
   let id = UUID()
 }
 
-struct CodexRegistrationPresentation: Identifiable {
-  let id = UUID()
-  let plan: ClientRegistrationPlan
-}
-
 @MainActor
 final class ComputerMCPAppModel: ObservableObject {
   static let profileActivationRefresh: Set<AppWorkspace> = [
@@ -72,8 +67,6 @@ final class ComputerMCPAppModel: ObservableObject {
     [String: LoadState<CloudflareTunnelLogSnapshot>] = [:]
   @Published private(set) var cliInstallationStatus: EmbeddedCLIInstallationStatus?
   @Published var generatedAccessToken: String?
-  @Published var codexRegistrationPresentation: CodexRegistrationPresentation?
-  @Published private(set) var codexRegistrationMessage: String?
 
   @Published private(set) var runningActions: Set<String> = []
   @Published var presentedError: PresentedAppError?
@@ -83,6 +76,7 @@ final class ComputerMCPAppModel: ObservableObject {
   let pluginManagement: PluginManagementModel
   let mcpRegistrations: MCPRegistrationModel
   let clientAccess: ClientAccessModel
+  let localClients: LocalClientsModel
   private let onboardingPreferences: any OnboardingPreferenceStoring
   private let permissionCoach = PermissionCoachWindowController()
   private var didStart = false
@@ -97,6 +91,7 @@ final class ComputerMCPAppModel: ObservableObject {
     self.pluginManagement = PluginManagementModel(controlPlane: controlPlane)
     self.mcpRegistrations = MCPRegistrationModel(controlPlane: controlPlane)
     self.clientAccess = ClientAccessModel(controlPlane: controlPlane)
+    self.localClients = LocalClientsModel(controlPlane: controlPlane)
     self.onboardingPreferences = onboardingPreferences
     self.isPresentingWelcome =
       onboardingPreferences.completedVersion < UserDefaultsOnboardingPreferences.currentVersion
@@ -512,53 +507,6 @@ final class ComputerMCPAppModel: ObservableObject {
     ) {
       self.cliInstallationStatus = try await self.controlPlane.installCommandLineTool()
     }
-  }
-
-  func previewCodexRegistration() {
-    let actionKey = "codex.preview"
-    guard !runningActions.contains(actionKey) else {
-      return
-    }
-    runningActions.insert(actionKey)
-    codexRegistrationMessage = nil
-    Task {
-      defer {
-        runningActions.remove(actionKey)
-      }
-      do {
-        codexRegistrationPresentation = CodexRegistrationPresentation(
-          plan: try await controlPlane.previewClientRegistration(
-            client: .codex, operation: .register)
-        )
-      } catch {
-        presentedError = PresentedAppError(
-          title: "Unable to prepare Codex registration",
-          message: AppLocalization.errorDescription(error)
-        )
-      }
-    }
-  }
-
-  func installCodexRegistration() {
-    guard let plan = codexRegistrationPresentation?.plan else { return }
-    codexRegistrationPresentation = nil
-    codexRegistrationMessage = nil
-    performAction(
-      key: "codex.install",
-      title: "Unable to register Computer MCP with Codex",
-      refresh: [.home]
-    ) {
-      let result = try await self.controlPlane.applyClientRegistration(plan)
-      guard result.outcome == .succeeded else {
-        throw ClientRegistrationError(result.errorCode ?? .processFailed)
-      }
-      self.codexRegistrationMessage =
-        "Computer MCP is registered with Codex. Start a new Codex session to use it."
-    }
-  }
-
-  func dismissCodexRegistrationMessage() {
-    codexRegistrationMessage = nil
   }
 
   /// Publishes against the manifest the editor opened; a newer manifest refuses the save.

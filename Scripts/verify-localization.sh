@@ -71,6 +71,8 @@ allowed_identical_chinese = [
   "%@ B",
   "CLI",
   "ChatGPT",
+  "Claude Code",
+  "Claude Desktop",
   "Cloudflare",
   "Codex",
   "Computer MCP",

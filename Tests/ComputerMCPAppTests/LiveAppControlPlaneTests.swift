@@ -79,7 +79,7 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
-  func codexConfirmationAppliesTheRetainedPreviewPlan() async throws {
+  func codexConfirmationAppliesOnlyTheReviewedPlan() async throws {
     let temporary = try ScopedTemporaryDirectory()
     let executable = temporary.url.appendingPathComponent("server")
     try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
@@ -93,19 +93,14 @@ final class LiveAppControlPlaneTests {
     let fixture = try AppControlPlaneFixture(
       registrationService: service, gatewayExecutablePath: executable.path)
     let model = ComputerMCPAppModel(controlPlane: fixture.app)
-    model.previewCodexRegistration()
-    for _ in 0..<2000 where model.runningActions.contains("codex.preview") {
-      try await Task.sleep(for: .milliseconds(1))
-    }
-    let reviewed = try #require(model.codexRegistrationPresentation?.plan)
-    #expect(reviewed.display.state == .notRegistered)
+    await model.localClients.beginReview(.codex, operation: .register)
+    let reviewed = try #require(model.localClients.review)
+    #expect(reviewed.plan.display.state == .notRegistered)
     runner.changeEntry()
-    model.installCodexRegistration()
-    for _ in 0..<2000 where model.runningActions.contains("codex.install") {
-      try await Task.sleep(for: .milliseconds(1))
-    }
-    #expect(model.presentedError?.message.contains("changed_since_preview") == true)
-    #expect(model.codexRegistrationMessage == nil)
+    await model.localClients.confirm(reviewed)
+    #expect(
+      model.localClients.outcome?.message
+        == LocalClientsModel.message(for: .changedSincePreview, client: .codex))
     #expect(runner.writeCount == 0)
     await fixture.cleanup()
   }

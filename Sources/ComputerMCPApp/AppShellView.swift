@@ -60,7 +60,7 @@ struct AppShellView: View {
   private var detail: some View {
     switch model.selectedWorkspace ?? .home {
     case .home:
-      HomeView()
+      HomeView(localClients: model.localClients)
     case .chatgpt:
       JourneyView(journey: .chatgpt)
     case .cloudflare:
@@ -127,7 +127,8 @@ private struct WelcomeView: View {
         }
         WelcomeChoice(
           title: "Connect a local MCP client",
-          detail: "Copy the stdio command or register Computer MCP with Codex.",
+          detail:
+            "Connect Codex, Claude Code or Claude Desktop, or copy the stdio command for another client.",
           systemImage: "terminal"
         ) {
           model.finishWelcome(selecting: .home)

@@ -402,8 +402,9 @@ Use the embedded CLI at
 `/Applications/Computer MCP.app/Contents/Resources/computer-mcp`, or its installed
 symlink. `--server-executable` selects a different executable. `--socket` with
 `--app` selects a particular App instance; the default is the production App's
-Gateway Socket. The App's **Register with Codex** button uses its own embedded
-CLI and socket, retains the reviewed plan and applies that exact plan.
+Gateway Socket. The App's Home connects, updates and removes each client with
+its own embedded CLI and socket; it retains the reviewed plan and applies that
+exact plan.
 
 Standalone mode validates the manifest before planning and registers
 `serve stdio --config <absolute-path>`:

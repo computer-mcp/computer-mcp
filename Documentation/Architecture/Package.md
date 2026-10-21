@@ -16,18 +16,32 @@ targets, and CI builds and tests them there.
 
 ## Dependencies
 
-| Package | Role |
-| --- | --- |
-| `computer-mcp/swift-sdk` compatibility fork | MCP server/client protocol, exact integer wire values, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
-| ArgumentParser | CLI parsing |
-| swift-toml and Yams | TOML config and Skill YAML frontmatter |
-| SwiftNIO | HTTP and Unix-socket transport adapters; shared lock primitives through `NIOConcurrencyHelpers` |
-| swift-subprocess | Process, Shell, and streaming lifecycle |
-| swift-system | `FilePath` for process launches where the System framework is unavailable |
-| GRDB | Transactional App metadata and redacted audit; system SQLite on Linux |
-| swift-log | Runtime logging integration |
-| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway` and `ComputerMCPControlPlane` targets on macOS and Linux |
-| macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
+Requirements follow the organization's
+[Versioning rules](https://github.com/computer-mcp/.github/blob/master/VERSIONING.md):
+organization forks and dependencies below `1.0.0` use `exact:`; other dependencies
+at or above `1.0.0` use `.upToNextMinor(from:)` at process, transport or security
+boundaries and `from:` elsewhere. The fork rule takes precedence. Floors are the
+adopted resolved versions, and committed lockfiles record the selected revisions.
+CI checks for lockfile drift.
+
+| Package | Requirement | Role |
+| --- | --- | --- |
+| `computer-mcp/swift-sdk` compatibility fork | `exact: "0.13.1-computer-mcp.1"` | MCP server/client protocol, exact integer wire values, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
+| ArgumentParser | `from: "1.8.2"` | CLI parsing |
+| swift-toml | `from: "2.0.0"` | TOML config |
+| Yams | `from: "6.2.2"` | Skill YAML frontmatter |
+| SwiftNIO | `.upToNextMinor(from: "2.101.2")` | HTTP and Unix-socket transport adapters; shared lock primitives through `NIOConcurrencyHelpers` |
+| swift-subprocess | `.upToNextMinor(from: "1.0.2")` | Process, Shell, and streaming lifecycle |
+| swift-system | `from: "1.7.2"` | `FilePath` for process launches where the System framework is unavailable |
+| GRDB | `from: "7.11.1"` | Transactional App metadata and redacted audit; system SQLite on Linux |
+| swift-log | `from: "1.14.0"` | Runtime logging integration |
+| swift-crypto | `.upToNextMinor(from: "4.5.2")` | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway` and `ComputerMCPControlPlane` targets on macOS and Linux |
+| macOS system `libarchive.2` | OS-provided | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
+
+`Tools/Validation` uses `from: "1.8.2"` for ArgumentParser and deliberately keeps
+the unmodified upstream `modelcontextprotocol/swift-sdk` at `exact: "0.12.1"`.
+Its [README](../../Tools/Validation/README.md) owns this independent-client
+exception for gateway interoperability checks.
 
 `CSystemArchive` is an internal system-library module with the minimal C ABI
 declarations used by the archive reader. macOS SDKs provide `libarchive.2.tbd`
@@ -47,7 +61,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors, audit error classification and the session authority interface |
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for distribution identity and environment, secrets, workspaces, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
-| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
+| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, child-input signal handling, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |
@@ -291,6 +305,12 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   without a terminal. Descriptor inheritance, including MCP ownership locks,
   uses Darwin spawn file actions; Linux rejects configurations that require
   inherited descriptors.
+  Child-input owners install a process-wide no-op SIGPIPE handler once when the
+  disposition is default, preserving an embedder's existing handler or SIG_IGN.
+  The host reports broken child-input pipes as write errors. A caught handler
+  resets to default on exec; SIG_IGN would survive exec and leak into children
+  launched by Foundation Process on Linux. Incomplete input writes fail as a
+  closed managed transport or a shell session that is no longer running.
   The HTTP client transport uses Foundation URLSession and a bounded SSE decoder.
   macOS reads native asynchronous bytes; Linux bridges data-delegate callbacks
   into the response byte stream. Each POST response and the standalone GET event channel own

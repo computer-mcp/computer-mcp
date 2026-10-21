@@ -1,6 +1,8 @@
 # Versioning and Release
 
 This document owns version meaning, release identity and acceptance policy.
+The organization's [Versioning rules](https://github.com/computer-mcp/.github/blob/master/VERSIONING.md)
+define shared SemVer, tag, release-record and dependency requirements.
 [Release Reference](../Reference/Release.md) owns operator commands and protected
 publisher configuration. `Scripts/release-checks.json` owns executable checks;
 `Scripts/release.py` runs those same checks locally and in CI.
@@ -23,12 +25,12 @@ for the combination actually used.
 
 ## Upgrade decisions
 
-- Compatible behavior fixes increment the patch number.
-- Compatible new public capabilities increment the minor number.
-- Incompatible public interface changes increment the major number.
-- Each plugin and SDK has its own release sequence. For components in `0.x`,
-  patches remain compatible; new capabilities or incompatible changes increment
-  the minor number and describe their compatibility impact.
+- While the host is `0.x`, fixes increment the patch number; new capabilities
+  and incompatible public interface changes increment the minor number.
+- From `1.0.0`, fixes increment the patch number, compatible new public
+  capabilities increment the minor number, and incompatible changes increment
+  the major number.
+- Each plugin and SDK has its own release sequence under the shared rules.
 - Documentation, CI and cleanup changes alone do not force a product release.
 - An upstream release requires downstream change, rebuilding or revalidation
   only when its effect on that downstream component warrants it.
@@ -55,6 +57,21 @@ checks the API, platform/artifact and host range for every requested App archite
 Before the first release, an archive may be adopted from an accepted commit before
 that plugin version is published. A host release requires that plugin release with
 the same archive digest to be public first.
+
+## Dependency baseline
+
+Organization forks and dependencies below `1.0.0` use `exact:` requirements.
+Other dependencies at or above `1.0.0` use `.upToNextMinor(from:)` at process,
+transport and security boundaries (swift-subprocess, swift-crypto and swift-nio),
+and `from:` elsewhere. The fork rule takes precedence. Requirement floors are
+the adopted resolved versions: swift-subprocess starts at `1.0.2`, and the MCP
+Swift SDK fork is exact `0.13.1-computer-mcp.1`. [Package](Package.md) records the
+host's complete direct baseline.
+
+Both the host and `Tools/Validation` commit `Package.resolved`; CI checks for
+lockfile drift. Validation deliberately uses the unmodified upstream MCP Swift
+SDK at exact `0.12.1` as its independent-client exception, owned by its
+[README](../../Tools/Validation/README.md).
 
 ## Updates and drift checks
 

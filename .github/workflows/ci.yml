@@ -16,7 +16,10 @@ concurrency:
 jobs:
   linux-core:
     runs-on: ubuntu-24.04
-    container: swift:6.2.4-noble
+    container:
+      image: swift:6.2.4-noble
+      # Owned process groups finish only once PID 1 reaps their orphaned members.
+      options: --init
     timeout-minutes: 20
     steps:
       - name: Checkout

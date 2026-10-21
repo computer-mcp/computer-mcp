@@ -71,7 +71,10 @@ product decision.
   spawn file actions. On Linux it rejects configurations that need them, so
   connected stdio MCP transports, which inherit their ownership lock, do not start
   there yet. Its supervisor runs under `/bin/sh` on macOS and `/bin/bash` on
-  Linux, where `/bin/sh` may lack job control without a terminal.
+  Linux, where `/bin/sh` may lack job control without a terminal. A process
+  group counts as finished only after its orphaned members are reaped, so a Linux
+  container needs an init process as PID 1 (`docker run --init`), as the Linux CI
+  job uses.
 - Extended attributes are read only through Darwin calls. On Linux, approvals
   that bind extended-attribute state fail with `operations.state_unavailable`.
 - Until a Linux host adopts a backpressured HTTP client, the Linux streaming

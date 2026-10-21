@@ -88,10 +88,14 @@ HTTP owner socket. OAuth approval retains separate Full Access session consent.
 | Operation | Arguments and result |
 | --- | --- |
 | `clients.authorizations` | Optional `tunnel_id`, `id`, `after_id`, `limit` (default 100, maximum 200). Returns `authorizations` with ID, tunnel ID, pairing code, client/redirect hosts and creation/expiry times; plus `next_after_id`. |
-| `clients.authorize` | Required `pairing_code`; optional `tunnel_id`, `profile_id` (default `cloudflare-observe`). Approves one unexpired pending request with a profile permitting `cloudflare-tunnel`; returns the grant. Ambiguous codes require `tunnel_id`. |
+| `clients.authorize` | Required `pairing_code`; optional `tunnel_id`, `profile_id`. Omission selects `cloudflare-observe` only while its effective mode is read-only; otherwise an explicit `profile_id` is required. Approves one unexpired pending request with a profile permitting `cloudflare-tunnel`; returns the grant. Ambiguous codes require `tunnel_id`. |
 | `clients.deny` | Required `pairing_code`, optional `tunnel_id`. Denies one pending request. |
 | `clients.grants` | Same paging/filter fields as authorizations. Returns `grants`, including revoked records, and `next_after_id`. Grants carry client ID, redirect host, profile, resource, scope and creation/last-use/revocation times. |
 | `clients.revoke_grant` | Required grant `id`. Immediately invalidates all grant tokens; repeated revocation is harmless. |
+
+The local `authorizeOAuthClient` API follows the same default: omitting
+`profileID` selects `cloudflare-observe` only in effective read-only mode;
+otherwise the caller must choose an explicit profile.
 
 `tunnel.cloudflare.save` accepts optional `oauth_enabled` and
 `oauth_client_allowlist` (an array of exact lowercase hosts). New connections

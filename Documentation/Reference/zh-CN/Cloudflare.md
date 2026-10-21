@@ -66,8 +66,10 @@ App 的「客户端权限」页在「登录请求」中列出同一请求及其�
 只读方案时需明确选择，所选方案的访问级别变化后须重新选择。过期请求不能批准。
 「已登录的远程客户端」列出仍有效的授权及其连接、配置方案、批准时间和最近使用时间，
 可直接撤销。
-配对十分钟过期，公网页面不能批准。授权默认使用只读配置档；完全访问仍需本机
-逐会话同意。批准或拒绝可加 `--tunnel-id` 区分不同连接的同码请求。
+配对十分钟过期，公网页面不能批准。CLI 与控制面仅在 `cloudflare-observe` 的
+实际模式仍为只读时默认使用它；否则须明确指定 `--profile`（控制面为
+`profile_id`）。完全访问仍需本机逐会话同意。批准或拒绝可加 `--tunnel-id`
+区分不同连接的同码请求。
 
 授权码单次使用、有效期六十秒；访问令牌有效一小时。刷新令牌每次使用都会轮换，
 三十天未使用即过期；重用已轮换的刷新令牌会吊销整个授权。数据库只保存令牌和
@@ -94,7 +96,8 @@ OAuth 连接在 MCP 认证或断开前保留名额，空闲限时同为 15 秒�
 `invalid_request`；授权类型不支持为 `unsupported_grant_type`；scope 不是
 `mcp` 为 `invalid_scope`；授权码、刷新令牌、客户端 ID、回调、PKCE 或 resource
 错误、过期、重用或绑定不符为 `invalid_grant`。客户端认证方式不支持时返回
-401 `invalid_client`。授权端点在验证回调后以 `unsupported_response_type` 或
+401 `invalid_client`，`WWW-Authenticate` 挑战与所尝试的 Authorization 方案一致
+（Basic 请求返回 `Basic`）。授权端点在验证回调后以 `unsupported_response_type` 或
 `invalid_scope` 重定向。回调保留已有查询，追加参数中的 `+` 编码为 `%2B`，
 空格编码为 `%20`。
 

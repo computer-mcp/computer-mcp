@@ -120,8 +120,10 @@ returns `access_denied`.
 `authorizations` and `grants` accept `--id`, `--after-id`, `--limit` (default
 100, maximum 200) and `--tunnel-id`. Approval and denial accept `--tunnel-id`
 to disambiguate codes across connections. Approval defaults to
-`cloudflare-observe`; `--profile` must allow `cloudflare-tunnel` and cannot be
-`local-admin`. The grant acts as `oauth:<grant ID>` with that profile. Full
+`cloudflare-observe` only while its effective mode is read-only; otherwise an
+explicit `--profile` is required. The selected profile must allow
+`cloudflare-tunnel` and cannot be `local-admin`. The grant acts as
+`oauth:<grant ID>` with that profile. Full
 Access still requires separate local session consent. `clients revoke-grant`
 revokes OAuth access and ends that grant's active gateway sessions and open
 streams; `clients revoke` manages saved Full Access trust.
@@ -169,9 +171,11 @@ parameters or unsupported content types; `unsupported_grant_type` for an unknown
 grant; `invalid_scope` for scopes other than `mcp`; `invalid_grant` for wrong,
 expired, reused or mismatched codes, refresh tokens, client IDs, redirect URIs,
 PKCE verifiers or resources. Unsupported client authentication returns 401
-`invalid_client`. Authorization redirects with `unsupported_response_type` or
-`invalid_scope` only after validating the registered callback. Callback values
-preserve literal `+` as `%2B` and spaces as `%20`, retaining the existing query.
+`invalid_client`, with a `WWW-Authenticate` challenge matching the attempted
+Authorization scheme (`Basic` for Basic requests). Authorization redirects with
+`unsupported_response_type` or `invalid_scope` only after validating the registered
+callback. Callback values preserve literal `+` as `%2B` and spaces as `%20`,
+retaining the existing query.
 
 Address buckets allow burst 60, refill one/second; grant buckets allow burst
 30, refill one/two seconds. Rate rejection returns 429 with `Retry-After`.

@@ -72,11 +72,15 @@ enum GatewayClientControl: Sendable {
           try ControlToolResponse.encodedPayload($0)
         }
       case "clients.authorize":
-        guard
-          let profileID = GatewayProfileID(
-            rawValue: arguments["profile_id"]?.stringValue
-              ?? GatewayProfileID.cloudflareObserve.rawValue)
-        else { throw GatewayToolError.invalidArguments("profile_id is invalid.") }
+        let profileID: GatewayProfileID?
+        if let rawProfile = arguments["profile_id"]?.stringValue {
+          guard let selected = GatewayProfileID(rawValue: rawProfile) else {
+            throw GatewayToolError.invalidArguments("profile_id is invalid.")
+          }
+          profileID = selected
+        } else {
+          profileID = nil
+        }
         let grant = try await service.authorizeOAuthClient(
           pairingCode: string("pairing_code", arguments),
           tunnelID: tunnelID, profileID: profileID, approver: .localCLI)

@@ -148,8 +148,9 @@ computer-mcp clients revoke-grant <grant-id>
 `--after-id`, `--limit` (default 100, maximum 200) and optional `--tunnel-id`.
 Pending rows include pairing code, client host, redirect host and expiry.
 `authorize` and `deny` accept `--tunnel-id` to resolve ambiguous codes. Approval
-defaults to `cloudflare-observe`; `--profile` selects a profile allowing
-`cloudflare-tunnel`. Pairing lasts ten minutes and decisions are single-use.
+defaults to `cloudflare-observe` only while its effective mode is read-only.
+Otherwise approval requires an explicit `--profile`. The selected profile must
+allow `cloudflare-tunnel`. Pairing lasts ten minutes and decisions are single-use.
 Grant revocation immediately invalidates its tokens. OAuth approval retains
 the existing separate Full Access session consent requirement.
 

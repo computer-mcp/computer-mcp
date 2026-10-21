@@ -235,7 +235,8 @@ package actor GatewayHTTPApp {
   private var sessions: [String: SessionContext] = [:]
   private var principalRegistries: [String: any GatewayAsyncToolServing] = [:]
   private var pendingSessionIDs = Set<String>()
-  private var pendingSessionPrincipals: [String: String] = [:]
+  /// Revocation tombstones remain until every admission for that principal returns.
+  private var inFlightOAuthAdmissions: [String: Int] = [:]
   private var revokedPrincipals = Set<String>()
   private var pendingSessionWaiters: [CheckedContinuation<Void, Never>] = []
   private var retiringSessions: [String: Task<Void, Never>] = [:]
@@ -522,7 +523,20 @@ package actor GatewayHTTPApp {
       return cors(
         GatewayOAuthHTTP.unauthorized(try? oauth?.configuration(for: request)), request: request)
     }
-    if principalID.hasPrefix("oauth:") {
+    let isOAuthPrincipal = principalID.hasPrefix("oauth:")
+    if isOAuthPrincipal { inFlightOAuthAdmissions[principalID, default: 0] += 1 }
+    defer {
+      if isOAuthPrincipal {
+        let remaining = (inFlightOAuthAdmissions[principalID] ?? 1) - 1
+        if remaining == 0 {
+          inFlightOAuthAdmissions.removeValue(forKey: principalID)
+          revokedPrincipals.remove(principalID)
+        } else {
+          inFlightOAuthAdmissions[principalID] = remaining
+        }
+      }
+    }
+    if isOAuthPrincipal {
       guard let oauth,
         (try? await oauth.server.grantIsLive(id: String(principalID.dropFirst("oauth:".count))))
           == true
@@ -546,11 +560,14 @@ package actor GatewayHTTPApp {
     guard !revokedPrincipals.contains(principalID) else {
       return GatewayOAuthHTTP.unauthorized(nil)
     }
-    guard !isStopping, channel != nil, !revokedPrincipals.contains(principalID) else {
+    guard !isStopping, channel != nil else {
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
     await reapIdleSessions(at: Date())
-    guard !isStopping, channel != nil, !revokedPrincipals.contains(principalID) else {
+    guard !revokedPrincipals.contains(principalID) else {
+      return GatewayOAuthHTTP.unauthorized(nil)
+    }
+    guard !isStopping, channel != nil else {
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
     let sessionID = request.header(HTTPHeaderName.sessionID)
@@ -609,13 +626,8 @@ package actor GatewayHTTPApp {
       )
     }
     pendingSessionIDs.insert(sessionID)
-    pendingSessionPrincipals[sessionID] = principalID
     defer {
       pendingSessionIDs.remove(sessionID)
-      pendingSessionPrincipals.removeValue(forKey: sessionID)
-      if !pendingSessionPrincipals.values.contains(principalID) {
-        revokedPrincipals.remove(principalID)
-      }
       if pendingSessionIDs.isEmpty {
         let waiters = pendingSessionWaiters
         pendingSessionWaiters.removeAll()
@@ -652,9 +664,13 @@ package actor GatewayHTTPApp {
     }
 
     guard !isStopping, channel != nil, !revokedPrincipals.contains(principalID) else {
+      let response =
+        revokedPrincipals.contains(principalID)
+        ? GatewayOAuthHTTP.unauthorized(nil)
+        : gatewayHTTPError(statusCode: 503, code: "server_stopping")
       await closeControlSession(controlSession)
       await server.stop()
-      return gatewayHTTPError(statusCode: 503, code: "server_stopping")
+      return response
     }
     sessions[sessionID] = SessionContext(
       principalID: principalID,
@@ -821,7 +837,7 @@ package actor GatewayHTTPApp {
   }
 
   private func endOAuthSessions(principalID: String) async {
-    if pendingSessionPrincipals.values.contains(principalID) {
+    if inFlightOAuthAdmissions[principalID] != nil {
       revokedPrincipals.insert(principalID)
     }
     let ids = sessions.filter { $0.value.principalID == principalID }.map(\.key)

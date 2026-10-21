@@ -203,9 +203,13 @@ grant. Grant revocation from Client access, the owner CLI, refresh-token revocat
 or refresh-token reuse also ends the grant's active gateway sessions and open
 streams. Audit records `oauth.grant_revoked` and completion as
 `oauth.sessions_ended`, bound to the grant principal. OAuth credentials never enter
-Keychain. The service keeps one lock-protected Access Token digest per Cloudflare
+Keychain. In-flight OAuth admissions retain principal revocation state until they
+drain, so revocation during idle cleanup or initialization cannot publish a new
+session. The service keeps one lock-protected Access Token digest per Cloudflare
 profile across listener startup and shutdown; rotation and rollback publish the
-digest synchronously after the corresponding Keychain write.
+digest synchronously after the corresponding Keychain write. Saves and deletion
+serialize each profile's credential mutation from the initial secret reads
+through activation and rollback.
 
 HTTP admission precedes body accumulation. With OAuth enabled, `/mcp`
 authentication pauses channel reads until the credential is checked; failure
@@ -231,10 +235,11 @@ parameters and unsupported content types, `unsupported_grant_type` for an unknow
 grant type, `invalid_scope` for scopes other than `mcp`, and `invalid_grant` for
 invalid, expired, reused or mismatched codes, refresh tokens or their bindings
 (client, redirect, PKCE or resource). Unsupported client authentication returns
-401 `invalid_client`. After validating a registered callback, authorization
-errors redirect with `unsupported_response_type` or `invalid_scope`. Appended
-callback parameters use percent encoding with only RFC 3986 unreserved characters
-left literal, preserving the registered URI's existing query.
+401 `invalid_client`, with a `WWW-Authenticate` challenge matching an attempted
+Authorization scheme (`Basic` for Basic requests). After validating a registered
+callback, authorization errors redirect with `unsupported_response_type` or
+`invalid_scope`. Appended callback parameters use percent encoding with only RFC
+3986 unreserved characters left literal, preserving the registered URI's existing query.
 
 OAuth endpoints and failed Bearer requests use address token buckets, with grant
 buckets for grant-bound operations. OAuth audit records requests, local decisions,

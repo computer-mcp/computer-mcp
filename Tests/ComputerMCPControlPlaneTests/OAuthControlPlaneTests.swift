@@ -83,6 +83,53 @@ struct OAuthControlPlaneTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func defaultApprovalRequiresAnEffectivelyReadOnlyObserveProfile(throughControl: Bool)
+    async throws
+  {
+    let fixture = try ControlFixture()
+    defer { fixture.remove() }
+    let server = fixture.server()
+    let owner = GatewayClientControl.app(fixture.operations)
+    func approve(_ code: String, profile: GatewayProfileID? = nil) async throws -> GatewayProfileID
+    {
+      if throughControl {
+        var arguments: [String: JSONValue] = ["pairing_code": .string(code)]
+        if let profile { arguments["profile_id"] = .string(profile.rawValue) }
+        let response = try await owner.call(name: "clients.authorize", arguments: arguments)
+        return try #require(
+          GatewayProfileID(rawValue: response.objectValue?["profile_id"]?.stringValue ?? ""))
+      }
+      return try await fixture.service.authorizeOAuthClient(
+        pairingCode: code, profileID: profile
+      ).profileID
+    }
+    let first = try await server.authorize(fixture.fields, address: "fixture")
+    #expect(try await approve(first.request.pairingCode) == .cloudflareObserve)
+
+    var observe = try #require(
+      try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve })
+    observe.mode = .workspaceOperations
+    try fixture.database.saveProfile(observe, expectedRevision: observe.authorizationRevision)
+    #expect(
+      try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve }?.mode
+        == .workspaceOperations)
+    let next = try await server.authorize(fixture.fields, address: "fixture")
+    do {
+      _ = try await approve(next.request.pairingCode)
+      Issue.record("Approval needs an explicit profile when Observe permits operations.")
+    } catch GatewayToolError.invalidArguments(let message) {
+      #expect(message.contains("explicit profile"))
+      #expect(message.contains("--profile"))
+      #expect(message.contains("profile_id"))
+    }
+    #expect(try await server.pendingRequests(approver: .localApp).count == 1)
+    #expect(try await server.grants(approver: .localApp).count == 1)
+    #expect(
+      try await approve(next.request.pairingCode, profile: .cloudflareObserve) == .cloudflareObserve
+    )
+  }
+
   // These integration cases publish manifests through the macOS exclusive-rename
   // adapter. Linux manifest recovery-record publication reports ENOSYS.
   #if os(macOS)
@@ -90,7 +137,7 @@ struct OAuthControlPlaneTests {
     func accessTokenRotationDuringStartupUsesTheCurrentCredential(rotateBeforeRead: Bool)
       async throws
     {
-      let gate = StartupTokenGate()
+      let gate = SuspensionGate()
       let fixture = try ControlFixture(tokenDidRead: { await gate.pause() })
       defer { fixture.remove() }
       let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
@@ -107,7 +154,7 @@ struct OAuthControlPlaneTests {
         try await fixture.service.startCloudflareTunnel(
           profileID: profile.id, gatewayService: fixture.gatewayService)
       }
-      await gate.waitUntilRead()
+      await gate.waitUntilPaused()
       if !rotateBeforeRead {
         newToken = try await fixture.service.saveCloudflareTunnelConfiguration(
           profile, tunnelToken: nil, regenerateAccessToken: true
@@ -158,6 +205,62 @@ struct OAuthControlPlaneTests {
       try await runtime.startListening()
       do {
         #expect(try await fixture.post(port: profile.localPort, token: original) == 400)
+        await runtime.stop()
+      } catch {
+        await runtime.stop()
+        throw error
+      }
+    }
+
+    @Test func overlappingRotationWaitsForFailedSavesRollback() async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      await fixture.secrets.setAsynchronously("synthetic-tunnel", for: profile.tunnelTokenReference)
+      let original = try #require(
+        try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: nil, regenerateAccessToken: true
+        ).generatedAccessToken)
+      let credential = try #require(await fixture.service.cloudflareAccessCredentials[profile.id])
+      let rollback = SuspensionGate()
+      await fixture.secrets.pauseWrite(original, for: profile.accessTokenReference, gate: rollback)
+      fixture.loader.rejectStagedManifest = true
+      let failedSave = Task {
+        try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: nil, regenerateAccessToken: true)
+      }
+      await rollback.waitUntilPaused()
+      let failedToken = try #require(
+        await fixture.secrets.valueAsynchronously(
+          for: profile.accessTokenReference, authenticationUI: .fail))
+      let readsDuringRollback = await fixture.secrets.readCount
+      fixture.loader.rejectStagedManifest = false
+      let successfulSave = Task {
+        try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: nil, regenerateAccessToken: true)
+      }
+      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+      while await fixture.service.cloudflareCredentialMutationWaiters[profile.id]?.count != 1,
+        ContinuousClock.now < deadline
+      { await Task.yield() }
+      #expect(await fixture.service.cloudflareCredentialMutationWaiters[profile.id]?.count == 1)
+      #expect(await fixture.secrets.readCount == readsDuringRollback)
+      await rollback.resume()
+      await #expect(throws: (any Error).self) { try await failedSave.value }
+      let current = try #require(try await successfulSave.value.generatedAccessToken)
+      #expect(
+        await fixture.secrets.valueAsynchronously(
+          for: profile.accessTokenReference, authenticationUI: .fail) == current)
+      #expect(await fixture.service.cloudflareAccessCredentials[profile.id] === credential)
+      #expect(await fixture.service.cloudflareCredentialMutationWaiters[profile.id] == nil)
+      let runtime = GatewayHTTPRuntime(
+        configuration: .init(), registry: RotationRegistry(), host: "127.0.0.1",
+        port: profile.localPort, publicBaseURL: nil, accessCredential: credential)
+      try await runtime.startListening()
+      do {
+        #expect(try await fixture.post(port: profile.localPort, token: current) == 400)
+        #expect(try await fixture.post(port: profile.localPort, token: original) == 401)
+        #expect(try await fixture.post(port: profile.localPort, token: failedToken) == 401)
         await runtime.stop()
       } catch {
         await runtime.stop()
@@ -387,12 +490,24 @@ private enum FixtureFailure: Error { case unused }
 
 private actor FixtureSecrets: SecretStore {
   private var values: [String: String] = [:]
-  func setAsynchronously(_ secret: String, for reference: SecretReference) {
+  private var pausedWrite: (String, SecretReference, SuspensionGate)?
+  private(set) var readCount = 0
+  func pauseWrite(_ secret: String, for reference: SecretReference, gate: SuspensionGate) {
+    pausedWrite = (secret, reference, gate)
+  }
+  func setAsynchronously(_ secret: String, for reference: SecretReference) async {
+    if let (value, target, gate) = pausedWrite, value == secret, target == reference {
+      pausedWrite = nil
+      await gate.pause()
+    }
     values[reference.account] = secret
   }
   func valueAsynchronously(
     for reference: SecretReference, authenticationUI: KeychainAuthenticationUI
-  ) -> String? { values[reference.account] }
+  ) -> String? {
+    readCount += 1
+    return values[reference.account]
+  }
   func containsAsynchronously(
     _ reference: SecretReference, authenticationUI: KeychainAuthenticationUI
   ) -> Bool { values[reference.account] != nil }
@@ -444,25 +559,25 @@ private struct UnusedPlatform: WorkspaceBookmarkServicing, PluginArchiveDirector
   func setEnabled(_ enabled: Bool) throws { throw FixtureFailure.unused }
 }
 
-private actor StartupTokenGate {
-  private var read = false
+private actor SuspensionGate {
+  private var paused = false
   private var resumed = false
-  private var readWaiters: [CheckedContinuation<Void, Never>] = []
-  private var startup: CheckedContinuation<Void, Never>?
+  private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
+  private var operation: CheckedContinuation<Void, Never>?
   func pause() async {
-    read = true
-    let waiters = readWaiters
-    readWaiters.removeAll()
+    paused = true
+    let waiters = pauseWaiters
+    pauseWaiters.removeAll()
     for waiter in waiters { waiter.resume() }
-    if !resumed { await withCheckedContinuation { startup = $0 } }
+    if !resumed { await withCheckedContinuation { operation = $0 } }
   }
-  func waitUntilRead() async {
-    if !read { await withCheckedContinuation { readWaiters.append($0) } }
+  func waitUntilPaused() async {
+    if !paused { await withCheckedContinuation { pauseWaiters.append($0) } }
   }
   func resume() {
     resumed = true
-    startup?.resume()
-    startup = nil
+    operation?.resume()
+    operation = nil
   }
 }
 

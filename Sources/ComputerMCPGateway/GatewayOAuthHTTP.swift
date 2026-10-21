@@ -95,7 +95,9 @@ package struct GatewayOAuthHTTP: Sendable {
       return Self.response(
         [String: String](), status: 302, extraHeaders: ["Location": redirect.location])
     } catch let error as OAuthError {
-      return Self.failure(error)
+      let scheme = request.header("Authorization")?.split(whereSeparator: { $0.isWhitespace })
+        .first.map(String.init)
+      return Self.failure(error, authorizationScheme: scheme)
     } catch {
       return Self.response(["error": "server_error"], status: 503)
     }
@@ -110,12 +112,13 @@ package struct GatewayOAuthHTTP: Sendable {
       ["error": "unauthorized"], status: 401, extraHeaders: ["WWW-Authenticate": challenge])
   }
 
-  static func failure(_ error: OAuthError) -> HTTPResponse {
+  static func failure(_ error: OAuthError, authorizationScheme: String? = nil) -> HTTPResponse {
     response(
       ["error": error.rawValue],
       status: error == .rateLimited ? 429 : error == .invalidClient ? 401 : 400,
       extraHeaders: error == .rateLimited
-        ? ["Retry-After": "2"] : error == .invalidClient ? ["WWW-Authenticate": "Bearer"] : [:])
+        ? ["Retry-After": "2"]
+        : error == .invalidClient ? ["WWW-Authenticate": authorizationScheme ?? "Bearer"] : [:])
   }
 
   private static func response<T: Encodable>(

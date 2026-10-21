@@ -32,11 +32,15 @@ struct Clients: AsyncParsableCommand {
     @OptionGroup var connection: AppControlConnectionOptions
     @Argument var pairingCode: String
     @Option(name: .long) var tunnelID: String?
-    @Option(name: .long) var profile = GatewayProfileID.cloudflareObserve.rawValue
+    @Option(
+      name: .long,
+      help: "Profile to approve. Defaults to cloudflare-observe only while it is read-only.")
+    var profile: String?
     func run() async throws {
       var arguments: [String: JSONValue] = [
-        "pairing_code": .string(pairingCode), "profile_id": .string(profile),
+        "pairing_code": .string(pairingCode)
       ]
+      if let profile { arguments["profile_id"] = .string(profile) }
       if let tunnelID { arguments["tunnel_id"] = .string(tunnelID) }
       try await Clients.report {
         try await connection.client().call("clients.authorize", arguments: .object(arguments))

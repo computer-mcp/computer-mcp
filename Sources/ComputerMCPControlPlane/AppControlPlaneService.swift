@@ -74,6 +74,8 @@ package actor AppControlPlaneService {
   package nonisolated let platform: PlatformServices
   var cloudflareRuntimes: [String: CloudflareRuntimeState] = [:]
   var cloudflareAccessCredentials: [String: HTTPAccessTokenCredential] = [:]
+  /// A profile keeps its mutation slot through secret reads, activation and rollback.
+  var cloudflareCredentialMutationWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
   var cloudflareOAuthSessions: [String: GatewayOAuthSessions] = [:]
   let cloudflareAccessTokenDidRead: @Sendable () async throws -> Void
   var cloudflareStartTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]

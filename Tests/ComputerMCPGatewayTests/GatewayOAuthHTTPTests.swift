@@ -345,7 +345,9 @@ struct GatewayOAuthHTTPTests {
         "Host": "gateway.example", "Content-Type": "application/x-www-form-urlencoded",
         "Authorization": "Basic synthetic",
       ], body: Data(Self.form(fixture.codeFields(code)).utf8), path: "/oauth/token")
-    try Self.expectError(await app.handle(request), "invalid_client", status: 401)
+    let response = await app.handle(request)
+    try Self.expectError(response, "invalid_client", status: 401)
+    #expect(response.headers["WWW-Authenticate"] == "Basic")
     #expect(
       OAuthError.unsupportedGrantType.auditClassification?.code == "oauth.unsupported_grant_type")
     #expect(
@@ -449,6 +451,75 @@ struct GatewayOAuthHTTPTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func revocationDuringInitializationRefusesTheSession(duringIdleCleanup: Bool) async throws {
+    let fixture = try HTTPFixture()
+    let (grant, code) = try await fixture.code()
+    let tokens = try await fixture.server.token(fixture.codeFields(code), address: "fixture")
+    let paused = AsyncStream<Void>.makeStream()
+    let gate = OAuthInitializationGate()
+    let managed = GatewayHTTPManagedSessions(
+      makeSession: { principal in
+        GatewayControlSessionServing(
+          base: EmptyHTTPRegistry(),
+          session: GatewayControlSession(
+            principalID: principal, profileID: .cloudflareObserve, caller: .cloudflareTunnel))
+      },
+      closeSession: { _ in
+        if duringIdleCleanup {
+          paused.continuation.yield(())
+          await gate.wait()
+        }
+      }, shutdown: {},
+      makeOAuthSession: { principal, profile in
+        if !duringIdleCleanup {
+          paused.continuation.yield(())
+          await gate.wait()
+        }
+        return GatewayControlSessionServing(
+          base: EmptyHTTPRegistry(),
+          session: GatewayControlSession(
+            principalID: principal, profileID: profile, caller: .cloudflareTunnel))
+      })
+    let runtime = GatewayHTTPRuntime(
+      configuration: .init(), source: .managed(managed), host: "127.0.0.1", port: 0,
+      publicBaseURL: fixture.configuration.issuer, accessToken: "static-fixture",
+      limits: .init(sessionIdleTimeout: 0.01, cleanupInterval: 3_600),
+      oauth: GatewayOAuthHTTP(server: fixture.server))
+    try await runtime.startListening()
+    let port = try #require(await runtime.boundPort())
+    do {
+      let idle = try await Self.post(runtimePort: port, token: "static-fixture", initialize: true)
+      #expect(idle.statusCode == 200)
+      try await Task.sleep(for: .milliseconds(20))
+    } catch {
+      await gate.resume()
+      await runtime.stop()
+      throw error
+    }
+    let initializing = Task {
+      try await Self.post(runtimePort: port, token: tokens.accessToken, initialize: true)
+    }
+    do {
+      var events = paused.stream.makeAsyncIterator()
+      _ = await events.next()
+      try await fixture.server.revokeGrant(id: grant.id, approver: .localApp)
+      await gate.resume()
+      let response = try await initializing.value
+      #expect(response.statusCode == 401)
+      #expect(response.value(forHTTPHeaderField: "MCP-Session-Id") == nil)
+      #expect(await runtime.activeSessionCount() == 0)
+      #expect(await runtime.controlSessions().isEmpty)
+      #expect(try await Self.post(runtimePort: port, token: tokens.accessToken).statusCode == 401)
+      await runtime.stop()
+    } catch {
+      await gate.resume()
+      _ = await initializing.result
+      await runtime.stop()
+      throw error
+    }
+  }
+
   private static func expectError(_ response: HTTPResponse, _ error: String, status: Int = 400)
     throws
   {
@@ -487,6 +558,19 @@ struct GatewayOAuthHTTPTests {
   }
   private static func object(_ response: HTTPResponse) throws -> [String: JSONValue] {
     try JSONDecoder().decode([String: JSONValue].self, from: response.bodyData ?? Data())
+  }
+}
+
+private actor OAuthInitializationGate {
+  private var resumed = false
+  private var waiter: CheckedContinuation<Void, Never>?
+  func wait() async {
+    if !resumed { await withCheckedContinuation { waiter = $0 } }
+  }
+  func resume() {
+    resumed = true
+    waiter?.resume()
+    waiter = nil
   }
 }
 

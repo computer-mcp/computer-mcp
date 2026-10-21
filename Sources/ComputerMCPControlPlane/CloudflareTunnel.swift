@@ -59,6 +59,9 @@ extension AppControlPlaneService {
     regenerateAccessToken: Bool = false
   ) async throws -> CloudflareOnboardingResult {
     try profile.validate()
+    await beginCloudflareCredentialMutation(profileID: profile.id)
+    defer { endCloudflareCredentialMutation(profileID: profile.id) }
+    try Task.checkCancellation()
     var configuration = try manifestStore.activeConfiguration()
     configuration.transports.cloudflare.removeAll { $0.id == profile.id }
     configuration.transports.cloudflare.append(
@@ -116,6 +119,9 @@ extension AppControlPlaneService {
   }
 
   package func deleteCloudflareTunnelConfiguration(id: String) async throws {
+    await beginCloudflareCredentialMutation(profileID: id)
+    defer { endCloudflareCredentialMutation(profileID: id) }
+    try Task.checkCancellation()
     let profile = try requireCloudflareProfile(id)
     _ = try await stopCloudflareTunnel(profileID: id)
     let authorization = oauthServer(for: profile)
@@ -479,6 +485,26 @@ extension AppControlPlaneService {
       throw CloudflareTunnelError.profileNotFound(id)
     }
     return profile
+  }
+
+  private func beginCloudflareCredentialMutation(profileID: String) async {
+    guard cloudflareCredentialMutationWaiters[profileID] != nil else {
+      cloudflareCredentialMutationWaiters[profileID] = []
+      return
+    }
+    await withCheckedContinuation {
+      cloudflareCredentialMutationWaiters[profileID, default: []].append($0)
+    }
+  }
+
+  private func endCloudflareCredentialMutation(profileID: String) {
+    if var waiters = cloudflareCredentialMutationWaiters[profileID], !waiters.isEmpty {
+      let next = waiters.removeFirst()
+      cloudflareCredentialMutationWaiters[profileID] = waiters
+      next.resume()
+    } else {
+      cloudflareCredentialMutationWaiters.removeValue(forKey: profileID)
+    }
   }
 
   private func restoreCloudflareSecret(

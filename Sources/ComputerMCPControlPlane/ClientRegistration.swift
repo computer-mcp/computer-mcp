@@ -244,6 +244,11 @@ package struct ClientRegistrationStep: Codable, Equatable, Sendable {
   }
 }
 
+package enum ClientRegistrationRecovery: String, Codable, Sendable {
+  case restored
+  case notRestored = "not_restored"
+}
+
 package struct ClientRegistrationResult: Codable, Sendable {
   package enum Outcome: String, Codable, Sendable { case succeeded, failed, uncertain }
   package let outcome: Outcome
@@ -252,8 +257,25 @@ package struct ClientRegistrationResult: Codable, Sendable {
   package let finalState: ClientRegistrationState
   package let finalEntry: ClientRegistrationEntrySummary?
   package let appliesAfter: String
+  /// Compares the reconciled entry with the private original after Claude Code recovery.
+  package let recovery: ClientRegistrationRecovery?
+
+  package init(
+    outcome: Outcome, errorCode: ClientRegistrationErrorCode?, steps: [ClientRegistrationStep],
+    finalState: ClientRegistrationState, finalEntry: ClientRegistrationEntrySummary?,
+    appliesAfter: String, recovery: ClientRegistrationRecovery? = nil
+  ) {
+    self.outcome = outcome
+    self.errorCode = errorCode
+    self.steps = steps
+    self.finalState = finalState
+    self.finalEntry = finalEntry
+    self.appliesAfter = appliesAfter
+    self.recovery = recovery
+  }
+
   enum CodingKeys: String, CodingKey {
-    case outcome, steps
+    case outcome, steps, recovery
     case errorCode = "error_code"
     case finalState = "final_state"
     case finalEntry = "final_entry"

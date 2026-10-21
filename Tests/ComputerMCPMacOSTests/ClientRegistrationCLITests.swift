@@ -33,14 +33,17 @@ struct ClientRegistrationCLITests {
     let applied = try fixture.run(
       ["install", client] + fixture.installOptions + ["--expect", fingerprint])
     #expect(applied.exitCode == 0 && applied.stdout.contains("succeeded"))
+    #expect(try fixture.json(applied)["recovery"] == nil)
     #expect(
       !refused.stdout.contains("PRIVATE_SENTINEL") && !refused.stderr.contains("PRIVATE_SENTINEL"))
     let again = try fixture.run(["install", client] + fixture.installOptions)
     #expect(again.exitCode == 0)
     #expect(try fixture.json(again)["steps"] == .array([]))
+    #expect(try fixture.json(again)["recovery"] == nil)
     let removed = try fixture.run(["uninstall", client, "--client-cli", fixture.client.path])
     #expect(removed.exitCode == 0)
     #expect(try fixture.json(removed)["final_state"] == .string("not_registered"))
+    #expect(try fixture.json(removed)["recovery"] == nil)
   }
 
   @Test(arguments: ["codex", "claude-code"])
@@ -90,6 +93,7 @@ struct ClientRegistrationCLITests {
     let result = try #require(output.first?.objectValue)
     #expect(result["outcome"] == .string("uncertain"))
     #expect(result["error_code"] == .string("uncertain"))
+    #expect(result["recovery"] == nil)
     #expect(result["final_state"] == .string(step == "probe" ? "unavailable" : "unreadable"))
     #expect(
       result["steps"]
@@ -101,6 +105,38 @@ struct ClientRegistrationCLITests {
     #expect(
       !String(decoding: try JSONEncoder().encode(output), as: UTF8.self).contains(
         "PRIVATE_SENTINEL"))
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func recoveryJSONReportsTheObservedEntry(writesEntry: Bool, timedOut: Bool) throws {
+    let fixture = try RegistrationCLIFixture()
+    try fixture.setEntry("claude-code", command: "user-server", argument: "PRIVATE_SENTINEL")
+    let service = fixture.service(
+      processRunner: RecoveryCLIRegistrationRunner(writesEntry: writesEntry, timedOut: timedOut))
+    let server = ClientRegistrationCommand.app(
+      executable: fixture.executable.path,
+      socket: fixture.root.appendingPathComponent("gateway.sock").path)
+    let plan = try service.preview(
+      client: .claudeCode, operation: .register, server: server, clientCLI: fixture.client.path)
+    let options = try ClientRegistrationOptions.parse([
+      "--client-cli", fixture.client.path, "--expect", plan.fingerprint,
+    ])
+    var output: [JSONValue] = []
+    do {
+      try options.run(
+        client: .claudeCode, operation: .register, server: server, service: service,
+        output: { output.append($0) })
+      Issue.record("A failed replacement did not exit with code 1")
+    } catch let code as ExitCode { #expect(code.rawValue == 1) }
+    #expect(output.count == 1)
+    let result = try #require(output.first?.objectValue)
+    #expect(result["outcome"] == .string("failed"))
+    #expect(result["recovery"] == .string(writesEntry ? "restored" : "not_restored"))
+    #expect(
+      result["steps"]?.arrayValue?.last?.objectValue?["outcome"]
+        == .string(timedOut ? "timed_out" : "failed"))
+    let json = String(decoding: try JSONEncoder().encode(output), as: UTF8.self)
+    #expect(!json.contains("PRIVATE_SENTINEL") && !json.contains("OUTSIDE_SENTINEL"))
   }
 
   @Test(arguments: ["codex", "claude-code"])
@@ -219,6 +255,28 @@ private struct RegistrationCLIFixture {
   }
   func json(_ result: CommandResult) throws -> [String: JSONValue] {
     try #require(JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8)).objectValue)
+  }
+}
+
+private struct RecoveryCLIRegistrationRunner: RegistrationProcessRunning {
+  let writesEntry: Bool
+  let timedOut: Bool
+
+  func run(
+    executable: String, arguments: [String], environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    let restore = arguments.contains("add-json")
+    if !arguments.contains("add"), !restore || writesEntry {
+      let result = try RegistrationProcessRunner().run(
+        executable: executable, arguments: arguments, environment: environment,
+        timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+      if !restore { return result }
+    }
+    return .init(
+      executable: executable, arguments: arguments, exitCode: 1, timedOut: restore && timedOut,
+      stdout: "PRIVATE_SENTINEL", stderr: "PRIVATE_SENTINEL", stdoutTruncated: false,
+      stderrTruncated: false)
   }
 }
 

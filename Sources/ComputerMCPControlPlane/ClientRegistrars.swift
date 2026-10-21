@@ -156,6 +156,7 @@ struct ClaudeCodeClientRegistrar {
     steps: [ClientRegistrationStep]
   ) -> ClientRegistrationResult {
     var steps = steps
+    var recovery: ClientRegistrationRecovery?
     var final = read(plan, using: service)
     if service.goalReached(plan, final) {
       return service.result(.succeeded, plan: plan, steps: steps, observation: final)
@@ -177,12 +178,15 @@ struct ClaudeCodeClientRegistrar {
             .uncertain, plan: plan, steps: steps, observation: final, error: .uncertain)
         }
         final = read(plan, using: service)
+        if !service.goalReached(plan, final) {
+          recovery = final.entry == old ? .restored : .notRestored
+        }
       }
     }
     let succeeded = service.goalReached(plan, final)
     return service.result(
       succeeded ? .succeeded : .failed, plan: plan, steps: steps, observation: final,
-      error: succeeded ? nil : .processFailed)
+      error: succeeded ? nil : .processFailed, recovery: recovery)
   }
 }
 

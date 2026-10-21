@@ -80,6 +80,41 @@ struct ClientRegistrationTests {
     #expect(!String(describing: plan).contains("PRIVATE_SENTINEL"))
   }
 
+  @Test(
+    arguments: ["codex_probe", "codex_read", "claude_probe"],
+    ["success", "failed", "timed_out", "unconfirmed", "unconfirmed_timeout"])
+  func statusesPreserveProcessUncertainty(scenario: String, outcome: String) throws {
+    let fixture = try RegistrationFixture()
+    let client: RegistrationClient = scenario.hasPrefix("codex") ? .codex : .claudeCode
+    let probe = scenario.hasSuffix("probe")
+    let unconfirmed = outcome.hasPrefix("unconfirmed")
+    try FileManager.default.copyItem(
+      at: fixture.clientExecutable,
+      to: fixture.root.appendingPathComponent(client == .codex ? "codex" : "claude"))
+    try fixture.setEntry(fixture.expectedEntry(client), client: client)
+    fixture.runner.intercept = { call in
+      guard outcome != "success",
+        probe ? call.arguments == ["--version"] : call.arguments.contains("get")
+      else { return nil }
+      return .init(
+        code: unconfirmed ? nil : 1, stderr: "PRIVATE_SENTINEL",
+        timedOut: outcome == "timed_out" || outcome == "unconfirmed_timeout")
+    }
+    let statuses = try fixture.service().statuses(server: fixture.server)
+    let status = try #require(statuses.first { $0.client == client })
+    #expect(status.uncertain == unconfirmed)
+    #expect(
+      status.state == (outcome == "success" ? .registered : probe ? .unavailable : .unreadable))
+    #expect(statuses.filter { $0.client != client }.allSatisfy { !$0.uncertain })
+    let json = try JSONValue.encoded(status)
+    #expect(json.objectValue?["uncertain"] == .bool(unconfirmed))
+    #expect(
+      fixture.runner.calls.count == (probe && outcome != "success" ? 1 : client == .codex ? 2 : 1))
+    #expect(
+      !String(decoding: try JSONEncoder().encode(statuses), as: UTF8.self).contains(
+        "PRIVATE_SENTINEL"))
+  }
+
   @Test(arguments: ["codex_probe", "codex_read", "claude_probe"], [false, true])
   func applyRecheckUncertaintyPrecedesStaleness(scenario: String, existing: Bool) throws {
     let fixture = try RegistrationFixture()
@@ -104,6 +139,7 @@ struct ClientRegistrationTests {
     }
     let result = try service.apply(plan)
     #expect(result.outcome == .uncertain && result.errorCode == .uncertain)
+    #expect(result.recovery == nil)
     #expect(result.steps == [.init(step: step, outcome: .uncertain, exitCode: nil)])
     #expect(result.finalState == plan.display.state)
     #expect(result.finalEntry == plan.display.observedEntry)
@@ -131,6 +167,7 @@ struct ClientRegistrationTests {
     let count = fixture.runner.calls.count
     let result = try service.apply(plan)
     #expect(result.outcome == .uncertain && result.errorCode == .uncertain)
+    #expect(result.recovery == nil)
     #expect(result.steps == [.init(step: step, outcome: .uncertain, exitCode: nil)])
     #expect(result.finalState == plan.display.state)
     #expect(fixture.runner.calls.count == count)
@@ -317,6 +354,7 @@ struct ClientRegistrationTests {
     let before = fixture.runner.calls.count
     let result = try service.apply(plan)
     #expect(result.outcome == .succeeded && result.steps.isEmpty)
+    #expect(result.recovery == nil)
     #expect(
       fixture.runner.calls.dropFirst(before).allSatisfy {
         $0.arguments == ["--version"] || $0.arguments.contains("get")
@@ -478,6 +516,10 @@ struct ClientRegistrationTests {
     let service = fixture.service()
     let result = try service.apply(fixture.preview(.claudeCode, service: service))
     #expect(result.steps.first?.step == "remove")
+    let recovered =
+      failure != "uncertain" && (step == "add" || failure == "committed")
+      && !(failure == "committed" && step == "add")
+    #expect(result.recovery == (recovered ? .restored : nil))
     if failure == "uncertain" {
       #expect(result.outcome == .uncertain)
       #expect(!result.steps.contains { $0.step == "restore" })
@@ -498,6 +540,30 @@ struct ClientRegistrationTests {
       !fixture.runner.calls.contains {
         $0.arguments.contains("get") || $0.arguments.contains("list")
       })
+  }
+
+  @Test(
+    arguments: [RegistrationClient.codex, .claudeCode],
+    [ClientRegistrationOperation.register, .remove])
+  func failedRegistrationAndRemovalHaveNoRecovery(
+    client: RegistrationClient, operation: ClientRegistrationOperation
+  ) throws {
+    let fixture = try RegistrationFixture()
+    if operation == .remove {
+      try fixture.setEntry(.object(["command": .string("user-server")]), client: client)
+    }
+    fixture.runner.intercept = { call in
+      guard call.arguments.contains(operation == .register ? "add" : "remove") else { return nil }
+      return .init(code: 1)
+    }
+    let service = fixture.service()
+    let plan = try service.preview(
+      client: client, operation: operation, server: fixture.server,
+      clientCLI: fixture.clientExecutable.path)
+    let result = try service.apply(plan)
+    #expect(result.outcome == .failed)
+    #expect(result.recovery == nil)
+    #expect(result.steps.count == 1)
   }
 
   @Test(arguments: ["success", "restore_fails", "occupied", "restore_uncertain"])
@@ -535,9 +601,61 @@ struct ClientRegistrationTests {
     if mode == "restore_fails" {
       #expect(result.outcome == .failed && result.finalState == .notRegistered)
     }
+    #expect(result.recovery == (mode == "restore_fails" ? .notRestored : nil))
     if mode == "restore_uncertain" {
       #expect(result.outcome == .uncertain && result.steps.last?.step == "restore")
     }
+  }
+
+  @Test(
+    arguments: ["absent", "original", "changed", "planned"],
+    ["succeeded", "failed", "timed_out", "unconfirmed"])
+  func claudeRecoveryComparesThePrivateObservedEntry(entry: String, process: String) throws {
+    let fixture = try RegistrationFixture()
+    let original: JSONValue = .object([
+      "type": .string("http"), "url": .string("https://example.test/PRIVATE_SENTINEL"),
+      "headers": .object(["Authorization": .string("PRIVATE_SENTINEL")]),
+    ])
+    try fixture.setEntry(original, client: .claudeCode)
+    fixture.runner.intercept = { call in
+      if call.arguments.contains("add") { return .init(code: 1) }
+      guard call.arguments.contains("add-json") else { return nil }
+      switch entry {
+      case "original": _ = try RegistrationFixture.perform(call)
+      case "changed":
+        try fixture.setEntry(
+          .object([
+            "type": .string("http"), "url": .string("https://example.test/PRIVATE_SENTINEL"),
+            "headers": .object(["Authorization": .string("DIFFERENT_PRIVATE_SENTINEL")]),
+          ]), client: .claudeCode)
+      case "planned": try fixture.setEntry(fixture.expectedEntry(.claudeCode), client: .claudeCode)
+      default: break
+      }
+      return .init(
+        code: process == "unconfirmed" ? nil : process == "succeeded" ? 0 : 1,
+        stderr: "PRIVATE_SENTINEL", timedOut: process == "timed_out" || process == "unconfirmed")
+    }
+    let service = fixture.service()
+    let result = try service.apply(fixture.preview(.claudeCode, service: service))
+    #expect(result.steps.map(\.step) == ["remove", "add", "restore"])
+    let expected: ClientRegistrationRecovery? =
+      process == "unconfirmed" || entry == "planned"
+      ? nil : entry == "original" ? .restored : .notRestored
+    #expect(result.recovery == expected)
+    if process == "unconfirmed" {
+      #expect(result.outcome == .uncertain && result.finalState == .notRegistered)
+    } else {
+      #expect(result.outcome == (entry == "planned" ? .succeeded : .failed))
+      #expect(
+        result.finalState
+          == (entry == "planned" ? .registered : entry == "absent" ? .notRegistered : .different))
+    }
+    let data = try JSONEncoder().encode(result)
+    let json = try JSONDecoder().decode(JSONValue.self, from: data)
+    #expect(json.objectValue?["recovery"] == expected.map { .string($0.rawValue) })
+    #expect(
+      try JSONDecoder().decode(ClientRegistrationResult.self, from: data).recovery == expected)
+    #expect(!String(decoding: data, as: UTF8.self).contains("PRIVATE_SENTINEL"))
   }
 
   @Test

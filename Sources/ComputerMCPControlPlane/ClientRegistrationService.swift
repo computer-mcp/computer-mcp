@@ -14,10 +14,24 @@ import Foundation
 package struct ClientRegistrationStatus: Codable, Sendable {
   package let client: RegistrationClient
   package let state: ClientRegistrationState
+  /// When true, state is the last observation before an unconfirmed process exit.
+  package let uncertain: Bool
   package let location: ClientRegistrationLocation
   package let observedEntry: ClientRegistrationEntrySummary?
+
+  package init(
+    client: RegistrationClient, state: ClientRegistrationState, uncertain: Bool = false,
+    location: ClientRegistrationLocation, observedEntry: ClientRegistrationEntrySummary?
+  ) {
+    self.client = client
+    self.state = state
+    self.uncertain = uncertain
+    self.location = location
+    self.observedEntry = observedEntry
+  }
+
   enum CodingKeys: String, CodingKey {
-    case client, state, location
+    case client, state, uncertain, location
     case observedEntry = "observed_entry"
   }
 }
@@ -61,7 +75,8 @@ package struct ClientRegistrationService: Sendable {
       let plan = try makePlan(
         bind(client: client, operation: .register, server: server, name: name, clientCLI: nil))
       return .init(
-        client: client, state: plan.display.state, location: plan.display.location,
+        client: client, state: plan.display.state,
+        uncertain: plan.contents.observation.uncertainStep != nil, location: plan.display.location,
         observedEntry: plan.display.observedEntry)
     }
   }
@@ -327,12 +342,12 @@ package struct ClientRegistrationService: Sendable {
   func result(
     _ outcome: ClientRegistrationResult.Outcome, plan: RegistrationPlanContents,
     steps: [ClientRegistrationStep], observation: RegistrationObservation,
-    error: ClientRegistrationErrorCode? = nil
+    error: ClientRegistrationErrorCode? = nil, recovery: ClientRegistrationRecovery? = nil
   ) -> ClientRegistrationResult {
     .init(
       outcome: outcome, errorCode: error, steps: steps, finalState: observation.state,
       finalEntry: observation.entry.map { .init($0, client: plan.client) },
-      appliesAfter: plan.client.appliesAfter)
+      appliesAfter: plan.client.appliesAfter, recovery: recovery)
   }
 
   private func acquireWriterLock() throws -> FileLock {

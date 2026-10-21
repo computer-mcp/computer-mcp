@@ -311,6 +311,9 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   resets to default on exec; SIG_IGN would survive exec and leak into children
   launched by Foundation Process on Linux. Incomplete input writes fail as a
   closed managed transport or a shell session that is no longer running.
+  Managed line sends and shell data/EOF operations complete in arrival order per
+  child input; close, cancellation and shutdown can interrupt blocked writes
+  independently.
   The HTTP client transport uses Foundation URLSession and a bounded SSE decoder.
   macOS reads native asynchronous bytes; Linux bridges data-delegate callbacks
   into the response byte stream. Each POST response and the standalone GET event channel own

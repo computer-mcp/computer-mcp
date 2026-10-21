@@ -44,6 +44,39 @@ struct SubprocessLifecycleTests {
   }
 
   @Test
+  func managedOverlappingWritesDeliverCompleteFramesInOrder() async throws {
+    let child = try GatedInputChild()
+    let process = try ManagedLineProcess(
+      configuration: .init(
+        executable: "/bin/sh", arguments: ["-c", GatedInputChild.command],
+        workingDirectory: child.directory.url,
+        terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))
+    do {
+      var lines = process.inboundLines.makeAsyncIterator()
+      try #require(try await lines.next() == "ready")
+      let payloads = ["a", "b", "c"].map { String(repeating: $0, count: 1_048_576) }
+      var writes: [Task<Void, Error>] = []
+      for payload in payloads {
+        writes.append(Task { try await process.sendLine(payload) })
+        let count = writes.count
+        try await waitUntil { await process.snapshot().pendingWrites == count }
+      }
+      try await child.releaseInput()
+      for write in writes { try await write.value }
+      for payload in payloads {
+        #expect(try await lines.next() == payload)
+      }
+      let result = await process.snapshot()
+      #expect(result.pendingWrites == 0 && result.state == .running && !result.hasExited)
+      #expect(kill(try #require(result.processID), 0) == 0)
+      await process.close()
+    } catch {
+      await process.close()
+      throw error
+    }
+  }
+
+  @Test
   func managedCloseReleasesBlockedWriterAndKillsStubbornGroup() async throws {
     let process = try ManagedLineProcess(
       configuration: .init(
@@ -59,11 +92,9 @@ struct SubprocessLifecycleTests {
       let ready = try #require(try await lines.next())
       let child = try #require(Int32(ready))
       let writing = Task { try await process.sendLine(String(repeating: "x", count: 1_048_576)) }
-      let deadline = ContinuousClock.now + .seconds(10)
-      while await process.snapshot().pendingWrites == 0, ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
-      }
-      try #require(await process.snapshot().pendingWrites == 1)
+      try await waitUntil { await process.snapshot().pendingWrites == 1 }
+      let queued = Task { try await process.sendLine("queued") }
+      try await waitUntil { await process.snapshot().pendingWrites == 2 }
       let cleanupStarted = ContinuousClock.now
       async let first: Void = process.close()
       async let second: Void = process.close()
@@ -75,6 +106,12 @@ struct SubprocessLifecycleTests {
         #expect(error.code == .failedToWriteToSubprocess)
       case let result:
         Issue.record("Expected a blocked input write failure, got \(result).")
+      }
+      switch await queued.result {
+      case .failure(ManagedLineProcessError.closed):
+        break
+      case let result:
+        Issue.record("Expected a queued input write to fail as closed, got \(result).")
       }
       #expect(cleanupStarted.duration(to: .now) < .seconds(10))
       let result = await process.snapshot()
@@ -142,10 +179,83 @@ struct SubprocessLifecycleTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func shellOverlappingWritesDeliverCompletePayloadsBeforeEOF(closeWithData: Bool) async throws {
+    let child = try GatedInputChild()
+    let directory = child.directory.url
+    let runtime = SubprocessShellRuntime()
+    let blocking = BlockingOperationExecutor(label: "test.shell-write-order", serial: false)
+    let payloads = ["a", "b", "c"].map {
+      Data((String(repeating: $0, count: 1_048_576) + "\n").utf8)
+    }
+    let expected =
+      Data("ready\n".utf8) + payloads.reduce(into: Data()) { $0.append($1) }
+      + Data("eof\n".utf8)
+    let outputBytes = expected.count
+    do {
+      let id = try await blocking.perform {
+        try runtime.spawn(
+          request: .init(
+            mode: .argv, executable: "/bin/sh", argv: ["-c", GatedInputChild.command]),
+          defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
+          timeoutMilliseconds: nil, maxOutputBytes: outputBytes, maxSessions: 1,
+          terminationGraceMilliseconds: 100)
+      }
+      try await waitUntil {
+        try runtime.read(
+          sessionID: id, stdoutCursor: 0, stderrCursor: 0, maxReadBytes: 0, encoding: .utf8
+        ).stdout.endCursor == 6
+      }
+      var writes: [Task<ShellWriteResult, Error>] = []
+      for (index, payload) in payloads.enumerated() {
+        let close = closeWithData && index == payloads.count - 1
+        writes.append(
+          Task {
+            try await blocking.perform {
+              try runtime.write(sessionID: id, data: payload, close: close)
+            }
+          })
+        let count = writes.count
+        try await waitUntil { try runtime.pendingWrites(sessionID: id) == count }
+      }
+      if !closeWithData {
+        writes.append(
+          Task {
+            try await blocking.perform {
+              try runtime.write(sessionID: id, data: Data(), close: true)
+            }
+          })
+        try await waitUntil { try runtime.pendingWrites(sessionID: id) == 4 }
+      }
+      try await child.releaseInput()
+      for (index, write) in writes.enumerated() {
+        let result = try await write.value
+        #expect(result.bytesWritten == (index < payloads.count ? payloads[index].count : 0))
+        #expect(result.inputClosed == (index == writes.count - 1))
+      }
+      try await waitUntil {
+        try runtime.read(
+          sessionID: id, stdoutCursor: 0, stderrCursor: 0, maxReadBytes: 0, encoding: .utf8
+        ).stdout.endCursor == outputBytes
+      }
+      let result = try runtime.read(
+        sessionID: id, stdoutCursor: 0, stderrCursor: 0,
+        maxReadBytes: outputBytes, encoding: .utf8)
+      #expect(result.stdout.text == String(decoding: expected, as: UTF8.self))
+      #expect(result.isRunning && result.streamErrors.isEmpty)
+      #expect(kill(try #require(result.processID), 0) == 0)
+      #expect(try runtime.pendingWrites(sessionID: id) == 0)
+      await runtime.shutdown()
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
+  }
+
   @Test
   func shellCancellationReleasesBlockedWriterBeforeShutdownReturns() async throws {
     let runtime = SubprocessShellRuntime()
-    let blocking = BlockingOperationExecutor(label: "test.shell-blocked-writer")
+    let blocking = BlockingOperationExecutor(label: "test.shell-blocked-writer", serial: false)
     do {
       let id = try await blocking.perform {
         try runtime.spawn(
@@ -161,11 +271,13 @@ struct SubprocessLifecycleTests {
             sessionID: id, data: Data(repeating: 120, count: 1_048_576), close: false)
         }
       }
-      let deadline = ContinuousClock.now + .seconds(10)
-      while try runtime.pendingWrites(sessionID: id) == 0, ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
+      try await waitUntil { try runtime.pendingWrites(sessionID: id) == 1 }
+      let queued = Task {
+        try await blocking.perform {
+          try runtime.write(sessionID: id, data: Data("queued".utf8), close: true)
+        }
       }
-      try #require(try runtime.pendingWrites(sessionID: id) == 1)
+      try await waitUntil { try runtime.pendingWrites(sessionID: id) == 2 }
       let cleanupStarted = ContinuousClock.now
       #expect(try runtime.cancel(sessionID: id).cancellationRequested)
       await runtime.shutdown()
@@ -176,6 +288,12 @@ struct SubprocessLifecycleTests {
         #expect(error.code == .failedToWriteToSubprocess)
       case let result:
         Issue.record("Expected a blocked input write failure, got \(result).")
+      }
+      switch await queued.result {
+      case .failure(let error as ShellRuntimeError):
+        #expect(error == .sessionNotRunning(id))
+      case let result:
+        Issue.record("Expected a queued input write to fail as not running, got \(result).")
       }
       #expect(cleanupStarted.duration(to: .now) < .seconds(10))
       #expect(try runtime.pendingWrites(sessionID: id) == 0)
@@ -254,4 +372,41 @@ struct SubprocessLifecycleTests {
       }
     }
   #endif
+
+  private func waitUntil(_ condition: () async throws -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(20)
+    while !(try await condition()) {
+      try #require(ContinuousClock.now < deadline, "Timed out waiting for child-input state.")
+      try Task.checkCancellation()
+      await Task.yield()
+    }
+  }
+}
+
+private struct GatedInputChild {
+  let directory: ScopedTemporaryDirectory
+
+  static let command = """
+    printf 'ready\\n'
+    IFS= read -r gate < input-gate
+    /bin/cat
+    printf 'eof\\n'
+    IFS= read -r gate < exit-gate
+    """
+
+  init() throws {
+    directory = try ScopedTemporaryDirectory()
+    for name in ["input-gate", "exit-gate"] {
+      try #require(mkfifo(directory.url.appendingPathComponent(name).path, 0o600) == 0)
+    }
+  }
+
+  func releaseInput() async throws {
+    let url = directory.url.appendingPathComponent("input-gate")
+    try await BlockingOperationExecutor(label: "test.child-input-gate").perform {
+      let handle = try FileHandle(forWritingTo: url)
+      defer { try? handle.close() }
+      try handle.write(contentsOf: Data("read\n".utf8))
+    }
+  }
 }

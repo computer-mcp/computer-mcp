@@ -65,7 +65,7 @@ package struct ClientRegistrationService: Sendable {
     self.desktop = desktop
     self.timeoutMilliseconds = timeoutMilliseconds
     self.maxOutputBytes = maxOutputBytes
-    self.argumentLimit = argumentLimit ?? Int(sysconf(_SC_ARG_MAX))
+    self.argumentLimit = argumentLimit ?? Int(sysconf(Int32(_SC_ARG_MAX)))
   }
 
   package func statuses(server: ClientRegistrationCommand, name: String = "computer-mcp") throws

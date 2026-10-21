@@ -345,13 +345,14 @@ extension DeliveryRepository {
         validate: {
           _ = try requireWorktree(journal, at: journal.base)
           _ = try Self.checkedPath(change.path, inside: worktree)
+        },
+        recordWrite: { state in
+          var recorded = journal
+          recorded.changes![index].writeState = state
+          try io.write(recorded, to: journals)
+          journal = recorded
         }
-      ) { state in
-        var recorded = journal
-        recorded.changes![index].writeState = state
-        try io.write(recorded, to: journals)
-        journal = recorded
-      }
+      )
     }
     return try request.paths.map { path in
       let url = try Self.checkedPath(path, inside: worktree)

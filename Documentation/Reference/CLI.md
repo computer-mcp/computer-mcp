@@ -527,10 +527,11 @@ Apply JSON includes `outcome`, `steps` (step, outcome, optional exit_code),
 `applies_after`. Optional `recovery` reports the reconciled state after a Claude
 Code replacement removed the original entry, failed to install the planned entry
 and attempted recovery: `restored` when the confirmed read equals the original
-private entry, or `not_restored` otherwise. This comparison is independent of the
-restore process's exit status, including a timeout with confirmed exit. It
-exposes no entry contents and is omitted in every other case, including uncertain
-outcomes. Stable error codes are `changed_since_preview`,
+private entry, or `not_restored` when it confirms a different entry or absence.
+This comparison is independent of the restore process's exit status, including
+a timeout with confirmed exit. It exposes no entry contents and is omitted in
+every other case, including unreadable reconciliation and uncertain outcomes.
+Stable error codes are `changed_since_preview`,
 `confirmation_required`, `unsupported_entry`, `client_running`, `unavailable`,
 `unreadable`, `writer_busy`, `write_failed`, `invalid_input`,
 `invalid_server_executable`, `support_directory_missing`, `process_failed`,

@@ -658,6 +658,40 @@ struct ClientRegistrationTests {
     #expect(!String(decoding: data, as: UTF8.self).contains("PRIVATE_SENTINEL"))
   }
 
+  @Test(arguments: [false, true], ["succeeded", "failed", "timed_out"])
+  func claudeRecoveryRequiresReadableReconciliation(writesEntry: Bool, process: String) throws {
+    let fixture = try RegistrationFixture()
+    let original: JSONValue = .object([
+      "type": .string("stdio"), "command": .string("old-server"),
+      "args": .array([.string("PRIVATE_SENTINEL")]),
+    ])
+    try fixture.setEntry(original, client: .claudeCode)
+    let file = fixture.file(.claudeCode)
+    let recoveredFile = fixture.root.appendingPathComponent("recovered-entry.json")
+    fixture.runner.intercept = { call in
+      if call.arguments.contains("add") { return .init(code: 1) }
+      guard call.arguments.contains("add-json") else { return nil }
+      if writesEntry { _ = try RegistrationFixture.perform(call) }
+      try FileManager.default.moveItem(at: file, to: recoveredFile)
+      try FileManager.default.createSymbolicLink(at: file, withDestinationURL: recoveredFile)
+      return .init(code: process == "succeeded" ? 0 : 1, timedOut: process == "timed_out")
+    }
+    let service = fixture.service()
+    let result = try service.apply(fixture.preview(.claudeCode, service: service))
+    #expect(result.steps.map(\.step) == ["remove", "add", "restore"])
+    #expect(result.steps.last?.outcome.rawValue == process)
+    #expect(result.outcome == .failed && result.finalState == .unreadable)
+    #expect(result.finalEntry == nil && result.recovery == nil)
+    #expect(
+      try RegistrationJSONFile.read(recoveredFile.path).entry(named: "computer-mcp")
+        == (writesEntry ? original : nil))
+    let data = try JSONEncoder().encode(result)
+    let json = try JSONDecoder().decode(JSONValue.self, from: data)
+    #expect(json.objectValue?["recovery"] == nil)
+    #expect(try JSONDecoder().decode(ClientRegistrationResult.self, from: data).recovery == nil)
+    #expect(!String(decoding: data, as: UTF8.self).contains("PRIVATE_SENTINEL"))
+  }
+
   @Test
   func unsupportedClaudeReplacementIsRefusedButRemovalIsAvailable() throws {
     let fixture = try RegistrationFixture()

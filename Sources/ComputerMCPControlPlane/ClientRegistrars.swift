@@ -178,7 +178,7 @@ struct ClaudeCodeClientRegistrar {
             .uncertain, plan: plan, steps: steps, observation: final, error: .uncertain)
         }
         final = read(plan, using: service)
-        if !service.goalReached(plan, final) {
+        if !service.goalReached(plan, final), final.entry != nil || final.state == .notRegistered {
           recovery = final.entry == old ? .restored : .notRestored
         }
       }

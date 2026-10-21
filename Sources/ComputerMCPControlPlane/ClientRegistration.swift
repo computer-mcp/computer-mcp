@@ -258,6 +258,7 @@ package struct ClientRegistrationResult: Codable, Sendable {
   package let finalEntry: ClientRegistrationEntrySummary?
   package let appliesAfter: String
   /// Compares the reconciled entry with the private original after Claude Code recovery.
+  /// Nil when reconciliation cannot observe the entry's presence or absence.
   package let recovery: ClientRegistrationRecovery?
 
   package init(

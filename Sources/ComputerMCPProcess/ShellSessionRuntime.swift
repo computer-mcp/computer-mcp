@@ -295,12 +295,23 @@ package protocol ShellManaging: Sendable {
     encoding: ShellStreamEncoding
   ) throws -> ShellSessionSnapshot
 
+  @available(*, noasync, message: "Use writeAsync(sessionID:data:close:) from async code.")
   func write(sessionID: String, data: Data, close: Bool) throws -> ShellWriteResult
+  func writeAsync(sessionID: String, data: Data, close: Bool) async throws -> ShellWriteResult
   func cancel(sessionID: String) throws -> ShellCancelResult
   func shutdown() async
 }
 
 extension ShellManaging {
+  package func writeAsync(sessionID: String, data: Data, close: Bool) async throws
+    -> ShellWriteResult
+  {
+    try Task.checkCancellation()
+    return try await BlockingOperationExecutor(label: "computer-mcp.shell-write").perform {
+      try self.write(sessionID: sessionID, data: data, close: close)
+    }
+  }
+
   func shutdown() async {}
 }
 
@@ -634,8 +645,31 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     )
   }
 
+  @available(*, noasync, message: "Use writeAsync(sessionID:data:close:) from async code.")
   package func write(sessionID: String, data: Data, close: Bool) throws -> ShellWriteResult {
     try requireSession(sessionID).write(data: data, close: close)
+  }
+
+  package func writeAsync(sessionID: String, data: Data, close: Bool) async throws
+    -> ShellWriteResult
+  {
+    try await requireSession(sessionID).writeAsync(data: data, close: close)
+  }
+
+  internal func inputSnapshot(sessionID: String) throws -> ChildProcessInput.Snapshot {
+    try requireSession(sessionID).input.snapshot
+  }
+
+  internal func observeInput(
+    sessionID: String, _ observer: @escaping @Sendable (ChildProcessInput.Event) -> Void
+  ) async throws {
+    await (try requireSession(sessionID)).input.observe(observer)
+  }
+
+  internal func beforeInputWriteSettles(
+    sessionID: String, _ hook: @escaping @Sendable () async -> Void
+  ) async throws {
+    await (try requireSession(sessionID)).input.beforeWriteSettles(hook)
   }
 
   /// Queued and outstanding child-input operations, including EOF delivery.
@@ -729,13 +763,22 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
           FileDescriptor(rawValue: stderrPipe.fileHandleForWriting.fileDescriptor),
           closeAfterSpawningProcess: false)
       ) { execution in
-        try stdoutPipe.fileHandleForWriting.close()
-        try stderrPipe.fileHandleForWriting.close()
-        session.attach(execution: execution, inputWriter: execution.standardInputWriter)
+        await session.input.attach(execution.standardInputWriter)
+        do {
+          try stdoutPipe.fileHandleForWriting.close()
+          try stderrPipe.fileHandleForWriting.close()
+        } catch {
+          await session.input.finish()
+          await session.input.bodyReturning()
+          throw error
+        }
+        session.attach(execution: execution)
         await withTaskGroup(of: Void.self) { group in
           group.addTask { await stdout.waitForEnd() }
           group.addTask { await stderr.waitForEnd() }
         }
+        await session.input.finish()
+        await session.input.bodyReturning()
       }
       session.finish(status: outcome.terminationStatus)
     } catch {
@@ -765,11 +808,7 @@ private final class ShellSession: @unchecked Sendable {
   let maxOutputBytes: Int
   private let terminationGraceMilliseconds: Int
   private var execution: ShellExecution?
-  private var inputWriter: StandardInputWriter?
-  // Tickets order complete data/EOF operations while leaving the state lock available to cancellation.
-  private let writeCondition = NSCondition()
-  private var nextWriteTicket = 0
-  private var servingWriteTicket = 0
+  let input: ChildProcessInput
   private var stdout = CursorDataBuffer()
   private var stderr = CursorDataBuffer()
   private var processID: Int32?
@@ -779,7 +818,6 @@ private final class ShellSession: @unchecked Sendable {
   private var cancelled = false
   private var started = false
   private var finished = false
-  private var inputClosed = false
   private var streamErrors: [String] = []
   private var _launchError: String?
   private let startedAt = Date()
@@ -788,6 +826,9 @@ private final class ShellSession: @unchecked Sendable {
 
   init(id: String, maxOutputBytes: Int, terminationGraceMilliseconds: Int) {
     self.id = id
+    self.input = ChildProcessInput(
+      closedError: ShellRuntimeError.sessionNotRunning(id),
+      inputClosedError: ShellRuntimeError.inputClosed(id))
     self.maxOutputBytes = maxOutputBytes
     self.terminationGraceMilliseconds = max(0, terminationGraceMilliseconds)
   }
@@ -805,11 +846,7 @@ private final class ShellSession: @unchecked Sendable {
     return _launchError
   }
 
-  var pendingWrites: Int {
-    writeCondition.lock()
-    defer { writeCondition.unlock() }
-    return nextWriteTicket - servingWriteTicket
-  }
+  var pendingWrites: Int { input.snapshot.pendingWrites }
 
   var isRunningOrStarting: Bool {
     condition.lock()
@@ -829,10 +866,9 @@ private final class ShellSession: @unchecked Sendable {
     return stderr.endCursor
   }
 
-  func attach(execution: ShellExecution, inputWriter: StandardInputWriter) {
+  func attach(execution: ShellExecution) {
     condition.lock()
     self.execution = execution
-    self.inputWriter = inputWriter
     self.processID = Int32(execution.processIdentifier.value)
     started = true
     let terminationRequested = cancelled || timedOut
@@ -870,7 +906,7 @@ private final class ShellSession: @unchecked Sendable {
       signal = code
     }
     execution = nil
-    inputWriter = nil
+    input.stop()
     finished = true
     finishedAt = Date()
     condition.broadcast()
@@ -885,7 +921,7 @@ private final class ShellSession: @unchecked Sendable {
       streamErrors.append(message)
     }
     execution = nil
-    inputWriter = nil
+    input.stop()
     finished = true
     finishedAt = Date()
     condition.broadcast()
@@ -923,6 +959,7 @@ private final class ShellSession: @unchecked Sendable {
       return
     }
     timedOut = true
+    input.stop()
     let execution = self.execution
     condition.unlock()
     requestTermination(execution)
@@ -935,6 +972,7 @@ private final class ShellSession: @unchecked Sendable {
       return false
     }
     cancelled = true
+    input.stop()
     let execution = self.execution
     condition.unlock()
     requestTermination(execution)
@@ -942,50 +980,24 @@ private final class ShellSession: @unchecked Sendable {
   }
 
   func write(data: Data, close: Bool) throws -> ShellWriteResult {
-    writeCondition.lock()
-    let ticket = nextWriteTicket
-    nextWriteTicket += 1
-    while ticket != servingWriteTicket {
-      writeCondition.wait()
-    }
-    writeCondition.unlock()
-    defer {
-      writeCondition.lock()
-      servingWriteTicket += 1
-      writeCondition.broadcast()
-      writeCondition.unlock()
-    }
+    try Task.checkCancellation()
+    return try blockingAsync { try await self.writeAsync(data: data, close: close) }
+  }
 
+  func writeAsync(data: Data, close: Bool) async throws -> ShellWriteResult {
+    try Task.checkCancellation()
+    try validateInput()
+    let bytesWritten = try await input.write(data, close: close)
+    return ShellWriteResult(sessionID: id, bytesWritten: bytesWritten, inputClosed: close)
+  }
+
+  private func validateInput() throws {
     condition.lock()
+    defer { condition.unlock() }
     guard !finished && !cancelled && !timedOut else {
-      condition.unlock()
       throw ShellRuntimeError.sessionNotRunning(id)
     }
-    guard !inputClosed else {
-      condition.unlock()
-      throw ShellRuntimeError.inputClosed(id)
-    }
-    guard let writer = inputWriter else {
-      condition.unlock()
-      throw ShellRuntimeError.sessionNotReady(id)
-    }
-    if close {
-      inputClosed = true
-    }
-    condition.unlock()
-
-    let bytesWritten: Int = try blockingAsync {
-      var count = 0
-      if !data.isEmpty {
-        count = try await writer.write(Array(data))
-        guard count == data.count else { throw ShellRuntimeError.sessionNotRunning(self.id) }
-      }
-      if close {
-        try await writer.finish()
-      }
-      return count
-    }
-    return ShellWriteResult(sessionID: id, bytesWritten: bytesWritten, inputClosed: close)
+    guard started else { throw ShellRuntimeError.sessionNotReady(id) }
   }
 
   func snapshot(

@@ -27,7 +27,7 @@ struct GatewayTerminalSessionsTests {
     #expect(owners.snapshot.map(\.resourceID) == [id])
     old = nil
     #expect(previous == nil)
-    _ = try current.write(sessionID: id, data: Data("final-output".utf8), close: true)
+    _ = try await current.writeAsync(sessionID: id, data: Data("final-output".utf8), close: true)
     let result = try current.wait(
       sessionID: id, timeoutMilliseconds: 2_000, maxReadBytes: 1_024, encoding: .utf8)
     try await drained(owners)
@@ -56,7 +56,7 @@ struct GatewayTerminalSessionsTests {
     #expect(previous == nil)
     let shell = SubprocessShellRuntime(sessions: storage, scope: scope)
     let current = SubprocessProcessRegistry(shellManager: shell)
-    _ = try shell.write(sessionID: id, data: Data("12345678".utf8), close: true)
+    _ = try await shell.writeAsync(sessionID: id, data: Data("12345678".utf8), close: true)
     _ = try shell.wait(sessionID: id, timeoutMilliseconds: 2_000, maxReadBytes: 16, encoding: .utf8)
     try await drained(owners)
     let result = try current.read(processID: id)
@@ -134,7 +134,7 @@ struct GatewayTerminalSessionsTests {
     #expect(try process.read(processID: id).isRunning)
     #expect(owners.snapshot.map(\.resourceID) == [id])
     #expect(throws: ShellRuntimeError.sessionLimitReached(1)) { try spawnCat(next, limit: 1) }
-    _ = try next.write(sessionID: id, data: Data(), close: true)
+    _ = try await next.writeAsync(sessionID: id, data: Data(), close: true)
     // Hold no lookup after completion: expiry may remove the completed entry immediately.
     try await drained(owners)
     #expect(try process.list().isEmpty)

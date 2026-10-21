@@ -309,11 +309,8 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   disposition is default, preserving an embedder's existing handler or SIG_IGN.
   The host reports broken child-input pipes as write errors. A caught handler
   resets to default on exec; SIG_IGN would survive exec and leak into children
-  launched by Foundation Process on Linux. Incomplete input writes fail as a
-  closed managed transport or a shell session that is no longer running.
-  Managed line sends and shell data/EOF operations complete in arrival order per
-  child input; close, cancellation and shutdown can interrupt blocked writes
-  independently.
+  launched by Foundation Process on Linux.
+  `ManagedLineProcess` and `ShellSession` share the child-input contract below.
   The HTTP client transport uses Foundation URLSession and a bounded SSE decoder.
   macOS reads native asynchronous bytes; Linux bridges data-delegate callbacks
   into the response byte stream. Each POST response and the standalone GET event channel own
@@ -372,3 +369,52 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
 The independent `plugin-codex` repository pins and verifies `swift-codex` in
 its own build and release checks. Host builds verify their own linked package
 graph; bundled plugin archives retain their separate dependency notices.
+
+## Child input lifecycle
+
+Every owner of a child's `StandardInputWriter` uses `ChildProcessInput` to own
+admission, writes and descriptor close:
+
+1. Writes enter one FIFO queue per child. Only one library write is outstanding
+   at a time. Explicit EOF, including a shell write with `close: true` and an
+   empty close-only call, takes its turn after earlier operations.
+2. Cancelling a caller before admission promptly removes its waiter and throws
+   `CancellationError`, without writing. A caller cancelled while receiving the
+   turn passes it on. Already-cancelled callers never write.
+3. Once admitted, the input owner's task completes the whole write independently
+   of caller cancellation. The caller awaits that result. Only the process's I/O
+   cancellation or closure as it ends can cut the write short.
+4. A short write fails as a closed managed transport or a shell session that is
+   no longer running. If some bytes were written, the owner retires input before
+   handing off the turn; queued and later data or EOF operations fail closed.
+   A zero-byte result fails that operation but leaves input available for the
+   next waiter. Library errors propagate unchanged.
+5. Close, cancellation and shutdown stop admission and fail queued waiters, while
+   process termination proceeds independently of the input queue. Teardown joins
+   the admitted operation before calling `finish()`. Every `run` body also joins
+   input before returning, since swift-subprocess automatically closes it then.
+   Thus a resumed write cannot use a descriptor that teardown has already closed.
+
+Managed close delivers EOF first when input is idle. With an admitted operation
+it signals the owned process group immediately after startup has published its
+identity. SIGTERM escalates to SIGKILL after `terminationGraceMilliseconds`;
+managed close then allows `killGraceMilliseconds` for exit and reports a
+termination timeout if necessary. Startup identity has a separate five-second
+bound. Idle close can use one additional termination grace for EOF delivery.
+Shell cancellation sends SIGTERM immediately and escalates after its configured
+termination grace. These signal paths never wait for input to drain. When the
+owned process exits, swift-subprocess cancels its I/O and releases the outstanding
+write even if a descendant still holds stdin open; joining input adds no pipe
+drain timeout to termination escalation. `pendingWrites` counts queued plus
+outstanding operations, including explicit EOF.
+
+Shell callers running in tasks use `writeAsync`, including the shell tool
+provider, so their cancellation reaches admission. The synchronous `write`
+bridge serves blocking callers and is unavailable from async code.
+
+With swift-subprocess 1.0.2, each write registers its descriptor again, and a
+second registration ends the first write's wait. Calling-task or process I/O
+cancellation can return a short count. `finish()` immediately unregisters and
+closes the descriptor, while a resumed write may still hold its descriptor
+number. The FIFO queue, independent admitted task, short-write check and teardown
+join together protect that descriptor's lifetime and the child's frame boundaries.

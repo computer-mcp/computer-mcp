@@ -79,6 +79,8 @@ package struct CloudflareTunnelConfigurationInput: Equatable, Sendable {
   package var localPort: Int
   package var metricsPort: Int
   package var cloudflaredPath: String?
+  package var oauthEnabled: Bool?
+  package var oauthClientAllowlist: [String]?
   package var tunnelToken: String?
   package var regenerateAccessToken: Bool
 
@@ -90,6 +92,8 @@ package struct CloudflareTunnelConfigurationInput: Equatable, Sendable {
     localPort: Int = 8_765,
     metricsPort: Int = 20_241,
     cloudflaredPath: String? = nil,
+    oauthEnabled: Bool? = nil,
+    oauthClientAllowlist: [String]? = nil,
     tunnelToken: String? = nil,
     regenerateAccessToken: Bool = false
   ) {
@@ -100,6 +104,8 @@ package struct CloudflareTunnelConfigurationInput: Equatable, Sendable {
     self.localPort = localPort
     self.metricsPort = metricsPort
     self.cloudflaredPath = cloudflaredPath
+    self.oauthEnabled = oauthEnabled
+    self.oauthClientAllowlist = oauthClientAllowlist
     self.tunnelToken = tunnelToken
     self.regenerateAccessToken = regenerateAccessToken
   }
@@ -480,6 +486,10 @@ package struct AppControlPlaneOperations: Sendable {
         localPort: input.localPort,
         metricsPort: input.metricsPort,
         cloudflaredPath: Self.optional(input.cloudflaredPath),
+        oauthEnabled: input.oauthEnabled ?? existing?.oauthEnabled ?? false,
+        oauthClientAllowlist: input.oauthClientAllowlist ?? existing?.oauthClientAllowlist ?? [
+          "claude.ai", "claude.com",
+        ],
         tunnelTokenReference: tunnelTokenReference,
         accessTokenReference: accessTokenReference
       ),

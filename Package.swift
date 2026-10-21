@@ -326,6 +326,7 @@ let neutralTargets: [Target] =
       name: "ComputerMCPControlPlaneTests",
       dependencies: [
         "ComputerMCPAuthorization", "ComputerMCPConfiguration",
+        "ComputerMCPDownstream", "ComputerMCPProcess",
         "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPCore",
         "ComputerMCPPlatform", "ComputerMCPTunnels", "ComputerMCPTestSupport",
       ]

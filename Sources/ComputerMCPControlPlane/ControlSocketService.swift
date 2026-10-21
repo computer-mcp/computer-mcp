@@ -772,6 +772,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
               localPort: object["local_port"]?.intValue ?? 8_765,
               metricsPort: object["metrics_port"]?.intValue ?? 20_241,
               cloudflaredPath: object["cloudflared_path"]?.stringValue,
+              oauthEnabled: object["oauth_enabled"]?.boolValue,
+              oauthClientAllowlist: object["oauth_client_allowlist"]?.arrayValue?.compactMap(
+                \.stringValue),
               tunnelToken: object["tunnel_token"]?.stringValue,
               regenerateAccessToken: object["regenerate_access_token"]?.boolValue ?? false
             )
@@ -1257,6 +1260,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         "local_port": .integer,
         "metrics_port": .integer,
         "cloudflared_path": .string,
+        "oauth_enabled": .boolean,
+        "oauth_client_allowlist": .strings,
         "tunnel_token": .string,
         "regenerate_access_token": .boolean,
       ],

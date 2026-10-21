@@ -9,7 +9,79 @@ struct Clients: AsyncParsableCommand {
     abstract: "Inspect and authorize connected clients through the local owner control socket.",
     discussion:
       "Use list to review a connection. Full Access requires allow --full-access and defaults to This Session. Access changes apply to new requests; already started work retains its owner. Commands return JSON.",
-    subcommands: [List.self, Allow.self, Limit.self, End.self, Trusts.self, Revoke.self])
+    subcommands: [
+      List.self, Allow.self, Limit.self, End.self, Trusts.self, Revoke.self,
+      Authorizations.self, Authorize.self, Deny.self, Grants.self, RevokeGrant.self,
+    ])
+
+  struct Authorizations: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "authorizations",
+      abstract: "List pending OAuth requests and pairing codes through the App control socket.")
+    @OptionGroup var page: ClientListOptions
+    @Option(name: .long) var tunnelID: String?
+    func run() async throws {
+      try await page.run(
+        "clients.authorizations", extra: tunnelID.map { ["tunnel_id": .string($0)] } ?? [:])
+    }
+  }
+
+  struct Authorize: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "authorize", abstract: "Approve an OAuth pairing code with a remote profile.")
+    @OptionGroup var connection: AppControlConnectionOptions
+    @Argument var pairingCode: String
+    @Option(name: .long) var tunnelID: String?
+    @Option(name: .long) var profile = GatewayProfileID.cloudflareObserve.rawValue
+    func run() async throws {
+      var arguments: [String: JSONValue] = [
+        "pairing_code": .string(pairingCode), "profile_id": .string(profile),
+      ]
+      if let tunnelID { arguments["tunnel_id"] = .string(tunnelID) }
+      try await Clients.report {
+        try await connection.client().call("clients.authorize", arguments: .object(arguments))
+      }
+    }
+  }
+
+  struct Deny: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "deny", abstract: "Deny a pending OAuth pairing code.")
+    @OptionGroup var connection: AppControlConnectionOptions
+    @Argument var pairingCode: String
+    @Option(name: .long) var tunnelID: String?
+    func run() async throws {
+      var arguments: [String: JSONValue] = ["pairing_code": .string(pairingCode)]
+      if let tunnelID { arguments["tunnel_id"] = .string(tunnelID) }
+      try await Clients.report {
+        try await connection.client().call("clients.deny", arguments: .object(arguments))
+      }
+    }
+  }
+
+  struct Grants: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "grants", abstract: "List OAuth grants through the App control socket.")
+    @OptionGroup var page: ClientListOptions
+    @Option(name: .long) var tunnelID: String?
+    func run() async throws {
+      try await page.run(
+        "clients.grants", extra: tunnelID.map { ["tunnel_id": .string($0)] } ?? [:])
+    }
+  }
+
+  struct RevokeGrant: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "revoke-grant", abstract: "Revoke an OAuth grant and invalidate its tokens.")
+    @OptionGroup var connection: AppControlConnectionOptions
+    @Argument var id: String
+    func run() async throws {
+      try await Clients.report {
+        try await connection.client().call(
+          "clients.revoke_grant", arguments: .object(["id": .string(id)]))
+      }
+    }
+  }
 
   struct List: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -136,8 +208,9 @@ struct ClientListOptions: ParsableArguments {
       throw ValidationError("--limit must be between 1 and 200.")
     }
   }
-  func run(_ name: String) async throws {
-    var arguments: [String: JSONValue] = ["limit": .integer(Int64(limit))]
+  func run(_ name: String, extra: [String: JSONValue] = [:]) async throws {
+    var arguments = extra
+    arguments["limit"] = .integer(Int64(limit))
     if let id { arguments["id"] = .string(id) }
     if let afterID { arguments["after_id"] = .string(afterID) }
     try await Clients.report {

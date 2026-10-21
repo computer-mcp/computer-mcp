@@ -1038,6 +1038,8 @@ package struct CloudflareTunnelTransportConfig: Codable, Equatable, Sendable, Id
   package var localPort: Int
   package var metricsPort: Int
   package var cloudflaredPath: String?
+  package var oauthEnabled: Bool
+  package var oauthClientAllowlist: [String]
 
   package init(
     id: String,
@@ -1046,7 +1048,9 @@ package struct CloudflareTunnelTransportConfig: Codable, Equatable, Sendable, Id
     gatewayProfile: GatewayProfileID = .cloudflareObserve,
     localPort: Int = 8_765,
     metricsPort: Int = 20_241,
-    cloudflaredPath: String? = nil
+    cloudflaredPath: String? = nil,
+    oauthEnabled: Bool = false,
+    oauthClientAllowlist: [String] = ["claude.ai", "claude.com"]
   ) {
     self.id = id
     self.tunnelName = tunnelName
@@ -1055,6 +1059,8 @@ package struct CloudflareTunnelTransportConfig: Codable, Equatable, Sendable, Id
     self.localPort = localPort
     self.metricsPort = metricsPort
     self.cloudflaredPath = cloudflaredPath
+    self.oauthEnabled = oauthEnabled
+    self.oauthClientAllowlist = oauthClientAllowlist
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -1065,6 +1071,8 @@ package struct CloudflareTunnelTransportConfig: Codable, Equatable, Sendable, Id
     case localPort = "local_port"
     case metricsPort = "metrics_port"
     case cloudflaredPath = "cloudflared_path"
+    case oauthEnabled = "oauth_enabled"
+    case oauthClientAllowlist = "oauth_client_allowlist"
   }
 
   package init(from decoder: any Decoder) throws {
@@ -1078,10 +1086,16 @@ package struct CloudflareTunnelTransportConfig: Codable, Equatable, Sendable, Id
     localPort = try container.decodeIfPresent(Int.self, forKey: .localPort) ?? 8_765
     metricsPort = try container.decodeIfPresent(Int.self, forKey: .metricsPort) ?? 20_241
     cloudflaredPath = try container.decodeIfPresent(String.self, forKey: .cloudflaredPath)
+    oauthEnabled = try container.decodeIfPresent(Bool.self, forKey: .oauthEnabled) ?? false
+    oauthClientAllowlist =
+      try container.decodeIfPresent([String].self, forKey: .oauthClientAllowlist) ?? [
+        "claude.ai", "claude.com",
+      ]
   }
 
   fileprivate func validate() throws {
     try validateConfigIdentifier(id, label: "transports.cloudflare.id")
+    try Self.validateOAuthClientAllowlist(oauthClientAllowlist)
     guard !tunnelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       !tunnelName.contains("\0")
     else {
@@ -1104,6 +1118,19 @@ package struct CloudflareTunnelTransportConfig: Codable, Equatable, Sendable, Id
       cloudflaredPath,
       label: "transports.cloudflare.cloudflared_path"
     )
+  }
+
+  package static func validateOAuthClientAllowlist(_ hosts: [String]) throws {
+    for host in hosts {
+      guard !host.isEmpty, host == host.lowercased(), !host.contains("*"),
+        let url = URL(string: "https://\(host)"), url.host == host, url.port == nil,
+        url.user == nil, url.password == nil, url.path.isEmpty, url.query == nil,
+        url.fragment == nil
+      else {
+        throw ConfigurationError.invalid(
+          "transports.cloudflare.oauth_client_allowlist must contain exact lowercase hostnames.")
+      }
+    }
   }
 }
 

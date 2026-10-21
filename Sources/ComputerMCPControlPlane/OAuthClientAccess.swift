@@ -1,0 +1,101 @@
+import ComputerMCPAuthorization
+import ComputerMCPCore
+import ComputerMCPGateway
+import ComputerMCPTunnels
+import Foundation
+
+package struct OAuthPendingAuthorization: Codable, Equatable, Sendable, Identifiable {
+  package let id: String
+  package let tunnelID: String
+  package let pairingCode: String
+  package let clientHost: String
+  package let redirectHost: String
+  package let createdAt: Date
+  package let expiresAt: Date
+
+  init(_ request: OAuthAuthorizationRequest) {
+    id = request.id
+    tunnelID = request.tunnelID
+    pairingCode = request.pairingCode
+    clientHost = request.clientHost
+    redirectHost = request.redirectHost
+    createdAt = request.createdAt
+    expiresAt = request.expiresAt
+  }
+}
+
+extension AppControlPlaneService {
+  func oauthServer(for profile: CloudflareTunnelConfiguration) -> OAuthAuthorizationServer {
+    OAuthAuthorizationServer(
+      configuration: .init(
+        tunnelID: profile.id, tunnelName: profile.tunnelName,
+        hostname: profile.publicHostname, clientAllowlist: profile.oauthClientAllowlist),
+      store: database)
+  }
+
+  package func oauthAuthorizations(tunnelID: String? = nil, approver: GatewayCallerKind = .localApp)
+    async throws -> [OAuthPendingAuthorization]
+  {
+    try requireOAuthOwner(approver)
+    var requests: [OAuthPendingAuthorization] = []
+    for profile in try cloudflareTunnelConfigurations()
+    where profile.oauthEnabled && (tunnelID == nil || profile.id == tunnelID) {
+      requests += try await oauthServer(for: profile).pendingRequests(approver: approver).map(
+        OAuthPendingAuthorization.init)
+    }
+    return requests.sorted { $0.id < $1.id }
+  }
+
+  package func authorizeOAuthClient(
+    pairingCode: String, tunnelID: String? = nil,
+    profileID: GatewayProfileID = .cloudflareObserve, approver: GatewayCallerKind = .localApp
+  ) async throws -> OAuthGrant {
+    let requests = try await oauthAuthorizations(tunnelID: tunnelID, approver: approver)
+      .filter { $0.pairingCode == pairingCode.uppercased() }
+    guard requests.count == 1, let request = requests.first,
+      let tunnel = try cloudflareTunnelConfigurations().first(where: {
+        $0.id == request.tunnelID && $0.oauthEnabled
+      }),
+      let profile = try await profileGrants().first(where: { $0.id == profileID })
+    else { throw OAuthError.invalidRequest }
+    return try await oauthServer(for: tunnel).approve(
+      pairingCode: request.pairingCode, profile: profile, approver: approver)
+  }
+
+  package func denyOAuthAuthorization(
+    pairingCode: String, tunnelID: String? = nil,
+    approver: GatewayCallerKind = .localApp
+  ) async throws {
+    let requests = try await oauthAuthorizations(tunnelID: tunnelID, approver: approver)
+      .filter { $0.pairingCode == pairingCode.uppercased() }
+    guard requests.count == 1, let request = requests.first,
+      let tunnel = try cloudflareTunnelConfigurations().first(where: { $0.id == request.tunnelID })
+    else { throw OAuthError.invalidRequest }
+    try await oauthServer(for: tunnel).deny(pairingCode: request.pairingCode, approver: approver)
+  }
+
+  package func oauthGrants(tunnelID: String? = nil, approver: GatewayCallerKind = .localApp)
+    async throws -> [OAuthGrant]
+  {
+    try requireOAuthOwner(approver)
+    var grants: [OAuthGrant] = []
+    for profile in try cloudflareTunnelConfigurations()
+    where tunnelID == nil || profile.id == tunnelID {
+      grants += try await oauthServer(for: profile).grants(approver: approver)
+    }
+    return grants.sorted { $0.id < $1.id }
+  }
+
+  package func revokeOAuthGrant(id: String, approver: GatewayCallerKind = .localApp) async throws {
+    try requireOAuthOwner(approver)
+    let grant = try database.oauthTransaction { try $0.grant(id: id) }
+    guard let grant,
+      let tunnel = try cloudflareTunnelConfigurations().first(where: { $0.id == grant.tunnelID })
+    else { throw OAuthError.invalidRequest }
+    try await oauthServer(for: tunnel).revokeGrant(id: id, approver: approver)
+  }
+
+  private func requireOAuthOwner(_ caller: GatewayCallerKind) throws {
+    guard caller == .localApp || caller == .localCLI else { throw OAuthError.accessDenied }
+  }
+}

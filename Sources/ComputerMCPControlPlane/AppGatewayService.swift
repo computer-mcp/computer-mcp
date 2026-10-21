@@ -377,7 +377,15 @@ package actor AppGatewayService {
         return admitted.serving
       },
       closeSession: { [weak self] sessionID in await self?.closeControlSession(id: sessionID) },
-      shutdown: { [weak self] in await self?.stopHTTPListener(id: id) })
+      shutdown: { [weak self] in await self?.stopHTTPListener(id: id) },
+      makeOAuthSession: { [weak self] principalID, grantProfileID in
+        guard let self else { throw GatewaySocketError.notConnected }
+        let admitted = try await self.makeServingSession(
+          key: RuntimeKey(
+            principalID: principalID, profileID: grantProfileID, caller: .cloudflareTunnel,
+            owner: .http(id)), epoch: id, trace: trace)
+        return admitted.serving
+      })
   }
 
   private func stopHTTPListener(id: UUID) async {

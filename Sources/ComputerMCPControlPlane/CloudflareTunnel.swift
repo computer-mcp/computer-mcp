@@ -1,3 +1,4 @@
+import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
@@ -35,6 +36,8 @@ extension AppControlPlaneService {
         localPort: definition.localPort,
         metricsPort: definition.metricsPort,
         cloudflaredPath: definition.cloudflaredPath,
+        oauthEnabled: definition.oauthEnabled,
+        oauthClientAllowlist: definition.oauthClientAllowlist,
         tunnelTokenReference: tunnelTokenReference,
         accessTokenReference: accessTokenReference
       )
@@ -66,7 +69,9 @@ extension AppControlPlaneService {
         gatewayProfile: profile.gatewayProfile,
         localPort: profile.localPort,
         metricsPort: profile.metricsPort,
-        cloudflaredPath: profile.cloudflaredPath
+        cloudflaredPath: profile.cloudflaredPath,
+        oauthEnabled: profile.oauthEnabled,
+        oauthClientAllowlist: profile.oauthClientAllowlist
       )
     )
     configuration.transports.cloudflare.sort { $0.id < $1.id }
@@ -88,6 +93,11 @@ extension AppControlPlaneService {
         try await setKeychainSecret(generatedAccessToken, for: profile.accessTokenReference)
       }
       try activateTransportConfiguration(configuration)
+      if let generatedAccessToken,
+        let origin = cloudflareRuntimes[profile.id]?.origin as? GatewayHTTPRuntime
+      {
+        await origin.updateAccessToken(generatedAccessToken)
+      }
     } catch {
       await restoreCloudflareSecret(
         existingTunnelToken,
@@ -108,6 +118,10 @@ extension AppControlPlaneService {
   package func deleteCloudflareTunnelConfiguration(id: String) async throws {
     let profile = try requireCloudflareProfile(id)
     _ = try await stopCloudflareTunnel(profileID: id)
+    let authorization = oauthServer(for: profile)
+    for grant in try await authorization.grants(approver: .localApp) where grant.revokedAt == nil {
+      try await authorization.revokeGrant(id: grant.id, approver: .localApp)
+    }
     var configuration = try manifestStore.activeConfiguration()
     configuration.transports.cloudflare.removeAll { $0.id == id }
     try activateTransportConfiguration(configuration)
@@ -306,7 +320,19 @@ extension AppControlPlaneService {
         host: "127.0.0.1",
         port: profile.localPort,
         publicBaseURL: profile.publicBaseURL?.absoluteString,
-        accessToken: accessToken
+        accessToken: accessToken,
+        oauth: GatewayOAuthHTTP(
+          server: oauthServer(for: profile),
+          currentConfiguration: { [manifestStore] in
+            guard
+              let current = try manifestStore.activeConfiguration().transports.cloudflare.first(
+                where: { $0.id == profile.id }),
+              current.oauthEnabled
+            else { return nil }
+            return OAuthServerConfiguration(
+              tunnelID: current.id, tunnelName: current.tunnelName,
+              hostname: current.publicHostname, clientAllowlist: current.oauthClientAllowlist)
+          })
       )
       runtime.origin = origin
       try requireCurrentGatewayInputs(inputs)

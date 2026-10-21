@@ -11,6 +11,8 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
   package var localPort: Int
   package var metricsPort: Int
   package var cloudflaredPath: String?
+  package var oauthEnabled: Bool
+  package var oauthClientAllowlist: [String]
   package var tunnelTokenReference: SecretReference
   package var accessTokenReference: SecretReference
 
@@ -22,6 +24,8 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
     case localPort = "local_port"
     case metricsPort = "metrics_port"
     case cloudflaredPath = "cloudflared_path"
+    case oauthEnabled = "oauth_enabled"
+    case oauthClientAllowlist = "oauth_client_allowlist"
     case tunnelTokenReference = "tunnel_token_reference"
     case accessTokenReference = "access_token_reference"
   }
@@ -34,6 +38,8 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
     localPort: Int = 8_765,
     metricsPort: Int = 20_241,
     cloudflaredPath: String? = nil,
+    oauthEnabled: Bool = false,
+    oauthClientAllowlist: [String] = ["claude.ai", "claude.com"],
     tunnelTokenReference: SecretReference,
     accessTokenReference: SecretReference
   ) {
@@ -44,6 +50,8 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
     self.localPort = localPort
     self.metricsPort = metricsPort
     self.cloudflaredPath = cloudflaredPath
+    self.oauthEnabled = oauthEnabled
+    self.oauthClientAllowlist = oauthClientAllowlist
     self.tunnelTokenReference = tunnelTokenReference
     self.accessTokenReference = accessTokenReference
   }
@@ -57,6 +65,7 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
   }
 
   package func validate() throws {
+    try CloudflareTunnelTransportConfig.validateOAuthClientAllowlist(oauthClientAllowlist)
     try validateConfigIdentifier(id, label: "transports.cloudflare.id")
     for (label, value) in [("tunnel name", tunnelName)] {
       guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

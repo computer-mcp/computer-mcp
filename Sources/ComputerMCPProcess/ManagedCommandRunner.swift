@@ -27,8 +27,20 @@ package struct ManagedCommandRunner: CommandRunning {
     executable: String, arguments: [String], workingDirectory: URL?, environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandDataResult {
-    let value = try execution.launch(
+    try runData(
       executable: executable, invocation: .init(arguments: arguments, standardInput: Data()),
+      workingDirectory: workingDirectory, environment: environment,
+      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+  }
+
+  /// Supplies finite stdin and closes it, retaining the managed timeout and cleanup policy.
+  package func runData(
+    executable: String, invocation: CLIInvocation, workingDirectory: URL?,
+    environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandDataResult {
+    let value = try execution.launch(
+      executable: executable, invocation: invocation,
       cwd: workingDirectory ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
       environment: environment, timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes)
@@ -43,7 +55,8 @@ package struct ManagedCommandRunner: CommandRunning {
       throw CommandRunnerError.launchFailed("Command execution or output collection failed.")
     }
     return .init(
-      executable: executable, arguments: arguments, exitCode: value.exitCode ?? value.signal,
+      executable: executable, arguments: invocation.arguments,
+      exitCode: value.exitCode ?? value.signal,
       timedOut: value.timedOut, stdout: stdout, stderr: stderr,
       stdoutTruncated: value.stdout.truncated || value.stdout.missedBytes,
       stderrTruncated: value.stderr.truncated || value.stderr.missedBytes)

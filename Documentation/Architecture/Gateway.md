@@ -18,6 +18,12 @@ tool providers. The control plane supplies management through
 and audit. Proxy authentication uses the injected `SecretStore` with noninteractive
 MCP HTTP reads, and bound host services use the injected Git executable.
 
+`ComputerMCPDelivery` supplies the `delivery` provider for host-declared isolated
+repository edits. Workspace composition filters `delivery.scopes` by workspace ID.
+The provider owns the shared Git-directory lock, atomic file journals, execution
+and recovery; ordinary gateway policy owns grants and confirmation. See
+[Isolated delivery](../Reference/Delivery.md).
+
 ## App-owned Topology
 
 ```text

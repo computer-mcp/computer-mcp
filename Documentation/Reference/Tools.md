@@ -6,6 +6,14 @@ annotations. Successful calls return the same bounded JSON value as readable
 JSON text and as `structuredContent.result`. Downstream MCP tools keep their
 provider-declared schemas and result shape when the Swift SDK exposes them.
 
+## `delivery.scopes.list` and `delivery.apply`
+
+The `delivery` provider lists host-declared scopes (read-only) and applies ordered
+UTF-8 edits in an isolated Git worktree (workspace write). Both require a workspace
+and declare no network use. Apply commits and fast-forwards onto the default branch
+or retains its branch, with durable recovery and bounded file snippets. See
+[Isolated delivery](Delivery.md) for schemas, reason codes and recovery.
+
 ## Execution owners
 
 `runtime.owners.list` lists retained work in one granted `workspace_id`. It

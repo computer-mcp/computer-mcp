@@ -95,6 +95,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package var tools: [ToolConfig]
   package var builtin: BuiltinConfig
   package var skills: SkillsConfig
+  package var delivery: DeliveryConfig
   package var workspaceDirectory: URL
   /// Host-owned identities remain referenceable while their contributions are disabled or unavailable.
   package var knownPluginMCPServerIDs: Set<String> = []
@@ -112,6 +113,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     tools: [ToolConfig] = [],
     builtin: BuiltinConfig = BuiltinConfig(),
     skills: SkillsConfig = SkillsConfig(),
+    delivery: DeliveryConfig = DeliveryConfig(),
     workspaceDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
   ) {
     self.schemaVersion = schemaVersion
@@ -126,6 +128,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     self.tools = tools
     self.builtin = builtin
     self.skills = skills
+    self.delivery = delivery
     self.workspaceDirectory = workspaceDirectory
   }
 
@@ -178,6 +181,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     try runtime.validate()
     try policy.validate()
     try skills.validate()
+    try delivery.validate(workspaces: workspaces)
     try validateUniqueIDs(workspaces.map(\.id), label: "workspace")
     try validateUniqueIDs(profiles.map { $0.id.rawValue }, label: "profile")
     try validateUniqueIDs(transports.openAI.map(\.id), label: "OpenAI transport")
@@ -447,6 +451,8 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "file.trash",
       "workspace.open",
       "workspace.reveal",
+      "delivery.scopes.list",
+      "delivery.apply",
       "git.root",
       "git.config",
       "git.remotes",
@@ -671,6 +677,8 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "file.trash",
       "workspace.open",
       "workspace.reveal",
+      "delivery.scopes.list",
+      "delivery.apply",
       "git.root",
       "git.config",
       "git.remotes",
@@ -827,6 +835,7 @@ extension GatewayConfiguration: Codable {
     case tools
     case builtin
     case skills
+    case delivery
   }
 
   package init(from decoder: any Decoder) throws {
@@ -859,6 +868,8 @@ extension GatewayConfiguration: Codable {
     self.skills =
       try container.decodeIfPresent(SkillsConfig.self, forKey: .skills)
       ?? SkillsConfig()
+    self.delivery =
+      try container.decodeIfPresent(DeliveryConfig.self, forKey: .delivery) ?? DeliveryConfig()
     self.workspaceDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     migrateImplicitMCPApprovals(from: try ConfigurationNode(from: decoder))
     dropRetiredBuiltins()
@@ -904,6 +915,7 @@ extension GatewayConfiguration: Codable {
     try container.encode(tools, forKey: .tools)
     try container.encode(builtin, forKey: .builtin)
     try container.encode(skills, forKey: .skills)
+    try container.encode(delivery, forKey: .delivery)
   }
 }
 

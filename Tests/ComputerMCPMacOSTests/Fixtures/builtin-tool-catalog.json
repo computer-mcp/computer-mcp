@@ -4503,6 +4503,191 @@
     },
     "title" : "Csv Read"
   },
+  "delivery.apply" : {
+    "_meta" : {
+      "securitySchemes" : [
+        {
+          "type" : "noauth"
+        }
+      ]
+    },
+    "annotations" : {
+      "destructiveHint" : false,
+      "openWorldHint" : false,
+      "readOnlyHint" : false
+    },
+    "capability" : {
+      "localOnly" : false,
+      "risk" : "workspace-write",
+      "usesNetwork" : false,
+      "workspaceRequirement" : "required"
+    },
+    "description" : "Apply ordered UTF-8 text edits within a host-declared scope in an isolated Git worktree, commit with a Conventional Commit message without trailers, and land by fast-forward or retain the committed branch. Returns state, commit, retained branch, reason and bounded file snippets; aborted results are tool errors. Uses the registered git command without network operations.",
+    "inputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "edits" : {
+          "items" : {
+            "additionalProperties" : false,
+            "oneOf" : [
+              {
+                "not" : {
+                  "required" : [
+                    "create"
+                  ]
+                },
+                "required" : [
+                  "replace"
+                ]
+              },
+              {
+                "not" : {
+                  "required" : [
+                    "replace"
+                  ]
+                },
+                "required" : [
+                  "create"
+                ]
+              }
+            ],
+            "properties" : {
+              "create" : {
+                "additionalProperties" : false,
+                "properties" : {
+                  "content" : {
+                    "description" : "New file content, at most 1 MiB of UTF-8; creates missing parent directories.",
+                    "type" : "string"
+                  }
+                },
+                "required" : [
+                  "content"
+                ],
+                "type" : "object"
+              },
+              "path" : {
+                "description" : "Relative repository path with forward slashes; no traversal, .git or symlinks.",
+                "type" : "string"
+              },
+              "replace" : {
+                "additionalProperties" : false,
+                "properties" : {
+                  "new" : {
+                    "description" : "Replacement text within the edit's combined 1 MiB UTF-8 limit.",
+                    "type" : "string"
+                  },
+                  "old" : {
+                    "description" : "Text occurring exactly once; old and new together are at most 1 MiB of UTF-8.",
+                    "minLength" : 1,
+                    "type" : "string"
+                  }
+                },
+                "required" : [
+                  "old",
+                  "new"
+                ],
+                "type" : "object"
+              }
+            },
+            "required" : [
+              "path"
+            ],
+            "type" : "object"
+          },
+          "maxItems" : 64,
+          "minItems" : 1,
+          "type" : "array"
+        },
+        "message" : {
+          "description" : "Conventional Commit message using feat, fix, docs, style, refactor, perf, test, build, ci, chore or revert; optional body, no Git trailers.",
+          "type" : "string"
+        },
+        "scope" : {
+          "description" : "Delivery scope id from delivery.scopes.list.",
+          "type" : "string"
+        },
+        "slug" : {
+          "description" : "Branch suffix; the commit type supplies the branch prefix.",
+          "maxLength" : 48,
+          "pattern" : "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "type" : "string"
+        },
+        "workspace_id" : {
+          "description" : "Stable workspace id returned by workspace.list.",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "scope",
+        "message",
+        "slug",
+        "edits"
+      ],
+      "type" : "object"
+    },
+    "name" : "delivery.apply",
+    "outputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "result" : {
+
+        }
+      },
+      "required" : [
+        "result"
+      ],
+      "type" : "object"
+    },
+    "title" : "Delivery Apply"
+  },
+  "delivery.scopes.list" : {
+    "_meta" : {
+      "securitySchemes" : [
+        {
+          "type" : "noauth"
+        }
+      ]
+    },
+    "annotations" : {
+      "destructiveHint" : false,
+      "openWorldHint" : false,
+      "readOnlyHint" : true
+    },
+    "capability" : {
+      "localOnly" : false,
+      "risk" : "read-only",
+      "usesNetwork" : false,
+      "workspaceRequirement" : "required"
+    },
+    "description" : "List the host-declared delivery scopes for the current workspace, including repository, path globs, default branch, worktree root, sparse checkout and delivery mode.",
+    "inputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "workspace_id" : {
+          "description" : "Stable workspace id returned by workspace.list.",
+          "type" : "string"
+        }
+      },
+      "required" : [
+
+      ],
+      "type" : "object"
+    },
+    "name" : "delivery.scopes.list",
+    "outputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "result" : {
+
+        }
+      },
+      "required" : [
+        "result"
+      ],
+      "type" : "object"
+    },
+    "title" : "Delivery Scopes List"
+  },
   "env.describe" : {
     "_meta" : {
       "securitySchemes" : [

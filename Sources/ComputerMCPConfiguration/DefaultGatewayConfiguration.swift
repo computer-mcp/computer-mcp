@@ -18,6 +18,7 @@ package enum DefaultGatewayConfiguration {
     computer.verify
     computer.windows
     csv.read
+    delivery.scopes.list
     env.describe
     file.compare_trees
     file.count
@@ -221,6 +222,7 @@ package enum DefaultGatewayConfiguration {
     file.trash
     file.write
     file.write_files
+    delivery.apply
     git.add
     git.branch_create
     git.branch_delete

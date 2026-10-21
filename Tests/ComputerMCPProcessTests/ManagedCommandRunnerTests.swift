@@ -57,6 +57,22 @@ struct ManagedCommandRunnerTests {
   }
 
   @Test
+  func invocationInputRoundTripsAndCloses() async throws {
+    let input = Data([0, 255, 128, 10]) + Data(repeating: 97, count: 131_072)
+    let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
+      try ManagedCommandRunner().runData(
+        executable: try testExecutable("cat"),
+        invocation: .init(arguments: [], standardInput: input),
+        workingDirectory: FileManager.default.temporaryDirectory,
+        environment: ["PATH": systemUtilityPath], timeoutMilliseconds: 5000,
+        maxOutputBytes: input.count)
+    }
+    #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderrString)")
+    #expect(result.stdout == input)
+    #expect(!result.stdoutTruncated && !result.stderrTruncated)
+  }
+
+  @Test
   func timeoutReclaimsANonCooperativeProcessGroup() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

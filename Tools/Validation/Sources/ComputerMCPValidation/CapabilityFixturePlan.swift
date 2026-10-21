@@ -72,6 +72,8 @@ public struct CapabilityFixturePlan: Sendable {
       return invocation([:], marker: workspaceID)
     case "workspace.describe":
       return primary([:], marker: workspaceID)
+    case "delivery.scopes.list":
+      return primary([:], marker: "scopes")
     case "policy.probe":
       return invocation(
         ["capability_id": .string("workspace.list")],

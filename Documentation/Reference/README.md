@@ -10,6 +10,7 @@ This directory contains detailed operational reference material.
 - [Control Plane Capabilities](ControlPlaneCapabilities.md): shared App/CLI
   management inventory, ownership, and secret-input rules.
 - [Tools](Tools.md): complete gateway tool families and result contracts.
+- [Isolated delivery](Delivery.md): declared scopes, edit-and-land tools, journals and recovery.
 - [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
 - [Scoped Host Services](HostServices.md): inherited MCP callbacks, approval
   ownership, derived registrations, diagnostics and recovery.

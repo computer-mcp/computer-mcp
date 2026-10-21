@@ -275,6 +275,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       lifetime.onShutdown { access.close() }
       var workspaceConfiguration = configuration
       workspaceConfiguration.workspaceDirectory = access.rootURL.standardizedFileURL
+      workspaceConfiguration.delivery.scopes = configuration.delivery.scopes.filter {
+        $0.workspace == workspace.id
+      }
       let shellManager = SubprocessShellRuntime(
         ownedWork: ownedWork, workspaceID: workspace.id, sessions: terminalSessions,
         scope: .workspace(

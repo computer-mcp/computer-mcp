@@ -1110,6 +1110,16 @@ final class LiveAppControlPlane: AppControlPlane {
         )
       )
     }
+    if !configuration.delivery.scopes.isEmpty {
+      summaries.append(
+        ProviderSummary(
+          id: "delivery", displayName: "Delivery", kind: .builtin, state: inProcessState,
+          version: nil, executablePath: nil,
+          toolCount: configuration.builtin.enabled.filter { $0.hasPrefix("delivery.") }.count,
+          lastDoctorMessage: AppLocalization.formatted(
+            "%@ delivery scope(s)", String(configuration.delivery.scopes.count)),
+          lastError: nil, lifecycleManaged: false))
+    }
     if configuration.skills.enabled {
       summaries.append(
         ProviderSummary(

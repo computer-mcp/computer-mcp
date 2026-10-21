@@ -198,6 +198,24 @@ struct PluginManagementModelTests {
   }
 
   @Test
+  func refusedSettingsSaveKeepsTheTypedRefusalForTheEditor() async throws {
+    let service = PluginManagementFake(current: try snapshot(revision: 1))
+    let model = PluginManagementModel(controlPlane: service)
+    await model.reload()
+    let refusal = PluginCompatibilityRefusal(
+      pluginID: "sample", version: try PluginVersion("1.2.3"), reason: .hostUpdateRequired,
+      requirement: .pluginAPI(declared: 2, supported: .supported))
+    service.changeError = ControlSocketCallError(
+      code: refusal.code, message: refusal.message, refusal: refusal)
+    let draft = PluginSettingsDraft(id: "sample", snapshot: try #require(model.snapshot))
+    let success = await model.apply(
+      .settings(pluginID: draft.id, try draft.settings()), expectedRevision: draft.revision)
+    #expect(!success)
+    #expect(model.refusal == refusal)
+    #expect(model.errorMessage == refusal.message)
+  }
+
+  @Test
   func staleEditorIsNotSilentlyRebasedOrRetried() async throws {
     let service = PluginManagementFake(current: try snapshot(revision: 1))
     let model = PluginManagementModel(controlPlane: service)
@@ -403,6 +421,7 @@ private final class PluginManagementFake: PluginManaging {
   var onFetch: (() async throws -> PluginHostSnapshot)?
   var beforeChange: (() async -> Void)?
   var resultIssues: [PluginStoreIssue] = []
+  var changeError: (any Error)?
   private(set) var changeCount = 0
   private(set) var receivedRevisions: [Int64] = []
 
@@ -419,6 +438,7 @@ private final class PluginManagementFake: PluginManaging {
     changeCount += 1
     receivedRevisions.append(expectedRevision)
     await beforeChange?()
+    if let changeError { throw changeError }
     guard expectedRevision == current.state.revision else {
       throw PluginStoreError.staleRevision(
         expected: expectedRevision, actual: current.state.revision)

@@ -37,6 +37,24 @@ struct PluginReleaseTests {
   }
 
   @Test
+  func refusedReleaseIssuesAreNoticesAndOtherIssuesKeepTheirMessages() throws {
+    let refusal = PluginCompatibilityRefusal(
+      pluginID: "combined", version: try PluginVersion("1.2.3"), reason: .pluginUpdateRequired,
+      requirement: .pluginAPI(declared: 1, supported: PluginAPIVersions(2...2)))
+    let refused = PluginCatalogIssue(
+      repository: "computer-mcp/combined", code: refusal.code, message: refusal.message,
+      refusal: refusal)
+    let withdrawn = PluginCatalogIssue(
+      repository: "computer-mcp/combined", code: "plugin.catalog.withdrawn",
+      message: "Withdrawn by its publisher.")
+    let locale = Locale(identifier: "zh-Hans")
+    #expect(PluginReleaseIssuePresentation(refused, locale: locale) == .refusal(refusal))
+    #expect(
+      PluginReleaseIssuePresentation(withdrawn, locale: locale)
+        == .message("Withdrawn by its publisher."))
+  }
+
+  @Test
   func pageLabelUsesTheViewLocale() throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()

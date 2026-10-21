@@ -51,7 +51,12 @@ struct PluginReleaseView: View {
         }
       }
       if let error = model.errorMessage {
-        Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
+        // A refusal in a loaded release is shown with its issue; this one failed the request.
+        if let refusal = model.refusal {
+          PluginRefusalNotice(refusal: refusal)
+        } else {
+          Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
+        }
       }
       if let result = model.result {
         let pageLabel = AppLocalization.formatted(
@@ -66,13 +71,17 @@ struct PluginReleaseView: View {
         }
         if !result.issues.isEmpty {
           ForEach(Array(result.issues.enumerated()), id: \.offset) { _, issue in
-            let message =
-              issue.code == "plugin.catalog.withdrawn"
-              ? issue.message
-              : AppLocalization.errorDescription(
-                issue.message, preferredLocalizations: [locale.identifier])
-            Text(verbatim: message)
-              .foregroundStyle(.orange)
+            switch PluginReleaseIssuePresentation(issue, locale: locale) {
+            case .refusal(let refusal):
+              PluginRefusalNotice(refusal: refusal)
+            case .message(let message):
+              Label {
+                Text(verbatim: message)
+              } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                  .symbolRenderingMode(.multicolor)
+              }
+            }
           }
         }
         if let status = result.catalog, status.stale {
@@ -158,7 +167,9 @@ struct PluginReleaseView: View {
         bundle: AppLocalization.resourceBundle
       )
       .font(.caption).foregroundStyle(.secondary)
-      if let error = management.errorMessage {
+      if let refusal = management.refusal {
+        PluginRefusalNotice(refusal: refusal)
+      } else if let error = management.errorMessage {
         Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
       }
       if stale {
@@ -225,6 +236,24 @@ struct PluginReleaseView: View {
       if await management.apply(.installRelease(artifact), expectedRevision: selection.revision) {
         dismiss()
       }
+    }
+  }
+}
+
+/// How a release issue is shown: refusals name the side to update; other issues show their message.
+enum PluginReleaseIssuePresentation: Equatable {
+  case refusal(PluginCompatibilityRefusal)
+  case message(String)
+
+  init(_ issue: PluginCatalogIssue, locale: Locale) {
+    if let refusal = issue.refusal {
+      self = .refusal(refusal)
+    } else if issue.code == "plugin.catalog.withdrawn" {
+      self = .message(issue.message)
+    } else {
+      self = .message(
+        AppLocalization.errorDescription(
+          issue.message, preferredLocalizations: [locale.identifier]))
     }
   }
 }

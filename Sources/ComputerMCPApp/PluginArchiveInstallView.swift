@@ -48,7 +48,11 @@ struct PluginArchiveInstallView: View {
       }
       .formStyle(.grouped)
       .disabled(model.isSaving)
-      if let error = model.errorMessage {
+      if let refusal = model.refusal {
+        PluginRefusalNotice(refusal: refusal)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(16)
+      } else if let error = model.errorMessage {
         Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled).padding(16)
       }
       Divider()

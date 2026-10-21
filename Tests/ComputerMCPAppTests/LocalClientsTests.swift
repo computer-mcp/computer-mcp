@@ -79,7 +79,7 @@ struct LocalClientsTests {
   @Test
   func resultsAndErrorsReadAsSentences() async throws {
     let fixture = try LocalClientsFixture()
-    let plan = try fixture.fake.previewClientRegistration(
+    let plan = try await fixture.fake.previewClientRegistration(
       client: .claudeDesktop, operation: .register
     ).display
     let uncertain = LocalClientsModel.outcome(
@@ -92,12 +92,107 @@ struct LocalClientsTests {
         outcome: .failed, errorCode: .clientRunning, steps: [], finalState: .notRegistered,
         finalEntry: nil, appliesAfter: plan.appliesAfter), plan: plan)
     #expect(
-      running.message == AppLocalization.formatted("Quit %@, then try again.", "Claude Desktop"))
+      running.message.hasPrefix(
+        AppLocalization.formatted("Quit %@, then try again.", "Claude Desktop")))
     let thrown = LocalClientsModel.failure(
       ClientRegistrationError(.writerBusy), client: .claudeDesktop)
     #expect(
       thrown.message
         == AppLocalization.string("Another client change is in progress. Try again shortly."))
+  }
+
+  @Test
+  func anUncertainChangeWaitsForAnExplicitRefresh() async throws {
+    let fixture = try LocalClientsFixture()
+    fixture.fake.applyOverride = { plan in
+      ClientRegistrationResult(
+        outcome: .uncertain, errorCode: .uncertain,
+        steps: [.init(step: "add", outcome: .uncertain, exitCode: nil)],
+        finalState: .notRegistered, finalEntry: nil, appliesAfter: plan.display.appliesAfter)
+    }
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    await model.reload()
+    await model.beginReview(.claudeDesktop, operation: .register)
+    await model.confirm(try #require(model.review))
+    #expect(model.uncertainClients == [.claudeDesktop])
+    #expect(model.outcome?.title == AppLocalization.string("Result unknown"))
+    #expect(model.outcome?.message.contains(AppLocalization.string("adding the new entry")) == true)
+    let reads = fixture.fake.fetchCount
+    await model.reload()
+    await model.beginReview(.claudeDesktop, operation: .register)
+    #expect(fixture.fake.fetchCount == reads)
+    #expect(model.review == nil)
+    await model.reload(explicit: true)
+    #expect(fixture.fake.fetchCount == reads + 1)
+    #expect(model.uncertainClients.isEmpty)
+  }
+
+  @Test(arguments: [false, true])
+  func aFailedReplacementSaysWhetherTheEntryWasRestored(restored: Bool) async throws {
+    let fixture = try LocalClientsFixture()
+    let plan = try await fixture.fake.previewClientRegistration(
+      client: .claudeDesktop, operation: .register
+    ).display
+    let outcome = LocalClientsModel.outcome(
+      ClientRegistrationResult(
+        outcome: .failed, errorCode: .processFailed,
+        steps: [
+          .init(step: "remove", outcome: .succeeded, exitCode: 0),
+          .init(step: "add", outcome: .failed, exitCode: 1),
+          .init(step: "restore", outcome: restored ? .succeeded : .failed, exitCode: 1),
+        ],
+        finalState: restored ? .different : .notRegistered, finalEntry: nil,
+        appliesAfter: plan.appliesAfter), plan: plan)
+    let restoration =
+      restored
+      ? AppLocalization.string("The previous entry was restored.")
+      : AppLocalization.formatted(
+        "The previous entry couldn't be restored. Check %@'s settings.", "Claude Desktop")
+    #expect(outcome.message.contains(restoration))
+    #expect(
+      outcome.message.contains(
+        AppLocalization.formatted(
+          "It now shows: %@.",
+          AppLocalization.string(restored ? "Different entry" : "Not connected"))))
+  }
+
+  @Test
+  func everyErrorCodeReadsAsASentence() {
+    let codes: [ClientRegistrationErrorCode] = [
+      .changedSincePreview, .confirmationRequired, .unsupportedEntry, .clientRunning,
+      .unavailable, .unreadable, .writerBusy, .writeFailed, .invalidInput,
+      .invalidServerExecutable, .supportDirectoryMissing, .processFailed, .uncertain,
+    ]
+    for code in codes {
+      for client in RegistrationClient.allCases {
+        let message = LocalClientsModel.message(for: code, client: client)
+        #expect(!message.isEmpty && !message.contains(code.rawValue))
+      }
+    }
+  }
+
+  @Test
+  func overlappingReviewsStartOnePreview() async throws {
+    let fixture = try LocalClientsFixture()
+    let (started, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    var release: CheckedContinuation<Void, Never>?
+    fixture.fake.previewGate = {
+      await withCheckedContinuation {
+        release = $0
+        signal.yield(())
+      }
+    }
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    let first = Task { await model.beginReview(.claudeDesktop, operation: .register) }
+    var iterator = started.makeAsyncIterator()
+    _ = await iterator.next()
+    #expect(model.busyClient == .claudeDesktop)
+    await model.beginReview(.codex, operation: .register)
+    fixture.fake.previewGate = nil
+    release?.resume()
+    await first.value
+    #expect(fixture.fake.previewCount == 1)
+    #expect(model.review?.plan.display.client == .claudeDesktop)
   }
 
   @Test
@@ -122,7 +217,7 @@ struct LocalClientsTests {
     #expect(!String(describing: replacement.plan.display).contains("SENTINEL"))
     try fixture.writeDesktopConfiguration(#"{"mcpServers":[]}"#)
     let refused = LocalClientReview(
-      plan: try fixture.fake.previewClientRegistration(
+      plan: try await fixture.fake.previewClientRegistration(
         client: .claudeDesktop, operation: .register))
     #expect(refused.plan.display.refusalCode == .unreadable)
     for dark in [false, true] {
@@ -192,7 +287,11 @@ private final class LocalClientsFake: LocalClientRegistering {
   let service: ClientRegistrationService
   let server: ClientRegistrationCommand
   var statusOverride: [ClientRegistrationStatus]?
+  var applyOverride: ((ClientRegistrationPlan) -> ClientRegistrationResult)?
+  var previewGate: (() async -> Void)?
   var applied: [String] = []
+  var fetchCount = 0
+  var previewCount = 0
 
   init(service: ClientRegistrationService, server: ClientRegistrationCommand) {
     self.service = service
@@ -200,17 +299,21 @@ private final class LocalClientsFake: LocalClientRegistering {
   }
 
   func fetchClientRegistrations() async throws -> [ClientRegistrationStatus] {
-    try statusOverride ?? service.statuses(server: server)
+    fetchCount += 1
+    return try statusOverride ?? service.statuses(server: server)
   }
   func previewClientRegistration(client: RegistrationClient, operation: ClientRegistrationOperation)
-    throws -> ClientRegistrationPlan
+    async throws -> ClientRegistrationPlan
   {
-    try service.preview(client: client, operation: operation, server: server)
+    previewCount += 1
+    if let previewGate { await previewGate() }
+    return try service.preview(client: client, operation: operation, server: server)
   }
   func applyClientRegistration(_ plan: ClientRegistrationPlan) async throws
     -> ClientRegistrationResult
   {
     applied.append(plan.fingerprint)
+    if let applyOverride { return applyOverride(plan) }
     return try service.apply(plan)
   }
 }

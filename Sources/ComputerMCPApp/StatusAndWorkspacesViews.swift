@@ -16,7 +16,7 @@ struct HomeView: View {
           gatewayAction
           RefreshButton {
             model.refresh(.home)
-            Task { await localClients.reload() }
+            Task { await localClients.reload(explicit: true) }
           }
         }
       }

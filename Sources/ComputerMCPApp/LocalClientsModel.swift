@@ -29,6 +29,9 @@ final class LocalClientsModel: ObservableObject {
   @Published private(set) var busyClient: RegistrationClient?
   @Published var review: LocalClientReview?
   @Published var outcome: LocalClientOutcome?
+  /// Clients whose last change ended without a confirmed process exit. Reading their state
+  /// starts more client processes, so it waits for an explicit refresh.
+  @Published private(set) var uncertainClients: Set<RegistrationClient> = []
 
   private let controlPlane: any LocalClientRegistering
   private var loadGeneration = 0
@@ -40,7 +43,13 @@ final class LocalClientsModel: ObservableObject {
   }
 
   /// Reading states starts each client's CLI, so callers reload on demand, not on a timer.
-  func reload() async {
+  /// After an uncertain change only an explicit reload reads again.
+  func reload(explicit: Bool = false) async {
+    if explicit {
+      uncertainClients = []
+    } else if !uncertainClients.isEmpty {
+      return
+    }
     loadGeneration += 1
     let generation = loadGeneration
     do {
@@ -55,7 +64,7 @@ final class LocalClientsModel: ObservableObject {
   }
 
   func beginReview(_ client: RegistrationClient, operation: ClientRegistrationOperation) async {
-    guard busyClient == nil, review == nil else { return }
+    guard busyClient == nil, review == nil, !uncertainClients.contains(client) else { return }
     busyClient = client
     defer { busyClient = nil }
     do {
@@ -74,15 +83,23 @@ final class LocalClientsModel: ObservableObject {
     guard busyClient == nil, review?.id == reviewed.id else { return }
     review = nil
     let plan = reviewed.plan
-    busyClient = plan.display.client
+    let client = plan.display.client
+    busyClient = client
+    var uncertain = false
     do {
-      outcome = Self.outcome(
-        try await controlPlane.applyClientRegistration(plan), plan: plan.display)
+      let result = try await controlPlane.applyClientRegistration(plan)
+      uncertain = result.outcome == .uncertain
+      outcome = Self.outcome(result, plan: plan.display)
     } catch {
-      outcome = Self.failure(error, client: plan.display.client)
+      uncertain = (error as? ClientRegistrationError)?.code == .uncertain
+      outcome = Self.failure(error, client: client)
     }
     busyClient = nil
-    await reload()
+    if uncertain {
+      uncertainClients.insert(client)
+    } else {
+      await reload()
+    }
   }
 
   static func outcome(_ result: ClientRegistrationResult, plan: ClientRegistrationDisplayPlan)
@@ -98,15 +115,40 @@ final class LocalClientsModel: ObservableObject {
             : "Removed from %@", name),
         message: AppLocalization.string(result.appliesAfter))
     case .uncertain:
+      let step = result.steps.last { $0.outcome == .uncertain }?.step
       return LocalClientOutcome(
         title: AppLocalization.string("Result unknown"),
         message: AppLocalization.formatted(
-          "Computer MCP couldn't confirm whether %@ applied the change. Check its settings before trying again.",
-          name))
+          "Computer MCP couldn't confirm whether %@ finished %@. It last showed: %@. Check its settings, then refresh before trying again.",
+          name, stepDescription(step), AppLocalization.string(result.finalState.localClientLabel)))
     case .failed:
+      var sentences = [message(for: result.errorCode ?? .processFailed, client: plan.client)]
+      if let restore = result.steps.last(where: { $0.step == "restore" }) {
+        sentences.append(
+          restore.outcome == .succeeded
+            ? AppLocalization.string("The previous entry was restored.")
+            : AppLocalization.formatted(
+              "The previous entry couldn't be restored. Check %@'s settings.", name))
+      }
+      sentences.append(
+        AppLocalization.formatted(
+          "It now shows: %@.", AppLocalization.string(result.finalState.localClientLabel)))
       return LocalClientOutcome(
         title: AppLocalization.formatted("Couldn't change %@", name),
-        message: message(for: result.errorCode ?? .processFailed, client: plan.client))
+        message: sentences.joined(separator: " "))
+    }
+  }
+
+  /// Describes a registration step for a sentence that follows "finished".
+  static func stepDescription(_ step: String?) -> String {
+    switch step {
+    case "remove": AppLocalization.string("removing the old entry")
+    case "add": AppLocalization.string("adding the new entry")
+    case "restore": AppLocalization.string("restoring the previous entry")
+    case "register": AppLocalization.string("saving the entry")
+    case "read": AppLocalization.string("reading its settings")
+    case "probe": AppLocalization.string("checking its command")
+    default: AppLocalization.string("the change")
     }
   }
 
@@ -134,7 +176,8 @@ final class LocalClientsModel: ObservableObject {
     case .clientRunning:
       return AppLocalization.formatted("Quit %@, then try again.", name)
     case .unavailable:
-      return AppLocalization.formatted("%@ isn't installed on this Mac.", name)
+      return AppLocalization.formatted(
+        "%@ isn't available: it isn't installed, or its command didn't respond.", name)
     case .unreadable:
       return AppLocalization.formatted(
         "Computer MCP couldn't read %@'s settings. Nothing was changed.", name)
@@ -153,6 +196,19 @@ final class LocalClientsModel: ObservableObject {
       return AppLocalization.formatted(
         "Computer MCP couldn't confirm whether %@ applied the change. Check its settings before trying again.",
         name)
+    }
+  }
+}
+
+extension ClientRegistrationState {
+  /// Localization key for the state as shown in Home and in result messages.
+  var localClientLabel: String {
+    switch self {
+    case .registered: "Connected"
+    case .notRegistered: "Not connected"
+    case .different: "Different entry"
+    case .unavailable: "Unavailable"
+    case .unreadable: "Settings can't be read"
     }
   }
 }

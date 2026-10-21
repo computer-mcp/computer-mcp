@@ -28,10 +28,20 @@ private struct LocalClientRow: View {
     let status = model.status(for: client)
     LabeledContent {
       HStack(spacing: 10) {
-        stateLabel(status?.state)
+        if model.uncertainClients.contains(client) {
+          Label {
+            Text("Result unknown — refresh to check", bundle: AppLocalization.resourceBundle)
+          } icon: {
+            Image(systemName: "questionmark.circle").foregroundStyle(.orange)
+          }
+        } else {
+          stateLabel(status?.state)
+        }
         if model.busyClient == client {
           ProgressView().controlSize(.small)
-        } else if let operation = operation(for: status?.state) {
+        } else if !model.uncertainClients.contains(client),
+          let operation = operation(for: status?.state)
+        {
           Button {
             Task { await model.beginReview(client, operation: operation) }
           } label: {
@@ -65,7 +75,11 @@ private struct LocalClientRow: View {
         Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
       }
     case .unavailable:
-      Text("Not installed", bundle: AppLocalization.resourceBundle).foregroundStyle(.secondary)
+      Text("Unavailable", bundle: AppLocalization.resourceBundle).foregroundStyle(.secondary)
+        .help(
+          Text(
+            "Not installed, or its command didn't respond.", bundle: AppLocalization.resourceBundle)
+        )
     case .unreadable:
       Label {
         Text("Settings can't be read", bundle: AppLocalization.resourceBundle)

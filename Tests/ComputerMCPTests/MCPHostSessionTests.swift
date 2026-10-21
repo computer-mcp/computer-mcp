@@ -11,6 +11,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))

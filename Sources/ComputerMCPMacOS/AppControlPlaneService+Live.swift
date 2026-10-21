@@ -1,6 +1,7 @@
 import ComputerMCP
 import ComputerMCPPersistence
 import ComputerMCPPlatformDarwin
+import ComputerMCPPlugins
 import ComputerMCPTunnels
 import Foundation
 
@@ -16,16 +17,17 @@ extension AppControlPlaneService {
     let database = try GatewayDatabase(path: resolvedDirectories.database.path)
     try resolvedDirectories.secureDatabaseFiles()
     let bundledPlugins = BundledPlugins.current
+    let platform = MacOSPlatform.services
     let manifestStore = try AtomicManifestStore(
       manifestURL: resolvedDirectories.manifest,
       database: database,
-      loader: GatewayManifestConfigurationLoader(database: database, bundledPlugins: bundledPlugins)
+      loader: GatewayManifestConfigurationLoader(
+        database: database, bundledPlugins: bundledPlugins, applications: platform.applications)
     )
     let secretStore = try KeychainSecretStore(
       service: keychainService,
       accessGroup: keychainAccessGroup
     )
-    let platform = MacOSPlatform.services
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
       secretStore: secretStore, executableSearchDirectories: platform.executableSearchDirectories,
       proxyResolver: SystemNetworkProxyResolver())

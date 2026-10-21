@@ -5,7 +5,7 @@ import Foundation
 
 /// Owns a private directory created by the host or reopened from its ownership receipt.
 /// All child writes and cleanup are anchored to open directory descriptors.
-package final class PluginArchiveDirectory {
+package final class PluginArchiveDirectory: PluginArchiveStagingDirectory {
   package let url: URL
   package let descriptor: Int32
   private let parent: Int32
@@ -53,7 +53,10 @@ package final class PluginArchiveDirectory {
     do {
       guard fstat(descriptor, &status) == 0, status.st_uid == geteuid(),
         status.st_mode & 0o077 == 0,
-        try identity.map({ try $0.matches(status, descriptor: descriptor) }) ?? true
+        try identity.map({
+          try DarwinPluginArchiveDirectoryFactory().matches(
+            $0, status: status, descriptor: descriptor)
+        }) ?? true
       else { throw PluginArchiveError.fileSystemFailure }
     } catch {
       Darwin.close(descriptor)
@@ -106,7 +109,8 @@ package final class PluginArchiveDirectory {
     guard stillOwnsName(), fstat(descriptor, &status) == 0 else {
       throw PluginArchiveError.fileSystemFailure
     }
-    return try PluginDirectoryIdentity(url: url, status: status, descriptor: descriptor)
+    return try DarwinPluginArchiveDirectoryFactory().identity(
+      url: url, status: status, descriptor: descriptor)
   }
 
   /// Only the reserved staging child is disposable in a committed installation.

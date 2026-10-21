@@ -4,6 +4,7 @@ import ComputerMCPDownstream
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPTransport
 import CryptoKit
@@ -194,13 +195,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let pluginState = try (pluginState ?? database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
     let artifactLeases = try Self.retainPluginArtifacts(
-      state: pluginState, plugins: plugins, database: database, transaction: artifactStorage)
+      state: pluginState, plugins: plugins, database: database,
+      directoryFactory: platform.pluginDirectories, transaction: artifactStorage)
     lifetime.onShutdown {
       for lease in artifactLeases { lease.close() }
     }
     sourceConfiguration.knownPluginMCPServerIDs.formUnion(pluginState.knownMCPRegistrationIDs)
     let resolved =
-      try plugins == nil ? PluginHost.resolve(pluginState, bundled: bundledPlugins) : nil
+      try plugins == nil
+      ? PluginHost.resolve(
+        pluginState, bundled: bundledPlugins, applications: platform.applications) : nil
     let composition = try GatewayPluginComposition(
       configuration: sourceConfiguration, plugins: plugins ?? resolved?.plugins ?? [])
     let configuration = composition.runtimeConfiguration

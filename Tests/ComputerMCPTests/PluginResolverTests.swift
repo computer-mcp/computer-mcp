@@ -9,6 +9,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 struct PluginResolverTests {
@@ -28,7 +29,8 @@ struct PluginResolverTests {
     let environment = ["PATH": "/usr/bin:/bin"]
     let resolution = try PluginStore.resolve(
       snapshot: state, bundled: [fixture.package], hostVersion: PluginVersion("1.0.29"),
-      architecture: "arm64", environment: environment)
+      architecture: "arm64", environment: environment,
+      applications: MacOSPlatform.services.applications)
     let plugin = try #require(resolution.plugins.first)
     #expect(plugin.diagnostics.isEmpty)
     let server = try #require(plugin.mcpServers.first)
@@ -45,7 +47,8 @@ struct PluginResolverTests {
     let report = try PluginDoctorReport.inspect(
       pluginID: fixture.package.manifest.id, state: state,
       bundled: .init(packages: [fixture.package], issues: []),
-      hostVersion: PluginVersion("1.0.29"), architecture: "arm64", environment: environment)
+      hostVersion: PluginVersion("1.0.29"), architecture: "arm64", environment: environment,
+      applications: MacOSPlatform.services.applications)
     #expect(report.status == .passed)
     let inspection = try #require(
       report.checks.first { $0.id == "mcp:native:executable" }?.inspection)
@@ -101,7 +104,7 @@ struct PluginResolverTests {
     #expect(plugin.mcpServers.first?.args == ["mcp"])
   }
 
-  private static let scriptManifest = PluginManifestTests.combined
+  private static let scriptManifest = PluginManifestFixture.combined
     .replacingOccurrences(of: "commands = ['vendor-cli']", with: "commands = ['python3']")
     .replacingOccurrences(
       of: "executable = { dependency = 'vendor' }", with: "executable = { path = 'adapter' }"
@@ -150,7 +153,7 @@ struct PluginResolverTests {
   @Test
   func httpContributionRejectsProcessArguments() throws {
     let fixture = try CompositionFixture(
-      text: PluginManifestTests.header + """
+      text: PluginManifestFixture.header + """
 
         [[mcp]]
         id = 'native'
@@ -284,7 +287,7 @@ struct PluginResolverTests {
     let resolution = try PluginStore.resolve(
       snapshot: state, bundled: [fixture.package], hostVersion: PluginVersion("1.0.29"),
       architecture: "arm64", searchDirectories: [URL(fileURLWithPath: "/usr/bin")],
-      environment: ["PATH": fixture.root.path])
+      environment: ["PATH": fixture.root.path], applications: MacOSPlatform.services.applications)
     let plugin = try #require(resolution.plugins.first)
     #expect(plugin.mcpServers.isEmpty && plugin.cliCommands.isEmpty)
     #expect(plugin.skillRoots.count == 1)
@@ -424,7 +427,7 @@ struct PluginResolverTests {
     #expect(payload.objectValue?["stdout"] == .string("空 格;$(no-execution)"))
     #expect(payload.objectValue?["exit_code"] == .number(0))
     #expect(output.objectValue?["isError"] == .bool(false))
-    let structured = try CompositionFixture(text: PluginManifestTests.combined)
+    let structured = try CompositionFixture(text: PluginManifestFixture.combined)
     defer { structured.cleanup() }
     #expect(throws: ConfigurationError.self) { try structured.resolve(settings: settings) }
   }
@@ -484,7 +487,7 @@ struct PluginResolverTests {
   @Test
   func incompatibleHostDoesNotActivateAnyContribution() throws {
     let fixture = try CompositionFixture(
-      text: PluginManifestTests.header + """
+      text: PluginManifestFixture.header + """
         [compatibility]
         minimum_host = '99.0.0'
         [[skills]]
@@ -554,7 +557,7 @@ private struct CompositionFixture {
       at: root.appendingPathComponent("skills/example"), withIntermediateDirectories: true)
     let content =
       text
-      ?? PluginManifestTests.combined.replacingOccurrences(
+      ?? PluginManifestFixture.combined.replacingOccurrences(
         of: "tree = { kind = 'introspection', args = ['schema', '--json'] }\n", with: "")
     try content.write(
       to: root.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8)

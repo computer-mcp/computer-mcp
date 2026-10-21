@@ -1,13 +1,15 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPersistence
+import ComputerMCPPlugins
 import Foundation
 
 extension AppControlPlaneService {
   package func doctorPlugin(id: String) throws -> PluginDoctorReport {
     try PluginDoctorReport.inspect(
       pluginID: id, state: database.pluginStoreSnapshot(), bundled: bundledPlugins,
-      hostVersion: PluginVersion(ComputerMCPCLI.version), architecture: PluginHost.architecture)
+      hostVersion: PluginVersion(ComputerMCPCLI.version), architecture: PluginHost.architecture,
+      applications: platform.applications)
   }
 
   package func pluginReleaseArtifacts(
@@ -27,7 +29,8 @@ extension AppControlPlaneService {
   package func pluginSnapshot() throws -> PluginHostSnapshot {
     try PluginHostSnapshot(
       state: database.pluginStoreSnapshot(), issues: pluginRecoveryIssues,
-      recoveryError: pluginRecoveryError, bundled: bundledPlugins)
+      recoveryError: pluginRecoveryError, bundled: bundledPlugins,
+      applications: platform.applications)
   }
 
   /// Run after the App has claimed its control socket, before admitting gateway clients.
@@ -38,7 +41,7 @@ extension AppControlPlaneService {
     pluginRecoveryAttempted = true
     configurationMutationInProgress = true
     defer { configurationMutationInProgress = false }
-    try? await recoverPluginFiles(using: PluginStore(database: database))
+    try? await recoverPluginFiles(using: PluginStore(database: database, platform: platform))
   }
 
   private func recoverPluginFiles(using store: PluginStore, expectedRevision: Int64? = nil)
@@ -66,7 +69,9 @@ extension AppControlPlaneService {
       knownPluginMCPServerIDs: state.knownMCPRegistrationIDs)
     _ = try GatewayPluginComposition(
       configuration: configuration,
-      plugins: PluginHost.resolve(state, bundled: bundledPlugins).plugins)
+      plugins: PluginHost.resolve(
+        state, bundled: bundledPlugins, applications: platform.applications
+      ).plugins)
     return configuration
   }
 
@@ -86,7 +91,8 @@ extension AppControlPlaneService {
     let inputs = try gatewayInputs()
     let manifestStore = manifestStore
     let bundledPlugins = bundledPlugins
-    let publication: PluginStore.PublishSnapshot?
+    let platform = platform
+    let publication: GatewayPluginStateStore.PublishSnapshot?
     if let publish {
       publication = { proposed, expected, storage in
         guard expected == inputs.persisted else { throw GatewayDatabaseError.configurationChanged }
@@ -96,13 +102,15 @@ extension AppControlPlaneService {
       publication = nil
     }
     let store = PluginStore(
-      database: database, expectedConfiguration: inputs.persisted, publishSnapshot: publication
+      database: database, platform: platform, expectedConfiguration: inputs.persisted,
+      publishSnapshot: publication
     ) { proposed in
       var configuration = try manifestStore.activeConfiguration()
       configuration.knownPluginMCPServerIDs =
         proposed
         .includingBundledDefaults(bundledPlugins.packages.map(\.manifest)).knownMCPRegistrationIDs
-      let resolution = try PluginHost.resolve(proposed, bundled: bundledPlugins)
+      let resolution = try PluginHost.resolve(
+        proposed, bundled: bundledPlugins, applications: platform.applications)
       _ = try GatewayPluginComposition(configuration: configuration, plugins: resolution.plugins)
       // Source failures are diagnosable independently; a newly selected broken source must not be committed.
       if let affected = Self.affectedPluginID(change, in: proposed),
@@ -159,7 +167,7 @@ extension AppControlPlaneService {
     }
     return try PluginHostSnapshot(
       state: state, issues: pluginRecoveryIssues, recoveryError: pluginRecoveryError,
-      bundled: bundledPlugins)
+      bundled: bundledPlugins, applications: platform.applications)
   }
 
   private func pluginArchiveWorker() throws -> URL {

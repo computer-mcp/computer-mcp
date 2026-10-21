@@ -13,6 +13,7 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlugins
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
@@ -2470,7 +2471,10 @@ private struct GenerationFixture: Sendable {
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     control = AppControlPlaneService(
       directories: directories, database: database,
-      manifestStore: try AtomicManifestStore(manifestURL: directories.manifest, database: database),
+      manifestStore: try AtomicManifestStore(
+        manifestURL: directories.manifest, database: database,
+        loader: GatewayManifestConfigurationLoader(
+          database: database, applications: MacOSPlatform.services.applications)),
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         secretStore: secrets,
@@ -2481,7 +2485,10 @@ private struct GenerationFixture: Sendable {
         .deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/computer-mcp").path,
       platform: PlatformServices(
-        workspaceGrants: bookmarkService, toolProviders: MacOSPlatform.services.toolProviders,
+        workspaceGrants: bookmarkService,
+        pluginDirectories: MacOSPlatform.services.pluginDirectories,
+        applications: MacOSPlatform.services.applications,
+        toolProviders: MacOSPlatform.services.toolProviders,
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         fileChanges: MacOSPlatform.services.fileChanges),
       bundledPlugins: .init(packages: [], issues: []))

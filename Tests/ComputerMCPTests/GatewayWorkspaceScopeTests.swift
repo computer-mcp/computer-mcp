@@ -34,6 +34,8 @@ struct GatewayWorkspaceScopeTests {
       database: persisted ? database : nil, registeredWorkspaces: persisted ? nil : [workspace],
       platform: PlatformServices(
         workspaceGrants: WorkspaceBookmarkService(adapter: adapter),
+        pluginDirectories: MacOSPlatform.services.pluginDirectories,
+        applications: MacOSPlatform.services.applications,
         toolProviders: MacOSPlatform.services.toolProviders,
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         fileChanges: MacOSPlatform.services.fileChanges),
@@ -126,6 +128,8 @@ struct GatewayWorkspaceScopeTests {
       database: database,
       platform: PlatformServices(
         workspaceGrants: WorkspaceBookmarkService(adapter: adapter),
+        pluginDirectories: MacOSPlatform.services.pluginDirectories,
+        applications: MacOSPlatform.services.applications,
         toolProviders: MacOSPlatform.services.toolProviders,
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         fileChanges: MacOSPlatform.services.fileChanges),

@@ -1,7 +1,9 @@
 import ArgumentParser
 import ComputerMCP
 import ComputerMCPCore
+import ComputerMCPMacOS
 import ComputerMCPPlatform
+import ComputerMCPPlugins
 import Foundation
 
 struct BundlePluginsCommand: AsyncParsableCommand {
@@ -20,7 +22,7 @@ struct BundlePluginsCommand: AsyncParsableCommand {
       let artifacts = try await BundledPluginDistribution.prepare(
         index: URL(fileURLWithPath: index), destination: URL(fileURLWithPath: output),
         workerExecutable: worker, hostVersion: PluginVersion(ComputerMCPCLI.version),
-        architectures: architectures)
+        architectures: architectures, directoryFactory: MacOSPlatform.services.pluginDirectories)
       try FileHandle.standardOutput.write(contentsOf: JSONEncoder().encode(artifacts))
     } catch {
       let failure = error as? PluginArchiveError ?? .invalidInput

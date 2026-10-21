@@ -4,6 +4,7 @@ import ComputerMCPCore
 import ComputerMCPMacOS
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPTunnels
 import Foundation

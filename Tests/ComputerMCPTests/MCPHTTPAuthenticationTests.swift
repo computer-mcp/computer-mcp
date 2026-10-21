@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import Foundation
@@ -9,6 +10,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 
@@ -40,7 +42,7 @@ struct MCPHTTPAuthenticationTests {
   {
     let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }
-    let store = PluginStore(database: fixture.database)
+    let store = PluginStore(database: fixture.database, platform: MacOSPlatform.services)
     let endpoint = "https://example.test/mcp"
     func register(_ id: String) async throws -> URL {
       let root = fixture.root.appendingPathComponent(id)

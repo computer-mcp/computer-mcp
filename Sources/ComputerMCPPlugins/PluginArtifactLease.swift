@@ -1,0 +1,73 @@
+import ComputerMCPPlatform
+import Foundation
+import NIOConcurrencyHelpers
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+
+  // Glibc also exports a struct named flock; bind the function by its C symbol.
+  @_silgen_name("flock") private func flock(_ descriptor: Int32, _ operation: Int32) -> Int32
+#elseif canImport(Musl)
+  import Musl
+#endif
+
+/// Pins an owned installation independently of its current selection in the store.
+/// Acquisition and deletion both hold the installation transaction lock, so a
+/// reader cannot create a replacement lock while cleanup removes the directory.
+package final class PluginArtifactLease: Sendable {
+  package let identity: PluginDirectoryIdentity
+  private let descriptor: Int32
+  private let closed = NIOLockedValueBox(false)
+
+  init(directory: any PluginArchiveStagingDirectory, exclusive: Bool) throws {
+    let descriptor = openat(
+      directory.descriptor, "artifact.lock",
+      O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else { throw PluginArchiveError.fileSystemFailure }
+    do {
+      var status = stat()
+      var named = stat()
+      guard fstat(descriptor, &status) == 0, status.st_mode & S_IFMT == S_IFREG,
+        status.st_uid == geteuid(), status.st_mode & 0o077 == 0, status.st_nlink == 1
+      else { throw PluginArchiveError.invalidInput }
+      guard flock(descriptor, (exclusive ? LOCK_EX : LOCK_SH) | LOCK_NB) == 0 else {
+        if errno == EWOULDBLOCK { throw PluginStoreError.artifactInUse }
+        throw PluginArchiveError.fileSystemFailure
+      }
+      guard fstatat(directory.descriptor, "artifact.lock", &named, AT_SYMLINK_NOFOLLOW) == 0,
+        named.st_dev == status.st_dev, named.st_ino == status.st_ino
+      else { throw PluginArchiveError.fileSystemFailure }
+      self.identity = try directory.identity()
+      self.descriptor = descriptor
+    } catch {
+      closeDescriptor(descriptor)
+      throw error
+    }
+  }
+
+  deinit { close() }
+
+  /// This descriptor is private to one runtime; child ownership uses separate
+  /// process receipts. End its lock explicitly so incidental fork-before-exec
+  /// copies cannot extend a finished runtime's lease.
+  package func close() {
+    closed.withLockedValue { closed in
+      guard !closed else { return }
+      closed = true
+      flock(descriptor, LOCK_UN)
+      closeDescriptor(descriptor)
+    }
+  }
+}
+
+private func closeDescriptor(_ descriptor: Int32) {
+  #if canImport(Darwin)
+    Darwin.close(descriptor)
+  #elseif canImport(Glibc)
+    Glibc.close(descriptor)
+  #elseif canImport(Musl)
+    Musl.close(descriptor)
+  #endif
+}

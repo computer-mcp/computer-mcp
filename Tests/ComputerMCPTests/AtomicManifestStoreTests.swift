@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
@@ -75,6 +76,8 @@ final class AtomicManifestStoreTests {
     let before = try fixture.database.configurationState()
     let store = try AtomicManifestStore(
       manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications),
       fileManager: outcome == "file"
         ? RejectingManifestMetadata(manifestURL: fixture.manifestURL) : .default)
     let candidate = try store.prepare(
@@ -116,7 +119,10 @@ final class AtomicManifestStoreTests {
     let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
     let manager = RejectingManifestMetadata(manifestURL: fixture.manifestURL)
     let store = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database, fileManager: manager)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications),
+      fileManager: manager)
     #expect(try store.activeConfiguration().server.name == "original")
     #expect(throws: ManifestWriteFailure.self) {
       try store.activate(manifest: Self.manifest(name: "rejected"))
@@ -126,7 +132,9 @@ final class AtomicManifestStoreTests {
     #expect(try store.activeConfiguration().server.name == "original")
     #expect(try store.history().map(\.id) == [original.id])
     let reopened = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications))
     #expect(try reopened.activeConfiguration().server.name == "original")
   }
 
@@ -149,7 +157,10 @@ final class AtomicManifestStoreTests {
     }
     let manager = ManifestMetadataProbe(manifestURL: fixture.manifestURL)
     let store = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database, fileManager: manager)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications),
+      fileManager: manager)
     let proposed = Self.manifest(name: "rejected")
     #expect(throws: DatabaseError.self) { try store.activate(manifest: proposed) }
     // The deferred constraint fails at COMMIT, after the real replacement completed.
@@ -166,7 +177,10 @@ final class AtomicManifestStoreTests {
     defer { fixture.cleanup() }
     let manager = RejectingManifestMetadata(manifestURL: fixture.manifestURL)
     let store = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database, fileManager: manager)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications),
+      fileManager: manager)
     #expect(throws: ManifestWriteFailure.self) {
       try store.activate(manifest: Self.manifest(name: "rejected"))
     }
@@ -222,7 +236,9 @@ final class AtomicManifestStoreTests {
     if committed { try fixture.database.saveConfigurationRevision(revision) }
     let reopenedDatabase = try GatewayDatabase(path: try #require(fixture.database.fileURL).path)
     let reopened = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: reopenedDatabase)
+      manifestURL: fixture.manifestURL, database: reopenedDatabase,
+      loader: GatewayManifestConfigurationLoader(
+        database: reopenedDatabase, applications: MacOSPlatform.services.applications))
     #expect(
       try fixture.files.currentData() == (committed ? Data(revision.manifest.utf8) : previous))
     if committed || !initialActivation {
@@ -250,7 +266,10 @@ final class AtomicManifestStoreTests {
     let external = Data(Self.manifest(name: "external").utf8)
     try external.write(to: fixture.manifestURL)
     #expect(throws: AtomicManifestStoreError.recoveryConflict(fixture.manifestURL.path)) {
-      try AtomicManifestStore(manifestURL: fixture.manifestURL, database: fixture.database)
+      try AtomicManifestStore(
+        manifestURL: fixture.manifestURL, database: fixture.database,
+        loader: GatewayManifestConfigurationLoader(
+          database: fixture.database, applications: MacOSPlatform.services.applications))
     }
     #expect(try Data(contentsOf: fixture.manifestURL) == external)
     #expect(try Data(contentsOf: fixture.files.recoveryURL) == journal)
@@ -258,7 +277,9 @@ final class AtomicManifestStoreTests {
     // the same journal can recover without inventing another activated revision.
     try Data(revision.manifest.utf8).write(to: fixture.manifestURL)
     let reopened = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications))
     #expect(
       try reopened.activeConfiguration().server.name == (committed ? "candidate" : "original"))
     #expect(try reopened.history().count == (committed ? 2 : 1))
@@ -285,7 +306,10 @@ final class AtomicManifestStoreTests {
     }
     let journal = try Data(contentsOf: fixture.files.recoveryURL)
     #expect(throws: AtomicManifestStoreError.invalidRecoveryJournal) {
-      try AtomicManifestStore(manifestURL: fixture.manifestURL, database: fixture.database)
+      try AtomicManifestStore(
+        manifestURL: fixture.manifestURL, database: fixture.database,
+        loader: GatewayManifestConfigurationLoader(
+          database: fixture.database, applications: MacOSPlatform.services.applications))
     }
     #expect(try Data(contentsOf: fixture.manifestURL) == previous)
     #expect(try Data(contentsOf: fixture.files.recoveryURL) == journal)
@@ -297,7 +321,9 @@ final class AtomicManifestStoreTests {
     defer { fixture.cleanup() }
     let first = try fixture.store.activate(manifest: Self.manifest(name: "first"))
     let other = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications))
     try fixture.files.withExclusiveAccess { () throws -> Void in
       #expect(throws: AtomicManifestStoreError.changeInProgress) {
         try other.activate(manifest: Self.manifest(name: "contended"), expectedDigest: first.digest)
@@ -319,14 +345,19 @@ final class AtomicManifestStoreTests {
     _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
     let manager = RejectingRecoveryCleanup(recoveryURL: fixture.files.recoveryURL)
     let store = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database, fileManager: manager)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications),
+      fileManager: manager)
     let revision = try store.activate(manifest: Self.manifest(name: "committed"))
     #expect(try store.activeConfiguration().server.name == "committed")
     #expect(try fixture.database.configurationRevision(id: revision.id)?.digest == revision.digest)
     #expect(try permissions(at: fixture.files.recoveryURL) == 0o600)
     #expect(try permissions(at: fixture.manifestURL) == 0o600)
     let reopened = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database)
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications))
     #expect(try reopened.activeConfiguration().server.name == "committed")
     #expect(try reopened.history().count == 2)
     #expect(!FileManager.default.fileExists(atPath: fixture.files.recoveryURL.path))
@@ -590,7 +621,10 @@ private final class ManifestStoreFixture {
     } else {
       database = try GatewayDatabase(inMemory: ())
     }
-    store = try AtomicManifestStore(manifestURL: manifestURL, database: database)
+    store = try AtomicManifestStore(
+      manifestURL: manifestURL, database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: MacOSPlatform.services.applications))
   }
 
   var files: ManifestFileTransaction {

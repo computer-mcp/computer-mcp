@@ -1,6 +1,7 @@
 import ComputerMCP
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import Foundation
 

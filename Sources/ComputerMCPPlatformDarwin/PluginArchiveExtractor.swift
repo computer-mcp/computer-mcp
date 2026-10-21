@@ -7,12 +7,7 @@ import Foundation
 /// It does not verify publisher identity, activate packages, or execute their code.
 /// Cancellation is cooperative between parser calls; untrusted parsing belongs
 /// in an installer worker with independent CPU/memory/time limits.
-package struct PluginArchiveExtractor {
-  package struct Result: Equatable, Sendable {
-    package let root: URL
-    package let entries: Int
-    package let bytes: Int
-  }
+package struct PluginArchiveExtractor: PluginArchiveExtracting {
 
   package let limits: PluginArchiveLimits
 
@@ -23,7 +18,7 @@ package struct PluginArchiveExtractor {
   package func extract(
     _ source: URL, toNewDirectory destination: URL,
     checkCancellation: () throws -> Void = { try Task.checkCancellation() }
-  ) throws -> Result {
+  ) throws -> PluginArchiveExtraction {
     try limits.validate()
     try checkCancellation()
     guard source.isFileURL, source.path.hasPrefix("/"), !source.path.contains("\0") else {
@@ -64,7 +59,7 @@ package struct PluginArchiveExtractor {
   private func decode(
     _ archive: OpaquePointer, into directory: PluginArchiveDirectory,
     checkCancellation: () throws -> Void
-  ) throws -> Result {
+  ) throws -> PluginArchiveExtraction {
     var paths = Paths()
     var entryCount = 0
     var total = 0
@@ -133,7 +128,7 @@ package struct PluginArchiveExtractor {
       }
     }
     guard entryCount > 0 else { throw PluginArchiveError.invalidArchive }
-    return Result(root: directory.url, entries: entryCount, bytes: total)
+    return PluginArchiveExtraction(root: directory.url, entries: entryCount, bytes: total)
   }
 
   private func validateStream(_ archive: OpaquePointer) throws {

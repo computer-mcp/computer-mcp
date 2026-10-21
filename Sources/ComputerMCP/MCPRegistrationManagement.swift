@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import CryptoKit
 import Foundation
@@ -76,7 +77,8 @@ extension AppControlPlaneService {
       throw ConfigurationError.invalid("The active manifest is not valid UTF-8.")
     }
     let configuration = try parseManifest(text)
-    let resolved = try PluginHost.resolve(database.pluginStoreSnapshot(), bundled: bundledPlugins)
+    let resolved = try PluginHost.resolve(
+      database.pluginStoreSnapshot(), bundled: bundledPlugins, applications: platform.applications)
     let composition = try GatewayPluginComposition(
       configuration: configuration, plugins: resolved.plugins)
     return MCPRegistrationSnapshot(

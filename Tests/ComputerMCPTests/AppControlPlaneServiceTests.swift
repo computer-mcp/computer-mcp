@@ -15,6 +15,7 @@ import Testing
 @testable import ComputerMCPPersistence
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .serialized)
@@ -1174,7 +1175,7 @@ final class AppControlPlaneServiceTests {
     let packageRoot = fixture.root.appendingPathComponent("package")
     try FileManager.default.createDirectory(
       at: packageRoot.appendingPathComponent("skills"), withIntermediateDirectories: true)
-    try PluginManifestTests.combined.replacingOccurrences(
+    try PluginManifestFixture.combined.replacingOccurrences(
       of: "tree = { kind = 'introspection', args = ['schema', '--json'] }\n", with: ""
     )
     .write(
@@ -1354,7 +1355,7 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(GatewayConfiguration().exportedTOML())
-    let store = PluginStore(database: fixture.database)
+    let store = PluginStore(database: fixture.database, platform: MacOSPlatform.services)
     _ = try await store.setSettings(
       .init(mcp: ["native": .init(registrationID: "plugin-native")]), for: "test-package",
       expectedRevision: 0)
@@ -2748,8 +2749,9 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
     try directories.secureDatabaseFiles()
     let manifestStore = try AtomicManifestStore(
       manifestURL: directories.manifest,
-      database: database
-    )
+      database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: MacOSPlatform.services.applications))
     secretStore = try KeychainSecretStore(adapter: keychainAdapter ?? MemoryKeychainAdapter())
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
       secretStore: secretStore,

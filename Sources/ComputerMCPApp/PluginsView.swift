@@ -1,4 +1,5 @@
 import ComputerMCP
+import ComputerMCPPlugins
 import SwiftUI
 import UniformTypeIdentifiers
 

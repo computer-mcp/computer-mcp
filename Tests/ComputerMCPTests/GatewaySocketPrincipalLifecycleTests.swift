@@ -22,7 +22,10 @@ struct GatewaySocketPrincipalLifecycleTests {
       logs: root.appendingPathComponent("logs"))
     try directories.prepare()
     let database = try GatewayDatabase(path: directories.database.path)
-    let manifest = try AtomicManifestStore(manifestURL: directories.manifest, database: database)
+    let manifest = try AtomicManifestStore(
+      manifestURL: directories.manifest, database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: MacOSPlatform.services.applications))
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let control = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifest, secretStore: secrets,

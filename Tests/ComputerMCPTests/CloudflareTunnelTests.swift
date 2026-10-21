@@ -732,8 +732,9 @@ private final class CloudflareControlPlaneFixture {
     database = try GatewayDatabase(path: directories.database.path)
     let manifestStore = try AtomicManifestStore(
       manifestURL: directories.manifest,
-      database: database
-    )
+      database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: MacOSPlatform.services.applications))
     _ = try manifestStore.activate(manifest: DefaultGatewayConfiguration.manifest)
     let secretStore = try KeychainSecretStore(
       service: "com.showxu.computer-mcp.cloudflare-tests",

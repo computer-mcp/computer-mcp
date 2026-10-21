@@ -1,10 +1,12 @@
 import AppKit
+import ComputerMCPMacOS
 import Foundation
 import SwiftUI
 import Testing
 
 @testable import ComputerMCP
 @testable import ComputerMCPApp
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 @MainActor
@@ -283,7 +285,9 @@ private final class ReleaseAppFake: PluginManaging {
     if let failure { throw failure }
     return result(page: page)
   }
-  func fetchPlugins() async throws -> PluginHostSnapshot { try PluginHostSnapshot(state: state) }
+  func fetchPlugins() async throws -> PluginHostSnapshot {
+    try PluginHostSnapshot(state: state, applications: MacOSPlatform.services.applications)
+  }
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
   {
@@ -298,7 +302,7 @@ private final class ReleaseAppFake: PluginManaging {
       throw PluginStoreError.staleRevision(expected: expectedRevision, actual: state.revision)
     }
     state.revision += 1
-    return try PluginHostSnapshot(state: state)
+    return try PluginHostSnapshot(state: state, applications: MacOSPlatform.services.applications)
   }
   func searchPlugins(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
     -> PluginCatalogSearchResult

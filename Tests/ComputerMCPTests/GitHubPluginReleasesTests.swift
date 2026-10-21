@@ -1,3 +1,5 @@
+import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
 import Testing
@@ -5,6 +7,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlugins
 
 @Suite(.timeLimit(.minutes(1)))
 struct GitHubPluginReleasesTests {
@@ -30,7 +33,8 @@ struct GitHubPluginReleasesTests {
 
   @Test
   func cancellationDuringDownloadReclaimsOnlyItsReceiptedStaging() async throws {
-    let fixture = try await PreparationFixture.make(format: "zip")
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, format: "zip")
     defer { fixture.files.remove() }
     let bytes = try Data(contentsOf: fixture.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -41,7 +45,7 @@ struct GitHubPluginReleasesTests {
     await http.setAssets([releaseAssetFixture(id: 20, artifact: artifact)], page: 1)
     let database = try GatewayDatabase(
       path: fixture.files.root.appendingPathComponent("cancel.sqlite").path)
-    let store = PluginStore(database: database)
+    let store = PluginStore(database: database, platform: MacOSPlatform.services)
     let root = fixture.files.root.appendingPathComponent("Plugins")
     let download = GitHubPluginDownload(origin: server.origin)
     let task = Task {
@@ -57,7 +61,8 @@ struct GitHubPluginReleasesTests {
       #expect(try database.pluginOwnedDirectories().count == 1)
       #expect(try await store.snapshot().installations.isEmpty)
       await #expect(throws: PluginStoreError.installationBusy) {
-        try await PluginStore(database: database).recoverInstallations(storageRoot: root)
+        try await PluginStore(database: database, platform: MacOSPlatform.services)
+          .recoverInstallations(storageRoot: root)
       }
       task.cancel()
       await #expect(throws: CancellationError.self) { try await task.value }
@@ -74,7 +79,8 @@ struct GitHubPluginReleasesTests {
 
   @Test
   func downloadedCompositionUsesTheOwnedInstallationTransaction() async throws {
-    let fixture = try await PreparationFixture.make(format: "zip")
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, format: "zip")
     defer { fixture.files.remove() }
     let bytes = try Data(contentsOf: fixture.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -83,7 +89,7 @@ struct GitHubPluginReleasesTests {
     let artifact = pluginArtifactFixture(bytes: bytes, manifest: PreparationFixture.manifest)
     let database = try GatewayDatabase(
       path: fixture.files.root.appendingPathComponent("download.sqlite").path)
-    let store = PluginStore(database: database)
+    let store = PluginStore(database: database, platform: MacOSPlatform.services)
     let root = fixture.files.root.appendingPathComponent("Plugins")
     let result = try await store.installGitHubArtifact(
       artifact, hostVersion: PluginVersion("1.0.0"), architecture: "arm64", storageRoot: root,
@@ -110,7 +116,8 @@ struct GitHubPluginReleasesTests {
     #expect(await http.assetPages == ["1", "1"])
     let reopened = PluginStore(
       database: try GatewayDatabase(
-        path: fixture.files.root.appendingPathComponent("download.sqlite").path))
+        path: fixture.files.root.appendingPathComponent("download.sqlite").path),
+      platform: MacOSPlatform.services)
     #expect(try await reopened.snapshot() == result.snapshot)
     #expect(try await reopened.recoverInstallations(storageRoot: root).isEmpty)
     let removed = try await reopened.uninstallArtifact(
@@ -122,7 +129,8 @@ struct GitHubPluginReleasesTests {
 
   @Test(arguments: ["manifest", "download", "release", "revision"])
   func failedDownloadInstallationPreservesTheSelectedPackage(_ fault: String) async throws {
-    let fixture = try await PreparationFixture.make(format: "zip")
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, format: "zip")
     defer { fixture.files.remove() }
     let bytes = try Data(contentsOf: fixture.archive)
     let manifest =
@@ -133,7 +141,7 @@ struct GitHubPluginReleasesTests {
     defer { server.stop() }
     let database = try GatewayDatabase(
       path: fixture.files.root.appendingPathComponent("failure.sqlite").path)
-    let store = PluginStore(database: database)
+    let store = PluginStore(database: database, platform: MacOSPlatform.services)
     let root = fixture.files.root.appendingPathComponent("Plugins")
     let original = try await store.installArchive(
       at: fixture.archive, expectedSHA256: fixture.digest, pluginID: "combined",
@@ -383,48 +391,4 @@ actor ReleaseHTTPFake: PluginCatalogHTTPFetching {
     headers["link"] = link.map { "<\($0)>; rel=\"next\"" }
     return .init(status: 200, headers: headers, body: try! JSONEncoder().encode(value))
   }
-}
-
-private let releaseManifestFixture = """
-  id = 'combined'
-  name = 'Combined'
-  version = '1.2.3'
-  [[mcp]]
-  id = 'native'
-  transport = 'http'
-  url = 'https://example.invalid/mcp'
-  """
-
-func pluginArtifactFixture(
-  bytes: Data = Data("archive fixture".utf8), assetID: Int64 = 11,
-  manifest text: String = releaseManifestFixture
-)
-  -> GitHubPluginArtifact
-{
-  let parsed = try! PluginManifest.parse(text)
-  let manifest = Data(text.utf8)
-  let blob = Data("blob \(manifest.count)\0".utf8) + manifest
-  return GitHubPluginArtifact(
-    declaration: PluginCatalogEntry(
-      repositoryID: 7, repository: "computer-mcp/combined", publisherID: 315_005_910,
-      revision: String(repeating: "a", count: 40),
-      manifestBlobSHA: Insecure.SHA1.hash(data: blob).map { String(format: "%02x", $0) }.joined(),
-      manifestSHA256: SHA256.hash(data: manifest).map { String(format: "%02x", $0) }.joined(),
-      pluginID: parsed.id, name: parsed.name, version: parsed.version,
-      summary: parsed.description, mcp: parsed.mcp.map(\.id), cli: parsed.cli.map(\.id),
-      skills: parsed.skills.map(\.id)),
-    releaseID: 9, tag: "release/1.2.3", prerelease: false,
-    assetID: assetID, name: "combined.zip", size: Int64(bytes.count),
-    sha256: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined())
-}
-
-func releaseAssetFixture(
-  id: Int = 11, artifact: GitHubPluginArtifact = pluginArtifactFixture()
-) -> [String: JSONValue] {
-  return [
-    "id": .number(Double(id)), "name": .string(artifact.name),
-    "size": .number(Double(artifact.size)),
-    "state": .string("uploaded"), "digest": .string("sha256:" + artifact.sha256),
-    "url": .string("https://api.github.com/repos/computer-mcp/combined/releases/assets/\(id)"),
-  ]
 }

@@ -122,7 +122,7 @@ above them and supplied by the composition root:
 | Distribution environment | `Platform` | the App distribution environment in control-plane storage |
 | Computer Use provider and permission status | `Core`, `Platform` | direct Computer Use references in the gateway and control plane; the composition root registers the provider |
 | Archive extractor | `Platform` | the `libarchive`-based extractor, which moves to `PlatformDarwin`; archive limits, errors, staging directories and directory identity become `Platform` values |
-| Directory identity capture and private staging | `Platform` | the `stat`-based identity capture and private directory creation; implemented in `PlatformPOSIX`, with the Darwin birth-time field in `PlatformDarwin` |
+| Directory identity capture and private staging | `Platform` | descriptor-anchored private directory creation/recovery, identity capture/matching and exclusive rename; implemented in `PlatformDarwin`, including birth time and volume UUID |
 | Application locator | `Platform` | Launch Services application lookup in plugin dependency resolution |
 
 ## Rationale

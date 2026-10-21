@@ -13,6 +13,7 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
@@ -543,7 +544,9 @@ struct MCPRegistrationControlFixture: Sendable {
     let bundled = BundledPlugins.load(directory: nil)
     let store = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
-      loader: GatewayManifestConfigurationLoader(database: database, bundledPlugins: bundled))
+      loader: GatewayManifestConfigurationLoader(
+        database: database, bundledPlugins: bundled,
+        applications: MacOSPlatform.services.applications))
     _ = try store.activate(manifest: GatewayConfiguration(workspaceDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(

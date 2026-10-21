@@ -1,14 +1,12 @@
 import AppKit
+import ComputerMCPPlatform
 import Foundation
 
 /// Observes registered Apple application bundles without launching them.
-package enum ApplicationBundleLookup {
-  package enum Result: Equatable, Sendable {
-    case found(URL)
-    case notFound
-  }
+package struct ApplicationBundleLookup: ApplicationBundleLocating {
+  package init() {}
 
-  package static func locate(bundleIdentifier: String) -> Result {
+  package func locate(bundleIdentifier: String) -> ApplicationBundleLocation {
     if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
       return .found(url)
     }

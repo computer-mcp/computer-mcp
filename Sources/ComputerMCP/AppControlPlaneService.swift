@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPToolsWorkspace
 import ComputerMCPTransport
@@ -616,7 +617,9 @@ package actor AppControlPlaneService {
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
     let composition = try GatewayPluginComposition(
       configuration: configuration,
-      plugins: PluginHost.resolve(pluginState, bundled: bundledPlugins).plugins)
+      plugins: PluginHost.resolve(
+        pluginState, bundled: bundledPlugins, applications: platform.applications
+      ).plugins)
     try ProfileGrantConfig(
       id: grant.id, capabilities: grant.capabilityIDs.sorted(),
       workspaces: grant.workspaceIDs.sorted(), allowedCallers: Array(grant.allowedCallers),
@@ -779,7 +782,10 @@ package actor AppControlPlaneService {
     let secretStore = secretStore
     let plugins: [ResolvedPlugin]? = try await gatewayOperations.perform {
       try persistentState
-        ? nil : PluginHost.resolve(inputs.plugins, bundled: bundledPlugins).plugins
+        ? nil
+        : PluginHost.resolve(
+          inputs.plugins, bundled: bundledPlugins, applications: platform.applications
+        ).plugins
     }
     var context = inputs.configuration.executionContext(
       caller: caller, profileID: profileID, transportTrace: transportTrace)

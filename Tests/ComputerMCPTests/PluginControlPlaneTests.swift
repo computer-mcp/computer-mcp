@@ -12,6 +12,7 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
@@ -107,7 +108,8 @@ struct PluginControlPlaneTests {
       #expect(
         try await fixture.host.parseManifest(configuration.exportedTOML()).profiles.count == 1)
       let loader = GatewayManifestConfigurationLoader(
-        database: fixture.database, bundledPlugins: bundled)
+        database: fixture.database, bundledPlugins: bundled,
+        applications: MacOSPlatform.services.applications)
       let manifest = fixture.root.appendingPathComponent("bundled-profile.toml")
       try configuration.exportedTOML().write(to: manifest, atomically: true, encoding: .utf8)
       #expect(try loader.load(path: manifest.path).profiles.count == 1)
@@ -150,7 +152,8 @@ struct PluginControlPlaneTests {
   func cancellingHostDownloadJoinsAndReleasesItsMutationReservation() async throws {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
-    let archive = try await PreparationFixture.make(manifest: manifest, format: "zip")
+    let archive = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -190,7 +193,8 @@ struct PluginControlPlaneTests {
   func releaseSelectionDownloadAndFailureThroughRealCLIAndOwnerSocket() async throws {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
-    let archive = try await PreparationFixture.make(manifest: manifest, format: "zip")
+    let archive = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -317,6 +321,7 @@ struct PluginControlPlaneTests {
   @Test
   func archiveLifecycleThroughRealCLIAndOwnerSocket() async throws {
     let archive = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))
     defer { archive.files.remove() }
@@ -350,6 +355,7 @@ struct PluginControlPlaneTests {
       #expect(try fixture.database.pluginStoreSnapshot() == snapshot.state)
 
       let update = try await PreparationFixture.make(
+        directoryFactory: MacOSPlatform.services.pluginDirectories,
         manifest: PreparationFixture.manifest
           .replacingOccurrences(
             of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"
@@ -423,6 +429,7 @@ struct PluginControlPlaneTests {
   @Test
   func committedUninstallWarningsSurviveListAndShow() async throws {
     let archive = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))
     defer { archive.files.remove() }
@@ -470,7 +477,8 @@ struct PluginControlPlaneTests {
     let identity: PluginDirectoryIdentity
     let replacement: URL
     do {
-      let storage = try PluginInstallationStorage(at: fixture.directories.plugins)
+      let storage = try PluginInstallationStorage(
+        at: fixture.directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
       defer { storage.finishTransaction() }
       identity = try storage.createInstallation()
       try fixture.database.recordPluginDirectory(
@@ -511,7 +519,8 @@ struct PluginControlPlaneTests {
     let fixture = try PluginControlFixture()
     defer { fixture.remove() }
     do {
-      let storage = try PluginInstallationStorage(at: fixture.directories.plugins)
+      let storage = try PluginInstallationStorage(
+        at: fixture.directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
       defer { storage.finishTransaction() }
       try await fixture.host.recoverPluginsAtStartup()
       #expect(
@@ -580,7 +589,9 @@ struct PluginControlFixture: Sendable {
     database = try GatewayDatabase(path: directories.database.path)
     let manifestStore = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
-      loader: GatewayManifestConfigurationLoader(database: database, bundledPlugins: bundled))
+      loader: GatewayManifestConfigurationLoader(
+        database: database, bundledPlugins: bundled,
+        applications: MacOSPlatform.services.applications))
     _ = try manifestStore.activate(
       manifest: GatewayConfiguration(workspaceDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())

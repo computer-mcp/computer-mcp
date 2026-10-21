@@ -186,6 +186,27 @@ let neutralTargets: [Target] =
         "ComputerMCPProcess", "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPPlugins",
+      dependencies: [
+        "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPDownstream",
+        .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "TOML", package: "swift-toml"),
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        .product(name: "Subprocess", package: "swift-subprocess"),
+        .product(
+          name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
+      ]
+    ),
+    .testTarget(
+      name: "ComputerMCPPluginsTests",
+      dependencies: [
+        "ComputerMCPPlugins", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
+        "ComputerMCPTestSupport", .product(name: "Crypto", package: "swift-crypto"),
+      ],
+      resources: [.copy("Fixtures")]
+    ),
+    .target(
       name: "ComputerMCPTransport",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -235,9 +256,10 @@ let neutralTargets: [Target] =
       name: "ComputerMCPTestSupport",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPProcess",
-        "ComputerMCPConfiguration", "ComputerMCPTunnels",
+        "ComputerMCPConfiguration", "ComputerMCPTunnels", "ComputerMCPPlugins",
+        .product(name: "Crypto", package: "swift-crypto"),
       ],
-      path: "Tests/ComputerMCPTestSupport"),
+      path: "Tests/ComputerMCPTestSupport", resources: [.copy("Fixtures")]),
     .testTarget(
       name: "ComputerMCPTransportTests",
       dependencies: [
@@ -324,6 +346,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCPMacOS",
         dependencies: [
+          "ComputerMCPPlugins",
           "ComputerMCPToolsShell",
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
@@ -343,6 +366,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCP",
         dependencies: [
+          "ComputerMCPPlugins",
           "ComputerMCPToolsSkills",
           "ComputerMCPToolsFiles",
           "ComputerMCPToolsWorkspace",
@@ -372,6 +396,7 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "computer-mcp",
         dependencies: [
+          "ComputerMCPPlugins", "ComputerMCPPlatformDarwin",
           "ComputerMCPToolsCLI",
           "ComputerMCP",
           "ComputerMCPMacOS",
@@ -387,6 +412,7 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "ComputerMCPApp",
         dependencies: [
+          "ComputerMCPPlugins",
           "ComputerMCPDownstream",
           "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
           "ComputerMCPPlatform",
@@ -438,8 +464,19 @@ let neutralTargets: [Target] =
           "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ]),
       .testTarget(
+        name: "ComputerMCPPluginsDarwinTests",
+        dependencies: [
+          "ComputerMCPPlugins", "ComputerMCPCore", "ComputerMCPConfiguration",
+          "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin", "ComputerMCPProcess", "ComputerMCPTransport",
+          "ComputerMCPTestSupport",
+          .product(name: "MCP", package: "swift-sdk"),
+        ]
+      ),
+      .testTarget(
         name: "ComputerMCPTests",
         dependencies: [
+          "ComputerMCPPlugins",
           "ComputerMCPToolsShell",
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
@@ -465,6 +502,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPAppTests",
         dependencies: [
+          "ComputerMCPPlugins",
           "ComputerMCPApp", "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",

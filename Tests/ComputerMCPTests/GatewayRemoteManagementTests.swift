@@ -1,3 +1,4 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -5,6 +6,7 @@ import Testing
 @testable import ComputerMCP
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(2)))
@@ -149,7 +151,8 @@ struct GatewayRemoteManagementTests {
   func officialInstallationUsesTypedRemoteDispatchAndUnknownSourceNeedsLocalTrust() async throws {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
-    let archive = try await PreparationFixture.make(manifest: manifest, format: "zip")
+    let archive = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -284,7 +287,8 @@ struct GatewayRemoteManagementTests {
   func revocationDuringVerifiedDownloadCannotPublish(endSession: Bool) async throws {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
-    let archive = try await PreparationFixture.make(manifest: manifest, format: "zip")
+    let archive = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -338,9 +342,12 @@ struct GatewayRemoteManagementTests {
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let nextManifest = manifest.replacingOccurrences(
       of: "version = '1.2.3'", with: "version = '1.2.4'")
-    let first = try await PreparationFixture.make(manifest: manifest, format: "zip")
+    let first = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
     defer { first.files.remove() }
-    let next = try await PreparationFixture.make(manifest: nextManifest, format: "zip")
+    let next = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: nextManifest,
+      format: "zip")
     defer { next.files.remove() }
     let body = first.files.root.appendingPathComponent("download-body")
     let firstBytes = try Data(contentsOf: first.archive)
@@ -494,7 +501,9 @@ struct GatewayRemoteManagementAuthorityTests {
         source: .init(kind: .development, root: files.packageRoot),
         manifestDigest: String(repeating: "a", count: 64), registeredAt: .now)
     }
-    let snapshot = try PluginHostSnapshot(state: state, bundled: .load(directory: nil))
+    let snapshot = try PluginHostSnapshot(
+      state: state, bundled: .load(directory: nil),
+      applications: MacOSPlatform.services.applications)
     let summary = try GatewayRemoteManagement.plugin(
       "test-package", snapshot: snapshot, details: false)
     #expect(summary.objectValue?["revision"] == .integer(9_007_199_254_740_993))
@@ -539,7 +548,9 @@ struct GatewayRemoteManagementAuthorityTests {
     var state = PluginStoreSnapshot()
     state.settings["test-package"] = current
     let report = try GatewayRemoteManagement.plugin(
-      "test-package", snapshot: .init(state: state, bundled: bundle))
+      "test-package",
+      snapshot: .init(
+        state: state, bundled: bundle, applications: MacOSPlatform.services.applications))
     let text = ControlToolResponse.payloadText(report)
     #expect(!text.contains("private-binding") && !text.contains("private-argument"))
   }

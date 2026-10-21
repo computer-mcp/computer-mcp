@@ -1,5 +1,6 @@
 import Combine
 import ComputerMCP
+import ComputerMCPPlugins
 import Foundation
 
 @MainActor

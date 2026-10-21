@@ -1,5 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPlatform
+import ComputerMCPPlugins
 import CryptoKit
 import Foundation
 
@@ -31,10 +33,15 @@ package protocol ManifestConfigurationLoading: Sendable {
 package struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading {
   var database: GatewayDatabase? = nil
   var bundledPlugins: BundledPlugins = .current
+  let applications: any ApplicationBundleLocating
 
-  package init(database: GatewayDatabase? = nil, bundledPlugins: BundledPlugins = .current) {
+  package init(
+    database: GatewayDatabase? = nil, bundledPlugins: BundledPlugins = .current,
+    applications: any ApplicationBundleLocating
+  ) {
     self.database = database
     self.bundledPlugins = bundledPlugins
+    self.applications = applications
   }
   package func load(path: String) throws -> GatewayConfiguration {
     let state = try (database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
@@ -44,7 +51,8 @@ package struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading 
       knownPluginMCPServerIDs: state.knownMCPRegistrationIDs)
     _ = try GatewayPluginComposition(
       configuration: configuration,
-      plugins: PluginHost.resolve(state, bundled: bundledPlugins).plugins)
+      plugins: PluginHost.resolve(state, bundled: bundledPlugins, applications: applications)
+        .plugins)
     return configuration
   }
 }
@@ -70,12 +78,12 @@ package final class AtomicManifestStore: @unchecked Sendable {
   package init(
     manifestURL: URL,
     database: GatewayDatabase,
-    loader: (any ManifestConfigurationLoading)? = nil,
+    loader: any ManifestConfigurationLoading,
     fileManager: FileManager = .default
   ) throws {
     self.manifestURL = manifestURL.standardizedFileURL
     self.database = database
-    self.loader = loader ?? GatewayManifestConfigurationLoader(database: database)
+    self.loader = loader
     self.fileManager = fileManager
     try Self.ensureDirectory(
       self.manifestURL.deletingLastPathComponent(),

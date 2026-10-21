@@ -1,6 +1,7 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import Crypto
 import Foundation
 
 struct CodexClientRegistrar {
@@ -206,9 +207,12 @@ struct ClaudeDesktopClientRegistrar {
     -> RegistrationObservation
   {
     do {
-      return service.observation(
-        try RegistrationJSONFile.read(plan.location.configurationFile).entry(
-          named: plan.serverName), for: plan)
+      let file = try RegistrationJSONFile.read(plan.location.configurationFile)
+      var observed = service.observation(file.entry(named: plan.serverName), for: plan)
+      observed.fileSHA256 = file.bytes.map {
+        SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined()
+      }
+      return observed
     } catch { return .init(state: .unreadable, entry: nil) }
   }
 

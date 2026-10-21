@@ -208,6 +208,8 @@ package struct ClientRegistrationPlan: Sendable, CustomStringConvertible,
 struct RegistrationObservation: Codable, Equatable, Sendable {
   let state: ClientRegistrationState
   let entry: JSONValue?
+  /// Claude Desktop's whole-file SHA-256; nil when its configuration file is absent.
+  var fileSHA256: String?
   /// The process whose exit was unconfirmed; no subsequent step may run.
   var uncertainStep: String?
 }

@@ -328,6 +328,54 @@ struct ClientRegistrationTests {
     #expect(changed.fingerprint != plan.fingerprint)
   }
 
+  @Test
+  func desktopRefusesUnrelatedInPlaceChangesAfterPreview() throws {
+    let fixture = try RegistrationFixture()
+    let file = fixture.file(.claudeDesktop)
+    try Data("{\"theme\":\"dark\" }".utf8).write(to: file)
+    let service = fixture.service()
+    let plan = try fixture.preview(.claudeDesktop, service: service)
+    let before = try RegistrationJSONFile.read(file.path)
+    let changedBytes = Data("{\"theme\":\"light\"}".utf8)
+    let handle = try FileHandle(forWritingTo: file)
+    try handle.write(contentsOf: changedBytes)
+    try handle.close()
+    let after = try RegistrationJSONFile.read(file.path)
+    #expect(after.bytes != before.bytes)
+    #expect(after.inode == before.inode)
+    #expect(after.mode == before.mode)
+    #expect(after.size == before.size)
+    let fresh = try fixture.preview(.claudeDesktop, service: service)
+    #expect(fresh.display.state == plan.display.state)
+    #expect(fresh.display.observedEntry == plan.display.observedEntry)
+    #expect(fresh.fingerprint != plan.fingerprint)
+    do {
+      _ = try service.apply(plan)
+      Issue.record("Applied a plan after an unrelated file change")
+    } catch let error as ClientRegistrationError { #expect(error.code == .changedSincePreview) }
+    #expect(try Data(contentsOf: file) == changedBytes)
+  }
+
+  @Test
+  func desktopRefusesFileCreationAfterPreview() throws {
+    let fixture = try RegistrationFixture()
+    let file = fixture.file(.claudeDesktop)
+    let service = fixture.service()
+    let plan = try fixture.preview(.claudeDesktop, service: service)
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+    let changedBytes = Data("{\"theme\":\"light\"}".utf8)
+    try changedBytes.write(to: file)
+    let fresh = try fixture.preview(.claudeDesktop, service: service)
+    #expect(fresh.display.state == plan.display.state)
+    #expect(fresh.display.observedEntry == plan.display.observedEntry)
+    #expect(fresh.fingerprint != plan.fingerprint)
+    do {
+      _ = try service.apply(plan)
+      Issue.record("Applied a plan after the configuration file appeared")
+    } catch let error as ClientRegistrationError { #expect(error.code == .changedSincePreview) }
+    #expect(try Data(contentsOf: file) == changedBytes)
+  }
+
   @Test(arguments: RegistrationClient.allCases)
   func displayAndDiagnosticsExcludePrivateValues(client: RegistrationClient) throws {
     let fixture = try RegistrationFixture()
@@ -351,6 +399,10 @@ struct ClientRegistrationTests {
       display + String(describing: plan) + String(reflecting: plan)
       + String(reflecting: Mirror(reflecting: plan))
     for sentinel in sentinels { #expect(!representations.contains(sentinel)) }
+    if client == .claudeDesktop {
+      let digest = try #require(plan.contents.observation.fileSHA256)
+      #expect(!representations.contains(digest))
+    }
     #expect(plan.display.observedEntry?.urlOrigin == "https://example.test:8443")
     #expect(plan.display.observedEntry?.environmentNames == ["TOKEN"])
     #expect(plan.display.observedEntry?.headerNames == ["Authorization"])
@@ -358,7 +410,12 @@ struct ClientRegistrationTests {
     #expect(display.contains("argument_count") && !display.contains("argumentCount"))
     let first = plan.fingerprint
     try fixture.setEntry(entry, client: client, outside: "a different outside value")
-    #expect(try fixture.preview(client).fingerprint == first)
+    let changed = try fixture.preview(client).fingerprint
+    if client == .claudeDesktop {
+      #expect(changed != first)
+    } else {
+      #expect(changed == first)
+    }
   }
 
   @Test(arguments: ["add", "remove"], ["nonzero", "launch", "timeout", "uncertain", "committed"])

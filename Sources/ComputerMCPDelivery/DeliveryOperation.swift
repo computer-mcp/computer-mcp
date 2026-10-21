@@ -61,7 +61,11 @@ extension DeliveryRepository {
         let stagingGit = try requireWorktree(journal, at: base)
         guard
           try stagingGit.run(
-            ["--no-optional-locks", "diff", "--cached", "--quiet", "--"] + request.paths,
+            [
+              "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--cached",
+              "--quiet", "--",
+            ]
+              + request.paths,
             at: worktree, accepting: [0, 1]
           ).exitCode == 0
         else {
@@ -148,9 +152,19 @@ extension DeliveryRepository {
       try requireMainBranch(scope.defaultBranch)
       // No intervening Git command may separate this baseline check from the merge it guards.
       if try git.revision("HEAD", at: main) == validatedBase {
+        // Git applies an existing merge autostash even when creation is disabled.
+        let autostash = common.appendingPathComponent("MERGE_AUTOSTASH")
+        do {
+          _ = try FileManager.default.attributesOfItem(atPath: autostash.path)
+          throw DeliveryFailure(
+            reason: .gitFailed, detail: "Pending merge autostash retained: \(autostash.path)")
+        } catch let error as CocoaError
+          where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile
+        {}
         let merge = try git.run(
           [
             "merge", "--ff-only", "--no-squash", "--no-edit", "--no-overwrite-ignore",
+            "--no-autostash",
             journal.commit!,
           ], at: main,
           accepting: [0, 1, 128])
@@ -188,6 +202,18 @@ extension DeliveryRepository {
     var invoked = false
     do {
       let pinned = try requireWorktree(journal, at: original)
+      try requireVisibleIndex(journal, git: pinned)
+      guard
+        try pinned.run(
+          [
+            "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all",
+            "--ignored=matching",
+          ], at: worktree
+        ).stdout.isEmpty
+      else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed, detail: "Worktree changed before rebase: \(worktree.path)")
+      }
       guard rebaseDirectory(journal) == nil,
         try pinned.revision("HEAD", at: worktree) == original
       else {
@@ -195,7 +221,9 @@ extension DeliveryRepository {
           reason: .cleanupFailed, detail: "Delivery worktree changed before rebase.")
       }
       invoked = true
-      let result = try pinned.run(["rebase", base], at: worktree, accepting: [0, 1, 128])
+      let result = try pinned.run(
+        ["rebase", "--no-update-refs", "--no-autostash", base], at: worktree,
+        accepting: [0, 1, 128])
       if result.exitCode != 0 {
         failure = DeliveryFailure(
           reason: .gitFailed, detail: "Rebase command failed.",
@@ -240,7 +268,11 @@ extension DeliveryRepository {
     -> Bool
   {
     let changedPaths = try git.run(
-      ["--no-optional-locks", "diff", "--no-renames", "--name-only", "-z", base, journal.commit!],
+      [
+        "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+        "--name-only",
+        "-z", base, journal.commit!,
+      ],
       at: root
     ).stdout.split(separator: "\0").map(String.init)
     guard Set(changedPaths) == Set(paths), changedPaths.allSatisfy({ scope.contains(path: $0) })

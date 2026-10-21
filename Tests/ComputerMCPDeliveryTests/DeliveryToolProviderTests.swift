@@ -336,7 +336,9 @@ struct DeliveryToolProviderTests {
       let wrapper = fixture.temporary.url.appendingPathComponent("git-wrapper")
       let script = """
         #!\(try testExecutable("sh"))
-        if test "$1" = merge; then exit 0; fi
+        for argument do
+          if test "$argument" = merge; then exit 0; fi
+        done
         exec \(quote(fixture.executable)) "$@"
         """
       try Data(script.utf8).write(to: wrapper)
@@ -433,7 +435,7 @@ struct DeliveryToolProviderTests {
       let git = quote(fixture.executable)
       let provider = try fixture.provider(
         wrappingGit: """
-          if test "$1" = merge; then
+          case " $* " in *" merge "*)
             for verified do :; done
             if \(git) merge-base --is-ancestor main "$verified"; then
               advanced=$(\(git) commit-tree "$verified^{tree}" -p "$verified" -m 'test: advance delivery branch') || exit
@@ -441,7 +443,7 @@ struct DeliveryToolProviderTests {
               printf '%s' "$verified" > .git/verified-commit
               printf '%s' "$advanced" > .git/advanced-commit
             fi
-          fi
+          esac
           """)
       let result = try fixture.apply(provider: provider)
       let verified = try fixture.read(".git/verified-commit")
@@ -473,10 +475,10 @@ struct DeliveryToolProviderTests {
       let provider = try fixture.provider(
         wrappingGit: outcome == "command_failure"
           ? """
-          if test "$1" = merge; then
+          case " $* " in *" merge "*)
             \(quote(fixture.executable)) "$@" || exit $?
             exit 79
-          fi
+          esac
           """ : "", timeout: outcome == "timeout" ? 1500 : nil)
       let result = try fixture.apply(provider: provider)
       #expect(result["state"] == .string("committed"), "\(result)")
@@ -499,10 +501,10 @@ struct DeliveryToolProviderTests {
       let ending = outcome == "timeout" ? "sleep 5" : "exit \(outcome == "exception" ? 79 : 1)"
       let provider = try fixture.provider(
         wrappingGit: """
-          if test "$1" = merge; then
+          case " $* " in *" merge "*)
             \(quote(fixture.executable)) "$@" || exit $?
             \(ending)
-          fi
+          esac
           """, timeout: outcome == "timeout" ? 1500 : nil)
       let result = try fixture.apply(provider: provider)
       #expect(result["state"] == .string("merged"), "\(result)")

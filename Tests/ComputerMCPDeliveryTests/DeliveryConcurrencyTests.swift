@@ -48,11 +48,11 @@ struct DeliveryConcurrencyTests {
       let git = quote(fixture.executable)
       let provider = try fixture.provider(
         wrappingGit: """
-          if test "$1" = worktree && test "$2" = remove; then
+          case " $* " in *" worktree remove "*)
             \(git) "$@" || exit $?
             touch \(marker)
             exit 0
-          fi
+          esac
           if test -f \(marker); then
             for argument do
               if test "$argument" = 'HEAD^{commit}'; then

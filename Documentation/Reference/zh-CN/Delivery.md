@@ -81,7 +81,16 @@ Git 失败附退出码与截断 stderr。其余状态为成功工具结果。
 整个调用持有 `<git-common-dir>/computer-mcp/delivery.lock` 的 POSIX 文件锁，
 App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及其超时（未设置时使用
 策略默认值）；移除继承环境和命令环境中的全部 `GIT_*`，设置
-`GIT_TERMINAL_PROMPT=0`，仓库配置与钩子仍然生效。
+`GIT_TERMINAL_PROMPT=0`、`GIT_NO_LAZY_FETCH=1` 与空的 `GIT_ALLOW_PROTOCOL`，
+禁止提示、隐式取回对象与全部 Git 传输，兼容较旧 Git；缺少本地对象时失败。
+仓库配置与钩子仍然生效。每条 Git 命令都带
+`-c gc.auto=0 -c maintenance.auto=false`，阻止自动清理对象、reflog 与 worktree
+登记；另带 `-c submodule.recurse=false`，保留子模块检出状态。diff 核对使用
+`--no-ext-diff --no-textconv`，不运行外部 diff 命令或写入文本转换缓存；另带
+`-c notes.rewrite.rebase=false`，禁止 rebase 自动复制 notes，保留其他 notes 引用。
+`-c rerere.enabled=false` 保留共享的冲突解决缓存。执行器同时设置
+`rebase.updateRefs=false` 与 `rebase.autoStash=false`，覆盖 `rebase --abort`
+等不接受启动选项的动作模式。
 
 预检要求路径合法、worktree 根被忽略、主检出目标文件没有未提交改动、分支可用，
 且提交说明合法。预检与恢复的所有 Git 检查均带 `--no-optional-locks`，不会刷新或
@@ -99,14 +108,21 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 回退均视为已变化：在隔离 worktree 中 rebase 到当前默认分支，重新核对新基线到提交的
 完整 diff，再重试一次；第二次基线变化时，以 `committed` / `not_fast_forward` 保留
 分支，不再合并或 rebase。land 使用
-`merge --ff-only --no-squash --no-edit --no-overwrite-ignore <已核对的提交号>`，
+`merge --ff-only --no-squash --no-edit --no-overwrite-ignore --no-autostash <已核对的提交号>`，
 以不可变的提交号合并。目标路径若出现被忽略的外部文件，合并失败并保留该文件。
 实时交付只有主检出的 `HEAD` 恰好等于交付提交时才报告 `merged`，命令失败、超时或
 抛出异常时也按同一规则核对。合并后钩子产生后继提交时，结果为 `committed` 并保留分支。
 
-每次 rebase 后都按同样规则核对新提交相对新基线的改动路径；不符则以
+rebase 使用 `--no-update-refs --no-autostash`，避免仓库配置改写其他分支或暂存用户改动；
+merge 也带 `--no-autostash`。主检出已有 `MERGE_AUTOSTASH` 时停止合并，以
+`committed` / `git_failed` 保留交付分支；Git 即使禁用了 autostash 创建，仍会应用这个
+待处理的 stash。每次 rebase 后都按同样规则核对新提交相对新基线的改动路径；不符则以
 `committed` / `scope_changed` 保留分支，包括默认分支已含相同补丁而产生空 diff 的
-情况。发起 rebase 前，日志记录原提交与目标提交。运行中的调用在自己的 rebase 失败时，只有其
+情况。发起 rebase 前，日志记录原提交与目标提交。
+实际发起前还会核对索引可见性标记，要求整个 worktree 干净（包括未跟踪和被忽略的文件），
+因为 rebase 内部检出可能覆盖被忽略的文件。中止自己的 rebase 前，再次核对索引可见性，
+并拒绝有任何未跟踪或被忽略文件的 worktree；已跟踪的冲突文件仍可按日志中止。
+拒绝时以 `cleanup_pending` 保留 worktree 与分支。运行中的调用在自己的 rebase 失败时，只有其
 实际已发起该命令且 `orig-head` 与 `onto` 均与记录相同时才中止到保存的原提交；否则保留为
 `cleanup_pending`。rebase 命令报错或超时但已无
 进行中的 rebase 时，以交付分支实际顶端重新核对并记录提交号，命令失败后不再尝试合并。
@@ -142,13 +158,15 @@ worktree 中。`committed` 始终保留分支，即使提交
 保留分支并记录诊断详情，包括主检出已变化的情况。
 
 仓库锁在 App 与 CLI 进程之间串行交付调用。用户和其他工具等外部 Git 写入者不受
-此锁约束。对它们的保证是：不丢失已提交的工作（本次交付和此前已有的工作仍能从某个
-引用到达，或在结果中给出）；不删除不属于本次操作的文件、未提交改动或 worktree；
+此锁约束。对它们的保证是：不丢失可从 `refs/` 下的引用或任一检出的 `HEAD` 到达的
+已提交工作（本次交付和此前已有的工作仍能从这些引用到达，或在结果中给出）。Git 的
+瞬态伪引用（如 `ORIG_HEAD`、`FETCH_HEAD`）不在此保证范围内；merge 与 rebase
+可能替换它们。不删除不属于本次操作的文件、未提交改动或 worktree；
 每个守护 Git 改动的状态核对紧挨着该改动执行；Git 提供原子引用事务的地方使用事务；
 检测到干扰时保留分支，以 `committed` 或 `cleanup_pending` 与原因收敛。恢复与清理
 只撤销能证明属于本次操作的状态：日志证明已写入的文件，以及身份与记录一致的
-worktree 和分支。无法证明时保留，以 `cleanup_pending` 给出路径与原因，由用户处理。唯一不在
-保证内的是：没有原子原语覆盖核对与下一次文件系统或 Git 改动时，两者之间极短窗口中的外部写入。
+worktree 和分支。无法证明时保留，以 `cleanup_pending` 给出路径与原因，由用户处理。在此范围内，
+剩余例外为：没有原子原语覆盖核对与下一次文件系统或 Git 改动时，两者之间极短窗口中的外部写入。
 这些核对不提供该窗口内对外部 Git 写入者的隔离。
 
 日志为 `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`，schema 1
@@ -161,7 +179,9 @@ worktree 和分支。无法证明时保留，以 `cleanup_pending` 给出路径�
 原始字节与摘要。每项 `writeState` 在尝试前为 `pending`，文件系统改动前为 `writing`，
 成功后立即记录为 `written`，被拒绝后记录为 `rejected`。缺少写入证据或停留在
 `writing` 时，撤销必须保守保留。`staged` 保存暂存后已核对的索引条目。可选 `rebase` 在发起前保存
-`original` 与 `onto` 提交号，完成后也保留以识别本次 `ORIG_HEAD`。日志写入顺序为同目录独占创建的临时文件、文件 fsync、改名、目录 fsync；已有日志目标必须为操作身份一致的常规文件才可替换。临时文件改名与 `unlink` 清理前，
+`original` 与 `onto` 提交号，完成后也保留以识别本次 `ORIG_HEAD`。日志先独占创建同目录临时文件并执行文件 fsync；目标不存在时用 `link` 独占发布，
+再删除临时文件，目标若在发布前出现则失败并保留它；目标存在时须先核对为操作身份一致的
+常规日志文件，再改名替换。发布后执行目录 fsync。临时文件改名与 `unlink` 清理前，
 均核对其 inode 与独占打开的文件一致。
 首次创建 `computer-mcp` 与 `delivery` 目录时，在改动 Git 状态前还会同步每个新建
 目录的父目录，包括先于日志写入创建的锁目录。

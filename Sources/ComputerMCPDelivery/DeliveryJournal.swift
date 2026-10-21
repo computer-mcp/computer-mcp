@@ -96,6 +96,7 @@ internal struct DeliveryIO: Sendable {
   var beforeFileWrite: @Sendable (DeliveryJournal.Change, URL) throws -> Void = { _, _ in }
   var beforeEmptyDirectoryRemoval: @Sendable (URL) throws -> Void = { _ in }
   var beforeFileRollback: @Sendable (URL) throws -> Void = { _ in }
+  var beforeJournalPublication: @Sendable (URL) throws -> Void = { _ in }
 
   func writeFile(
     _ change: DeliveryJournal.Change, to path: URL,
@@ -236,15 +237,20 @@ internal struct DeliveryIO: Sendable {
       try handle.write(contentsOf: content)
       try handle.synchronize()
       try requireTemporaryFile(temporary, handle: handle)
-      try requireJournalTarget(journal, at: target)
-      guard rename(temporary.path, target.path) == 0 else {
+      let replacing = try verifiedJournalExists(journal, at: target)
+      try beforeJournalPublication(target)
+      let published =
+        replacing
+        ? rename(temporary.path, target.path)
+        : link(temporary.path, target.path)
+      guard published == 0 else {
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
       }
     }
     try synchronizeDirectory(directory)
   }
 
-  private func requireJournalTarget(_ journal: DeliveryJournal, at target: URL) throws {
+  private func verifiedJournalExists(_ journal: DeliveryJournal, at target: URL) throws -> Bool {
     do {
       let attributes = try FileManager.default.attributesOfItem(atPath: target.path)
       guard attributes[.type] as? FileAttributeType == .typeRegular else {
@@ -260,10 +266,11 @@ internal struct DeliveryIO: Sendable {
         throw DeliveryFailure(
           reason: .journalFailed, detail: "Journal identity changed; retained: \(target.path)")
       }
+      return true
     } catch let error as CocoaError
       where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile
     {
-      return
+      return false
     }
   }
 }

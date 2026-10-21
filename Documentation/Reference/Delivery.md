@@ -115,8 +115,19 @@ It is shared by App and standalone processes and held throughout recovery,
 preflight, execution and cleanup. Lock acquisition waits up to 60 seconds, then
 returns `busy`. Each Git command uses the registered executable/interpreter and
 its configured timeout (or the policy default). Inherited and command-configured
-`GIT_*` variables are removed and `GIT_TERMINAL_PROMPT=0` is set. Repository
-configuration and hooks remain active.
+`GIT_*` variables are removed. Delivery sets `GIT_TERMINAL_PROMPT=0`,
+`GIT_NO_LAZY_FETCH=1` and an empty `GIT_ALLOW_PROTOCOL` to disable prompts,
+implicit object fetching and all Git transports, including on older Git versions.
+Missing local objects cause failure. Repository
+configuration and hooks remain active. Every Git invocation supplies
+`-c gc.auto=0 -c maintenance.auto=false` to prevent automatic object, reflog and
+worktree-registration maintenance, and `-c submodule.recurse=false` to preserve
+nested repositories' checkouts. Diff inspections use `--no-ext-diff --no-textconv`
+to avoid external diff commands and text-conversion cache writes. Rebase note
+copying is disabled with `-c notes.rewrite.rebase=false` so that other notes refs
+remain unchanged. `-c rerere.enabled=false` preserves the shared conflict-resolution
+cache. The runner also sets `rebase.updateRefs=false` and `rebase.autoStash=false`
+for action modes such as `rebase --abort`, which reject start-only flags.
 
 Preflight checks scopes, path containment, the ignored worktree root, a clean
 main-checkout state for target files, branch availability and the message. Land
@@ -142,7 +153,7 @@ Immediately before each landing attempt, delivery requires the main checkout's
 counts as a moved default branch: delivery rebases onto its current tip, checks
 the entire new baseline-to-commit diff and retries once. A second baseline
 change returns `committed` / `not_fast_forward` without another merge or rebase.
-Land runs `merge --ff-only --no-squash --no-edit --no-overwrite-ignore <verified_commit>`
+Land runs `merge --ff-only --no-squash --no-edit --no-overwrite-ignore --no-autostash <verified_commit>`
 in the main checkout using the immutable, validated commit ID. An ignored file
 that appears at a target path prevents landing rather than being overwritten.
 Live delivery reports
@@ -150,10 +161,21 @@ Live delivery reports
 after a command failure, timeout or exception. A post-merge hook that creates a
 descendant leaves the result `committed` with its branch retained.
 
-Every rebase is followed by the same exact-path validation against its new
-baseline. A mismatch, including an empty diff when the default branch already
+Rebase uses `--no-update-refs --no-autostash` so that repository configuration
+cannot rewrite other branches or temporarily stash user changes. Merge also
+uses `--no-autostash`. An existing main-checkout `MERGE_AUTOSTASH` prevents landing
+and returns `committed` / `git_failed` with the branch retained, because Git would
+otherwise apply that pending stash even with autostash creation disabled.
+Every rebase is followed by the same exact-path validation
+against its new baseline. A mismatch, including an empty diff when the default branch already
 contains the patch, returns `committed` / `scope_changed` with the branch retained.
 Before starting a rebase, delivery journals its original and target commit IDs.
+It then checks index visibility flags and requires a clean entire worktree,
+including untracked and ignored files, because rebase's internal checkout can
+overwrite ignored files. Before aborting its own rebase, delivery again checks
+index visibility and refuses any untracked or ignored files; tracked conflict
+files remain eligible for the recorded abort. Refusal retains the worktree and
+branch as `cleanup_pending`.
 The running call immediately aborts its own failed rebase to the saved commit only
 after actually invoking it and when its `orig-head` and `onto` match that record;
 otherwise it is retained as
@@ -209,17 +231,20 @@ detail, including a changed main checkout.
 
 The repository lock serializes delivery calls across App and CLI processes.
 Other Git writers, including users and other tools, do not take this lock.
-Against those writers, delivery preserves committed work (both newly delivered
-and previously existing work remains reachable from a ref or is identified in
-the result), preserves files, uncommitted changes and worktrees it does not own,
+Against those writers, delivery preserves committed work reachable from refs
+under `refs/` or any checkout's `HEAD`: both newly delivered and previously
+existing work remains reachable from those refs or is identified in the result.
+Git's transient pseudorefs, such as `ORIG_HEAD` and `FETCH_HEAD`, are outside
+this guarantee; merge and rebase may replace them. Delivery also preserves
+files, uncommitted changes and worktrees it does not own,
 checks state immediately before each guarded Git mutation, and uses Git's atomic
 reference transactions where available. Detected interference converges to a
 retained branch with `committed` or `cleanup_pending` and a reason. The only
 state recovery and cleanup undo is state proven to belong to this operation:
 durably recorded successful writes and worktrees and branches with matching
 recorded identities. Unproven state is retained as `cleanup_pending` with its path
-and reason for user handling. The only
-excluded case is an external write in the short interval between a check and
+and reason for user handling. Within this scope, the remaining exception is an
+external write in the short interval between a check and
 the next filesystem or Git mutation where no atomic primitive covers both. These checks do not
 provide isolation from external Git writers across that interval.
 
@@ -241,12 +266,13 @@ write evidence and `writing` both require conservative retention during rollback
 `staged` records
 verified index entries after staging. Optional `rebase` records the `original`
 and `onto` commit IDs before rebase starts and retains them after completion to
-identify its `ORIG_HEAD`. Each journal write uses a
-same-directory, exclusively created temporary file, file fsync, rename and
-directory fsync. An existing journal target must be a regular file with the same
-operation identity before replacement. Temporary-file cleanup uses `unlink` and
-checks its inode against the exclusively opened file; rename checks the same
-identity.
+identify its `ORIG_HEAD`. Each journal write uses a same-directory, exclusively
+created temporary file and file fsync. An absent target is published with
+exclusive `link`, then the temporary entry is removed; a target that appeared
+meanwhile is preserved and publication fails. An existing target must be a
+regular journal with matching operation identity before replacement by rename.
+Directory fsync follows publication. Temporary-file publication and `unlink`
+cleanup check its inode against the exclusively opened file.
 Creating the `computer-mcp` and `delivery` directories also fsyncs each directory's
 parent before execution can mutate Git state, including when the lock directory
 is created before journal writing.

@@ -31,6 +31,8 @@ internal struct DeliveryGit: Sendable {
     var environment = tools.environment.merging(command.env) { _, value in value }
       .filter { !$0.key.hasPrefix("GIT_") }
     environment["GIT_TERMINAL_PROMPT"] = "0"
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment["GIT_ALLOW_PROTOCOL"] = ""
     self.environment = environment
     timeout = command.defaultTimeoutMs ?? tools.configuration.policy.defaultTimeoutMs
   }
@@ -51,7 +53,13 @@ internal struct DeliveryGit: Sendable {
       let result = try runner.runData(
         executable: executable,
         invocation: .init(
-          arguments: prefix + binding + pathOptions + arguments, standardInput: input),
+          arguments: prefix + binding + pathOptions
+            + [
+              "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "submodule.recurse=false",
+              "-c", "notes.rewrite.rebase=false", "-c", "rebase.updateRefs=false",
+              "-c", "rebase.autoStash=false", "-c", "rerere.enabled=false",
+            ]
+            + arguments, standardInput: input),
         workingDirectory: directory, environment: environment,
         timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
       guard !result.timedOut, let code = result.exitCode, accepting.contains(code),

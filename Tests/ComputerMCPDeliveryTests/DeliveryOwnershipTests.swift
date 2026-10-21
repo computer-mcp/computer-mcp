@@ -114,9 +114,9 @@ struct DeliveryOwnershipTests {
       } else {
         provider = try fixture.provider(
           wrappingGit: """
-            if test "$1" = worktree && test "$2" = add; then
+            case " $* " in *" worktree add "*)
               \(quote(fixture.executable)) branch docs/entry main || exit $?
-            fi
+            esac
             """)
       }
       let result = try fixture.apply(provider: provider)
@@ -152,9 +152,9 @@ struct DeliveryOwnershipTests {
         afterCheck
         ? try fixture.provider(
           wrappingGit: """
-            if test "$1" = update-ref; then
+            case " $* " in *" update-ref "*)
               \(quote(fixture.executable)) symbolic-ref refs/heads/docs/entry refs/heads/other || exit $?
-            fi
+            esac
             """, io: io) : fixture.provider(io: io)
       let result = try fixture.apply(
         fixture.request(old: merged ? "alpha" : "absent"), provider: provider)

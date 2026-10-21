@@ -440,6 +440,19 @@ internal struct DeliveryRepository: Sendable {
         throw DeliveryFailure(
           reason: .cleanupFailed, detail: "Unowned rebase retained: \(journal.worktree)")
       }
+      try requireVisibleIndex(journal, git: pinned)
+      for ignored in [false, true] {
+        let arguments =
+          ["--no-optional-locks", "ls-files", "--others", "--exclude-standard", "-z"]
+          + (ignored ? ["--ignored"] : [])
+        guard try pinned.run(arguments, at: URL(fileURLWithPath: journal.worktree)).stdout.isEmpty
+        else {
+          throw DeliveryFailure(
+            reason: .cleanupFailed,
+            detail: "Untracked worktree files retained before rebase abort: \(journal.worktree)")
+        }
+      }
+      // Action modes require config overrides; they reject the rebase start options.
       try pinned.run(["rebase", "--abort"], at: URL(fileURLWithPath: journal.worktree))
     }
     return pinned
@@ -575,6 +588,11 @@ internal struct DeliveryRepository: Sendable {
           "Unproven worktree state retained at \(directory.path): \(unproven.filter { !$0.isEmpty }.joined(separator: ", "))"
       )
     }
+    try requireVisibleIndex(journal, git: pinned)
+  }
+
+  func requireVisibleIndex(_ journal: DeliveryJournal, git pinned: DeliveryGit) throws {
+    let worktree = URL(fileURLWithPath: journal.worktree)
     let entries = try pinned.run(
       ["--no-optional-locks", "ls-files", "-v", "-z"], at: worktree
     ).stdout.split(separator: "\0")

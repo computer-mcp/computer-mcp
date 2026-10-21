@@ -460,42 +460,16 @@ package struct AppControlPlaneOperations: Sendable {
   package func saveCloudflareTunnelConfiguration(
     _ input: CloudflareTunnelConfigurationInput
   ) async throws -> CloudflareOnboardingResult {
-    let id = try Self.required(input.id, label: "Profile ID")
-    let tunnelName = try Self.required(input.tunnelName, label: "Named tunnel")
-    let publicHostname = try Self.required(input.publicHostname, label: "Public hostname")
+    var input = input
+    input.id = try Self.required(input.id, label: "Profile ID")
+    input.tunnelName = try Self.required(input.tunnelName, label: "Named tunnel")
+    input.publicHostname = try Self.required(input.publicHostname, label: "Public hostname")
     guard input.gatewayProfile != .localAdmin else {
       throw AppControlPlaneOperationError.invalidRemoteProfile(input.gatewayProfile)
     }
-    let existing = try await controlPlane.cloudflareTunnelConfigurations().first { $0.id == id }
-    let tunnelTokenReference =
-      try existing?.tunnelTokenReference
-      ?? SecretReference(account: "cloudflare.\(id).tunnel-token")
-    let accessTokenReference =
-      try existing?.accessTokenReference
-      ?? SecretReference(account: "cloudflare.\(id).access-token")
-    let token = Self.optional(input.tunnelToken)
-    if existing == nil && token == nil {
-      throw AppControlPlaneOperationError.missingCredential(label: "Named-tunnel token")
-    }
-    return try await controlPlane.saveCloudflareTunnelConfiguration(
-      CloudflareTunnelConfiguration(
-        id: id,
-        tunnelName: tunnelName,
-        publicHostname: publicHostname,
-        gatewayProfile: input.gatewayProfile,
-        localPort: input.localPort,
-        metricsPort: input.metricsPort,
-        cloudflaredPath: Self.optional(input.cloudflaredPath),
-        oauthEnabled: input.oauthEnabled ?? existing?.oauthEnabled ?? false,
-        oauthClientAllowlist: input.oauthClientAllowlist ?? existing?.oauthClientAllowlist ?? [
-          "claude.ai", "claude.com",
-        ],
-        tunnelTokenReference: tunnelTokenReference,
-        accessTokenReference: accessTokenReference
-      ),
-      tunnelToken: token,
-      regenerateAccessToken: input.regenerateAccessToken
-    )
+    input.tunnelToken = Self.optional(input.tunnelToken)
+    input.cloudflaredPath = Self.optional(input.cloudflaredPath)
+    return try await controlPlane.saveCloudflareTunnelConfiguration(input)
   }
 
   package func deleteCloudflareTunnelConfiguration(id: String) async throws {

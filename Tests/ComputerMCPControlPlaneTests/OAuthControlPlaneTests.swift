@@ -133,6 +133,94 @@ struct OAuthControlPlaneTests {
   // These integration cases publish manifests through the macOS exclusive-rename
   // adapter. Linux manifest recovery-record publication reports ENOSYS.
   #if os(macOS)
+    @Test func queuedRotationPreservesTheCompletedSavesOAuthPolicy() async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      _ = try await fixture.service.saveCloudflareTunnelConfiguration(
+        profile, tunnelToken: "synthetic-tunnel")
+      let saving = SuspensionGate()
+      await fixture.secrets.pauseWrite(
+        "updated-tunnel", for: profile.tunnelTokenReference, gate: saving)
+      var disabling = fixture.saveInput(for: profile)
+      disabling.oauthEnabled = false
+      disabling.oauthClientAllowlist = ["updated.example"]
+      disabling.tunnelToken = "updated-tunnel"
+      let firstInput = disabling
+      let first = Task {
+        try await fixture.operations.saveCloudflareTunnelConfiguration(firstInput)
+      }
+      await saving.waitUntilPaused()
+      var rotating = fixture.saveInput(for: profile)
+      rotating.regenerateAccessToken = true
+      let secondInput = rotating
+      let second = Task {
+        try await fixture.operations.saveCloudflareTunnelConfiguration(secondInput)
+      }
+      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+      while await fixture.service.cloudflareCredentialMutationWaiters[profile.id]?.count != 1,
+        ContinuousClock.now < deadline
+      { await Task.yield() }
+      #expect(await fixture.service.cloudflareCredentialMutationWaiters[profile.id]?.count == 1)
+      await saving.resume()
+      _ = try await first.value
+      let rotated = try await second.value
+      #expect(!rotated.profile.oauthEnabled)
+      #expect(rotated.profile.oauthClientAllowlist == ["updated.example"])
+      #expect(rotated.generatedAccessToken != nil)
+      let current = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      #expect(!current.oauthEnabled)
+      #expect(current.oauthClientAllowlist == ["updated.example"])
+      #expect(
+        await fixture.secrets.valueAsynchronously(
+          for: profile.accessTokenReference, authenticationUI: .fail)
+          == rotated.generatedAccessToken)
+    }
+
+    @Test func savingOneTunnelPreservesAnotherTunnelsCompletedDisablement() async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      _ = try await fixture.service.saveCloudflareTunnelConfiguration(
+        profile, tunnelToken: "synthetic-tunnel")
+      let other = CloudflareTunnelConfiguration(
+        id: "other", tunnelName: "other-named", publicHostname: "other.example",
+        oauthEnabled: true, oauthClientAllowlist: ["client.example"],
+        tunnelTokenReference: try SecretReference(account: "cloudflare.other.tunnel-token"),
+        accessTokenReference: try SecretReference(account: "cloudflare.other.access-token"))
+      _ = try await fixture.service.saveCloudflareTunnelConfiguration(
+        other, tunnelToken: "synthetic-other-tunnel")
+      let saving = SuspensionGate()
+      await fixture.secrets.pauseWrite(
+        "updated-tunnel", for: profile.tunnelTokenReference, gate: saving)
+      var input = fixture.saveInput(for: profile)
+      input.tunnelName = "updated-named"
+      input.tunnelToken = "updated-tunnel"
+      let savingInput = input
+      let first = Task {
+        try await fixture.operations.saveCloudflareTunnelConfiguration(savingInput)
+      }
+      await saving.waitUntilPaused()
+      do {
+        var disabling = fixture.saveInput(for: other)
+        disabling.oauthEnabled = false
+        _ = try await fixture.operations.saveCloudflareTunnelConfiguration(disabling)
+        #expect(
+          try await fixture.service.cloudflareTunnelConfigurations().first { $0.id == other.id }?
+            .oauthEnabled == false)
+        await saving.resume()
+        _ = try await first.value
+        let current = try await fixture.service.cloudflareTunnelConfigurations()
+        #expect(current.first { $0.id == profile.id }?.tunnelName == "updated-named")
+        #expect(current.first { $0.id == other.id }?.oauthEnabled == false)
+        #expect(current.first { $0.id == other.id }?.oauthClientAllowlist == ["client.example"])
+      } catch {
+        await saving.resume()
+        _ = await first.result
+        throw error
+      }
+    }
+
     @Test func startWaitsForDeletionToRevokeGrantsAndInvalidateTheListenerCredential() async throws
     {
       let fixture = try ControlFixture()
@@ -514,6 +602,12 @@ private final class ControlFixture: Sendable {
   }
   func post(port: Int, token: String) async throws -> Int {
     try await postResponse(port: port, token: token).statusCode
+  }
+  func saveInput(for profile: CloudflareTunnelConfiguration) -> CloudflareTunnelConfigurationInput {
+    .init(
+      id: profile.id, tunnelName: profile.tunnelName, publicHostname: profile.publicHostname,
+      gatewayProfile: profile.gatewayProfile, localPort: profile.localPort,
+      metricsPort: profile.metricsPort, cloudflaredPath: profile.cloudflaredPath)
   }
   func postResponse(port: Int, token: String, initialize: Bool = false) async throws
     -> HTTPURLResponse

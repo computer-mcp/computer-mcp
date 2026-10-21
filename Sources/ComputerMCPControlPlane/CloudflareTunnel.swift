@@ -54,31 +54,52 @@ extension AppControlPlaneService {
   }
 
   package func saveCloudflareTunnelConfiguration(
+    _ input: CloudflareTunnelConfigurationInput
+  ) async throws -> CloudflareOnboardingResult {
+    await beginCloudflareCredentialMutation(profileID: input.id)
+    defer { endCloudflareCredentialMutation(profileID: input.id) }
+    try Task.checkCancellation()
+    let existing = try cloudflareTunnelConfigurations().first { $0.id == input.id }
+    if existing == nil && input.tunnelToken == nil {
+      throw AppControlPlaneOperationError.missingCredential(label: "Named-tunnel token")
+    }
+    let profile = CloudflareTunnelConfiguration(
+      id: input.id,
+      tunnelName: input.tunnelName,
+      publicHostname: input.publicHostname,
+      gatewayProfile: input.gatewayProfile,
+      localPort: input.localPort,
+      metricsPort: input.metricsPort,
+      cloudflaredPath: input.cloudflaredPath,
+      oauthEnabled: input.oauthEnabled ?? existing?.oauthEnabled ?? false,
+      oauthClientAllowlist: input.oauthClientAllowlist ?? existing?.oauthClientAllowlist ?? [
+        "claude.ai", "claude.com",
+      ],
+      tunnelTokenReference: try SecretReference(account: "cloudflare.\(input.id).tunnel-token"),
+      accessTokenReference: try SecretReference(account: "cloudflare.\(input.id).access-token")
+    )
+    return try await performCloudflareSave(
+      profile, tunnelToken: input.tunnelToken, regenerateAccessToken: input.regenerateAccessToken)
+  }
+
+  package func saveCloudflareTunnelConfiguration(
     _ profile: CloudflareTunnelConfiguration,
     tunnelToken: String?,
     regenerateAccessToken: Bool = false
   ) async throws -> CloudflareOnboardingResult {
-    try profile.validate()
     await beginCloudflareCredentialMutation(profileID: profile.id)
     defer { endCloudflareCredentialMutation(profileID: profile.id) }
+    return try await performCloudflareSave(
+      profile, tunnelToken: tunnelToken, regenerateAccessToken: regenerateAccessToken)
+  }
+
+  /// The caller owns this profile's mutation slot through publication and rollback.
+  private func performCloudflareSave(
+    _ profile: CloudflareTunnelConfiguration, tunnelToken: String?, regenerateAccessToken: Bool
+  ) async throws -> CloudflareOnboardingResult {
     try Task.checkCancellation()
-    var configuration = try manifestStore.activeConfiguration()
-    configuration.transports.cloudflare.removeAll { $0.id == profile.id }
-    configuration.transports.cloudflare.append(
-      CloudflareTunnelTransportConfig(
-        id: profile.id,
-        tunnelName: profile.tunnelName,
-        publicHostname: profile.publicHostname,
-        gatewayProfile: profile.gatewayProfile,
-        localPort: profile.localPort,
-        metricsPort: profile.metricsPort,
-        cloudflaredPath: profile.cloudflaredPath,
-        oauthEnabled: profile.oauthEnabled,
-        oauthClientAllowlist: profile.oauthClientAllowlist
-      )
-    )
-    configuration.transports.cloudflare.sort { $0.id < $1.id }
-    try configuration.validate()
+    try profile.validate()
+    try configuration(savingCloudflareProfile: profile).validate()
 
     let existingTunnelToken = try await keychainSecretValue(for: profile.tunnelTokenReference)
     let existingAccessToken = try await keychainSecretValue(for: profile.accessTokenReference)
@@ -97,7 +118,7 @@ extension AppControlPlaneService {
         cloudflareAccessCredential(profileID: profile.id, token: generatedAccessToken)
           .replace(with: generatedAccessToken)
       }
-      try activateTransportConfiguration(configuration)
+      try activateTransportConfiguration(configuration(savingCloudflareProfile: profile))
     } catch {
       await restoreCloudflareSecret(
         existingTunnelToken,
@@ -116,6 +137,28 @@ extension AppControlPlaneService {
       profile: profile,
       generatedAccessToken: generatedAccessToken
     )
+  }
+
+  private func configuration(savingCloudflareProfile profile: CloudflareTunnelConfiguration) throws
+    -> GatewayConfiguration
+  {
+    var configuration = try manifestStore.activeConfiguration()
+    configuration.transports.cloudflare.removeAll { $0.id == profile.id }
+    configuration.transports.cloudflare.append(
+      CloudflareTunnelTransportConfig(
+        id: profile.id,
+        tunnelName: profile.tunnelName,
+        publicHostname: profile.publicHostname,
+        gatewayProfile: profile.gatewayProfile,
+        localPort: profile.localPort,
+        metricsPort: profile.metricsPort,
+        cloudflaredPath: profile.cloudflaredPath,
+        oauthEnabled: profile.oauthEnabled,
+        oauthClientAllowlist: profile.oauthClientAllowlist
+      )
+    )
+    configuration.transports.cloudflare.sort { $0.id < $1.id }
+    return configuration
   }
 
   package func deleteCloudflareTunnelConfiguration(id: String) async throws {

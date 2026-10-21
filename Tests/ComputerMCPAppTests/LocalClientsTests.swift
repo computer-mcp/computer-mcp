@@ -266,6 +266,49 @@ struct LocalClientsTests {
     #expect(model.review?.plan.display.client == .claudeDesktop)
   }
 
+  @Test(arguments: [false, true])
+  func callsDuringAReadWaitAndAnUncertainReadStopsThem(uncertain: Bool) async throws {
+    let fixture = try LocalClientsFixture()
+    let location = ClientRegistrationLocation(
+      configurationFile: fixture.desktopFile.path, configurationVariable: nil,
+      configurationValue: nil)
+    fixture.fake.statusOverride = [
+      .init(
+        client: .claudeDesktop, state: .notRegistered, uncertain: uncertain, location: location,
+        observedEntry: nil)
+    ]
+    let gate = Gate()
+    fixture.fake.fetchGate = { await gate.wait() }
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    let reading = Task { await model.reload() }
+    await gate.started()
+    await model.reload()
+    await model.reload(explicit: true)
+    await model.beginReview(.claudeDesktop, operation: .register)
+    #expect(fixture.fake.fetchCount == 1 && fixture.fake.previewCount == 0)
+    fixture.fake.fetchGate = nil
+    gate.release()
+    await reading.value
+    #expect(fixture.fake.fetchCount == (uncertain ? 1 : 2))
+    #expect(model.uncertainClients == (uncertain ? [.claudeDesktop] : []))
+  }
+
+  @Test
+  func aReadRequestedDuringAnUncertainPreviewDoesNotRun() async throws {
+    let fixture = try LocalClientsFixture(runner: UnconfirmedProbeRunner())
+    let gate = Gate()
+    fixture.fake.previewGate = { await gate.wait() }
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    let previewing = Task { await model.beginReview(.codex, operation: .register) }
+    await gate.started()
+    await model.reload()
+    fixture.fake.previewGate = nil
+    gate.release()
+    await previewing.value
+    #expect(fixture.fake.fetchCount == 0)
+    #expect(model.uncertainClients == [.codex])
+  }
+
   @Test
   func rowsAndReviewSheetsRender() async throws {
     let fixture = try LocalClientsFixture()
@@ -378,6 +421,7 @@ private final class LocalClientsFake: LocalClientRegistering {
   var applyOverride: ((ClientRegistrationPlan) -> ClientRegistrationResult)?
   var previewGate: (() async -> Void)?
   var applyGate: (() async -> Void)?
+  var fetchGate: (() async -> Void)?
   var applied: [String] = []
   var fetchCount = 0
   var previewCount = 0
@@ -389,6 +433,7 @@ private final class LocalClientsFake: LocalClientRegistering {
 
   func fetchClientRegistrations() async throws -> [ClientRegistrationStatus] {
     fetchCount += 1
+    if let fetchGate { await fetchGate() }
     return try statusOverride ?? service.statuses(server: server)
   }
   func previewClientRegistration(client: RegistrationClient, operation: ClientRegistrationOperation)
@@ -418,4 +463,25 @@ private struct UnconfirmedProbeRunner: RegistrationProcessRunning {
       executable: executable, arguments: arguments, exitCode: nil, timedOut: true, stdout: "",
       stderr: "", stdoutTruncated: false, stderrTruncated: false)
   }
+}
+
+/// Suspends one call until the test releases it.
+@MainActor
+private final class Gate {
+  private var continuation: CheckedContinuation<Void, Never>?
+  private let (events, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+
+  func wait() async {
+    await withCheckedContinuation {
+      continuation = $0
+      signal.yield(())
+    }
+  }
+
+  func started() async {
+    var iterator = events.makeAsyncIterator()
+    _ = await iterator.next()
+  }
+
+  func release() { continuation?.resume() }
 }

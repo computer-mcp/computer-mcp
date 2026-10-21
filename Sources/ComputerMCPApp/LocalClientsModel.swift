@@ -25,7 +25,7 @@ struct LocalClientOutcome: Identifiable {
 final class LocalClientsModel: ObservableObject {
   @Published private(set) var statuses: [ClientRegistrationStatus] = []
   @Published private(set) var loadError: String?
-  /// The client whose preview or change is in progress; one at a time.
+  /// The client whose preview or change is in progress.
   @Published private(set) var busyClient: RegistrationClient?
   @Published var review: LocalClientReview?
   @Published var outcome: LocalClientOutcome?
@@ -34,9 +34,11 @@ final class LocalClientsModel: ObservableObject {
   @Published private(set) var uncertainClients: Set<RegistrationClient> = []
 
   private let controlPlane: any LocalClientRegistering
-  private var loadGeneration = 0
-  /// No status read starts while a change runs: its outcome decides whether reading is safe.
-  private var applying = false
+  /// Every registration call can start client processes, so at most one runs at a time.
+  @Published private(set) var callInFlight = false
+  /// A read requested while a call ran: nil for none, true when it was an explicit refresh.
+  /// It runs after that call only if the call left nothing uncertain.
+  private var pendingReload: Bool?
 
   init(controlPlane: any LocalClientRegistering) { self.controlPlane = controlPlane }
 
@@ -45,36 +47,42 @@ final class LocalClientsModel: ObservableObject {
   }
 
   /// Reading states starts each client's CLI, so callers reload on demand, not on a timer.
-  /// After an uncertain change only an explicit reload reads again.
+  /// After anything uncertain only an explicit reload reads again.
   func reload(explicit: Bool = false) async {
-    guard !applying else { return }
+    if callInFlight {
+      pendingReload = (pendingReload ?? false) || explicit
+      return
+    }
     if explicit {
       uncertainClients = []
     } else if !uncertainClients.isEmpty {
       return
     }
-    loadGeneration += 1
-    let generation = loadGeneration
+    callInFlight = true
+    var uncertain = false
     do {
       let loaded = try await controlPlane.fetchClientRegistrations()
-      guard generation == loadGeneration else { return }
       statuses = loaded
-      uncertainClients.formUnion(loaded.filter(\.uncertain).map(\.client))
+      let unconfirmed = loaded.filter(\.uncertain).map(\.client)
+      uncertain = !unconfirmed.isEmpty
+      uncertainClients.formUnion(unconfirmed)
       loadError = nil
     } catch {
-      guard generation == loadGeneration else { return }
       loadError = AppLocalization.errorDescription(error)
     }
+    await finishCall(uncertain: uncertain)
   }
 
   func beginReview(_ client: RegistrationClient, operation: ClientRegistrationOperation) async {
-    guard busyClient == nil, review == nil, !uncertainClients.contains(client) else { return }
+    guard !callInFlight, review == nil, !uncertainClients.contains(client) else { return }
+    callInFlight = true
     busyClient = client
-    defer { busyClient = nil }
+    var uncertain = false
     do {
       let plan = try await controlPlane.previewClientRegistration(
         client: client, operation: operation)
       if plan.display.refusalCode == .uncertain {
+        uncertain = true
         uncertainClients.insert(client)
         outcome = LocalClientOutcome(
           title: AppLocalization.string("Result unknown"),
@@ -85,18 +93,20 @@ final class LocalClientsModel: ObservableObject {
     } catch {
       outcome = Self.failure(error, client: client)
     }
+    busyClient = nil
+    await finishCall(uncertain: uncertain)
   }
 
   func cancelReview() { review = nil }
 
   /// Applies exactly the plan the owner reviewed; the service refuses it if anything changed.
   func confirm(_ reviewed: LocalClientReview) async {
-    guard busyClient == nil, review?.id == reviewed.id else { return }
+    guard !callInFlight, review?.id == reviewed.id else { return }
     review = nil
     let plan = reviewed.plan
     let client = plan.display.client
+    callInFlight = true
     busyClient = client
-    applying = true
     var uncertain = false
     do {
       let result = try await controlPlane.applyClientRegistration(plan)
@@ -107,12 +117,21 @@ final class LocalClientsModel: ObservableObject {
       outcome = Self.failure(error, client: client)
     }
     busyClient = nil
-    applying = false
     if uncertain {
       uncertainClients.insert(client)
     } else {
-      await reload()
+      pendingReload = pendingReload ?? false
     }
+    await finishCall(uncertain: uncertain)
+  }
+
+  /// Ends the running call and runs the coalesced read unless the call left anything uncertain.
+  private func finishCall(uncertain: Bool) async {
+    callInFlight = false
+    let pending = pendingReload
+    pendingReload = nil
+    guard !uncertain, let explicit = pending else { return }
+    await reload(explicit: explicit)
   }
 
   static func outcome(_ result: ClientRegistrationResult, plan: ClientRegistrationDisplayPlan)

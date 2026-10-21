@@ -47,7 +47,7 @@ private struct LocalClientRow: View {
           } label: {
             actionTitle(status?.state)
           }
-          .disabled(model.busyClient != nil)
+          .disabled(model.callInFlight)
           .accessibilityIdentifier("home.local-client.\(client.rawValue).action")
         }
       }

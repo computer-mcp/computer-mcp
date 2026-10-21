@@ -2,7 +2,6 @@ import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
-import ComputerMCPGateway
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPTestSupport
@@ -12,6 +11,7 @@ import MCP
 import Testing
 
 @testable import ComputerMCPControlPlane
+@testable import ComputerMCPGateway
 
 #if canImport(FoundationNetworking)
   import FoundationNetworking
@@ -133,6 +133,78 @@ struct OAuthControlPlaneTests {
   // These integration cases publish manifests through the macOS exclusive-rename
   // adapter. Linux manifest recovery-record publication reports ENOSYS.
   #if os(macOS)
+    @Test func startWaitsForDeletionToRevokeGrantsAndInvalidateTheListenerCredential() async throws
+    {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      let token = try #require(
+        try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: "synthetic-tunnel", regenerateAccessToken: true
+        ).generatedAccessToken)
+      let pairing = try await fixture.server().authorize(fixture.fields, address: "fixture")
+      let grant = try await fixture.service.authorizeOAuthClient(
+        pairingCode: pairing.request.pairingCode)
+      _ = try await fixture.service.startCloudflareTunnel(
+        profileID: profile.id, gatewayService: fixture.gatewayService)
+      let credential = try #require(await fixture.service.cloudflareAccessCredentials[profile.id])
+      let sessions = try #require(await fixture.service.cloudflareOAuthSessions[profile.id])
+      let revoking = SuspensionGate()
+      await sessions.attach { _ in await revoking.pause() }
+      let deleting = Task {
+        try await fixture.service.deleteCloudflareTunnelConfiguration(id: profile.id)
+      }
+      await revoking.waitUntilPaused()
+      #expect(await fixture.service.cloudflareRuntimes[profile.id] == nil)
+      let starting = Task {
+        try await fixture.service.startCloudflareTunnel(
+          profileID: profile.id, gatewayService: fixture.gatewayService)
+      }
+      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+      while await fixture.service.cloudflareCredentialMutationWaiters[profile.id]?.count != 1,
+        ContinuousClock.now < deadline
+      { await Task.yield() }
+      #expect(await fixture.service.cloudflareCredentialMutationWaiters[profile.id]?.count == 1)
+      #expect(await fixture.service.cloudflareStartTasks[profile.id] == nil)
+      await revoking.resume()
+      do {
+        try await deleting.value
+        await #expect(throws: CloudflareTunnelError.profileNotFound(profile.id)) {
+          try await starting.value
+        }
+        #expect(try await fixture.service.cloudflareTunnelConfigurations().isEmpty)
+        #expect(await fixture.service.cloudflareRuntimes.isEmpty)
+        #expect(await fixture.service.cloudflareStartTasks.isEmpty)
+        #expect(await fixture.service.cloudflareCredentialMutationWaiters.isEmpty)
+        #expect(await fixture.service.cloudflareAccessCredentials[profile.id] == nil)
+        #expect(
+          await fixture.secrets.valueAsynchronously(
+            for: profile.accessTokenReference, authenticationUI: .fail) == nil)
+        #expect(try await fixture.server().grants(approver: .localApp).first?.id == grant.id)
+        #expect(try await fixture.server().grants(approver: .localApp).first?.revokedAt != nil)
+        // A listener retaining the deleted profile's credential must refuse its token.
+        let retained = GatewayHTTPRuntime(
+          configuration: .init(), registry: RotationRegistry(), host: "127.0.0.1",
+          port: profile.localPort, publicBaseURL: nil, accessCredential: credential)
+        try await retained.startListening()
+        do {
+          #expect(try await fixture.post(port: profile.localPort, token: token) == 401)
+          await retained.stop()
+        } catch {
+          await retained.stop()
+          throw error
+        }
+        await fixture.gatewayService.stop()
+      } catch {
+        await revoking.resume()
+        _ = await deleting.result
+        _ = await starting.result
+        try? await fixture.service.stop()
+        await fixture.gatewayService.stop()
+        throw error
+      }
+    }
+
     @Test(arguments: [false, true])
     func accessTokenRotationDuringStartupUsesTheCurrentCredential(rotateBeforeRead: Bool)
       async throws

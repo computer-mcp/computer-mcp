@@ -131,9 +131,9 @@ extension AppControlPlaneService {
     var configuration = try manifestStore.activeConfiguration()
     configuration.transports.cloudflare.removeAll { $0.id == id }
     try activateTransportConfiguration(configuration)
+    cloudflareAccessCredentials.removeValue(forKey: id)?.replace(with: nil)
     try await deleteKeychainSecret(profile.tunnelTokenReference)
     try await deleteKeychainSecret(profile.accessTokenReference)
-    cloudflareAccessCredentials.removeValue(forKey: id)
     cloudflareOAuthSessions.removeValue(forKey: id)
   }
 
@@ -224,13 +224,21 @@ extension AppControlPlaneService {
   package func startCloudflareTunnel(profileID: String, gatewayService: AppGatewayService)
     async throws -> CloudflareTunnelStatus
   {
-    guard cloudflareStartTasks[profileID] == nil, cloudflareStopTasks[profileID] == nil else {
-      throw CloudflareTunnelError.alreadyRunning(profileID)
+    let task: Task<CloudflareTunnelStatus, Error>
+    do {
+      await beginCloudflareCredentialMutation(profileID: profileID)
+      defer { endCloudflareCredentialMutation(profileID: profileID) }
+      try Task.checkCancellation()
+      _ = try requireCloudflareProfile(profileID)
+      guard cloudflareStartTasks[profileID] == nil, cloudflareStopTasks[profileID] == nil else {
+        throw CloudflareTunnelError.alreadyRunning(profileID)
+      }
+      task = Task {
+        try await self.performCloudflareStart(profileID: profileID, gatewayService: gatewayService)
+      }
+      // Registration and slot release share an actor turn so deletion can join this start.
+      cloudflareStartTasks[profileID] = task
     }
-    let task = Task {
-      try await self.performCloudflareStart(profileID: profileID, gatewayService: gatewayService)
-    }
-    cloudflareStartTasks[profileID] = task
     defer { cloudflareStartTasks.removeValue(forKey: profileID) }
     return try await withTaskCancellationHandler {
       try await task.value

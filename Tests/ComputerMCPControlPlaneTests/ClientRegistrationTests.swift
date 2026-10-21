@@ -292,12 +292,18 @@ struct ClientRegistrationTests {
       }
       """.utf8
     ).write(to: source)
+    // The Linux Swift image provides clang but not cc.
+    let path = ProcessInfo.processInfo.environment["PATH"] ?? "/bin"
+    let compiler =
+      path.split(separator: ":").contains {
+        FileManager.default.isExecutableFile(atPath: "\($0)/cc")
+      } ? "cc" : "clang"
     let compiled = try RegistrationProcessRunner().run(
       executable: "/usr/bin/env",
-      arguments: ["cc", source.path, "-o", fixture.clientExecutable.path],
-      environment: ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/bin"],
+      arguments: [compiler, source.path, "-o", fixture.clientExecutable.path],
+      environment: ["PATH": path],
       timeoutMilliseconds: 10_000, maxOutputBytes: 16_384)
-    #expect(compiled.exitCode == 0)
+    #expect(compiled.exitCode == 0, "\(compiled.stderr)")
     let runner = EnvironmentRegistrationRunner()
     let variable = client == .codex ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"
     let service = ClientRegistrationService(

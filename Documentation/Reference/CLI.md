@@ -36,7 +36,7 @@ computer-mcp clients end [--control-socket <control-socket>] <id> [--expected-re
 computer-mcp clients trusts [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
 computer-mcp clients revoke [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
 computer-mcp clients authorizations [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>] [--tunnel-id <tunnel-id>]
-computer-mcp clients authorize [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>] [--profile <profile>]
+computer-mcp clients authorize [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>] [--profile <profile>] [--authorization-revision <authorization-revision>]
 computer-mcp clients deny [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>]
 computer-mcp clients grants [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>] [--tunnel-id <tunnel-id>]
 computer-mcp clients revoke-grant [--control-socket <control-socket>] <id>
@@ -151,6 +151,10 @@ Pending rows include pairing code, client host, redirect host and expiry.
 defaults to `cloudflare-observe` only while its effective mode is read-only.
 Otherwise approval requires an explicit `--profile`. The selected profile must
 allow `cloudflare-tunnel`. Pairing lasts ten minutes and decisions are single-use.
+Pass `--authorization-revision <revision>` to bind approval to the chosen
+profile's reviewed `authorization_revision` from `profile show`. If its mode or
+permissions have changed, approval fails; review the current profile before
+trying again. The argument is optional for CLI approvals.
 Grant revocation immediately invalidates its tokens. OAuth approval retains
 the existing separate Full Access session consent requirement.
 

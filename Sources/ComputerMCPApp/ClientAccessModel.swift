@@ -34,7 +34,10 @@ protocol ClientAccessManaging {
     async throws
   func endClientAccess(id: String, expectedRevision: Int64) async throws
   func revokeClientTrust(id: String, expectedRevision: Int64) async throws
-  func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
+  func approveOAuthRequest(
+    _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
+    expectedAuthorizationRevision: Int64
+  )
     async throws
   func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws
   func revokeOAuthGrant(id: String) async throws
@@ -57,7 +60,10 @@ extension ClientAccessManaging {
   func revokeClientTrust(id: String, expectedRevision: Int64) async throws {
     throw unavailableClientAccess()
   }
-  func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
+  func approveOAuthRequest(
+    _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
+    expectedAuthorizationRevision: Int64
+  )
     async throws
   {
     throw unavailableClientAccess()
@@ -225,14 +231,16 @@ final class ClientAccessModel: ObservableObject {
       return false
     }
     guard let current = oauthProfile(for: request), current.id == reviewed.id,
-      current.mode == reviewed.mode
+      current.mode == reviewed.mode, current.authorizationRevision == reviewed.authorizationRevision
     else {
       errorMessage = AppLocalization.string(
         "The profile for this sign-in changed. Review it and approve again.")
       return false
     }
     let approved = await perform {
-      try await self.controlPlane.approveOAuthRequest(request, profile: current.id)
+      try await self.controlPlane.approveOAuthRequest(
+        request, profile: reviewed.id, expectedAuthorizationRevision: reviewed.authorizationRevision
+      )
     }
     if approved { oauthProfileChoices[request.id] = nil }
     return approved

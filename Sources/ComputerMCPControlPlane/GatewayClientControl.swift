@@ -14,7 +14,10 @@ enum GatewayClientControl: Sendable {
       readOnly: true),
     .init(
       "clients.authorize",
-      arguments: ["pairing_code": .string, "tunnel_id": .string, "profile_id": .string],
+      arguments: [
+        "pairing_code": .string, "tunnel_id": .string, "profile_id": .string,
+        "authorization_revision": .integer,
+      ],
       required: ["pairing_code"], readOnly: false),
     .init(
       "clients.deny", arguments: ["pairing_code": .string, "tunnel_id": .string],
@@ -81,9 +84,13 @@ enum GatewayClientControl: Sendable {
         } else {
           profileID = nil
         }
+        let authorizationRevision = try arguments["authorization_revision"].map { _ in
+          try revision("authorization_revision", arguments)
+        }
         let grant = try await service.authorizeOAuthClient(
           pairingCode: string("pairing_code", arguments),
-          tunnelID: tunnelID, profileID: profileID, approver: .localCLI)
+          tunnelID: tunnelID, profileID: profileID,
+          expectedAuthorizationRevision: authorizationRevision, approver: .localCLI)
         return try ControlToolResponse.encodedPayload(grant)
       case "clients.deny":
         let code = try string("pairing_code", arguments)

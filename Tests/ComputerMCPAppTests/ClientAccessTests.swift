@@ -149,6 +149,11 @@ struct ClientAccessTests {
   func signInApprovalDefaultsToReadOnlyAndKeepsTheOwnersChoice() async throws {
     let service = ClientAccessFake()
     service.oauth = true
+    var observeProfile = ProfileGrant.cloudflareObserve
+    observeProfile.authorizationRevision = 17
+    var operateProfile = ProfileGrant.cloudflareOperate
+    operateProfile.authorizationRevision = 23
+    service.remoteProfiles = [operateProfile, observeProfile]
     let model = ClientAccessModel(controlPlane: service)
     await model.reload()
     #expect(model.pendingOAuthRequests.map(\.pairingCode) == ["K7M2QP", "R4TX9H"])
@@ -170,7 +175,26 @@ struct ClientAccessTests {
         "oauth-approve:R4TX9H:cloudflare:cloudflare-operate",
       ])
     #expect(model.oauthProfileChoices.isEmpty)
+    #expect(service.oauthApprovalRevisions == [17, 23])
     #expect(service.approvals.isEmpty)
+  }
+
+  @Test
+  func reviewedPermissionsMustMatchEvenWhenTheAccessModeIsUnchanged() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let request = try #require(model.pendingOAuthRequests.first)
+    let reviewed = try #require(model.oauthProfile(for: request))
+    var current = reviewed
+    current.capabilityIDs.insert("file.read")
+    current.authorizationRevision += 1
+    service.remoteProfiles = [current]
+    await model.reload()
+    #expect(!(await model.approve(request, reviewed: reviewed)))
+    #expect(model.errorMessage != nil)
+    #expect(service.actions.isEmpty)
   }
 
   @Test
@@ -382,10 +406,15 @@ private final class ClientAccessFake: ClientAccessManaging {
       oauthGrants: oauthGrants, remoteProfiles: remoteProfiles,
       tunnelHosts: ["cloudflare": "mcp.example.com"])
   }
-  func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
+  var oauthApprovalRevisions: [Int64] = []
+  func approveOAuthRequest(
+    _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
+    expectedAuthorizationRevision: Int64
+  )
     async throws
   {
     actions.append("oauth-approve:\(request.pairingCode):\(request.tunnelID):\(profile.rawValue)")
+    oauthApprovalRevisions.append(expectedAuthorizationRevision)
     if failWrite { throw AppControlPlaneError.unavailable("Write unavailable") }
   }
   func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws {

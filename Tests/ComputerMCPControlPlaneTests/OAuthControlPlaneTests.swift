@@ -130,6 +130,54 @@ struct OAuthControlPlaneTests {
     )
   }
 
+  @Test(arguments: [false, true], [false, true])
+  func approvalRejectsChangedProfileAuthorizationUntilItIsReviewedAgain(
+    throughControl: Bool, changeMode: Bool
+  ) async throws {
+    let fixture = try ControlFixture()
+    defer { fixture.remove() }
+    let server = fixture.server()
+    let pairing = try await server.authorize(fixture.fields, address: "fixture")
+    let reviewed = try #require(
+      try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve })
+    #expect(reviewed.mode == .readOnly)
+    let changed = try await fixture.service.updateProfilePermissions(
+      profileID: reviewed.id, mode: changeMode ? .workspaceOperations : nil,
+      capabilityIDs: changeMode ? ["file.read", "file.write"] : ["file.read"],
+      expectedRevision: reviewed.authorizationRevision)
+    #expect(changed.authorizationRevision > reviewed.authorizationRevision)
+    #expect(changed.mode == (changeMode ? .workspaceOperations : .readOnly))
+    #expect(changed.capabilityIDs != reviewed.capabilityIDs)
+    let owner = GatewayClientControl.app(fixture.operations)
+    func approve(revision: Int64) async throws -> GatewayProfileID {
+      if throughControl {
+        let response = try await owner.call(
+          name: "clients.authorize",
+          arguments: [
+            "pairing_code": .string(pairing.request.pairingCode),
+            "profile_id": .string(reviewed.id.rawValue),
+            "authorization_revision": .integer(revision),
+          ])
+        return try #require(
+          GatewayProfileID(rawValue: response.objectValue?["profile_id"]?.stringValue ?? ""))
+      }
+      return try await fixture.service.authorizeOAuthClient(
+        pairingCode: pairing.request.pairingCode, profileID: reviewed.id,
+        expectedAuthorizationRevision: revision
+      ).profileID
+    }
+    do {
+      _ = try await approve(revision: reviewed.authorizationRevision)
+      Issue.record("An approval must use the profile revision the owner reviewed.")
+    } catch GatewayToolError.invalidArguments(let message) {
+      #expect(message.contains("authorization changed"))
+      #expect(message.contains("review"))
+    }
+    #expect(try await server.pendingRequests(approver: .localApp).count == 1)
+    #expect(try await server.grants(approver: .localApp).isEmpty)
+    #expect(try await approve(revision: changed.authorizationRevision) == reviewed.id)
+  }
+
   // These integration cases publish manifests through the macOS exclusive-rename
   // adapter. Linux manifest recovery-record publication reports ENOSYS.
   #if os(macOS)
@@ -517,6 +565,14 @@ struct OAuthControlPlaneTests {
       #expect(throws: (any Error).self) {
         try contract.validate(.object(["full_access": .bool(true)]))
       }
+    }
+    let approve = try #require(
+      GatewayClientControl.contracts.first { $0.name == "clients.authorize" })
+    _ = try approve.validate(
+      .object(["pairing_code": .string("ABCDEF"), "authorization_revision": .integer(7)]))
+    #expect(throws: (any Error).self) {
+      try approve.validate(
+        .object(["pairing_code": .string("ABCDEF"), "authorization_revision": .string("7")]))
     }
   }
 }

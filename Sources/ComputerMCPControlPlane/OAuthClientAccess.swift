@@ -63,7 +63,8 @@ extension AppControlPlaneService {
 
   package func authorizeOAuthClient(
     pairingCode: String, tunnelID: String? = nil,
-    profileID: GatewayProfileID? = nil, approver: GatewayCallerKind = .localApp
+    profileID: GatewayProfileID? = nil, expectedAuthorizationRevision: Int64? = nil,
+    approver: GatewayCallerKind = .localApp
   ) async throws -> OAuthGrant {
     let requests = try await oauthAuthorizations(tunnelID: tunnelID, approver: approver)
       .filter { $0.pairingCode == pairingCode.uppercased() }
@@ -75,6 +76,13 @@ extension AppControlPlaneService {
         $0.id == (profileID ?? .cloudflareObserve)
       })
     else { throw OAuthError.invalidRequest }
+    if let expectedAuthorizationRevision,
+      profile.authorizationRevision != expectedAuthorizationRevision
+    {
+      throw GatewayToolError.invalidArguments(
+        "Profile authorization changed. Reload the profile and review it before approving."
+      )
+    }
     guard profileID != nil || profile.mode == .readOnly else {
       throw GatewayToolError.invalidArguments(
         "cloudflare-observe is not read-only. Choose an explicit profile with --profile in the CLI or profile_id in the control plane."

@@ -226,11 +226,15 @@ final class LiveAppControlPlane: AppControlPlane {
       tunnelHosts: tunnelHosts)
   }
 
-  func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
+  func approveOAuthRequest(
+    _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
+    expectedAuthorizationRevision: Int64
+  )
     async throws
   {
     _ = try await controlPlane.authorizeOAuthClient(
-      pairingCode: request.pairingCode, tunnelID: request.tunnelID, profileID: profile)
+      pairingCode: request.pairingCode, tunnelID: request.tunnelID, profileID: profile,
+      expectedAuthorizationRevision: expectedAuthorizationRevision)
   }
 
   func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws {

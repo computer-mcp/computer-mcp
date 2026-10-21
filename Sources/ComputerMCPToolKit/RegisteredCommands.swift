@@ -10,17 +10,20 @@ package struct RegisteredCommands: Sendable {
   private let configuration: GatewayConfiguration
   private let commandRunner: any CommandRunning
   private let environment: [String: String]
+  private let builtinExecutables: [String: String]
   private let sqliteCommand: CLICommandConfig?
   package let execution: CLIProcessExecution
 
   package init(
     configuration: GatewayConfiguration, commandRunner: any CommandRunning,
-    environment: [String: String], sqliteCommand: CLICommandConfig? = nil
+    environment: [String: String], sqliteCommand: CLICommandConfig? = nil,
+    builtinExecutables: [String: String] = [:]
   ) {
     self.configuration = configuration
     self.commandRunner = commandRunner
     self.environment = environment
     self.sqliteCommand = sqliteCommand
+    self.builtinExecutables = builtinExecutables
     self.execution = CLIProcessExecution(
       maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
   }
@@ -83,6 +86,13 @@ package struct RegisteredCommands: Sendable {
     ExecutableInspection.inspect(
       executable, workingDirectory: base ?? defaultBase,
       environment: environment.merging(overrides) { _, value in value })
+  }
+
+  package func builtinExecutable(_ name: String) throws -> String {
+    guard let executable = builtinExecutables[name] else {
+      throw GatewayToolError.disabled("Builtin command '\(name)' is unavailable on this platform.")
+    }
+    return executable
   }
 
   package func sqliteCLICommand() throws -> CLICommandConfig {

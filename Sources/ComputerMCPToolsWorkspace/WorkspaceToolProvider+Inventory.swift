@@ -3,7 +3,7 @@ import ComputerMCPToolKit
 import Foundation
 import TOML
 
-extension GatewayToolRegistry {
+extension WorkspaceToolProvider {
   internal static let workspaceManifestCandidates = [
     "Package.swift",
     "Package.resolved",

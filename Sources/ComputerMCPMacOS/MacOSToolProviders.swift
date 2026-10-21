@@ -7,10 +7,12 @@ import ComputerMCPPlatformDarwin
 import ComputerMCPProcess
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
+import ComputerMCPToolsFiles
 import ComputerMCPToolsGit
 import ComputerMCPToolsShell
 import ComputerMCPToolsSkills
 import ComputerMCPToolsStructured
+import ComputerMCPToolsWorkspace
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
   package init() {}
@@ -30,12 +32,21 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       configuration: configuration, commandRunner: commandRunner,
       processManager: processManager, shellManager: shellManager,
       mediaInspector: DarwinMediaInspector(),
-      sqliteCommand: .init(id: "sqlite3", executable: "/usr/bin/sqlite3"))
+      sqliteCommand: .init(id: "sqlite3", executable: "/usr/bin/sqlite3"),
+      builtinExecutables: [
+        "file": "/usr/bin/file", "wc": "/usr/bin/wc", "du": "/usr/bin/du",
+        "mdls": "/usr/bin/mdls", "diff": "/usr/bin/diff", "curl": "/usr/bin/curl",
+        "zipinfo": "/usr/bin/zipinfo", "tar": "/usr/bin/tar", "unzip": "/usr/bin/unzip",
+        "zip": "/usr/bin/zip",
+      ],
+      extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher(),
+      workspaceOpener: DarwinWorkspaceOpener(commandRunner: commandRunner))
     let cli = CLIToolProvider(environment: environment)
     let providers: [any GatewayToolProvider] = [
       GitToolProvider(environment: environment), cli, ProcessToolProvider(environment: environment),
       ShellToolProvider(environment: environment), StructuredToolProvider(environment: environment),
-      SkillsToolProvider(environment: environment),
+      SkillsToolProvider(environment: environment), FilesToolProvider(environment: environment),
+      WorkspaceToolProvider(environment: environment),
     ]
     let computerUse = ComputerUseGatewayProvider()
     return (

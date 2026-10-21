@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPToolsWorkspace
 import Foundation
 import GRDB
 import Testing

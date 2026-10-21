@@ -109,3 +109,11 @@ package enum WorkspaceDeduplicationError: Error, LocalizedError, Equatable {
     }
   }
 }
+
+package struct WorkspaceDeduplicationDigestInput: Codable {
+  package var groups: [WorkspaceDeduplicationGroup]
+
+  package init(groups: [WorkspaceDeduplicationGroup]) {
+    self.groups = groups
+  }
+}

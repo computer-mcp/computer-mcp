@@ -3,7 +3,7 @@ import ComputerMCPPlatform
 import ComputerMCPToolKit
 import Foundation
 
-extension GatewayToolRegistry {
+extension FilesToolProvider {
   internal func listArchive(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
     let maxEntries = optionalInt("max_entries", in: object) ?? 1_000
@@ -432,7 +432,7 @@ extension GatewayToolRegistry {
     {
       return ArchiveListCommand(
         format: "zip",
-        executable: "/usr/bin/zipinfo",
+        executable: try registeredCommands.builtinExecutable("zipinfo"),
         arguments: ["-1", url.path]
       )
     }
@@ -443,7 +443,7 @@ extension GatewayToolRegistry {
     if tarSuffixes.contains(where: { name.hasSuffix($0) }) {
       return ArchiveListCommand(
         format: "tar",
-        executable: "/usr/bin/tar",
+        executable: try registeredCommands.builtinExecutable("tar"),
         arguments: ["-tf", url.path]
       )
     }
@@ -461,13 +461,13 @@ extension GatewayToolRegistry {
     case "zip":
       return ArchiveListCommand(
         format: archive.format,
-        executable: "/usr/bin/zipinfo",
+        executable: try registeredCommands.builtinExecutable("zipinfo"),
         arguments: ["-l", archiveURL.path]
       )
     case "tar":
       return ArchiveListCommand(
         format: archive.format,
-        executable: "/usr/bin/tar",
+        executable: try registeredCommands.builtinExecutable("tar"),
         arguments: ["-tvf", archiveURL.path]
       )
     default:
@@ -485,7 +485,7 @@ extension GatewayToolRegistry {
     case "zip":
       return ArchiveListCommand(
         format: archive.format,
-        executable: "/usr/bin/unzip",
+        executable: try registeredCommands.builtinExecutable("unzip"),
         arguments: ["-q", overwrite ? "-o" : "-n", archiveURL.path, "-d", destinationURL.path]
       )
     case "tar":
@@ -495,7 +495,7 @@ extension GatewayToolRegistry {
         : ["-xkf", archiveURL.path, "-C", destinationURL.path]
       return ArchiveListCommand(
         format: archive.format,
-        executable: "/usr/bin/tar",
+        executable: try registeredCommands.builtinExecutable("tar"),
         arguments: args
       )
     default:
@@ -512,13 +512,13 @@ extension GatewayToolRegistry {
     case "zip":
       return ArchiveListCommand(
         format: archive.format,
-        executable: "/usr/bin/unzip",
+        executable: try registeredCommands.builtinExecutable("unzip"),
         arguments: ["-p", archiveURL.path, entry]
       )
     case "tar":
       return ArchiveListCommand(
         format: archive.format,
-        executable: "/usr/bin/tar",
+        executable: try registeredCommands.builtinExecutable("tar"),
         arguments: ["-xOf", archiveURL.path, entry]
       )
     default:
@@ -545,7 +545,7 @@ extension GatewayToolRegistry {
       }
       return ArchiveListCommand(
         format: "zip",
-        executable: "/usr/bin/zip",
+        executable: try registeredCommands.builtinExecutable("zip"),
         arguments: ["-qry", archiveURL.path] + sourcePaths
       )
     }
@@ -568,7 +568,7 @@ extension GatewayToolRegistry {
       }
       return ArchiveListCommand(
         format: "tar",
-        executable: "/usr/bin/tar",
+        executable: try registeredCommands.builtinExecutable("tar"),
         arguments: [tarFlag, archiveURL.path] + sourcePaths
       )
     }

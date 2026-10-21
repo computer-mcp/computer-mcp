@@ -110,7 +110,9 @@
     "ComputerMCPMacOS",
     "ComputerMCPApp",
     "computer-mcp",
-    "ComputerMCPToolsStructuredDarwinTests"
+    "ComputerMCPToolsStructuredDarwinTests",
+    "ComputerMCPToolsFilesDarwinTests",
+    "ComputerMCPToolsWorkspaceDarwinTests"
   ],
   "macos_imports": [
     "AVFoundation",
@@ -173,8 +175,7 @@
     "MCPRuntimeAdapter": "ComputerMCPGateway",
     "ManifestFileTransaction": "ComputerMCPControlPlane",
     "ManifestRecoveryRecord": "ComputerMCPControlPlane",
-    "PlatformServices": "ComputerMCPGateway",
-    "WorkspaceDeduplicationDigestInput": "ComputerMCPToolsWorkspace"
+    "PlatformServices": "ComputerMCPGateway"
   },
   "extensions": {
     "CloudflareTunnel.swift:AppControlPlaneService": "ComputerMCPControlPlane",
@@ -191,8 +192,6 @@
     "^GatewayHTTPRuntime": "ComputerMCPGateway",
     "^ComputerUse": "ComputerMCPComputerUse",
     "^GatewayToolRegistry\\+(System|Network|MacOS)": "ComputerMCPToolsSystem",
-    "^GatewayToolRegistry\\+(Files|Archives)": "ComputerMCPToolsFiles",
-    "^GatewayToolRegistry\\+(Workspace|WorkspaceInventory)\\.swift|^Workspace(Deduplication|ConfigurationChange)": "ComputerMCPToolsWorkspace",
     "^MCPRegistration": "ComputerMCPControlPlane",
     "^MCPRuntimeAdapter": "ComputerMCPGateway",
     "^(Plugin|StaticPluginCatalog|GitHub|BundledPlugin)": "ComputerMCPPlugins",
@@ -227,8 +226,7 @@
     "PluginDependencyResolver->ApplicationBundleLookup",
     "PluginInstallationStorage->PluginArchiveDirectory",
     "PluginStore->GatewayDatabase",
-    "PluginStore->PluginArchiveDirectory",
-    "PreparedWorkspaceChange->GatewayDatabase"
+    "PluginStore->PluginArchiveDirectory"
   ],
   "tests": {
     "AppControlPlaneServiceTests.swift": "ComputerMCPControlPlaneTests",

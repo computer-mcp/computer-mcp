@@ -4,6 +4,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPProcess
+import ComputerMCPToolsWorkspace
 import ComputerMCPTransport
 import ComputerMCPTunnels
 import Foundation
@@ -312,7 +313,8 @@ package actor AppControlPlaneService {
   func applyWorkspaceChange(
     _ change: WorkspaceHostChange,
     publish:
-      @Sendable (GatewayInputs, PreparedWorkspaceChange) async throws ->
+      @Sendable (GatewayInputs, PreparedWorkspaceChange<GatewayDatabase.ConfigurationState>)
+      async throws ->
       GatewayDatabase.ConfigurationState
   ) async throws -> WorkspaceChangeResult {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }

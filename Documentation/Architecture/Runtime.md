@@ -156,6 +156,33 @@ remain alive through a bounded startup-stability window before its state may
 become `running`; an immediate exit fails closed and enters the reconnect
 backoff instead of producing a false healthy state.
 
+
+## Local Client Registration
+
+`ClientRegistrationService` in `ComputerMCPControlPlane` binds a configuration
+location and exact child environment when previewing a Codex, Claude Code or
+Claude Desktop registration. Its immutable private plan contains only the named
+entry; the displayable plan omits private values. Apply serializes Computer MCP
+writers through `client-registration.lock` in the per-user state directory,
+rechecks the private plan's SHA-256 fingerprint and executes only those actions.
+The App retains its preview plan through confirmation; the CLI uses `--expect`
+for a reviewed replacement or removal of a different entry.
+
+Codex state comes from its read-only JSON query. Claude Code state comes from
+its user-scope JSON file; its CLI owns writes and restorable replacement
+recovery. Desktop presence and running-state checks are injected by the macOS
+composition root. Desktop writes require the App to be closed, preserve other
+JSON fields and permissions, and use a private same-directory temporary file
+with a final identity/content check and exclusive publication for new files.
+Without a Desktop platform implementation its state is unavailable.
+
+`RegistrationProcessRunner` in `ComputerMCPProcess` spawns an independent process
+group with an exact environment, bounded output and a deadline. A timeout kills
+the group and waits for confirmed child exit. An unconfirmed exit stops all
+later steps and recovery. Claude Code failures with confirmed exit reconcile
+against the bound file and restore the old supported entry only while its name
+is absent. Registration results contain step outcomes and a redacted final
+state; client diagnostics and recovery JSON never reach presentation.
 ## Execution Planes
 
 External-provider diagnostics carry a resolved launch directory and merged

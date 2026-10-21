@@ -199,8 +199,11 @@ Computer MCP requires macOS 14 or later.
    installed App from Finder. macOS privacy grants belong to this signed App
    identity.
 3. On Welcome, choose **Connect a local MCP client** and start the Gateway.
-4. Copy the displayed stdio command into your client. Codex users can instead
-   review and confirm **Register with Codex**.
+4. For Codex, review and confirm **Register with Codex**. For Claude Code or
+   Claude Desktop, review `computer-mcp install claude-code --app --dry-run` or
+   `computer-mcp install claude-desktop --app --dry-run`, then apply the reviewed
+   plan. Close Claude Desktop before applying. See the
+   [registration commands](Documentation/Reference/CLI.md#local-client-registration).
 5. Make the first read-only tool call:
 
    ```text

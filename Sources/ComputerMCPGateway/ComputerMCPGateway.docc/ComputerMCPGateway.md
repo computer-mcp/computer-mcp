@@ -65,6 +65,7 @@ The following types belong to `ComputerMCPTunnels`:
 
 `ComputerMCPControlPlane` owns the independent adapter's installation workflow:
 
-- `CodexMCPInstaller`
-- `CodexMCPInstallInvocation`
-- `CodexMCPInstallerError`
+- `ClientRegistrationService`
+- `ClientRegistrationPlan`
+- `ClientRegistrationDisplayPlan`
+- `ClientRegistrationResult`

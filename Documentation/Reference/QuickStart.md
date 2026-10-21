@@ -6,9 +6,21 @@ a connection on Welcome. Normal App use does not require TOML.
 For a local MCP client:
 
 1. Start the Gateway on Home.
-2. Copy the displayed command and arguments into the client.
-3. For Codex, preview and confirm **Register with Codex**.
+2. For Codex, preview and confirm **Register with Codex**.
+3. For Claude Code or Claude Desktop, use the embedded CLI to review a plan
+   and apply it. Close Claude Desktop before applying its plan:
 4. Make one real tool request and refresh Home to reach Verified.
+
+```sh
+"/Applications/Computer MCP.app/Contents/Resources/computer-mcp" install claude-code --app --dry-run
+"/Applications/Computer MCP.app/Contents/Resources/computer-mcp" install claude-code --app
+"/Applications/Computer MCP.app/Contents/Resources/computer-mcp" install claude-desktop --app --dry-run
+```
+
+A different existing entry needs the reviewed fingerprint with `--expect`.
+Use `uninstall <client> --dry-run` to review removal. Start a new Codex or
+Claude Code session, or reopen Claude Desktop, after applying. See
+[local client registration](CLI.md#local-client-registration) for all options.
 
 The App remembers only the onboarding version. Readiness and completion are
 derived from live App, Gateway, dependency, transport, Keychain, and audit

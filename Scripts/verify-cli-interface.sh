@@ -184,6 +184,11 @@ public_leaf_commands=(
   "install cli"
   "uninstall cli"
   "install codex"
+  "install claude-code"
+  "install claude-desktop"
+  "uninstall codex"
+  "uninstall claude-code"
+  "uninstall claude-desktop"
   "serve stdio"
   "serve http"
   "bridge"
@@ -264,7 +269,13 @@ FIXTURE_MARKER="$OUTSIDE_DIR/provider-starts.log"
 DOCTOR_JSON="$OUTSIDE_DIR/doctor.json"
 CAPABILITIES_JSON="$OUTSIDE_DIR/capabilities.json"
 CODEX_APP_PLAN="$OUTSIDE_DIR/codex-app-plan.json"
-trap 'rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CAPABILITIES_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
+REGISTRATION_HOME="$OUTSIDE_DIR/registration-home"
+mkdir -p "$REGISTRATION_HOME"
+touch "$REGISTRATION_HOME/.registration-fixture"
+FAKE_CLIENT="$REGISTRATION_HOME/client"
+cp "$ROOT_DIR/Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py" "$FAKE_CLIENT"
+chmod 700 "$FAKE_CLIENT"
+trap 'rm -rf "$REGISTRATION_HOME"; rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CAPABILITIES_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
 (
   cd "$OUTSIDE_DIR"
   verify_help "$ROOT_CLI"
@@ -337,9 +348,9 @@ then
   exit 1
 fi
 
-"$ROOT_CLI" install codex \
+HOME="$REGISTRATION_HOME" CODEX_HOME="$REGISTRATION_HOME/codex" "$ROOT_CLI" install codex \
   --app \
-  --codex-cli /bin/echo \
+  --client-cli "$FAKE_CLIENT" \
   --server-executable "$ROOT_CLI" \
   --dry-run >"$CODEX_APP_PLAN"
 rg '"bridge"' "$CODEX_APP_PLAN" >/dev/null
@@ -348,15 +359,20 @@ if rg '"--config"' "$CODEX_APP_PLAN" >/dev/null; then
   echo "CLI interface verification failed: App Codex plan contains --config." >&2
   exit 1
 fi
-if "$ROOT_CLI" install codex \
+if HOME="$REGISTRATION_HOME" CODEX_HOME="$REGISTRATION_HOME/codex" "$ROOT_CLI" install codex \
   --app \
   --config "$FIXTURE_MANIFEST" \
-  --codex-cli /bin/echo \
+  --client-cli "$FAKE_CLIENT" \
   --server-executable "$ROOT_CLI" \
   --dry-run >/dev/null 2>&1
 then
   echo "CLI interface verification failed: --app and --config were accepted together." >&2
   exit 1
 fi
+
+/usr/bin/jq -e '.schema_version == 1 and .state == "not_registered" and (.fingerprint | length == 64)' "$CODEX_APP_PLAN" >/dev/null
+HOME="$REGISTRATION_HOME" CLAUDE_CONFIG_DIR="$REGISTRATION_HOME/claude" "$ROOT_CLI" install claude-code \
+  --app --client-cli "$FAKE_CLIENT" --server-executable "$ROOT_CLI" --dry-run \
+  | /usr/bin/jq -e '.client == "claude-code" and .state == "not_registered"' >/dev/null
 
 echo "CLI interface verification passed."

@@ -407,9 +407,9 @@ private struct CodexRegistrationConfirmation: View {
   }
 
   private var displayCommand: String {
-    ([presentation.invocation.codexCLI] + presentation.invocation.arguments)
-      .map(shellToken)
-      .joined(separator: " ")
+    let command =
+      presentation.plan.display.actions.first?.command ?? presentation.plan.display.server
+    return ([command.executable] + command.arguments).map(shellToken).joined(separator: " ")
   }
 
   private func shellToken(_ value: String) -> String {

@@ -40,7 +40,7 @@ struct ProfileConfirmation: Identifiable {
 
 struct CodexRegistrationPresentation: Identifiable {
   let id = UUID()
-  let invocation: CodexMCPInstallInvocation
+  let plan: ClientRegistrationPlan
 }
 
 @MainActor
@@ -527,7 +527,8 @@ final class ComputerMCPAppModel: ObservableObject {
       }
       do {
         codexRegistrationPresentation = CodexRegistrationPresentation(
-          invocation: try await controlPlane.previewCodexRegistration()
+          plan: try await controlPlane.previewClientRegistration(
+            client: .codex, operation: .register)
         )
       } catch {
         presentedError = PresentedAppError(
@@ -539,6 +540,7 @@ final class ComputerMCPAppModel: ObservableObject {
   }
 
   func installCodexRegistration() {
+    guard let plan = codexRegistrationPresentation?.plan else { return }
     codexRegistrationPresentation = nil
     codexRegistrationMessage = nil
     performAction(
@@ -546,7 +548,10 @@ final class ComputerMCPAppModel: ObservableObject {
       title: "Unable to register Computer MCP with Codex",
       refresh: [.home]
     ) {
-      _ = try await self.controlPlane.installCodexRegistration()
+      let result = try await self.controlPlane.applyClientRegistration(plan)
+      guard result.outcome == .succeeded else {
+        throw ClientRegistrationError(result.errorCode ?? .processFailed)
+      }
       self.codexRegistrationMessage =
         "Computer MCP is registered with Codex. Start a new Codex session to use it."
     }

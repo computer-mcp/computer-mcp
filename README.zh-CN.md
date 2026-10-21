@@ -164,8 +164,10 @@ Computer MCP 要求 macOS 14 或更高版本。
 2. 校验摘要，将 **Computer MCP** 拖入“应用程序”，并从 Finder 打开安装后的 App。
    macOS 隐私授权绑定的是这个签名 App 身份。
 3. 在欢迎页选择 **连接本地 MCP 客户端**，然后启动 Gateway。
-4. 把页面显示的 stdio 命令复制到客户端。Codex 用户也可以预览并确认
-   **Register with Codex**。
+4. Codex 用户预览并确认 **Register with Codex**。Claude Code 或 Claude Desktop
+   用户使用 `computer-mcp install claude-code --app --dry-run` 或
+   `computer-mcp install claude-desktop --app --dry-run` 核对计划后应用；应用前先退出
+   Claude Desktop。详见[注册命令](Documentation/Reference/CLI.md#local-client-registration)。
 5. 发起第一个只读工具调用：
 
    ```text

@@ -365,32 +365,8 @@ final class ProcessAndOpenAITunnelTests {
     #expect((audit.readOnlyToolCount) == (1))
   }
 
-  @Test
-  func testCodexInstallPlanBuildsCodexMCPAddInvocation() throws {
-    let installer = CodexMCPInstaller()
-    let cwd = FileManager.default.currentDirectoryPath
-
-    let invocation = try installer.plan(
-      codexCLI: "/bin/echo",
-      serverName: "computer-mcp",
-      configPath: "Examples/computer-mcp.toml",
-      executablePath: "/bin/cat"
-    )
-
-    #expect((invocation.codexCLI) == ("/bin/echo"))
-    #expect(
-      (invocation.arguments)
-        == ([
-          "mcp", "add", "computer-mcp", "--", "/bin/cat", "serve", "stdio", "--config",
-          "\(cwd)/Examples/computer-mcp.toml",
-        ]))
-    #expect(
-      (invocation.mcpCommand)
-        == (["/bin/cat", "serve", "stdio", "--config", "\(cwd)/Examples/computer-mcp.toml"]))
-  }
-
-  @Test(arguments: [false, true], [false, true])
-  func installPlanRejectsUnusableExecutables(codex: Bool, directory: Bool) throws {
+  @Test(arguments: [false, true])
+  func tunnelResolverRejectsUnusableExecutables(directory: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -401,57 +377,12 @@ final class ProcessAndOpenAITunnelTests {
         [.posixPermissions: 0o700], ofItemAtPath: executable.path)
     }
     #expect(throws: (any Error).self) {
-      try CodexMCPInstaller().planApp(
-        codexCLI: codex ? executable.path : "/bin/echo", serverName: "fixture",
-        executablePath: codex ? "/bin/cat" : executable.path)
-    }
-    #expect(throws: (any Error).self) {
       try OpenAITunnelClientResolver(
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories
       ).resolve(
         requestedPath: executable.path,
         configuration: GatewayConfiguration(workspaceDirectory: root))
     }
-  }
-
-  @Test
-  func testCodexAppInstallPlanUsesTheAppOwnedBridgeWithoutAConfigPath() throws {
-    let invocation = try CodexMCPInstaller().planApp(
-      codexCLI: "/bin/echo",
-      serverName: "computer-mcp",
-      executablePath: "/bin/cat"
-    )
-
-    #expect(
-      invocation.arguments == [
-        "mcp", "add", "computer-mcp", "--", "/bin/cat", "bridge", "--client-identity",
-        "local-mcp",
-      ])
-    #expect(
-      invocation.mcpCommand == [
-        "/bin/cat", "bridge", "--client-identity", "local-mcp",
-      ])
-    #expect(invocation.arguments.contains("--config") == false)
-  }
-
-  @Test
-  func codexAppInstallationPreservesTheSelectedSocket() throws {
-    let socket = "/private/tmp/Computer MCP Development/gateway.sock"
-    let installer = CodexMCPInstaller()
-    let invocation = try installer.planApp(
-      codexCLI: "/bin/echo", serverName: "development", executablePath: "/bin/cat",
-      socketPath: socket)
-    let result = try installer.installApp(
-      codexCLI: "/bin/echo", serverName: "development", executablePath: "/bin/cat",
-      socketPath: socket)
-    #expect(
-      invocation.mcpCommand == [
-        "/bin/cat", "bridge", "--client-identity", "local-mcp", "--socket", socket,
-      ])
-    #expect(result.exitCode == 0)
-    #expect(
-      result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        == invocation.arguments.joined(separator: " "))
   }
 
   @Test

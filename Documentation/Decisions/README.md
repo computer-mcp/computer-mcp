@@ -11,5 +11,6 @@ This directory contains accepted decision records.
 - [Platform Scope](PlatformScope.md)
 - [Module Architecture](ModuleArchitecture.md)
 - [Fresh Start at 0.1.0](FreshStart.md)
+- [Local Client Registration](ClientRegistration.md)
 
 Current architecture truth remains in `Documentation/Architecture/`.

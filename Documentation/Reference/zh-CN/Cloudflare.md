@@ -40,8 +40,9 @@ OAuth 配对和令牌端点的事件不会建立 Verified。
 
 ## OAuth 配对
 
-每条连接默认关闭 OAuth。已有连接可通过所有者 CLI 开启；省略令牌参数会保留
-已保存的凭据：
+每条连接默认关闭 OAuth。可在 App 的 Cloudflare 连接编辑器中打开「允许通过 OAuth
+登录」，并在「允许的客户端主机」中编辑允许列表。已有连接也可通过所有者 CLI 开启；
+省略令牌参数会保留已保存的凭据：
 
 ```sh
 computer-mcp tunnel cloudflare save partner --tunnel-name computer-mcp-release --public-hostname mcp.example.com --gateway-profile cloudflare-observe --oauth-enabled
@@ -60,6 +61,9 @@ computer-mcp clients revoke-grant <grant-id>
 客户端连接 `https://<hostname>/mcp`，通过 CIMD、S256 PKCE 和本机批准获得授权。
 隧道路由需保留公网 Host，并转发 `/.well-known/…`、`/oauth/…` 和 `/mcp`。
 浏览器只显示客户端主机、回调主机和六位配对码；请在 Mac 上核对同码后批准。
+App 的「客户端权限」页在「登录请求」中列出同一请求，只提供允许 `cloudflare-tunnel`
+的配置方案，并默认选中 Cloudflare 观察；「已登录的远程客户端」列出仍有效的授权、
+配置方案和最近使用时间，可直接撤销。
 配对十分钟过期，公网页面不能批准。授权默认使用只读配置档；完全访问仍需本机
 逐会话同意。批准或拒绝可加 `--tunnel-id` 区分不同连接的同码请求。
 

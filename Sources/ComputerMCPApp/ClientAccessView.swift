@@ -1,3 +1,5 @@
+import ComputerMCPAuthorization
+import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPGateway
 import SwiftUI
@@ -19,6 +21,17 @@ struct ClientAccessView: View {
         Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
       }
       if let snapshot = model.snapshot {
+        if !model.pendingOAuthRequests.isEmpty {
+          Text("Sign-in requests", bundle: AppLocalization.resourceBundle).font(.headline)
+          Text(
+            "Approve only if the code matches the one shown in the browser where you are signing in.",
+            bundle: AppLocalization.resourceBundle
+          ).font(.callout).foregroundStyle(.secondary)
+          ForEach(model.pendingOAuthRequests) { request in
+            OAuthRequestRow(model: model, request: request)
+            Divider()
+          }
+        }
         if snapshot.sessions.isEmpty, model.isAvailable {
           Text("Clients appear here when they connect.", bundle: AppLocalization.resourceBundle)
             .foregroundStyle(.secondary)
@@ -32,6 +45,17 @@ struct ClientAccessView: View {
             "Access changes apply to new requests. Already started work is not cancelled.",
             bundle: AppLocalization.resourceBundle
           ).font(.callout).foregroundStyle(.secondary)
+        }
+        if !model.activeOAuthGrants.isEmpty {
+          Text("Signed-in remote clients", bundle: AppLocalization.resourceBundle)
+            .font(.headline)
+          Text(
+            "Revoking ends a client's sign-in immediately. It must ask for your approval again to reconnect.",
+            bundle: AppLocalization.resourceBundle
+          ).font(.callout).foregroundStyle(.secondary)
+          ForEach(model.activeOAuthGrants) { grant in
+            OAuthGrantRow(model: model, grant: grant)
+          }
         }
         let trusts = snapshot.trusts.filter(\.fullAccessAllowed)
         if !trusts.isEmpty {
@@ -151,6 +175,111 @@ struct ClientAccessView: View {
   }
 }
 
+private struct OAuthRequestRow: View {
+  @ObservedObject var model: ClientAccessModel
+  let request: OAuthPendingAuthorization
+  @Environment(\.locale) private var locale
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(verbatim: request.pairingCode)
+          .font(.system(.title2, design: .monospaced).weight(.semibold))
+          .textSelection(.enabled)
+          .accessibilityIdentifier("client-access.oauth.\(request.id).code")
+        Spacer()
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Expires %@", locale: locale,
+              request.expiresAt.formatted(
+                Date.RelativeFormatStyle(presentation: .named, locale: locale)))
+          )
+          .font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+        GridRow {
+          Text("Client", bundle: AppLocalization.resourceBundle).foregroundStyle(.secondary)
+          Text(verbatim: request.clientHost)
+        }
+        GridRow {
+          Text("Returns to", bundle: AppLocalization.resourceBundle).foregroundStyle(.secondary)
+          Text(verbatim: request.redirectHost)
+        }
+      }
+      HStack {
+        if let selected = model.oauthProfile(for: request) {
+          Picker(
+            selection: Binding(
+              get: { selected },
+              set: { model.oauthProfileChoices[request.id] = $0 }
+            )
+          ) {
+            ForEach(model.oauthProfileOptions, id: \.self) { profile in
+              Text(verbatim: AppLocalization.string(profile.displayName)).tag(profile)
+            }
+          } label: {
+            Text("Profile", bundle: AppLocalization.resourceBundle)
+          }
+          .fixedSize()
+          .accessibilityIdentifier("client-access.oauth.\(request.id).profile")
+        } else {
+          Text(
+            "No profile allows Cloudflare tunnel connections. Allow them in a profile to approve this request.",
+            bundle: AppLocalization.resourceBundle
+          ).font(.callout).foregroundStyle(.secondary)
+        }
+        Spacer()
+        Button(role: .destructive) {
+          Task { await model.deny(request) }
+        } label: {
+          Text("Deny", bundle: AppLocalization.resourceBundle)
+        }
+        .accessibilityIdentifier("client-access.oauth.\(request.id).deny")
+        Button {
+          Task { await model.approve(request) }
+        } label: {
+          Text("Approve", bundle: AppLocalization.resourceBundle)
+        }
+        .accessibilityIdentifier("client-access.oauth.\(request.id).approve")
+        .disabled(model.oauthProfile(for: request) == nil)
+      }
+      .disabled(!model.isAvailable || model.isSaving)
+    }
+  }
+}
+
+private struct OAuthGrantRow: View {
+  @ObservedObject var model: ClientAccessModel
+  let grant: OAuthGrant
+  @Environment(\.locale) private var locale
+
+  var body: some View {
+    HStack {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(verbatim: URL(string: grant.clientID)?.host ?? grant.clientID).font(.headline)
+        Text(verbatim: AppLocalization.string(grant.profileID.displayName))
+        if let lastUsed = grant.lastUsedAt {
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Last used %@", locale: locale,
+              lastUsed.formatted(Date.RelativeFormatStyle(presentation: .named, locale: locale)))
+          ).font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      Spacer()
+      Button(role: .destructive) {
+        Task { await model.revoke(grant) }
+      } label: {
+        Text("Revoke", bundle: AppLocalization.resourceBundle)
+      }
+      .accessibilityIdentifier("client-access.oauth-grant.\(grant.id).revoke")
+      .disabled(!model.isAvailable)
+    }
+  }
+}
+
 struct ClientConsentView: View {
   @ObservedObject var model: ClientAccessModel
   let draftID: UUID
@@ -234,8 +363,12 @@ struct ClientAccessMenuLabel: View {
   let serviceSystemImage: String
 
   var body: some View {
-    Label(
-      model.controllingSessions.isEmpty ? "Computer MCP" : model.statusText,
-      systemImage: model.controllingSessions.isEmpty ? serviceSystemImage : "cursorarrow.rays")
+    if !model.pendingOAuthRequests.isEmpty {
+      Label(model.statusText, systemImage: "person.badge.key")
+    } else {
+      Label(
+        model.controllingSessions.isEmpty ? "Computer MCP" : model.statusText,
+        systemImage: model.controllingSessions.isEmpty ? serviceSystemImage : "cursorarrow.rays")
+    }
   }
 }

@@ -13,6 +13,19 @@ package struct OAuthPendingAuthorization: Codable, Equatable, Sendable, Identifi
   package let createdAt: Date
   package let expiresAt: Date
 
+  package init(
+    id: String, tunnelID: String, pairingCode: String, clientHost: String, redirectHost: String,
+    createdAt: Date, expiresAt: Date
+  ) {
+    self.id = id
+    self.tunnelID = tunnelID
+    self.pairingCode = pairingCode
+    self.clientHost = clientHost
+    self.redirectHost = redirectHost
+    self.createdAt = createdAt
+    self.expiresAt = expiresAt
+  }
+
   init(_ request: OAuthAuthorizationRequest) {
     id = request.id
     tunnelID = request.tunnelID

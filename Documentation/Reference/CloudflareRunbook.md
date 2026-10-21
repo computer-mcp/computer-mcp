@@ -80,7 +80,9 @@ MCP never saves those consumer credentials.
 
 ## OAuth client pairing
 
-OAuth defaults off per connection. Enable it through the owner CLI on the Mac:
+OAuth defaults off per connection. In the App, turn on **Allow sign-in with
+OAuth** in the Cloudflare connection editor, where **Allowed client hosts** edits
+the allowlist. The owner CLI on the Mac does the same:
 
 ```sh
 computer-mcp tunnel cloudflare save partner --tunnel-name computer-mcp-release --public-hostname mcp.example.com --gateway-profile cloudflare-observe --oauth-enabled
@@ -103,6 +105,10 @@ Point the client at `https://<hostname>/mcp`. Preserve the public Host and route
 `/.well-known/…` and `/oauth/…` through the tunnel as well as `/mcp`. The client
 must support CIMD and S256 PKCE. Its browser page displays client host, redirect
 host and six-character code. Review the matching local request before approval.
+In the App, **Client access** lists it under **Sign-in requests** with the same
+code, client host and redirect host, and offers only profiles that allow
+`cloudflare-tunnel`, with Cloudflare Observe selected first. **Signed-in remote
+clients** lists live grants with their profile and last use; **Revoke** ends one.
 Only the local owner control plane can approve or deny; the public page polls
 an opaque handle. Pairing expires in ten minutes. The callback receives the
 original `state`, issuer `iss` and a 60-second single-use code; denial or expiry

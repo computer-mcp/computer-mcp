@@ -199,9 +199,10 @@ Unix-domain Socket；ChatGPT 使用 OpenAI Secure MCP Tunnel；经审查的公�
 Bearer-protected Origin。
 
 Cloudflare 连接支持可选的 OAuth，可供 claude.ai 等使用 CIMD 的公开客户端接入。
-通过所有者 CLI 或清单为连接启用后，在 Mac 上运行
-`computer-mcp clients authorizations` 核对六位配对码，再用
-`computer-mcp clients authorize <code>` 批准。授权默认使用只读配置档，完全访问仍需
+在 App 的 Cloudflare 连接编辑器中打开「允许通过 OAuth 登录」（也可用所有者 CLI
+或清单）后，客户端登录时在「客户端权限」页核对六位配对码、选择配置方案并批准；
+终端中对应 `computer-mcp clients authorizations` 与
+`computer-mcp clients authorize <code>`。授权默认使用只读配置档，完全访问仍需
 本机逐会话同意。设置与吊销步骤见 [Cloudflare 参考](Documentation/Reference/zh-CN/Cloudflare.md)。
 Verified 只接受当前访问令牌或仍有效 OAuth 授权的成功工具请求；替换或吊销凭据后，
 对应证据失效，新凭据需要重新验证。

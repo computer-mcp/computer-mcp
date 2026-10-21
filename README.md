@@ -237,10 +237,13 @@ loopback-only, bearer-protected origin behind a Cloudflare remotely managed
 named tunnel.
 
 Cloudflare connections support optional OAuth for public CIMD clients such as
-claude.ai. Enable it per connection through the owner CLI or manifest, review the
-six-character pairing code on your Mac with `computer-mcp clients authorizations`,
-and approve with `computer-mcp clients authorize <code>`. Grants default to
-Observe and retain the existing local Full Access consent boundary. See the
+claude.ai. Turn on **Allow sign-in with OAuth** in the App's Cloudflare
+connection editor, or use the owner CLI or manifest. When a client signs in,
+compare the six-character pairing code on its browser page with the request in
+**Client access**, choose its profile and approve; `computer-mcp clients
+authorizations` and `computer-mcp clients authorize <code>` do the same from a
+terminal. Grants default to Observe and retain the existing local Full Access
+consent boundary. See the
 [OAuth setup and revocation steps](Documentation/Reference/CloudflareRunbook.md#oauth-client-pairing).
 Verified follows the current Access Token or a live OAuth grant; replacing or
 revoking that credential requires fresh verification for its replacement.

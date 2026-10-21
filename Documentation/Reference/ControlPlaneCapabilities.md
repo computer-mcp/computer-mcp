@@ -19,7 +19,7 @@ commands.
 | --- | --- | --- | --- |
 | App | status, start, stop, restart, launch at login | `app …` | Home and Settings |
 | Client access | list, explicit Full Access consent, limit/end connection access, saved trust list/revoke | `clients …` | Client access |
-| OAuth client access | pending pairing requests, local approval/denial, grant list/revocation | `clients authorizations`, `clients authorize`, `clients deny`, `clients grants`, `clients revoke-grant` | — |
+| OAuth client access | pending pairing requests, local approval/denial, grant list/revocation | `clients authorizations`, `clients authorize`, `clients deny`, `clients grants`, `clients revoke-grant` | Client access |
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
 | Workspaces | list, canonical add, remove, profile enable/disable, deduplication | `workspace …` | Workspaces |

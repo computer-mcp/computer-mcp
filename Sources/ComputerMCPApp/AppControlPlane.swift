@@ -265,6 +265,8 @@ struct CloudflareTunnelSummary: Identifiable, Sendable {
   var processIdentifier: Int32?
   var connectedAt: Date?
   var lastError: String?
+  var oauthEnabled = false
+  var oauthClientAllowlist: [String] = []
 }
 
 struct LocalMCPConnectionSummary: Sendable {
@@ -298,6 +300,12 @@ struct CloudflareTunnelConfigurationDraft: Identifiable, Sendable {
   var cloudflaredPath: String?
   var tunnelToken: String?
   var regenerateAccessToken: Bool
+  var oauthEnabled = false
+  var oauthClientAllowlist = CloudflareTunnelConfigurationDraft.defaultOAuthClients
+}
+
+extension CloudflareTunnelConfigurationDraft {
+  static let defaultOAuthClients = ["claude.ai", "claude.com"]
 }
 
 struct CloudflareTunnelLogSnapshot: Sendable {

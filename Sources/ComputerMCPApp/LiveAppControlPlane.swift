@@ -213,7 +213,28 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func fetchClientAccess() async throws -> ClientAccessSnapshot {
     let sessions = await operations.controlSessions()
-    return try ClientAccessSnapshot(sessions: sessions, trusts: operations.clientTrusts())
+    let remoteProfiles = try await controlPlane.profileGrants()
+      .filter { $0.allowedCallers.contains(.cloudflareTunnel) }.map(\.id)
+    return try await ClientAccessSnapshot(
+      sessions: sessions, trusts: operations.clientTrusts(),
+      oauthRequests: controlPlane.oauthAuthorizations(),
+      oauthGrants: controlPlane.oauthGrants(), remoteProfiles: remoteProfiles)
+  }
+
+  func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
+    async throws
+  {
+    _ = try await controlPlane.authorizeOAuthClient(
+      pairingCode: request.pairingCode, tunnelID: request.tunnelID, profileID: profile)
+  }
+
+  func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws {
+    try await controlPlane.denyOAuthAuthorization(
+      pairingCode: request.pairingCode, tunnelID: request.tunnelID)
+  }
+
+  func revokeOAuthGrant(id: String) async throws {
+    try await controlPlane.revokeOAuthGrant(id: id)
   }
 
   func grantClientFullAccess(
@@ -356,7 +377,9 @@ final class LiveAppControlPlane: AppControlPlane {
           metricsPort: profile.metricsPort,
           processIdentifier: status?.processID,
           connectedAt: status?.startedAt,
-          lastError: status?.lastError
+          lastError: status?.lastError,
+          oauthEnabled: profile.oauthEnabled,
+          oauthClientAllowlist: profile.oauthClientAllowlist
         ))
     }
     return summaries
@@ -775,6 +798,8 @@ final class LiveAppControlPlane: AppControlPlane {
         localPort: draft.localPort,
         metricsPort: draft.metricsPort,
         cloudflaredPath: draft.cloudflaredPath,
+        oauthEnabled: draft.oauthEnabled,
+        oauthClientAllowlist: draft.oauthClientAllowlist,
         tunnelToken: draft.tunnelToken,
         regenerateAccessToken: draft.regenerateAccessToken
       )

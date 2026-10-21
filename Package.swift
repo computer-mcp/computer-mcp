@@ -494,6 +494,7 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "ComputerMCPApp",
         dependencies: [
+          "ComputerMCPAuthorization",
           "ComputerMCPPlugins",
           "ComputerMCPComputerUse",
           "ComputerMCPToolsSkills",
@@ -609,6 +610,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPAppTests",
         dependencies: [
+          "ComputerMCPAuthorization",
           "ComputerMCPPlugins",
           "ComputerMCPApp", "ComputerMCPControlPlane", "ComputerMCPGateway",
           "ComputerMCPMacOS",

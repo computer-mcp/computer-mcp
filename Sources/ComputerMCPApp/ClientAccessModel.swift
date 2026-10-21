@@ -1,4 +1,6 @@
 import Combine
+import ComputerMCPAuthorization
+import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPGateway
 import CryptoKit
@@ -7,6 +9,10 @@ import Foundation
 struct ClientAccessSnapshot: Sendable {
   var sessions: [GatewayControlSessionSnapshot]
   var trusts: [GatewayClientTrust]
+  var oauthRequests: [OAuthPendingAuthorization] = []
+  var oauthGrants: [OAuthGrant] = []
+  /// Profiles a remote tunnel client may be approved with.
+  var remoteProfiles: [GatewayProfileID] = []
 }
 
 @MainActor
@@ -20,6 +26,10 @@ protocol ClientAccessManaging {
     async throws
   func endClientAccess(id: String, expectedRevision: Int64) async throws
   func revokeClientTrust(id: String, expectedRevision: Int64) async throws
+  func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
+    async throws
+  func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws
+  func revokeOAuthGrant(id: String) async throws
 }
 
 extension ClientAccessManaging {
@@ -39,6 +49,15 @@ extension ClientAccessManaging {
   func revokeClientTrust(id: String, expectedRevision: Int64) async throws {
     throw unavailableClientAccess()
   }
+  func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
+    async throws
+  {
+    throw unavailableClientAccess()
+  }
+  func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws {
+    throw unavailableClientAccess()
+  }
+  func revokeOAuthGrant(id: String) async throws { throw unavailableClientAccess() }
   private func unavailableClientAccess() -> AppControlPlaneError {
     .unavailable("Client access is unavailable. Refresh to check current connections.")
   }
@@ -75,6 +94,10 @@ final class ClientAccessModel: ObservableObject {
     guard isAvailable,
       snapshot?.sessions.allSatisfy({ $0.ended || $0.profile != nil }) == true
     else { return AppLocalization.string("Client access status unavailable") }
+    if !pendingOAuthRequests.isEmpty {
+      return AppLocalization.formatted(
+        "Sign-in requests waiting: %@", String(pendingOAuthRequests.count))
+    }
     return controllingSessions.isEmpty
       ? AppLocalization.string("No clients have control")
       : AppLocalization.formatted("Clients with control: %@", String(controllingSessions.count))
@@ -158,6 +181,52 @@ final class ClientAccessModel: ObservableObject {
     _ = await perform {
       try await self.controlPlane.revokeClientTrust(id: trust.id, expectedRevision: trust.revision)
     }
+  }
+
+  /// The profile the owner picked for each pending sign-in.
+  @Published var oauthProfileChoices: [String: GatewayProfileID] = [:]
+
+  /// Profiles that admit tunnel clients, read-only Cloudflare Observe first.
+  var oauthProfileOptions: [GatewayProfileID] {
+    let profiles = snapshot?.remoteProfiles ?? []
+    return profiles.filter { $0 == .cloudflareObserve }
+      + profiles.filter { $0 != .cloudflareObserve }
+  }
+
+  /// The owner's pick when it is still offered, otherwise the first option.
+  func oauthProfile(for request: OAuthPendingAuthorization) -> GatewayProfileID? {
+    let options = oauthProfileOptions
+    if let choice = oauthProfileChoices[request.id], options.contains(choice) { return choice }
+    return options.first
+  }
+
+  @discardableResult
+  func approve(_ request: OAuthPendingAuthorization) async -> Bool {
+    guard let profile = oauthProfile(for: request) else { return false }
+    let approved = await perform {
+      try await self.controlPlane.approveOAuthRequest(request, profile: profile)
+    }
+    if approved { oauthProfileChoices[request.id] = nil }
+    return approved
+  }
+
+  func deny(_ request: OAuthPendingAuthorization) async {
+    if await perform({ try await self.controlPlane.denyOAuthRequest(request) }) {
+      oauthProfileChoices[request.id] = nil
+    }
+  }
+
+  func revoke(_ grant: OAuthGrant) async {
+    _ = await perform { try await self.controlPlane.revokeOAuthGrant(id: grant.id) }
+  }
+
+  var pendingOAuthRequests: [OAuthPendingAuthorization] {
+    (snapshot?.oauthRequests ?? []).sorted { $0.createdAt < $1.createdAt }
+  }
+
+  var activeOAuthGrants: [OAuthGrant] {
+    (snapshot?.oauthGrants ?? []).filter { $0.revokedAt == nil }
+      .sorted { ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt) }
   }
 
   private func perform(_ operation: () async throws -> Void) async -> Bool {

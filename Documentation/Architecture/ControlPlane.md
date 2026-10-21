@@ -106,8 +106,11 @@ main-thread dispatch before entering macOS AX/AppKit behavior.
 The App's Client access page presents connected socket/HTTP sessions separately
 from saved client approvals. Its ObservableObject feature model captures the
 reviewed session and trust revisions; refresh cannot rebase an open confirmation.
-The menu shows current control status and directs the owner to that page. A failed
-refresh remains unavailable while retaining the last visible records.
+Pending OAuth sign-in requests and live grants appear on the same page; approval
+offers only profiles that allow `cloudflare-tunnel`, Cloudflare Observe first.
+The menu shows current control status, or the number of waiting sign-in requests,
+and directs the owner to that page. A failed refresh remains unavailable while
+retaining the last visible records.
 
 Restricted permission editing uses the host's current classified tool catalog,
 registered projects and composed MCP integrations. The App presents readable

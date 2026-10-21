@@ -581,7 +581,9 @@ struct CloudflareEditorPresentation: Identifiable {
         metricsPort: tunnel.metricsPort,
         cloudflaredPath: nil,
         tunnelToken: nil,
-        regenerateAccessToken: false
+        regenerateAccessToken: false,
+        oauthEnabled: tunnel.oauthEnabled,
+        oauthClientAllowlist: tunnel.oauthClientAllowlist
       ),
       isEditing: true
     )
@@ -592,10 +594,13 @@ struct CloudflareTunnelEditorView: View {
   @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var model: ComputerMCPAppModel
   @State private var draft: CloudflareTunnelConfigurationDraft
+  @State private var oauthClientHosts: String
   let isEditing: Bool
 
   init(presentation: CloudflareEditorPresentation) {
     _draft = State(initialValue: presentation.draft)
+    _oauthClientHosts = State(
+      initialValue: presentation.draft.oauthClientAllowlist.joined(separator: ", "))
     self.isEditing = presentation.isEditing
   }
 
@@ -639,6 +644,21 @@ struct CloudflareTunnelEditorView: View {
         Text("Cloudflare Access service tokens belong to consumers and are never stored here.")
           .font(.caption)
           .foregroundStyle(.secondary)
+        Section {
+          Toggle("Allow sign-in with OAuth", isOn: $draft.oauthEnabled)
+            .accessibilityIdentifier("cloudflare.editor.oauth")
+          TextField("Allowed client hosts", text: $oauthClientHosts)
+            .disabled(!draft.oauthEnabled)
+            .accessibilityIdentifier("cloudflare.editor.oauth-clients")
+        } header: {
+          Text("Sign-in for clients such as claude.ai")
+        } footer: {
+          Text(
+            "Clients that cannot send a custom header, such as claude.ai, sign in with OAuth. You approve each new client in Client access by matching the code shown on its browser page. Separate client hosts with commas."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
         DisclosureGroup("Advanced") {
           LabeledContent("Origin port") {
             TextField("8765", value: $draft.localPort, format: .number).frame(width: 100)
@@ -661,7 +681,9 @@ struct CloudflareTunnelEditorView: View {
         Spacer()
         Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
         Button {
-          model.saveCloudflareTunnelConfiguration(draft)
+          var saved = draft
+          saved.oauthClientAllowlist = Self.clientHosts(oauthClientHosts)
+          model.saveCloudflareTunnelConfiguration(saved)
           dismiss()
         } label: {
           Text(verbatim: AppLocalization.string(isEditing ? "Save" : "Add"))
@@ -673,11 +695,21 @@ struct CloudflareTunnelEditorView: View {
             || draft.publicHostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || (!isEditing
               && (draft.tunnelToken ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            || (draft.oauthEnabled && Self.clientHosts(oauthClientHosts).isEmpty)
         )
       }
       .padding(16)
     }
-    .frame(width: 600, height: 620)
+    .frame(width: 600, height: 700)
+  }
+
+  private static func clientHosts(_ text: String) -> [String] {
+    var hosts: [String] = []
+    for part in text.split(whereSeparator: { $0 == "," || $0.isWhitespace }) {
+      let host = part.lowercased()
+      if !hosts.contains(host) { hosts.append(host) }
+    }
+    return hosts
   }
 }
 

@@ -12,5 +12,6 @@ This directory contains accepted decision records.
 - [Module Architecture](ModuleArchitecture.md)
 - [Fresh Start at 0.1.0](FreshStart.md)
 - [Local Client Registration](ClientRegistration.md)
+- [Plugin API Version](PluginAPI.md)
 
 Current architecture truth remains in `Documentation/Architecture/`.

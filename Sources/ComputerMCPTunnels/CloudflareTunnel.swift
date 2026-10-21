@@ -56,6 +56,14 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
     self.accessTokenReference = accessTokenReference
   }
 
+  package var transportConfiguration: CloudflareTunnelTransportConfig {
+    CloudflareTunnelTransportConfig(
+      id: id, tunnelName: tunnelName, publicHostname: publicHostname,
+      gatewayProfile: gatewayProfile, localPort: localPort, metricsPort: metricsPort,
+      cloudflaredPath: cloudflaredPath, oauthEnabled: oauthEnabled,
+      oauthClientAllowlist: oauthClientAllowlist)
+  }
+
   package var publicBaseURL: URL? {
     URL(string: "https://\(publicHostname)")
   }
@@ -299,6 +307,7 @@ package enum CloudflareTunnelError: Error, LocalizedError, Equatable {
   case profileNotFound(String)
   case processLaunchFailed(String)
   case profileCallerMismatch(String)
+  case staleConfiguration(String)
   case unsupportedCloudflaredVersion(String?)
 
   package var errorDescription: String? {
@@ -312,6 +321,8 @@ package enum CloudflareTunnelError: Error, LocalizedError, Equatable {
     case .processLaunchFailed(let message): "cloudflared failed to launch: \(message)"
     case .profileCallerMismatch(let id):
       "Gateway profile '\(id)' does not allow the cloudflare-tunnel caller."
+    case .staleConfiguration(let id):
+      "Cloudflare tunnel '\(id)' configuration changed. Reopen the tunnel and review it before saving."
     case .unsupportedCloudflaredVersion(let version):
       "cloudflared 2025.4.0 or newer is required for token-file"
         + (version.map { "; found \($0)" } ?? "; the installed version could not be determined")

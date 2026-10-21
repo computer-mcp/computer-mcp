@@ -20,6 +20,18 @@ import Foundation
   import Musl
 #endif
 
+extension CloudflareTunnelConfiguration {
+  /// SHA-256 of the saved transport's compact JSON with sorted keys and unescaped slashes.
+  package var configurationDigest: String {
+    get throws {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+      let data = try encoder.encode(transportConfiguration)
+      return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+  }
+}
+
 extension AppControlPlaneService {
   package func cloudflareTunnelConfigurations() throws -> [CloudflareTunnelConfiguration] {
     let configured = try manifestStore.activeConfiguration().transports.cloudflare
@@ -79,23 +91,27 @@ extension AppControlPlaneService {
       accessTokenReference: try SecretReference(account: "cloudflare.\(input.id).access-token")
     )
     return try await performCloudflareSave(
-      profile, tunnelToken: input.tunnelToken, regenerateAccessToken: input.regenerateAccessToken)
+      profile, tunnelToken: input.tunnelToken, regenerateAccessToken: input.regenerateAccessToken,
+      expectedTunnelDigest: input.expectedTunnelDigest)
   }
 
   package func saveCloudflareTunnelConfiguration(
     _ profile: CloudflareTunnelConfiguration,
     tunnelToken: String?,
-    regenerateAccessToken: Bool = false
+    regenerateAccessToken: Bool = false,
+    expectedTunnelDigest: String? = nil
   ) async throws -> CloudflareOnboardingResult {
     await beginCloudflareCredentialMutation(profileID: profile.id)
     defer { endCloudflareCredentialMutation(profileID: profile.id) }
     return try await performCloudflareSave(
-      profile, tunnelToken: tunnelToken, regenerateAccessToken: regenerateAccessToken)
+      profile, tunnelToken: tunnelToken, regenerateAccessToken: regenerateAccessToken,
+      expectedTunnelDigest: expectedTunnelDigest)
   }
 
   /// The caller owns this profile's mutation slot through publication and rollback.
   private func performCloudflareSave(
-    _ profile: CloudflareTunnelConfiguration, tunnelToken: String?, regenerateAccessToken: Bool
+    _ profile: CloudflareTunnelConfiguration, tunnelToken: String?, regenerateAccessToken: Bool,
+    expectedTunnelDigest: String?
   ) async throws -> CloudflareOnboardingResult {
     try Task.checkCancellation()
     try profile.validate()
@@ -124,6 +140,12 @@ extension AppControlPlaneService {
       await manifestStore.publicationLock.acquire()
       defer { manifestStore.publicationLock.release() }
       try Task.checkCancellation()
+      if let expectedTunnelDigest {
+        let current = try cloudflareTunnelConfigurations().first { $0.id == profile.id }
+        guard try current?.configurationDigest == expectedTunnelDigest else {
+          throw CloudflareTunnelError.staleConfiguration(profile.id)
+        }
+      }
       try activateTransportConfiguration(configuration, expectedDigest: digest)
     } catch {
       await restoreCloudflareSecret(
@@ -152,19 +174,7 @@ extension AppControlPlaneService {
   {
     var configuration = base
     configuration.transports.cloudflare.removeAll { $0.id == profile.id }
-    configuration.transports.cloudflare.append(
-      CloudflareTunnelTransportConfig(
-        id: profile.id,
-        tunnelName: profile.tunnelName,
-        publicHostname: profile.publicHostname,
-        gatewayProfile: profile.gatewayProfile,
-        localPort: profile.localPort,
-        metricsPort: profile.metricsPort,
-        cloudflaredPath: profile.cloudflaredPath,
-        oauthEnabled: profile.oauthEnabled,
-        oauthClientAllowlist: profile.oauthClientAllowlist
-      )
-    )
+    configuration.transports.cloudflare.append(profile.transportConfiguration)
     configuration.transports.cloudflare.sort { $0.id < $1.id }
     return configuration
   }

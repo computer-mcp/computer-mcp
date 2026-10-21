@@ -19,6 +19,48 @@ import Testing
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
   @Test
+  func tunnelEditorPassesItsOpenedDigestThroughToTheControlPlane() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      var initial = CloudflareEditorPresentation.new.draft
+      initial.tunnelName = "named"
+      initial.publicHostname = "gateway.example"
+      initial.cloudflaredPath = "/tools/cloudflared"
+      initial.tunnelToken = "synthetic-tunnel"
+      initial.oauthEnabled = true
+      initial.oauthClientAllowlist = ["client.example", "second.example"]
+      #expect(initial.expectedTunnelDigest == nil)
+      _ = try await fixture.app.saveCloudflareTunnelConfiguration(initial)
+
+      let summary = try #require(try await fixture.app.fetchCloudflareTunnels().first)
+      let profile = try #require(
+        try await fixture.controlPlane.cloudflareTunnelConfigurations().first)
+      #expect(try summary.configurationDigest == profile.configurationDigest)
+      var draft = CloudflareEditorPresentation.edit(summary).draft
+      #expect(draft.expectedTunnelDigest == summary.configurationDigest)
+      #expect(draft.cloudflaredPath == initial.cloudflaredPath)
+      draft.tunnelName = "first-edit"
+      _ = try await fixture.app.saveCloudflareTunnelConfiguration(draft)
+
+      let opened = try #require(try await fixture.app.fetchCloudflareTunnels().first)
+      var stale = CloudflareEditorPresentation.edit(opened).draft
+      var disabled = profile
+      disabled.tunnelName = opened.tunnelName
+      disabled.oauthEnabled = false
+      _ = try await fixture.controlPlane.saveCloudflareTunnelConfiguration(
+        disabled, tunnelToken: nil)
+      stale.tunnelName = "unrelated-edit"
+      await #expect(throws: CloudflareTunnelError.staleConfiguration(opened.id)) {
+        try await fixture.app.saveCloudflareTunnelConfiguration(stale)
+      }
+      let current = try #require(try await fixture.app.fetchCloudflareTunnels().first)
+      #expect(current.tunnelName == opened.tunnelName)
+      #expect(!current.oauthEnabled)
+      #expect(current.oauthClientAllowlist == opened.oauthClientAllowlist)
+      #expect(current.configurationDigest != opened.configurationDigest)
+    }
+  }
+
+  @Test
   func manifestEditorSavesOnlyAgainstTheManifestItOpened() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()

@@ -579,11 +579,12 @@ struct CloudflareEditorPresentation: Identifiable {
         gatewayProfileID: tunnel.profileID,
         localPort: tunnel.localPort,
         metricsPort: tunnel.metricsPort,
-        cloudflaredPath: nil,
+        cloudflaredPath: tunnel.cloudflaredPath,
         tunnelToken: nil,
         regenerateAccessToken: false,
         oauthEnabled: tunnel.oauthEnabled,
-        oauthClientAllowlist: tunnel.oauthClientAllowlist
+        oauthClientAllowlist: tunnel.oauthClientAllowlist,
+        expectedTunnelDigest: tunnel.configurationDigest
       ),
       isEditing: true
     )

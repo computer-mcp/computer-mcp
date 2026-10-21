@@ -256,12 +256,14 @@ struct OpenAITunnelLogSnapshot: Sendable {
 
 struct CloudflareTunnelSummary: Identifiable, Sendable {
   var id: String
+  var configurationDigest: String
   var tunnelName: String
   var publicHostname: String
   var profileID: String
   var state: ServiceState
   var localPort: Int
   var metricsPort: Int
+  var cloudflaredPath: String?
   var processIdentifier: Int32?
   var connectedAt: Date?
   var lastError: String?
@@ -302,6 +304,7 @@ struct CloudflareTunnelConfigurationDraft: Identifiable, Sendable {
   var regenerateAccessToken: Bool
   var oauthEnabled = false
   var oauthClientAllowlist = CloudflareTunnelConfigurationDraft.defaultOAuthClients
+  var expectedTunnelDigest: String? = nil
 }
 
 extension CloudflareTunnelConfigurationDraft {

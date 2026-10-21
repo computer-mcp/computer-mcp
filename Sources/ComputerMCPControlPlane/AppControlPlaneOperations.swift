@@ -83,6 +83,7 @@ package struct CloudflareTunnelConfigurationInput: Equatable, Sendable {
   package var oauthClientAllowlist: [String]?
   package var tunnelToken: String?
   package var regenerateAccessToken: Bool
+  package var expectedTunnelDigest: String?
 
   package init(
     id: String,
@@ -95,7 +96,8 @@ package struct CloudflareTunnelConfigurationInput: Equatable, Sendable {
     oauthEnabled: Bool? = nil,
     oauthClientAllowlist: [String]? = nil,
     tunnelToken: String? = nil,
-    regenerateAccessToken: Bool = false
+    regenerateAccessToken: Bool = false,
+    expectedTunnelDigest: String? = nil
   ) {
     self.id = id
     self.tunnelName = tunnelName
@@ -108,6 +110,7 @@ package struct CloudflareTunnelConfigurationInput: Equatable, Sendable {
     self.oauthClientAllowlist = oauthClientAllowlist
     self.tunnelToken = tunnelToken
     self.regenerateAccessToken = regenerateAccessToken
+    self.expectedTunnelDigest = expectedTunnelDigest
   }
 }
 

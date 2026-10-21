@@ -29,6 +29,33 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct OAuthControlPlaneTests {
+  @Test func tunnelConfigurationDigestCoversEverySavedField() throws {
+    let profile = CloudflareTunnelConfiguration(
+      id: "tunnel", tunnelName: "named", publicHostname: "gateway.example",
+      cloudflaredPath: "/tools/cloudflared", oauthEnabled: true,
+      oauthClientAllowlist: ["client.example", "second.example"],
+      tunnelTokenReference: try SecretReference(account: "cloudflare.tunnel.tunnel-token"),
+      accessTokenReference: try SecretReference(account: "cloudflare.tunnel.access-token"))
+    let digest = try profile.configurationDigest
+    #expect(digest == "d162d170b8f351efb885cf2ccf786eec0885a9d53cee53138b5c8fd81bee540e")
+    let edits: [(String, (inout CloudflareTunnelConfiguration) -> Void)] = [
+      ("id", { $0.id = "other" }),
+      ("tunnel_name", { $0.tunnelName = "other" }),
+      ("public_hostname", { $0.publicHostname = "other.example" }),
+      ("gateway_profile", { $0.gatewayProfile = .cloudflareOperate }),
+      ("local_port", { $0.localPort += 1 }),
+      ("metrics_port", { $0.metricsPort += 1 }),
+      ("cloudflared_path", { $0.cloudflaredPath = nil }),
+      ("oauth_enabled", { $0.oauthEnabled = false }),
+      ("oauth_client_allowlist", { $0.oauthClientAllowlist.removeLast() }),
+    ]
+    for (field, edit) in edits {
+      var changed = profile
+      edit(&changed)
+      #expect(try changed.configurationDigest != digest, "Digest must cover \(field)")
+    }
+  }
+
   @Test func ownerContractsListApproveDenyAndRevoke() async throws {
     let fixture = try ControlFixture()
     defer { fixture.remove() }
@@ -534,7 +561,57 @@ struct OAuthControlPlaneTests {
     }
 
     @Test(arguments: [false, true])
-    func staleTunnelSaveIsRefusedAfterGatewayPublication(disableOAuth: Bool) async throws {
+    func openedTunnelSaveCannotRestoreNewerOAuthRestrictions(disableOAuth: Bool) async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      var profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      profile.oauthClientAllowlist = ["client.example", "second.example"]
+      _ = try await fixture.service.saveCloudflareTunnelConfiguration(
+        profile, tunnelToken: "synthetic-tunnel")
+      let opened = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      let openedDigest = try opened.configurationDigest
+
+      var restriction = fixture.saveInput(for: opened)
+      if disableOAuth {
+        restriction.oauthEnabled = false
+      } else {
+        restriction.oauthClientAllowlist = ["client.example"]
+      }
+      _ = try await fixture.operations.saveCloudflareTunnelConfiguration(restriction)
+      let restricted = try #require(
+        try await fixture.service.cloudflareTunnelConfigurations().first)
+      let manifestDigest = try await fixture.service.configurationDigest()
+      #expect(try restricted.configurationDigest != openedDigest)
+
+      var draft = fixture.saveInput(for: opened)
+      draft.tunnelName = "unrelated-edit"
+      draft.oauthEnabled = opened.oauthEnabled
+      draft.oauthClientAllowlist = opened.oauthClientAllowlist
+      draft.expectedTunnelDigest = openedDigest
+      let stale = draft
+      await #expect(throws: CloudflareTunnelError.staleConfiguration(opened.id)) {
+        try await fixture.operations.saveCloudflareTunnelConfiguration(stale)
+      }
+      #expect(try await fixture.service.cloudflareTunnelConfigurations() == [restricted])
+      #expect(try await fixture.service.configurationDigest() == manifestDigest)
+      #expect(restricted.oauthEnabled == !disableOAuth)
+      #expect(
+        restricted.oauthClientAllowlist
+          == (disableOAuth ? opened.oauthClientAllowlist : ["client.example"]))
+
+      var refreshed = fixture.saveInput(for: restricted)
+      refreshed.tunnelName = draft.tunnelName
+      refreshed.expectedTunnelDigest = try restricted.configurationDigest
+      let saved = try await fixture.operations.saveCloudflareTunnelConfiguration(refreshed)
+      #expect(saved.profile.tunnelName == draft.tunnelName)
+      #expect(saved.profile.oauthEnabled == restricted.oauthEnabled)
+      #expect(saved.profile.oauthClientAllowlist == restricted.oauthClientAllowlist)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func staleTunnelSaveIsRefusedAfterGatewayPublication(
+      disableOAuth: Bool, bindTunnelDigest: Bool
+    ) async throws {
       let gate = SuspensionGate()
       let fixture = try ControlFixture(manifestWillPublish: { await gate.pause() })
       defer { fixture.remove() }
@@ -553,6 +630,7 @@ struct OAuthControlPlaneTests {
       await gate.waitUntilPaused()
       var input = fixture.saveInput(for: profile)
       input.tunnelName = "updated-name"
+      input.expectedTunnelDigest = bindTunnelDigest ? try profile.configurationDigest : nil
       let savingInput = input
       let saving = Task {
         try await fixture.operations.saveCloudflareTunnelConfiguration(savingInput)
@@ -561,7 +639,13 @@ struct OAuthControlPlaneTests {
       await waitForPublicationWaiters(lock, count: 1)
       await gate.resume()
       _ = try await publishing.value
-      await #expect(throws: AtomicManifestStoreError.staleDigest) { try await saving.value }
+      if bindTunnelDigest {
+        await #expect(throws: CloudflareTunnelError.staleConfiguration(profile.id)) {
+          try await saving.value
+        }
+      } else {
+        await #expect(throws: AtomicManifestStoreError.staleDigest) { try await saving.value }
+      }
       let current = try await fixture.service.activeConfiguration()
       #expect(current.transports.cloudflare[0].tunnelName == profile.tunnelName)
       #expect(current.transports.cloudflare[0].oauthEnabled == !disableOAuth)

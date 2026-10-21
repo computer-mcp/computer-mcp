@@ -779,7 +779,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
               oauthClientAllowlist: object["oauth_client_allowlist"]?.arrayValue?.compactMap(
                 \.stringValue),
               tunnelToken: object["tunnel_token"]?.stringValue,
-              regenerateAccessToken: object["regenerate_access_token"]?.boolValue ?? false
+              regenerateAccessToken: object["regenerate_access_token"]?.boolValue ?? false,
+              expectedTunnelDigest: object["expected_tunnel_digest"]?.stringValue
             )
           )
         )
@@ -1274,6 +1275,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         "oauth_client_allowlist": .strings,
         "tunnel_token": .string,
         "regenerate_access_token": .boolean,
+        "expected_tunnel_digest": .string,
       ],
       required: ["id", "tunnel_name", "public_hostname", "gateway_profile"],
       readOnly: false

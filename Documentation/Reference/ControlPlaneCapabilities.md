@@ -105,3 +105,16 @@ always supplies the digest of the profile it displayed.
 `oauth_client_allowlist` (an array of exact lowercase hosts). New connections
 default to disabled OAuth and `["claude.ai", "claude.com"]`; omission preserves
 an existing connection. No client registry or client secret is created.
+
+The optional `expected_tunnel_digest` (`expectedTunnelDigest` in the local save
+API) binds a save to the tunnel configuration the caller opened. The digest is
+lowercase SHA-256 hex over the saved `CloudflareTunnelTransportConfig` encoded as
+compact JSON with sorted keys and unescaped slashes. It includes `id`,
+`tunnel_name`, `public_hostname`, `gateway_profile`, `local_port`, `metrics_port`,
+`cloudflared_path` when present, `oauth_enabled` and `oauth_client_allowlist` in
+its saved order. Credential values and runtime status are excluded. The App
+carries this digest in its tunnel summary and existing-tunnel editor draft.
+Save compares it with the current tunnel while holding both the tunnel mutation
+slot and configuration publication lock; a mismatch refuses the save with a
+stale-configuration error and requires reopening the tunnel. New tunnels and
+owner CLI saves omit the digest and retain their existing save behavior.

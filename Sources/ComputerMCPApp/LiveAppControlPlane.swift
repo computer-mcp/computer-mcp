@@ -377,12 +377,14 @@ final class LiveAppControlPlane: AppControlPlane {
       summaries.append(
         CloudflareTunnelSummary(
           id: profile.id,
+          configurationDigest: try profile.configurationDigest,
           tunnelName: profile.tunnelName,
           publicHostname: profile.publicHostname,
           profileID: profile.gatewayProfile.rawValue,
           state: (status?.state ?? .stopped).appState,
           localPort: profile.localPort,
           metricsPort: profile.metricsPort,
+          cloudflaredPath: profile.cloudflaredPath,
           processIdentifier: status?.processID,
           connectedAt: status?.startedAt,
           lastError: status?.lastError,
@@ -811,7 +813,8 @@ final class LiveAppControlPlane: AppControlPlane {
         oauthEnabled: draft.oauthEnabled,
         oauthClientAllowlist: draft.oauthClientAllowlist,
         tunnelToken: draft.tunnelToken,
-        regenerateAccessToken: draft.regenerateAccessToken
+        regenerateAccessToken: draft.regenerateAccessToken,
+        expectedTunnelDigest: draft.expectedTunnelDigest
       )
     )
     return result.generatedAccessToken

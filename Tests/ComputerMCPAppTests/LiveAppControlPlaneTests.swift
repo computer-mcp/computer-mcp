@@ -19,6 +19,23 @@ import Testing
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
   @Test
+  func manifestEditorSavesOnlyAgainstTheManifestItOpened() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      try await fixture.app.startApplication()
+      let opened = try await fixture.app.fetchDiagnostics().manifest
+      let first = opened.content + "\n# first edit\n"
+      try await fixture.app.saveManifest(first, expectedDigest: opened.digest)
+      await #expect(throws: (any Error).self) {
+        try await fixture.app.saveManifest(
+          opened.content + "\n# stale edit\n", expectedDigest: opened.digest)
+      }
+      let current = try await fixture.app.fetchDiagnostics().manifest
+      #expect(current.content == first)
+      #expect(current.digest != opened.digest)
+    }
+  }
+
+  @Test
   func incompatibleCallerConsentCannotEnableTheShellFacility() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()

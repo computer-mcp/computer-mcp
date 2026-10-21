@@ -520,10 +520,11 @@ final class LiveAppControlPlane: AppControlPlane {
         )
       }
     )
-    let manifestContent = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
+    let manifestData = try Data(contentsOf: controlPlane.directories.manifest)
+    guard let manifestContent = String(data: manifestData, encoding: .utf8) else {
+      throw CocoaError(.fileReadInapplicableStringEncoding)
+    }
+    let manifestDigest = try AtomicManifestStore.digest(of: manifestData)
     var foundCurrentRevision = false
     let revisions = try await controlPlane.configurationHistory().map { revision in
       let isCurrent =
@@ -549,6 +550,7 @@ final class LiveAppControlPlane: AppControlPlane {
       manifest: ManifestSnapshot(
         path: controlPlane.directories.manifest.path,
         content: manifestContent,
+        digest: manifestDigest,
         revisions: revisions
       )
     )
@@ -877,8 +879,8 @@ final class LiveAppControlPlane: AppControlPlane {
     return result
   }
 
-  func saveManifest(_ content: String) async throws {
-    _ = try await operations.activateManifest(content)
+  func saveManifest(_ content: String, expectedDigest: String) async throws {
+    _ = try await operations.activateManifest(content, expectedDigest: expectedDigest)
   }
 
   func rollbackManifest(to revisionID: String) async throws {

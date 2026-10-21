@@ -400,6 +400,8 @@ struct ManifestRevisionSummary: Identifiable, Sendable {
 struct ManifestSnapshot: Sendable {
   var path: String
   var content: String
+  /// Digest of `content` as the manifest store computes it; edits publish against it.
+  var digest: String
   var revisions: [ManifestRevisionSummary]
 }
 
@@ -476,7 +478,7 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func previewCodexRegistration() async throws -> CodexMCPInstallInvocation
   func installCodexRegistration() async throws -> CommandResult
 
-  func saveManifest(_ content: String) async throws
+  func saveManifest(_ content: String, expectedDigest: String) async throws
   func rollbackManifest(to revisionID: String) async throws
   func exportDiagnostics(to destination: URL) async throws
 }
@@ -602,7 +604,9 @@ final class UnavailableControlPlane: AppControlPlane {
     throw unavailable()
   }
   func installCodexRegistration() async throws -> CommandResult { throw unavailable() }
-  func saveManifest(_ content: String) async throws { throw unavailable() }
+  func saveManifest(_ content: String, expectedDigest: String) async throws {
+    throw unavailable()
+  }
   func rollbackManifest(to revisionID: String) async throws { throw unavailable() }
   func exportDiagnostics(to destination: URL) async throws { throw unavailable() }
 

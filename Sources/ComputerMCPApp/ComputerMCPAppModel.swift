@@ -556,13 +556,14 @@ final class ComputerMCPAppModel: ObservableObject {
     codexRegistrationMessage = nil
   }
 
-  func saveManifest(_ content: String) {
+  /// Publishes against the manifest the editor opened; a newer manifest refuses the save.
+  func saveManifest(_ content: String, expectedDigest: String) {
     performAction(
       key: "manifest.save",
       title: "Unable to activate manifest",
       refresh: [.diagnostics, .home, .profiles, .providers, .tunnels]
     ) {
-      try await self.controlPlane.saveManifest(content)
+      try await self.controlPlane.saveManifest(content, expectedDigest: expectedDigest)
     }
   }
 

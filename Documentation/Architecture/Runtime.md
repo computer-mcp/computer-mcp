@@ -163,7 +163,8 @@ backoff instead of producing a false healthy state.
 location and exact child environment when previewing a Codex, Claude Code or
 Claude Desktop registration. Its immutable private plan contains only the named
 entry; the displayable plan omits private values. Apply serializes Computer MCP
-writers through `client-registration.lock` in the per-user state directory,
+writers through `client-registration.lock` in the production per-user state directory
+(shared by production and Development Apps and the CLI),
 rechecks the private plan's SHA-256 fingerprint and executes only those actions.
 The App retains its preview plan through confirmation; the CLI uses `--expect`
 for a reviewed replacement or removal of a different entry.

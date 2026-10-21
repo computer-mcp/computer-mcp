@@ -5,6 +5,7 @@ import ComputerMCPPlatform
 import Foundation
 
 extension MacOSPlatform {
+  /// All App distributions and the CLI share the production per-user writer lock.
   package static func clientRegistrationService(
     stateDirectory: URL? = nil,
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,

@@ -54,8 +54,7 @@ final class LiveAppControlPlane: AppControlPlane {
     )
     self.fileLogger = try AppFileLogger(directory: controlPlane.directories.logs)
     self.permissionRequester = MacOSSystemPermissionRequester()
-    self.registrationService = MacOSPlatform.clientRegistrationService(
-      stateDirectory: controlPlane.directories.applicationSupport)
+    self.registrationService = MacOSPlatform.clientRegistrationService()
     fileLogger.append(.info, event: "app.control_plane.initialized")
   }
 
@@ -78,8 +77,7 @@ final class LiveAppControlPlane: AppControlPlane {
     self.permissionRequester = permissionRequester
     self.registrationService =
       registrationService
-      ?? MacOSPlatform.clientRegistrationService(
-        stateDirectory: controlPlane.directories.applicationSupport)
+      ?? MacOSPlatform.clientRegistrationService()
     fileLogger.append(.info, event: "app.control_plane.initialized")
   }
 

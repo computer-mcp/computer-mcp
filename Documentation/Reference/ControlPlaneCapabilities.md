@@ -96,9 +96,10 @@ HTTP owner socket. OAuth approval retains separate Full Access session consent.
 The local `authorizeOAuthClient` API follows the same default: omitting
 `profileID` selects `cloudflare-observe` only in effective read-only mode;
 otherwise the caller must choose an explicit profile. Its optional
-`expectedAuthorizationRevision` binds approval to the reviewed
-`ProfileGrant.authorizationRevision`. Changes to mode or permissions advance
-this revision. The App always supplies the reviewed revision.
+`expectedAuthorizationDigest` binds approval to the reviewed
+`OAuthApprovalProfile.authorizationDigest`, computed from the effective grant.
+The App snapshot carries this digest with each remote profile, and the App
+always supplies the digest of the profile it displayed.
 
 `tunnel.cloudflare.save` accepts optional `oauth_enabled` and
 `oauth_client_allowlist` (an array of exact lowercase hosts). New connections

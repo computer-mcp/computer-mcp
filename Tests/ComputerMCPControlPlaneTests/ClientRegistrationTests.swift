@@ -376,6 +376,44 @@ struct ClientRegistrationTests {
     #expect(try Data(contentsOf: file) == changedBytes)
   }
 
+  @Test(arguments: ["edit", "appearance", "disappearance"])
+  func desktopRefusesFileChangesBeforeWriterSnapshot(change: String) throws {
+    let fixture = try RegistrationFixture()
+    let file = fixture.file(.claudeDesktop)
+    if change != "appearance" {
+      try Data("{\"theme\":\"dark\" }".utf8).write(to: file)
+    }
+    let changedBytes = Data("{\"theme\":\"light\"}".utf8)
+    let service = ClientRegistrationService(
+      homeDirectory: fixture.root, stateDirectory: fixture.root.appendingPathComponent("state"),
+      executableSearchDirectories: [], environment: [:], processRunner: fixture.runner,
+      desktop: .init(
+        configurationFile: file, isInstalled: { true },
+        isRunning: {
+          // The writer checks running state after the fingerprint recheck, before its snapshot.
+          do {
+            if change == "disappearance" {
+              if FileManager.default.fileExists(atPath: file.path) {
+                try FileManager.default.removeItem(at: file)
+              }
+            } else {
+              try changedBytes.write(to: file)
+            }
+          } catch { Issue.record(error) }
+          return false
+        }))
+    let plan = try fixture.preview(.claudeDesktop, service: service)
+    do {
+      _ = try service.apply(plan)
+      Issue.record("Applied a plan after the configuration file changed")
+    } catch let error as ClientRegistrationError { #expect(error.code == .changedSincePreview) }
+    if change == "disappearance" {
+      #expect(!FileManager.default.fileExists(atPath: file.path))
+    } else {
+      #expect(try Data(contentsOf: file) == changedBytes)
+    }
+  }
+
   @Test(arguments: RegistrationClient.allCases)
   func displayAndDiagnosticsExcludePrivateValues(client: RegistrationClient) throws {
     let fixture = try RegistrationFixture()

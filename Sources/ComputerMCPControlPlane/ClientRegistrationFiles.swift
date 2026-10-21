@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import Crypto
 import Foundation
 
 #if canImport(Darwin)
@@ -71,7 +72,10 @@ struct DesktopRegistrationFileWriter: Sendable {
     guard !isRunning() else { throw ClientRegistrationError(.clientRunning) }
     let path = plan.location.configurationFile
     let original = try RegistrationJSONFile.read(path)
-    guard original.entry(named: plan.serverName) == plan.observation.entry else {
+    let fileSHA256 = original.bytes.map {
+      SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined()
+    }
+    guard fileSHA256 == plan.observation.fileSHA256 else {
       throw ClientRegistrationError(.changedSincePreview)
     }
     let directory = URL(fileURLWithPath: path).deletingLastPathComponent()

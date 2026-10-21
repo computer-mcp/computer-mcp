@@ -11,7 +11,7 @@ Each entry contains `id`, `cli_command`, `surface`, `read_only`, `destructive`,
 `idempotent`, and `local_only`. The embedded CLI reads the catalog directly, so
 it remains available when the App is stopped. The same catalog validates the
 current-user control socket and is never part of a remote profile's MCP tool
-list. Standalone HTTP hosts expose the same six `clients` contracts on their
+list. Standalone HTTP hosts expose the six session/trust `clients` contracts on their
 explicit private owner socket; they do not expose App lifecycle or configuration
 commands.
 
@@ -19,6 +19,7 @@ commands.
 | --- | --- | --- | --- |
 | App | status, start, stop, restart, launch at login | `app …` | Home and Settings |
 | Client access | list, explicit Full Access consent, limit/end connection access, saved trust list/revoke | `clients …` | Client access |
+| OAuth client access | pending pairing requests, local approval/denial, grant list/revocation | `clients authorizations`, `clients authorize`, `clients deny`, `clients grants`, `clients revoke-grant` | — |
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
 | Workspaces | list, canonical add, remove, profile enable/disable, deduplication | `workspace …` | Workspaces |
@@ -77,3 +78,22 @@ commands only with `--api-key-stdin` or `--tunnel-token-stdin`. They never enter
 argv, manifests, examples, capability output, or audit payloads. Generated
 Cloudflare access tokens are returned once to the owner-only caller and stored
 in Keychain.
+
+## OAuth owner operations
+
+These contracts use the App's current-user owner control socket or local App
+control-plane API. They are absent from remote MCP catalogs and the standalone
+HTTP owner socket. OAuth approval retains separate Full Access session consent.
+
+| Operation | Arguments and result |
+| --- | --- |
+| `clients.authorizations` | Optional `tunnel_id`, `id`, `after_id`, `limit` (default 100, maximum 200). Returns `authorizations` with ID, tunnel ID, pairing code, client/redirect hosts and creation/expiry times; plus `next_after_id`. |
+| `clients.authorize` | Required `pairing_code`; optional `tunnel_id`, `profile_id` (default `cloudflare-observe`). Approves one unexpired pending request with a profile permitting `cloudflare-tunnel`; returns the grant. Ambiguous codes require `tunnel_id`. |
+| `clients.deny` | Required `pairing_code`, optional `tunnel_id`. Denies one pending request. |
+| `clients.grants` | Same paging/filter fields as authorizations. Returns `grants`, including revoked records, and `next_after_id`. Grants carry client ID, redirect host, profile, resource, scope and creation/last-use/revocation times. |
+| `clients.revoke_grant` | Required grant `id`. Immediately invalidates all grant tokens; repeated revocation is harmless. |
+
+`tunnel.cloudflare.save` accepts optional `oauth_enabled` and
+`oauth_client_allowlist` (an array of exact lowercase hosts). New connections
+default to disabled OAuth and `["claude.ai", "claude.com"]`; omission preserves
+an existing connection. No client registry or client secret is created.

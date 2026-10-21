@@ -167,9 +167,49 @@ The private socket validates current-user ownership and peer credentials. The
 App is the sole service owner and cleans up its socket and owned processes on
 normal termination.
 
-Cloudflare release mode always requires the Computer MCP Access Token and a remotely-managed
+Cloudflare release mode uses authenticated loopback HTTP and a remotely-managed
 named tunnel. Quick Tunnel and anonymous HTTP are development Validation Test Cases
-only. Computer MCP does not implement an OAuth authorization server.
+only. Header-capable consumers use the Computer MCP Access Token; replacing it
+through the owner control plane immediately updates the running listener.
+
+OAuth is enabled per Cloudflare connection and defaults off. The gateway is both
+the protected resource and authorization server on that connection's public HTTPS
+origin. Its OAuth routes require the public Host; loopback Host requests cannot
+use them. Public clients identify through HTTPS Client ID Metadata Documents
+(CIMD), with exact hosts on the owner-managed allowlist (default `claude.ai` and
+`claude.com`). The credential-free fetch is bounded to 64 KiB and eight seconds,
+does not follow redirects, and pins a checked public numeric destination while
+URLSession performs TLS validation. Private, loopback and special-use destination
+addresses are refused. The document must bind its own URL and the exact redirect
+URI; registered loopback redirect ports are ignored during matching.
+
+The browser displays client and redirect hosts and a six-character pairing code.
+It can only poll a separate opaque status handle. Approval and denial require the
+local App control plane or owner CLI. Pairing expires after ten minutes. Approval
+creates a grant for the selected remote profile, default `cloudflare-observe`.
+Its principal is `oauth:<grant ID>` and its caller is `cloudflare-tunnel`.
+OAuth authenticates that identity; profile, workspace and per-session Full Access
+consent still apply. Client secrets and Dynamic Client Registration are not part
+of this authorization surface.
+
+Authorization codes and tokens contain 256 random bits; GRDB stores their SHA-256
+digests and bindings, never their plaintext. Codes expire after 60 seconds and
+bind client ID, exact redirect URI, S256 PKCE and resource. Access tokens last one
+hour and bind `https://<hostname>/mcp`. Refresh tokens rotate on every use and
+expire after 30 idle days. Reuse of a rotated refresh token revokes its grant.
+Owner grant revocation invalidates all of its tokens immediately. RFC 7009 access
+token revocation invalidates that token; refresh token revocation invalidates the
+grant. OAuth credentials never enter Keychain.
+
+OAuth endpoints and failed Bearer requests use address token buckets, with grant
+buckets for grant-bound operations. OAuth audit records requests, local decisions,
+expiry, token issuance, refresh, token and grant revocation, and refresh reuse.
+Failed Bearer audit is limited to one summary event per minute per listener.
+No credential values enter these events. Cloudflare Verified requires an allowed
+tool audit event from the current Access Token or a live OAuth grant, bound to
+that credential's profile and the current tunnel start. OAuth protocol events
+cannot establish Verified; replacement or revocation removes the affected
+credential's verification evidence.
 
 ## TCC And Computer Use
 
@@ -222,7 +262,7 @@ audit row rather than inferring a denial from message text alone.
 ## Persistence And Logging
 
 GRDB stores workspaces, profiles, provider health, manifest revisions,
-operation tickets, bounded MCP execution receipts and redacted audit metadata. The Data Protection Keychain
+operation tickets, OAuth requests/grants and credential digests, bounded MCP execution receipts and redacted audit metadata. The Data Protection Keychain
 stores transport keys and access token values.
 App logs are JSONL, mode `0600`, rotated, bounded, and redact secret-like
 fields.

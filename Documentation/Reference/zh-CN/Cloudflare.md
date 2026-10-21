@@ -35,12 +35,47 @@ Authorization: Bearer <computer-mcp-access-token>
 
 发起一次只读工具调用，回到 Cloudflare 页面选择 **Check for Request**。只有当前
 Named Tunnel、Profile、Caller 和启动时间均匹配的成功审计请求才会进入 Verified。
+该请求还必须来自当前访问令牌或仍有效的 OAuth 授权，并匹配该凭据的配置档。
+OAuth 配对和令牌端点的事件不会建立 Verified。
+
+## OAuth 配对
+
+每条连接默认关闭 OAuth。已有连接可通过所有者 CLI 开启；省略令牌参数会保留
+已保存的凭据：
+
+```sh
+computer-mcp tunnel cloudflare save partner --tunnel-name computer-mcp-release --public-hostname mcp.example.com --gateway-profile cloudflare-observe --oauth-enabled
+computer-mcp clients authorizations
+computer-mcp clients authorize <pairing-code> --profile cloudflare-observe
+computer-mcp clients deny <pairing-code>
+computer-mcp clients grants
+computer-mcp clients revoke-grant <grant-id>
+```
+
+重复 `--oauth-client-host <host>` 可替换 CIMD 客户端主机允许列表；默认允许
+`claude.ai` 和 `claude.com`，按完整主机名匹配。`--no-oauth-enabled` 关闭 OAuth；
+保存已有连接时，省略这些选项会保留原设置。清单键为 `oauth_enabled` 和
+`oauth_client_allowlist`，更改可作用于运行中的监听器。
+
+客户端连接 `https://<hostname>/mcp`，通过 CIMD、S256 PKCE 和本机批准获得授权。
+隧道路由需保留公网 Host，并转发 `/.well-known/…`、`/oauth/…` 和 `/mcp`。
+浏览器只显示客户端主机、回调主机和六位配对码；请在 Mac 上核对同码后批准。
+配对十分钟过期，公网页面不能批准。授权默认使用只读配置档；完全访问仍需本机
+逐会话同意。批准或拒绝可加 `--tunnel-id` 区分不同连接的同码请求。
+
+授权码单次使用、有效期六十秒；访问令牌有效一小时。刷新令牌每次使用都会轮换，
+三十天未使用即过期；重用已轮换的刷新令牌会吊销整个授权。数据库只保存令牌和
+授权码的 SHA-256 摘要，日志、审计和钥匙串都不保存 OAuth 原值。吊销授权立即
+拒绝其令牌。替换 Computer MCP 访问令牌也会立即更新运行中的监听器。
+独立的 Cloudflare Access 策略仍需允许该客户端访问相关路径。
 
 ## 恢复
 
 - `cloudflared` 不兼容：通过官方安装渠道升级后 Retry。
-- Token 被撤销：编辑连接并保存新 Token；旧 Verified 状态会立即失效。
-- 401：核对 Computer MCP Access Token，而不是 Tunnel Token。
+- 替换 Computer MCP 访问令牌或吊销 OAuth 授权：对应的 Verified 证据立即失效；
+  新凭据需重新完成成功的工具请求。
+- Cloudflare 隧道令牌被撤销：编辑连接并保存新令牌，重新诊断和启动。
+- 401：核对 Computer MCP 访问令牌或 OAuth 授权、刷新状态，而不是隧道令牌。
 - Cloudflare 连接成功但无 MCP：核对 hostname 路由、origin 端口和 `/mcp` 路径。
 - 停止连接会清理临时 `0600` Token 文件和 loopback origin，不会删除 Cloudflare 账号内的 Tunnel。
 

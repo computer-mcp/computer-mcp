@@ -14,7 +14,7 @@ let package = Package(
     )
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.0"),
+    .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
     .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
   ],
   targets: [

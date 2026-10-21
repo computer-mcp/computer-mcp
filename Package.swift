@@ -6,26 +6,26 @@ let subprocessDependency: Package.Dependency =
   .package(url: "https://github.com/swiftlang/swift-subprocess.git", .upToNextMinor(from: "1.0.2"))
 
 let cryptoDependency: Package.Dependency =
-  .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2")
+  .package(url: "https://github.com/apple/swift-crypto.git", .upToNextMinor(from: "4.5.2"))
 
 let tomlDependency: Package.Dependency =
   .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0")
 
 let yamsDependency: Package.Dependency =
-  .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0")
+  .package(url: "https://github.com/jpsim/Yams.git", from: "6.2.2")
 
 let grdbDependency: Package.Dependency =
-  .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0")
+  .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1")
 
 let nioDependency: Package.Dependency =
-  .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0")
+  .package(url: "https://github.com/apple/swift-nio.git", .upToNextMinor(from: "2.101.2"))
 
 // FilePath comes from the System framework on Apple platforms and from swift-system elsewhere.
 let systemDependency: Package.Dependency =
   .package(url: "https://github.com/apple/swift-system.git", from: "1.7.2")
 
 let loggingDependency: Package.Dependency =
-  .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0")
+  .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0")
 
 let mcpDependency: Package.Dependency =
   .package(url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.1-computer-mcp.1")
@@ -423,7 +423,7 @@ let neutralTargets: [Target] =
       ),
     ],
     dependencies: [
-      .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.0"),
+      .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
       loggingDependency,
       nioDependency,
       subprocessDependency,

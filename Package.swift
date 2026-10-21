@@ -147,6 +147,19 @@ let neutralTargets: [Target] =
         "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPAuthorization",
+      dependencies: [
+        "ComputerMCPCore", .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPAuthorizationTests",
+      dependencies: [
+        "ComputerMCPAuthorization", "ComputerMCPCore",
+        .product(name: "NIOCore", package: "swift-nio"),
+      ]),
+    .target(
       name: "ComputerMCPDelivery",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
@@ -254,6 +267,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPGateway",
       dependencies: [
+        "ComputerMCPAuthorization",
         "ComputerMCPPlugins", "ComputerMCPToolsWorkspace", "ComputerMCPConfiguration",
         "ComputerMCPCore", "ComputerMCPPersistence", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPDownstream",
@@ -272,6 +286,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPGatewayTests",
       dependencies: [
+        "ComputerMCPAuthorization",
         "ComputerMCPConfiguration",
         "ComputerMCPCore",
         "ComputerMCPDownstream",
@@ -298,6 +313,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPControlPlane",
       dependencies: [
+        "ComputerMCPAuthorization",
         "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsWorkspace",
         "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
         "ComputerMCPPersistence", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
@@ -309,6 +325,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPControlPlaneTests",
       dependencies: [
+        "ComputerMCPAuthorization", "ComputerMCPConfiguration",
         "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPCore",
         "ComputerMCPPlatform", "ComputerMCPTunnels", "ComputerMCPTestSupport",
       ]

@@ -217,6 +217,8 @@ internal struct DeliveryRepository: Sendable {
           switch (error as? DeliveryFailure)?.reason {
           case .worktreeUnrecognized: .worktreeUnrecognized
           case .rebaseInProgress: .rebaseInProgress
+          case .branchUnproven: .branchUnproven
+          case .worktreeRegistrationRetained: .worktreeRegistrationRetained
           default: .cleanupFailed
           }
         journal.message = boundedDeliveryText(error.localizedDescription)
@@ -224,10 +226,25 @@ internal struct DeliveryRepository: Sendable {
         continue
       }
       let branchCommit = try git.revision("refs/heads/\(journal.branch)", at: root)
+      let defaultTip = try git.revision("refs/heads/\(journal.defaultBranch)", at: root)
+      if let saved = journal.commit {
+        let savedIsMerged =
+          try defaultTip.map { try git.isAncestor(saved, of: $0, at: root) } ?? false
+        let savedIsRetained =
+          try branchCommit.map { try git.isAncestor(saved, of: $0, at: root) } ?? false
+        guard savedIsMerged || savedIsRetained else {
+          journal.phase = .cleanupPending
+          journal.state = .cleanupPending
+          journal.reason = .cleanupFailed
+          journal.message = boundedDeliveryText(
+            "Saved commit \(saved) is not reachable from the current default or delivery branch (\(branchCommit ?? "missing")); retained: \(journal.branch), \(journal.worktree)"
+          )
+          try io.write(journal, to: journals)
+          continue
+        }
+      }
       if let branchCommit, branchCommit != journal.base { journal.commit = branchCommit }
-      var defaultTip: String?
       if let commit = journal.commit {
-        defaultTip = try git.revision("refs/heads/\(journal.defaultBranch)", at: root)
         journal.merged =
           try defaultTip.map { try git.isAncestor(commit, of: $0, at: root) } ?? false
         journal.state = journal.merged ? .merged : .committed
@@ -265,13 +282,23 @@ internal struct DeliveryRepository: Sendable {
     })
   }
 
-  func recordWorktreeIdentity(_ journal: inout DeliveryJournal) throws {
+  func recordCreation(_ journal: inout DeliveryJournal) throws {
     let worktree = URL(fileURLWithPath: journal.worktree)
     let directory = try worktreeDirectory(at: worktree)
     let gitdir = try String(contentsOf: directory.appendingPathComponent("gitdir"), encoding: .utf8)
-    journal.worktreeIdentity = .init(directory: directory.path, gitdir: gitdir)
-    _ = try verifiedWorktree(journal)
-    try io.write(journal, to: journals)
+    guard let commit = try git.revision("refs/heads/\(journal.branch)", at: root),
+      commit == journal.base
+    else {
+      throw DeliveryFailure(
+        reason: .branchUnproven, detail: "Branch changed during creation: \(journal.branch)")
+    }
+    var recorded = journal
+    recorded.creation = .init(
+      branchCommit: commit, worktree: .init(directory: directory.path, gitdir: gitdir),
+      sparse: scope.sparse)
+    _ = try verifiedWorktree(recorded)
+    try io.write(recorded, to: journals)
+    journal = recorded
   }
 
   private func worktreeDirectory(at worktree: URL) throws -> URL {
@@ -305,11 +332,11 @@ internal struct DeliveryRepository: Sendable {
   func verifiedWorktree(_ journal: DeliveryJournal) throws -> DeliveryGit? {
     let worktree = URL(fileURLWithPath: journal.worktree)
     guard FileManager.default.fileExists(atPath: worktree.path) else {
-      try removeWorktreeRegistration(journal)
+      try requireRegistrationAbsent(journal)
       return nil
     }
     do {
-      guard try hasWorktreeRegistration(worktree), let identity = journal.worktreeIdentity else {
+      guard try hasWorktreeRegistration(worktree), let identity = journal.creation?.worktree else {
         throw unrecognizedWorktree(worktree)
       }
       let directory = try worktreeDirectory(at: worktree)
@@ -366,23 +393,34 @@ internal struct DeliveryRepository: Sendable {
       do { try io.removeEmptyDirectory(worktree) } catch {
         throw unrecognizedWorktree(worktree)
       }
-      try removeWorktreeRegistration(journal)
+      try requireRegistrationAbsent(journal)
       return nil
     }
   }
 
   func rebaseDirectory(_ journal: DeliveryJournal) -> URL? {
-    guard let identity = journal.worktreeIdentity else { return nil }
+    guard let identity = journal.creation?.worktree else { return nil }
     return ["rebase-merge", "rebase-apply"].map {
       URL(fileURLWithPath: identity.directory).appendingPathComponent($0)
     }.first { FileManager.default.fileExists(atPath: $0.path) }
   }
 
   func worktreeForCleanup(_ journal: DeliveryJournal) throws -> DeliveryGit? {
+    try requireProvenBranch(journal)
     let pinned = try verifiedWorktree(journal)
     guard rebaseDirectory(journal) == nil else {
       throw DeliveryFailure(
         reason: .rebaseInProgress, detail: "In-progress rebase retained: \(journal.worktree)")
+    }
+    return pinned
+  }
+
+  func requireWorktree(_ journal: DeliveryJournal, at commit: String) throws -> DeliveryGit {
+    guard let pinned = try worktreeForCleanup(journal) else {
+      throw unrecognizedWorktree(URL(fileURLWithPath: journal.worktree))
+    }
+    guard try pinned.revision("HEAD", at: URL(fileURLWithPath: journal.worktree)) == commit else {
+      throw DeliveryFailure(reason: .gitFailed, detail: "Delivery worktree HEAD has changed.")
     }
     return pinned
   }
@@ -407,63 +445,30 @@ internal struct DeliveryRepository: Sendable {
     return pinned
   }
 
-  private func removeWorktreeRegistration(_ journal: DeliveryJournal) throws {
+  private func requireRegistrationAbsent(_ journal: DeliveryJournal) throws {
     let worktree = URL(fileURLWithPath: journal.worktree)
-    guard let identity = journal.worktreeIdentity else {
-      guard try !hasWorktreeRegistration(worktree) else { throw unrecognizedWorktree(worktree) }
-      return
-    }
-    let directory = URL(fileURLWithPath: identity.directory).standardizedFileURL
-    guard
-      directory.deletingLastPathComponent().path == common.appendingPathComponent("worktrees").path,
-      directory.resolvingSymlinksInPath().path == directory.path
-    else { throw unrecognizedWorktree(worktree) }
-    if FileManager.default.fileExists(atPath: directory.path) {
-      let backlink = try String(
-        contentsOf: directory.appendingPathComponent("gitdir"), encoding: .utf8)
-      let backlinkPath = backlink.trimmingCharacters(in: .newlines)
-      let backlinkURL =
-        (backlinkPath.hasPrefix("/")
-        ? URL(fileURLWithPath: backlinkPath)
-        : directory.appendingPathComponent(backlinkPath)).standardizedFileURL
-      guard backlink == identity.gitdir,
-        resolvedPath(backlinkURL) == resolvedPath(worktree.appendingPathComponent(".git"))
-      else { throw unrecognizedWorktree(worktree) }
-      func exists(_ path: URL) throws -> Bool {
-        do {
-          _ = try FileManager.default.attributesOfItem(atPath: path.path)
-          return true
-        } catch let error as CocoaError
-          where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile
-        {
-          return false
-        }
-      }
-      guard
-        try !exists(directory.appendingPathComponent("locked")),
-        try !exists(worktree)
-      else {
-        throw DeliveryFailure(
-          reason: .cleanupFailed,
-          detail: "Worktree registration is locked or its directory exists: \(worktree.path)")
-      }
-      guard rebaseDirectory(journal) == nil else {
-        throw DeliveryFailure(
-          reason: .rebaseInProgress, detail: "In-progress rebase retained: \(worktree.path)")
-      }
-      let head = try String(contentsOf: directory.appendingPathComponent("HEAD"), encoding: .utf8)
-        .trimmingCharacters(in: .newlines)
-      guard head == "ref: refs/heads/\(journal.branch)" || head == (journal.commit ?? journal.base)
-      else {
-        throw DeliveryFailure(
-          reason: .cleanupFailed,
-          detail: "Worktree registration HEAD has changed; retained: \(directory.path)")
-      }
-      try FileManager.default.removeItem(at: directory)
-    }
-    guard try !hasWorktreeRegistration(worktree) else {
+    let directory = journal.creation?.worktree.directory
+    guard try !hasWorktreeRegistration(worktree),
+      directory.map({ !FileManager.default.fileExists(atPath: $0) }) ?? true
+    else {
       throw DeliveryFailure(
-        reason: .cleanupFailed, detail: "Worktree registration remains: \(worktree.path)")
+        reason: .worktreeRegistrationRetained,
+        detail:
+          "Missing worktree registration retained: \(directory ?? common.appendingPathComponent("worktrees").path) (worktree: \(worktree.path)). Use git worktree prune after preserving its state."
+      )
+    }
+  }
+
+  private func requireProvenBranch(_ journal: DeliveryJournal) throws {
+    guard journal.creation?.branchCommit != journal.base else { return }
+    let exists =
+      try git.run(
+        ["--no-optional-locks", "show-ref", "--verify", "--quiet", "refs/heads/\(journal.branch)"],
+        at: root, accepting: [0, 1]
+      ).exitCode == 0
+    guard !exists else {
+      throw DeliveryFailure(
+        reason: .branchUnproven, detail: "Branch creation is unproven; retained: \(journal.branch)")
     }
   }
 
@@ -479,6 +484,8 @@ internal struct DeliveryRepository: Sendable {
         uncertain.append(change.path)
         continue
       }
+      let pinned = try requireWorktree(journal, at: journal.base)
+      try requireOwnedWorktreeState(journal, git: pinned)
       let path = try Self.checkedPath(change.path, inside: worktree)
       let index = try pinned.run(
         ["--no-optional-locks", "ls-files", "--stage", "-z", "--", change.path], at: worktree
@@ -487,14 +494,10 @@ internal struct DeliveryRepository: Sendable {
         try pinned.run(
           ["restore", "--staged", "--source=\(journal.base)", "--", change.path], at: worktree)
       }
-      let current = try? Data(contentsOf: path)
-      guard current == change.original || current == change.written else { continue }
-      guard current != change.original else { continue }
-      if let original = change.original {
-        try original.write(to: path)
-      } else {
-        try FileManager.default.removeItem(at: path)
-      }
+      let undoGit = try requireWorktree(journal, at: journal.base)
+      try requireOwnedWorktreeState(journal, git: undoGit)
+      _ = try Self.checkedPath(change.path, inside: worktree)
+      try io.undoFile(change, at: path)
     }
     guard uncertain.isEmpty else {
       throw DeliveryFailure(
@@ -505,11 +508,103 @@ internal struct DeliveryRepository: Sendable {
     }
   }
 
+  private func requireOwnedWorktreeState(_ journal: DeliveryJournal, git pinned: DeliveryGit) throws
+  {
+    let worktree = URL(fileURLWithPath: journal.worktree)
+    let privateRefs = try pinned.run(
+      [
+        "--no-optional-locks", "for-each-ref", "--format=%(refname)", "refs/worktree/",
+        "refs/bisect/", "refs/rewritten/",
+      ],
+      at: worktree
+    ).stdout
+    guard let creation = journal.creation else { throw unrecognizedWorktree(worktree) }
+    let directory = URL(fileURLWithPath: creation.worktree.directory)
+    let locks = try FileManager.default.subpathsOfDirectory(atPath: directory.path).filter {
+      $0.hasSuffix(".lock")
+    }
+    guard locks.isEmpty else {
+      throw DeliveryFailure(
+        reason: .cleanupFailed,
+        detail: "Worktree Git locks retained at \(directory.path): \(locks.joined(separator: ", "))"
+      )
+    }
+    let otherOperation = [
+      "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "sequencer",
+    ].contains {
+      FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path)
+    }
+    let pseudorefs = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter {
+      !["HEAD", "ORIG_HEAD", "AUTO_MERGE", "COMMIT_EDITMSG"].contains($0)
+        && $0.range(of: "^[A-Z][A-Z0-9_]*$", options: .regularExpression) != nil
+    }
+    var automaticMergeIsOwned = true
+    if FileManager.default.fileExists(atPath: directory.appendingPathComponent("AUTO_MERGE").path) {
+      let actual = try pinned.run(
+        ["--no-optional-locks", "rev-parse", "--verify", "AUTO_MERGE"], at: worktree
+      ).stdout
+      let expected = try git.run(
+        [
+          "--no-optional-locks", "rev-parse", "--verify",
+          "\(journal.commit ?? journal.base)^{tree}",
+        ], at: root
+      ).stdout
+      automaticMergeIsOwned = actual == expected
+    }
+    var originalHeadIsOwned = true
+    if FileManager.default.fileExists(atPath: directory.appendingPathComponent("ORIG_HEAD").path) {
+      let original = try pinned.revision("ORIG_HEAD", at: worktree)
+      originalHeadIsOwned = original != nil && original == journal.rebase?.original
+      if !originalHeadIsOwned, let original,
+        let branch = try git.revision("refs/heads/\(journal.branch)", at: root)
+      {
+        originalHeadIsOwned = try git.isAncestor(original, of: branch, at: root)
+      }
+    }
+    guard privateRefs.isEmpty, !otherOperation, pseudorefs.isEmpty, originalHeadIsOwned,
+      automaticMergeIsOwned
+    else {
+      let unproven =
+        [privateRefs.trimmingCharacters(in: .newlines)] + pseudorefs
+        + (originalHeadIsOwned ? [] : ["ORIG_HEAD"])
+        + (automaticMergeIsOwned ? [] : ["AUTO_MERGE"])
+        + (otherOperation ? ["Git operation"] : [])
+      throw DeliveryFailure(
+        reason: .cleanupFailed,
+        detail:
+          "Unproven worktree state retained at \(directory.path): \(unproven.filter { !$0.isEmpty }.joined(separator: ", "))"
+      )
+    }
+    let entries = try pinned.run(
+      ["--no-optional-locks", "ls-files", "-v", "-z"], at: worktree
+    ).stdout.split(separator: "\0")
+    for entry in entries {
+      let path = String(entry.dropFirst(2))
+      var unsafeSkip = false
+      if entry.first == "S" {
+        let target = try Self.checkedPath(path, inside: worktree)
+        unsafeSkip =
+          journal.creation?.sparse != true || FileManager.default.fileExists(atPath: target.path)
+      }
+      guard entry.first?.isLowercase != true, !unsafeSkip else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed,
+          detail:
+            "Worktree index flags conceal possible changes; retained: \(worktree.path)/\(path)")
+      }
+    }
+  }
+
   private func cleanup(_ journal: DeliveryJournal, verifiedDefault: String?) throws {
     try io.beforeCleanup(journal)
+    try requireProvenBranch(journal)
     let worktree = URL(fileURLWithPath: journal.worktree)
+    if journal.state == .aborted, let pinned = try worktreeForCleanup(journal) {
+      try requireOwnedWorktreeState(journal, git: pinned)
+      try undoEdits(journal, git: pinned)
+    }
     if let pinned = try worktreeForCleanup(journal) {
-      if journal.state == .aborted { try undoEdits(journal, git: pinned) }
+      try requireOwnedWorktreeState(journal, git: pinned)
       // Git's removal check ignores ignored files; include them when protecting other writers.
       guard
         try pinned.run(
@@ -523,14 +618,20 @@ internal struct DeliveryRepository: Sendable {
         throw DeliveryFailure(
           reason: .cleanupFailed, detail: "Worktree has uncommitted changes: \(worktree.path)")
       }
-      if try worktreeForCleanup(journal) != nil {
+      if FileManager.default.fileExists(atPath: worktree.path) {
         try git.run(["worktree", "remove", worktree.path], at: root)
+      } else {
+        try requireRegistrationAbsent(journal)
       }
     }
     guard journal.state == .merged || journal.state == .aborted,
       let branchTip = try git.revision("refs/heads/\(journal.branch)", at: root)
     else { return }
-    let expected = journal.commit ?? journal.base
+    guard let creation = journal.creation, creation.branchCommit == journal.base else {
+      throw DeliveryFailure(
+        reason: .branchUnproven, detail: "Branch creation is unproven; retained: \(journal.branch)")
+    }
+    let expected = journal.commit ?? creation.branchCommit
     guard let defaultTip = try git.revision("refs/heads/\(journal.defaultBranch)", at: root),
       let head = try git.revision("HEAD", at: main)
     else { throw DeliveryFailure(reason: .cleanupFailed, detail: "Main checkout has changed.") }
@@ -559,6 +660,14 @@ internal struct DeliveryRepository: Sendable {
         detail: "Main checkout HEAD or default branch changed during cleanup.")
     }
     try io.beforeBranchDeletion(journal.branch, expected)
+    let deliveryRef = try git.run(
+      ["--no-optional-locks", "symbolic-ref", "--quiet", "refs/heads/\(journal.branch)"],
+      at: root, accepting: [0, 1])
+    guard deliveryRef.exitCode == 1 else {
+      throw DeliveryFailure(
+        reason: .cleanupFailed,
+        detail: "Delivery branch is a symbolic ref; retained: \(journal.branch)")
+    }
     let currentHeadRef = try git.run(
       ["--no-optional-locks", "symbolic-ref", "--quiet", "HEAD"], at: main,
       accepting: [0, 1]
@@ -568,8 +677,10 @@ internal struct DeliveryRepository: Sendable {
         reason: .cleanupFailed, detail: "Main checkout HEAD branch has changed.")
     }
     let transaction = """
+      option no-deref
       start
       verify refs/heads/\(journal.defaultBranch) \(defaultTip)
+      option no-deref
       delete refs/heads/\(journal.branch) \(expected)
       prepare
       commit
@@ -612,19 +723,24 @@ internal struct DeliveryRepository: Sendable {
         switch (error as? DeliveryFailure)?.reason {
         case .worktreeUnrecognized: .worktreeUnrecognized
         case .rebaseInProgress: .rebaseInProgress
+        case .branchUnproven: .branchUnproven
+        case .worktreeRegistrationRetained: .worktreeRegistrationRetained
         default: .cleanupFailed
         }
       journal.message = boundedDeliveryText(error.localizedDescription)
       try? io.write(journal, to: journals)
     }
+    return retainedResult(journal)
+  }
+
+  func retainedResult(_ journal: DeliveryJournal) -> DeliveryResult {
     var result = journal.result
-    if result.state == .cleanupPending,
+    if result.state == .cleanupPending || result.state == .committed {
       let branch = try? git.run(
         ["--no-optional-locks", "show-ref", "--verify", "--quiet", "refs/heads/\(journal.branch)"],
         at: root,
         accepting: [0, 1])
-    {
-      result.branch = branch.exitCode == 0 ? journal.branch : nil
+      result.branch = branch?.exitCode == 0 ? journal.branch : nil
     }
     return result
   }

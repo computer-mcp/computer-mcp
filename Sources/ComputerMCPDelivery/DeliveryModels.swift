@@ -30,6 +30,8 @@ internal enum DeliveryReason: String, Codable, Sendable {
   case rebaseInProgress = "rebase_in_progress"
   case scopeChanged = "scope_changed"
   case worktreeUnrecognized = "worktree_unrecognized"
+  case worktreeRegistrationRetained = "worktree_registration_retained"
+  case branchUnproven = "branch_unproven"
   case journalFailed = "journal_failed"
   case interrupted
   case cleanupFailed = "cleanup_failed"

@@ -20,8 +20,13 @@ extension DeliveryRepository {
         try cancellation.check()
         var arguments = ["worktree", "add", "-b", request.branch]
         if scope.sparse { arguments.append("--no-checkout") }
+        _ = try Self.checkedPath(scope.worktreeRoot + "/" + operationID, inside: root)
+        guard !FileManager.default.fileExists(atPath: worktree.path) else {
+          throw DeliveryFailure(
+            reason: .worktreeUnrecognized, detail: "Worktree path already exists: \(worktree.path)")
+        }
         try git.run(arguments + [worktree.path, base], at: root)
-        try recordWorktreeIdentity(&journal)
+        try recordCreation(&journal)
         guard let worktreeGit = try verifiedWorktree(journal) else {
           throw DeliveryFailure(
             reason: .worktreeUnrecognized, detail: "Delivery worktree is missing.")
@@ -35,14 +40,27 @@ extension DeliveryRepository {
                 result.append(character)
               }
           }
-          try worktreeGit.run(
+          guard try FileManager.default.contentsOfDirectory(atPath: worktree.path) == [".git"]
+          else {
+            throw DeliveryFailure(
+              reason: .cleanupFailed,
+              detail: "Worktree changed before sparse checkout: \(worktree.path)")
+          }
+          try requireWorktree(journal, at: base).run(
             ["sparse-checkout", "set", "--no-cone", "--"] + patterns, at: worktree)
-          try worktreeGit.run(["checkout"], at: worktree)
+          let checkoutGit = try requireWorktree(journal, at: base)
+          guard try FileManager.default.contentsOfDirectory(atPath: worktree.path) == [".git"]
+          else {
+            throw DeliveryFailure(
+              reason: .cleanupFailed, detail: "Worktree changed before checkout: \(worktree.path)")
+          }
+          try checkoutGit.run(["checkout", "--no-overwrite-ignore"], at: worktree)
         }
         journal.files = try edit(request, journal: &journal, git: worktreeGit)
         try cancellation.check()
+        let stagingGit = try requireWorktree(journal, at: base)
         guard
-          try worktreeGit.run(
+          try stagingGit.run(
             ["--no-optional-locks", "diff", "--cached", "--quiet", "--"] + request.paths,
             at: worktree, accepting: [0, 1]
           ).exitCode == 0
@@ -50,16 +68,17 @@ extension DeliveryRepository {
           throw DeliveryFailure(
             reason: .gitFailed, detail: "Delivery target index entries have changed.")
         }
-        try worktreeGit.run(["add", "--"] + request.paths, at: worktree)
-        journal.staged = try stagedEntries(journal, git: worktreeGit)
+        try stagingGit.run(["add", "--"] + request.paths, at: worktree)
+        journal.staged = try stagedEntries(journal, git: stagingGit)
         try io.write(journal, to: journals)
         try cancellation.check()
-        _ = try stagedEntries(journal, git: worktreeGit)
-        guard try worktreeGit.revision("HEAD", at: worktree) == base else {
+        let committingGit = try requireWorktree(journal, at: base)
+        _ = try stagedEntries(journal, git: committingGit)
+        guard try committingGit.revision("HEAD", at: worktree) == base else {
           throw DeliveryFailure(reason: .gitFailed, detail: "Delivery worktree HEAD has changed.")
         }
-        try worktreeGit.run(["commit", "-m", request.message], at: worktree)
-        guard let commit = try worktreeGit.revision("HEAD", at: worktree), commit != base else {
+        try committingGit.run(["commit", "-m", request.message], at: worktree)
+        guard let commit = try committingGit.revision("HEAD", at: worktree), commit != base else {
           throw DeliveryFailure(reason: .gitFailed, detail: "Git did not create a delivery commit.")
         }
         journal.commit = commit
@@ -103,11 +122,13 @@ extension DeliveryRepository {
             switch (error as? DeliveryFailure)?.reason {
             case .worktreeUnrecognized: .worktreeUnrecognized
             case .rebaseInProgress: .rebaseInProgress
+            case .branchUnproven: .branchUnproven
+            case .worktreeRegistrationRetained: .worktreeRegistrationRetained
             default: .cleanupFailed
             }
           journal.message = boundedDeliveryText(error.localizedDescription)
           try? io.write(journal, to: journals)
-          return (journal.result, nil)
+          return (retainedResult(journal), nil)
         }
         journal.state = journal.merged ? .merged : (journal.commit == nil ? .aborted : .committed)
         journal.reason = journal.merged ? nil : failure?.reason
@@ -156,9 +177,6 @@ extension DeliveryRepository {
     -> Bool
   {
     try cancellation.check()
-    guard let pinned = try verifiedWorktree(journal) else {
-      throw DeliveryFailure(reason: .worktreeUnrecognized, detail: "Delivery worktree is missing.")
-    }
     let worktree = URL(fileURLWithPath: journal.worktree)
     let original = journal.commit!
     guard rebaseDirectory(journal) == nil else {
@@ -167,13 +185,16 @@ extension DeliveryRepository {
     journal.rebase = .init(original: original, onto: base)
     try io.write(journal, to: journals)
     var failure: DeliveryFailure?
+    var invoked = false
     do {
+      let pinned = try requireWorktree(journal, at: original)
       guard rebaseDirectory(journal) == nil,
         try pinned.revision("HEAD", at: worktree) == original
       else {
         throw DeliveryFailure(
           reason: .cleanupFailed, detail: "Delivery worktree changed before rebase.")
       }
+      invoked = true
       let result = try pinned.run(["rebase", base], at: worktree, accepting: [0, 1, 128])
       if result.exitCode != 0 {
         failure = DeliveryFailure(
@@ -187,13 +208,17 @@ extension DeliveryRepository {
           reason: .gitFailed,
           detail: boundedDeliveryText(error.localizedDescription))
     }
+    if !invoked, let failure { throw failure }
     if rebaseDirectory(journal) != nil {
+      guard invoked else {
+        throw DeliveryFailure(
+          reason: .rebaseInProgress, detail: "In-progress rebase retained: \(journal.worktree)")
+      }
       try abortRebase(journal)
       guard try git.revision("refs/heads/\(journal.branch)", at: root) == original else {
         throw DeliveryFailure(
           reason: .gitFailed, detail: "Rebase abort did not restore the saved commit.")
       }
-      journal.rebase = nil
       journal.reason = .rebaseConflict
       return false
     }
@@ -202,7 +227,6 @@ extension DeliveryRepository {
       throw DeliveryFailure(reason: .gitFailed, detail: "Delivery branch disappeared after rebase.")
     }
     journal.commit = actual
-    journal.rebase = nil
     let valid = try verifyPaths(&journal, base: base, paths: paths)
     if valid, let failure { journal.reason = failure.reason }
     do { try io.write(journal, to: journals) } catch {
@@ -310,12 +334,19 @@ extension DeliveryRepository {
     for index in journal.changes!.indices {
       let change = journal.changes![index]
       try cancellation.check()
+      _ = try requireWorktree(journal, at: journal.base)
       let url = try Self.checkedPath(change.path, inside: worktree)
       if change.original == nil {
         try FileManager.default.createDirectory(
           at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       }
-      try io.writeFile(change, to: url) { state in
+      try io.writeFile(
+        change, to: url,
+        validate: {
+          _ = try requireWorktree(journal, at: journal.base)
+          _ = try Self.checkedPath(change.path, inside: worktree)
+        }
+      ) { state in
         var recorded = journal
         recorded.changes![index].writeState = state
         try io.write(recorded, to: journals)

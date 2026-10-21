@@ -153,7 +153,7 @@ struct DeliveryConcurrencyTests {
       let actual = try fixture.git(["rev-parse", "docs/entry"])
       let old = try String(contentsOf: original, encoding: .utf8).trimmingCharacters(in: .newlines)
       #expect(actual != old)
-      #expect(result["state"] == .string("committed"))
+      #expect(result["state"] == .string("committed"), "\(result)")
       #expect(result["reason"] == .string("git_failed"))
       #expect(result["branch"] == .string("docs/entry"))
       #expect(result["commit"] == .string(actual))

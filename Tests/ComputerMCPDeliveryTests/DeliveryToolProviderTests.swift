@@ -567,7 +567,7 @@ struct DeliveryToolProviderTests {
         fixture.create("notes/[literal]*.txt", "literal"),
       ])
       let result = try fixture.apply(.object(request), provider: fixture.provider(scope: scope))
-      #expect(result["state"] == .string("merged"))
+      #expect(result["state"] == .string("merged"), "\(result)")
       #expect(try fixture.read("notes/[literal]*.txt") == "literal")
       try fixture.assertClean()
     }

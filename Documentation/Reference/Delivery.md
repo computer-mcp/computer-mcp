@@ -83,7 +83,8 @@ Later edits see the results of earlier edits, including on the same file.
 All edits are computed in memory before any file is written. Each file is written
 once, from its original bytes to its final content. Immediately before replacing
 a file, delivery rereads it and requires the original bytes; creation uses
-exclusive creation so that a newly appeared file is preserved. All files are read
+exclusive creation so that a newly appeared file is preserved. Replacements write
+a temporary file and rename it over the checked target. All files are read
 back before staging only the requested paths. The journal records each successful
 write immediately. Rejected writes never authorize rollback, even when another
 writer's bytes equal the requested final content. Immediately before committing,
@@ -123,7 +124,12 @@ mode also requires the main checkout to be on the default branch.
 Git inspections in preflight and recovery use `--no-optional-locks` so that
 checking status does not refresh or write the main checkout's index. The isolated
 worktree starts at the current default-branch commit. Sparse mode uses non-cone,
-exact-path sparse checkout.
+exact-path sparse checkout. Immediately after `worktree add -b` succeeds, delivery
+persists creation evidence containing the initial branch commit and worktree
+identity. A branch without that evidence is retained as `cleanup_pending` /
+`branch_unproven`, including when creation fails or is interrupted before recording
+success. Worktree identity and the expected `HEAD` are checked again before
+file writes, sparse-checkout changes, checkout, staging, commit and rebase.
 
 After recording the commit, delivery checks its actual paths with
 `diff --no-renames --name-only <baseline> <commit>`. The changed paths must be
@@ -148,26 +154,49 @@ Every rebase is followed by the same exact-path validation against its new
 baseline. A mismatch, including an empty diff when the default branch already
 contains the patch, returns `committed` / `scope_changed` with the branch retained.
 Before starting a rebase, delivery journals its original and target commit IDs.
-The running call immediately aborts its own failed rebase to the saved commit when its
-`orig-head` and `onto` match that record; otherwise it is retained as
+The running call immediately aborts its own failed rebase to the saved commit only
+after actually invoking it and when its `orig-head` and `onto` match that record;
+otherwise it is retained as
 `cleanup_pending`. If a rebase command
 fails or times out with no rebase in progress, delivery reads the branch's actual
 tip, validates it again and records that commit; it does not attempt landing
-after the command failure. Commit-only mode retains the branch without landing.
+after the command failure. If validation fails before invocation, the saved commit
+ID remains in the result; no rebase is aborted or attributed to delivery.
+Commit-only mode retains the branch without landing.
 
-Cleanup uses `worktree remove` without `--force` and checks for tracked,
-untracked and ignored changes. For `aborted`, cleanup undoes only files durably
+Cleanup uses `worktree remove` without `--force` only on a verified, existing
+worktree and checks for tracked, untracked and ignored changes. Private refs under
+`refs/worktree/`, `refs/bisect/` or `refs/rewritten/`, or another Git operation
+(`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG` or `sequencer`),
+prevent rollback and removal and retain the worktree as `cleanup_pending` /
+`cleanup_failed`. Worktree-local `*.lock` files, including `index.lock`, also
+prevent both operations so that pending external Git writes remain intact.
+Other pseudoref state, including `FETCH_HEAD` and `BISECT_HEAD`, also prevents
+removal. `ORIG_HEAD` is accepted only when it names the recorded original commit
+of delivery's rebase or a commit reachable from the retained delivery branch.
+`AUTO_MERGE` must equal the recorded commit's tree object, so removing it cannot
+lose unique content. Index entries marked assume-unchanged prevent removal. Skip-worktree entries are
+accepted only for delivery's recorded sparse checkout and only when the physical
+path is absent; a clean status alone does not prove that hidden files are absent. For `aborted`, cleanup undoes only files durably
 recorded as written by this operation and still matching its final bytes, and
-unstages only its recorded index entries. A rejected write is never undone. A
+unstages only its recorded index entries. Created-file rollback uses `unlink`,
+which refuses a replacement directory without recursively deleting its contents.
+Replaced-file rollback writes a temporary file and renames it over the checked
+target. A rejected write is never undone. A
 write interrupted before successful-write evidence was persisted is retained as
 `cleanup_pending`; matching bytes alone do not establish ownership. Other changes
 make removal fail and remain available in the worktree.
 `committed` always retains its branch, even when the commit is reachable from the
 default branch; `cleanup_pending` with an undelivered commit also retains it.
-Branch deletion is limited to `merged` and `aborted`. Before an aborted deletion,
+Branch deletion requires persisted creation evidence and is limited to `merged`
+and `aborted`. Before an aborted deletion,
 the branch tip must be reachable from the current default tip. One
-`update-ref --stdin` transaction verifies the default ref's checked object ID
-and deletes the delivery branch with its expected value. On every Git version,
+`update-ref --stdin` transaction starts with `option no-deref`, verifies the
+default ref's checked object ID, repeats `option no-deref` for the deletion, and
+deletes the delivery branch with its expected value. Immediately before the
+transaction, the delivery branch must be a regular ref, not a symbolic ref;
+non-dereferencing deletion protects other branches even if it changes afterward.
+On every Git version,
 the check that the main checkout's `HEAD` is still the symbolic ref
 `refs/heads/<default>` runs immediately before the transaction. A symbolic
 `HEAD` change in that check-to-transaction interval remains a residual concurrency
@@ -191,15 +220,18 @@ durably recorded successful writes and worktrees and branches with matching
 recorded identities. Unproven state is retained as `cleanup_pending` with its path
 and reason for user handling. The only
 excluded case is an external write in the short interval between a check and
-the next Git command where no atomic primitive covers both. These checks do not
+the next filesystem or Git mutation where no atomic primitive covers both. These checks do not
 provide isolation from external Git writers across that interval.
 
 Journals live at `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`.
 Schema 1 records `operation_id`, `workspace`, `scope`, `repository`,
 `default_branch`, `branch`, `worktree`, baseline `base`, `phase`, optional `commit`,
 `merged`, optional terminal `state`, `reason` and `message`, and `files`. Immediately
-after creation, `worktree_identity` records the administrative `directory` under
-`<git-common-dir>/worktrees/` and the exact contents of its `gitdir` file. Optional
+after successful creation, optional `creation` records `branchCommit` (equal to
+`base`), `sparse`, and `worktree`, containing the administrative `directory` under
+`<git-common-dir>/worktrees/` and the exact contents of its `gitdir` file. This
+record authorizes cleanup only after it has been persisted. Missing creation
+evidence never authorizes branch deletion. Optional
 `changes` record original and final (`written`) file bytes, their Git blob object
 IDs (`originalDigest` and `finalDigest`), and original index entries before file
 writes; a newly created file has no original bytes or digest. Each change's
@@ -208,8 +240,13 @@ writes; a newly created file has no original bytes or digest. Each change's
 write evidence and `writing` both require conservative retention during rollback.
 `staged` records
 verified index entries after staging. Optional `rebase` records the `original`
-and `onto` commit IDs before rebase starts. Each journal write uses a
-same-directory temporary file, file fsync, rename and directory fsync.
+and `onto` commit IDs before rebase starts and retains them after completion to
+identify its `ORIG_HEAD`. Each journal write uses a
+same-directory, exclusively created temporary file, file fsync, rename and
+directory fsync. An existing journal target must be a regular file with the same
+operation identity before replacement. Temporary-file cleanup uses `unlink` and
+checks its inode against the exclusively opened file; rename checks the same
+identity.
 Creating the `computer-mcp` and `delivery` directories also fsyncs each directory's
 parent before execution can mutate Git state, including when the lock directory
 is created before journal writing.
@@ -242,21 +279,25 @@ not pass ownership verification. An unrecognized empty directory is removed with
 `rmdir`, which atomically refuses a directory that becomes nonempty;
 a nonempty directory is
 retained with `cleanup_pending` / `worktree_unrecognized` and its path in the
-journal. If the working directory is missing, recovery removes only the recorded
-administrative directory after confirming its exact recorded `gitdir` contents,
-its backlink to the missing working directory, the absence of a lock or an
-in-progress rebase, and a `HEAD` still naming the recorded delivery branch or its
-recorded commit. A different detached commit or branch retains the registration
-and its refs and reflog as `cleanup_pending`, with the administrative path in the
-diagnostic. This
-also applies after removing an unrecognized empty directory. Unrelated worktree
-registrations are preserved. A failed ownership or lock check keeps the operation
-`cleanup_pending`. Recovery retains every in-progress rebase, its index and its
+journal. If the working directory is missing but its registration or recorded
+administrative directory remains, recovery preserves that administrative state
+and returns `cleanup_pending` / `worktree_registration_retained`, identifying the
+administrative path. Delivery never deletes administrative directories itself:
+a matching `HEAD` cannot prove ownership of their index or private refs. This
+also applies after removing an unrecognized empty directory. The user can
+preserve the state and then use `git worktree prune` to remove stale registrations.
+Unrelated worktree registrations are preserved. Failed ownership checks keep the
+operation `cleanup_pending`. Recovery retains every in-progress rebase, its index and its
 working files as `cleanup_pending` / `rebase_in_progress`, with the worktree path.
 Even matching recorded commit IDs cannot establish ownership of subsequent user
 resolutions or staged changes. Recovery then
 reconciles actual refs, including a commit created before its journal
-update. No commit means cleanup and `aborted`; a commit reachable from the default
+update. A saved commit must remain reachable from the delivery branch or default
+branch before recovery can adopt another tip or clean up. Otherwise recovery
+retains the saved commit ID, branch, worktree and reflogs as `cleanup_pending` /
+`cleanup_failed`, with both commit IDs in its diagnostic. An unproven rewrite,
+including an interrupted rebase without durable completion evidence, does not
+authorize forgetting the saved commit. No commit means cleanup and `aborted`; a commit reachable from the default
 branch means cleanup and `merged`; an unmerged commit means worktree removal,
 branch retention and `committed` / `interrupted`. Failed cleanup remains pending
 for the next recovery.
@@ -285,6 +326,8 @@ Error IDs prefix these codes with `delivery.`:
 | `rebase_in_progress` | Recovery or cleanup retained an in-progress rebase for user handling |
 | `scope_changed` | Committed or rebased diff does not change exactly the requested in-scope paths; branch retained |
 | `worktree_unrecognized` | Recorded worktree is not the repository's registered worktree; nonempty directory retained for inspection |
+| `branch_unproven` | Branch exists without persisted creation evidence; retained for user handling |
+| `worktree_registration_retained` | Working directory is missing; administrative state is retained for user handling |
 | `journal_failed` | Journal could not be persisted; an existing commit remains on its branch |
 | `interrupted` | Recovery classified an interrupted operation |
 | `cleanup_failed` | Cleanup or final journal persistence requires retry |

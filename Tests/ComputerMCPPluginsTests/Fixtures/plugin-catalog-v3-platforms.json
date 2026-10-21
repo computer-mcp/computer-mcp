@@ -46,7 +46,8 @@
         "minimum_host": null,
         "platforms": [
           "macos"
-        ]
+        ],
+        "plugin_api": 1
       },
       "contributions": {
         "cli": [],
@@ -72,6 +73,6 @@
       "withdrawn": false
     }
   ],
-  "revision": "09ca448990f5a1556c0a9f4f0c4f8059951d3091d44371da55e8296954146101",
-  "schema_version": 2
+  "revision": "8aa84e603e71cd5b0c283da076315f6b83d4645479c485d167812ce11e483fc9",
+  "schema_version": 3
 }

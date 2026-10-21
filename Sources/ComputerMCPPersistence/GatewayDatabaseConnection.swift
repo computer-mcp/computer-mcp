@@ -54,6 +54,9 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
     migrator.registerMigration("remote-oauth") { database in
       for statement in OAuthSchema.statements { try database.execute(sql: statement) }
     }
+    migrator.registerMigration("audit-error-details") { database in
+      try database.alter(table: "auditEvents") { $0.add(column: "errorDetailsJSON", .text) }
+    }
     return migrator
   }()
 

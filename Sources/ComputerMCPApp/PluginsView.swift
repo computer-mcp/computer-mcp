@@ -251,7 +251,8 @@ struct PluginsView: View {
             case .dependencyUnavailable: Text("Dependency unavailable")
             case .executableUnavailable: Text("Executable unavailable")
             case .executableUnverified: Text("Executable needs verification")
-            case .hostIncompatible: Text("Host incompatible")
+            case .hostUpdateRequired, .pluginUpdateRequired, .platformUnsupported:
+              Text(diagnostic.refusal?.message ?? "")
             }
             if let dependency = diagnostic.dependencyID { Text(verbatim: dependency) }
             if let inspection = diagnostic.executable {

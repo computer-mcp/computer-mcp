@@ -10,6 +10,22 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginArchivePreparationTests {
+  @Test
+  func newerPluginAPICarriesItsRefusalThroughTheRealArchiveWorker() async throws {
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(),
+      manifest: PreparationFixture.manifest.replacingOccurrences(
+        of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
+    defer { fixture.files.remove() }
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "combined", version: PluginVersion("1.2.3"), declared: 2))
+    await #expect(throws: refusal) {
+      try await fixture.prepare { _, _ in Issue.record("Refused package reached activation") }
+    }
+    #expect(try fixture.stagingContents().isEmpty)
+  }
+
   @Test(arguments: ["mac.zip", "intel.zip", "unknown.zip", ""])
   func archiveTargetMustPermitThisHostBeforeActivation(name: String) async throws {
     let fixture = try await PreparationFixture.make(
@@ -23,7 +39,7 @@ struct PluginArchivePreparationTests {
         architecture: "arm64", artifactName: name
       ) { package, _ in package.manifest.id }
     } else {
-      await #expect(throws: PluginArchiveError.incompatiblePackage) {
+      await #expect(throws: PluginCompatibilityRefusal.self) {
         try await fixture.preparation.withPreparedPackage(
           archive: fixture.archive, expectedSHA256: fixture.digest, pluginID: "combined",
           version: PluginVersion("1.2.3"), hostVersion: PluginVersion("1.0.0"),
@@ -77,15 +93,19 @@ struct PluginArchivePreparationTests {
     if failure == "archive" { try Data("invalid archive".utf8).write(to: fixture.archive) }
     let digest =
       failure == "checksum" ? String(repeating: "0", count: 64) : try fixture.currentDigest()
-    let expected: PluginArchiveError =
+    let expected: any Error =
       switch failure {
-      case "checksum": .checksumMismatch
-      case "identity", "version": .identityMismatch
-      case "architecture", "host": .incompatiblePackage
-      case "manifest": .invalidPackage
-      default: .invalidArchive
+      case "checksum": PluginArchiveError.checksumMismatch
+      case "identity", "version": PluginArchiveError.identityMismatch
+      case "architecture", "host":
+        try #require(
+          PluginManifest.parse(manifest).refusal(
+            host: PluginVersion(failure == "host" ? "0.0.9" : "1.0.0"),
+            architecture: failure == "architecture" ? "x86_64" : "arm64"))
+      case "manifest": PluginArchiveError.invalidPackage
+      default: PluginArchiveError.invalidArchive
       }
-    await #expect(throws: expected) {
+    await #expect {
       try await fixture.preparation.withPreparedPackage(
         archive: fixture.archive, expectedSHA256: digest,
         pluginID: failure == "identity" ? "different" : "combined",
@@ -93,6 +113,11 @@ struct PluginArchivePreparationTests {
         hostVersion: PluginVersion(failure == "host" ? "0.0.9" : "1.0.0"),
         architecture: failure == "architecture" ? "x86_64" : "arm64"
       ) { _, _ in Issue.record("Invalid package reached activation") }
+    } throws: { error in
+      if let refusal = expected as? PluginCompatibilityRefusal {
+        return error as? PluginCompatibilityRefusal == refusal
+      }
+      return error as? PluginArchiveError == expected as? PluginArchiveError
     }
     #expect(try fixture.stagingContents().isEmpty)
     #expect(FileManager.default.fileExists(atPath: fixture.archive.path))

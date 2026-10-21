@@ -75,6 +75,8 @@ package enum ControlToolResponse {
     for error: Error
   ) -> (decision: AuditDecision, code: String) {
     if error is MCPHTTPAuthenticationError { return (.failed, "mcp.authentication") }
+    if let refusal = error as? PluginCompatibilityRefusal { return (.failed, refusal.code) }
+    if error is PluginManifestError { return (.failed, "plugin.invalid_manifest") }
     if let error = error as? PluginCatalogError {
       return (.failed, error.code)
     }
@@ -126,6 +128,17 @@ package enum ControlToolResponse {
       return (.failed, "configuration.invalid")
     }
     return (.failed, "control.operation_failed")
+  }
+
+  package static func errorPayload(_ error: any Error) throws -> JSONValue {
+    var fields: [String: JSONValue] = [
+      "code": .string(auditDisposition(for: error).code),
+      "message": .string(errorMessage(error)),
+    ]
+    if let refusal = error as? PluginCompatibilityRefusal {
+      fields["refusal"] = try encodedPayload(refusal)
+    }
+    return .object(fields)
   }
 
   package static func errorMessage(_ error: Error) -> String {

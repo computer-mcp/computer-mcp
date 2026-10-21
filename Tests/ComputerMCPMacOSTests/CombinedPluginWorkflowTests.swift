@@ -367,6 +367,7 @@ struct CombinedPluginWorkflowTests {
     id = 'combined'
     name = 'Combined integration fixture'
     version = '1.0.0'
+    plugin_api = 1
     [[dependencies]]
     id = 'printf'
     commands = ['printf']

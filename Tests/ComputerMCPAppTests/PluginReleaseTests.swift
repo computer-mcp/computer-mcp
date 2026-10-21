@@ -13,6 +13,30 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct PluginReleaseTests {
   @Test
+  func modelsExposeTheSameRefusalAsTheControlClientAndCatalogIssue() async throws {
+    let service = try ReleaseAppFake()
+    let refusal = PluginCompatibilityRefusal(
+      pluginID: "combined", version: try PluginVersion("1.2.3"), reason: .hostUpdateRequired,
+      requirement: .pluginAPI(declared: 2, supported: .supported))
+    let model = PluginManagementModel(controlPlane: service)
+    model.report(
+      ControlSocketCallError(code: refusal.code, message: refusal.message, refusal: refusal))
+    #expect(model.refusal == refusal && model.errorMessage == refusal.message)
+    model.report(refusal)
+    #expect(model.refusal == refusal && model.errorMessage == refusal.message)
+    service.installable = false
+    service.issues = [
+      .init(
+        repository: "computer-mcp/combined", code: refusal.code, message: refusal.message,
+        refusal: refusal)
+    ]
+    let releases = PluginReleaseModel(entry: service.artifact.declaration, controlPlane: service)
+    await releases.search()
+    #expect(releases.refusal == refusal && !releases.canInstall)
+    #expect(releases.result?.issues.first?.refusal == refusal)
+  }
+
+  @Test
   func pageLabelUsesTheViewLocale() throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()

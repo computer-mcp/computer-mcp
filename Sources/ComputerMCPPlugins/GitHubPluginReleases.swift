@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPPlatform
 import Foundation
 
@@ -91,6 +92,7 @@ package struct PluginCatalogReleaseVersion: Codable, Equatable, Sendable {
   package let withdrawalReason: String?
   package let compatible: Bool
   package let dependencies: [PluginDependency]
+  package var refusal: PluginCompatibilityRefusal? = nil
 }
 
 /// Revalidates one selected public release against current GitHub source and membership.
@@ -108,15 +110,28 @@ package struct GitHubPluginReleases: Sendable {
   }
 
   /// Re-fetch by immutable release/asset IDs; renamed, replaced or moved selections fail closed.
-  func revalidate(_ artifact: GitHubPluginArtifact) async throws {
+  func revalidate(
+    _ artifact: GitHubPluginArtifact, hostVersion: PluginVersion? = nil,
+    architecture: String = PluginHost.architecture
+  ) async throws {
     try artifact.validate()
-    try await withDeadline { try await checkRelease(artifact) }
+    let host = try hostVersion ?? PluginVersion(ComputerMCPCLI.version)
+    try await withDeadline {
+      try await checkRelease(artifact, host: host, architecture: architecture)
+    }
   }
 
-  private func checkRelease(_ artifact: GitHubPluginArtifact) async throws {
+  private func checkRelease(
+    _ artifact: GitHubPluginArtifact, host: PluginVersion, architecture: String
+  ) async throws {
     let release = try await metadata(
       repository: artifact.declaration.repository, repositoryID: artifact.declaration.repositoryID,
       releaseID: artifact.releaseID)
+    if let refusal = release.manifest.refusal(
+      host: host, architecture: architecture, artifactName: artifact.name)
+    {
+      throw refusal
+    }
     guard release.entry == artifact.declaration, release.release.tagName == artifact.tag,
       release.release.prerelease == artifact.prerelease
     else { throw PluginCatalogError.invalidProvenance }
@@ -174,6 +189,8 @@ package struct GitHubPluginReleases: Sendable {
       }
     } catch {
       if Task.isCancelled || error is CancellationError { throw CancellationError() }
+      if let refusal = error as? PluginCompatibilityRefusal { throw refusal }
+      if let invalid = error as? PluginManifestError { throw invalid }
       if let error = error as? PluginCatalogError { throw error }
       if (error as? URLError)?.code == .timedOut { throw PluginCatalogError.timedOut }
       throw PluginCatalogError.networkUnavailable

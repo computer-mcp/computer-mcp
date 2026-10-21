@@ -26,6 +26,22 @@ struct GitHubPluginSourceTests {
       ])
   }
 
+  @Test
+  func pinnedNewerManifestKeepsItsRefusalInsteadOfInvalidManifest() async throws {
+    let text = "id = 'combined'\nversion = '1.0.0'\nplugin_api = 2\nnew_runtime = true\n"
+    let http = PinnedManifestHTTP(manifest: text)
+    let repository = try JSONDecoder().decode(
+      GitHubPluginSource.Repository.self,
+      from: JSONEncoder().encode(catalogRepository("combined", id: 1)))
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "combined", version: PluginVersion("1.0.0"), declared: 2))
+    await #expect(throws: refusal) {
+      try await GitHubPluginSource.declaration(
+        repository: repository, revision: catalogCommit, http: http)
+    }
+  }
+
   @Test(arguments: ["publisher", "repository", "blob", "manifest"])
   func invalidSourceCannotBecomeAnInstallableDeclaration(_ fault: String) async throws {
     var source = catalogRepository("combined", id: 1)
@@ -52,6 +68,7 @@ private let catalogManifest = """
   id = 'combined'
   name = 'Combined 工具'
   version = '1.0.0'
+  plugin_api = 1
   repository = 'https://github.com/someone-else/claim'
   [[dependencies]]
   id = 'vendor'

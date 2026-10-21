@@ -1,4 +1,5 @@
 import ComputerMCPConfiguration
+import ComputerMCPCore
 import ComputerMCPPlatform
 import Foundation
 import TOML
@@ -19,6 +20,7 @@ package struct PluginManifest: Codable, Equatable, Sendable {
   package let id: String
   package let name: String
   package let version: PluginVersion
+  package let pluginAPI: Int
   package let description: String?
   package let repository: String?
   package let compatibility: PluginCompatibility?
@@ -29,10 +31,18 @@ package struct PluginManifest: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case id, name, version, description, repository, compatibility, dependencies, mcp, cli, skills
+    case pluginAPI = "plugin_api"
   }
 
   package init(from decoder: any Decoder) throws {
+    let header = try Header(from: decoder)
+    if let refusal = PluginAPIVersions.supported.refusal(
+      pluginID: header.id, version: header.version, declared: header.pluginAPI)
+    {
+      throw refusal
+    }
     let c = try decoder.pluginContainer(keyedBy: CodingKeys.self)
+    pluginAPI = header.pluginAPI
     id = try c.decode(String.self, forKey: .id)
     name = try c.decode(String.self, forKey: .name)
     version = try c.decode(PluginVersion.self, forKey: .version)
@@ -51,6 +61,27 @@ package struct PluginManifest: Codable, Equatable, Sendable {
       throw PluginManifestError.invalid("Manifest exceeds 1 MiB.")
     }
     return try TOMLDecoder().decode(Self.self, from: text)
+  }
+
+  /// Reads the versioned envelope before applying strict schema decoding.
+  private struct Header: Decodable {
+    let id: String
+    let version: PluginVersion
+    let pluginAPI: Int
+    enum CodingKeys: String, CodingKey, CaseIterable {
+      case id, version
+      case pluginAPI = "plugin_api"
+    }
+    init(from decoder: any Decoder) throws {
+      let c = try decoder.pluginContainer(keyedBy: CodingKeys.self, strict: false)
+      guard let value = try? c.decode(Int.self, forKey: .pluginAPI), value > 0 else {
+        throw PluginManifestError.invalid("plugin_api must be a positive integer.")
+      }
+      pluginAPI = value
+      id = try c.decode(String.self, forKey: .id)
+      try validatePluginID(id)
+      version = try c.decode(PluginVersion.self, forKey: .version)
+    }
   }
 
   private func validate() throws {
@@ -349,22 +380,48 @@ private func validatePluginHTTPURL(_ value: String, label: String, httpsOnly: Bo
 private struct PluginCodingKey: CodingKey {
   let stringValue: String
   let intValue: Int? = nil
-  init?(stringValue: String) { self.stringValue = stringValue }
+  init(_ stringValue: String) { self.stringValue = stringValue }
+  init?(stringValue: String) { self.init(stringValue) }
   init?(intValue: Int) { return nil }
 }
 
-extension Decoder {
-  func pluginContainer<Key: CodingKey & CaseIterable>(keyedBy type: Key.Type) throws
-    -> KeyedDecodingContainer<Key>
-  {
-    let raw = try container(keyedBy: PluginCodingKey.self)
-    let allowed = Set(Key.allCases.map(\.stringValue))
-    let unknown = Set(raw.allKeys.map(\.stringValue)).subtracting(allowed).sorted()
-    guard unknown.isEmpty else {
-      let location = codingPath.map(\.stringValue).joined(separator: ".")
-      throw PluginManifestError.invalid(
-        "Unknown fields at '\(location)': \(unknown.joined(separator: ", ")).")
+/// Maps schema-owned keys when decoding canonical control-plane snapshots, while
+/// keeping source TOML field names exact and unknown-field rejection strict.
+struct PluginDecodingContainer<Key: CodingKey & CaseIterable> {
+  private let raw: KeyedDecodingContainer<PluginCodingKey>
+  private let canonical: Bool
+
+  init(decoder: any Decoder, strict: Bool) throws {
+    raw = try decoder.container(keyedBy: PluginCodingKey.self)
+    canonical = decoder.userInfo[CanonicalJSONCoding.decodingKeys] as? Bool == true
+    if strict {
+      let allowed = Set(Key.allCases.map { name($0) })
+      let unknown = Set(raw.allKeys.map(\.stringValue)).subtracting(allowed).sorted()
+      guard unknown.isEmpty else {
+        let location = decoder.codingPath.map(\.stringValue).joined(separator: ".")
+        throw PluginManifestError.invalid(
+          "Unknown fields at '\(location)': \(unknown.joined(separator: ", ")).")
+      }
     }
-    return try container(keyedBy: type)
+  }
+
+  func decode<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T {
+    try raw.decode(type, forKey: PluginCodingKey(name(key)))
+  }
+
+  func decodeIfPresent<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T? {
+    try raw.decodeIfPresent(type, forKey: PluginCodingKey(name(key)))
+  }
+
+  private func name(_ key: Key) -> String {
+    canonical ? CanonicalJSONCoding.swiftPropertyName(key.stringValue) : key.stringValue
+  }
+}
+
+extension Decoder {
+  func pluginContainer<Key: CodingKey & CaseIterable>(keyedBy type: Key.Type, strict: Bool = true)
+    throws -> PluginDecodingContainer<Key>
+  {
+    try PluginDecodingContainer(decoder: self, strict: strict)
   }
 }

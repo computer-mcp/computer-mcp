@@ -18,6 +18,7 @@ package struct PluginDoctorCheck: Codable, Sendable, Identifiable {
   package var enabled: Bool? = nil
   package var workingDirectory: String? = nil
   package var inspection: ExecutableInspection? = nil
+  package var refusal: PluginCompatibilityRefusal? = nil
 }
 
 package struct PluginDoctorDependency: Codable, Sendable, Identifiable {
@@ -40,6 +41,7 @@ package struct PluginDoctorReport: Codable, Sendable {
   package let status: PluginCheckStatus
   package let scope: String
   package let notChecked: [String]
+  package var refusal: PluginCompatibilityRefusal? { checks.compactMap(\.refusal).first }
 
   package static func inspect(
     pluginID: String, state: PluginStoreSnapshot, bundled: BundledPlugins,
@@ -81,10 +83,15 @@ package struct PluginDoctorReport: Codable, Sendable {
         let selected = try PluginStore.selectedPackage(
           pluginID, in: state, bundled: bundled.packages)
       else {
+        let issue = bundled.issues.first { $0.pluginID == pluginID }
         let message =
-          bundled.issues.first { $0.pluginID == pluginID }?.message
+          issue?.message
           ?? "No selected or bundled source is available. Select an installed source or register a package."
-        checks.append(.init(id: "source", kind: .source, status: .failed, message: message))
+        checks.append(
+          .init(
+            id: "source", kind: issue?.refusal == nil ? .source : .compatibility,
+            status: .failed, message: message, refusal: issue?.refusal))
+        version = issue?.refusal?.version
         return report()
       }
       plugin = selected.0
@@ -95,20 +102,22 @@ package struct PluginDoctorReport: Codable, Sendable {
           id: "source", kind: .source, status: .passed,
           message: "Selected package and declaration identity were validated."))
     } catch {
+      let refusal = error as? PluginCompatibilityRefusal
+      version = refusal?.version
       checks.append(
-        .init(id: "source", kind: .source, status: .failed, message: error.localizedDescription))
+        .init(
+          id: "source", kind: refusal == nil ? .source : .compatibility, status: .failed,
+          message: error.localizedDescription, refusal: refusal))
       return report()
     }
-    let compatible =
-      source?.permits(manifest: plugin.manifest, host: hostVersion, architecture: architecture)
-      == true
+    let refusal = source?.refusal(
+      manifest: plugin.manifest, host: hostVersion, architecture: architecture)
     checks.append(
       .init(
-        id: "compatibility", kind: .compatibility, status: compatible ? .passed : .failed,
-        message: compatible
-          ? "The selected package permits this host version, platform and architecture."
-          : "The selected package excludes this host version, platform or architecture. Select a compatible package."
-      ))
+        id: "compatibility", kind: .compatibility, status: refusal == nil ? .passed : .failed,
+        message: refusal?.message
+          ?? "The selected package permits this plugin API, host version, platform and architecture.",
+        refusal: refusal))
     let resolvedDependencies = PluginDependencyResolver.resolve(
       for: plugin, settings: settings,
       searchDirectories: PluginHost.searchDirectories(environment: environment),

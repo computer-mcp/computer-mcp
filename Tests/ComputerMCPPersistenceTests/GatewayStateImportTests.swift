@@ -67,7 +67,7 @@ struct GatewayStateImportTests {
       )
       #expect(
         try String.fetchAll(database, sql: "SELECT identifier FROM grdb_migrations")
-          == ["gateway-initial", "remote-oauth"])
+          == ["gateway-initial", "remote-oauth", "audit-error-details"])
     }
   }
 
@@ -80,7 +80,10 @@ struct GatewayStateImportTests {
 
     #expect(report.previousDatabase == directory.previous)
     #expect(try Self.dump(directory.previous) == before)
-    #expect(try Self.ledger(directory.database) == ["gateway-initial", "remote-oauth"])
+    #expect(
+      try Self.ledger(directory.database) == [
+        "gateway-initial", "remote-oauth", "audit-error-details",
+      ])
     #expect(
       directory.entries() == [
         "gateway.sqlite", "gateway.sqlite.before-import", "gateway.sqlite.lock",
@@ -582,7 +585,10 @@ struct GatewayStateImportTests {
 
     #expect(report.restoredInterruptedImport)
     #expect(report.previousDatabase == nil)
-    #expect(try Self.ledger(directory.database) == ["gateway-initial", "remote-oauth"])
+    #expect(
+      try Self.ledger(directory.database) == [
+        "gateway-initial", "remote-oauth", "audit-error-details",
+      ])
     #expect(directory.entries() == ["gateway.sqlite", "gateway.sqlite.lock"])
   }
 
@@ -676,7 +682,10 @@ struct GatewayStateImportTests {
 
     #expect(report.restoredInterruptedImport)
     #expect(try Self.dump(directory.previous) == before)
-    #expect(try Self.ledger(directory.database) == ["gateway-initial", "remote-oauth"])
+    #expect(
+      try Self.ledger(directory.database) == [
+        "gateway-initial", "remote-oauth", "audit-error-details",
+      ])
     #expect(
       directory.entries() == [
         "gateway.sqlite", "gateway.sqlite.before-import", "gateway.sqlite.lock",

@@ -16,6 +16,7 @@ final class PluginCatalogModel: ObservableObject {
   @Published private(set) var result: PluginCatalogSearchResult?
   @Published private(set) var isLoading = false
   @Published private(set) var errorMessage: String?
+  @Published private(set) var refusal: PluginCompatibilityRefusal?
 
   private let controlPlane: any PluginCatalogManaging
   private var generation = 0
@@ -54,6 +55,7 @@ final class PluginCatalogModel: ObservableObject {
     let current = generation
     isLoading = true
     errorMessage = nil
+    refusal = nil
     let controlPlane = controlPlane
     let task = Task {
       try await controlPlane.searchPlugins(query: query, kind: kind, page: page, refresh: refresh)
@@ -77,11 +79,12 @@ final class PluginCatalogModel: ObservableObject {
       guard generation == current, !Task.isCancelled, !task.isCancelled,
         !(error is CancellationError)
       else { return }
+      refusal = error as? PluginCompatibilityRefusal ?? (error as? ControlSocketCallError)?.refusal
       if case PluginCatalogError.httpStatus(let status) = error {
         errorMessage = AppLocalization.formatted(
           "Plugin request failed with HTTP %@.", String(status))
       } else {
-        errorMessage = AppLocalization.errorDescription(error)
+        errorMessage = refusal?.message ?? AppLocalization.errorDescription(error)
       }
     }
   }

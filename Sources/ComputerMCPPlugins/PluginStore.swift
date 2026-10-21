@@ -111,13 +111,16 @@ package struct PluginStoreSnapshot: Codable, Equatable, Sendable {
 package struct PluginStoreIssue: Codable, Equatable, Sendable {
   package let pluginID: String
   package let message: String
+  package let refusal: PluginCompatibilityRefusal?
+  package var code: String? { refusal?.code }
 
   package init(
     pluginID: String,
-    message: String
+    message: String, refusal: PluginCompatibilityRefusal? = nil
   ) {
     self.pluginID = pluginID
     self.message = message
+    self.refusal = refusal
   }
 }
 
@@ -326,7 +329,10 @@ package actor PluginStore {
             architecture: architecture, environment: environment))
       } catch {
         // A selected source failure is visible; it does not silently activate another version.
-        issues.append(PluginStoreIssue(pluginID: id, message: error.localizedDescription))
+        issues.append(
+          PluginStoreIssue(
+            pluginID: id, message: error.localizedDescription,
+            refusal: error as? PluginCompatibilityRefusal))
       }
     }
     return PluginStoreResolution(revision: state.revision, plugins: plugins, issues: issues)

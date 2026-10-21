@@ -15,6 +15,23 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginStoreInstallationTests {
   @Test
+  func newerPluginAPIIsRefusedBeforeAnInstallationCommits() async throws {
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      manifest: PreparationFixture.manifest.replacingOccurrences(
+        of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
+    defer { fixture.files.remove() }
+    let database = try GatewayDatabase(path: fixture.files.root.appendingPathComponent("db").path)
+    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "combined", version: PluginVersion("1.2.3"), declared: 2))
+    await #expect(throws: refusal) { try await fixture.install(into: store, revision: 0) }
+    #expect(try database.pluginStoreSnapshot() == PluginStoreSnapshot())
+    #expect(try database.pluginOwnedDirectories().isEmpty)
+  }
+
+  @Test
   func recoveryRefreshesDurableRollbackMetadataWithoutChangingHostChoices() async throws {
     let fixture = try await PreparationFixture.make(
       directoryFactory: MacOSPlatform.services.pluginDirectories, )
@@ -113,7 +130,7 @@ struct PluginStoreInstallationTests {
     #expect(
       incompatible.mcpServers.isEmpty && incompatible.cliCommands.isEmpty
         && incompatible.skillRoots.isEmpty)
-    #expect(incompatible.diagnostics.map(\.code) == [.hostIncompatible])
+    #expect(incompatible.diagnostics.map(\.code) == [.platformUnsupported])
     #expect(
       !FileManager.default.fileExists(
         atPath: record.source.root.appendingPathComponent("executed").path))
@@ -252,6 +269,7 @@ struct PluginStoreInstallationTests {
     id = 'combined'
     name = 'Combined'
     version = '1.2.3'
+    plugin_api = 1
     [compatibility]
     minimum_host = '0.1.0'
     architectures = ['arm64']

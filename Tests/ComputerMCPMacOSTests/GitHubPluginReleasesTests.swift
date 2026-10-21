@@ -11,6 +11,21 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct GitHubPluginReleasesTests {
+  @Test
+  func releaseManifestRefusalSurvivesTheMetadataDeadlineBoundary() async throws {
+    let artifact = pluginArtifactFixture()
+    let http = ReleaseHTTPFake()
+    await http.setManifest(
+      releaseManifestFixture.replacingOccurrences(
+        of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
+    let releases = GitHubPluginReleases(http: http)
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "combined", version: PluginVersion("1.2.3"), declared: 2))
+    await #expect(throws: refusal) { try await releases.revalidate(artifact) }
+    #expect(await http.assetPages.isEmpty)
+  }
+
   @Test(arguments: ["correct", "forged", "omitted"])
   func selectedTargetIsRevalidatedAgainstTheExactTag(fault: String) async throws {
     let manifest = PreparationFixture.platformManifest.replacingOccurrences(

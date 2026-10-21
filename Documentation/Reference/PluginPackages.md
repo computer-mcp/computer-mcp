@@ -17,6 +17,7 @@ does not establish publisher trust, artifact integrity, or user authorization.
 | `id` | Stable package identity |
 | `name` | Nonempty display name |
 | `version` | Semantic release version, including optional prerelease/build identifiers |
+| `plugin_api` | Required positive integer identifying the manifest schema and runtime contract; this host supports `1...1` |
 | `description` | Optional package description |
 | `repository` | Optional HTTPS repository URL; a claim, not verified provenance |
 | `compatibility.minimum_host` | Inclusive minimum host release |
@@ -40,15 +41,37 @@ release asset exactly. At most 100 declarations are permitted. Every declared
 archive must be published, and every published installable archive must be declared
 when the list is present. All archives contain the exact same root manifest bytes
 as the tag. Targets are declarations; they do not establish binary validity or
-execution permission. Set `minimum_host` to a released host that supports the fields
-used by the package; older hosts reject unknown fields.
+execution permission. Every field and runtime behavior belongs to the declared
+`plugin_api`; adding, removing or reinterpreting a field defines a new API version.
+Host release bounds constrain releases within that API, such as requiring a host fix.
 
-Legacy manifests retain their macOS default, architecture constraints and stored
-declaration fingerprints. Without an artifact list, every archive inherits the
-release target. Local installation retains a declared archive's filename; renaming
+Without an artifact list, every archive inherits the release target. Local installation retains a declared archive's filename; renaming
 it does not choose another target. The installation record preserves the selected
 name, and activation and diagnostics recheck its target. Bundled distribution
 checks the selected archive against every requested App architecture.
+
+### Compatibility refusals
+
+`computer-mcp build-info` reports the host's `plugin_api.minimum` and
+`plugin_api.maximum`. Compatibility produces one structured refusal, in this order:
+
+| Condition | Error code | Action |
+| --- | --- | --- |
+| Plugin API above the host range | `plugin.host_update_required` | Update Computer MCP |
+| Plugin API below the host range | `plugin.plugin_update_required` | Update the plugin |
+| Platform, architecture or selected artifact does not target this Mac | `plugin.platform_unsupported` | Use a package built for this Mac |
+| Host below `minimum_host` | `plugin.host_update_required` | Update Computer MCP |
+| Host at or above `maximum_host` | `plugin.plugin_update_required` | Update the plugin |
+
+The refusal JSON carries `plugin_id`, `version`, `reason` and `requirement`. The requirement
+records the declared API and supported range, the declared platform and artifact
+targets and this host's platform/architecture, or the declared host range and
+current host version. Its message names the action. Archive preparation,
+installation, bundled collection, release verification, catalog issues, resolution
+diagnostics, store issues and doctor checks retain that same value. Control and
+CLI errors include it as `error.refusal`; audit JSON retains it in `error_details`.
+The App's plugin models expose it alongside message text. See the accepted
+[Plugin API decision](../Decisions/PluginAPI.md) for rationale.
 
 ## Executables and External Dependencies
 
@@ -66,8 +89,7 @@ Package loading and executable inspection select the current host platform's
 path. An archive must contain that selected executable.
 A missing selected file is an error; the host never tries another platform or
 adds an executable suffix. CLI Tree helpers follow the same selection rule.
-Set `minimum_host` to a released host supporting this field before publishing
-a package that uses it.
+The field is part of plugin API `1`.
 
 Each `[[dependencies]]` entry has `id`, ordered executable base names in
 `commands`, optional ordered `applications` locators, human-readable
@@ -206,6 +228,7 @@ directory in its own repository:
 id = "example-integration"
 name = "Example Integration"
 version = "1.2.3"
+plugin_api = 1
 
 [compatibility]
 platforms = ["macos"]
@@ -246,7 +269,11 @@ for every CLI. A package must describe its actual executable's contract.
 
 ## Validation and File Safety
 
-Unknown fields are rejected at every manifest level. The manifest must be UTF-8
+The host first reads only `id`, `version` and `plugin_api`, ignoring other
+fields. Missing, non-integer or non-positive `plugin_api` is `invalid_manifest`,
+with the field named. An unsupported positive API is refused before strict
+decoding of that version's schema. Unknown fields are rejected at every level
+of a supported manifest. The manifest must be UTF-8
 and no larger than 1 MiB. Package-relative paths reject absolute paths, tilde
 expansion, backslashes, NULs, empty components, and `.`/`..` components.
 
@@ -607,8 +634,8 @@ App-owned static catalog service. A search never installs a package, runs code,
 changes registrations or grants access. Installed plugin inventory stays local.
 
 The service reads `https://computer-mcp.github.io/plugins/index.json`, a complete
-publisher-generated schema 2 snapshot. Schema 1 remains readable with its legacy
-macOS target semantics. The publisher pins the official GitHub
+publisher-generated schema 3 snapshot. Each release's `compatibility` includes
+`plugin_api`, platform/architecture targets and host bounds. Only schema 3 is read. The publisher pins the official GitHub
 organization `computer-mcp` by numeric ID `315005910`, admits repositories by
 numeric identity and verifies published tags, commits, declarations and release
 archives. Each repository supplies its current stable version and any newer
@@ -618,7 +645,7 @@ signature, execution grant or replacement for installation-time GitHub checks.
 
 Query words match repository, plugin ID, name and description; `--kind` filters
 contributions. Search includes the current stable, non-withdrawn release when it
-matches this host version, platform and architecture and has a matching archive.
+passes the same API, platform/artifact and host-range evaluation and has a matching archive.
 Host and plugin releases are paired; incompatible current versions do not cause
 historical compatibility fallback. Each archive is filtered by its declared target. Filtering happens before
 pagination. Each local page contains at most 10 matching plugins. Search, paging
@@ -680,7 +707,9 @@ endpoint; it does not publish metadata or substitute a fixture for a real respon
 Release selection reads the cached catalog locally. It defaults to the current
 stable version; an exact tag selects that current stable or newer prerelease. Results
 include current versions, channel, withdrawal/compatibility state and runtime
-prerequisites. Withdrawn or incompatible versions have no selectable archives.
+prerequisites. Withdrawn versions and versions refused for this host have no
+selectable archives. An explicitly selected tag reports its structured refusal
+in `issues`, and every version includes its refusal when present.
 Selection records retain publisher, repository, release and asset IDs, tag commit,
 declaration hashes, filename, size and archive SHA-256. Archive pages contain at
 most 10 entries with explicit continuation. Discovery does not download packages.

@@ -7,6 +7,7 @@ package let releaseManifestFixture = """
   id = 'combined'
   name = 'Combined'
   version = '1.2.3'
+  plugin_api = 1
   [[mcp]]
   id = 'native'
   transport = 'http'

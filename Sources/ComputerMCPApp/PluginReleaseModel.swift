@@ -16,6 +16,7 @@ final class PluginReleaseModel: ObservableObject {
   @Published private(set) var result: GitHubPluginReleaseArtifacts?
   @Published private(set) var isLoading = false
   @Published private(set) var errorMessage: String?
+  @Published private(set) var refusal: PluginCompatibilityRefusal?
   private let controlPlane: any PluginManaging
   private var generation = 0
   private var request: Task<GitHubPluginReleaseArtifacts, any Error>?
@@ -50,6 +51,7 @@ final class PluginReleaseModel: ObservableObject {
     let current = generation
     isLoading = true
     errorMessage = nil
+    refusal = nil
     let controlPlane = controlPlane
     let entry = entry
     let task = Task {
@@ -74,15 +76,17 @@ final class PluginReleaseModel: ObservableObject {
         next.declaration.repositoryID == entry.repositoryID
       else { throw PluginCatalogError.invalidProvenance }
       result = next
+      refusal = next.issues.compactMap(\.refusal).first
     } catch {
       guard current == generation, !Task.isCancelled, !task.isCancelled,
         !(error is CancellationError)
       else { return }
+      refusal = error as? PluginCompatibilityRefusal ?? (error as? ControlSocketCallError)?.refusal
       if case PluginCatalogError.httpStatus(let status) = error {
         errorMessage = AppLocalization.formatted(
           "Plugin request failed with HTTP %@.", String(status))
       } else {
-        errorMessage = AppLocalization.errorDescription(error)
+        errorMessage = refusal?.message ?? AppLocalization.errorDescription(error)
       }
     }
   }

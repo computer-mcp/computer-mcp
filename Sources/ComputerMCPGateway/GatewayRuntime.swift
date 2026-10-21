@@ -2177,6 +2177,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         capabilityID: capabilityID,
         decision: decision,
         errorCode: errorCode,
+        errorDetails: output?.objectValue?["structuredContent"]?.objectValue?["error"]?
+          .objectValue?["refusal"],
         durationMilliseconds: Int(duration.components.seconds * 1_000)
           + Int(duration.components.attoseconds / 1_000_000_000_000_000),
         inputDigest: inputDigest,
@@ -2206,10 +2208,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let message =
       (error as? any LocalizedError)?.errorDescription
       ?? String(describing: error)
-    let payload = JSONValue.object([
-      "code": .string(code),
-      "message": .string(message),
-    ])
+    var fields: [String: JSONValue] = ["code": .string(code), "message": .string(message)]
+    if let refusal = error as? PluginCompatibilityRefusal {
+      fields["refusal"] = try? ControlToolResponse.encodedPayload(refusal)
+    }
+    let payload = JSONValue.object(fields)
     return .object([
       "content": .array([
         .object([
@@ -2862,7 +2865,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   static func auditErrorCode(for error: Error) -> String? {
-    if error is PluginCatalogError || error is PluginStoreError || error is PluginArchiveError
+    if error is PluginCompatibilityRefusal || error is PluginManifestError
+      || error is PluginCatalogError || error is PluginStoreError || error is PluginArchiveError
       || error is PluginHostError
     {
       return ControlToolResponse.auditDisposition(for: error).code

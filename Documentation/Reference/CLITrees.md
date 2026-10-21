@@ -262,3 +262,10 @@ The generated tree retains explicit partial coverage and its publisher baseline.
 Its version and native-interface checks execute inside the same generic call
 path as direct registration; an incompatible assertion is also tested to reject
 an otherwise valid invocation.
+
+Plugin-provided CLI trees are loaded only after the package passes the host's
+plugin API, platform/artifact and host-range evaluation. The package declares
+`plugin_api = 1`; `computer-mcp build-info` reports the host's supported range.
+Refusals retain their declared and supported values and an actionable message;
+see [Plugin Packages](PluginPackages.md#compatibility-refusals) and the
+[Plugin API decision](../Decisions/PluginAPI.md).

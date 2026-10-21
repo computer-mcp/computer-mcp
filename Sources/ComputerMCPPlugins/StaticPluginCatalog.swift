@@ -79,8 +79,8 @@ package actor StaticPluginCatalog: PluginCatalogBrowsing {
     let releases = snapshot.value.document.releases.filter {
       !$0.withdrawn && (filter.includePrereleases || !$0.prerelease)
         && (filter.includeIncompatible
-          || $0.matches(
-            host: filter.host, architecture: filter.architecture, platform: filter.platform))
+          || $0.refusal(
+            host: filter.host, architecture: filter.architecture, platform: filter.platform) == nil)
     }.sorted(by: Self.newer)
     var selected: [String: StaticPluginCatalogDocument.Release] = [:]
     for release in releases where selected[release.pluginID] == nil {
@@ -124,10 +124,9 @@ package actor StaticPluginCatalog: PluginCatalogBrowsing {
       return !$0.prerelease
     }
     guard let selected else { throw PluginCatalogError.httpStatus(404) }
-    let permitted =
-      !selected.withdrawn
-      && selected.matches(
-        host: filter.host, architecture: filter.architecture, platform: filter.platform)
+    let refusal = selected.refusal(
+      host: filter.host, architecture: filter.architecture, platform: filter.platform)
+    let permitted = !selected.withdrawn && refusal == nil
     let assets =
       permitted
       ? selected.assets.filter {
@@ -136,13 +135,15 @@ package actor StaticPluginCatalog: PluginCatalogBrowsing {
     let offset = (page - 1) * 10
     let pageAssets = Array(assets.dropFirst(offset).prefix(10))
     var issues = snapshot.issues
-    if !permitted {
+    if selected.withdrawn {
       issues.append(
         .init(
-          repository: repository,
-          code: selected.withdrawn ? "plugin.catalog.withdrawn" : "plugin.catalog.incompatible",
-          message: selected.withdrawalReason
-            ?? "This release is incompatible with the selected host."))
+          repository: repository, code: "plugin.catalog.withdrawn",
+          message: selected.withdrawalReason!))
+    } else if let refusal {
+      issues.append(
+        .init(
+          repository: repository, code: refusal.code, message: refusal.message, refusal: refusal))
     }
     return GitHubPluginReleaseArtifacts(
       declaration: selected.declaration, releaseID: selected.releaseID, tag: selected.tag,
@@ -153,9 +154,11 @@ package actor StaticPluginCatalog: PluginCatalogBrowsing {
         PluginCatalogReleaseVersion(
           tag: $0.tag, version: $0.version, prerelease: $0.prerelease,
           withdrawn: $0.withdrawn, withdrawalReason: $0.withdrawalReason,
-          compatible: $0.matches(
-            host: filter.host, architecture: filter.architecture, platform: filter.platform),
-          dependencies: $0.dependencies)
+          compatible: $0.refusal(
+            host: filter.host, architecture: filter.architecture, platform: filter.platform) == nil,
+          dependencies: $0.dependencies,
+          refusal: $0.refusal(
+            host: filter.host, architecture: filter.architecture, platform: filter.platform))
       })
   }
 

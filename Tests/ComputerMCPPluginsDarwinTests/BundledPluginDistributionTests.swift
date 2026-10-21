@@ -1,4 +1,5 @@
 import ComputerMCPPlatformDarwin
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -10,6 +11,39 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct BundledPluginDistributionTests {
+  @Test
+  func newerPluginAPIFailsBundledPreparationWithTheOriginalRefusal() async throws {
+    let fixture = try await PreparationFixture.make(
+      directoryFactory: DarwinPluginArchiveDirectoryFactory(),
+      manifest: PreparationFixture.manifest.replacingOccurrences(
+        of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
+    defer { fixture.files.remove() }
+    let index = try Self.index(fixture)
+    let output = fixture.files.root.appendingPathComponent("Plugins")
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "combined", version: PluginVersion("1.2.3"), declared: 2))
+    await #expect(throws: refusal) {
+      try await Self.prepare(index: index, output: output, architectures: ["arm64"])
+    }
+    #expect(!FileManager.default.fileExists(atPath: output.path))
+    let cli = try ProcessCommandRunner().run(
+      executable: Self.worker.path,
+      arguments: [
+        "_bundle-plugins", "--index", index.path, "--output", output.path, "--architectures",
+        "arm64",
+      ],
+      workingDirectory: fixture.files.root, environment: [:], timeoutMilliseconds: 30_000,
+      maxOutputBytes: 16_384)
+    #expect(cli.exitCode == 1)
+    let payload = try JSONDecoder().decode(JSONValue.self, from: Data(cli.stdout.utf8))
+    #expect(payload.objectValue?["error"]?.objectValue?["code"] == .string(refusal.code))
+    let encodedRefusal = try JSONDecoder().decode(
+      JSONValue.self, from: CanonicalJSONCoding.encoder().encode(refusal))
+    #expect(payload.objectValue?["error"]?.objectValue?["refusal"] == encodedRefusal)
+    #expect(!FileManager.default.fileExists(atPath: output.path))
+  }
+
   @Test
   func actualDistributionArchiveLoadsWithoutGrantsOrExternalExecution() async throws {
     let files = try ArchiveFixture()

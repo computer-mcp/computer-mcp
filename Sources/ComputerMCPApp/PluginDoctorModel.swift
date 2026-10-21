@@ -9,6 +9,7 @@ final class PluginDoctorModel: ObservableObject {
   @Published private(set) var report: PluginDoctorReport?
   @Published private(set) var isChecking = false
   @Published private(set) var errorMessage: String?
+  @Published private(set) var refusal: PluginCompatibilityRefusal?
 
   private let controlPlane: any PluginManaging
   private var generation = 0
@@ -45,12 +46,14 @@ final class PluginDoctorModel: ObservableObject {
       }
       guard generation == current, !Task.isCancelled, !task.isCancelled else { return }
       report = next
+      refusal = next.refusal
       errorMessage = nil
     } catch {
       guard generation == current, !Task.isCancelled, !task.isCancelled,
         !(error is CancellationError)
       else { return }
-      errorMessage = AppLocalization.errorDescription(error)
+      refusal = error as? PluginCompatibilityRefusal ?? (error as? ControlSocketCallError)?.refusal
+      errorMessage = refusal?.message ?? AppLocalization.errorDescription(error)
     }
   }
 

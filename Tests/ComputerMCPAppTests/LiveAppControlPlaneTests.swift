@@ -506,6 +506,7 @@ final class LiveAppControlPlaneTests {
       id = 'screen-package'
       name = 'Screen package'
       version = '1.0.0'
+      plugin_api = 1
       [[skills]]
       id = 'guide'
       path = 'skills'

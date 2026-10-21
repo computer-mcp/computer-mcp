@@ -317,10 +317,14 @@ struct PluginResolverTests {
   @Test
   func registrationIDsDoNotAliasWhenPackageIDsContainSeparators() throws {
     let first = try CompositionFixture(
-      text: "id = 'a-b'\nname = 'First'\nversion = '1.0.0'\n[[skills]]\nid = 'c'\npath = 'skills'")
+      text:
+        "id = 'a-b'\nname = 'First'\nversion = '1.0.0'\nplugin_api = 1\n[[skills]]\nid = 'c'\npath = 'skills'"
+    )
     defer { first.cleanup() }
     let second = try CompositionFixture(
-      text: "id = 'a'\nname = 'Second'\nversion = '1.0.0'\n[[skills]]\nid = 'b-c'\npath = 'skills'")
+      text:
+        "id = 'a'\nname = 'Second'\nversion = '1.0.0'\nplugin_api = 1\n[[skills]]\nid = 'b-c'\npath = 'skills'"
+    )
     defer { second.cleanup() }
     let settings = PluginSettings(enabled: true)
     let a = try first.resolve(settings: settings)
@@ -497,7 +501,7 @@ struct PluginResolverTests {
     defer { fixture.cleanup() }
     let resolved = try fixture.resolve()
     #expect(resolved.origins.isEmpty)
-    #expect(resolved.diagnostics.map(\.code) == [.hostIncompatible])
+    #expect(resolved.diagnostics.map(\.code) == [.hostUpdateRequired])
   }
 }
 

@@ -158,6 +158,12 @@ struct PluginDoctorTests {
     defer { fixture.cleanup() }
     let report = try fixture.inspect(fixture.state(enabled: false))
     #expect(report.checks.first { $0.id == "compatibility" }?.status == .failed)
+    let refusal = try #require(
+      fixture.plugin.manifest.refusal(
+        host: PluginVersion("1.0.0"), architecture: "arm64"))
+    #expect(report.refusal == refusal)
+    #expect(report.checks.first { $0.id == "compatibility" }?.refusal == refusal)
+    #expect(report.checks.first { $0.id == "compatibility" }?.message == refusal.message)
     #expect(report.dependencies.first?.resolutionSource == "unresolved")
     #expect(report.checks.first { $0.id == "mcp:native:executable" }?.status == .failed)
     #expect(report.checks.first { $0.id == "skills:guidance" }?.status == .passed)
@@ -216,6 +222,7 @@ private struct PluginDoctorFixture {
       id = 'sample'
       name = 'Sample'
       version = '1.0.0'
+      plugin_api = 1
       \(compatibility)
       [[dependencies]]
       id = 'vendor'

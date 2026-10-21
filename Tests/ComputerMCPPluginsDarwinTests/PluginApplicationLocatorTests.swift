@@ -208,6 +208,7 @@ private struct ApplicationLocatorFixture {
       id = 'application-fixture'
       name = 'Application Fixture'
       version = '1.0.0'
+      plugin_api = 1
       [[dependencies]]
       id = 'vendor'
       commands = ['fixture-vendor']

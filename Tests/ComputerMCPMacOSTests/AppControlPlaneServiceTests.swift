@@ -1278,7 +1278,7 @@ final class AppControlPlaneServiceTests {
         workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 15_000,
         maxOutputBytes: 1_048_576)
       #expect(stale.exitCode != 0)
-      #expect(stale.stderr.contains("Reload"))
+      #expect(stale.stdout.contains("Reload"))
       settings.cli["commands"]?.registrationID = "package-cli"
       _ = try await client.call(
         "plugin.configure",

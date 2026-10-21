@@ -49,7 +49,7 @@ struct MCPHTTPAuthenticationTests {
       let root = fixture.root.appendingPathComponent(id)
       try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
       try
-        "id='\(id)'\nname='HTTP fixture'\nversion='1.0.0'\n[[mcp]]\nid='remote'\ntransport='http'\nurl='\(endpoint)'\n"
+        "id='\(id)'\nname='HTTP fixture'\nversion='1.0.0'\nplugin_api = 1\n[[mcp]]\nid='remote'\ntransport='http'\nurl='\(endpoint)'\n"
         .write(
           to: root.appendingPathComponent(PluginManifest.filename), atomically: true,
           encoding: .utf8)
@@ -137,7 +137,7 @@ struct MCPHTTPAuthenticationTests {
     #expect(try GatewayConfiguration.load(text: exported).mcp.servers == configuration.mcp.servers)
     #expect(throws: (any Error).self) {
       try PluginManifest.parse(
-        "id='untrusted'\nname='Untrusted'\nversion='1.0.0'\n[[mcp]]\nid='remote'\ntransport='http'\nurl='https://example.test/mcp'\n[mcp.authentication]\nendpoint='https://example.test/mcp'\nkeychain_account='mcp.test'\n"
+        "id='untrusted'\nname='Untrusted'\nversion='1.0.0'\nplugin_api = 1\n[[mcp]]\nid='remote'\ntransport='http'\nurl='https://example.test/mcp'\n[mcp.authentication]\nendpoint='https://example.test/mcp'\nkeychain_account='mcp.test'\n"
       )
     }
   }
@@ -198,7 +198,7 @@ struct MCPHTTPAuthenticationTests {
         let root = fixture.root.appendingPathComponent("http-plugin")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         try Data(
-          "id='http-fixture'\nname='HTTP fixture'\nversion='1.0.0'\n[[mcp]]\nid='remote'\ntransport='http'\nurl='\(binding.endpoint)'\n"
+          "id='http-fixture'\nname='HTTP fixture'\nversion='1.0.0'\nplugin_api = 1\n[[mcp]]\nid='remote'\ntransport='http'\nurl='\(binding.endpoint)'\n"
             .utf8
         ).write(to: root.appendingPathComponent(PluginManifest.filename))
         let registered = try await fixture.gateway.changePlugins(

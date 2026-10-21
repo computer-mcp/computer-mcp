@@ -1,6 +1,7 @@
 import ArgumentParser
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPPlugins
 import CryptoKit
 import Foundation
 
@@ -10,6 +11,10 @@ struct BuildInfo: ParsableCommand {
     abstract: "Print the signed release identity for this CLI executable."
   )
 
+  enum Format: String, ExpressibleByArgument { case json, human }
+  @Option(name: .long, help: "Output format: json or human.")
+  var format: Format = .json
+
   func run() throws {
     let executableURL = try Self.executableURL()
     let identityURL = executableURL.deletingLastPathComponent()
@@ -18,25 +23,39 @@ struct BuildInfo: ParsableCommand {
     let actualDigest = try Self.sha256(of: executableURL)
     let expectedDigest = identity?["embedded_cli_sha256"] as? String
 
-    printJSON(
-      .object([
-        "schema_version": .number(1),
-        "version": .string(identity?["version"] as? String ?? ComputerMCPCLI.version),
-        "build": .string(identity?["build"] as? String ?? ComputerMCPCLI.build),
-        "source_commit": optionalString(identity?["source_commit"] as? String),
-        "team_identifier": optionalString(identity?["team_identifier"] as? String),
-        "architectures": .array(
-          (identity?["architectures"] as? [String] ?? []).sorted().map(JSONValue.string)
-        ),
-        "embedded_cli_sha256": .string(actualDigest),
-        "embedded_cli_digest_matches": .bool(
-          expectedDigest.map { $0 == actualDigest } ?? false
-        ),
-        "identity_resource": .string(
-          identity == nil ? "unavailable" : "signed-app-resource"
-        ),
-      ])
-    )
+    let fields: [String: JSONValue] = [
+      "schema_version": .number(1),
+      "plugin_api": try .encoded(PluginAPIVersions.supported),
+      "version": .string(identity?["version"] as? String ?? ComputerMCPCLI.version),
+      "build": .string(identity?["build"] as? String ?? ComputerMCPCLI.build),
+      "source_commit": optionalString(identity?["source_commit"] as? String),
+      "team_identifier": optionalString(identity?["team_identifier"] as? String),
+      "architectures": .array(
+        (identity?["architectures"] as? [String] ?? []).sorted().map(JSONValue.string)
+      ),
+      "embedded_cli_sha256": .string(actualDigest),
+      "embedded_cli_digest_matches": .bool(
+        expectedDigest.map { $0 == actualDigest } ?? false
+      ),
+      "identity_resource": .string(
+        identity == nil ? "unavailable" : "signed-app-resource"
+      ),
+    ]
+    switch format {
+    case .json: printJSON(.object(fields))
+    case .human:
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = .sortedKeys
+      for key in fields.keys.sorted() {
+        if key == "plugin_api" {
+          let range = PluginAPIVersions.supported
+          print("plugin_api: minimum \(range.minimum), maximum \(range.maximum)")
+        } else {
+          let value = fields[key]!
+          print("\(key): \(String(decoding: try encoder.encode(value), as: UTF8.self))")
+        }
+      }
+    }
   }
 
   private static func executableURL() throws -> URL {

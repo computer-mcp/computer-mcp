@@ -124,7 +124,14 @@ extension AppControlPlaneService {
         let issue = resolution.issues.first(where: { $0.pluginID == affected }),
         proposed.selectedInstallations[affected] != nil
       {
+        if let refusal = issue.refusal { throw refusal }
         throw PluginHostError.invalidComposition(issue.message)
+      }
+      if let affected = Self.affectedPluginID(change, in: proposed),
+        let refusal = resolution.plugins.flatMap(\.diagnostics)
+          .first(where: { $0.pluginID == affected && $0.refusal != nil })?.refusal
+      {
+        throw refusal
       }
       try configuration.validate()
     }

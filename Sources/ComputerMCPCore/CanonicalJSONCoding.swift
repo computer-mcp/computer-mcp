@@ -7,6 +7,9 @@ import Foundation
 /// keys remain stable and conventional, including `capability_ids`,
 /// `http_url`, and `mcp_request_id`.
 package enum CanonicalJSONCoding {
+  /// Lets schema-owned decoders distinguish canonical wire keys from source-format keys.
+  package static let decodingKeys = CodingUserInfoKey(rawValue: "computer-mcp.canonical-keys")!
+
   package static func encoder(
     outputFormatting: JSONEncoder.OutputFormatting = []
   ) -> JSONEncoder {
@@ -20,6 +23,7 @@ package enum CanonicalJSONCoding {
 
   package static func decoder() -> JSONDecoder {
     let decoder = JSONDecoder()
+    decoder.userInfo[decodingKeys] = true
     decoder.keyDecodingStrategy = .custom { codingPath in
       AnyCodingKey(Self.swiftPropertyName(codingPath.last?.stringValue ?? ""))
     }
@@ -67,7 +71,7 @@ package enum CanonicalJSONCoding {
     return words.filter { !$0.isEmpty }.joined(separator: "_")
   }
 
-  internal static func swiftPropertyName(_ snakeCaseKey: String) -> String {
+  package static func swiftPropertyName(_ snakeCaseKey: String) -> String {
     let components = snakeCaseKey.split(separator: "_").map(String.init)
     guard let first = components.first else { return snakeCaseKey }
     return first

@@ -24,7 +24,18 @@ package struct PluginContributionOrigin: Codable, Equatable, Sendable {
 
 package struct PluginResolutionDiagnostic: Codable, Equatable, Sendable {
   package enum Code: String, Codable, Sendable {
-    case dependencyUnavailable, executableUnavailable, executableUnverified, hostIncompatible
+    case dependencyUnavailable, executableUnavailable, executableUnverified
+    case hostUpdateRequired = "plugin.host_update_required"
+    case pluginUpdateRequired = "plugin.plugin_update_required"
+    case platformUnsupported = "plugin.platform_unsupported"
+
+    init(_ reason: PluginCompatibilityRefusal.Reason) {
+      switch reason {
+      case .hostUpdateRequired: self = .hostUpdateRequired
+      case .pluginUpdateRequired: self = .pluginUpdateRequired
+      case .platformUnsupported: self = .platformUnsupported
+      }
+    }
   }
   package let pluginID: String
   package let componentID: String?
@@ -32,6 +43,7 @@ package struct PluginResolutionDiagnostic: Codable, Equatable, Sendable {
   package let dependencyID: String?
   package let instructions: String?
   package var executable: ExecutableInspection? = nil
+  package var refusal: PluginCompatibilityRefusal? = nil
 }
 
 package struct ResolvedPlugin: Sendable {
@@ -76,11 +88,13 @@ package enum PluginResolver {
         origins: origins, diagnostics: diagnostics)
     }
     guard settings.enabled else { return result() }
-    if !source.permits(manifest: manifest, host: hostVersion, architecture: architecture) {
+    if let refusal = source.refusal(
+      manifest: manifest, host: hostVersion, architecture: architecture)
+    {
       diagnostics.append(
         .init(
           pluginID: manifest.id, componentID: nil,
-          code: .hostIncompatible, dependencyID: nil, instructions: nil))
+          code: .init(refusal.reason), dependencyID: nil, instructions: nil, refusal: refusal))
       return result()
     }
     let interpreterBindings = try Self.interpreterBindings(

@@ -12,11 +12,11 @@ struct StaticPluginCatalogTests {
   func publisherPlatformSnapshotFiltersEachArchiveAndVersionLocally() async throws {
     let url = try #require(
       Bundle.module.url(
-        forResource: "plugin-catalog-v2-platforms", withExtension: "json", subdirectory: "Fixtures")
+        forResource: "plugin-catalog-v3-platforms", withExtension: "json", subdirectory: "Fixtures")
     )
     let bytes = try Data(contentsOf: url)
     let document = try StaticPluginCatalogDocument.decode(bytes)
-    #expect(document.schemaVersion == 2)
+    #expect(document.schemaVersion == 3)
     let catalog = StaticPluginCatalog(
       http: StaticCatalogHTTPFake([.success(staticCatalogResponse(bytes))]))
     for (platform, architecture, expected) in [
@@ -41,45 +41,61 @@ struct StaticPluginCatalogTests {
     }
   }
 
-  @Test
-  func schemaUpgradeMaterializesInheritedTargetsWithoutChangingReleaseIdentity() throws {
-    let old = try StaticPluginCatalogDocument.decode(staticCatalogFixture())
+  @Test(arguments: ["api", "platform", "minimum", "maximum"])
+  func filteringAndExplicitSelectionKeepTheCommonRefusal(fault: String) async throws {
     let data = try staticCatalogData { root in
-      root["schema_version"] = .integer(2)
-      root["generation"] = .integer(2)
-      root["releases"] = .array(
-        root["releases"]!.arrayValue!.map { value in
-          var release = value.objectValue!
-          let compatibility = release["compatibility"]!.objectValue!
-          release["assets"] = .array(
-            release["assets"]!.arrayValue!.map { value in
-              var asset = value.objectValue!
-              asset["compatibility"] = .object([
-                "platforms": compatibility["platforms"]!,
-                "architectures": compatibility["architectures"]!,
-              ])
-              return .object(asset)
-            })
-          return .object(release)
-        })
-    }
-    let current = try StaticPluginCatalogDocument.decode(data)
-    try current.validateSuccessor(of: old)
-    let widened = try staticCatalogData { root in
-      root = try! JSONDecoder().decode(JSONValue.self, from: data).objectValue!
       var release = root["releases"]!.arrayValue![0].objectValue!
-      var asset = release["assets"]!.arrayValue![0].objectValue!
-      asset["compatibility"] = .object([
-        "platforms": .array([.string("macos")]), "architectures": .array([]),
-      ])
-      release["assets"] = .array([.object(asset)])
+      var compatibility = release["compatibility"]!.objectValue!
+      switch fault {
+      case "api": compatibility["plugin_api"] = .integer(2)
+      case "minimum": compatibility["minimum_host"] = .string("2.5.0")
+      case "maximum": compatibility["maximum_host"] = .string("2.0.0")
+      default: break
+      }
+      release["compatibility"] = .object(compatibility)
       root["releases"] = .array([.object(release)])
     }
-    #expect(throws: PluginCatalogError.self) { try StaticPluginCatalogDocument.decode(widened) }
-    let downgrade = try StaticPluginCatalogDocument.decode(
-      staticCatalogData { $0["generation"] = .integer(3) })
-    #expect(throws: PluginCatalogError.invalidProvenance) {
-      try downgrade.validateSuccessor(of: current)
+    let filter = StaticPluginCatalog.Filter(
+      host: try PluginVersion("2.0.0"), architecture: fault == "platform" ? "x86_64" : "arm64",
+      platform: "macos")
+    let document = try StaticPluginCatalogDocument.decode(data)
+    let refusal = try #require(
+      document.releases[0].refusal(
+        host: filter.host, architecture: filter.architecture, platform: filter.platform))
+    let catalog = StaticPluginCatalog(
+      http: StaticCatalogHTTPFake([.success(staticCatalogResponse(data))]))
+    let search = try await catalog.search(
+      query: "", kind: nil, page: 1, refresh: false, filter: filter)
+    #expect(search.entries.isEmpty)
+    let selected = try await catalog.artifacts(
+      repository: "computer-mcp/plugin-example", repositoryID: 10, tag: "v1.0.0", page: 1,
+      filter: filter)
+    #expect(selected.artifacts.isEmpty)
+    #expect(selected.issues.first?.refusal == refusal)
+    #expect(selected.issues.first?.code == refusal.code)
+    #expect(selected.issues.first?.message == refusal.message)
+    #expect(selected.versions.first?.refusal == refusal)
+  }
+
+  @Test(arguments: ["missing", "zero"])
+  func releasePluginAPIIsRequiredAndPositive(fault: String) throws {
+    let data = try staticCatalogData { root in
+      var release = root["releases"]!.arrayValue![0].objectValue!
+      var compatibility = release["compatibility"]!.objectValue!
+      compatibility["plugin_api"] = fault == "missing" ? nil : .integer(0)
+      release["compatibility"] = .object(compatibility)
+      root["releases"] = .array([.object(release)])
+    }
+    #expect(throws: PluginCatalogError.invalidResponse) {
+      try StaticPluginCatalogDocument.decode(data)
+    }
+  }
+
+  @Test(arguments: [1, 2])
+  func onlySchemaThreeIsRead(schema: Int) throws {
+    #expect(throws: PluginCatalogError.invalidResponse) {
+      try StaticPluginCatalogDocument.decode(
+        staticCatalogData { $0["schema_version"] = .integer(Int64(schema)) })
     }
   }
 
@@ -87,16 +103,19 @@ struct StaticPluginCatalogTests {
   func decodesPublisherGeneratedCanonicalBytesAndExactIdentity() throws {
     let data = try staticCatalogFixture()
     let document = try StaticPluginCatalogDocument.decode(data)
-    #expect(document.revision == "5c751086b1b61120cc2addc21d5a2e3f6d7baa22299774277bddfe762d6f4651")
+    #expect(document.revision == "9ea0036192dadaf54ec2b52d3dcb64a6bf549bdf0979a8cacca5804a18c69d0d")
     let release = try #require(document.releases.first)
     #expect(release.name == "工具 Plugin")
     #expect(release.dependencies.first?.commands == ["python3"])
     #expect(
-      release.matches(host: try PluginVersion("2.0.0"), architecture: "arm64", platform: "macos"))
+      release.refusal(host: try PluginVersion("2.0.0"), architecture: "arm64", platform: "macos")
+        == nil)
     #expect(
-      !release.matches(host: try PluginVersion("3.0.0"), architecture: "arm64", platform: "macos"))
+      release.refusal(host: try PluginVersion("3.0.0"), architecture: "arm64", platform: "macos")
+        != nil)
     #expect(
-      !release.matches(host: try PluginVersion("2.0.0"), architecture: "x86_64", platform: "macos"))
+      release.refusal(host: try PluginVersion("2.0.0"), architecture: "x86_64", platform: "macos")
+        != nil)
     let exact = try staticCatalogData { root in
       var values = root["releases"]!.arrayValue!
       var release = values[0].objectValue!
@@ -116,7 +135,7 @@ struct StaticPluginCatalogTests {
   func rejectsInvalidDocuments(_ fault: String) throws {
     var bytes = try staticCatalogData { root in
       switch fault {
-      case "schema": root["schema_version"] = .integer(3)
+      case "schema": root["schema_version"] = .integer(4)
       case "publisher":
         root["publisher"] = .object(["login": .string("computer-mcp"), "id": .integer(999)])
       case "unknown": root["extra"] = .bool(true)
@@ -253,7 +272,7 @@ struct StaticPluginCatalogTests {
       repository: "computer-mcp/plugin-example-01", repositoryID: 1, tag: nil, page: 1,
       filter: filter)
     #expect(artifacts.tag == "v3.0.0" && artifacts.artifacts.isEmpty)
-    #expect(artifacts.issues.last?.code == "plugin.catalog.incompatible")
+    #expect(artifacts.issues.last?.code == "plugin.host_update_required")
     #expect(artifacts.versions.map(\.tag) == ["v4.0.0-beta.1", "v3.0.0"])
     #expect(artifacts.versions.last?.compatible == false)
     let beta = try await catalog.artifacts(
@@ -287,7 +306,7 @@ struct StaticPluginCatalogTests {
       #expect(release.artifacts.isEmpty && release.versions.count == 1)
       #expect(
         release.issues.first?.code
-          == (withdrawn ? "plugin.catalog.withdrawn" : "plugin.catalog.incompatible"))
+          == (withdrawn ? "plugin.catalog.withdrawn" : "plugin.platform_unsupported"))
     }
   }
 
@@ -310,7 +329,7 @@ struct StaticPluginCatalogTests {
     let revalidated = try await catalog.load()
     #expect(revalidated.value.document == first.value.document && !revalidated.status.stale)
     #expect(revalidated.value.record.validatedAt == clock.now)
-    #expect(await http.validators.last?.etag == "\"fixture-v1\"")
+    #expect(await http.validators.last?.etag == "\"fixture-v3\"")
     let offline = StaticCatalogHTTPFake([])
     let reopened = StaticPluginCatalog(cacheURL: cache, http: offline, now: { clock.now })
     #expect(try await reopened.load().value.document == first.value.document)

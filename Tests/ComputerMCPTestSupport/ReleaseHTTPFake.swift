@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPlugins
+import Crypto
 import Foundation
 
 package actor ReleaseHTTPFake: PluginCatalogHTTPFetching {
@@ -12,7 +13,7 @@ package actor ReleaseHTTPFake: PluginCatalogHTTPFetching {
   private var revision = String(repeating: "a", count: 40)
   private var prerelease = false
   private var changeAfterValidation = false
-  private let manifest: String
+  private var manifest: String
   private let artifactBytes: Data
   private var pages: [Int: [[String: JSONValue]]]
   private var links: [Int: String] = [:]
@@ -31,6 +32,8 @@ package actor ReleaseHTTPFake: PluginCatalogHTTPFetching {
       ]
     ]
   }
+
+  package func setManifest(_ text: String) { manifest = text }
 
   package func setAssets(_ values: [[String: JSONValue]], page: Int, next: Int? = nil) {
     pages[page] = values
@@ -99,7 +102,10 @@ package actor ReleaseHTTPFake: PluginCatalogHTTPFetching {
           "type": .string("file"), "path": .string(PluginManifest.filename),
           "encoding": .string("base64"),
           "size": .number(Double(bytes.count)), "content": .string(bytes.base64EncodedString()),
-          "sha": .string(pluginArtifactFixture(manifest: manifest).declaration.manifestBlobSHA),
+          "sha": .string(
+            Insecure.SHA1.hash(data: Data("blob \(bytes.count)\0".utf8) + bytes).map {
+              String(format: "%02x", $0)
+            }.joined()),
         ]))
     }
     return .init(status: 404, headers: [:], body: Data())

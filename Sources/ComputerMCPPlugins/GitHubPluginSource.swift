@@ -36,7 +36,10 @@ enum GitHubPluginSource {
       : SHA256.hash(data: gitObject).map { String(format: "%02x", $0) }.joined()
     guard blobSHA == file.sha else { throw PluginCatalogError.invalidResponse }
     let manifest: PluginManifest
-    do { manifest = try PluginManifest.parse(text) } catch {
+    do { manifest = try PluginManifest.parse(text) } catch let refusal as PluginCompatibilityRefusal
+    {
+      throw refusal
+    } catch {
       throw PluginCatalogError.invalidManifest
     }
     guard manifest.name.utf8.count <= 4_096, (manifest.description?.utf8.count ?? 0) <= 16_384

@@ -1,3 +1,4 @@
+import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPTransport
@@ -48,17 +49,23 @@ package struct GatewayHTTPLimits: Sendable {
 /// An App listener borrows host generations while retaining its own session lifecycle.
 package struct GatewayHTTPManagedSessions: Sendable {
   package let makeSession: @Sendable (String) async throws -> GatewayControlSessionServing
+  package let makeOAuthSession:
+    (@Sendable (String, GatewayProfileID) async throws -> GatewayControlSessionServing)?
   let closeSession: @Sendable (String) async -> Void
   package let shutdown: @Sendable () async -> Void
 
   package init(
     makeSession: @escaping @Sendable (String) async throws -> GatewayControlSessionServing,
     closeSession: @escaping @Sendable (String) async -> Void,
-    shutdown: @escaping @Sendable () async -> Void
+    shutdown: @escaping @Sendable () async -> Void,
+    makeOAuthSession: (
+      @Sendable (String, GatewayProfileID) async throws -> GatewayControlSessionServing
+    )? = nil
   ) {
     self.makeSession = makeSession
     self.closeSession = closeSession
     self.shutdown = shutdown
+    self.makeOAuthSession = makeOAuthSession
   }
 }
 
@@ -98,19 +105,21 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
     accessToken: String? = nil,
     logger: Logger? = nil,
     limits: GatewayHTTPLimits = .v1,
-    control: GatewayHTTPControlConfiguration? = nil
+    control: GatewayHTTPControlConfiguration? = nil,
+    oauth: GatewayOAuthHTTP? = nil
   ) {
     self.init(
       configuration: configuration, source: .registry(registry), host: host, port: port,
       publicBaseURL: publicBaseURL, accessToken: accessToken, logger: logger, limits: limits,
-      control: control)
+      control: control, oauth: oauth)
   }
 
   package init(
     configuration: GatewayConfiguration, source: GatewayHTTPSessionSource,
     host: String, port: Int, publicBaseURL: String?, accessToken: String? = nil,
     logger: Logger? = nil, limits: GatewayHTTPLimits = .v1,
-    control: GatewayHTTPControlConfiguration? = nil
+    control: GatewayHTTPControlConfiguration? = nil,
+    oauth: GatewayOAuthHTTP? = nil
   ) {
     self.configuration = configuration
     self.host = host
@@ -126,7 +135,8 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
       accessToken: accessToken,
       logger: resolvedLogger,
       limits: limits,
-      control: control
+      control: control,
+      oauth: oauth
     )
   }
 
@@ -145,6 +155,10 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
 
   package func stop() async {
     await app.stop()
+  }
+
+  package func updateAccessToken(_ token: String?) async {
+    await app.updateAccessToken(token)
   }
 
   internal func activeSessionCount() async -> Int {
@@ -197,6 +211,7 @@ package actor GatewayHTTPApp {
   private let configuration: GatewayConfiguration
   private let source: GatewayHTTPSessionSource
   private let authenticator: HTTPBearerAuthenticator
+  private let oauth: GatewayOAuthHTTP?
   private var listeningPort: Int
   private let effectivePublicBaseURL: String?
   private let logger: Logger
@@ -226,7 +241,8 @@ package actor GatewayHTTPApp {
     accessToken: String?,
     logger: Logger,
     limits: GatewayHTTPLimits,
-    control: GatewayHTTPControlConfiguration?
+    control: GatewayHTTPControlConfiguration?,
+    oauth: GatewayOAuthHTTP? = nil
   ) {
     self.configuration = configuration
     self.source = source
@@ -239,7 +255,10 @@ package actor GatewayHTTPApp {
     self.logger = logger
     self.limits = limits
     self.control = control
+    self.oauth = oauth
   }
+
+  package func updateAccessToken(_ token: String?) { authenticator.updateAccessToken(token) }
 
   package func startListening(host: String, port: Int) async throws {
     guard channel == nil, !isStarting, !isStopping || stopCompleted else {
@@ -270,6 +289,7 @@ package actor GatewayHTTPApp {
       mcpPath: configuration.server.http.path,
       healthPath: configuration.server.http.healthPath,
       authenticator: authenticator,
+      asynchronousAuthentication: oauth != nil,
       limits: limits
     )
     let bootstrap = ServerBootstrap(group: group)
@@ -391,6 +411,16 @@ package actor GatewayHTTPApp {
     let path = normalizedHTTPPath(request.path ?? "/")
     let http = configuration.server.http
 
+    // Cloudflare supplies this header on the loopback origin. Direct requests use
+    // their peer address, added by the transport rather than a request parameter.
+    let address =
+      request.header("CF-Connecting-IP") ?? request.header("X-Computer-MCP-Peer-Address")
+      ?? "unknown"
+    if GatewayOAuthHTTP.paths.contains(path) {
+      guard let oauth else { return gatewayHTTPError(statusCode: 404, code: "not_found") }
+      return await oauth.handle(request, address: address)
+    }
+
     if request.method.uppercased() == "OPTIONS" {
       return cors(.ok(headers: [:]), request: request)
     }
@@ -403,18 +433,40 @@ package actor GatewayHTTPApp {
       return cors(.error(statusCode: 404, .invalidRequest("Not Found")), request: request)
     }
 
-    if let authError = authenticator.authorizationError(for: request) {
+    let principalID: String
+    var oauthProfileID: GatewayProfileID?
+    if let authenticated = authenticator.authenticatedPrincipalID(for: request) {
+      principalID = authenticated
+    } else if let oauth {
+      do {
+        let active = try oauth.configuration(for: request)
+        if active != nil,
+          let grant = try await oauth.server.authenticate(
+            accessToken: HTTPBearerAuthenticator.accessToken(from: request) ?? "", address: address)
+        {
+          principalID = grant.principalID
+          oauthProfileID = grant.profileID
+        } else {
+          if active == nil { try await oauth.server.checkRate(address: address) }
+          try await oauth.server.authenticationFailed()
+          return cors(GatewayOAuthHTTP.unauthorized(active), request: request)
+        }
+      } catch let error as OAuthError {
+        return cors(GatewayOAuthHTTP.failure(error), request: request)
+      } catch { return gatewayHTTPError(statusCode: 503, code: "authentication_unavailable") }
+    } else if let authError = authenticator.authorizationError(for: request) {
       return cors(authError, request: request)
+    } else {
+      principalID = "http-anonymous:\(generation.uuidString)"
     }
-
-    let principalID =
-      authenticator.authenticatedPrincipalID(for: request)
-      ?? "http-anonymous:\(generation.uuidString)"
-    let response = await handleMCP(request, principalID: principalID)
+    let response = await handleMCP(
+      request, principalID: principalID, oauthProfileID: oauthProfileID)
     return cors(response, request: request)
   }
 
-  private func handleMCP(_ request: HTTPRequest, principalID: String) async -> HTTPResponse {
+  private func handleMCP(
+    _ request: HTTPRequest, principalID: String, oauthProfileID: GatewayProfileID?
+  ) async -> HTTPResponse {
     guard !isStopping, channel != nil else {
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
@@ -450,7 +502,8 @@ package actor GatewayHTTPApp {
     }
 
     if request.method.uppercased() == "POST", isInitializeRequest(request.body) {
-      return await createSessionAndHandle(request, principalID: principalID)
+      return await createSessionAndHandle(
+        request, principalID: principalID, oauthProfileID: oauthProfileID)
     }
 
     if sessionID != nil {
@@ -462,7 +515,9 @@ package actor GatewayHTTPApp {
     )
   }
 
-  private func createSessionAndHandle(_ request: HTTPRequest, principalID: String) async
+  private func createSessionAndHandle(
+    _ request: HTTPRequest, principalID: String, oauthProfileID: GatewayProfileID?
+  ) async
     -> HTTPResponse
   {
     let sessionID = UUID().uuidString
@@ -492,7 +547,8 @@ package actor GatewayHTTPApp {
     let controlSession: GatewayControlSession?
     let sessionRegistry: any GatewayAsyncToolServing
     do {
-      (sessionRegistry, controlSession) = try await makeSessionRegistry(principalID: principalID)
+      (sessionRegistry, controlSession) = try await makeSessionRegistry(
+        principalID: principalID, oauthProfileID: oauthProfileID)
     } catch {
       return gatewayHTTPError(statusCode: 500, code: "control_session_unavailable")
     }
@@ -527,14 +583,21 @@ package actor GatewayHTTPApp {
     return await transport.handleRequest(request)
   }
 
-  private func makeSessionRegistry(principalID: String) async throws
+  private func makeSessionRegistry(principalID: String, oauthProfileID: GatewayProfileID?)
+    async throws
     -> (any GatewayAsyncToolServing, GatewayControlSession?)
   {
     switch source {
     case .managed(let owner):
+      if let oauthProfileID {
+        guard let makeSession = owner.makeOAuthSession else { throw OAuthError.accessDenied }
+        let serving = try await makeSession(principalID, oauthProfileID)
+        return (serving, serving.session)
+      }
       let serving = try await owner.makeSession(principalID)
       return (serving, serving.session)
     case .registry(let registry):
+      guard oauthProfileID == nil else { throw OAuthError.accessDenied }
       let admitted: any GatewayAsyncToolServing
       if let existing = principalRegistries[principalID] {
         admitted = existing
@@ -787,6 +850,7 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
   let mcpPath: String
   let healthPath: String
   let authenticator: HTTPBearerAuthenticator
+  let asynchronousAuthentication: Bool
   let limits: GatewayHTTPLimits
 
   func rejection(for head: HTTPRequestHead) -> HTTPResponse? {
@@ -798,6 +862,7 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
     let method = head.method.rawValue.uppercased()
     if path != normalizedHTTPPath(mcpPath),
       path != normalizedHTTPPath(healthPath),
+      !GatewayOAuthHTTP.paths.contains(path),
       method != "OPTIONS"
     {
       return gatewayHTTPError(statusCode: 404, code: "not_found")
@@ -807,18 +872,20 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
       guard headerValues(named: HTTPHeaderName.authorization, in: head.headers).count <= 1 else {
         return gatewayHTTPError(statusCode: 400, code: "ambiguous_authorization")
       }
-      let request = HTTPRequest(
-        method: method,
-        headers: Dictionary(
-          head.headers.map { ($0.name, $0.value) },
-          uniquingKeysWith: { _, newest in newest }
-        ),
-        path: head.uri
-      )
-      if let authError = authenticator.authorizationError(for: request) {
-        return authError
+      if !asynchronousAuthentication {
+        let request = HTTPRequest(
+          method: method,
+          headers: Dictionary(
+            head.headers.map { ($0.name, $0.value) }, uniquingKeysWith: { _, value in value }),
+          path: head.uri)
+        if let rejection = authenticator.authorizationError(for: request) { return rejection }
       }
     }
+
+    guard headerValues(named: "Host", in: head.headers).count == 1,
+      headerValues(named: "CF-Connecting-IP", in: head.headers).count <= 1,
+      headerValues(named: HTTPHeaderName.authorization, in: head.headers).count <= 1
+    else { return gatewayHTTPError(statusCode: 400, code: "ambiguous_headers") }
 
     let contentLengths = headerValues(named: "Content-Length", in: head.headers)
     guard contentLengths.count <= 1 else {
@@ -853,9 +920,11 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
   }
 }
 
-internal struct HTTPBearerAuthenticator: Sendable {
-  private let authenticationRequired: Bool
-  private let expectedDigest: [UInt8]?
+/// Shared by ingress and the listener; the lock publishes credential rotation atomically.
+internal final class HTTPBearerAuthenticator: @unchecked Sendable {
+  private let lock = NSLock()
+  private var authenticationRequired: Bool
+  private var expectedDigest: [UInt8]?
 
   init(
     configuration: HTTPServerConfig,
@@ -870,10 +939,21 @@ internal struct HTTPBearerAuthenticator: Sendable {
   }
 
   func authorizationError(for request: HTTPRequest) -> HTTPResponse? {
+    lock.withLock { authorizationErrorLocked(for: request) }
+  }
+
+  func updateAccessToken(_ token: String?) {
+    lock.withLock {
+      authenticationRequired = true
+      expectedDigest = token.flatMap { $0.isEmpty ? nil : Self.digest($0) }
+    }
+  }
+
+  private func authorizationErrorLocked(for request: HTTPRequest) -> HTTPResponse? {
     guard authenticationRequired else {
       return nil
     }
-    let candidateDigest = Self.digest(accessToken(from: request) ?? "")
+    let candidateDigest = Self.digest(Self.accessToken(from: request) ?? "")
     guard let expectedDigest,
       Self.constantTimeEqual(candidateDigest, expectedDigest)
     else {
@@ -884,13 +964,15 @@ internal struct HTTPBearerAuthenticator: Sendable {
 
   /// A credential identifies one shared principal, regardless of the HTTP session or client name.
   func authenticatedPrincipalID(for request: HTTPRequest) -> String? {
-    guard authenticationRequired, authorizationError(for: request) == nil,
-      let expectedDigest
-    else { return nil }
-    return "credential:sha256:" + expectedDigest.map { String(format: "%02x", $0) }.joined()
+    lock.withLock {
+      guard authenticationRequired, authorizationErrorLocked(for: request) == nil,
+        let expectedDigest
+      else { return nil }
+      return "credential:sha256:" + expectedDigest.map { String(format: "%02x", $0) }.joined()
+    }
   }
 
-  private func accessToken(from request: HTTPRequest) -> String? {
+  static func accessToken(from request: HTTPRequest) -> String? {
     guard let header = request.header(HTTPHeaderName.authorization),
       header.lowercased().hasPrefix("bearer ")
     else {
@@ -997,7 +1079,7 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
         return
       }
       self.state = nil
-      let request = makeRequest(state)
+      let request = makeRequest(state, peerAddress: context.remoteAddress?.ipAddress)
       let writer = SendableChannelContext(context: context)
       let version = state.head.version
       Task {
@@ -1007,13 +1089,17 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
     }
   }
 
-  private func makeRequest(_ state: RequestState) -> HTTPRequest {
+  private func makeRequest(_ state: RequestState, peerAddress: String?) -> HTTPRequest {
     var body = state.body
     let data = Data(body.readBytes(length: body.readableBytes) ?? [])
     var headers: [String: String] = [:]
     for header in state.head.headers {
       headers[header.name] = header.value
     }
+    headers = headers.filter {
+      $0.key.caseInsensitiveCompare("X-Computer-MCP-Peer-Address") != .orderedSame
+    }
+    headers["X-Computer-MCP-Peer-Address"] = peerAddress ?? "unknown"
     return HTTPRequest(
       method: state.head.method.rawValue,
       headers: headers,

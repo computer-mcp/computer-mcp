@@ -258,15 +258,17 @@ struct OAuthAuthorizationTests {
   @Test func limitsAndFailureAuditAreBounded() async throws {
     let flow = Flow()
     for _ in 0..<Int(OAuthLimits.addressCapacity) {
-      try await flow.server.authenticationFailed(address: "one")
+      try await flow.server.checkRate(address: "one")
+      try await flow.server.authenticationFailed()
     }
     await #expect(throws: OAuthError.rateLimited) {
-      try await flow.server.authenticationFailed(address: "one")
+      try await flow.server.checkRate(address: "one")
     }
     #expect(flow.store.snapshot.audit.count == 1)
     try await flow.server.checkRate(address: "two")
     flow.clock.advance(OAuthLimits.failureAuditInterval)
-    try await flow.server.authenticationFailed(address: "one")
+    try await flow.server.checkRate(address: "one")
+    try await flow.server.authenticationFailed()
     #expect(flow.store.snapshot.audit.count == 2)
     var limiter = OAuthRateLimiter()
     for _ in 0..<Int(OAuthLimits.grantCapacity) {

@@ -2,13 +2,31 @@ import ComputerMCPCore
 import Crypto
 import Foundation
 
-package enum OAuthError: String, Error, Sendable {
+package enum OAuthError: String, Error, LocalizedError, AuditErrorClassifying, Sendable {
   case invalidRequest = "invalid_request"
   case invalidClient = "invalid_client"
   case invalidGrant = "invalid_grant"
   case accessDenied = "access_denied"
   case rateLimited = "temporarily_unavailable"
   case networkUnavailable = "network_unavailable"
+
+  package var errorDescription: String? {
+    switch self {
+    case .invalidRequest: "The OAuth request is invalid or no longer pending."
+    case .invalidClient: "The OAuth client could not be validated."
+    case .invalidGrant: "The OAuth code or token is invalid, expired, or already used."
+    case .accessDenied: "OAuth client access requires the local owner and a remote profile."
+    case .rateLimited: "The OAuth request limit was reached. Retry later."
+    case .networkUnavailable: "CIMD networking is unavailable on this platform."
+    }
+  }
+
+  package var auditClassification: (decision: AuditDecision, code: String)? {
+    (
+      self == .invalidRequest || self == .networkUnavailable ? .failed : .denied,
+      "oauth." + rawValue
+    )
+  }
 }
 
 package struct OAuthServerConfiguration: Equatable, Sendable {

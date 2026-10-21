@@ -12,7 +12,9 @@ package struct URLSessionCIMDFetcher: CIMDFetching {
       else { throw OAuthError.invalidClient }
       let started = Date()
       let port = url.port ?? 443
-      let destination = try await Self.resolve(host: host, port: port, timeout: timeout)
+      let destination = try await Self.resolve(
+        host: host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")), port: port,
+        timeout: timeout)
       guard CIMDAddressPolicy.isPublic(destination) else { throw OAuthError.invalidClient }
       try Task.checkCancellation()
       let remaining = timeout - Date().timeIntervalSince(started)
@@ -29,7 +31,7 @@ package struct URLSessionCIMDFetcher: CIMDFetching {
           }
           return channel.pipeline.addHandler(
             CIMDConnectHandler(
-              destination: destination, authority: authority, group: group, timeout: remaining))
+              destination: destination, authority: authority, timeout: remaining))
         }.bind(host: "127.0.0.1", port: 0).get()
       } catch {
         try? await group.shutdownGracefully()
@@ -89,6 +91,7 @@ package struct URLSessionCIMDFetcher: CIMDFetching {
         "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": proxyPort,
         "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": proxyPort,
         "ExceptionsList": [], "ExcludeSimpleHostnames": 0,
+        "ProxyAutoConfigEnable": 0, "ProxyAutoDiscoveryEnable": 0,
       ]
       let session = URLSession(
         configuration: configuration, delegate: CIMDSessionDelegate(), delegateQueue: nil)
@@ -177,18 +180,16 @@ package struct URLSessionCIMDFetcher: CIMDFetching {
     typealias OutboundOut = ByteBuffer
     private let destination: SocketAddress
     private let authority: String
-    private let group: EventLoopGroup
     private let timeout: TimeInterval
     private var buffer = ByteBuffer()
     private var connecting = false
     private var upstream: Channel?
 
     init(
-      destination: SocketAddress, authority: String, group: EventLoopGroup, timeout: TimeInterval
+      destination: SocketAddress, authority: String, timeout: TimeInterval
     ) {
       self.destination = destination
       self.authority = authority
-      self.group = group
       self.timeout = timeout
     }
 
@@ -215,6 +216,8 @@ package struct URLSessionCIMDFetcher: CIMDFetching {
       connecting = true
       let inbound = context.channel
       let bootstrap = ClientBootstrap(group: inbound.eventLoop)
+        .channelOption(ChannelOptions.autoRead, value: false)
+        .channelOption(ChannelOptions.maxMessagesPerRead, value: 1)
         .connectTimeout(.milliseconds(Int64(timeout * 1_000)))
         .channelInitializer { channel in
           channel.pipeline.addHandler(CIMDRelayHandler(peer: inbound))
@@ -249,8 +252,15 @@ package struct URLSessionCIMDFetcher: CIMDFetching {
     typealias InboundIn = ByteBuffer
     private let peer: Channel
     init(peer: Channel) { self.peer = peer }
+    func channelActive(context: ChannelHandlerContext) { context.read() }
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-      peer.writeAndFlush(unwrapInboundIn(data), promise: nil)
+      let channel = context.channel
+      peer.writeAndFlush(unwrapInboundIn(data)).whenComplete { result in
+        switch result {
+        case .success: channel.read()
+        case .failure: channel.close(promise: nil)
+        }
+      }
     }
     func channelInactive(context: ChannelHandlerContext) { peer.close(promise: nil) }
     func errorCaught(context: ChannelHandlerContext, error: any Error) {

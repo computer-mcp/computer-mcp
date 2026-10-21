@@ -1,3 +1,4 @@
+import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
@@ -9,7 +10,7 @@ import Crypto
 import Foundation
 import GRDB
 
-package final class GatewayDatabase: @unchecked Sendable {
+package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   private let connection: GatewayDatabaseConnection
   private var writer: any DatabaseWriter { connection.writer }
   private let profileChangeLock = NSLock()
@@ -36,6 +37,12 @@ package final class GatewayDatabase: @unchecked Sendable {
 
   package init(connection: GatewayDatabaseConnection) {
     self.connection = connection
+  }
+
+  package func oauthTransaction<Result>(
+    _ body: (any OAuthStoreTransaction) throws -> Result
+  ) throws -> Result {
+    try writer.write { try body(GatewayOAuthTransaction(database: $0)) }
   }
 
   /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in

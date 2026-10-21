@@ -212,6 +212,7 @@ package actor OAuthAuthorizationServer {
   }
 
   package func authenticate(accessToken: String, address: String) throws -> OAuthGrant? {
+    try checkRate(address: address)
     let now = clock()
     return try store.oauthTransaction { transaction in
       guard let token = try transaction.token(digest: OAuthSecret.digest(accessToken)),
@@ -220,7 +221,7 @@ package actor OAuthAuthorizationServer {
         var grant = try transaction.grant(id: token.grantID), grant.revokedAt == nil,
         grant.tunnelID == configuration.tunnelID, grant.resource == configuration.resource
       else { return nil }
-      guard limiter.allow(address: address, grantID: grant.id, now: now) else {
+      guard limiter.allowGrant(grant.id, now: now) else {
         throw OAuthError.rateLimited
       }
       grant.lastUsedAt = now
@@ -271,7 +272,7 @@ package actor OAuthAuthorizationServer {
   }
 
   /// One audit row per interval summarizes failed credentials, never their values.
-  package func authenticationFailed(address: String) throws {
+  package func authenticationFailed() throws {
     let now = clock()
     if lastFailureAudit == nil
       || now.timeIntervalSince(lastFailureAudit!) >= OAuthLimits.failureAuditInterval
@@ -280,7 +281,6 @@ package actor OAuthAuthorizationServer {
       try store.oauthTransaction { try $0.audit(event) }
       lastFailureAudit = now
     }
-    try checkRate(address: address)
   }
 
   private func liveGrant(_ id: String, clientID: String, transaction: any OAuthStoreTransaction)

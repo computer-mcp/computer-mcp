@@ -15,14 +15,15 @@ final class GatewayDatabaseSchemaTests {
 
   deinit { try? FileManager.default.removeItem(at: directory) }
 
-  @Test func newDatabaseMatchesTheSchemaBaseline() throws {
-    let connection = try GatewayDatabaseConnection(inMemory: ())
+  @Test func initialMigrationMatchesTheSchemaBaseline() throws {
+    let writer = try DatabaseQueue()
+    try GatewayDatabaseConnection.migrator.migrate(writer, upTo: "gateway-initial")
     let url = try #require(
       Bundle.module.url(
         forResource: "gateway-schema", withExtension: "json", subdirectory: "Fixtures"))
     let expected = try JSONDecoder().decode([SchemaEntry].self, from: Data(contentsOf: url))
-    #expect(try Self.schema(connection.writer) == expected)
-    let ledger = try connection.writer.read {
+    #expect(try Self.schema(writer) == expected)
+    let ledger = try writer.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations")
     }
     #expect(ledger == ["gateway-initial"])
@@ -31,6 +32,39 @@ final class GatewayDatabaseSchemaTests {
   @Test func reopeningAppliesNothing() throws {
     let first = try Self.schema(GatewayDatabaseConnection(path: path).writer)
     #expect(try Self.schema(GatewayDatabaseConnection(path: path).writer) == first)
+  }
+
+  @Test func oauthMigrationPreservesTheInitialSchemaAndRows() throws {
+    let earlier = try DatabaseQueue(path: path)
+    try GatewayDatabaseConnection.migrator.migrate(earlier, upTo: "gateway-initial")
+    let before = try Self.schema(earlier)
+    try earlier.write {
+      try $0.execute(
+        sql: "INSERT INTO runtimeSettings VALUES ('fixture', 'preserved', '2026-10-21')")
+    }
+    try earlier.close()
+    let connection = try GatewayDatabaseConnection(path: path)
+    let after = try Self.schema(connection.writer)
+    let oldNames = Set(before.map(\.name))
+    #expect(after.filter { oldNames.contains($0.name) } == before)
+    let additions = after.filter { !oldNames.contains($0.name) }
+    #expect(
+      Set(additions.filter { $0.type == "table" }.map(\.name)) == [
+        "oauthAuthorizationRequests", "oauthGrants", "oauthAuthorizationCodes", "oauthTokens",
+      ])
+    try connection.writer.read { (database: Database) throws in
+      #expect(
+        try String.fetchAll(database, sql: "SELECT identifier FROM grdb_migrations ORDER BY rowid")
+          == ["gateway-initial", "remote-oauth"])
+      #expect(
+        try String.fetchOne(
+          database, sql: "SELECT value FROM runtimeSettings WHERE key = 'fixture'") == "preserved")
+      #expect(
+        try database.columns(in: "oauthTokens").map(\.name) == [
+          "digest", "grantID", "kind", "expiresAt", "payloadJSON",
+        ])
+      #expect(try Row.fetchAll(database, sql: "PRAGMA foreign_key_list(oauthTokens)").count == 1)
+    }
   }
 
   @Test func databaseWithEarlierMigrationsIsRefusedUnchanged() throws {

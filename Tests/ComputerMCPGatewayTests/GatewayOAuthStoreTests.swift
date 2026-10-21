@@ -101,7 +101,10 @@ struct GatewayOAuthStoreTests {
       }
       let audit = try String.fetchAll(
         database, sql: "SELECT capabilityID FROM auditEvents ORDER BY occurredAt, rowid")
-      #expect(audit.suffix(2) == ["oauth.refresh_token_reuse", "oauth.grant_revoked"])
+      #expect(
+        audit.suffix(3) == [
+          "oauth.refresh_token_reuse", "oauth.grant_revoked", "oauth.sessions_ended",
+        ])
     }
   }
 }

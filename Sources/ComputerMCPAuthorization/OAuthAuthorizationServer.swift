@@ -8,16 +8,24 @@ package actor OAuthAuthorizationServer {
   private let clock: @Sendable () -> Date
   private var limiter = OAuthRateLimiter()
   private var lastFailureAudit: Date?
+  private var metadataFetches: [String: Int] = [:]
+  private var endSessions: @Sendable (String) async -> Void
 
   package init(
     configuration: OAuthServerConfiguration, store: any OAuthStore,
     identifier: any OAuthClientIdentifying = CIMDClientIdentifier(),
-    clock: @escaping @Sendable () -> Date = { Date() }
+    clock: @escaping @Sendable () -> Date = { Date() },
+    endSessions: @escaping @Sendable (String) async -> Void = { _ in }
   ) {
     self.configuration = configuration
     self.store = store
     self.identifier = identifier
     self.clock = clock
+    self.endSessions = endSessions
+  }
+
+  package func setSessionRevoker(_ endSessions: @escaping @Sendable (String) async -> Void) {
+    self.endSessions = endSessions
   }
 
   package func checkRate(address: String) throws {
@@ -26,19 +34,32 @@ package actor OAuthAuthorizationServer {
 
   package func authorize(
     _ fields: [String: String], address: String,
-    clientAllowlist: [String]? = nil
+    clientAllowlist: [String]? = nil, rateChecked: Bool = false
   ) async throws -> OAuthPairing {
-    try checkRate(address: address)
-    guard fields["response_type"] == "code", let clientID = fields["client_id"],
+    if !rateChecked { try checkRate(address: address) }
+    guard let responseType = fields["response_type"], !responseType.isEmpty,
+      let clientID = fields["client_id"],
       let redirectURI = fields["redirect_uri"], let state = fields["state"], !state.isEmpty,
       state.utf8.count <= 2_048, let challenge = fields["code_challenge"], challenge.count == 43,
       challenge.utf8.allSatisfy({ Self.base64URLCharacters.contains($0) }),
-      fields["code_challenge_method"] == "S256", fields["resource"] == configuration.resource,
-      fields["scope"] == nil || fields["scope"] == "mcp"
+      fields["code_challenge_method"] == "S256", fields["resource"] == configuration.resource
     else { throw OAuthError.invalidRequest }
+    try reserveMetadataFetch(address: address)
+    defer {
+      metadataFetches[address, default: 1] -= 1
+      if metadataFetches[address] == 0 { metadataFetches.removeValue(forKey: address) }
+    }
+    try Task.checkCancellation()
     try await identifier.identify(
       clientID: clientID, redirectURI: redirectURI,
       allowlist: clientAllowlist ?? configuration.clientAllowlist)
+    try Task.checkCancellation()
+    if responseType != "code" || (fields["scope"] != nil && fields["scope"] != "mcp") {
+      throw OAuthAuthorizationRedirect(
+        location: try OAuthCallback.location(
+          redirectURI: redirectURI, state: state, issuer: configuration.issuer,
+          error: responseType != "code" ? .unsupportedResponseType : .invalidScope))
+    }
     let now = clock()
     let statusToken = OAuthSecret.generate()
     return try store.oauthTransaction { transaction in
@@ -59,11 +80,31 @@ package actor OAuthAuthorizationServer {
         statusDigest: OAuthSecret.digest(statusToken), tunnelID: configuration.tunnelID,
         clientID: clientID, redirectURI: redirectURI, state: state, codeChallenge: challenge,
         resource: configuration.resource, scope: "mcp", createdAt: now,
-        expiresAt: now.addingTimeInterval(OAuthLimits.requestLifetime), status: .pending)
+        expiresAt: now.addingTimeInterval(OAuthLimits.requestLifetime), status: .pending,
+        clientAddress: address)
       try transaction.save(request)
       try transaction.audit(audit("authorization_requested", now: now))
       return OAuthPairing(request: request, statusToken: statusToken)
     }
+  }
+
+  private func reserveMetadataFetch(address: String) throws {
+    guard metadataFetches[address, default: 0] < OAuthLimits.maxMetadataFetchesPerAddress,
+      metadataFetches.values.reduce(0, +) < OAuthLimits.maxMetadataFetchesPerTunnel
+    else { throw OAuthError.rateLimited }
+    try store.oauthTransaction { transaction in
+      let now = clock()
+      try expireRequests(transaction, now: now)
+      try transaction.prune(before: now)
+      let outstanding = try transaction.requests(tunnelID: configuration.tunnelID)
+        .filter { $0.status == .pending || $0.status == .approved }
+      guard
+        outstanding.count + metadataFetches.values.reduce(0, +) < OAuthLimits.maxPendingRequests,
+        outstanding.filter({ $0.clientAddress == address }).count
+          + metadataFetches[address, default: 0] < OAuthLimits.maxPendingRequestsPerAddress
+      else { throw OAuthError.rateLimited }
+    }
+    metadataFetches[address, default: 0] += 1
   }
 
   package func pendingRequests(approver: GatewayCallerKind) throws -> [OAuthAuthorizationRequest] {
@@ -123,8 +164,10 @@ package actor OAuthAuthorizationServer {
     }
   }
 
-  package func status(statusToken: String, address: String) throws -> OAuthPairingStatus {
-    try checkRate(address: address)
+  package func status(statusToken: String, address: String, rateChecked: Bool = false) throws
+    -> OAuthPairingStatus
+  {
+    if !rateChecked { try checkRate(address: address) }
     let now = clock()
     return try store.oauthTransaction { transaction in
       try expireRequests(transaction, now: now)
@@ -139,7 +182,7 @@ package actor OAuthAuthorizationServer {
       case .approved:
         guard let id = request.grantID, let grant = try transaction.grant(id: id),
           grant.revokedAt == nil
-        else { return .redirect(try redirect(request, error: "access_denied")) }
+        else { return .redirect(try redirect(request, error: .accessDenied)) }
         guard limiter.allowGrant(id, now: now) else { throw OAuthError.rateLimited }
         let code = OAuthSecret.generate()
         try transaction.save(
@@ -153,19 +196,31 @@ package actor OAuthAuthorizationServer {
         try transaction.save(request)
         return .redirect(try redirect(request, code: code))
       case .denied, .expired, .delivered:
-        return .redirect(try redirect(request, error: "access_denied"))
+        return .redirect(try redirect(request, error: .accessDenied))
       }
     }
   }
 
-  package func token(_ fields: [String: String], address: String) throws -> OAuthTokenResponse {
-    try checkRate(address: address)
-    guard let clientID = fields["client_id"], !clientID.isEmpty, fields["client_secret"] == nil
-    else { throw OAuthError.invalidClient }
-    guard fields["resource"] == configuration.resource,
-      fields["scope"] == nil || fields["scope"] == "mcp"
+  package func token(_ fields: [String: String], address: String, rateChecked: Bool = false)
+    async throws -> OAuthTokenResponse
+  {
+    if !rateChecked { try checkRate(address: address) }
+    guard fields.values.allSatisfy({ !$0.isEmpty }),
+      let clientID = fields["client_id"], let grantType = fields["grant_type"],
+      fields["resource"] != nil
     else { throw OAuthError.invalidRequest }
+    guard fields["client_secret"] == nil else { throw OAuthError.invalidClient }
+    guard ["authorization_code", "refresh_token"].contains(grantType) else {
+      throw OAuthError.unsupportedGrantType
+    }
+    let required =
+      grantType == "authorization_code"
+      ? ["code", "redirect_uri", "code_verifier"] : ["refresh_token"]
+    guard required.allSatisfy({ fields[$0] != nil }) else { throw OAuthError.invalidRequest }
+    guard fields["scope"] == nil || fields["scope"] == "mcp" else { throw OAuthError.invalidScope }
+    guard fields["resource"] == configuration.resource else { throw OAuthError.invalidGrant }
     let now = clock()
+    var revokedGrant: OAuthGrant?
     // Protocol errors may commit security state (notably refresh reuse revocation).
     let result: Result<OAuthTokenResponse, OAuthError> = try store.oauthTransaction { transaction in
       switch fields["grant_type"] {
@@ -196,6 +251,7 @@ package actor OAuthAuthorizationServer {
           try transaction.save(grant)
           try transaction.audit(audit("refresh_token_reuse", grant: grant, now: now, denied: true))
           try transaction.audit(audit("grant_revoked", grant: grant, now: now))
+          revokedGrant = grant
           return .failure(.invalidGrant)
         }
         guard limiter.allowGrant(grant.id, now: now) else { return .failure(.rateLimited) }
@@ -205,9 +261,10 @@ package actor OAuthAuthorizationServer {
         return .success(
           try issueTokens(
             grant: &grant, transaction: transaction, now: now, action: "tokens_refreshed"))
-      default: return .failure(.invalidRequest)
+      default: return .failure(.unsupportedGrantType)
       }
     }
+    if let revokedGrant { try await endGrantSessions(revokedGrant, caller: .cloudflareTunnel) }
     return try result.get()
   }
 
@@ -230,12 +287,23 @@ package actor OAuthAuthorizationServer {
     }
   }
 
-  package func revoke(_ fields: [String: String], address: String) throws {
-    try checkRate(address: address)
+  package func grantIsLive(id: String) throws -> Bool {
+    try store.oauthTransaction {
+      guard let grant = try $0.grant(id: id) else { return false }
+      return grant.revokedAt == nil && grant.tunnelID == configuration.tunnelID
+        && grant.resource == configuration.resource
+    }
+  }
+
+  package func revoke(_ fields: [String: String], address: String, rateChecked: Bool = false)
+    async throws
+  {
+    if !rateChecked { try checkRate(address: address) }
     guard let clientID = fields["client_id"], !clientID.isEmpty, fields["client_secret"] == nil
     else { throw OAuthError.invalidClient }
     guard let value = fields["token"], !value.isEmpty else { throw OAuthError.invalidRequest }
     let now = clock()
+    var revokedGrant: OAuthGrant?
     try store.oauthTransaction { transaction in
       guard var token = try transaction.token(digest: OAuthSecret.digest(value)),
         var grant = try liveGrant(token.grantID, clientID: clientID, transaction: transaction)
@@ -248,8 +316,10 @@ package actor OAuthAuthorizationServer {
         grant.revokedAt = now
         try transaction.save(grant)
         try transaction.audit(audit("grant_revoked", grant: grant, now: now))
+        revokedGrant = grant
       }
     }
+    if let revokedGrant { try await endGrantSessions(revokedGrant, caller: .cloudflareTunnel) }
   }
 
   package func grants(approver: GatewayCallerKind) throws -> [OAuthGrant] {
@@ -257,10 +327,10 @@ package actor OAuthAuthorizationServer {
     return try store.oauthTransaction { try $0.grants(tunnelID: configuration.tunnelID) }
   }
 
-  package func revokeGrant(id: String, approver: GatewayCallerKind) throws {
+  package func revokeGrant(id: String, approver: GatewayCallerKind) async throws {
     try requireLocal(approver)
     let now = clock()
-    try store.oauthTransaction { transaction in
+    let grant = try store.oauthTransaction { transaction in
       guard var grant = try transaction.grant(id: id), grant.tunnelID == configuration.tunnelID
       else { throw OAuthError.invalidRequest }
       if grant.revokedAt == nil {
@@ -268,6 +338,15 @@ package actor OAuthAuthorizationServer {
         try transaction.save(grant)
         try transaction.audit(audit("grant_revoked", grant: grant, caller: approver, now: now))
       }
+      return grant
+    }
+    try await endGrantSessions(grant, caller: approver)
+  }
+
+  private func endGrantSessions(_ grant: OAuthGrant, caller: GatewayCallerKind) async throws {
+    await endSessions(grant.principalID)
+    try store.oauthTransaction {
+      try $0.audit(audit("sessions_ended", grant: grant, caller: caller, now: clock()))
     }
   }
 
@@ -325,21 +404,11 @@ package actor OAuthAuthorizationServer {
   }
 
   private func redirect(
-    _ request: OAuthAuthorizationRequest, code: String? = nil, error: String? = nil
+    _ request: OAuthAuthorizationRequest, code: String? = nil, error: OAuthError? = nil
   ) throws -> String {
-    guard var url = URLComponents(string: request.redirectURI) else {
-      throw OAuthError.invalidRequest
-    }
-    var items = url.queryItems ?? []
-    items += [
-      URLQueryItem(name: "state", value: request.state),
-      URLQueryItem(name: "iss", value: configuration.issuer),
-    ]
-    if let code { items.append(URLQueryItem(name: "code", value: code)) }
-    if let error { items.append(URLQueryItem(name: "error", value: error)) }
-    url.queryItems = items
-    guard let result = url.string else { throw OAuthError.invalidRequest }
-    return result
+    try OAuthCallback.location(
+      redirectURI: request.redirectURI, state: request.state, issuer: configuration.issuer,
+      code: code, error: error)
   }
 
   private func requireLocal(_ caller: GatewayCallerKind) throws {

@@ -123,7 +123,8 @@ to disambiguate codes across connections. Approval defaults to
 `cloudflare-observe`; `--profile` must allow `cloudflare-tunnel` and cannot be
 `local-admin`. The grant acts as `oauth:<grant ID>` with that profile. Full
 Access still requires separate local session consent. `clients revoke-grant`
-revokes OAuth access; `clients revoke` manages saved Full Access trust.
+revokes OAuth access and ends that grant's active gateway sessions and open
+streams; `clients revoke` manages saved Full Access trust.
 
 Access tokens last one hour. Refresh tokens rotate on every use and expire
 after 30 idle days. Reusing a rotated refresh token revokes the grant. The
@@ -147,13 +148,39 @@ receive 404. Pairing and status responses are `no-store` with CSP
 `frame-ancestors 'none'`; token and revocation responses are also `no-store`.
 An unauthenticated public `/mcp` request receives 401 with
 `WWW-Authenticate: Bearer resource_metadata="https://<hostname>/.well-known/oauth-protected-resource/mcp", scope="mcp"`.
-Protocol errors use `invalid_request`, `invalid_client` or `invalid_grant`.
+At the request head, `/mcp` authentication pauses body reads and OAuth routes
+consume the address rate allowance. A failed credential gets the 401 challenge
+and a closed connection. OAuth-disabled listeners use synchronous Bearer
+authentication at the head. Headers and OAuth bodies are limited to 16 KiB;
+authenticated MCP bodies to 8 MiB. Declared or streamed overflow returns 413 and
+closes. The body deadline is 15 seconds from the head; the initial head has the
+same deadline. Timeout returns 408 and closes. Each listener caps connections
+awaiting authentication at 32, returning 503 and closing excess sockets. Public
+OAuth connections keep their slot until MCP authentication or disconnect and
+have a 15-second idle deadline.
+
+Each tunnel allows 128 pending or approved pairings, at most three per client
+address. CIMD admission is reserved before fetching: one fetch per address, four
+per tunnel. Exceeding either quota returns 429 `temporarily_unavailable` without
+a fetch; failures and cancellations free the reservation.
+
+Token errors return 400: `invalid_request` for missing, empty or duplicate
+parameters or unsupported content types; `unsupported_grant_type` for an unknown
+grant; `invalid_scope` for scopes other than `mcp`; `invalid_grant` for wrong,
+expired, reused or mismatched codes, refresh tokens, client IDs, redirect URIs,
+PKCE verifiers or resources. Unsupported client authentication returns 401
+`invalid_client`. Authorization redirects with `unsupported_response_type` or
+`invalid_scope` only after validating the registered callback. Callback values
+preserve literal `+` as `%2B` and spaces as `%20`, retaining the existing query.
+
 Address buckets allow burst 60, refill one/second; grant buckets allow burst
 30, refill one/two seconds. Rate rejection returns 429 with `Retry-After`.
 At most 4,096 limiter keys are retained per listener. Failed Bearer audit emits
 at most one summary per minute. Audit also records authorization requests,
 approvals, denials, expiry, token issuance/refresh/revocation, refresh reuse and
-grant revocation.
+grant revocation and completion of session/stream termination
+(`oauth.sessions_ended`). Refresh-token reuse and refresh-token revocation also
+terminate the grant's sessions and streams.
 
 ## Lifecycle and verification
 

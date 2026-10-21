@@ -10,47 +10,54 @@ package struct GatewayOAuthHTTP: Sendable {
     "/oauth/token", "/oauth/revoke",
   ]
   package let server: OAuthAuthorizationServer
+  let sessions: GatewayOAuthSessions
   private let currentConfiguration: @Sendable () throws -> OAuthServerConfiguration?
 
   package init(
     server: OAuthAuthorizationServer,
+    sessions: GatewayOAuthSessions = GatewayOAuthSessions(),
     currentConfiguration: (@Sendable () throws -> OAuthServerConfiguration?)? = nil
   ) {
     self.server = server
+    self.sessions = sessions
     self.currentConfiguration = currentConfiguration ?? { server.configuration }
   }
 
   func configuration(for request: HTTPRequest) throws -> OAuthServerConfiguration? {
-    guard let configuration = try currentConfiguration(),
-      configuration.issuer == server.configuration.issuer,
+    guard let configuration = try enabledConfiguration(),
       request.header("Host")?.lowercased() == configuration.hostname.lowercased()
     else { return nil }
     return configuration
   }
 
-  func handle(_ request: HTTPRequest, address: String) async -> HTTPResponse {
-    var rateChecked = false
+  func enabledConfiguration() throws -> OAuthServerConfiguration? {
+    guard let configuration = try currentConfiguration(),
+      configuration.issuer == server.configuration.issuer
+    else { return nil }
+    return configuration
+  }
+
+  func handle(_ request: HTTPRequest, address: String, rateChecked: Bool = false) async
+    -> HTTPResponse
+  {
     do {
       guard let configuration = try configuration(for: request) else {
         return Self.response(["error": "not_found"], status: 404)
       }
       let path = normalizedHTTPPath(request.path ?? "/")
       let method = request.method.uppercased()
+      if !rateChecked { try await server.checkRate(address: address) }
       switch (method, path) {
       case ("GET", "/.well-known/oauth-protected-resource/mcp"),
         ("GET", "/.well-known/oauth-protected-resource"):
-        rateChecked = true
-        try await server.checkRate(address: address)
         return Self.response(configuration.protectedResourceMetadata)
       case ("GET", "/.well-known/oauth-authorization-server"):
-        rateChecked = true
-        try await server.checkRate(address: address)
         return Self.response(configuration.authorizationServerMetadata)
       case ("GET", "/oauth/authorize"):
         let fields = try Self.query(request)
-        rateChecked = true
         let pairing = try await server.authorize(
-          fields, address: address, clientAllowlist: configuration.clientAllowlist)
+          fields, address: address, clientAllowlist: configuration.clientAllowlist,
+          rateChecked: true)
         return .data(
           Data(Self.page(pairing).utf8),
           headers: Self.secureHeaders(contentType: "text/html; charset=utf-8"))
@@ -59,40 +66,35 @@ package struct GatewayOAuthHTTP: Sendable {
         guard let token = fields["request"], token.count == 43 else {
           throw OAuthError.invalidRequest
         }
-        rateChecked = true
-        switch try await server.status(statusToken: token, address: address) {
+        switch try await server.status(statusToken: token, address: address, rateChecked: true) {
         case .pending: return Self.response(["status": "pending"])
         case .redirect(let target):
           return Self.response(["status": "complete", "redirect_uri": target])
         }
       case ("POST", "/oauth/token"), ("POST", "/oauth/revoke"):
-        guard request.header("Authorization") == nil,
+        guard
           request.header("Content-Type")?.lowercased().split(separator: ";").first?
             .trimmingCharacters(in: .whitespaces) == "application/x-www-form-urlencoded",
           let body = request.body, let text = String(data: body, encoding: .utf8)
         else { throw OAuthError.invalidRequest }
+        guard request.header("Authorization") == nil else { throw OAuthError.invalidClient }
         let fields = try Self.form(text)
-        rateChecked = true
         if path == "/oauth/token" {
-          return Self.response(try await server.token(fields, address: address))
+          return Self.response(try await server.token(fields, address: address, rateChecked: true))
         }
-        try await server.revoke(fields, address: address)
+        try await server.revoke(fields, address: address, rateChecked: true)
         return .data(Data(), headers: Self.secureHeaders(contentType: "application/json"))
       default:
-        rateChecked = true
-        try await server.checkRate(address: address)
         return Self.response(
           ["error": "invalid_request"], status: 405,
           extraHeaders: [
             "Allow": path == "/oauth/token" || path == "/oauth/revoke" ? "POST" : "GET"
           ])
       }
+    } catch let redirect as OAuthAuthorizationRedirect {
+      return Self.response(
+        [String: String](), status: 302, extraHeaders: ["Location": redirect.location])
     } catch let error as OAuthError {
-      if !rateChecked {
-        do { try await server.checkRate(address: address) } catch let rateError as OAuthError {
-          return Self.failure(rateError)
-        } catch { return Self.response(["error": "server_error"], status: 503) }
-      }
       return Self.failure(error)
     } catch {
       return Self.response(["error": "server_error"], status: 503)
@@ -110,8 +112,10 @@ package struct GatewayOAuthHTTP: Sendable {
 
   static func failure(_ error: OAuthError) -> HTTPResponse {
     response(
-      ["error": error.rawValue], status: error == .rateLimited ? 429 : 400,
-      extraHeaders: error == .rateLimited ? ["Retry-After": "2"] : [:])
+      ["error": error.rawValue],
+      status: error == .rateLimited ? 429 : error == .invalidClient ? 401 : 400,
+      extraHeaders: error == .rateLimited
+        ? ["Retry-After": "2"] : error == .invalidClient ? ["WWW-Authenticate": "Bearer"] : [:])
   }
 
   private static func response<T: Encodable>(
@@ -139,7 +143,9 @@ package struct GatewayOAuthHTTP: Sendable {
 
   /// Duplicate parameters and malformed encodings have no unambiguous OAuth meaning.
   static func form(_ text: String) throws -> [String: String] {
-    guard text.utf8.count <= 16 * 1_024 else { throw OAuthError.invalidRequest }
+    guard text.utf8.count <= GatewayHTTPLimits.v1.maxOAuthBodyBytes else {
+      throw OAuthError.invalidRequest
+    }
     var fields: [String: String] = [:]
     for item in text.split(separator: "&", omittingEmptySubsequences: false) {
       let pair = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)

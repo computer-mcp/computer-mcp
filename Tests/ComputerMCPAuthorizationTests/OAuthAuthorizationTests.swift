@@ -85,7 +85,7 @@ struct OAuthAuthorizationTests {
     let (_, code) = try await flow.approve()
     var exchange = flow.codeFields(code)
     exchange["resource"] = "https://other.example/mcp"
-    await #expect(throws: OAuthError.invalidRequest) {
+    await #expect(throws: OAuthError.invalidGrant) {
       try await flow.server.token(exchange, address: "browser")
     }
     let tokens = try await flow.exchange(code)
@@ -97,7 +97,7 @@ struct OAuthAuthorizationTests {
       try await other.authenticate(accessToken: tokens.accessToken, address: "browser") == nil)
     var refresh = flow.refreshFields(tokens.refreshToken)
     refresh["resource"] = "https://other.example/mcp"
-    await #expect(throws: OAuthError.invalidRequest) {
+    await #expect(throws: OAuthError.invalidGrant) {
       try await flow.server.token(refresh, address: "browser")
     }
   }
@@ -118,8 +118,8 @@ struct OAuthAuthorizationTests {
       try await flow.refresh(replacement.refreshToken)
     }
     #expect(
-      flow.store.snapshot.audit.suffix(2).map(\.capabilityID) == [
-        "oauth.refresh_token_reuse", "oauth.grant_revoked",
+      flow.store.snapshot.audit.suffix(3).map(\.capabilityID) == [
+        "oauth.refresh_token_reuse", "oauth.grant_revoked", "oauth.sessions_ended",
       ])
   }
 
@@ -255,6 +255,85 @@ struct OAuthAuthorizationTests {
     await #expect(throws: OAuthError.invalidGrant) { try await flow.refresh(tokens.refreshToken) }
   }
 
+  @Test func pairingQuotaLeavesRoomForOtherAddresses() async throws {
+    let flow = Flow()
+    var requests: [OAuthPairing] = []
+    for _ in 0..<OAuthLimits.maxPendingRequestsPerAddress {
+      requests.append(try await flow.server.authorize(flow.authorizeFields, address: "one"))
+    }
+    _ = try await flow.server.approve(
+      pairingCode: requests[0].request.pairingCode, approver: .localApp)
+    await #expect(throws: OAuthError.rateLimited) {
+      try await flow.server.authorize(flow.authorizeFields, address: "one")
+    }
+    _ = try await flow.server.authorize(flow.authorizeFields, address: "two")
+    try await flow.server.deny(pairingCode: requests[1].request.pairingCode, approver: .localApp)
+    _ = try await flow.server.authorize(flow.authorizeFields, address: "one")
+    flow.clock.advance(OAuthLimits.requestLifetime)
+    _ = try await flow.server.authorize(flow.authorizeFields, address: "one")
+  }
+
+  @Test func metadataFetchAdmissionIsReservedBeforeSuspension() async throws {
+    let identifier = PausedIdentifier()
+    let flow = Flow(identifier: identifier)
+    let tasks = (0..<OAuthLimits.maxMetadataFetchesPerTunnel).map { index in
+      Task { try await flow.server.authorize(flow.authorizeFields, address: "address-\(index)") }
+    }
+    await identifier.waitForCalls(4)
+    await #expect(throws: OAuthError.rateLimited) {
+      try await flow.server.authorize(flow.authorizeFields, address: "address-0")
+    }
+    await #expect(throws: OAuthError.rateLimited) {
+      try await flow.server.authorize(flow.authorizeFields, address: "another")
+    }
+    #expect(await identifier.calls == 4)
+    await identifier.finish()
+    for task in tasks { _ = try await task.value }
+    #expect(flow.store.snapshot.requests.count == 4)
+  }
+
+  @Test(arguments: [false, true])
+  func metadataReservationsAreReleasedAfterFailureAndCancellation(cancel: Bool) async throws {
+    let identifier = PausedIdentifier()
+    let flow = Flow(identifier: identifier)
+    let first = Task { try await flow.server.authorize(flow.authorizeFields, address: "same") }
+    await identifier.waitForCalls(1)
+    if cancel { first.cancel() } else { await identifier.finish(error: .invalidClient) }
+    switch await first.result {
+    case .success: Issue.record("Failed fetch created a pairing")
+    case .failure(let error):
+      if cancel {
+        #expect(error is CancellationError)
+      } else {
+        #expect(error as? OAuthError == .invalidClient)
+      }
+    }
+    let next = Task { try await flow.server.authorize(flow.authorizeFields, address: "same") }
+    await identifier.waitForCalls(2)
+    await identifier.finish()
+    _ = try await next.value
+    #expect(flow.store.snapshot.requests.count == 1)
+  }
+
+  @Test(arguments: ["+", "&", "=", "%", " ", "你好 café", "+&=% 你好"])
+  func callbackParametersSurviveAFormDecoder(state: String) throws {
+    let existing = "fixed=a%2Bb&empty="
+    let callback = try OAuthCallback.location(
+      redirectURI: "https://consumer.example/callback?" + existing,
+      state: state, issuer: "https://gateway.example", code: "code+&=% 你好", error: .invalidScope)
+    let query = try #require(URLComponents(string: callback)?.percentEncodedQuery)
+    #expect(query.hasPrefix(existing + "&"))
+    let fields = try decodeCallbackForm(query)
+    #expect(fields["fixed"] == "a+b")
+    #expect(fields["empty"] == "")
+    #expect(fields["state"] == state)
+    #expect(fields["code"] == "code+&=% 你好")
+    #expect(fields["iss"] == "https://gateway.example")
+    #expect(fields["error"] == "invalid_scope")
+    #expect(fields["error_description"] == OAuthError.invalidScope.errorDescription)
+    #expect(!query.contains("+"))
+  }
+
   @Test func limitsAndFailureAuditAreBounded() async throws {
     let flow = Flow()
     for _ in 0..<Int(OAuthLimits.addressCapacity) {
@@ -320,11 +399,12 @@ private struct Flow: Sendable {
     tunnelID: "tunnel", tunnelName: "named",
     hostname: "gateway.example", clientAllowlist: ["client.example"])
   let server: OAuthAuthorizationServer
-  init() {
+  init(identifier: (any OAuthClientIdentifying)? = nil) {
     server = OAuthAuthorizationServer(
       configuration: configuration, store: store,
-      identifier: CIMDClientIdentifier(
-        fetcher: FixtureFetcher(clientID: clientID, redirects: [redirectURI])),
+      identifier: identifier
+        ?? CIMDClientIdentifier(
+          fetcher: FixtureFetcher(clientID: clientID, redirects: [redirectURI])),
       clock: { [clock] in clock.now })
   }
   func newServer() -> OAuthAuthorizationServer {
@@ -414,4 +494,54 @@ private final class MemoryTransaction: OAuthStoreTransaction {
   func save(_ token: OAuthToken) throws { state.tokens[token.digest] = token }
   func audit(_ event: AuditEvent) throws { state.audit.append(event) }
   func prune(before: Date) throws {}
+}
+
+private func decodeCallbackForm(_ query: String) throws -> [String: String] {
+  var result: [String: String] = [:]
+  for part in query.split(separator: "&") {
+    let pair = part.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+    let name = try #require(
+      String(pair[0]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding)
+    let value = try #require(
+      String(pair[1]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding)
+    result[name] = value
+  }
+  return result
+}
+
+private actor PausedIdentifier: OAuthClientIdentifying {
+  private(set) var calls = 0
+  private var pending: [UUID: CheckedContinuation<Void, any Error>] = [:]
+  private var observers: [(Int, CheckedContinuation<Void, Never>)] = []
+  func identify(clientID: String, redirectURI: String, allowlist: [String]) async throws {
+    let id = UUID()
+    calls += 1
+    for (count, observer) in observers where calls >= count { observer.resume() }
+    observers.removeAll { calls >= $0.0 }
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, any Error>) in
+        if Task.isCancelled {
+          continuation.resume(throwing: CancellationError())
+        } else {
+          pending[id] = continuation
+        }
+      }
+    } onCancel: {
+      Task { await self.cancel(id) }
+    }
+  }
+  func waitForCalls(_ count: Int) async {
+    if calls < count { await withCheckedContinuation { observers.append((count, $0)) } }
+  }
+  func finish(error: OAuthError? = nil) {
+    let completions = pending.values
+    pending.removeAll()
+    for continuation in completions {
+      if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+    }
+  }
+  private func cancel(_ id: UUID) {
+    pending.removeValue(forKey: id)?.resume(throwing: CancellationError())
+  }
 }

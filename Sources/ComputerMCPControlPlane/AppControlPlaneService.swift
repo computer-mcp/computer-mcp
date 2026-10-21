@@ -73,6 +73,9 @@ package actor AppControlPlaneService {
   )
   package nonisolated let platform: PlatformServices
   var cloudflareRuntimes: [String: CloudflareRuntimeState] = [:]
+  var cloudflareAccessCredentials: [String: HTTPAccessTokenCredential] = [:]
+  var cloudflareOAuthSessions: [String: GatewayOAuthSessions] = [:]
+  let cloudflareAccessTokenDidRead: @Sendable () async throws -> Void
   var cloudflareStartTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
   var cloudflareStopTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
   private var cachedLaunchAtLoginState: LaunchAtLoginState = .unavailable
@@ -102,7 +105,8 @@ package actor AppControlPlaneService {
     pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
     pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
-    bundledPlugins: BundledPlugins = .current
+    bundledPlugins: BundledPlugins = .current,
+    cloudflareAccessTokenDidRead: @escaping @Sendable () async throws -> Void = {}
   ) {
     self.directories = directories
     self.gatewayExecutablePath = gatewayExecutablePath
@@ -126,6 +130,7 @@ package actor AppControlPlaneService {
     self.pluginReleases = pluginReleases
     self.pluginDownload = pluginDownload
     self.bundledPlugins = bundledPlugins
+    self.cloudflareAccessTokenDidRead = cloudflareAccessTokenDidRead
   }
 
   package func start() async throws {

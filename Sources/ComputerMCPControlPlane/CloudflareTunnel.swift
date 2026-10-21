@@ -91,13 +91,10 @@ extension AppControlPlaneService {
       }
       if let generatedAccessToken {
         try await setKeychainSecret(generatedAccessToken, for: profile.accessTokenReference)
+        cloudflareAccessCredential(profileID: profile.id, token: generatedAccessToken)
+          .replace(with: generatedAccessToken)
       }
       try activateTransportConfiguration(configuration)
-      if let generatedAccessToken,
-        let origin = cloudflareRuntimes[profile.id]?.origin as? GatewayHTTPRuntime
-      {
-        await origin.updateAccessToken(generatedAccessToken)
-      }
     } catch {
       await restoreCloudflareSecret(
         existingTunnelToken,
@@ -107,6 +104,9 @@ extension AppControlPlaneService {
         existingAccessToken,
         reference: profile.accessTokenReference
       )
+      if generatedAccessToken != nil {
+        cloudflareAccessCredentials[profile.id]?.replace(with: existingAccessToken)
+      }
       throw error
     }
     return CloudflareOnboardingResult(
@@ -127,6 +127,8 @@ extension AppControlPlaneService {
     try activateTransportConfiguration(configuration)
     try await deleteKeychainSecret(profile.tunnelTokenReference)
     try await deleteKeychainSecret(profile.accessTokenReference)
+    cloudflareAccessCredentials.removeValue(forKey: id)
+    cloudflareOAuthSessions.removeValue(forKey: id)
   }
 
   package func cloudflareTunnelStatuses() -> [CloudflareTunnelStatus] {
@@ -255,6 +257,8 @@ extension AppControlPlaneService {
     guard let accessToken = try await keychainSecretValue(for: profile.accessTokenReference) else {
       throw CloudflareTunnelError.missingAccessToken
     }
+    let accessCredential = cloudflareAccessCredential(profileID: profileID, token: accessToken)
+    try await cloudflareAccessTokenDidRead()
     guard let cloudflared = resolveCloudflared(profile.cloudflaredPath) else {
       throw CloudflareTunnelError.cloudflaredUnavailable
     }
@@ -320,9 +324,10 @@ extension AppControlPlaneService {
         host: "127.0.0.1",
         port: profile.localPort,
         publicBaseURL: profile.publicBaseURL?.absoluteString,
-        accessToken: accessToken,
+        accessCredential: accessCredential,
         oauth: GatewayOAuthHTTP(
           server: oauthServer(for: profile),
+          sessions: cloudflareOAuthSessions[profile.id]!,
           currentConfiguration: { [manifestStore] in
             guard
               let current = try manifestStore.activeConfiguration().transports.cloudflare.first(
@@ -394,6 +399,16 @@ extension AppControlPlaneService {
       try? setCloudflareDesiredRunning(desiredBeforeStart, profileID: profileID)
       throw error
     }
+  }
+
+  /// Called on the service actor without suspension after the secret read or write.
+  private func cloudflareAccessCredential(profileID: String, token: String)
+    -> HTTPAccessTokenCredential
+  {
+    if let existing = cloudflareAccessCredentials[profileID] { return existing }
+    let credential = HTTPAccessTokenCredential(token: token)
+    cloudflareAccessCredentials[profileID] = credential
+    return credential
   }
 
   private func cloudflaredVersionResult(_ executable: String) async throws -> CommandResult {

@@ -199,7 +199,42 @@ hour and bind `https://<hostname>/mcp`. Refresh tokens rotate on every use and
 expire after 30 idle days. Reuse of a rotated refresh token revokes its grant.
 Owner grant revocation invalidates all of its tokens immediately. RFC 7009 access
 token revocation invalidates that token; refresh token revocation invalidates the
-grant. OAuth credentials never enter Keychain.
+grant. Grant revocation from Client access, the owner CLI, refresh-token revocation
+or refresh-token reuse also ends the grant's active gateway sessions and open
+streams. Audit records `oauth.grant_revoked` and completion as
+`oauth.sessions_ended`, bound to the grant principal. OAuth credentials never enter
+Keychain. The service keeps one lock-protected Access Token digest per Cloudflare
+profile across listener startup and shutdown; rotation and rollback publish the
+digest synchronously after the corresponding Keychain write.
+
+HTTP admission precedes body accumulation. With OAuth enabled, `/mcp`
+authentication pauses channel reads until the credential is checked; failure
+returns 401 with the resource metadata challenge and closes the connection.
+Without enabled OAuth, synchronous Bearer authentication runs at the request
+head. OAuth routes consume their address rate allowance at the head. Headers are
+limited to 16 KiB, OAuth bodies to 16 KiB and authenticated MCP bodies to 8 MiB;
+both declared lengths and arriving bytes are checked, with 413 and close on
+overflow. A request must complete its body within 15 seconds of its head (also
+15 seconds to supply an initial head), or receive 408 and close. Each listener
+admits at most 32 connections awaiting authentication; excess connections receive
+503 and close. Public OAuth connections retain this reservation until MCP
+authentication or disconnect, with the same 15-second idle deadline.
+
+Each tunnel admits at most 128 pending or approved pairings, including at most
+three per tunnel-reported client address. Admission is reserved before CIMD
+identification: at most one fetch per address and four per tunnel may run at
+once. Capacity rejection returns 429 `temporarily_unavailable` without fetching;
+failure and cancellation release the reservation.
+
+The token endpoint returns 400 `invalid_request` for missing, empty or duplicate
+parameters and unsupported content types, `unsupported_grant_type` for an unknown
+grant type, `invalid_scope` for scopes other than `mcp`, and `invalid_grant` for
+invalid, expired, reused or mismatched codes, refresh tokens or their bindings
+(client, redirect, PKCE or resource). Unsupported client authentication returns
+401 `invalid_client`. After validating a registered callback, authorization
+errors redirect with `unsupported_response_type` or `invalid_scope`. Appended
+callback parameters use percent encoding with only RFC 3986 unreserved characters
+left literal, preserving the registered URI's existing query.
 
 OAuth endpoints and failed Bearer requests use address token buckets, with grant
 buckets for grant-bound operations. OAuth audit records requests, local decisions,

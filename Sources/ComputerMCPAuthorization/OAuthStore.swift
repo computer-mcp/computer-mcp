@@ -32,6 +32,9 @@ package enum OAuthLimits {
   package static let metadataMaxBytes = 64 * 1_024
   package static let metadataTimeout: TimeInterval = 8
   package static let maxPendingRequests = 128
+  package static let maxPendingRequestsPerAddress = 3
+  package static let maxMetadataFetchesPerAddress = 1
+  package static let maxMetadataFetchesPerTunnel = 4
   package static let addressCapacity: Double = 60
   package static let addressRefillPerSecond: Double = 1
   package static let grantCapacity: Double = 30

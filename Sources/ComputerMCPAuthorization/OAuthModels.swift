@@ -6,6 +6,9 @@ package enum OAuthError: String, Error, LocalizedError, AuditErrorClassifying, S
   case invalidRequest = "invalid_request"
   case invalidClient = "invalid_client"
   case invalidGrant = "invalid_grant"
+  case unsupportedGrantType = "unsupported_grant_type"
+  case unsupportedResponseType = "unsupported_response_type"
+  case invalidScope = "invalid_scope"
   case accessDenied = "access_denied"
   case rateLimited = "temporarily_unavailable"
   case networkUnavailable = "network_unavailable"
@@ -15,6 +18,9 @@ package enum OAuthError: String, Error, LocalizedError, AuditErrorClassifying, S
     case .invalidRequest: "The OAuth request is invalid or no longer pending."
     case .invalidClient: "The OAuth client could not be validated."
     case .invalidGrant: "The OAuth code or token is invalid, expired, or already used."
+    case .unsupportedGrantType: "The OAuth grant type is not supported."
+    case .unsupportedResponseType: "The OAuth response type is not supported."
+    case .invalidScope: "The OAuth scope must be mcp."
     case .accessDenied: "OAuth client access requires the local owner and a remote profile."
     case .rateLimited: "The OAuth request limit was reached. Retry later."
     case .networkUnavailable: "CIMD networking is unavailable on this platform."
@@ -22,10 +28,14 @@ package enum OAuthError: String, Error, LocalizedError, AuditErrorClassifying, S
   }
 
   package var auditClassification: (decision: AuditDecision, code: String)? {
-    (
-      self == .invalidRequest || self == .networkUnavailable ? .failed : .denied,
-      "oauth." + rawValue
-    )
+    let decision: AuditDecision
+    switch self {
+    case .invalidRequest, .unsupportedGrantType, .unsupportedResponseType, .networkUnavailable:
+      decision = .failed
+    case .invalidClient, .invalidGrant, .invalidScope, .accessDenied, .rateLimited:
+      decision = .denied
+    }
+    return (decision, "oauth." + rawValue)
   }
 }
 
@@ -89,6 +99,7 @@ package struct OAuthAuthorizationRequest: Codable, Equatable, Sendable, Identifi
   package let expiresAt: Date
   package var status: Status
   package var grantID: String?
+  package var clientAddress: String?
   package var clientHost: String { URL(string: clientID)?.host ?? "" }
   package var redirectHost: String { URL(string: redirectURI)?.host ?? "" }
 }
@@ -156,6 +167,38 @@ package struct OAuthPairing: Sendable {
 package enum OAuthPairingStatus: Sendable {
   case pending
   case redirect(String)
+}
+
+/// A protocol error can redirect only after client identification validates the callback.
+package struct OAuthAuthorizationRedirect: Error, Sendable {
+  package let location: String
+}
+
+package enum OAuthCallback {
+  package static func location(
+    redirectURI: String, state: String, issuer: String,
+    code: String? = nil, error: OAuthError? = nil
+  ) throws -> String {
+    guard var url = URLComponents(string: redirectURI) else { throw OAuthError.invalidRequest }
+    var parameters = [("state", state), ("iss", issuer)]
+    if let code { parameters.append(("code", code)) }
+    if let error {
+      parameters.append(("error", error.rawValue))
+      if let description = error.errorDescription {
+        parameters.append(("error_description", description))
+      }
+    }
+    let allowed = CharacterSet(
+      charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    let query = parameters.map { name, value in
+      name + "=" + value.addingPercentEncoding(withAllowedCharacters: allowed)!
+    }.joined(separator: "&")
+    url.percentEncodedQuery = [url.percentEncodedQuery, query].compactMap { $0 }.filter {
+      !$0.isEmpty
+    }.joined(separator: "&")
+    guard let result = url.string else { throw OAuthError.invalidRequest }
+    return result
+  }
 }
 
 package enum OAuthSecret {

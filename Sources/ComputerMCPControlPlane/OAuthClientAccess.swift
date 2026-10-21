@@ -39,11 +39,13 @@ package struct OAuthPendingAuthorization: Codable, Equatable, Sendable, Identifi
 
 extension AppControlPlaneService {
   func oauthServer(for profile: CloudflareTunnelConfiguration) -> OAuthAuthorizationServer {
-    OAuthAuthorizationServer(
+    let sessions = cloudflareOAuthSessions[profile.id] ?? GatewayOAuthSessions()
+    cloudflareOAuthSessions[profile.id] = sessions
+    return OAuthAuthorizationServer(
       configuration: .init(
         tunnelID: profile.id, tunnelName: profile.tunnelName,
         hostname: profile.publicHostname, clientAllowlist: profile.oauthClientAllowlist),
-      store: database)
+      store: database, endSessions: { principalID in await sessions.end(principalID: principalID) })
   }
 
   package func oauthAuthorizations(tunnelID: String? = nil, approver: GatewayCallerKind = .localApp)

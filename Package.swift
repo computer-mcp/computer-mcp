@@ -158,6 +158,7 @@ let neutralTargets: [Target] =
       dependencies: [
         "ComputerMCPAuthorization", "ComputerMCPCore",
         .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
       ]),
     .target(
       name: "ComputerMCPDelivery",

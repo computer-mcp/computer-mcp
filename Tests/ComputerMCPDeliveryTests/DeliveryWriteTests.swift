@@ -50,24 +50,106 @@ struct DeliveryWriteTests {
     }
   }
 
-  @Test
-  func newlyAppearedFileIsNotOverwritten() async throws {
+  @Test(arguments: [false, true], [false, true])
+  func newlyAppearedFileIsNotOverwritten(identical: Bool, deferredCleanup: Bool) async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
       let provider = fixture.provider(
-        io: .init(beforeFileWrite: { change, path in
-          if change.original == nil { try Data("external creation\n".utf8).write(to: path) }
-        }))
+        io: .init(
+          beforeCleanup: { _ in
+            if deferredCleanup { throw CocoaError(.fileWriteNoPermission) }
+          },
+          beforeFileWrite: { change, path in
+            if change.original == nil {
+              try (identical ? change.written : Data("external creation\n".utf8)).write(to: path)
+            }
+          }))
       var request = try #require(fixture.request().objectValue)
       request["edits"] = .array([fixture.create("notes/new.md", "delivery creation\n")])
       let result = try fixture.apply(.object(request), provider: provider)
       #expect(result["state"] == .string("cleanup_pending"))
       let journal = try #require(fixture.journals().first)
       #expect(journal.commit == nil)
-      #expect(
-        try fixture.read("notes/new.md", at: URL(fileURLWithPath: journal.worktree))
-          == "external creation\n")
+      #expect(journal.changes?.first?.writeState == .rejected)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      let content = identical ? "delivery creation\n" : "external creation\n"
+      #expect(try fixture.read("notes/new.md", at: worktree) == content)
       #expect(try fixture.git(["rev-parse", journal.branch]) == journal.base)
+      let repository = try fixture.repository()
+      for _ in 0..<2 {
+        try repository.withLock { try repository.recover() }
+        #expect(try fixture.read("notes/new.md", at: worktree) == content)
+        #expect(try fixture.journals().first?.state == .cleanupPending)
+        #expect(try fixture.journals().first?.changes?.first?.writeState == .rejected)
+        #expect(try fixture.git(["rev-parse", journal.branch]) == journal.base)
+      }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func rejectedReplacementWithMatchingFinalBytesIsPreserved(deferredCleanup: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let provider = fixture.provider(
+        io: .init(
+          beforeCleanup: { _ in
+            if deferredCleanup { throw CocoaError(.fileWriteNoPermission) }
+          },
+          beforeFileWrite: { change, path in
+            try change.written.write(to: path)
+          }))
+      let result = try fixture.apply(provider: provider)
+      #expect(result["state"] == .string("cleanup_pending"))
+      let journal = try #require(fixture.journals().first)
+      #expect(journal.changes?.first?.writeState == .rejected)
+      let repository = try fixture.repository()
+      for _ in 0..<2 {
+        try repository.withLock { try repository.recover() }
+        #expect(try fixture.journals().first?.state == .cleanupPending)
+        #expect(try fixture.journals().first?.changes?.first?.writeState == .rejected)
+        #expect(
+          try fixture.read("notes/log.md", at: URL(fileURLWithPath: journal.worktree))
+            == "beta\nstable\n")
+        #expect(try fixture.git(["rev-parse", journal.branch]) == journal.base)
+      }
+    }
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func unprovenWriteIsRetainedAfterJournalFailure(created: Bool, missingEvidence: Bool) async throws
+  {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let provider = fixture.provider(
+        io: .init(beforeJournalWrite: { journal in
+          if journal.phase == .started,
+            journal.changes?.contains(where: { $0.writeState == .written }) == true
+          {
+            throw CocoaError(.fileWriteNoPermission)
+          }
+        }))
+      var request = try #require(fixture.request().objectValue)
+      let path = created ? "notes/new.md" : "notes/log.md"
+      let content = created ? "delivery creation\n" : "beta\nstable\n"
+      if created { request["edits"] = .array([fixture.create(path, content)]) }
+      let result = try fixture.apply(.object(request), provider: provider)
+      #expect(result["state"] == .string("cleanup_pending"))
+      var journal = try #require(fixture.journals().first)
+      #expect(journal.changes?.first?.writeState == .writing)
+      let repository = try fixture.repository()
+      if missingEvidence {
+        journal.changes?[0].writeState = nil
+        try repository.io.write(journal, to: repository.journals)
+      }
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      for _ in 0..<2 {
+        try repository.withLock { try repository.recover() }
+        let pending = try #require(fixture.journals().first)
+        #expect(pending.state == .cleanupPending && pending.reason == .cleanupFailed)
+        #expect(pending.message?.contains(worktree.path) == true)
+        #expect(try fixture.read(path, at: worktree) == content)
+        #expect(try fixture.git(["rev-parse", journal.branch]) == journal.base)
+      }
     }
   }
 
@@ -180,21 +262,31 @@ struct DeliveryWriteTests {
   func repeatedEditsWriteFinalContentOnceWithDurableDigests() async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
-      let io = DeliveryIO(beforeFileWrite: { change, path in
-        let journal = try #require(fixture.journals().first)
-        let saved = try #require(journal.changes?.first(where: { $0.path == change.path }))
-        #expect(saved.original == change.original && saved.written == change.written)
-        #expect(
-          saved.originalDigest == change.originalDigest && saved.finalDigest == change.finalDigest)
-        let repository = try fixture.repository()
-        #expect(change.finalDigest == (try repository.git.blobID(change.written, at: fixture.root)))
-        if let original = change.original {
-          #expect(try Data(contentsOf: path) == original)
-          #expect(change.originalDigest == (try repository.git.blobID(original, at: fixture.root)))
-        }
-        try fixture.write(
-          ".git/write-count", ((try? fixture.read(".git/write-count")) ?? "") + "\(change.path)\n")
-      })
+      let io = DeliveryIO(
+        beforeCleanup: { journal in
+          #expect(journal.changes?.allSatisfy { $0.writeState == .written } == true)
+          let saved = try #require(fixture.journals().first)
+          #expect(saved.changes?.allSatisfy { $0.writeState == .written } == true)
+        },
+        beforeFileWrite: { change, path in
+          let journal = try #require(fixture.journals().first)
+          let saved = try #require(journal.changes?.first(where: { $0.path == change.path }))
+          #expect(saved.original == change.original && saved.written == change.written)
+          #expect(
+            saved.originalDigest == change.originalDigest && saved.finalDigest == change.finalDigest
+          )
+          let repository = try fixture.repository()
+          #expect(
+            change.finalDigest == (try repository.git.blobID(change.written, at: fixture.root)))
+          if let original = change.original {
+            #expect(try Data(contentsOf: path) == original)
+            #expect(
+              change.originalDigest == (try repository.git.blobID(original, at: fixture.root)))
+          }
+          try fixture.write(
+            ".git/write-count", ((try? fixture.read(".git/write-count")) ?? "") + "\(change.path)\n"
+          )
+        })
       var request = try #require(fixture.request().objectValue)
       request["edits"] = .array([
         fixture.replace("notes/log.md", "alpha", "beta"),

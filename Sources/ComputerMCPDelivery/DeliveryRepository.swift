@@ -210,12 +210,15 @@ internal struct DeliveryRepository: Sendable {
       }
       let relativeWorktree = String(journal.worktree.dropFirst(journal.repository.count + 1))
       _ = try Self.checkedPath(relativeWorktree, inside: recordedRoot)
-      do { try abortRebase(journal) } catch {
+      do { _ = try worktreeForCleanup(journal) } catch {
         journal.phase = .cleanupPending
         journal.state = .cleanupPending
         journal.reason =
-          (error as? DeliveryFailure)?.reason == .worktreeUnrecognized
-          ? .worktreeUnrecognized : .cleanupFailed
+          switch (error as? DeliveryFailure)?.reason {
+          case .worktreeUnrecognized: .worktreeUnrecognized
+          case .rebaseInProgress: .rebaseInProgress
+          default: .cleanupFailed
+          }
         journal.message = boundedDeliveryText(error.localizedDescription)
         try io.write(journal, to: journals)
         continue
@@ -337,7 +340,7 @@ internal struct DeliveryRepository: Sendable {
       let branch = try pinned.run(
         ["--no-optional-locks", "symbolic-ref", "--quiet", "HEAD"], at: worktree, accepting: [0, 1]
       ).stdout.trimmingCharacters(in: .newlines)
-      // Rebase detaches HEAD; its durable head-name identifies the branch that abort will restore.
+      // Rebase detaches HEAD; head-name identifies the branch whose worktree is retained.
       let rebaseBranch = rebaseDirectory(journal).flatMap {
         try? String(contentsOf: $0.appendingPathComponent("head-name"), encoding: .utf8)
           .trimmingCharacters(in: .newlines)
@@ -360,7 +363,9 @@ internal struct DeliveryRepository: Sendable {
       guard try FileManager.default.contentsOfDirectory(atPath: worktree.path).isEmpty else {
         throw error
       }
-      try FileManager.default.removeItem(at: worktree)
+      do { try io.removeEmptyDirectory(worktree) } catch {
+        throw unrecognizedWorktree(worktree)
+      }
       try removeWorktreeRegistration(journal)
       return nil
     }
@@ -371,6 +376,15 @@ internal struct DeliveryRepository: Sendable {
     return ["rebase-merge", "rebase-apply"].map {
       URL(fileURLWithPath: identity.directory).appendingPathComponent($0)
     }.first { FileManager.default.fileExists(atPath: $0.path) }
+  }
+
+  func worktreeForCleanup(_ journal: DeliveryJournal) throws -> DeliveryGit? {
+    let pinned = try verifiedWorktree(journal)
+    guard rebaseDirectory(journal) == nil else {
+      throw DeliveryFailure(
+        reason: .rebaseInProgress, detail: "In-progress rebase retained: \(journal.worktree)")
+    }
+    return pinned
   }
 
   @discardableResult
@@ -433,6 +447,18 @@ internal struct DeliveryRepository: Sendable {
           reason: .cleanupFailed,
           detail: "Worktree registration is locked or its directory exists: \(worktree.path)")
       }
+      guard rebaseDirectory(journal) == nil else {
+        throw DeliveryFailure(
+          reason: .rebaseInProgress, detail: "In-progress rebase retained: \(worktree.path)")
+      }
+      let head = try String(contentsOf: directory.appendingPathComponent("HEAD"), encoding: .utf8)
+        .trimmingCharacters(in: .newlines)
+      guard head == "ref: refs/heads/\(journal.branch)" || head == (journal.commit ?? journal.base)
+      else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed,
+          detail: "Worktree registration HEAD has changed; retained: \(directory.path)")
+      }
       try FileManager.default.removeItem(at: directory)
     }
     guard try !hasWorktreeRegistration(worktree) else {
@@ -444,7 +470,15 @@ internal struct DeliveryRepository: Sendable {
   private func undoEdits(_ journal: DeliveryJournal, git pinned: DeliveryGit) throws {
     let worktree = URL(fileURLWithPath: journal.worktree)
     guard try pinned.revision("HEAD", at: worktree) == journal.base else { return }
+    var uncertain: [String] = []
     for change in journal.changes ?? [] {
+      switch change.writeState {
+      case .written: break
+      case .pending, .rejected: continue
+      case .writing, nil:
+        uncertain.append(change.path)
+        continue
+      }
       let path = try Self.checkedPath(change.path, inside: worktree)
       let index = try pinned.run(
         ["--no-optional-locks", "ls-files", "--stage", "-z", "--", change.path], at: worktree
@@ -462,12 +496,19 @@ internal struct DeliveryRepository: Sendable {
         try FileManager.default.removeItem(at: path)
       }
     }
+    guard uncertain.isEmpty else {
+      throw DeliveryFailure(
+        reason: .cleanupFailed,
+        detail:
+          "File write ownership is unproven; retained in \(worktree.path): \(uncertain.joined(separator: ", "))"
+      )
+    }
   }
 
   private func cleanup(_ journal: DeliveryJournal, verifiedDefault: String?) throws {
     try io.beforeCleanup(journal)
     let worktree = URL(fileURLWithPath: journal.worktree)
-    if let pinned = try abortRebase(journal) {
+    if let pinned = try worktreeForCleanup(journal) {
       if journal.state == .aborted { try undoEdits(journal, git: pinned) }
       // Git's removal check ignores ignored files; include them when protecting other writers.
       guard
@@ -482,7 +523,7 @@ internal struct DeliveryRepository: Sendable {
         throw DeliveryFailure(
           reason: .cleanupFailed, detail: "Worktree has uncommitted changes: \(worktree.path)")
       }
-      if try verifiedWorktree(journal) != nil {
+      if try worktreeForCleanup(journal) != nil {
         try git.run(["worktree", "remove", worktree.path], at: root)
       }
     }
@@ -568,8 +609,11 @@ internal struct DeliveryRepository: Sendable {
       journal.phase = .cleanupPending
       journal.state = .cleanupPending
       journal.reason =
-        (error as? DeliveryFailure)?.reason == .worktreeUnrecognized
-        ? .worktreeUnrecognized : .cleanupFailed
+        switch (error as? DeliveryFailure)?.reason {
+        case .worktreeUnrecognized: .worktreeUnrecognized
+        case .rebaseInProgress: .rebaseInProgress
+        default: .cleanupFailed
+        }
       journal.message = boundedDeliveryText(error.localizedDescription)
       try? io.write(journal, to: journals)
     }

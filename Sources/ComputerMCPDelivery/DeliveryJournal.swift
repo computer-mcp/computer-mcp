@@ -14,6 +14,10 @@ internal struct DeliveryJournal: Codable, Sendable {
   }
 
   struct Change: Codable, Sendable {
+    enum WriteState: String, Codable, Sendable {
+      case pending, writing, written, rejected
+    }
+
     var path: String
     var original: Data?
     var written: Data
@@ -21,6 +25,8 @@ internal struct DeliveryJournal: Codable, Sendable {
     // Git blob IDs digest the exact bytes using the repository's object format.
     var originalDigest: String?
     var finalDigest: String?
+    // Missing evidence and an interrupted write both require manual reconciliation.
+    var writeState: WriteState?
   }
 
   struct Rebase: Codable, Sendable {
@@ -83,11 +89,17 @@ internal struct DeliveryIO: Sendable {
   var beforeMergeCheck: @Sendable (DeliveryJournal) throws -> Void = { _ in }
   var afterWorktreeVerification: @Sendable (DeliveryJournal) throws -> Void = { _ in }
   var beforeFileWrite: @Sendable (DeliveryJournal.Change, URL) throws -> Void = { _, _ in }
+  var beforeEmptyDirectoryRemoval: @Sendable (URL) throws -> Void = { _ in }
 
-  func writeFile(_ change: DeliveryJournal.Change, to path: URL) throws {
+  func writeFile(
+    _ change: DeliveryJournal.Change, to path: URL,
+    recordWrite: (DeliveryJournal.Change.WriteState) throws -> Void
+  ) throws {
     try beforeFileWrite(change, path)
+    try recordWrite(.writing)
     if let original = change.original {
       guard try Data(contentsOf: path) == original else {
+        try recordWrite(.rejected)
         throw DeliveryFailure(
           reason: .gitFailed, detail: "Delivery target changed before writing: \(change.path)")
       }
@@ -95,14 +107,24 @@ internal struct DeliveryIO: Sendable {
     } else {
       let descriptor = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o644)
       guard descriptor >= 0 else {
-        if errno == EEXIST {
+        let code = errno
+        try recordWrite(.rejected)
+        if code == EEXIST {
           throw DeliveryFailure(reason: .fileExists, detail: "File already exists: \(change.path)")
         }
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
       }
       let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
       defer { try? handle.close() }
       try handle.write(contentsOf: change.written)
+    }
+    try recordWrite(.written)
+  }
+
+  func removeEmptyDirectory(_ directory: URL) throws {
+    try beforeEmptyDirectoryRemoval(directory)
+    guard rmdir(directory.path) == 0 else {
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
   }
 

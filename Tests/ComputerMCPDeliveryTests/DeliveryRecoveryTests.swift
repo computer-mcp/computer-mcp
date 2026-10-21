@@ -23,6 +23,13 @@ struct DeliveryRecoveryTests {
       let journal = try interrupted(fixture, at: point)
       let repository = try fixture.repository()
       try repository.withLock { try repository.recover() }
+      if point == .duringRebase {
+        let pending = try #require(fixture.journals().first)
+        #expect(pending.phase == .cleanupPending && pending.reason == .rebaseInProgress)
+        #expect(repository.rebaseDirectory(pending) != nil)
+        try fixture.git(["rebase", "--abort"], at: URL(fileURLWithPath: journal.worktree))
+        try repository.withLock { try repository.recover() }
+      }
       let recovered = try #require(fixture.journals().first)
       #expect(recovered.phase == .finished)
       let committed = point != .beforeWorktree && point != .beforeCommit
@@ -270,6 +277,84 @@ struct DeliveryRecoveryTests {
   }
 
   @Test
+  func recoveryRemovesMissingWorktreeAtRecordedDetachedCommit() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .afterCommit)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      try fixture.git(["checkout", "--detach", try #require(journal.commit)], at: worktree)
+      try FileManager.default.removeItem(at: worktree)
+      let repository = try fixture.repository()
+      try repository.withLock { try repository.recover() }
+      #expect(try fixture.journals().first?.state == .committed)
+      try fixture.assertClean(retained: true)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func recoveryPreservesMovedWorktreeWithChangedHead(detached: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .afterCommit)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      try fixture.git(
+        detached ? ["checkout", "--detach"] : ["switch", "-c", "other"], at: worktree)
+      try fixture.write("outside.txt", "unique worktree commit\n", at: worktree)
+      try fixture.git(["commit", "-am", "test: unique worktree commit"], at: worktree)
+      let unique = try fixture.git(["rev-parse", "HEAD"], at: worktree)
+      let directory = URL(fileURLWithPath: try #require(journal.worktreeIdentity).directory)
+      let head = try Data(contentsOf: directory.appendingPathComponent("HEAD"))
+      let reflog = try Data(contentsOf: directory.appendingPathComponent("logs/HEAD"))
+      let moved = fixture.temporary.url.appendingPathComponent("moved")
+      try FileManager.default.moveItem(at: worktree, to: moved)
+      let repository = try fixture.repository()
+      for _ in 0..<2 {
+        try repository.withLock { try repository.recover() }
+        let pending = try #require(fixture.journals().first)
+        #expect(pending.state == .cleanupPending && pending.reason == .cleanupFailed)
+        #expect(pending.message?.contains(directory.path) == true)
+        #expect(try Data(contentsOf: directory.appendingPathComponent("HEAD")) == head)
+        #expect(try Data(contentsOf: directory.appendingPathComponent("logs/HEAD")) == reflog)
+        #expect(try fixture.git(["--git-dir=\(directory.path)", "rev-parse", "HEAD"]) == unique)
+        #expect(try fixture.git(["rev-parse", journal.branch]) == journal.commit)
+        #expect(try fixture.read("outside.txt", at: moved) == "unique worktree commit\n")
+      }
+      try fixture.git(["worktree", "repair", moved.path])
+      #expect(try fixture.git(["rev-parse", "HEAD"], at: moved) == unique)
+    }
+  }
+
+  @Test
+  func fileAppearingBeforeEmptyDirectoryRemovalIsPreserved() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .beforeCommit)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      try FileManager.default.removeItem(at: worktree)
+      try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+      let repository = try fixture.repository(
+        io: .init(beforeEmptyDirectoryRemoval: { directory in
+          #expect(directory == worktree)
+          #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+          try fixture.write("keep.txt", "external creation\n", at: directory)
+        }))
+      try repository.withLock { try repository.recover() }
+      let retry = try fixture.repository()
+      try retry.withLock { try retry.recover() }
+      let pending = try #require(fixture.journals().first)
+      #expect(pending.state == .cleanupPending && pending.reason == .worktreeUnrecognized)
+      #expect(pending.message?.contains(worktree.path) == true)
+      #expect(try fixture.read("keep.txt", at: worktree) == "external creation\n")
+      #expect(try fixture.git(["rev-parse", journal.branch]) == journal.base)
+      #expect(try fixture.git(["worktree", "list", "--porcelain"]).contains(worktree.path))
+      try FileManager.default.removeItem(at: worktree.appendingPathComponent("keep.txt"))
+      try retry.withLock { try retry.recover() }
+      #expect(try fixture.journals().first?.state == .aborted)
+      try fixture.assertClean()
+    }
+  }
+
+  @Test
   func lockedMissingWorktreeStaysPendingUntilUnlocked() async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
@@ -352,8 +437,8 @@ struct DeliveryRecoveryTests {
     }
   }
 
-  @Test(arguments: ["unrecorded", "orig-head", "onto"], [false, true])
-  func recoveryPreservesUnownedRebase(ownership: String, resolved: Bool) async throws {
+  @Test(arguments: ["matching", "unrecorded", "orig-head", "onto"], [false, true])
+  func recoveryPreservesInProgressRebase(ownership: String, resolved: Bool) async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
       var journal = try interrupted(
@@ -366,7 +451,7 @@ struct DeliveryRecoveryTests {
         #expect(journal.rebase == nil)
       } else if ownership == "orig-head" {
         journal.rebase?.original = journal.base
-      } else {
+      } else if ownership == "onto" {
         journal.rebase?.onto = journal.base
       }
       let repository = try fixture.repository()
@@ -382,10 +467,19 @@ struct DeliveryRecoveryTests {
       let rebase = try #require(repository.rebaseDirectory(journal))
       let original = try Data(contentsOf: rebase.appendingPathComponent("orig-head"))
       let onto = try Data(contentsOf: rebase.appendingPathComponent("onto"))
+      if ownership == "matching" {
+        #expect(
+          String(data: original, encoding: .utf8)?.trimmingCharacters(in: .newlines)
+            == journal.rebase?.original)
+        #expect(
+          String(data: onto, encoding: .utf8)?.trimmingCharacters(in: .newlines)
+            == journal.rebase?.onto)
+      }
       for _ in 0..<2 {
         try repository.withLock { try repository.recover() }
         #expect(try fixture.journals().first?.phase == .cleanupPending)
-        #expect(try fixture.journals().first?.reason == .cleanupFailed)
+        #expect(try fixture.journals().first?.reason == .rebaseInProgress)
+        #expect(try fixture.journals().first?.message?.contains(worktree.path) == true)
         #expect(try Data(contentsOf: directory.appendingPathComponent("index")) == index)
         #expect(try fixture.read("notes/log.md", at: worktree) == content)
         #expect(try fixture.git(["rev-parse", "HEAD"], at: worktree) == head)
@@ -685,6 +779,7 @@ struct DeliveryRecoveryTests {
       let index = try Data(contentsOf: fixture.root.appendingPathComponent(".git/index"))
       let conflict = try fixture.read("notes/log.md")
       let gitfile = try Data(contentsOf: worktree.appendingPathComponent(".git"))
+      let deliveryConflict = try fixture.read("notes/log.md", at: worktree)
       let io = DeliveryIO(afterWorktreeVerification: { _ in
         let path = worktree.appendingPathComponent(".git")
         if FileManager.default.fileExists(atPath: path.path) {
@@ -693,6 +788,8 @@ struct DeliveryRecoveryTests {
       })
       let repository = try fixture.repository(io: io)
       try repository.withLock { try repository.recover() }
+      #expect(try fixture.journals().first?.reason == .rebaseInProgress)
+      try repository.withLock { try repository.recover() }
       #expect(try fixture.journals().first?.reason == .worktreeUnrecognized)
       #expect(try fixture.git(["rev-parse", "HEAD"]) == head)
       #expect(try Data(contentsOf: fixture.root.appendingPathComponent(".git/index")) == index)
@@ -700,13 +797,13 @@ struct DeliveryRecoveryTests {
       #expect(
         FileManager.default.fileExists(
           atPath: fixture.root.appendingPathComponent(".git/rebase-merge").path))
-      // The verified binding still selected only the delivery administration directory.
       let directory = URL(fileURLWithPath: try #require(journal.worktreeIdentity).directory)
       #expect(
-        !FileManager.default.fileExists(
+        FileManager.default.fileExists(
           atPath: directory.appendingPathComponent("rebase-merge").path))
-      #expect(try fixture.read("notes/log.md", at: worktree) == "beta\nstable\n")
+      #expect(try fixture.read("notes/log.md", at: worktree) == deliveryConflict)
       try gitfile.write(to: worktree.appendingPathComponent(".git"))
+      try fixture.git(["rebase", "--abort"], at: worktree)
       try fixture.git(["rebase", "--abort"])
     }
   }

@@ -84,7 +84,9 @@ All edits are computed in memory before any file is written. Each file is writte
 once, from its original bytes to its final content. Immediately before replacing
 a file, delivery rereads it and requires the original bytes; creation uses
 exclusive creation so that a newly appeared file is preserved. All files are read
-back before staging only the requested paths. Immediately before committing,
+back before staging only the requested paths. The journal records each successful
+write immediately. Rejected writes never authorize rollback, even when another
+writer's bytes equal the requested final content. Immediately before committing,
 delivery verifies those index blobs against the final contents' Git object IDs
 and requires the worktree `HEAD` to remain at the original baseline.
 
@@ -134,8 +136,10 @@ Immediately before each landing attempt, delivery requires the main checkout's
 counts as a moved default branch: delivery rebases onto its current tip, checks
 the entire new baseline-to-commit diff and retries once. A second baseline
 change returns `committed` / `not_fast_forward` without another merge or rebase.
-Land runs `merge --ff-only --no-squash --no-edit <verified_commit>` in the main
-checkout using the immutable, validated commit ID. Live delivery reports
+Land runs `merge --ff-only --no-squash --no-edit --no-overwrite-ignore <verified_commit>`
+in the main checkout using the immutable, validated commit ID. An ignored file
+that appears at a target path prevents landing rather than being overwritten.
+Live delivery reports
 `merged` only when that checkout's `HEAD` equals the delivery commit, including
 after a command failure, timeout or exception. A post-merge hook that creates a
 descendant leaves the result `committed` with its branch retained.
@@ -144,7 +148,7 @@ Every rebase is followed by the same exact-path validation against its new
 baseline. A mismatch, including an empty diff when the default branch already
 contains the patch, returns `committed` / `scope_changed` with the branch retained.
 Before starting a rebase, delivery journals its original and target commit IDs.
-An in-progress failed rebase is aborted to the saved commit only when its
+The running call immediately aborts its own failed rebase to the saved commit when its
 `orig-head` and `onto` match that record; otherwise it is retained as
 `cleanup_pending`. If a rebase command
 fails or times out with no rebase in progress, delivery reads the branch's actual
@@ -152,9 +156,12 @@ tip, validates it again and records that commit; it does not attempt landing
 after the command failure. Commit-only mode retains the branch without landing.
 
 Cleanup uses `worktree remove` without `--force` and checks for tracked,
-untracked and ignored changes. For `aborted`, durable undo records restore only
-files still matching this operation's original or final bytes and unstage only its recorded index
-entries. Other changes make removal fail and remain available in the worktree.
+untracked and ignored changes. For `aborted`, cleanup undoes only files durably
+recorded as written by this operation and still matching its final bytes, and
+unstages only its recorded index entries. A rejected write is never undone. A
+write interrupted before successful-write evidence was persisted is retained as
+`cleanup_pending`; matching bytes alone do not establish ownership. Other changes
+make removal fail and remain available in the worktree.
 `committed` always retains its branch, even when the commit is reachable from the
 default branch; `cleanup_pending` with an undelivered commit also retains it.
 Branch deletion is limited to `merged` and `aborted`. Before an aborted deletion,
@@ -179,6 +186,10 @@ the result), preserves files, uncommitted changes and worktrees it does not own,
 checks state immediately before each guarded Git mutation, and uses Git's atomic
 reference transactions where available. Detected interference converges to a
 retained branch with `committed` or `cleanup_pending` and a reason. The only
+state recovery and cleanup undo is state proven to belong to this operation:
+durably recorded successful writes and worktrees and branches with matching
+recorded identities. Unproven state is retained as `cleanup_pending` with its path
+and reason for user handling. The only
 excluded case is an external write in the short interval between a check and
 the next Git command where no atomic primitive covers both. These checks do not
 provide isolation from external Git writers across that interval.
@@ -191,7 +202,11 @@ after creation, `worktree_identity` records the administrative `directory` under
 `<git-common-dir>/worktrees/` and the exact contents of its `gitdir` file. Optional
 `changes` record original and final (`written`) file bytes, their Git blob object
 IDs (`originalDigest` and `finalDigest`), and original index entries before file
-writes; a newly created file has no original bytes or digest. `staged` records
+writes; a newly created file has no original bytes or digest. Each change's
+`writeState` is `pending` before an attempt, `writing` before filesystem mutation,
+`written` immediately after success, or `rejected` after a refused write. Missing
+write evidence and `writing` both require conservative retention during rollback.
+`staged` records
 verified index entries after staging. Optional `rebase` records the `original`
 and `onto` commit IDs before rebase starts. Each journal write uses a
 same-directory temporary file, file fsync, rename and directory fsync.
@@ -219,22 +234,27 @@ worktree, recovery requires its path in `worktree list --porcelain`, a regular
 `.git` file selecting the recorded administrative directory, that directory's
 unchanged recorded `gitdir` contents and backlink, the recorded delivery branch
 in `HEAD`, and an exact `rev-parse --show-toplevel` match. During a rebase, the
-saved `head-name` identifies the branch that abort restores. Every Git command
+saved `head-name` identifies the branch whose worktree is retained. Every Git command
 inside a verified worktree, including verification commands, passes explicit
 `--git-dir` and `--work-tree`; loss of `.git` cannot redirect discovery into the
 main checkout. A moved original worktree or a replacement at its old path does
-not pass ownership verification. An unrecognized empty directory is removed;
+not pass ownership verification. An unrecognized empty directory is removed with
+`rmdir`, which atomically refuses a directory that becomes nonempty;
 a nonempty directory is
 retained with `cleanup_pending` / `worktree_unrecognized` and its path in the
 journal. If the working directory is missing, recovery removes only the recorded
 administrative directory after confirming its exact recorded `gitdir` contents,
-its backlink to the missing working directory, and the absence of a lock. This
+its backlink to the missing working directory, the absence of a lock or an
+in-progress rebase, and a `HEAD` still naming the recorded delivery branch or its
+recorded commit. A different detached commit or branch retains the registration
+and its refs and reflog as `cleanup_pending`, with the administrative path in the
+diagnostic. This
 also applies after removing an unrecognized empty directory. Unrelated worktree
 registrations are preserved. A failed ownership or lock check keeps the operation
-`cleanup_pending`. Recovery aborts an in-progress rebase only in a verified
-worktree when the journal records that this operation started it and its current
-`orig-head` and `onto` match the recorded values. An unowned rebase and its index
-and working files are retained as `cleanup_pending`. Recovery then
+`cleanup_pending`. Recovery retains every in-progress rebase, its index and its
+working files as `cleanup_pending` / `rebase_in_progress`, with the worktree path.
+Even matching recorded commit IDs cannot establish ownership of subsequent user
+resolutions or staged changes. Recovery then
 reconciles actual refs, including a commit created before its journal
 update. No commit means cleanup and `aborted`; a commit reachable from the default
 branch means cleanup and `merged`; an unmerged commit means worktree removal,
@@ -262,6 +282,7 @@ Error IDs prefix these codes with `delivery.`:
 | `commit_only` | Commit retained under commit-only mode |
 | `not_fast_forward` | Fast-forward attempt did not leave HEAD at the delivery commit |
 | `rebase_conflict` | Rebase failed and was aborted to the saved commit |
+| `rebase_in_progress` | Recovery or cleanup retained an in-progress rebase for user handling |
 | `scope_changed` | Committed or rebased diff does not change exactly the requested in-scope paths; branch retained |
 | `worktree_unrecognized` | Recorded worktree is not the repository's registered worktree; nonempty directory retained for inspection |
 | `journal_failed` | Journal could not be persisted; an existing commit remains on its branch |

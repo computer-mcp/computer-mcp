@@ -86,7 +86,7 @@ extension DeliveryRepository {
             reason: .gitFailed, detail: boundedDeliveryText(error.localizedDescription))
         // A hook, timeout or failed journal write can leave a commit despite a failed command.
         do {
-          try abortRebase(journal)
+          _ = try worktreeForCleanup(journal)
           if journal.commit == nil,
             let commit = try git.revision("refs/heads/\(request.branch)", at: root), commit != base
           {
@@ -100,8 +100,11 @@ extension DeliveryRepository {
           journal.phase = .cleanupPending
           journal.state = .cleanupPending
           journal.reason =
-            (error as? DeliveryFailure)?.reason == .worktreeUnrecognized
-            ? .worktreeUnrecognized : .cleanupFailed
+            switch (error as? DeliveryFailure)?.reason {
+            case .worktreeUnrecognized: .worktreeUnrecognized
+            case .rebaseInProgress: .rebaseInProgress
+            default: .cleanupFailed
+            }
           journal.message = boundedDeliveryText(error.localizedDescription)
           try? io.write(journal, to: journals)
           return (journal.result, nil)
@@ -125,7 +128,10 @@ extension DeliveryRepository {
       // No intervening Git command may separate this baseline check from the merge it guards.
       if try git.revision("HEAD", at: main) == validatedBase {
         let merge = try git.run(
-          ["merge", "--ff-only", "--no-squash", "--no-edit", journal.commit!], at: main,
+          [
+            "merge", "--ff-only", "--no-squash", "--no-edit", "--no-overwrite-ignore",
+            journal.commit!,
+          ], at: main,
           accepting: [0, 1, 128])
         if try git.revision("HEAD", at: main) == journal.commit {
           journal.merged = true
@@ -298,17 +304,23 @@ extension DeliveryRepository {
       return .init(
         path: path, original: file.original, written: written, index: file.index,
         originalDigest: try file.original.map { try pinned.blobID($0, at: worktree) },
-        finalDigest: try pinned.blobID(written, at: worktree))
+        finalDigest: try pinned.blobID(written, at: worktree), writeState: .pending)
     }
     try io.write(journal, to: journals)
-    for change in journal.changes! {
+    for index in journal.changes!.indices {
+      let change = journal.changes![index]
       try cancellation.check()
       let url = try Self.checkedPath(change.path, inside: worktree)
       if change.original == nil {
         try FileManager.default.createDirectory(
           at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       }
-      try io.writeFile(change, to: url)
+      try io.writeFile(change, to: url) { state in
+        var recorded = journal
+        recorded.changes![index].writeState = state
+        try io.write(recorded, to: journals)
+        journal = recorded
+      }
     }
     return try request.paths.map { path in
       let url = try Self.checkedPath(path, inside: worktree)

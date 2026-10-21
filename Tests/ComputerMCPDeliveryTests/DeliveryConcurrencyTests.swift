@@ -8,6 +8,35 @@ import Testing
 @Suite(.nativeIntegration)
 struct DeliveryConcurrencyTests {
   @Test
+  func ignoredMainFileBeforeLandingIsPreserved() async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let baseline = try fixture.git(["rev-parse", "HEAD"])
+      let provider = fixture.provider(
+        io: .init(beforeMergeCheck: { _ in
+          try fixture.write(".gitignore", ".claude/worktrees/\nnotes/new.md\n")
+          try fixture.write("notes/new.md", "external ignored file\n")
+        }))
+      var request = try #require(fixture.request().objectValue)
+      request["edits"] = .array([fixture.create("notes/new.md", "delivery creation\n")])
+      let result = try fixture.apply(.object(request), provider: provider)
+      #expect(result["state"] == .string("committed"))
+      #expect(result["reason"] == .string("not_fast_forward"))
+      #expect(result["branch"] == .string("docs/entry"))
+      #expect(try fixture.git(["rev-parse", "HEAD"]) == baseline)
+      #expect(try fixture.read("notes/new.md") == "external ignored file\n")
+      #expect(try fixture.read(".gitignore") == ".claude/worktrees/\nnotes/new.md\n")
+      #expect(try fixture.git(["show", "docs/entry:notes/new.md"]) == "delivery creation")
+      #expect(try fixture.git(["diff", "--name-only", baseline, "docs/entry"]) == "notes/new.md")
+      #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
+      #expect(try fixture.journals().first?.phase == .finished)
+      #expect(
+        try fixture.git(["worktree", "list", "--porcelain"]).components(separatedBy: "worktree ")
+          .count == 2)
+    }
+  }
+
+  @Test
   func abortedCleanupRequiresConsistentDefaultAndHeadSamples() async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()

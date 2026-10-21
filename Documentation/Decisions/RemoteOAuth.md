@@ -94,6 +94,30 @@ still requires the existing per-session local consent. The owner revokes a
 grant from Client access or with the owner CLI, which invalidates its tokens
 immediately.
 
+### Consistency
+
+Approval binds a client to exactly the authorization the owner reviewed, and
+no approval survives the deletion of its tunnel:
+
+- A profile's authorization digest is the SHA-256 of the canonical encoding of
+  its effective grant (mode, capabilities, workspaces, callers, Full Access,
+  MCP servers and confirmation policy) as resolved from the active
+  configuration and persisted overrides, whether or not the profile has an
+  override. The App shows remote profiles with their digest and approves with
+  the digest it displayed; the owner CLI may pass one.
+- Every path that changes the active configuration (App and CLI saves, tunnel
+  saves, profile permission changes, import, rollback and external manifest
+  reload) publishes under one configuration publication lock, from a
+  configuration read under that lock. Approval holds the same lock while it
+  resolves the chosen profile, compares the reviewed digest and commits the
+  grant, so no configuration change can take effect between the comparison and
+  the grant.
+- Approval, start, save and deletion of a tunnel are serialized by that
+  tunnel's mutation slot. Deletion, within its slot, revokes every grant and
+  ends every pending request and unexchanged code for the tunnel in one store
+  transaction, so a tunnel recreated with the same ID and hostname starts with
+  no requests or grants.
+
 ### Tokens
 
 Access tokens, refresh tokens and authorization codes are opaque 256-bit random

@@ -117,7 +117,8 @@ final class CloudflareTunnelTests {
       .init(
         id: .cloudflareObserve, capabilities: ["workspace.list", "fixture.inspect"],
         workspaces: ["fixture"], allowedCallers: [.cloudflareTunnel], mcpServers: ["fixture"]))
-    _ = try await controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await controlPlane.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await controlPlane.configurationDigest())
     try fixture.database.saveWorkspace(
       RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path))
     let pending = Task {
@@ -153,7 +154,10 @@ final class CloudflareTunnelTests {
         #expect(try await second.value.state == .stopped)
       } else {
         configuration.server.name = "changed-during-origin-start"
-        _ = try await controlPlane.activateManifest(configuration.exportedTOML())
+        _ = try await controlPlane.activateManifest(
+          configuration.exportedTOML(),
+          expectedDigest: try? await controlPlane.configurationDigest()
+        )
         try Data().write(to: release)
       }
       switch await pending.result {

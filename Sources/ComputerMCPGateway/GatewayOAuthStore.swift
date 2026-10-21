@@ -1,11 +1,20 @@
 import ComputerMCPAuthorization
 import ComputerMCPCore
+import ComputerMCPPersistence
 import Foundation
 import GRDB
 
 /// Valid only during the enclosing GatewayDatabase write transaction.
 struct GatewayOAuthTransaction: OAuthStoreTransaction {
   let database: Database
+
+  func profile(id: GatewayProfileID) throws -> ProfileGrant? {
+    try ProfileRecord.fetchOne(database, key: id.rawValue)?.value()
+  }
+
+  func workspaceIDs() throws -> Set<String> {
+    Set(try String.fetchAll(database, sql: "SELECT id FROM workspaces"))
+  }
 
   func requests(tunnelID: String) throws -> [OAuthAuthorizationRequest] {
     try rows("oauthAuthorizationRequests", tunnelID: tunnelID)
@@ -77,6 +86,19 @@ struct GatewayOAuthTransaction: OAuthStoreTransaction {
       arguments: [tunnelID])
     try database.execute(
       sql: "DELETE FROM oauthAuthorizationRequests WHERE tunnelID = ?", arguments: [tunnelID])
+  }
+
+  func reconcileTunnels(activeIDs: Set<String>) throws {
+    let storedIDs = try String.fetchAll(
+      database,
+      sql: """
+        SELECT tunnelID FROM oauthGrants UNION SELECT tunnelID FROM oauthAuthorizationRequests
+        """)
+    let now = Date()
+    for id in storedIDs where !activeIDs.contains(id) {
+      try OAuthAuthorizationServer.revokeTunnel(
+        id: id, transaction: self, now: now, approver: .localApp)
+    }
   }
 
   func audit(_ event: AuditEvent) throws {

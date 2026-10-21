@@ -333,14 +333,17 @@ package struct AppControlPlaneOperations: Sendable {
   package func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws
     -> ConfigurationRevision
   {
-    try await gatewayService.changeManifest(manifest, expectedDigest: expectedDigest)
+    guard let expectedDigest else { throw AtomicManifestStoreError.staleDigest }
+    return try await gatewayService.changeManifest(manifest, expectedDigest: expectedDigest)
   }
 
   package func rollbackManifest(to revisionID: String) async throws -> ConfigurationRevision {
+    let digest = try await controlPlane.configurationDigest()
     guard let revision = try controlPlane.database.configurationRevision(id: revisionID) else {
       throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
-    return try await gatewayService.changeManifest(revision.manifest, reason: .rolledBack)
+    return try await gatewayService.changeManifest(
+      revision.manifest, reason: .rolledBack, expectedDigest: digest)
   }
 
   package func refreshProvider(id: String? = nil) async throws -> [ProviderState] {

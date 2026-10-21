@@ -45,6 +45,12 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     try writer.write { try body(GatewayOAuthTransaction(database: $0)) }
   }
 
+  package func reconcileOAuthTunnels(activeIDs: Set<String>) throws {
+    try writer.write {
+      try GatewayOAuthTransaction(database: $0).reconcileTunnels(activeIDs: activeIDs)
+    }
+  }
+
   /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
   /// comparison even though only canonical workspaces appear in the public directory.
   package struct ConfigurationState: Equatable, Sendable {
@@ -1041,7 +1047,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   /// A recovery journal restores file state if SQLite rolls this transaction back.
   package func activateConfigurationRevision(
     _ revision: ConfigurationRevision, expected: ConfigurationState,
-    resolution: GatewayConfigurationResolution,
+    resolution: GatewayConfigurationResolution, activeTunnelIDs: Set<String>,
     replaceManifest: (ConfigurationState) throws -> Void
   ) throws -> ConfigurationState {
     let committed = try writer.write { database in
@@ -1049,6 +1055,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         throw GatewayDatabaseError.configurationChanged
       }
       try Self.applyRuntimeResolution(resolution, in: database)
+      try GatewayOAuthTransaction(database: database).reconcileTunnels(activeIDs: activeTunnelIDs)
       try ConfigurationRevisionRecord(revision).insert(database)
       let state = try Self.configurationState(in: database)
       try replaceManifest(state)

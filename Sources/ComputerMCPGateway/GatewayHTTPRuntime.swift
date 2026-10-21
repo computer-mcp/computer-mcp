@@ -179,6 +179,8 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
     await app.activeSessionCount()
   }
 
+  internal func activeOAuthRequestCount() async -> Int { await app.activeOAuthRequestCount() }
+
   internal func boundPort() async -> Int? {
     await app.boundPort()
   }
@@ -208,6 +210,7 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
 }
 
 package actor GatewayHTTPApp {
+  func activeOAuthRequestCount() -> Int { oauthRequestTasks.count }
   private struct SessionContext {
     let principalID: String
     let controlSession: GatewayControlSession?
@@ -235,6 +238,7 @@ package actor GatewayHTTPApp {
   private var sessions: [String: SessionContext] = [:]
   private var principalRegistries: [String: any GatewayAsyncToolServing] = [:]
   private var pendingSessionIDs = Set<String>()
+  private var oauthRequestTasks: [UUID: Task<HTTPResponse, Never>] = [:]
   /// Revocation tombstones remain until every admission for that principal returns.
   private var inFlightOAuthAdmissions: [String: Int] = [:]
   private var revokedPrincipals = Set<String>()
@@ -426,6 +430,12 @@ package actor GatewayHTTPApp {
     if activeChannel?.isActive == true {
       try? await activeChannel?.close()
     }
+    // A disconnected channel can cancel its handler while OAuth still owns store work.
+    // Admission is closed before this snapshot, and every admitted task is joined.
+    let oauthTasks = Array(oauthRequestTasks.values)
+    for task in oauthTasks { task.cancel() }
+    for task in oauthTasks { _ = await task.value }
+    oauthRequestTasks.removeAll()
     // Stop managed admission before joining in-progress MCP initialization.
     if case .managed(let owner) = source { await owner.shutdown() }
     await stopAllSessions()
@@ -446,6 +456,9 @@ package actor GatewayHTTPApp {
   }
 
   func admit(_ request: HTTPRequest) async -> GatewayHTTPAdmissionResult {
+    guard !isStopping else {
+      return .rejected(gatewayHTTPError(statusCode: 503, code: "server_stopping"))
+    }
     let path = normalizedHTTPPath(request.path ?? "/")
     let address = Self.clientAddress(request)
     if GatewayOAuthHTTP.paths.contains(path) {
@@ -504,8 +517,19 @@ package actor GatewayHTTPApp {
     let path = normalizedHTTPPath(request.path ?? "/")
     if GatewayOAuthHTTP.paths.contains(path) {
       guard let oauth else { return gatewayHTTPError(statusCode: 404, code: "not_found") }
-      return await oauth.handle(
-        request, address: Self.clientAddress(request), rateChecked: admitted.oauthRateChecked)
+      guard !isStopping else { return gatewayHTTPError(statusCode: 503, code: "server_stopping") }
+      let id = UUID()
+      let task = Task {
+        await oauth.handle(
+          request, address: Self.clientAddress(request), rateChecked: admitted.oauthRateChecked)
+      }
+      oauthRequestTasks[id] = task
+      defer { oauthRequestTasks.removeValue(forKey: id) }
+      return await withTaskCancellationHandler {
+        await task.value
+      } onCancel: {
+        task.cancel()
+      }
     }
     if request.method.uppercased() == "OPTIONS" { return cors(.ok(headers: [:]), request: request) }
     if path == configuration.server.http.healthPath {

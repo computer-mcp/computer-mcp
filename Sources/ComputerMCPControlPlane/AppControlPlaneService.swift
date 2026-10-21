@@ -77,7 +77,7 @@ package actor AppControlPlaneService {
   /// A profile keeps its mutation slot through secret reads, activation and rollback.
   var cloudflareCredentialMutationWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
   var cloudflareOAuthSessions: [String: GatewayOAuthSessions] = [:]
-  let oauthApprovalWillCommit: @Sendable () async throws -> Void
+  let oauthApprovalWillCommit: @Sendable () throws -> Void
   let cloudflareAccessTokenDidRead: @Sendable () async throws -> Void
   var cloudflareStartTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
   var cloudflareStopTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
@@ -109,7 +109,7 @@ package actor AppControlPlaneService {
     pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
     pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
     bundledPlugins: BundledPlugins = .current,
-    oauthApprovalWillCommit: @escaping @Sendable () async throws -> Void = {},
+    oauthApprovalWillCommit: @escaping @Sendable () throws -> Void = {},
     cloudflareAccessTokenDidRead: @escaping @Sendable () async throws -> Void = {}
   ) {
     self.directories = directories
@@ -141,6 +141,17 @@ package actor AppControlPlaneService {
   package func start() async throws {
     try directories.prepare()
     try directories.secureDatabaseFiles()
+    await manifestStore.publicationLock.acquire()
+    do {
+      defer { manifestStore.publicationLock.release() }
+      let activeIDs: Set<String>
+      do {
+        activeIDs = Set(try manifestStore.activeConfiguration().transports.cloudflare.map(\.id))
+      } catch AtomicManifestStoreError.manifestMissing {
+        activeIDs = []
+      }
+      try database.reconcileOAuthTunnels(activeIDs: activeIDs)
+    }
     try await recoverPluginsAtStartup()
 
   }
@@ -186,15 +197,20 @@ package actor AppControlPlaneService {
     let configuration =
       try FileManager.default.fileExists(atPath: directories.manifest.path)
       ? manifestStore.activeConfiguration() : nil
-    let digest =
-      try expectedDigest ?? configuration.map { try manifestStore.admittedDigest(for: $0) }
-    return try manifestStore.commit(
-      manifestStore.prepare(
-        manifest: manifest, expectedDigest: digest, expectedConfiguration: configuration))
+    let prepared = try manifestStore.prepare(
+      manifest: manifest, expectedDigest: expectedDigest, expectedConfiguration: configuration)
+    if let configuration {
+      try await drainRemovedCloudflareTunnels(from: configuration, to: prepared.configuration)
+    }
+    return try manifestStore.commit(prepared)
+  }
+
+  package func configurationDigest() throws -> String {
+    try manifestStore.admittedDigest(for: manifestStore.activeConfiguration())
   }
 
   func applyManifestChange(
-    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String?,
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String,
     publish: @Sendable (GatewayInputs, PreparedManifestChange) async throws -> ConfigurationRevision
   ) async throws -> ConfigurationRevision {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
@@ -206,11 +222,12 @@ package actor AppControlPlaneService {
     let inputs = try gatewayInputs()
     let prepared = try manifestStore.prepare(
       manifest: manifest, reason: reason,
-      expectedDigest: try expectedDigest ?? manifestStore.admittedDigest(for: inputs.configuration),
+      expectedDigest: expectedDigest,
       expectedConfiguration: inputs.configuration)
     guard prepared.persisted == inputs.persisted else {
       throw GatewayDatabaseError.configurationChanged
     }
+    try await drainRemovedCloudflareTunnels(from: inputs.configuration, to: prepared.configuration)
     return try await publish(inputs, prepared)
   }
 
@@ -447,6 +464,21 @@ package actor AppControlPlaneService {
 
   package func profileGrants() async throws -> [ProfileGrant] {
     let inputs = try gatewayInputs()
+    var grants = Dictionary(
+      uniqueKeysWithValues: try await baseProfileGrants(inputs: inputs).map { ($0.id, $0) })
+    for persisted in inputs.profiles {
+      guard let configured = grants[persisted.id] else { continue }
+      var effective = configured.applyingPersistedRuntimeState(persisted)
+      if persisted.authorizationRevision == 0, effective.capabilityIDs.contains("*") {
+        effective.workspaceIDs.formUnion(inputs.workspaces.map(\.id))
+      }
+      grants[persisted.id] = effective
+    }
+    try requireCurrentGatewayInputs(inputs)
+    return grants.values.sorted { $0.id.rawValue < $1.id.rawValue }
+  }
+
+  func baseProfileGrants(inputs: GatewayInputs) async throws -> [ProfileGrant] {
     let configuration = inputs.configuration
     let configuredProfileIDs = Set(configuration.profiles.map(\.id))
     let profileIDs = Array(
@@ -483,16 +515,6 @@ package actor AppControlPlaneService {
         mode: .readOnly,
         authorizationRevision: 0
       )
-    }
-    for persisted in inputs.profiles {
-      guard let configured = grants[persisted.id] else {
-        continue
-      }
-      var effective = configured.applyingPersistedRuntimeState(persisted)
-      if persisted.authorizationRevision == 0, effective.capabilityIDs.contains("*") {
-        effective.workspaceIDs.formUnion(inputs.workspaces.map(\.id))
-      }
-      grants[persisted.id] = effective
     }
     try requireCurrentGatewayInputs(inputs)
     return profileIDs.compactMap { grants[$0] }
@@ -943,12 +965,12 @@ package actor AppControlPlaneService {
   }
 
   package func saveOpenAITunnelConfiguration(_ profile: OpenAITunnelConfiguration) async throws {
+    var configuration = try manifestStore.activeConfiguration()
+    let digest = try manifestStore.admittedDigest(for: configuration)
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
     try profile.validate()
-    var configuration = try manifestStore.activeConfiguration()
-    let digest = try manifestStore.admittedDigest(for: configuration)
     configuration.transports.openAI.removeAll { $0.id == profile.id }
     configuration.transports.openAI.append(
       OpenAITunnelTransportConfig(
@@ -968,14 +990,14 @@ package actor AppControlPlaneService {
   }
 
   package func deleteOpenAITunnelConfiguration(id: String) async throws {
+    var configuration = try manifestStore.activeConfiguration()
+    let digest = try manifestStore.admittedDigest(for: configuration)
     _ = try requireOpenAITunnelConfiguration(id)
     _ = try await openAITunnelSupervisor.stop(profileID: id)
     try setOpenAITunnelDesiredRunning(false, profileID: id)
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
-    var configuration = try manifestStore.activeConfiguration()
-    let digest = try manifestStore.admittedDigest(for: configuration)
     configuration.transports.openAI.removeAll { $0.id == id }
     try activateTransportConfiguration(configuration, expectedDigest: digest)
     try await deleteKeychainSecret(

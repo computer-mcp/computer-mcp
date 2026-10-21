@@ -215,7 +215,8 @@ struct OAuthAuthorizationTests {
     let pairing = try await flow.server.authorize(flow.authorizeFields, address: "browser")
     await #expect(throws: OAuthError.accessDenied) {
       try await flow.server.approve(
-        pairingCode: pairing.request.pairingCode, profile: .localAdmin, approver: .localCLI)
+        pairingCode: pairing.request.pairingCode, profile: { _ in .localAdmin }, approver: .localCLI
+      )
     }
   }
 
@@ -479,6 +480,8 @@ private final class MemoryOAuthStore: OAuthStore, @unchecked Sendable {
 private final class MemoryTransaction: OAuthStoreTransaction {
   var state: MemoryOAuthState
   init(state: MemoryOAuthState) { self.state = state }
+  func profile(id: GatewayProfileID) throws -> ProfileGrant? { nil }
+  func workspaceIDs() throws -> Set<String> { [] }
   func requests(tunnelID: String) throws -> [OAuthAuthorizationRequest] {
     state.requests.values.filter { $0.tunnelID == tunnelID }
   }

@@ -461,7 +461,8 @@ struct GatewayRemoteManagementTests {
       ],
       workspaceDirectory: fixture.root)
     configuration.policy.shellEnabled = true
-    _ = try await fixture.host.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.host.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     try await fixture.gateway.start(profile: .chatGPTOperate)

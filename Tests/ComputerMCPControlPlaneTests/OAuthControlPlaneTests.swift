@@ -2,11 +2,13 @@ import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
+import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPTunnels
 import Foundation
+import GRDB
 import MCP
 import Testing
 
@@ -180,8 +182,9 @@ struct OAuthControlPlaneTests {
   }
 
   @Test func permissionPublicationWaitsForApprovalToCommit() async throws {
-    let gate = SuspensionGate()
-    let fixture = try ControlFixture(approvalWillCommit: { await gate.pause() })
+    let gate = CommitGate()
+    defer { gate.resume() }
+    let fixture = try ControlFixture(approvalWillCommit: { gate.pause() })
     defer { fixture.remove() }
     let flow = fixture.server()
     let pairing = try await flow.authorize(fixture.fields, address: "fixture")
@@ -189,6 +192,7 @@ struct OAuthControlPlaneTests {
       try await fixture.service.oauthApprovalProfiles().first {
         $0.grant.id == .cloudflareObserve
       })
+    let lock = await fixture.service.manifestStore.publicationLock
     let approving = Task {
       try await fixture.service.authorizeOAuthClient(
         pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
@@ -200,11 +204,7 @@ struct OAuthControlPlaneTests {
         profileID: reviewed.grant.id, mode: .workspaceOperations,
         capabilityIDs: ["file.read", "file.write"])
     }
-    let lock = await fixture.service.manifestStore.publicationLock
-    await waitForPublicationWaiters(lock, count: 1)
-    #expect(try fixture.database.profiles().isEmpty)
-    #expect(try await flow.grants(approver: .localApp).isEmpty)
-    await gate.resume()
+    gate.resume()
     let grant = try await approving.value
     let changed = try await changing.value
     #expect(grant.profileID == reviewed.grant.id)
@@ -221,6 +221,101 @@ struct OAuthControlPlaneTests {
     #expect(lock.waitingCount == count)
   }
 
+  @Test func startupWithoutAManifestEndsStoredTunnelAuthority() async throws {
+    let fixture = try ControlFixture()
+    defer { fixture.remove() }
+    let flow = fixture.server()
+    let pairing = try await flow.authorize(fixture.fields, address: "fixture")
+    let grant = try await fixture.service.authorizeOAuthClient(
+      pairingCode: pairing.request.pairingCode)
+    let pending = try await flow.authorize(fixture.fields, address: "pending")
+    try FileManager.default.removeItem(at: fixture.service.directories.manifest)
+    let restarted = try fixture.restartedService()
+    try await restarted.start()
+    #expect(try fixture.database.oauthTransaction { try $0.grant(id: grant.id) }?.revokedAt != nil)
+    #expect(try fixture.database.oauthTransaction { try $0.requests(tunnelID: "tunnel") }.isEmpty)
+    await #expect(throws: OAuthError.invalidRequest) {
+      try await flow.status(statusToken: pending.statusToken, address: "pending")
+    }
+    try await restarted.stop()
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func derivedWorkspaceAuthorizationSerializesWithApproval(removing: Bool, changeFirst: Bool)
+    async throws
+  {
+    let gate = CommitGate()
+    defer { gate.resume() }
+    let fixture = try ControlFixture(approvalWillCommit: { gate.pause() })
+    defer { fixture.remove() }
+    let source = fixture.root.appendingPathComponent("source").resolvingSymlinksInPath()
+    let child = fixture.root.appendingPathComponent("child").resolvingSymlinksInPath()
+    for directory in [source, child] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    try fixture.database.saveWorkspace(
+      .init(id: "source", displayName: "Source", rootPath: source.path))
+    try fixture.database.saveProfile(
+      .init(
+        id: .cloudflareOperate, capabilityIDs: ["workspace.list"], workspaceIDs: ["source"],
+        allowedCallers: [.cloudflareTunnel], mode: .workspaceOperations))
+    let registration = MCPDerivedWorkspaceRegistration(
+      origin: "fixture", receiptID: "derived-receipt", sourceWorkspaceID: "source",
+      sourceRoot: source.path, receiptDigest: "fixture-digest", profileID: .cloudflareOperate,
+      principalID: "existing-client", caller: .cloudflareTunnel,
+      workspace: .init(id: "child", displayName: "Child", rootPath: child.path))
+    if removing {
+      try fixture.database.registerDerivedWorkspace(
+        registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
+    }
+    let connection = try GatewayDatabaseConnection(
+      path: try #require(fixture.database.fileURL).path)
+    try await connection.writer.writeWithoutTransaction {
+      try $0.execute(sql: "PRAGMA busy_timeout = 0")
+    }
+    let writer = GatewayDatabase(connection: connection)
+    func changeWorkspace() throws {
+      if removing {
+        try writer.unregisterDerivedWorkspace(
+          registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
+      } else {
+        try writer.registerDerivedWorkspace(
+          registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
+      }
+    }
+    let flow = fixture.server()
+    let pairing = try await flow.authorize(fixture.fields, address: "fixture")
+    let reviewed = try #require(
+      try await fixture.service.oauthApprovalProfiles().first { $0.grant.id == .cloudflareOperate })
+    if changeFirst {
+      try changeWorkspace()
+      await #expect(throws: (any Error).self) {
+        try await fixture.service.authorizeOAuthClient(
+          pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
+          expectedAuthorizationDigest: reviewed.authorizationDigest)
+      }
+      #expect(try await flow.grants(approver: .localApp).isEmpty)
+      #expect(try await flow.pendingRequests(approver: .localApp).count == 1)
+    } else {
+      let approving = Task {
+        try await fixture.service.authorizeOAuthClient(
+          pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
+          expectedAuthorizationDigest: reviewed.authorizationDigest)
+      }
+      await gate.waitUntilPaused()
+      // This connection cannot commit between the digest comparison and grant insertion.
+      #expect(throws: DatabaseError.self) { try changeWorkspace() }
+      gate.resume()
+      #expect(try await approving.value.profileID == reviewed.grant.id)
+      try changeWorkspace()
+      #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
+    }
+    let current = try #require(
+      try await fixture.service.oauthApprovalProfiles().first { $0.grant.id == reviewed.grant.id })
+    #expect(current.authorizationDigest != reviewed.authorizationDigest)
+    #expect(current.grant.workspaceIDs.contains("child") == !removing)
+  }
+
   // These integration cases publish manifests through the macOS exclusive-rename
   // adapter. Linux manifest recovery-record publication reports ENOSYS.
   #if os(macOS)
@@ -235,7 +330,9 @@ struct OAuthControlPlaneTests {
           id: .cloudflareObserve, capabilities: ["file.read"],
           allowedCallers: [.cloudflareTunnel], mode: .readOnly)
       ]
-      _ = try await fixture.service.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.service.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try? await fixture.service.configurationDigest())
       let reviewed = try #require(
         try await fixture.service.oauthApprovalProfiles().first {
           $0.grant.id == .cloudflareObserve
@@ -245,7 +342,9 @@ struct OAuthControlPlaneTests {
       let pairing = try await flow.authorize(fixture.fields, address: "fixture")
       configuration.profiles[0].mode = .workspaceOperations
       configuration.profiles[0].capabilities = ["file.read", "file.write"]
-      _ = try await fixture.gatewayService.changeManifest(configuration.exportedTOML())
+      _ = try await fixture.gatewayService.changeManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try await fixture.service.configurationDigest())
       await #expect(throws: (any Error).self) {
         try await fixture.service.authorizeOAuthClient(
           pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
@@ -264,20 +363,193 @@ struct OAuthControlPlaneTests {
         expectedAuthorizationDigest: current.authorizationDigest)
     }
 
+    @Test(arguments: ["delete", "activate", "import", "rollback", "reload", "startup"])
+    func everyTunnelRemovalEndsAuthorityBeforeRestoration(path: String) async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      let original = try await fixture.service.activeConfiguration().exportedTOML()
+      var removed = try await fixture.service.activeConfiguration()
+      removed.transports.cloudflare = []
+      let absent = try removed.exportedTOML()
+      let flow = fixture.server()
+      let (_, tokenCode) = try await fixture.approvedCode(flow)
+      let tokens = try await flow.token(fixture.codeFields(tokenCode), address: "tokens")
+      let (_, code) = try await fixture.approvedCode(flow)
+      let pending = try await flow.authorize(fixture.fields, address: "pending")
+      let undelivered = try await flow.authorize(fixture.fields, address: "undelivered")
+      _ = try await fixture.service.authorizeOAuthClient(
+        pairingCode: undelivered.request.pairingCode)
+      var owner = fixture.service
+      var listener: GatewayHTTPRuntime?
+      if path != "startup" {
+        let source = try await fixture.gatewayService.makeHTTPSessions(
+          profileID: .cloudflareObserve,
+          trace: .init(transport: "cloudflare_tunnel", tunnelInstanceID: profile.id))
+        let origin = GatewayHTTPRuntime(
+          configuration: .init(), source: .managed(source), host: "127.0.0.1",
+          port: profile.localPort,
+          publicBaseURL: fixture.configuration.issuer, accessToken: "fixture-static",
+          oauth: GatewayOAuthHTTP(server: flow))
+        listener = origin
+        try await origin.startListening()
+        await fixture.installOrigin(origin, profile: profile)
+        #expect(
+          try await fixture.postResponse(
+            port: profile.localPort, token: "fixture-static", initialize: true
+          ).statusCode == 200)
+      }
+      let socket = ControlSocketService(
+        controlPlane: fixture.service, gatewayService: fixture.gatewayService,
+        socketURL: fixture.root.appendingPathComponent("control.sock"))
+      do {
+        switch path {
+        case "delete":
+          try await fixture.operations.deleteCloudflareTunnelConfiguration(id: profile.id)
+        case "activate":
+          _ = try await fixture.operations.activateManifest(
+            absent, expectedDigest: try await owner.configurationDigest())
+        case "import":
+          try await socket.start()
+          let client = AppControlPlaneServiceClient(
+            socketURL: fixture.root.appendingPathComponent("control.sock"))
+          let preview = try await client.call(
+            "config.import", arguments: .object(["toml": .string(absent)]))
+          let digest = try #require(preview.objectValue?["current_digest"]?.stringValue)
+          _ = try await client.call(
+            "config.import",
+            arguments: .object([
+              "toml": .string(absent), "apply": .bool(true),
+              "expected_current_digest": .string(digest),
+            ]))
+        case "rollback":
+          let revision = ConfigurationRevision(
+            digest: try AtomicManifestStore.digest(of: Data(absent.utf8)), manifest: absent)
+          try fixture.database.saveConfigurationRevision(revision)
+          _ = try await fixture.operations.rollbackManifest(to: revision.id)
+        case "reload":
+          try Data(absent.utf8).write(to: owner.directories.manifest, options: .atomic)
+          fixture.monitor.signal()
+          let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+          while try await !owner.cloudflareTunnelConfigurations().isEmpty,
+            ContinuousClock.now < deadline
+          {
+            await Task.yield()
+          }
+        case "startup":
+          try Data(absent.utf8).write(to: owner.directories.manifest, options: .atomic)
+          owner = try fixture.restartedService()
+          try await owner.start()
+        default: Issue.record("Unknown publication path")
+        }
+        #expect(try await owner.cloudflareTunnelConfigurations().isEmpty)
+        #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
+        #expect(try await flow.grants(approver: .localApp).allSatisfy { $0.revokedAt != nil })
+        await #expect(throws: OAuthError.invalidGrant) {
+          try await flow.token(fixture.refreshFields(tokens.refreshToken), address: "tokens")
+        }
+        _ = try await owner.activateManifest(
+          original, expectedDigest: try? await owner.configurationDigest())
+        #expect(try await owner.cloudflareTunnelConfigurations().first?.id == profile.id)
+        #expect(
+          try await owner.cloudflareTunnelConfigurations().first?.publicHostname
+            == profile.publicHostname)
+        #expect(
+          try await flow.authenticate(accessToken: tokens.accessToken, address: "tokens") == nil)
+        await #expect(throws: OAuthError.invalidGrant) {
+          try await flow.token(fixture.refreshFields(tokens.refreshToken), address: "tokens")
+        }
+        await #expect(throws: OAuthError.invalidGrant) {
+          try await flow.token(fixture.codeFields(code), address: "tokens")
+        }
+        for pairing in [pending, undelivered] {
+          await #expect(throws: OAuthError.invalidRequest) {
+            try await flow.status(statusToken: pairing.statusToken, address: "pending")
+          }
+          await #expect(throws: OAuthError.invalidRequest) {
+            try await owner.authorizeOAuthClient(pairingCode: pairing.request.pairingCode)
+          }
+        }
+        await socket.stop()
+        await listener?.stop()
+        await fixture.gatewayService.stop()
+        try await owner.stop()
+      } catch {
+        await socket.stop()
+        await listener?.stop()
+        await fixture.gatewayService.stop()
+        try? await owner.stop()
+        throw error
+      }
+    }
+
+    @Test func deletionJoinsAuthorizationSuspendedBeforeInsertion() async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let gate = SuspensionGate()
+      let canceled = AsyncStream<Void>.makeStream()
+      let flow = fixture.server(authorizationWillInsert: {
+        await withTaskCancellationHandler {
+          await gate.pause()
+        } onCancel: {
+          canceled.continuation.yield(())
+          canceled.continuation.finish()
+        }
+      })
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      let listener = GatewayHTTPRuntime(
+        configuration: .init(), registry: RotationRegistry(), host: "127.0.0.1",
+        port: profile.localPort,
+        publicBaseURL: fixture.configuration.issuer, accessToken: "fixture-static",
+        oauth: GatewayOAuthHTTP(server: flow))
+      try await listener.startListening()
+      await fixture.installOrigin(listener, profile: profile)
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.invalidateAndCancel() }
+      var url = URLComponents(string: "http://127.0.0.1:\(profile.localPort)/oauth/authorize")!
+      url.queryItems = fixture.fields.map { URLQueryItem(name: $0.key, value: $0.value) }
+      var request = URLRequest(url: url.url!)
+      request.setValue("gateway.example", forHTTPHeaderField: "Host")
+      let authorization = Task { try? await session.data(for: request) }
+      await gate.waitUntilPaused()
+      let deleting = Task {
+        try await fixture.service.deleteCloudflareTunnelConfiguration(id: profile.id)
+      }
+      for await _ in canceled.stream { break }
+      #expect(await listener.activeOAuthRequestCount() == 1)
+      #expect(try await fixture.service.cloudflareTunnelConfigurations().count == 1)
+      #expect(
+        try fixture.database.oauthTransaction { try $0.requests(tunnelID: profile.id).isEmpty })
+      await gate.resume()
+      try await deleting.value
+      _ = await authorization.value
+      #expect(await listener.activeOAuthRequestCount() == 0)
+      #expect(try await fixture.service.cloudflareTunnelConfigurations().isEmpty)
+      #expect(
+        try fixture.database.oauthTransaction { try $0.requests(tunnelID: profile.id).isEmpty })
+      #expect(
+        try fixture.database.auditEvents(limit: 100).contains {
+          $0.capabilityID == "oauth.authorization_requested"
+        })
+    }
+
     @Test(arguments: [false, true])
-    func tunnelSaveMergesAfterGatewayPublication(disableOAuth: Bool) async throws {
+    func staleTunnelSaveIsRefusedAfterGatewayPublication(disableOAuth: Bool) async throws {
       let gate = SuspensionGate()
       let fixture = try ControlFixture(manifestWillPublish: { await gate.pause() })
       defer { fixture.remove() }
       let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
       _ = try await fixture.service.saveCloudflareTunnelConfiguration(
         profile, tunnelToken: "synthetic-tunnel")
+      let digest = try await fixture.service.configurationDigest()
       var configuration = try await fixture.service.activeConfiguration()
       configuration.transports.cloudflare[0].oauthEnabled = !disableOAuth
       configuration.transports.cloudflare[0].oauthClientAllowlist = ["updated.example"]
       configuration.builtin.enabled = ["file.read"]
       let manifest = try configuration.exportedTOML()
-      let publishing = Task { try await fixture.gatewayService.changeManifest(manifest) }
+      let publishing = Task {
+        try await fixture.gatewayService.changeManifest(manifest, expectedDigest: digest)
+      }
       await gate.waitUntilPaused()
       var input = fixture.saveInput(for: profile)
       input.tunnelName = "updated-name"
@@ -289,48 +561,77 @@ struct OAuthControlPlaneTests {
       await waitForPublicationWaiters(lock, count: 1)
       await gate.resume()
       _ = try await publishing.value
-      let saved = try await saving.value
-      #expect(saved.profile.oauthEnabled == !disableOAuth)
-      #expect(saved.profile.oauthClientAllowlist == ["updated.example"])
+      await #expect(throws: AtomicManifestStoreError.staleDigest) { try await saving.value }
       let current = try await fixture.service.activeConfiguration()
-      #expect(current.transports.cloudflare[0].tunnelName == "updated-name")
+      #expect(current.transports.cloudflare[0].tunnelName == profile.tunnelName)
       #expect(current.transports.cloudflare[0].oauthEnabled == !disableOAuth)
       #expect(current.transports.cloudflare[0].oauthClientAllowlist == ["updated.example"])
       #expect(current.builtin.enabled == ["file.read"])
     }
 
-    @Test func gatewayPublicationReadsItsBaseAfterATunnelSave() async throws {
+    @Test func staleGatewayPublicationIsRefusedAfterTunnelSave() async throws {
       let fixture = try ControlFixture()
       defer { fixture.remove() }
       let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
       _ = try await fixture.service.saveCloudflareTunnelConfiguration(
         profile, tunnelToken: "synthetic-tunnel")
-      let saving = SuspensionGate()
-      await fixture.secrets.pauseWrite(
-        "updated-tunnel", for: profile.tunnelTokenReference, gate: saving)
+      let digest = try await fixture.service.configurationDigest()
+      var configuration = try await fixture.service.activeConfiguration()
+      configuration.builtin.enabled = ["file.read"]
       var input = fixture.saveInput(for: profile)
-      input.tunnelToken = "updated-tunnel"
+      input.oauthEnabled = false
       input.tunnelName = "updated-name"
       let savingInput = input
-      let first = Task {
+      let manifest = try configuration.exportedTOML()
+      let lock = await fixture.service.manifestStore.publicationLock
+      await lock.acquire()
+      let saving = Task {
         try await fixture.operations.saveCloudflareTunnelConfiguration(savingInput)
       }
-      await saving.waitUntilPaused()
-      var configuration = try await fixture.service.activeConfiguration()
-      configuration.transports.cloudflare[0].oauthEnabled = false
-      configuration.builtin.enabled = ["file.read"]
-      _ = try await fixture.gatewayService.changeManifest(configuration.exportedTOML())
-      await saving.resume()
-      _ = try await first.value
+      await waitForPublicationWaiters(lock, count: 1)
+      let publishing = Task {
+        try await fixture.gatewayService.changeManifest(manifest, expectedDigest: digest)
+      }
+      await waitForPublicationWaiters(lock, count: 2)
+      lock.release()
+      _ = try await saving.value
+      await #expect(throws: AtomicManifestStoreError.staleDigest) { try await publishing.value }
       let current = try await fixture.service.activeConfiguration()
       #expect(current.transports.cloudflare[0].tunnelName == "updated-name")
       #expect(!current.transports.cloudflare[0].oauthEnabled)
-      #expect(current.builtin.enabled == ["file.read"])
+      #expect(current.builtin.enabled != ["file.read"])
+    }
+
+    @Test func tunnelStartCannotRegisterAfterRemovalHasDrainedTheListener() async throws {
+      let gate = SuspensionGate()
+      let fixture = try ControlFixture(manifestWillPublish: { await gate.pause() })
+      defer { fixture.remove() }
+      let digest = try await fixture.service.configurationDigest()
+      var configuration = try await fixture.service.activeConfiguration()
+      configuration.transports.cloudflare = []
+      let manifest = try configuration.exportedTOML()
+      let publishing = Task {
+        try await fixture.gatewayService.changeManifest(manifest, expectedDigest: digest)
+      }
+      await gate.waitUntilPaused()
+      let starting = Task {
+        try await fixture.service.startCloudflareTunnel(
+          profileID: "tunnel", gatewayService: fixture.gatewayService)
+      }
+      let lock = await fixture.service.manifestStore.publicationLock
+      await waitForPublicationWaiters(lock, count: 1)
+      #expect(await fixture.service.cloudflareStartTasks.isEmpty)
+      await gate.resume()
+      _ = try await publishing.value
+      await #expect(throws: CloudflareTunnelError.profileNotFound("tunnel")) {
+        try await starting.value
+      }
     }
 
     @Test func deletionWaitsForAnAdmittedApprovalThenRevokesIt() async throws {
-      let gate = SuspensionGate()
-      let fixture = try ControlFixture(approvalWillCommit: { await gate.pause() })
+      let gate = CommitGate()
+      defer { gate.resume() }
+      let fixture = try ControlFixture(approvalWillCommit: { gate.pause() })
       defer { fixture.remove() }
       let flow = fixture.server()
       let pairing = try await flow.authorize(fixture.fields, address: "fixture")
@@ -350,8 +651,7 @@ struct OAuthControlPlaneTests {
       #expect(
         await fixture.service.cloudflareCredentialMutationWaiters[fixture.configuration.tunnelID]?
           .count == 1)
-      #expect(try await flow.grants(approver: .localApp).isEmpty)
-      await gate.resume()
+      gate.resume()
       let approved = try await approving.value
       try await deleting.value
       #expect(try await fixture.service.cloudflareTunnelConfigurations().isEmpty)
@@ -413,7 +713,7 @@ struct OAuthControlPlaneTests {
           == rotated.generatedAccessToken)
     }
 
-    @Test func savingOneTunnelPreservesAnotherTunnelsCompletedDisablement() async throws {
+    @Test func staleSaveOfAnotherTunnelCannotOverwriteCompletedDisablement() async throws {
       let fixture = try ControlFixture()
       defer { fixture.remove() }
       let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
@@ -445,9 +745,9 @@ struct OAuthControlPlaneTests {
           try await fixture.service.cloudflareTunnelConfigurations().first { $0.id == other.id }?
             .oauthEnabled == false)
         await saving.resume()
-        _ = try await first.value
+        await #expect(throws: AtomicManifestStoreError.staleDigest) { try await first.value }
         let current = try await fixture.service.cloudflareTunnelConfigurations()
-        #expect(current.first { $0.id == profile.id }?.tunnelName == "updated-named")
+        #expect(current.first { $0.id == profile.id }?.tunnelName == profile.tunnelName)
         #expect(current.first { $0.id == other.id }?.oauthEnabled == false)
         #expect(current.first { $0.id == other.id }?.oauthClientAllowlist == ["client.example"])
       } catch {
@@ -481,26 +781,22 @@ struct OAuthControlPlaneTests {
           .value
       else { throw OAuthError.invalidGrant }
       let credential = try #require(await fixture.service.cloudflareAccessCredentials[profile.id])
-      let sessions = try #require(await fixture.service.cloudflareOAuthSessions[profile.id])
       let revoking = SuspensionGate()
-      await sessions.attach { _ in await revoking.pause() }
+      try await fixture.service.pauseOriginStop(profileID: profile.id, gate: revoking)
       let deleting = Task {
         try await fixture.service.deleteCloudflareTunnelConfiguration(id: profile.id)
       }
       await revoking.waitUntilPaused()
-      #expect(await fixture.service.cloudflareRuntimes[profile.id] == nil)
+      #expect(await fixture.service.cloudflareRuntimes[profile.id]?.state == .stopping)
       #expect(
-        try fixture.database.oauthTransaction { try $0.requests(tunnelID: profile.id) }.isEmpty)
-      #expect(
-        try fixture.database.oauthTransaction { try $0.grants(tunnelID: profile.id) }.allSatisfy {
-          $0.revokedAt != nil
+        try fixture.database.oauthTransaction { try $0.requests(tunnelID: profile.id) }.contains {
+          $0.id == pending.request.id
         })
       #expect(
+        try fixture.database.oauthTransaction { try $0.grant(id: grant.id) }?.revokedAt == nil)
+      #expect(
         try fixture.database.oauthTransaction { try $0.code(digest: OAuthSecret.digest(code)) }
-          == nil)
-      await #expect(throws: OAuthError.invalidRequest) {
-        try await fixture.service.authorizeOAuthClient(pairingCode: pending.request.pairingCode)
-      }
+          != nil)
       let starting = Task {
         try await fixture.service.startCloudflareTunnel(
           profileID: profile.id, gatewayService: fixture.gatewayService)
@@ -817,17 +1113,18 @@ private final class ControlFixture: Sendable {
   let operations: AppControlPlaneOperations
   let gatewayService: AppGatewayService
   let secrets = FixtureSecrets()
+  let monitor = FixtureManifestMonitor()
   let configuration = OAuthServerConfiguration(
     tunnelID: "tunnel", tunnelName: "named", hostname: "gateway.example",
     clientAllowlist: ["client.example"])
 
   init(
     tokenDidRead: @escaping @Sendable () async throws -> Void = {},
-    approvalWillCommit: @escaping @Sendable () async throws -> Void = {},
+    approvalWillCommit: @escaping @Sendable () throws -> Void = {},
     manifestWillPublish: @escaping @Sendable () async throws -> Void = {}
   ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "oauth-control-" + UUID().uuidString)
+      "oauth-control-" + String(UUID().uuidString.prefix(12)))
     let directories = AppControlPlaneServiceDirectories(
       applicationSupport: root.appendingPathComponent("Support"),
       logs: root.appendingPathComponent("Logs"))
@@ -858,12 +1155,13 @@ private final class ControlFixture: Sendable {
         database: database, applications: TestApplicationBundleLocator()))
     let store = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database, loader: loader)
+    let monitor = monitor
     let platform = PlatformServices(
       workspaceGrants: UnusedPlatform(), pluginDirectories: UnusedPlatform(),
       applications: TestApplicationBundleLocator(), toolProviders: UnusedPlatform(),
       managementToolNames: [],
       executableSearchDirectories: [], gitExecutable: "git",
-      fileChanges: { _ in QuietManifestMonitor() })
+      fileChanges: { _ in monitor })
     service = AppControlPlaneService(
       directories: directories, database: database, manifestStore: store,
       defaultManifest: try manifest.exportedTOML(), secretStore: secrets,
@@ -888,10 +1186,55 @@ private final class ControlFixture: Sendable {
       "code_challenge_method": "S256", "resource": configuration.resource,
     ]
   }
-  func server() -> OAuthAuthorizationServer {
+  func server(authorizationWillInsert: @escaping @Sendable () async throws -> Void = {})
+    -> OAuthAuthorizationServer
+  {
     OAuthAuthorizationServer(
       configuration: configuration, store: database,
-      identifier: CIMDClientIdentifier(fetcher: ControlDocument()))
+      identifier: CIMDClientIdentifier(fetcher: ControlDocument()),
+      authorizationWillInsert: authorizationWillInsert)
+  }
+  func approvedCode(_ flow: OAuthAuthorizationServer) async throws -> (OAuthGrant, String) {
+    let pairing = try await flow.authorize(fields, address: UUID().uuidString)
+    let grant = try await service.authorizeOAuthClient(pairingCode: pairing.request.pairingCode)
+    guard
+      case .redirect(let target) = try await flow.status(
+        statusToken: pairing.statusToken, address: "fixture"),
+      let code = URLComponents(string: target)?.queryItems?.first(where: { $0.name == "code" })?
+        .value
+    else { throw OAuthError.invalidGrant }
+    return (grant, code)
+  }
+  func codeFields(_ code: String) -> [String: String] {
+    [
+      "grant_type": "authorization_code", "client_id": fields["client_id"]!,
+      "redirect_uri": fields["redirect_uri"]!,
+      "code": code, "code_verifier": String(repeating: "a", count: 43),
+      "resource": configuration.resource,
+    ]
+  }
+  func refreshFields(_ refresh: String) -> [String: String] {
+    [
+      "grant_type": "refresh_token", "client_id": fields["client_id"]!, "refresh_token": refresh,
+      "resource": configuration.resource,
+    ]
+  }
+  func restartedService() throws -> AppControlPlaneService {
+    let directories = service.directories
+    let database = try GatewayDatabase(path: directories.database.path)
+    let store = try AtomicManifestStore(
+      manifestURL: directories.manifest, database: database, loader: loader)
+    return AppControlPlaneService(
+      directories: directories, database: database, manifestStore: store,
+      defaultManifest: service.defaultManifest, secretStore: secrets,
+      openAITunnelSupervisor: OpenAITunnelSupervisor(
+        secretStore: secrets, executableSearchDirectories: [],
+        proxyResolver: FixedOpenAITunnelHTTPProxyResolver()),
+      launchAtLoginController: UnusedPlatform(),
+      computerUsePermissionReader: FixedComputerUsePermissionReader(), platform: service.platform)
+  }
+  func installOrigin(_ origin: GatewayHTTPRuntime, profile: CloudflareTunnelConfiguration) async {
+    await service.installOrigin(origin, profile: profile)
   }
   func post(port: Int, token: String) async throws -> Int {
     try await postResponse(port: port, token: token).statusCode
@@ -990,7 +1333,7 @@ private struct UnusedPlatform: WorkspaceBookmarkServicing, PluginArchiveDirector
     throw FixtureFailure.unused
   }
   func resolve(_ workspace: RegisteredWorkspace) throws -> ResolvedWorkspaceAccess {
-    throw FixtureFailure.unused
+    throw WorkspaceBookmarkError.bookmarkResolutionFailed(workspaceID: workspace.id)
   }
   func create(at url: URL) throws -> any PluginArchiveStagingDirectory {
     throw FixtureFailure.unused
@@ -1046,9 +1389,35 @@ private struct RotationRegistry: GatewayToolServing {
   { .null }
 }
 
-private struct QuietManifestMonitor: FileChangeMonitor {
-  var changes: AsyncStream<Void> { AsyncStream { _ in } }
-  func close() async {}
+private final class FixtureManifestMonitor: FileChangeMonitor, Sendable {
+  let changes: AsyncStream<Void>
+  private let continuation: AsyncStream<Void>.Continuation
+  init() { (changes, continuation) = AsyncStream.makeStream() }
+  func signal() { continuation.yield(()) }
+  func close() async { continuation.finish() }
+}
+
+private struct GatedOriginStop: HTTPOriginLifecycle {
+  let origin: any HTTPOriginLifecycle
+  let gate: SuspensionGate
+  func stop() async {
+    await origin.stop()
+    await gate.pause()
+  }
+}
+
+extension AppControlPlaneService {
+  fileprivate func pauseOriginStop(profileID: String, gate: SuspensionGate) throws {
+    guard let origin = cloudflareRuntimes[profileID]?.origin else { throw FixtureFailure.unused }
+    cloudflareRuntimes[profileID]?.origin = GatedOriginStop(origin: origin, gate: gate)
+  }
+  fileprivate func installOrigin(
+    _ origin: GatewayHTTPRuntime, profile: CloudflareTunnelConfiguration
+  ) {
+    cloudflareRuntimes[profile.id] = .init(
+      profile: profile, state: .running, process: nil, origin: origin, tokenFile: nil,
+      stdoutHandle: nil, stderrHandle: nil, startedAt: Date(), lastError: nil)
+  }
 }
 
 private final class FixtureManifestLoader: ManifestConfigurationLoading, @unchecked Sendable {
@@ -1091,5 +1460,28 @@ private final class OAuthStreamObserver: NSObject, URLSessionDataDelegate, Senda
   ) {
     continuation.yield(.ended)
     continuation.finish()
+  }
+}
+
+// The gate pauses a synchronous SQLite write on its database queue.
+private final class CommitGate: @unchecked Sendable {
+  private let condition = NSCondition()
+  private var resumed = false
+  private let entered: AsyncStream<Void>
+  private let continuation: AsyncStream<Void>.Continuation
+  init() { (entered, continuation) = AsyncStream.makeStream() }
+  func pause() {
+    condition.lock()
+    continuation.yield(())
+    continuation.finish()
+    while !resumed { condition.wait() }
+    condition.unlock()
+  }
+  func waitUntilPaused() async { for await _ in entered { return } }
+  func resume() {
+    condition.lock()
+    resumed = true
+    condition.broadcast()
+    condition.unlock()
   }
 }

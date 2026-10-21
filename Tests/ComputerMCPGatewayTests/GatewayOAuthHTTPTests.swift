@@ -178,7 +178,8 @@ struct GatewayOAuthHTTPTests {
     let pairing = try await fixture.server.authorize(
       fixture.authorizationFields, address: "fixture")
     let grant = try await fixture.server.approve(
-      pairingCode: pairing.request.pairingCode, profile: .cloudflareOperate, approver: .localApp)
+      pairingCode: pairing.request.pairingCode, profile: { _ in .cloudflareOperate },
+      approver: .localApp)
     guard
       case .redirect(let target) = try await fixture.server.status(
         statusToken: pairing.statusToken, address: "fixture"),

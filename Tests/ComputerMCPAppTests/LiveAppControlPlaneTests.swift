@@ -48,7 +48,9 @@ final class LiveAppControlPlaneTests {
             id: .chatGPTOperate, capabilities: ["file.read"], workspaces: ["*"],
             allowedCallers: [.localMCP], mode: .workspaceOperations)
         ], workspaceDirectory: fixture.root)
-      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.controlPlane.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
       try await fixture.app.startApplication()
       try await fixture.app.registerWorkspace(at: fixture.root)
@@ -94,7 +96,7 @@ final class LiveAppControlPlaneTests {
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
       _ = try await fixture.controlPlane.activateManifest(
         GatewayConfiguration(policy: .init(shellEnabled: true), workspaceDirectory: fixture.root)
-          .exportedTOML())
+          .exportedTOML(), expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.setGatewayDesiredRunning(gatewayRunning)
       try await fixture.app.startApplication()
       let client = AppControlPlaneServiceClient(
@@ -296,7 +298,9 @@ final class LiveAppControlPlaneTests {
             allowedCallers: [.secureTunnel], mode: .workspaceOperations)
         ], builtin: .init(enabled: ["system.time", "file.read", "file.write"]),
         workspaceDirectory: fixture.root)
-      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.controlPlane.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.database.saveWorkspace(
         .init(id: "project", displayName: "My Project", rootPath: fixture.root.path))
       try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)

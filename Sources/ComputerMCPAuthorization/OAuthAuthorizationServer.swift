@@ -6,6 +6,7 @@ package actor OAuthAuthorizationServer {
   private let store: any OAuthStore
   private let identifier: any OAuthClientIdentifying
   private let clock: @Sendable () -> Date
+  private let authorizationWillInsert: @Sendable () async throws -> Void
   private var limiter = OAuthRateLimiter()
   private var lastFailureAudit: Date?
   private var metadataFetches: [String: Int] = [:]
@@ -15,12 +16,14 @@ package actor OAuthAuthorizationServer {
     configuration: OAuthServerConfiguration, store: any OAuthStore,
     identifier: any OAuthClientIdentifying = CIMDClientIdentifier(),
     clock: @escaping @Sendable () -> Date = { Date() },
+    authorizationWillInsert: @escaping @Sendable () async throws -> Void = {},
     endSessions: @escaping @Sendable (String) async -> Void = { _ in }
   ) {
     self.configuration = configuration
     self.store = store
     self.identifier = identifier
     self.clock = clock
+    self.authorizationWillInsert = authorizationWillInsert
     self.endSessions = endSessions
   }
 
@@ -62,6 +65,7 @@ package actor OAuthAuthorizationServer {
     }
     let now = clock()
     let statusToken = OAuthSecret.generate()
+    try await authorizationWillInsert()
     return try store.oauthTransaction { transaction in
       try expireRequests(transaction, now: now)
       try transaction.prune(before: now)
@@ -118,15 +122,19 @@ package actor OAuthAuthorizationServer {
   }
 
   package func approve(
-    pairingCode: String, profile: ProfileGrant = .cloudflareObserve,
+    pairingCode: String,
+    profile: @Sendable (any OAuthStoreTransaction) throws -> ProfileGrant = { _ in
+      .cloudflareObserve
+    },
     approver: GatewayCallerKind
   ) throws -> OAuthGrant {
     try requireLocal(approver)
-    guard profile.id != .localAdmin, profile.allowedCallers.contains(.cloudflareTunnel) else {
-      throw OAuthError.accessDenied
-    }
     let now = clock()
     return try store.oauthTransaction { transaction in
+      let profile = try profile(transaction)
+      guard profile.id != .localAdmin, profile.allowedCallers.contains(.cloudflareTunnel) else {
+        throw OAuthError.accessDenied
+      }
       try expireRequests(transaction, now: now)
       guard
         var request = try transaction.requests(tunnelID: configuration.tunnelID).first(where: {
@@ -343,22 +351,31 @@ package actor OAuthAuthorizationServer {
     try await endGrantSessions(grant, caller: approver)
   }
 
-  /// The tunnel owner holds its mutation slot through this transaction and session cleanup.
-  package func revokeTunnel(approver: GatewayCallerKind) async throws {
-    try requireLocal(approver)
-    let now = clock()
-    let grants = try store.oauthTransaction { transaction in
-      let grants = try transaction.grants(tunnelID: configuration.tunnelID)
-      for var grant in grants where grant.revokedAt == nil {
-        grant.revokedAt = now
-        try transaction.save(grant)
-        try transaction.audit(audit("grant_revoked", grant: grant, caller: approver, now: now))
-      }
-      try transaction.endAuthorizations(tunnelID: configuration.tunnelID)
-      try transaction.audit(audit("authorizations_ended", caller: approver, now: now))
-      return grants
+  /// The publisher drains the listener before ending its authority in the publication transaction.
+  package static func revokeTunnel(
+    id: String, transaction: any OAuthStoreTransaction, now: Date, approver: GatewayCallerKind
+  ) throws {
+    guard approver == .localApp || approver == .localCLI else { throw OAuthError.accessDenied }
+    let grants = try transaction.grants(tunnelID: id)
+    let requests = try transaction.requests(tunnelID: id)
+    for var grant in grants where grant.revokedAt == nil {
+      grant.revokedAt = now
+      try transaction.save(grant)
+      try transaction.audit(
+        AuditEvent(
+          occurredAt: now, requestID: UUID().uuidString, caller: approver,
+          principalDigest: AuditEvent.verifiedPrincipalDigest(grant.principalID),
+          transport: "cloudflare_tunnel", tunnelInstanceID: id, profileID: grant.profileID,
+          capabilityID: "oauth.grant_revoked", decision: .allowed))
     }
-    for grant in grants { try await endGrantSessions(grant, caller: approver) }
+    try transaction.endAuthorizations(tunnelID: id)
+    if !requests.isEmpty || grants.contains(where: { $0.revokedAt == nil }) {
+      try transaction.audit(
+        AuditEvent(
+          occurredAt: now, requestID: UUID().uuidString, caller: approver,
+          transport: "cloudflare_tunnel", tunnelInstanceID: id, profileID: .cloudflareObserve,
+          capabilityID: "oauth.authorizations_ended", decision: .allowed))
+    }
   }
 
   private func endGrantSessions(_ grant: OAuthGrant, caller: GatewayCallerKind) async throws {

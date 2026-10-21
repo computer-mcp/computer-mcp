@@ -79,8 +79,7 @@ extension AppControlPlaneService {
       accessTokenReference: try SecretReference(account: "cloudflare.\(input.id).access-token")
     )
     return try await performCloudflareSave(
-      profile, tunnelToken: input.tunnelToken, regenerateAccessToken: input.regenerateAccessToken,
-      input: input)
+      profile, tunnelToken: input.tunnelToken, regenerateAccessToken: input.regenerateAccessToken)
   }
 
   package func saveCloudflareTunnelConfiguration(
@@ -96,12 +95,14 @@ extension AppControlPlaneService {
 
   /// The caller owns this profile's mutation slot through publication and rollback.
   private func performCloudflareSave(
-    _ profile: CloudflareTunnelConfiguration, tunnelToken: String?, regenerateAccessToken: Bool,
-    input: CloudflareTunnelConfigurationInput? = nil
+    _ profile: CloudflareTunnelConfiguration, tunnelToken: String?, regenerateAccessToken: Bool
   ) async throws -> CloudflareOnboardingResult {
     try Task.checkCancellation()
     try profile.validate()
-    try configuration(savingCloudflareProfile: profile).validate()
+    let base = try manifestStore.activeConfiguration()
+    let digest = try manifestStore.admittedDigest(for: base)
+    let configuration = configuration(savingCloudflareProfile: profile, in: base)
+    try configuration.validate()
 
     let existingTunnelToken = try await keychainSecretValue(for: profile.tunnelTokenReference)
     let existingAccessToken = try await keychainSecretValue(for: profile.accessTokenReference)
@@ -111,7 +112,6 @@ extension AppControlPlaneService {
     let generatedAccessToken =
       regenerateAccessToken || existingAccessToken == nil
       ? Self.secureRandomToken() : nil
-    var savedProfile = profile
     do {
       if let tunnelToken {
         try await setKeychainSecret(tunnelToken, for: profile.tunnelTokenReference)
@@ -124,17 +124,7 @@ extension AppControlPlaneService {
       await manifestStore.publicationLock.acquire()
       defer { manifestStore.publicationLock.release() }
       try Task.checkCancellation()
-      let current = try manifestStore.activeConfiguration()
-      let digest = try manifestStore.admittedDigest(for: current)
-      if let input,
-        let existing = current.transports.cloudflare.first(where: { $0.id == profile.id })
-      {
-        savedProfile.oauthEnabled = input.oauthEnabled ?? existing.oauthEnabled
-        savedProfile.oauthClientAllowlist =
-          input.oauthClientAllowlist ?? existing.oauthClientAllowlist
-      }
-      try activateTransportConfiguration(
-        configuration(savingCloudflareProfile: savedProfile), expectedDigest: digest)
+      try activateTransportConfiguration(configuration, expectedDigest: digest)
     } catch {
       await restoreCloudflareSecret(
         existingTunnelToken,
@@ -150,15 +140,17 @@ extension AppControlPlaneService {
       throw error
     }
     return CloudflareOnboardingResult(
-      profile: savedProfile,
+      profile: profile,
       generatedAccessToken: generatedAccessToken
     )
   }
 
-  private func configuration(savingCloudflareProfile profile: CloudflareTunnelConfiguration) throws
+  private func configuration(
+    savingCloudflareProfile profile: CloudflareTunnelConfiguration, in base: GatewayConfiguration
+  )
     -> GatewayConfiguration
   {
-    var configuration = try manifestStore.activeConfiguration()
+    var configuration = base
     configuration.transports.cloudflare.removeAll { $0.id == profile.id }
     configuration.transports.cloudflare.append(
       CloudflareTunnelTransportConfig(
@@ -182,21 +174,28 @@ extension AppControlPlaneService {
     defer { endCloudflareCredentialMutation(profileID: id) }
     try Task.checkCancellation()
     let profile = try requireCloudflareProfile(id)
+    var configuration = try manifestStore.activeConfiguration()
+    let digest = try manifestStore.admittedDigest(for: configuration)
     _ = try await stopCloudflareTunnel(profileID: id)
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
-    // Revocation commits before publication can remove the tunnel. Failure leaves
-    // the tunnel configured with its old authorizations ended, never live grants.
-    try await oauthServer(for: profile).revokeTunnel(approver: .localApp)
-    var configuration = try manifestStore.activeConfiguration()
-    let digest = try manifestStore.admittedDigest(for: configuration)
     configuration.transports.cloudflare.removeAll { $0.id == id }
     try activateTransportConfiguration(configuration, expectedDigest: digest)
     cloudflareAccessCredentials.removeValue(forKey: id)?.replace(with: nil)
     try await deleteKeychainSecret(profile.tunnelTokenReference)
     try await deleteKeychainSecret(profile.accessTokenReference)
     cloudflareOAuthSessions.removeValue(forKey: id)
+  }
+
+  /// Caller holds the publication lock. Stop joins any registered start without acquiring its slot.
+  func drainRemovedCloudflareTunnels(
+    from current: GatewayConfiguration, to proposed: GatewayConfiguration
+  ) async throws {
+    let retained = Set(proposed.transports.cloudflare.map(\.id))
+    for tunnel in current.transports.cloudflare where !retained.contains(tunnel.id) {
+      _ = try await stopCloudflareTunnel(profileID: tunnel.id)
+    }
   }
 
   package func cloudflareTunnelStatuses() -> [CloudflareTunnelStatus] {
@@ -290,6 +289,8 @@ extension AppControlPlaneService {
     do {
       await beginCloudflareCredentialMutation(profileID: profileID)
       defer { endCloudflareCredentialMutation(profileID: profileID) }
+      await manifestStore.publicationLock.acquire()
+      defer { manifestStore.publicationLock.release() }
       try Task.checkCancellation()
       _ = try requireCloudflareProfile(profileID)
       guard cloudflareStartTasks[profileID] == nil, cloudflareStopTasks[profileID] == nil else {

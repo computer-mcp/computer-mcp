@@ -61,7 +61,8 @@ struct ManifestFileTransaction {
   /// Called under the manifest lock; the database callback remains synchronous.
   func commit(
     stagedURL: URL, previous: Data?, revision: ConfigurationRevision,
-    expected: GatewayDatabase.ConfigurationState, resolution: GatewayConfigurationResolution
+    expected: GatewayDatabase.ConfigurationState, resolution: GatewayConfigurationResolution,
+    activeTunnelIDs: Set<String>
   ) throws -> GatewayDatabase.ConfigurationState {
     guard try currentData() == previous else { throw AtomicManifestStoreError.staleDigest }
     let record = ManifestRecoveryRecord(version: 1, revision: revision, previous: previous)
@@ -83,7 +84,7 @@ struct ManifestFileTransaction {
     do {
       try Self.synchronizeDirectory(manifestURL.deletingLastPathComponent())
       _ = try database.activateConfigurationRevision(
-        revision, expected: expected, resolution: resolution
+        revision, expected: expected, resolution: resolution, activeTunnelIDs: activeTunnelIDs
       ) {
         state in
         committed = state

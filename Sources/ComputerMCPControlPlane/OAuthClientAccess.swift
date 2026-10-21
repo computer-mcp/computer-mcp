@@ -74,37 +74,51 @@ extension AppControlPlaneService {
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
-    guard
-      try database.oauthTransaction({ transaction in
-        try transaction.requests(tunnelID: request.tunnelID).contains {
-          $0.id == request.id && $0.status == .pending
-        }
-      })
-    else { throw OAuthError.invalidRequest }
+    let inputs = try gatewayInputs()
     guard
       let tunnel = try cloudflareTunnelConfigurations().first(where: {
         $0.id == request.tunnelID && $0.oauthEnabled
       }),
-      let profile = try await profileGrants().first(where: {
+      let base = try await baseProfileGrants(inputs: inputs).first(where: {
         $0.id == (profileID ?? .cloudflareObserve)
       })
     else { throw OAuthError.invalidRequest }
-    if let expectedAuthorizationDigest,
-      try OAuthApprovalProfile(grant: profile).authorizationDigest != expectedAuthorizationDigest
-    {
-      throw GatewayToolError.invalidArguments(
-        "Profile authorization changed. Reload the profile and review it before approving."
-      )
-    }
-    guard profileID != nil || profile.mode == .readOnly else {
-      throw GatewayToolError.invalidArguments(
-        "cloudflare-observe is not read-only. Choose an explicit profile with --profile in the CLI or profile_id in the control plane."
-      )
-    }
-    try await oauthApprovalWillCommit()
-    try Task.checkCancellation()
+    let derivesWorkspaces =
+      base.id == .cloudflareObserve
+      && !inputs.configuration.profiles.contains { $0.id == base.id }
+    let willCommit = oauthApprovalWillCommit
     return try await oauthServer(for: tunnel).approve(
-      pairingCode: request.pairingCode, profile: profile, approver: approver)
+      pairingCode: request.pairingCode,
+      profile: { transaction in
+        guard
+          try transaction.requests(tunnelID: request.tunnelID).contains(where: {
+            $0.id == request.id && $0.status == .pending
+          })
+        else { throw OAuthError.invalidRequest }
+        var profile = base
+        if derivesWorkspaces { profile.workspaceIDs = try transaction.workspaceIDs() }
+        if let persisted = try transaction.profile(id: base.id) {
+          profile = profile.applyingPersistedRuntimeState(persisted)
+          if persisted.authorizationRevision == 0, profile.capabilityIDs.contains("*") {
+            profile.workspaceIDs.formUnion(try transaction.workspaceIDs())
+          }
+        }
+        if let expectedAuthorizationDigest,
+          try OAuthApprovalProfile(grant: profile).authorizationDigest
+            != expectedAuthorizationDigest
+        {
+          throw GatewayToolError.invalidArguments(
+            "Profile authorization changed. Reload the profile and review it before approving.")
+        }
+        guard profileID != nil || profile.mode == .readOnly else {
+          throw GatewayToolError.invalidArguments(
+            "cloudflare-observe is not read-only. Choose an explicit profile with --profile in the CLI or profile_id in the control plane."
+          )
+        }
+        try willCommit()
+        try Task.checkCancellation()
+        return profile
+      }, approver: approver)
   }
 
   package func denyOAuthAuthorization(

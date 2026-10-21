@@ -126,7 +126,7 @@ def check_bump(data, version, build, kind):
     expected = {
         "fix": (major, minor, patch + 1),
         "feature": (major, minor + 1, 0),
-        "breaking": (major + 1, 0, 0),
+        "breaking": (major, minor + 1, 0) if major == 0 else (major + 1, 0, 0),
         "candidate": (major, minor, patch),
     }[kind]
     require(version_tuple(version) == expected, f"{kind} requires version {'.'.join(map(str, expected))}")

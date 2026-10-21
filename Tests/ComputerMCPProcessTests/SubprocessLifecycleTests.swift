@@ -2,6 +2,7 @@ import ComputerMCPCore
 import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
 import Foundation
+import Subprocess
 import Testing
 
 @testable import ComputerMCPProcess
@@ -58,18 +59,24 @@ struct SubprocessLifecycleTests {
       let ready = try #require(try await lines.next())
       let child = try #require(Int32(ready))
       let writing = Task { try await process.sendLine(String(repeating: "x", count: 1_048_576)) }
-      let deadline = ContinuousClock.now + .seconds(2)
+      let deadline = ContinuousClock.now + .seconds(10)
       while await process.snapshot().pendingWrites == 0, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
       }
-      #expect(await process.snapshot().pendingWrites == 1)
+      try #require(await process.snapshot().pendingWrites == 1)
+      let cleanupStarted = ContinuousClock.now
       async let first: Void = process.close()
       async let second: Void = process.close()
       _ = await (first, second)
-      guard case .failure = await writing.result else {
-        Issue.record("The blocked write unexpectedly completed.")
-        return
+      switch await writing.result {
+      case .failure(ManagedLineProcessError.closed):
+        break
+      case .failure(let error as SubprocessError):
+        #expect(error.code == .failedToWriteToSubprocess)
+      case let result:
+        Issue.record("Expected a blocked input write failure, got \(result).")
       }
+      #expect(cleanupStarted.duration(to: .now) < .seconds(10))
       let result = await process.snapshot()
       #expect(result.hasExited && result.terminationEscalated)
       #expect(result.pendingWrites == 0)
@@ -154,14 +161,24 @@ struct SubprocessLifecycleTests {
             sessionID: id, data: Data(repeating: 120, count: 1_048_576), close: false)
         }
       }
-      // Let the write exceed pipe capacity before requesting cancellation.
-      try await Task.sleep(for: .milliseconds(100))
+      let deadline = ContinuousClock.now + .seconds(10)
+      while try runtime.pendingWrites(sessionID: id) == 0, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      try #require(try runtime.pendingWrites(sessionID: id) == 1)
+      let cleanupStarted = ContinuousClock.now
       #expect(try runtime.cancel(sessionID: id).cancellationRequested)
       await runtime.shutdown()
-      guard case .failure = await writing.result else {
-        Issue.record("The blocked write unexpectedly completed.")
-        return
+      switch await writing.result {
+      case .failure(let error as ShellRuntimeError):
+        #expect(error == .sessionNotRunning(id))
+      case .failure(let error as SubprocessError):
+        #expect(error.code == .failedToWriteToSubprocess)
+      case let result:
+        Issue.record("Expected a blocked input write failure, got \(result).")
       }
+      #expect(cleanupStarted.duration(to: .now) < .seconds(10))
+      #expect(try runtime.pendingWrites(sessionID: id) == 0)
       let result = try runtime.read(
         sessionID: id, stdoutCursor: 0, stderrCursor: 0, maxReadBytes: 64, encoding: .utf8)
       #expect(!result.isRunning && result.cancelled && result.signal != nil)

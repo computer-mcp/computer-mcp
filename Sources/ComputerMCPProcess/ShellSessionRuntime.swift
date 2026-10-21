@@ -638,6 +638,11 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     try requireSession(sessionID).write(data: data, close: close)
   }
 
+  /// Nonempty writes past session validation that have not returned from the input writer.
+  internal func pendingWrites(sessionID: String) throws -> Int {
+    try requireSession(sessionID).pendingWrites
+  }
+
   package func cancel(sessionID: String) throws -> ShellCancelResult {
     let session = try requireSession(sessionID)
     let requested = session.cancel()
@@ -761,6 +766,7 @@ private final class ShellSession: @unchecked Sendable {
   private let terminationGraceMilliseconds: Int
   private var execution: ShellExecution?
   private var inputWriter: StandardInputWriter?
+  private let inputWrites = NIOLockedValueBox(0)
   private var stdout = CursorDataBuffer()
   private var stderr = CursorDataBuffer()
   private var processID: Int32?
@@ -794,6 +800,10 @@ private final class ShellSession: @unchecked Sendable {
     condition.lock()
     defer { condition.unlock() }
     return _launchError
+  }
+
+  var pendingWrites: Int {
+    inputWrites.withLockedValue { $0 }
   }
 
   var isRunningOrStarting: Bool {
@@ -948,6 +958,8 @@ private final class ShellSession: @unchecked Sendable {
     let bytesWritten: Int = try blockingAsync {
       var count = 0
       if !data.isEmpty {
+        self.inputWrites.withLockedValue { $0 += 1 }
+        defer { self.inputWrites.withLockedValue { $0 -= 1 } }
         count = try await writer.write(Array(data))
         guard count == data.count else { throw ShellRuntimeError.sessionNotRunning(self.id) }
       }

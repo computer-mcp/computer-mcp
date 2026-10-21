@@ -394,6 +394,7 @@ let neutralTargets: [Target] =
       dependencies: [
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTestSupport",
+        .product(name: "Subprocess", package: "swift-subprocess"),
       ]
     ),
     .testTarget(

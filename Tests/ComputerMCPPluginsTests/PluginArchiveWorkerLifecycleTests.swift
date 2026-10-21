@@ -18,11 +18,16 @@ struct PluginArchiveWorkerLifecycleTests {
     let fixture = try await PreparationFixture.make(directoryFactory: WorkerDirectoryFactory())
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("pid")
+    let watchdog = fixture.files.root.appendingPathComponent("watchdog-expired")
     let limit = stderr ? 4_096 : 16_384
     let worker = try await fixture.stub(
       """
       import os, signal, sys, time
-      signal.alarm(15)
+      def watchdog_expired(signum, frame):
+          with open(\(try fixture.literal(watchdog.path)), 'w') as f: f.write('expired')
+          os._exit(124)
+      signal.signal(signal.SIGALRM, watchdog_expired)
+      signal.alarm(30)
       signal.signal(signal.SIGTERM, signal.SIG_IGN)
       with open(\(try fixture.literal(report.path)), 'w') as f: f.write(str(os.getpid()))
       failure = '"invalid_archive"'
@@ -31,12 +36,16 @@ struct PluginArchiveWorkerLifecycleTests {
       stream = sys.\(stderr ? "stderr" : "stdout")
       stream.write(' ' * (\(limit + (overflow ? 1 : 0)) - \(stderr ? 0 : 17)))
       stream.flush()
-      \(overflow ? "time.sleep(30)" : "sys.exit(1)")
+      \(overflow ? "time.sleep(60)" : "sys.exit(1)")
       """)
+    let started = ContinuousClock.now
     await #expect(throws: overflow ? PluginArchiveError.workerFailed : .invalidArchive) {
       try await fixture.prepare(worker: worker) { _, _ in Issue.record("Worker reached activation.")
       }
     }
+    #expect(
+      started.duration(to: .now) < .seconds(10), "Cleanup must precede the 30-second watchdog.")
+    #expect(!FileManager.default.fileExists(atPath: watchdog.path), "Worker watchdog expired.")
     let pid = try #require(Int32(String(contentsOf: report, encoding: .utf8)))
     #expect(kill(pid, 0) == -1 && errno == ESRCH)
     #expect(try fixture.stagingContents().isEmpty)
@@ -48,33 +57,52 @@ struct PluginArchiveWorkerLifecycleTests {
     let fixture = try await PreparationFixture.make(directoryFactory: WorkerDirectoryFactory())
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("pid")
+    let watchdog = fixture.files.root.appendingPathComponent("watchdog-expired")
     let worker = try await fixture.stub(
       """
       import os, signal, time
-      signal.alarm(15)
+      def watchdog_expired(signum, frame):
+          with open(\(try fixture.literal(watchdog.path)), 'w') as f: f.write('expired')
+          os._exit(124)
+      signal.signal(signal.SIGALRM, watchdog_expired)
+      signal.alarm(30)
       signal.signal(signal.SIGTERM, signal.SIG_IGN)
       os.mkdir('partial')
-      with open(\(try fixture.literal(report.path)), 'w') as f: f.write(str(os.getpid()))
-      time.sleep(30)
+      report = \(try fixture.literal(report.path))
+      with open(report + '.tmp', 'w') as f: f.write(str(os.getpid()))
+      os.replace(report + '.tmp', report)
+      time.sleep(60)
       """)
+    let started = ContinuousClock.now
     let task = Task {
-      try await fixture.prepare(worker: worker, timeout: cancel ? .seconds(10) : .seconds(2)) {
+      try await fixture.prepare(worker: worker, timeout: cancel ? .seconds(60) : .seconds(5)) {
         _, _ in Issue.record("Incomplete worker reached activation.")
       }
     }
-    let deadline = ContinuousClock.now + .seconds(5)
-    while !FileManager.default.fileExists(atPath: report.path), ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    if cancel {
+    do {
+      let deadline = started + .seconds(10)
+      while !FileManager.default.fileExists(atPath: report.path), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      try #require(FileManager.default.fileExists(atPath: report.path))
+      let pid = try #require(Int32(String(contentsOf: report, encoding: .utf8)))
+      if cancel {
+        try #require(kill(pid, 0) == 0)
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+      } else {
+        await #expect(throws: PluginArchiveError.timedOut) { try await task.value }
+      }
+      #expect(
+        started.duration(to: .now) < .seconds(10), "Cleanup must precede the 30-second watchdog.")
+      #expect(!FileManager.default.fileExists(atPath: watchdog.path), "Worker watchdog expired.")
+      #expect(kill(pid, 0) == -1 && errno == ESRCH)
+      #expect(try fixture.stagingContents().isEmpty)
+    } catch {
       task.cancel()
-      await #expect(throws: CancellationError.self) { try await task.value }
-    } else {
-      await #expect(throws: PluginArchiveError.timedOut) { try await task.value }
+      _ = await task.result
+      throw error
     }
-    let pid = try #require(Int32(String(contentsOf: report, encoding: .utf8)))
-    #expect(kill(pid, 0) == -1 && errno == ESRCH)
-    #expect(try fixture.stagingContents().isEmpty)
   }
 
   @Test

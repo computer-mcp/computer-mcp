@@ -135,21 +135,22 @@ package struct PluginArchivePreparation: Sendable {
               FileDescriptor(rawValue: input), closeAfterSpawningProcess: false),
             output: .bytes(limit: 16_384), error: .bytes(limit: 4_096))
           try Task.checkCancellation()
+          let output = Data(execution.standardOutput)
           if execution.terminationStatus != .exited(0) {
             if execution.terminationStatus == .exited(1),
               let failure = try? JSONDecoder().decode(
-                PluginArchiveError.self, from: Data(execution.standardOutput))
+                PluginArchiveError.self, from: output)
             {
               throw failure
             }
             throw PluginArchiveError.workerFailed
           }
           guard
-            let object = try? JSONSerialization.jsonObject(with: Data(execution.standardOutput))
+            let object = try? JSONSerialization.jsonObject(with: output)
               as? [String: Any],
             Set(object.keys) == ["sha256", "archive_bytes", "extracted_bytes", "entries"],
             let receipt = try? JSONDecoder().decode(
-              PluginArchiveReceipt.self, from: Data(execution.standardOutput)),
+              PluginArchiveReceipt.self, from: output),
             receipt.sha256 == sha256, receipt.archiveBytes > 0,
             receipt.archiveBytes <= PluginArchiveLimits().archiveBytes,
             receipt.extractedBytes >= 0,

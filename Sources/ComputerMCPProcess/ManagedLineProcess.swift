@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import Foundation
 import Subprocess
 
@@ -158,6 +159,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
   package init(configuration: Configuration) throws {
     try configuration.validate()
+    installBrokenPipeHandler()
     // Copy while the caller still owns its descriptors. Launch and shutdown may race,
     // so asynchronous spawn must never refer to a descriptor the caller can close/reuse.
     var configuration = configuration
@@ -335,16 +337,18 @@ package final class ManagedLineProcess: @unchecked Sendable {
           environment: .custom(environment),
           workingDirectory: FilePath(configuration.workingDirectory.path),
           platformOptions: platformOptions,
-          output: FileDescriptorOutput.fileDescriptor(
+          input: .inputWriter,
+          output: .fileDescriptor(
             standardOutput.writeEnd,
             closeAfterSpawningProcess: true
-          )
-        ) { execution, inputWriter, stderr in
+          ),
+          error: .sequence
+        ) { execution in
           for handle in configuration.inheritedDescriptors.values { try? handle.close() }
           try? configuration.ownershipHandle?.close()
           await state.attach(
             execution: execution,
-            inputWriter: inputWriter
+            inputWriter: execution.standardInputWriter
           )
           guard let processID = await waitForProcessID(at: supervisor.processIDFile)
           else {
@@ -358,7 +362,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
             _ = await state.signalChildGroup(SIGTERM)
           }
           do {
-            for try await _ in stderr {}
+            for try await _ in execution.standardError {}
           } catch {
             await state.recordStreamError(error)
           }
@@ -498,8 +502,12 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
 }
 
+private typealias ManagedLineExecution = Execution<
+  CustomWriteInput, FileDescriptorOutput, SequenceOutput
+>
+
 private struct ManagedLineProcessShutdownHandles: Sendable {
-  var execution: Execution?
+  var execution: ManagedLineExecution?
   var writer: StandardInputWriter?
 }
 
@@ -508,7 +516,7 @@ private actor ManagedLineProcessState {
   private let maximumMessageBytes: Int
   private let ownerProcessID: Int32
   private var state: ManagedLineProcessSnapshot.State = .starting
-  private var execution: Execution?
+  private var execution: ManagedLineExecution?
   private var inputWriter: StandardInputWriter?
   private var processID: Int32?
   private var supervisorProcessID: Int32?
@@ -534,7 +542,7 @@ private actor ManagedLineProcessState {
     self.ownerProcessID = ownerProcessID
   }
 
-  func attach(execution: Execution, inputWriter: StandardInputWriter) {
+  func attach(execution: ManagedLineExecution, inputWriter: StandardInputWriter) {
     self.execution = execution
     self.inputWriter = inputWriter
     supervisorProcessID = Int32(execution.processIdentifier.value)
@@ -568,7 +576,8 @@ private actor ManagedLineProcessState {
     let frame = Data((line + "\n").utf8)
     pendingWrites += 1
     defer { pendingWrites -= 1 }
-    _ = try await inputWriter.write(Array(frame))
+    let count = try await inputWriter.write(Array(frame))
+    guard count == frame.count else { throw ManagedLineProcessError.closed }
   }
 
   func appendStandardOutput(_ data: Data) throws {
@@ -619,7 +628,7 @@ private actor ManagedLineProcessState {
     return .init(execution: execution, writer: inputWriter)
   }
 
-  func runningExecution() -> Execution? {
+  func runningExecution() -> ManagedLineExecution? {
     guard !hasFinished() else { return nil }
     return execution
   }

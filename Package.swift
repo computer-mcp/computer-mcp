@@ -3,7 +3,7 @@
 import PackageDescription
 
 let subprocessDependency: Package.Dependency =
-  .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.4.0")
+  .package(url: "https://github.com/swiftlang/swift-subprocess.git", .upToNextMinor(from: "1.0.2"))
 
 let cryptoDependency: Package.Dependency =
   .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2")

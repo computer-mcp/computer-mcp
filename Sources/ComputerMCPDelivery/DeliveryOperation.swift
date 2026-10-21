@@ -222,7 +222,7 @@ extension DeliveryRepository {
       }
       invoked = true
       let result = try pinned.run(
-        ["rebase", "--no-update-refs", "--no-autostash", base], at: worktree,
+        ["rebase", "--no-update-refs", "--no-autostash", "--no-rebase-merges", base], at: worktree,
         accepting: [0, 1, 128])
       if result.exitCode != 0 {
         failure = DeliveryFailure(

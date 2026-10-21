@@ -512,8 +512,19 @@ internal struct DeliveryRepository: Sendable {
           reason: .cleanupFailed,
           detail: "Rebase conflict state changed; retained: \(journal.worktree)")
       }
+      let deliveryRef = "refs/heads/\(journal.branch)"
+      let symbolic = try pinned.run(
+        ["--no-optional-locks", "symbolic-ref", "--quiet", deliveryRef], at: worktree,
+        accepting: [0, 1])
+      guard symbolic.exitCode == 1,
+        try pinned.revision(deliveryRef, at: worktree) == rebase.original
+      else {
+        throw DeliveryFailure(
+          reason: .cleanupFailed,
+          detail: "Delivery branch changed before rebase abort; retained: \(journal.branch)")
+      }
       // Action modes require config overrides; they reject the rebase start options.
-      try pinned.run(["rebase", "--abort"], at: URL(fileURLWithPath: journal.worktree))
+      try pinned.run(["rebase", "--abort"], at: worktree)
     }
     return pinned
   }

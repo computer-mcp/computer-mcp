@@ -113,8 +113,9 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 实时交付只有主检出的 `HEAD` 恰好等于交付提交时才报告 `merged`，命令失败、超时或
 抛出异常时也按同一规则核对。合并后钩子产生后继提交时，结果为 `committed` 并保留分支。
 
-rebase 使用 `--no-update-refs --no-autostash`，避免仓库配置改写其他分支或暂存用户改动；
-merge 也带 `--no-autostash`。主检出已有 `MERGE_AUTOSTASH` 时停止合并，以
+rebase 使用 `--no-update-refs --no-autostash --no-rebase-merges`，避免仓库配置改写其他分支、
+暂存用户改动或写入及删除 `refs/rewritten/` 下的标签引用。merge 也带 `--no-autostash`。
+主检出已有 `MERGE_AUTOSTASH` 时停止合并，以
 `committed` / `git_failed` 保留交付分支；Git 即使禁用了 autostash 创建，仍会应用这个
 待处理的 stash。每次 rebase 后都按同样规则核对新提交相对新基线的改动路径；不符则以
 `committed` / `scope_changed` 保留分支，包括默认分支已含相同补丁而产生空 diff 的
@@ -127,8 +128,10 @@ merge 也带 `--no-autostash`。主检出已有 `MERGE_AUTOSTASH` 时停止合�
 待重放提交须为保存的原提交，其第一父提交须为记录的基线。resolve-undo 记录、外部已跟踪
 改动、已暂存的冲突解决、缺少冲突快照或无法证明的复杂 rebase 均阻止中止，以 `cleanup_pending` /
 `rebase_in_progress` 保留 worktree 与分支给用户处理。运行中的调用在自己的 rebase 失败时，只有其
-实际已发起该命令且 `orig-head` 与 `onto` 均与记录相同时才中止到保存的原提交；否则保留为
-`cleanup_pending`。rebase 命令报错或超时但已无
+实际已发起该命令且 `orig-head` 与 `onto` 均与记录相同时才中止到保存的原提交。
+中止之前紧挨着确认交付分支仍是指向保存的原提交的普通引用；分支被推进、缺失或变为符号引用时，
+不中止，以 `cleanup_pending` / `rebase_in_progress` 保留 rebase 与 worktree，已有引用保持不变。
+rebase 命令报错或超时但已无
 进行中的 rebase 时，以交付分支实际顶端重新核对并记录提交号，命令失败后不再尝试合并。
 命令发起前核对失败时，结果保留原已保存的提交号，不中止或认领其他 rebase。
 commit-only 只提交并保留分支。

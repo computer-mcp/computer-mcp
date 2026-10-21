@@ -6,6 +6,122 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct DeliveryGitConfigurationTests {
+  @Test(arguments: ["advanced", "symbolic", "symbolic-advanced"])
+  func rebaseAbortPreservesChangedDeliveryBranch(state: String) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      try fixture.advanceDuringCommit(conflict: true)
+      let snapshot = fixture.root.appendingPathComponent(".git/external-index")
+      let io = DeliveryIO(afterWorktreeVerification: { journal in
+        guard let rebase = journal.rebase,
+          !FileManager.default.fileExists(atPath: snapshot.path),
+          let identity = journal.creation?.worktree
+        else { return }
+        let repository = try fixture.repository()
+        guard repository.rebaseDirectory(journal) != nil else { return }
+        let worktree = URL(fileURLWithPath: journal.worktree)
+        let commit =
+          state == "symbolic"
+          ? rebase.original
+          : try fixture.git([
+            "commit-tree", "\(rebase.original)^{tree}", "-p", rebase.original,
+            "-m", "test: external delivery branch commit",
+          ])
+        if state == "advanced" {
+          try fixture.git(["update-ref", "refs/heads/\(journal.branch)", commit])
+        } else {
+          try fixture.git(["branch", "other", commit])
+          try fixture.git(["symbolic-ref", "refs/heads/\(journal.branch)", "refs/heads/other"])
+          try fixture.write(
+            ".git/external-other-reflog", try fixture.read(".git/logs/refs/heads/other"))
+        }
+        try fixture.write(".git/external-tip", commit)
+        try fixture.write(".git/external-notes", try fixture.read("notes/log.md", at: worktree))
+        try Data(
+          contentsOf: URL(fileURLWithPath: identity.directory).appendingPathComponent("index")
+        )
+        .write(to: snapshot)
+      })
+      let result = try fixture.apply(provider: fixture.provider(io: io))
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["reason"] == .string("rebase_in_progress"))
+      #expect(result["branch"] == .string("docs/entry"))
+      let journal = try #require(fixture.journals().first)
+      #expect(result["commit"]?.stringValue == journal.rebase?.original)
+      let directory = URL(fileURLWithPath: try #require(journal.creation?.worktree.directory))
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      let repository = try fixture.repository()
+      for _ in 0..<2 {
+        #expect(
+          try fixture.git(["rev-parse", journal.branch]) == fixture.read(".git/external-tip"))
+        #expect(
+          try fixture.git(
+            ["symbolic-ref", "--quiet", "refs/heads/\(journal.branch)"], accepting: [0, 1])
+            == (state == "advanced" ? "" : "refs/heads/other"))
+        if state != "advanced" {
+          #expect(try fixture.git(["rev-parse", "other"]) == fixture.read(".git/external-tip"))
+          #expect(
+            try fixture.read(".git/logs/refs/heads/other")
+              == fixture.read(".git/external-other-reflog"))
+        }
+        #expect(try fixture.git(["rev-parse", "HEAD"], at: worktree) == journal.rebase?.onto)
+        #expect(
+          try fixture.read("notes/log.md", at: worktree) == fixture.read(".git/external-notes"))
+        #expect(try fixture.read("outside.txt", at: worktree) == "untouched\n")
+        #expect(
+          try Data(contentsOf: directory.appendingPathComponent("index"))
+            == Data(contentsOf: snapshot))
+        #expect(repository.rebaseDirectory(journal) != nil)
+        try repository.withLock { try repository.recover() }
+        #expect(try fixture.journals().first?.reason == .rebaseInProgress)
+      }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func configuredRebasePreservesPrivateRefs(conflict: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      try fixture.git(["config", "rebase.rebaseMerges", "true"])
+      try fixture.advanceDuringCommit(conflict: conflict)
+      let io = DeliveryIO(beforeMergeCheck: { journal in
+        guard journal.rebase == nil else { return }
+        let worktree = URL(fileURLWithPath: journal.worktree)
+        for name in ["onto", "external"] {
+          let commit = try fixture.git(
+            [
+              "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "test: private \(name) commit",
+            ], at: worktree)
+          try fixture.git(["update-ref", "refs/rewritten/\(name)", commit], at: worktree)
+        }
+        try fixture.write(
+          ".git/external-private-refs",
+          try fixture.git(
+            ["for-each-ref", "--format=%(refname) %(objectname)", "refs/rewritten/"], at: worktree))
+      })
+      let result = try fixture.apply(provider: fixture.provider(io: io))
+      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["reason"] == .string("cleanup_failed"))
+      #expect(result["branch"] == .string("docs/entry"))
+      let journal = try #require(fixture.journals().first)
+      let worktree = URL(fileURLWithPath: journal.worktree)
+      let repository = try fixture.repository()
+      #expect(journal.merged == !conflict)
+      #expect(try fixture.read("notes/log.md") == (conflict ? "gamma\nstable\n" : "beta\nstable\n"))
+      for _ in 0..<2 {
+        #expect(
+          try fixture.git(
+            ["for-each-ref", "--format=%(refname) %(objectname)", "refs/rewritten/"], at: worktree)
+            == fixture.read(".git/external-private-refs"))
+        #expect(try fixture.git(["rev-parse", journal.branch]) == result["commit"]?.stringValue)
+        #expect(repository.rebaseDirectory(journal) == nil)
+        #expect(try fixture.git(["worktree", "list", "--porcelain"]).contains(journal.worktree))
+        try repository.withLock { try repository.recover() }
+        #expect(try fixture.journals().first?.reason == .cleanupFailed)
+      }
+    }
+  }
+
   @Test(arguments: [
     "worktree", "index", "conflict", "resolved", "partial-resolution", "unmerged-index",
     "detached-commit", "missing-snapshot",

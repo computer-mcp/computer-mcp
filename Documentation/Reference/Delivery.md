@@ -161,8 +161,9 @@ Live delivery reports
 after a command failure, timeout or exception. A post-merge hook that creates a
 descendant leaves the result `committed` with its branch retained.
 
-Rebase uses `--no-update-refs --no-autostash` so that repository configuration
-cannot rewrite other branches or temporarily stash user changes. Merge also
+Rebase uses `--no-update-refs --no-autostash --no-rebase-merges` so that repository
+configuration cannot rewrite other branches, temporarily stash user changes, or
+write and delete label refs under `refs/rewritten/`. Merge also
 uses `--no-autostash`. An existing main-checkout `MERGE_AUTOSTASH` prevents landing
 and returns `committed` / `git_failed` with the branch retained, because Git would
 otherwise apply that pending stash even with autostash creation disabled.
@@ -184,9 +185,12 @@ external tracked edits or staged resolutions prevent abort. A missing snapshot
 or an unprovable complex rebase also prevents abort. Refusal retains the worktree
 and branch as `cleanup_pending` / `rebase_in_progress` for user handling.
 The running call immediately aborts its own failed rebase to the saved commit only
-after actually invoking it and when its `orig-head` and `onto` match that record;
-otherwise it is retained as
-`cleanup_pending`. If a rebase command
+after actually invoking it and when its `orig-head` and `onto` match that record.
+Immediately before abort, the delivery branch must still be a regular ref at the
+saved original commit. An advanced, missing or symbolic ref prevents abort,
+retains the rebase and worktree as `cleanup_pending` / `rebase_in_progress`, and
+leaves existing refs unchanged.
+If a rebase command
 fails or times out with no rebase in progress, delivery reads the branch's actual
 tip, validates it again and records that commit; it does not attempt landing
 after the command failure. If validation fails before invocation, the saved commit

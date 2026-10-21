@@ -11,8 +11,16 @@ struct ClientAccessSnapshot: Sendable {
   var trusts: [GatewayClientTrust]
   var oauthRequests: [OAuthPendingAuthorization] = []
   var oauthGrants: [OAuthGrant] = []
-  /// Profiles a remote tunnel client may be approved with.
-  var remoteProfiles: [GatewayProfileID] = []
+  /// Profiles the control plane accepts when approving a tunnel client.
+  var remoteProfiles: [ProfileGrant] = []
+  /// Public hostnames keyed by Cloudflare tunnel ID.
+  var tunnelHosts: [String: String] = [:]
+}
+
+/// A profile the owner picked for a sign-in, with the access level they saw.
+struct OAuthProfileChoice: Equatable {
+  var id: GatewayProfileID
+  var mode: GatewayPermissionMode
 }
 
 @MainActor
@@ -183,28 +191,48 @@ final class ClientAccessModel: ObservableObject {
     }
   }
 
-  /// The profile the owner picked for each pending sign-in.
-  @Published var oauthProfileChoices: [String: GatewayProfileID] = [:]
+  @Published private(set) var oauthProfileChoices: [String: OAuthProfileChoice] = [:]
 
-  /// Profiles that admit tunnel clients, read-only Cloudflare Observe first.
-  var oauthProfileOptions: [GatewayProfileID] {
-    let profiles = snapshot?.remoteProfiles ?? []
-    return profiles.filter { $0 == .cloudflareObserve }
-      + profiles.filter { $0 != .cloudflareObserve }
+  /// Approvable profiles from the least to the most access, Cloudflare Observe first.
+  var oauthProfileOptions: [ProfileGrant] {
+    (snapshot?.remoteProfiles ?? []).sorted {
+      ($0.mode.accessRank, $0.id == .cloudflareObserve ? 0 : 1, $0.id.rawValue)
+        < ($1.mode.accessRank, $1.id == .cloudflareObserve ? 0 : 1, $1.id.rawValue)
+    }
   }
 
-  /// The owner's pick when it is still offered, otherwise the first option.
-  func oauthProfile(for request: OAuthPendingAuthorization) -> GatewayProfileID? {
+  /// The owner's pick while it keeps the access level they saw, otherwise the first
+  /// read-only profile. Nil means the owner must choose.
+  func oauthProfile(for request: OAuthPendingAuthorization) -> ProfileGrant? {
     let options = oauthProfileOptions
-    if let choice = oauthProfileChoices[request.id], options.contains(choice) { return choice }
-    return options.first
+    if let choice = oauthProfileChoices[request.id] {
+      return options.first { $0.id == choice.id && $0.mode == choice.mode }
+    }
+    return options.first { $0.mode == .readOnly }
   }
 
+  func chooseOAuthProfile(_ id: GatewayProfileID, for request: OAuthPendingAuthorization) {
+    guard let profile = oauthProfileOptions.first(where: { $0.id == id }) else { return }
+    oauthProfileChoices[request.id] = OAuthProfileChoice(id: profile.id, mode: profile.mode)
+  }
+
+  /// Approves only with the profile and access level the owner reviewed, before expiry.
   @discardableResult
-  func approve(_ request: OAuthPendingAuthorization) async -> Bool {
-    guard let profile = oauthProfile(for: request) else { return false }
+  func approve(_ request: OAuthPendingAuthorization, reviewed: ProfileGrant) async -> Bool {
+    guard request.expiresAt > Date() else {
+      errorMessage = AppLocalization.string(
+        "This sign-in request expired. Ask the client to sign in again.")
+      return false
+    }
+    guard let current = oauthProfile(for: request), current.id == reviewed.id,
+      current.mode == reviewed.mode
+    else {
+      errorMessage = AppLocalization.string(
+        "The profile for this sign-in changed. Review it and approve again.")
+      return false
+    }
     let approved = await perform {
-      try await self.controlPlane.approveOAuthRequest(request, profile: profile)
+      try await self.controlPlane.approveOAuthRequest(request, profile: current.id)
     }
     if approved { oauthProfileChoices[request.id] = nil }
     return approved
@@ -221,7 +249,9 @@ final class ClientAccessModel: ObservableObject {
   }
 
   var pendingOAuthRequests: [OAuthPendingAuthorization] {
-    (snapshot?.oauthRequests ?? []).sorted { $0.createdAt < $1.createdAt }
+    let now = Date()
+    return (snapshot?.oauthRequests ?? []).filter { $0.expiresAt > now }
+      .sorted { $0.createdAt < $1.createdAt }
   }
 
   var activeOAuthGrants: [OAuthGrant] {
@@ -245,6 +275,25 @@ final class ClientAccessModel: ObservableObject {
       await load()
       errorMessage = AppLocalization.errorDescription(error)
       return false
+    }
+  }
+}
+
+extension GatewayPermissionMode {
+  /// Orders modes from the least to the most access.
+  var accessRank: Int {
+    switch self {
+    case .readOnly: 0
+    case .workspaceOperations: 1
+    case .localFullAccess: 2
+    }
+  }
+
+  var clientAccessLabel: String {
+    switch self {
+    case .readOnly: "Observe"
+    case .workspaceOperations: "Control — Restricted Access"
+    case .localFullAccess: "Control — Full Access"
     }
   }
 }

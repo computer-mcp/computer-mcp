@@ -146,22 +146,24 @@ struct ClientAccessTests {
   }
 
   @Test
-  func signInApprovalDefaultsToReadOnlyAndOffersOnlyTunnelProfiles() async throws {
+  func signInApprovalDefaultsToReadOnlyAndKeepsTheOwnersChoice() async throws {
     let service = ClientAccessFake()
     service.oauth = true
     let model = ClientAccessModel(controlPlane: service)
     await model.reload()
     #expect(model.pendingOAuthRequests.map(\.pairingCode) == ["K7M2QP", "R4TX9H"])
-    #expect(model.oauthProfileOptions == [.cloudflareObserve, .cloudflareOperate])
+    #expect(model.oauthProfileOptions.map(\.id) == [.cloudflareObserve, .cloudflareOperate])
     #expect(model.statusText == AppLocalization.formatted("Sign-in requests waiting: %@", "2"))
     let first = model.pendingOAuthRequests[0]
     let second = model.pendingOAuthRequests[1]
-    #expect(model.oauthProfile(for: first) == .cloudflareObserve)
-    model.oauthProfileChoices[first.id] = .chatGPTOperate
-    #expect(model.oauthProfile(for: first) == .cloudflareObserve)
-    #expect(await model.approve(first))
-    model.oauthProfileChoices[second.id] = .cloudflareOperate
-    #expect(await model.approve(second))
+    let observe = try #require(model.oauthProfile(for: first))
+    #expect(observe.id == .cloudflareObserve && observe.mode == .readOnly)
+    #expect(await model.approve(first, reviewed: observe))
+    model.chooseOAuthProfile(.cloudflareOperate, for: second)
+    model.chooseOAuthProfile(.chatGPTOperate, for: second)
+    let operate = try #require(model.oauthProfile(for: second))
+    #expect(operate.id == .cloudflareOperate)
+    #expect(await model.approve(second, reviewed: operate))
     #expect(
       service.actions == [
         "oauth-approve:K7M2QP:cloudflare:cloudflare-observe",
@@ -169,6 +171,64 @@ struct ClientAccessTests {
       ])
     #expect(model.oauthProfileChoices.isEmpty)
     #expect(service.approvals.isEmpty)
+  }
+
+  @Test
+  func aProfileNamedObserveThatAllowsChangesIsNeverTheDefault() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let request = try #require(model.pendingOAuthRequests.first)
+    let reviewed = try #require(model.oauthProfile(for: request))
+    var observe = ProfileGrant.cloudflareObserve
+    observe.mode = .workspaceOperations
+    service.remoteProfiles = [observe, .cloudflareOperate]
+    await model.reload()
+    #expect(model.oauthProfile(for: request) == nil)
+    #expect(!(await model.approve(request, reviewed: reviewed)))
+    #expect(model.errorMessage != nil)
+    #expect(service.actions.isEmpty)
+  }
+
+  @Test
+  func aChosenProfileWhoseAccessChangesMustBeChosenAgain() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let request = try #require(model.pendingOAuthRequests.first)
+    model.chooseOAuthProfile(.cloudflareOperate, for: request)
+    let reviewed = try #require(model.oauthProfile(for: request))
+    var operate = ProfileGrant.cloudflareOperate
+    operate.mode = .localFullAccess
+    service.remoteProfiles = [operate, .cloudflareObserve]
+    await model.reload()
+    #expect(model.oauthProfile(for: request) == nil)
+    #expect(!(await model.approve(request, reviewed: reviewed)))
+    #expect(service.actions.isEmpty)
+    model.chooseOAuthProfile(.cloudflareObserve, for: request)
+    let observe = try #require(model.oauthProfile(for: request))
+    #expect(await model.approve(request, reviewed: observe))
+    #expect(service.actions == ["oauth-approve:K7M2QP:cloudflare:cloudflare-observe"])
+  }
+
+  @Test
+  func expiredSignInRequestsLeaveTheListAndCannotBeApproved() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let expired = OAuthPendingAuthorization(
+      id: "c-request", tunnelID: "cloudflare", pairingCode: "W3NC8J", clientHost: "claude.ai",
+      redirectHost: "claude.ai", createdAt: Date(timeIntervalSinceNow: -700),
+      expiresAt: Date(timeIntervalSinceNow: -100))
+    service.oauthRequests.append(expired)
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    #expect(model.pendingOAuthRequests.map(\.pairingCode) == ["K7M2QP", "R4TX9H"])
+    #expect(model.statusText == AppLocalization.formatted("Sign-in requests waiting: %@", "2"))
+    #expect(!(await model.approve(expired, reviewed: .cloudflareObserve)))
+    #expect(model.errorMessage != nil)
+    #expect(service.actions.isEmpty)
   }
 
   @Test
@@ -180,7 +240,7 @@ struct ClientAccessTests {
     await model.reload()
     let request = try #require(model.pendingOAuthRequests.first)
     #expect(model.oauthProfile(for: request) == nil)
-    #expect(!(await model.approve(request)))
+    #expect(!(await model.approve(request, reviewed: .cloudflareObserve)))
     #expect(service.actions.isEmpty)
   }
 
@@ -192,7 +252,7 @@ struct ClientAccessTests {
     await model.reload()
     #expect(model.activeOAuthGrants.map(\.id) == ["recent", "older"])
     let request = try #require(model.pendingOAuthRequests.last)
-    model.oauthProfileChoices[request.id] = .cloudflareOperate
+    model.chooseOAuthProfile(.cloudflareOperate, for: request)
     await model.deny(request)
     #expect(model.oauthProfileChoices.isEmpty)
     await model.revoke(model.activeOAuthGrants[1])
@@ -241,6 +301,12 @@ struct ClientAccessTests {
         size: .init(width: 900, height: 900),
         appearance: appearance,
         name: dark ? "client-access-oauth-no-profile-dark" : "client-access-oauth-no-profile-light")
+      service.remoteProfiles = [.cloudflareOperate]
+      await model.reload()
+      try render(
+        ClientAccessView(model: model).padding(24).environment(\.locale, Locale(identifier: "en")),
+        size: .init(width: 900, height: 900), appearance: appearance,
+        name: dark ? "client-access-oauth-choose-dark" : "client-access-oauth-choose-light")
       service.remoteProfiles = [.cloudflareOperate, .cloudflareObserve]
     }
     #expect(service.actions.isEmpty)
@@ -278,8 +344,8 @@ private final class ClientAccessFake: ClientAccessManaging {
   var approvals: [ClientConsentDraft] = []
   var actions: [String] = []
   var oauth = false
-  var remoteProfiles: [GatewayProfileID] = [.cloudflareOperate, .cloudflareObserve]
-  let oauthRequests = [
+  var remoteProfiles: [ProfileGrant] = [.cloudflareOperate, .cloudflareObserve]
+  var oauthRequests = [
     OAuthPendingAuthorization(
       id: "a-request", tunnelID: "cloudflare", pairingCode: "R4TX9H", clientHost: "claude.ai",
       redirectHost: "claude.ai", createdAt: Date(timeIntervalSinceNow: -60),
@@ -313,7 +379,8 @@ private final class ClientAccessFake: ClientAccessManaging {
     guard oauth else { return .init(sessions: [session], trusts: [trust]) }
     return .init(
       sessions: [session], trusts: [trust], oauthRequests: oauthRequests,
-      oauthGrants: oauthGrants, remoteProfiles: remoteProfiles)
+      oauthGrants: oauthGrants, remoteProfiles: remoteProfiles,
+      tunnelHosts: ["cloudflare": "mcp.example.com"])
   }
   func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)
     async throws

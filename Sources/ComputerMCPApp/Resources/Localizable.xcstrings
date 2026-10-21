@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Choose a profile" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Choose a profile"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "选择配置方案"}}}},
+    "Connection" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Connection"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "连接"}}}},
+    "Through %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Through %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "经由 %@"}}}},
+    "Approved %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Approved %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "批准于 %@"}}}},
+    "This sign-in request expired. Ask the client to sign in again." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This sign-in request expired. Ask the client to sign in again."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此登录请求已过期，请让客户端重新登录。"}}}},
+    "The profile for this sign-in changed. Review it and approve again." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "The profile for this sign-in changed. Review it and approve again."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此登录请求的配置方案已变化，请重新检查后再批准。"}}}},
     "Expires %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Expires %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@过期"}}}},
     "Sign-in requests" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Sign-in requests"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "登录请求"}}}},
     "Approve only if the code matches the one shown in the browser where you are signing in." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Approve only if the code matches the one shown in the browser where you are signing in."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "仅当此代码与您正在登录的浏览器页面上显示的代码一致时才批准。"}}}},

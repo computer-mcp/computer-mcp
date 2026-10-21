@@ -106,9 +106,12 @@ Point the client at `https://<hostname>/mcp`. Preserve the public Host and route
 must support CIMD and S256 PKCE. Its browser page displays client host, redirect
 host and six-character code. Review the matching local request before approval.
 In the App, **Client access** lists it under **Sign-in requests** with the same
-code, client host and redirect host, and offers only profiles that allow
-`cloudflare-tunnel`, with Cloudflare Observe selected first. **Signed-in remote
-clients** lists live grants with their profile and last use; **Revoke** ends one.
+code, client host, redirect host and connection. It offers the profiles that
+allow `cloudflare-tunnel`, grouped by access level, and preselects a read-only
+one, Cloudflare Observe first; without a read-only profile you choose one
+explicitly, and approval stops if the chosen profile's access changes. Expired
+requests cannot be approved. **Signed-in remote clients** lists live grants with
+their connection, profile, approval time and last use; **Revoke** ends one.
 Only the local owner control plane can approve or deny; the public page polls
 an opaque handle. Pairing expires in ten minutes. The callback receives the
 original `state`, issuer `iss` and a 60-second single-use code; denial or expiry

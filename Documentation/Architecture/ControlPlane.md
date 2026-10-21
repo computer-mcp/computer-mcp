@@ -106,8 +106,10 @@ main-thread dispatch before entering macOS AX/AppKit behavior.
 The App's Client access page presents connected socket/HTTP sessions separately
 from saved client approvals. Its ObservableObject feature model captures the
 reviewed session and trust revisions; refresh cannot rebase an open confirmation.
-Pending OAuth sign-in requests and live grants appear on the same page; approval
-offers only profiles that allow `cloudflare-tunnel`, Cloudflare Observe first.
+Pending OAuth sign-in requests and live grants appear on the same page. Approval
+offers the profiles the authorization server accepts, preselects only a read-only
+one, and submits only the profile and access level the owner reviewed before the
+request expires.
 The menu shows current control status, or the number of waiting sign-in requests,
 and directs the owner to that page. A failed refresh remains unavailable while
 retaining the last visible records.

@@ -166,12 +166,7 @@ struct ClientAccessView: View {
 
   private func accessLabel(_ session: GatewayControlSessionSnapshot) -> String {
     if session.ended { return "Access ended" }
-    switch session.currentAccess {
-    case .readOnly: return "Observe"
-    case .workspaceOperations: return "Control — Restricted Access"
-    case .localFullAccess: return "Control — Full Access"
-    case nil: return "Access unavailable"
-    }
+    return session.currentAccess?.clientAccessLabel ?? "Access unavailable"
   }
 }
 
@@ -181,72 +176,114 @@ private struct OAuthRequestRow: View {
   @Environment(\.locale) private var locale
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(alignment: .firstTextBaseline) {
-        Text(verbatim: request.pairingCode)
-          .font(.system(.title2, design: .monospaced).weight(.semibold))
-          .textSelection(.enabled)
-          .accessibilityIdentifier("client-access.oauth.\(request.id).code")
-        Spacer()
-        TimelineView(.periodic(from: .now, by: 30)) { _ in
-          AppLocalization.verbatimText(
-            AppLocalization.formatted(
-              "Expires %@", locale: locale,
-              request.expiresAt.formatted(
-                Date.RelativeFormatStyle(presentation: .named, locale: locale)))
-          )
-          .font(.caption).foregroundStyle(.secondary)
-        }
-      }
-      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-        GridRow {
-          Text("Client", bundle: AppLocalization.resourceBundle).foregroundStyle(.secondary)
-          Text(verbatim: request.clientHost)
-        }
-        GridRow {
-          Text("Returns to", bundle: AppLocalization.resourceBundle).foregroundStyle(.secondary)
-          Text(verbatim: request.redirectHost)
-        }
-      }
-      HStack {
-        if let selected = model.oauthProfile(for: request) {
-          Picker(
-            selection: Binding(
-              get: { selected },
-              set: { model.oauthProfileChoices[request.id] = $0 }
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let expired = context.date >= request.expiresAt
+      let selected = model.oauthProfile(for: request)
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(alignment: .firstTextBaseline) {
+          Text(verbatim: request.pairingCode)
+            .font(.system(.title2, design: .monospaced).weight(.semibold))
+            .foregroundStyle(expired ? .secondary : .primary)
+            .textSelection(.enabled)
+            .accessibilityIdentifier("client-access.oauth.\(request.id).code")
+          Spacer()
+          if expired {
+            Text("Expired", bundle: AppLocalization.resourceBundle)
+              .font(.caption).foregroundStyle(.secondary)
+          } else {
+            AppLocalization.verbatimText(
+              AppLocalization.formatted(
+                "Expires %@", locale: locale,
+                request.expiresAt.formatted(
+                  Date.RelativeFormatStyle(presentation: .named, locale: locale)))
             )
-          ) {
-            ForEach(model.oauthProfileOptions, id: \.self) { profile in
-              Text(verbatim: AppLocalization.string(profile.displayName)).tag(profile)
-            }
-          } label: {
-            Text("Profile", bundle: AppLocalization.resourceBundle)
+            .font(.caption).foregroundStyle(.secondary)
           }
-          .fixedSize()
-          .accessibilityIdentifier("client-access.oauth.\(request.id).profile")
-        } else {
-          Text(
-            "No profile allows Cloudflare tunnel connections. Allow them in a profile to approve this request.",
-            bundle: AppLocalization.resourceBundle
-          ).font(.callout).foregroundStyle(.secondary)
         }
-        Spacer()
-        Button(role: .destructive) {
-          Task { await model.deny(request) }
-        } label: {
-          Text("Deny", bundle: AppLocalization.resourceBundle)
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+          GridRow {
+            Text("Client", bundle: AppLocalization.resourceBundle).foregroundStyle(.secondary)
+            Text(verbatim: request.clientHost)
+          }
+          GridRow {
+            Text("Returns to", bundle: AppLocalization.resourceBundle)
+              .foregroundStyle(.secondary)
+            Text(verbatim: request.redirectHost)
+          }
+          GridRow {
+            Text("Connection", bundle: AppLocalization.resourceBundle)
+              .foregroundStyle(.secondary)
+            Text(verbatim: model.snapshot?.tunnelHosts[request.tunnelID] ?? request.tunnelID)
+          }
         }
-        .accessibilityIdentifier("client-access.oauth.\(request.id).deny")
-        Button {
-          Task { await model.approve(request) }
-        } label: {
-          Text("Approve", bundle: AppLocalization.resourceBundle)
+        HStack {
+          if model.oauthProfileOptions.isEmpty {
+            Text(
+              "No profile allows Cloudflare tunnel connections. Allow them in a profile to approve this request.",
+              bundle: AppLocalization.resourceBundle
+            ).font(.callout).foregroundStyle(.secondary)
+          } else {
+            profilePicker(selected: selected)
+            if let selected {
+              Text(
+                verbatim: AppLocalization.string(selected.mode.clientAccessLabel)
+              )
+              .font(.callout)
+              .foregroundStyle(selected.mode == .readOnly ? Color.secondary : Color.orange)
+            }
+          }
+          Spacer()
+          Button(role: .destructive) {
+            Task { await model.deny(request) }
+          } label: {
+            Text("Deny", bundle: AppLocalization.resourceBundle)
+          }
+          .accessibilityIdentifier("client-access.oauth.\(request.id).deny")
+          Button {
+            guard let selected else { return }
+            Task { await model.approve(request, reviewed: selected) }
+          } label: {
+            Text("Approve", bundle: AppLocalization.resourceBundle)
+          }
+          .accessibilityIdentifier("client-access.oauth.\(request.id).approve")
+          .disabled(selected == nil)
         }
-        .accessibilityIdentifier("client-access.oauth.\(request.id).approve")
-        .disabled(model.oauthProfile(for: request) == nil)
+        .disabled(!model.isAvailable || model.isSaving || expired)
       }
-      .disabled(!model.isAvailable || model.isSaving)
     }
+  }
+
+  /// Groups profiles by access level; a missing choice shows a placeholder, never a default.
+  private func profilePicker(selected: ProfileGrant?) -> some View {
+    let options = model.oauthProfileOptions
+    let levels = GatewayPermissionMode.allCases.filter { mode in
+      options.contains { $0.mode == mode }
+    }
+    return Picker(
+      selection: Binding<GatewayProfileID?>(
+        get: { selected?.id },
+        set: { if let id = $0 { model.chooseOAuthProfile(id, for: request) } }
+      )
+    ) {
+      if selected == nil {
+        Text("Choose a profile", bundle: AppLocalization.resourceBundle)
+          .tag(GatewayProfileID?.none)
+      }
+      ForEach(levels, id: \.self) { level in
+        Section {
+          ForEach(options.filter { $0.mode == level }, id: \.id) { profile in
+            Text(verbatim: AppLocalization.string(profile.id.displayName))
+              .tag(GatewayProfileID?.some(profile.id))
+          }
+        } header: {
+          Text(verbatim: AppLocalization.string(level.clientAccessLabel))
+        }
+      }
+    } label: {
+      Text("Profile", bundle: AppLocalization.resourceBundle)
+    }
+    .fixedSize()
+    .accessibilityIdentifier("client-access.oauth.\(request.id).profile")
   }
 }
 
@@ -259,14 +296,13 @@ private struct OAuthGrantRow: View {
     HStack {
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: URL(string: grant.clientID)?.host ?? grant.clientID).font(.headline)
-        Text(verbatim: AppLocalization.string(grant.profileID.displayName))
-        if let lastUsed = grant.lastUsedAt {
-          AppLocalization.verbatimText(
-            AppLocalization.formatted(
-              "Last used %@", locale: locale,
-              lastUsed.formatted(Date.RelativeFormatStyle(presentation: .named, locale: locale)))
-          ).font(.caption).foregroundStyle(.secondary)
-        }
+        AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "Through %@", locale: locale, URL(string: grant.resource)?.host ?? grant.tunnelID))
+        AppLocalization.verbatimText(
+          [AppLocalization.string(grant.profileID.displayName), accessLevel]
+            .joined(separator: " · "))
+        AppLocalization.verbatimText(usage).font(.caption).foregroundStyle(.secondary)
       }
       Spacer()
       Button(role: .destructive) {
@@ -275,8 +311,27 @@ private struct OAuthGrantRow: View {
         Text("Revoke", bundle: AppLocalization.resourceBundle)
       }
       .accessibilityIdentifier("client-access.oauth-grant.\(grant.id).revoke")
-      .disabled(!model.isAvailable)
+      .disabled(!model.isAvailable || model.isSaving)
     }
+  }
+
+  /// The grant acts with its profile's current permissions.
+  private var accessLevel: String {
+    guard let profile = model.oauthProfileOptions.first(where: { $0.id == grant.profileID })
+    else { return AppLocalization.string("Access unavailable") }
+    return AppLocalization.string(profile.mode.clientAccessLabel)
+  }
+
+  private var usage: String {
+    let approved = AppLocalization.formatted(
+      "Approved %@", locale: locale,
+      grant.createdAt.formatted(
+        Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)))
+    guard let lastUsed = grant.lastUsedAt else { return approved }
+    let used = AppLocalization.formatted(
+      "Last used %@", locale: locale,
+      lastUsed.formatted(Date.RelativeFormatStyle(presentation: .named, locale: locale)))
+    return approved + " · " + used
   }
 }
 

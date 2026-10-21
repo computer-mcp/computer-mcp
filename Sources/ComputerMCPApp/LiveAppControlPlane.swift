@@ -213,12 +213,17 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func fetchClientAccess() async throws -> ClientAccessSnapshot {
     let sessions = await operations.controlSessions()
+    // Mirrors the authorization server's rule for profiles a tunnel client may receive.
     let remoteProfiles = try await controlPlane.profileGrants()
-      .filter { $0.allowedCallers.contains(.cloudflareTunnel) }.map(\.id)
+      .filter { $0.id != .localAdmin && $0.allowedCallers.contains(.cloudflareTunnel) }
+    let tunnelHosts = Dictionary(
+      try await controlPlane.cloudflareTunnelConfigurations().map { ($0.id, $0.publicHostname) },
+      uniquingKeysWith: { first, _ in first })
     return try await ClientAccessSnapshot(
       sessions: sessions, trusts: operations.clientTrusts(),
       oauthRequests: controlPlane.oauthAuthorizations(),
-      oauthGrants: controlPlane.oauthGrants(), remoteProfiles: remoteProfiles)
+      oauthGrants: controlPlane.oauthGrants(), remoteProfiles: remoteProfiles,
+      tunnelHosts: tunnelHosts)
   }
 
   func approveOAuthRequest(_ request: OAuthPendingAuthorization, profile: GatewayProfileID)

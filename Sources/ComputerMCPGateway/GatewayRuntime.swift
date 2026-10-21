@@ -486,7 +486,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       if !dispatched {
         try? recordAudit(
           context: bound, capabilityID: name, decision: Self.auditDecision(for: error),
-          errorCode: Self.auditErrorCode(for: error), duration: started.duration(to: .now),
+          errorCode: Self.auditErrorCode(for: error),
+          refusal: error as? PluginCompatibilityRefusal, duration: started.duration(to: .now),
           inputDigest: try? Self.inputDigest(tool: name, arguments: arguments), output: result,
           operationLinkage: nil)
       }
@@ -1184,7 +1185,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     if recordFailure {
       try? recordAudit(
         context: context, capabilityID: name, decision: Self.auditDecision(for: error),
-        errorCode: Self.auditErrorCode(for: error), duration: .zero,
+        errorCode: Self.auditErrorCode(for: error),
+        refusal: error as? PluginCompatibilityRefusal, duration: .zero,
         inputDigest: try? Self.inputDigest(tool: name, arguments: arguments?.objectValue ?? [:]),
         output: result, operationLinkage: linkage)
     }
@@ -1365,6 +1367,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         capabilityID: name,
         decision: Self.auditDecision(for: error),
         errorCode: Self.auditErrorCode(for: error),
+        refusal: error as? PluginCompatibilityRefusal,
         duration: start.duration(to: .now),
         inputDigest: inputDigest,
         output: auditOutput,
@@ -1519,6 +1522,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         capabilityID: name,
         decision: Self.auditDecision(for: error),
         errorCode: Self.auditErrorCode(for: error),
+        refusal: error as? PluginCompatibilityRefusal,
         duration: start.duration(to: .now),
         inputDigest: inputDigest,
         output: auditOutput,
@@ -2150,6 +2154,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     capabilityID: String,
     decision: AuditDecision,
     errorCode: String?,
+    refusal: PluginCompatibilityRefusal? = nil,
     duration: Duration,
     inputDigest: String?,
     output: JSONValue?,
@@ -2177,8 +2182,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         capabilityID: capabilityID,
         decision: decision,
         errorCode: errorCode,
-        errorDetails: output?.objectValue?["structuredContent"]?.objectValue?["error"]?
-          .objectValue?["refusal"],
+        errorDetails: try refusal.map { try ControlToolResponse.encodedPayload($0) },
         durationMilliseconds: Int(duration.components.seconds * 1_000)
           + Int(duration.components.attoseconds / 1_000_000_000_000_000),
         inputDigest: inputDigest,

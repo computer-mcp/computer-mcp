@@ -18,6 +18,63 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
+  @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])
+  func malformedGitHubManifestDiagnosticSurvivesControlClientAndCLI(declaration: String)
+    async throws
+  {
+    let artifact = pluginArtifactFixture()
+    let http = ReleaseHTTPFake()
+    await http.setManifest(
+      releaseManifestFixture.replacingOccurrences(of: "plugin_api = 1", with: declaration))
+    let fixture = try PluginControlFixture(
+      worker: "/usr/bin/true", releases: GitHubPluginReleases(http: http),
+      bundled: .init(packages: [], issues: []))
+    defer { fixture.remove() }
+    let invalid = PluginManifestError.invalid("plugin_api must be a positive integer.")
+    await #expect(throws: invalid) {
+      try await fixture.gateway.changePlugins(.installRelease(artifact), expectedRevision: 0)
+    }
+    let selection = fixture.root.appendingPathComponent("selection.json")
+    try CanonicalJSONCoding.encoder().encode(artifact).write(to: selection)
+    try await fixture.socket.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      await #expect {
+        try await client.call(
+          "plugin.install_release",
+          arguments: .object([
+            "artifact": try ControlToolResponse.encodedPayload(artifact),
+            "expected_revision": .integer(0),
+          ]))
+      } throws: { error in
+        let failure = error as? ControlSocketCallError
+        return failure?.code == "plugin.invalid_manifest"
+          && failure?.message == invalid.errorDescription && failure?.refusal == nil
+      }
+      let result = try await fixture.cli([
+        "install-release", selection.path, "--expected-revision", "0",
+      ])
+      #expect(result.exitCode == 1)
+      let error = try JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8))
+        .objectValue?["error"]?.objectValue
+      #expect(error?["code"] == .string("plugin.invalid_manifest"))
+      #expect(error?["message"] == invalid.errorDescription.map(JSONValue.string))
+      #expect(error?["refusal"] == nil)
+      let events = try fixture.database.auditEvents(limit: 10)
+        .filter { $0.capabilityID == "plugin.install_release" }
+      #expect(events.count == 2)
+      #expect(
+        events.allSatisfy { $0.errorCode == "plugin.invalid_manifest" && $0.errorDetails == nil })
+      #expect(try fixture.database.pluginStoreSnapshot() == PluginStoreSnapshot())
+      #expect(try fixture.database.pluginOwnedDirectories().isEmpty)
+      #expect(await http.assetPages.isEmpty)
+    } catch {
+      await fixture.socket.stop()
+      throw error
+    }
+    await fixture.socket.stop()
+  }
+
   @Test
   func refusalSurvivesControlClientCLIAndPersistedAuditRecords() async throws {
     let files = try PluginStoreFixture()

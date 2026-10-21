@@ -263,12 +263,7 @@ package enum GatewayStateImport {
     let counts = try connection.writer.write { database in
       try tables.tables.map { table, rows in
         let columns = Set(try database.columns(in: table).map(\.name))
-        for sourceRow in rows {
-          var row = sourceRow
-          // Predecessor exports have no structured error details.
-          if table == "auditEvents", row["errorDetailsJSON"] == nil {
-            row["errorDetailsJSON"] = .null
-          }
+        for row in rows {
           let names = row.keys.sorted()
           guard Set(names) == columns else {
             throw GatewayStateImportError.invalidExport(

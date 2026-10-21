@@ -10,8 +10,76 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPlugins
 
 struct GatewayInvocationContextTests {
+  @Test(arguments: [false, true], [false, true])
+  func downstreamRefusalPayloadIsNotPersistedAsHostAuditDetails(
+    asynchronous: Bool, isError: Bool
+  ) async throws {
+    let untrustedRefusal = JSONValue.object([
+      "credential": .string("Bearer fixture-secret-from-downstream"),
+      "arbitrary": .array([.integer(42), .bool(true)]),
+    ])
+    let fixture = try InvocationFixture(
+      reexportTools: true,
+      result: .object([
+        "content": .array([]), "isError": .bool(isError),
+        "structuredContent": .object(["error": .object(["refusal": untrustedRefusal])]),
+      ]))
+    do {
+      let result: JSONValue
+      if asynchronous {
+        result = try await fixture.runtime.callToolAsync(
+          name: "fixture.inspect", arguments: .object([:]), context: .empty)
+      } else {
+        result = try fixture.runtime.callTool(
+          name: "fixture.inspect", arguments: .object([:]), context: .empty)
+      }
+      #expect(
+        result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["refusal"]
+          == untrustedRefusal)
+      let events = try fixture.database.auditEvents()
+      #expect(events.count == 1)
+      let event = try #require(events.first)
+      #expect(event.decision == .allowed && event.errorCode == nil)
+      #expect(event.errorDetails == nil)
+      #expect(
+        !String(decoding: try JSONEncoder().encode(event), as: UTF8.self)
+          .contains("fixture-secret-from-downstream"))
+      await fixture.runtime.shutdown()
+    } catch {
+      await fixture.runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test
+  func hostCompatibilityRefusalIsPersistedAsAuditDetails() async throws {
+    let fixture = try InvocationFixture()
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "fixture", version: PluginVersion("1.0.0"), declared: 2))
+    do {
+      let result = fixture.runtime.routingErrorForMCP(
+        refusal, name: "fixture.inspect", arguments: .object([:]),
+        invocationContext: .empty, recordFailure: true)
+      let encoded = try ControlToolResponse.encodedPayload(refusal)
+      #expect(
+        result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["refusal"]
+          == encoded)
+      let events = try fixture.database.auditEvents()
+      #expect(events.count == 1)
+      let event = try #require(events.first)
+      #expect(event.decision == .failed && event.errorCode == refusal.code)
+      #expect(event.errorDetails == encoded)
+      await fixture.runtime.shutdown()
+    } catch {
+      await fixture.runtime.shutdown()
+      throw error
+    }
+  }
+
   @Test(arguments: [false, true])
   func standaloneOwnerCallsKeepLiveSessionAndSelectTheOwnedConnection(envelope: Bool) async throws {
     let fixture = try InvocationFixture(requiresControlSession: true)
@@ -440,7 +508,10 @@ private struct InvocationFixture {
     principalID: "context-client", profileID: .localAdmin, caller: .localMCP)
   let server: MCPServerConfig
 
-  init(requiresControlSession: Bool = false, reexportTools: Bool = false) throws {
+  init(
+    requiresControlSession: Bool = false, reexportTools: Bool = false,
+    result: JSONValue = .object(["content": .array([]), "isError": .bool(false)])
+  ) throws {
     server = MCPServerConfig(
       id: "fixture", transport: .stdio, command: "/unused/context-provider",
       exposure: reexportTools ? .reexport : .gateway, prefix: reexportTools ? "fixture" : nil,
@@ -448,7 +519,7 @@ private struct InvocationFixture {
       toolRisks: ["inspect": .readOnly, "change": .workspaceWrite], hostServices: true)
     workspace = try ScopedTemporaryDirectory()
     database = try GatewayDatabase(inMemory: ())
-    client = InvocationClientSpy()
+    client = InvocationClientSpy(result: result)
     configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       profiles: [
@@ -492,6 +563,10 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
   var discoveries: [InvocationContext] { catalogs.withLockedValue { $0.map(\.context) } }
   var discoveredServers: [String] { catalogs.withLockedValue { $0.map(\.serverID) } }
   private let observations = NIOLockedValueBox([Observation]())
+  private let result: JSONValue
+  init(result: JSONValue = .object(["content": .array([]), "isError": .bool(false)])) {
+    self.result = result
+  }
   var calls: [Observation] { observations.withLockedValue { $0 } }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
@@ -513,7 +588,7 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
           correlationID: admission?.correlationID(for: server, tool: name),
           continuation: context.continuation))
     }
-    return .object(["content": .array([]), "isError": .bool(false)])
+    return result
   }
   func startToolCall(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String,

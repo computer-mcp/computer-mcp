@@ -26,6 +26,23 @@ struct GitHubPluginReleasesTests {
     #expect(await http.assetPages.isEmpty)
   }
 
+  @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])
+  func malformedPluginAPIKeepsItsDiagnosticDuringReleaseVerification(declaration: String)
+    async throws
+  {
+    let artifact = pluginArtifactFixture()
+    let http = ReleaseHTTPFake()
+    await http.setManifest(
+      releaseManifestFixture.replacingOccurrences(of: "plugin_api = 1", with: declaration))
+    await #expect(
+      throws: PluginManifestError.invalid("plugin_api must be a positive integer.")
+    ) {
+      try await GitHubPluginReleases(http: http).revalidate(artifact)
+    }
+    #expect(await http.manifestRefs == [artifact.declaration.revision])
+    #expect(await http.assetPages.isEmpty)
+  }
+
   @Test(arguments: ["correct", "forged", "omitted"])
   func selectedTargetIsRevalidatedAgainstTheExactTag(fault: String) async throws {
     let manifest = PreparationFixture.platformManifest.replacingOccurrences(

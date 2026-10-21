@@ -61,6 +61,22 @@ struct GitHubPluginSourceTests {
     }
     if fault == "publisher" || fault == "repository" { #expect(await http.requests.isEmpty) }
   }
+
+  @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])
+  func malformedPluginAPIKeepsItsManifestDiagnostic(declaration: String) async throws {
+    let http = PinnedManifestHTTP(
+      manifest: catalogManifest.replacingOccurrences(of: "plugin_api = 1", with: declaration))
+    let repository = try JSONDecoder().decode(
+      GitHubPluginSource.Repository.self,
+      from: JSONEncoder().encode(catalogRepository("combined", id: 1)))
+    await #expect(
+      throws: PluginManifestError.invalid("plugin_api must be a positive integer.")
+    ) {
+      try await GitHubPluginSource.declaration(
+        repository: repository, revision: catalogCommit, http: http)
+    }
+    #expect(await http.requests.count == 1)
+  }
 }
 
 private let catalogCommit = String(repeating: "a", count: 40)

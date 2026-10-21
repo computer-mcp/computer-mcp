@@ -39,6 +39,8 @@ enum GitHubPluginSource {
     do { manifest = try PluginManifest.parse(text) } catch let refusal as PluginCompatibilityRefusal
     {
       throw refusal
+    } catch let invalid as PluginManifestError {
+      throw invalid
     } catch {
       throw PluginCatalogError.invalidManifest
     }

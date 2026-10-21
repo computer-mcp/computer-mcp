@@ -60,6 +60,7 @@ package struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading 
 
 package final class AtomicManifestStore: @unchecked Sendable {
   internal let manifestURL: URL
+  let publicationLock = ConfigurationPublicationLock()
 
   private let database: GatewayDatabase
   private let loader: any ManifestConfigurationLoading
@@ -193,7 +194,11 @@ package final class AtomicManifestStore: @unchecked Sendable {
     throws
     -> ConfigurationRevision
   {
-    try commit(prepare(manifest: manifest, reason: reason, expectedDigest: expectedDigest))
+    guard publicationLock.tryAcquire() else { throw AtomicManifestStoreError.changeInProgress }
+    defer { publicationLock.release() }
+    let current = try files.currentData()
+    let digest = try expectedDigest ?? current.map(Self.digest(of:))
+    return try commit(prepare(manifest: manifest, reason: reason, expectedDigest: digest))
   }
 
   func prepare(

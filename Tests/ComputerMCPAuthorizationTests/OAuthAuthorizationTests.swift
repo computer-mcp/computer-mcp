@@ -492,6 +492,11 @@ private final class MemoryTransaction: OAuthStoreTransaction {
   func save(_ code: OAuthAuthorizationCode) throws { state.codes[code.digest] = code }
   func token(digest: String) throws -> OAuthToken? { state.tokens[digest] }
   func save(_ token: OAuthToken) throws { state.tokens[token.digest] = token }
+  func endAuthorizations(tunnelID: String) throws {
+    let ids = Set(state.grants.values.filter { $0.tunnelID == tunnelID }.map(\.id))
+    state.requests = state.requests.filter { $0.value.tunnelID != tunnelID }
+    state.codes = state.codes.filter { !ids.contains($0.value.grantID) }
+  }
   func audit(_ event: AuditEvent) throws { state.audit.append(event) }
   func prune(before: Date) throws {}
 }

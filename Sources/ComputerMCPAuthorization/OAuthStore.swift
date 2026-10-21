@@ -18,6 +18,8 @@ package protocol OAuthStoreTransaction {
   func save(_ code: OAuthAuthorizationCode) throws
   func token(digest: String) throws -> OAuthToken?
   func save(_ token: OAuthToken) throws
+  /// End every pairing and discard unexchanged codes for this tunnel in this transaction.
+  func endAuthorizations(tunnelID: String) throws
   func audit(_ event: AuditEvent) throws
   /// Remove expired pending-flow data and expired access tokens. Refresh digests that
   /// detect reuse must survive while their grant can still authorize requests.

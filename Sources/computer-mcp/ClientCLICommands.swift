@@ -38,16 +38,16 @@ struct Clients: AsyncParsableCommand {
     var profile: String?
     @Option(
       name: .long,
-      help: "Approve only if the chosen profile still has this authorization revision.")
-    var authorizationRevision: Int64?
+      help: "Approve only if the chosen profile still has this authorization digest.")
+    var authorizationDigest: String?
     func run() async throws {
       var arguments: [String: JSONValue] = [
         "pairing_code": .string(pairingCode)
       ]
       if let profile { arguments["profile_id"] = .string(profile) }
       if let tunnelID { arguments["tunnel_id"] = .string(tunnelID) }
-      if let authorizationRevision {
-        arguments["authorization_revision"] = .integer(authorizationRevision)
+      if let authorizationDigest {
+        arguments["authorization_digest"] = .string(authorizationDigest)
       }
       try await Clients.report {
         try await connection.client().call("clients.authorize", arguments: .object(arguments))

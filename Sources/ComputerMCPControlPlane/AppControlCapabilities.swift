@@ -35,7 +35,7 @@ package enum AppControlCapabilityCatalog {
       "List pending OAuth pairing requests for local approval.", readOnly: true),
     item(
       "clients.authorize", "computer-mcp clients authorize",
-      "Approve one OAuth pairing code, optionally bound to a reviewed profile revision.",
+      "Approve one OAuth pairing code, optionally bound to a reviewed authorization digest.",
       idempotent: false),
     item(
       "clients.deny", "computer-mcp clients deny",

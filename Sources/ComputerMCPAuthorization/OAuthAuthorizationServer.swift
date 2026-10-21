@@ -343,6 +343,24 @@ package actor OAuthAuthorizationServer {
     try await endGrantSessions(grant, caller: approver)
   }
 
+  /// The tunnel owner holds its mutation slot through this transaction and session cleanup.
+  package func revokeTunnel(approver: GatewayCallerKind) async throws {
+    try requireLocal(approver)
+    let now = clock()
+    let grants = try store.oauthTransaction { transaction in
+      let grants = try transaction.grants(tunnelID: configuration.tunnelID)
+      for var grant in grants where grant.revokedAt == nil {
+        grant.revokedAt = now
+        try transaction.save(grant)
+        try transaction.audit(audit("grant_revoked", grant: grant, caller: approver, now: now))
+      }
+      try transaction.endAuthorizations(tunnelID: configuration.tunnelID)
+      try transaction.audit(audit("authorizations_ended", caller: approver, now: now))
+      return grants
+    }
+    for grant in grants { try await endGrantSessions(grant, caller: approver) }
+  }
+
   private func endGrantSessions(_ grant: OAuthGrant, caller: GatewayCallerKind) async throws {
     await endSessions(grant.principalID)
     try store.oauthTransaction {

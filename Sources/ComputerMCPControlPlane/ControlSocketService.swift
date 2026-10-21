@@ -450,12 +450,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
         payload = try encodedPayload(grant)
       case "profile.list":
-        payload = try encodedPayload(try await controlPlane.profileGrants())
+        payload = .array(
+          try await controlPlane.profileGrants().map { grant in
+            try profilePayload(grant)
+          })
       case "profile.show":
         let profile = try requiredProfile(in: object)
         guard let grant = try await controlPlane.profileGrants().first(where: { $0.id == profile })
         else { throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue) }
-        payload = try encodedPayload(grant)
+        payload = try profilePayload(grant)
       case "profile.activate":
         payload = try encodedPayload(
           try await operations.activateProfile(requiredProfile(in: object))
@@ -846,6 +849,13 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       )
       return result
     }
+  }
+
+  private func profilePayload(_ grant: ProfileGrant) throws -> JSONValue {
+    var fields = try encodedPayload(grant).objectValue ?? [:]
+    fields["authorization_digest"] = .string(
+      try OAuthApprovalProfile(grant: grant).authorizationDigest)
+    return .object(fields)
   }
 
   private func configurationOperation(

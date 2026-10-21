@@ -135,6 +135,7 @@ package actor AppGatewayService {
   package nonisolated let socketConfiguration: GatewaySocketConfiguration
 
   private let controlPlane: AppControlPlaneService
+  private let manifestWillPublish: @Sendable () async throws -> Void
   private let platform: PlatformServices
   private var controlSessionRecords: [String: (key: RuntimeKey, session: GatewayControlSession)] =
     [:]
@@ -170,8 +171,10 @@ package actor AppGatewayService {
 
   package init(
     controlPlane: AppControlPlaneService,
-    socketConfiguration: GatewaySocketConfiguration
+    socketConfiguration: GatewaySocketConfiguration,
+    manifestWillPublish: @escaping @Sendable () async throws -> Void = {}
   ) {
+    self.manifestWillPublish = manifestWillPublish
     self.controlPlane = controlPlane
     self.platform = controlPlane.platform
     self.socketConfiguration = socketConfiguration
@@ -1181,7 +1184,8 @@ package actor AppGatewayService {
     try await controlPlane.applyManifestChange(
       manifest, reason: reason, expectedDigest: expectedDigest
     ) { [self] _, prepared in
-      try await preparePublication(
+      try await manifestWillPublish()
+      return try await preparePublication(
         inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
         storage: nil
       ) { resolution, install in

@@ -63,12 +63,25 @@ extension AppControlPlaneService {
 
   package func authorizeOAuthClient(
     pairingCode: String, tunnelID: String? = nil,
-    profileID: GatewayProfileID? = nil, expectedAuthorizationRevision: Int64? = nil,
+    profileID: GatewayProfileID? = nil, expectedAuthorizationDigest: String? = nil,
     approver: GatewayCallerKind = .localApp
   ) async throws -> OAuthGrant {
     let requests = try await oauthAuthorizations(tunnelID: tunnelID, approver: approver)
       .filter { $0.pairingCode == pairingCode.uppercased() }
-    guard requests.count == 1, let request = requests.first,
+    guard requests.count == 1, let request = requests.first else { throw OAuthError.invalidRequest }
+    await beginCloudflareCredentialMutation(profileID: request.tunnelID)
+    defer { endCloudflareCredentialMutation(profileID: request.tunnelID) }
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
+    guard
+      try database.oauthTransaction({ transaction in
+        try transaction.requests(tunnelID: request.tunnelID).contains {
+          $0.id == request.id && $0.status == .pending
+        }
+      })
+    else { throw OAuthError.invalidRequest }
+    guard
       let tunnel = try cloudflareTunnelConfigurations().first(where: {
         $0.id == request.tunnelID && $0.oauthEnabled
       }),
@@ -76,8 +89,8 @@ extension AppControlPlaneService {
         $0.id == (profileID ?? .cloudflareObserve)
       })
     else { throw OAuthError.invalidRequest }
-    if let expectedAuthorizationRevision,
-      profile.authorizationRevision != expectedAuthorizationRevision
+    if let expectedAuthorizationDigest,
+      try OAuthApprovalProfile(grant: profile).authorizationDigest != expectedAuthorizationDigest
     {
       throw GatewayToolError.invalidArguments(
         "Profile authorization changed. Reload the profile and review it before approving."
@@ -88,6 +101,8 @@ extension AppControlPlaneService {
         "cloudflare-observe is not read-only. Choose an explicit profile with --profile in the CLI or profile_id in the control plane."
       )
     }
+    try await oauthApprovalWillCommit()
+    try Task.checkCancellation()
     return try await oauthServer(for: tunnel).approve(
       pairingCode: request.pairingCode, profile: profile, approver: approver)
   }

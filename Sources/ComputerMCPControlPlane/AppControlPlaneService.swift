@@ -77,6 +77,7 @@ package actor AppControlPlaneService {
   /// A profile keeps its mutation slot through secret reads, activation and rollback.
   var cloudflareCredentialMutationWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
   var cloudflareOAuthSessions: [String: GatewayOAuthSessions] = [:]
+  let oauthApprovalWillCommit: @Sendable () async throws -> Void
   let cloudflareAccessTokenDidRead: @Sendable () async throws -> Void
   var cloudflareStartTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
   var cloudflareStopTasks: [String: Task<CloudflareTunnelStatus, Error>] = [:]
@@ -108,6 +109,7 @@ package actor AppControlPlaneService {
     pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
     pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
     bundledPlugins: BundledPlugins = .current,
+    oauthApprovalWillCommit: @escaping @Sendable () async throws -> Void = {},
     cloudflareAccessTokenDidRead: @escaping @Sendable () async throws -> Void = {}
   ) {
     self.directories = directories
@@ -132,6 +134,7 @@ package actor AppControlPlaneService {
     self.pluginReleases = pluginReleases
     self.pluginDownload = pluginDownload
     self.bundledPlugins = bundledPlugins
+    self.oauthApprovalWillCommit = oauthApprovalWillCommit
     self.cloudflareAccessTokenDidRead = cloudflareAccessTokenDidRead
   }
 
@@ -173,11 +176,21 @@ package actor AppControlPlaneService {
   }
 
   @discardableResult
-  func activateManifest(_ manifest: String, expectedDigest: String? = nil) throws
+  func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws
     -> ConfigurationRevision
   {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
-    return try manifestStore.activate(manifest: manifest, expectedDigest: expectedDigest)
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
+    let configuration =
+      try FileManager.default.fileExists(atPath: directories.manifest.path)
+      ? manifestStore.activeConfiguration() : nil
+    let digest =
+      try expectedDigest ?? configuration.map { try manifestStore.admittedDigest(for: $0) }
+    return try manifestStore.commit(
+      manifestStore.prepare(
+        manifest: manifest, expectedDigest: digest, expectedConfiguration: configuration))
   }
 
   func applyManifestChange(
@@ -187,9 +200,13 @@ package actor AppControlPlaneService {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     configurationMutationInProgress = true
     defer { configurationMutationInProgress = false }
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     let inputs = try gatewayInputs()
     let prepared = try manifestStore.prepare(
-      manifest: manifest, reason: reason, expectedDigest: expectedDigest,
+      manifest: manifest, reason: reason,
+      expectedDigest: try expectedDigest ?? manifestStore.admittedDigest(for: inputs.configuration),
       expectedConfiguration: inputs.configuration)
     guard prepared.persisted == inputs.persisted else {
       throw GatewayDatabaseError.configurationChanged
@@ -242,7 +259,10 @@ package actor AppControlPlaneService {
   package func registerWorkspace(
     at url: URL,
     displayName: String? = nil
-  ) throws -> RegisteredWorkspace {
+  ) async throws -> RegisteredWorkspace {
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     let proposed = try platform.workspaceGrants.registerFolder(at: url, displayName: displayName)
     let registration = try database.registerWorkspaceIdempotently(proposed)
     if !registration.created,
@@ -266,6 +286,9 @@ package actor AppControlPlaneService {
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool
   ) async throws -> WorkspaceDeduplicationResult {
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     let expected = try database.configurationState()
     let plan = try database.workspaceDeduplicationPlan()
     let resolved = try await resolveLegacyWorkspaceProfiles(
@@ -283,6 +306,9 @@ package actor AppControlPlaneService {
   }
 
   package func removeWorkspace(id: String) async throws {
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     let expected = try database.configurationState()
     let canonicalID = expected.workspaceAliases[id] ?? id
     guard expected.workspaces.contains(where: { $0.id == canonicalID }) else {
@@ -331,6 +357,9 @@ package actor AppControlPlaneService {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     configurationMutationInProgress = true
     defer { configurationMutationInProgress = false }
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     let inputs = try gatewayInputs()
     let mutation: WorkspaceConfigurationMutation
     let affectedWorkspaceIDs: Set<String>
@@ -475,10 +504,16 @@ package actor AppControlPlaneService {
     workspaceID: String,
     profileID: GatewayProfileID
   ) async throws -> ProfileGrant {
+    let inputs = try gatewayInputs()
     guard try database.workspaces().contains(where: { $0.id == workspaceID }) else {
       throw AppControlPlaneServiceError.unknownWorkspace(workspaceID)
     }
     let grants = try await profileGrants()
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
+    try requireCurrentGatewayInputs(inputs)
+    let configuration = try manifestStore.activeConfiguration()
     guard var grant = grants.first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
@@ -491,7 +526,9 @@ package actor AppControlPlaneService {
       grant.workspaceIDs.remove(workspaceID)
     }
     try grant.validate()
-    try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    try manifestStore.withCurrentConfiguration(configuration) {
+      try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    }
     return try database.profiles().first { $0.id == profileID } ?? grant
   }
 
@@ -555,12 +592,17 @@ package actor AppControlPlaneService {
     _ enabled: Bool,
     profileID: GatewayProfileID
   ) async throws -> ProfileGrant {
+    let inputs = try gatewayInputs()
     if enabled {
       guard try manifestStore.activeConfiguration().policy.shellEnabled else {
         throw AppControlPlaneServiceError.fullShellManifestDisabled
       }
     }
     let grants = try await profileGrants()
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
+    try requireCurrentGatewayInputs(inputs)
     let configuration = try manifestStore.activeConfiguration()
     if enabled && !configuration.policy.shellEnabled {
       throw AppControlPlaneServiceError.fullShellManifestDisabled
@@ -576,7 +618,9 @@ package actor AppControlPlaneService {
       grant.capabilityIDs.formUnion(ProfileGrant.fullShellCapabilities)
     }
     try grant.validate()
-    try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    try manifestStore.withCurrentConfiguration(configuration) {
+      try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    }
     return try database.profiles().first { $0.id == profileID } ?? grant
   }
 
@@ -593,9 +637,14 @@ package actor AppControlPlaneService {
     expectedRevision: Int64? = nil,
     reviewedOptions: ProfilePermissionOptions? = nil
   ) async throws -> ProfileGrant {
+    let inputs = try gatewayInputs()
     guard var grant = try await profileGrants().first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
+    try requireCurrentGatewayInputs(inputs)
     if let reviewedOptions {
       try requireCurrentGatewayInputs(reviewedOptions.inputs)
       guard reviewedOptions.grant == grant else {
@@ -646,7 +695,9 @@ package actor AppControlPlaneService {
         try database.saveProfile(grant, expectedRevision: revision)
       }
     } else {
-      try database.saveProfile(grant, expectedRevision: revision)
+      try manifestStore.withCurrentConfiguration(configuration) {
+        try database.saveProfile(grant, expectedRevision: revision)
+      }
     }
     return try database.profiles().first { $0.id == profileID } ?? grant
   }
@@ -891,9 +942,13 @@ package actor AppControlPlaneService {
     }.sorted { $0.id < $1.id }
   }
 
-  package func saveOpenAITunnelConfiguration(_ profile: OpenAITunnelConfiguration) throws {
+  package func saveOpenAITunnelConfiguration(_ profile: OpenAITunnelConfiguration) async throws {
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     try profile.validate()
     var configuration = try manifestStore.activeConfiguration()
+    let digest = try manifestStore.admittedDigest(for: configuration)
     configuration.transports.openAI.removeAll { $0.id == profile.id }
     configuration.transports.openAI.append(
       OpenAITunnelTransportConfig(
@@ -909,16 +964,20 @@ package actor AppControlPlaneService {
       )
     )
     configuration.transports.openAI.sort { $0.id < $1.id }
-    try activateTransportConfiguration(configuration)
+    try activateTransportConfiguration(configuration, expectedDigest: digest)
   }
 
   package func deleteOpenAITunnelConfiguration(id: String) async throws {
     _ = try requireOpenAITunnelConfiguration(id)
     _ = try await openAITunnelSupervisor.stop(profileID: id)
     try setOpenAITunnelDesiredRunning(false, profileID: id)
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     var configuration = try manifestStore.activeConfiguration()
+    let digest = try manifestStore.admittedDigest(for: configuration)
     configuration.transports.openAI.removeAll { $0.id == id }
-    try activateTransportConfiguration(configuration)
+    try activateTransportConfiguration(configuration, expectedDigest: digest)
     try await deleteKeychainSecret(
       SecretReference(account: "tunnel.\(id).openai-api-key")
     )
@@ -1113,9 +1172,14 @@ package actor AppControlPlaneService {
     return profile
   }
 
-  func activateTransportConfiguration(_ configuration: GatewayConfiguration) throws {
+  /// Caller holds the publication lock and supplies the digest of its merge base.
+  func activateTransportConfiguration(_ configuration: GatewayConfiguration, expectedDigest: String)
+    throws
+  {
     try configuration.validate()
-    _ = try manifestStore.activate(manifest: configuration.exportedTOML())
+    _ = try manifestStore.commit(
+      manifestStore.prepare(
+        manifest: configuration.exportedTOML(), expectedDigest: expectedDigest))
   }
 
   private func validateOpenAITunnelSurface(_ profile: OpenAITunnelConfiguration) async throws {

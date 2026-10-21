@@ -145,42 +145,230 @@ struct OAuthControlPlaneTests {
       profileID: reviewed.id, mode: changeMode ? .workspaceOperations : nil,
       capabilityIDs: changeMode ? ["file.read", "file.write"] : ["file.read"],
       expectedRevision: reviewed.authorizationRevision)
-    #expect(changed.authorizationRevision > reviewed.authorizationRevision)
     #expect(changed.mode == (changeMode ? .workspaceOperations : .readOnly))
     #expect(changed.capabilityIDs != reviewed.capabilityIDs)
     let owner = GatewayClientControl.app(fixture.operations)
-    func approve(revision: Int64) async throws -> GatewayProfileID {
+    func approve(digest: String) async throws -> GatewayProfileID {
       if throughControl {
         let response = try await owner.call(
           name: "clients.authorize",
           arguments: [
             "pairing_code": .string(pairing.request.pairingCode),
             "profile_id": .string(reviewed.id.rawValue),
-            "authorization_revision": .integer(revision),
+            "authorization_digest": .string(digest),
           ])
         return try #require(
           GatewayProfileID(rawValue: response.objectValue?["profile_id"]?.stringValue ?? ""))
       }
       return try await fixture.service.authorizeOAuthClient(
         pairingCode: pairing.request.pairingCode, profileID: reviewed.id,
-        expectedAuthorizationRevision: revision
+        expectedAuthorizationDigest: digest
       ).profileID
     }
     do {
-      _ = try await approve(revision: reviewed.authorizationRevision)
-      Issue.record("An approval must use the profile revision the owner reviewed.")
+      _ = try await approve(digest: OAuthApprovalProfile(grant: reviewed).authorizationDigest)
+      Issue.record("An approval must use the authorization digest the owner reviewed.")
     } catch GatewayToolError.invalidArguments(let message) {
       #expect(message.contains("authorization changed"))
       #expect(message.contains("review"))
     }
     #expect(try await server.pendingRequests(approver: .localApp).count == 1)
     #expect(try await server.grants(approver: .localApp).isEmpty)
-    #expect(try await approve(revision: changed.authorizationRevision) == reviewed.id)
+    #expect(
+      try await approve(digest: OAuthApprovalProfile(grant: changed).authorizationDigest)
+        == reviewed.id)
+  }
+
+  @Test func permissionPublicationWaitsForApprovalToCommit() async throws {
+    let gate = SuspensionGate()
+    let fixture = try ControlFixture(approvalWillCommit: { await gate.pause() })
+    defer { fixture.remove() }
+    let flow = fixture.server()
+    let pairing = try await flow.authorize(fixture.fields, address: "fixture")
+    let reviewed = try #require(
+      try await fixture.service.oauthApprovalProfiles().first {
+        $0.grant.id == .cloudflareObserve
+      })
+    let approving = Task {
+      try await fixture.service.authorizeOAuthClient(
+        pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
+        expectedAuthorizationDigest: reviewed.authorizationDigest)
+    }
+    await gate.waitUntilPaused()
+    let changing = Task {
+      try await fixture.service.updateProfilePermissions(
+        profileID: reviewed.grant.id, mode: .workspaceOperations,
+        capabilityIDs: ["file.read", "file.write"])
+    }
+    let lock = await fixture.service.manifestStore.publicationLock
+    await waitForPublicationWaiters(lock, count: 1)
+    #expect(try fixture.database.profiles().isEmpty)
+    #expect(try await flow.grants(approver: .localApp).isEmpty)
+    await gate.resume()
+    let grant = try await approving.value
+    let changed = try await changing.value
+    #expect(grant.profileID == reviewed.grant.id)
+    #expect(changed.mode == .workspaceOperations)
+    #expect(
+      try OAuthApprovalProfile(grant: changed).authorizationDigest != reviewed.authorizationDigest)
+    #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
+    #expect(lock.waitingCount == 0)
+  }
+
+  private func waitForPublicationWaiters(_ lock: ConfigurationPublicationLock, count: Int) async {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while lock.waitingCount != count, ContinuousClock.now < deadline { await Task.yield() }
+    #expect(lock.waitingCount == count)
   }
 
   // These integration cases publish manifests through the macOS exclusive-rename
   // adapter. Linux manifest recovery-record publication reports ENOSYS.
   #if os(macOS)
+    @Test func manifestDerivedAuthorizationRejectsTheDigestDisplayedBeforeAPermissionChange()
+      async throws
+    {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      var configuration = try await fixture.service.activeConfiguration()
+      configuration.profiles = [
+        .init(
+          id: .cloudflareObserve, capabilities: ["file.read"],
+          allowedCallers: [.cloudflareTunnel], mode: .readOnly)
+      ]
+      _ = try await fixture.service.activateManifest(configuration.exportedTOML())
+      let reviewed = try #require(
+        try await fixture.service.oauthApprovalProfiles().first {
+          $0.grant.id == .cloudflareObserve
+        })
+      #expect(try fixture.database.profiles().isEmpty)
+      let flow = fixture.server()
+      let pairing = try await flow.authorize(fixture.fields, address: "fixture")
+      configuration.profiles[0].mode = .workspaceOperations
+      configuration.profiles[0].capabilities = ["file.read", "file.write"]
+      _ = try await fixture.gatewayService.changeManifest(configuration.exportedTOML())
+      await #expect(throws: (any Error).self) {
+        try await fixture.service.authorizeOAuthClient(
+          pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
+          expectedAuthorizationDigest: reviewed.authorizationDigest)
+      }
+      #expect(try fixture.database.profiles().isEmpty)
+      #expect(try await flow.grants(approver: .localApp).isEmpty)
+      #expect(try await flow.pendingRequests(approver: .localApp).count == 1)
+      let current = try #require(
+        try await fixture.service.oauthApprovalProfiles().first {
+          $0.grant.id == reviewed.grant.id
+        })
+      #expect(current.authorizationDigest != reviewed.authorizationDigest)
+      _ = try await fixture.service.authorizeOAuthClient(
+        pairingCode: pairing.request.pairingCode, profileID: current.grant.id,
+        expectedAuthorizationDigest: current.authorizationDigest)
+    }
+
+    @Test(arguments: [false, true])
+    func tunnelSaveMergesAfterGatewayPublication(disableOAuth: Bool) async throws {
+      let gate = SuspensionGate()
+      let fixture = try ControlFixture(manifestWillPublish: { await gate.pause() })
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      _ = try await fixture.service.saveCloudflareTunnelConfiguration(
+        profile, tunnelToken: "synthetic-tunnel")
+      var configuration = try await fixture.service.activeConfiguration()
+      configuration.transports.cloudflare[0].oauthEnabled = !disableOAuth
+      configuration.transports.cloudflare[0].oauthClientAllowlist = ["updated.example"]
+      configuration.builtin.enabled = ["file.read"]
+      let manifest = try configuration.exportedTOML()
+      let publishing = Task { try await fixture.gatewayService.changeManifest(manifest) }
+      await gate.waitUntilPaused()
+      var input = fixture.saveInput(for: profile)
+      input.tunnelName = "updated-name"
+      let savingInput = input
+      let saving = Task {
+        try await fixture.operations.saveCloudflareTunnelConfiguration(savingInput)
+      }
+      let lock = await fixture.service.manifestStore.publicationLock
+      await waitForPublicationWaiters(lock, count: 1)
+      await gate.resume()
+      _ = try await publishing.value
+      let saved = try await saving.value
+      #expect(saved.profile.oauthEnabled == !disableOAuth)
+      #expect(saved.profile.oauthClientAllowlist == ["updated.example"])
+      let current = try await fixture.service.activeConfiguration()
+      #expect(current.transports.cloudflare[0].tunnelName == "updated-name")
+      #expect(current.transports.cloudflare[0].oauthEnabled == !disableOAuth)
+      #expect(current.transports.cloudflare[0].oauthClientAllowlist == ["updated.example"])
+      #expect(current.builtin.enabled == ["file.read"])
+    }
+
+    @Test func gatewayPublicationReadsItsBaseAfterATunnelSave() async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      _ = try await fixture.service.saveCloudflareTunnelConfiguration(
+        profile, tunnelToken: "synthetic-tunnel")
+      let saving = SuspensionGate()
+      await fixture.secrets.pauseWrite(
+        "updated-tunnel", for: profile.tunnelTokenReference, gate: saving)
+      var input = fixture.saveInput(for: profile)
+      input.tunnelToken = "updated-tunnel"
+      input.tunnelName = "updated-name"
+      let savingInput = input
+      let first = Task {
+        try await fixture.operations.saveCloudflareTunnelConfiguration(savingInput)
+      }
+      await saving.waitUntilPaused()
+      var configuration = try await fixture.service.activeConfiguration()
+      configuration.transports.cloudflare[0].oauthEnabled = false
+      configuration.builtin.enabled = ["file.read"]
+      _ = try await fixture.gatewayService.changeManifest(configuration.exportedTOML())
+      await saving.resume()
+      _ = try await first.value
+      let current = try await fixture.service.activeConfiguration()
+      #expect(current.transports.cloudflare[0].tunnelName == "updated-name")
+      #expect(!current.transports.cloudflare[0].oauthEnabled)
+      #expect(current.builtin.enabled == ["file.read"])
+    }
+
+    @Test func deletionWaitsForAnAdmittedApprovalThenRevokesIt() async throws {
+      let gate = SuspensionGate()
+      let fixture = try ControlFixture(approvalWillCommit: { await gate.pause() })
+      defer { fixture.remove() }
+      let flow = fixture.server()
+      let pairing = try await flow.authorize(fixture.fields, address: "fixture")
+      let approving = Task {
+        try await fixture.service.authorizeOAuthClient(pairingCode: pairing.request.pairingCode)
+      }
+      await gate.waitUntilPaused()
+      let deleting = Task {
+        try await fixture.service.deleteCloudflareTunnelConfiguration(
+          id: fixture.configuration.tunnelID)
+      }
+      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+      while await fixture.service.cloudflareCredentialMutationWaiters[
+        fixture.configuration.tunnelID]?.count != 1,
+        ContinuousClock.now < deadline
+      { await Task.yield() }
+      #expect(
+        await fixture.service.cloudflareCredentialMutationWaiters[fixture.configuration.tunnelID]?
+          .count == 1)
+      #expect(try await flow.grants(approver: .localApp).isEmpty)
+      await gate.resume()
+      let approved = try await approving.value
+      try await deleting.value
+      #expect(try await fixture.service.cloudflareTunnelConfigurations().isEmpty)
+      #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
+      #expect(
+        try await flow.grants(approver: .localApp).allSatisfy {
+          $0.id == approved.id && $0.revokedAt != nil
+        })
+      let events = try fixture.database.auditEvents(limit: 100).sorted {
+        $0.occurredAt < $1.occurredAt
+      }
+      let approval = try #require(
+        events.firstIndex { $0.capabilityID == "oauth.authorization_approved" })
+      let revocation = try #require(events.firstIndex { $0.capabilityID == "oauth.grant_revoked" })
+      #expect(approval < revocation)
+    }
+
     @Test func queuedRotationPreservesTheCompletedSavesOAuthPolicy() async throws {
       let fixture = try ControlFixture()
       defer { fixture.remove() }
@@ -283,6 +471,15 @@ struct OAuthControlPlaneTests {
         pairingCode: pairing.request.pairingCode)
       _ = try await fixture.service.startCloudflareTunnel(
         profileID: profile.id, gatewayService: fixture.gatewayService)
+      let pending = try await fixture.server().authorize(fixture.fields, address: "pending")
+      let delivered = try await fixture.server().authorize(fixture.fields, address: "delivered")
+      _ = try await fixture.service.authorizeOAuthClient(pairingCode: delivered.request.pairingCode)
+      guard
+        case .redirect(let callback) = try await fixture.server().status(
+          statusToken: delivered.statusToken, address: "delivered"),
+        let code = URLComponents(string: callback)?.queryItems?.first(where: { $0.name == "code" })?
+          .value
+      else { throw OAuthError.invalidGrant }
       let credential = try #require(await fixture.service.cloudflareAccessCredentials[profile.id])
       let sessions = try #require(await fixture.service.cloudflareOAuthSessions[profile.id])
       let revoking = SuspensionGate()
@@ -292,6 +489,18 @@ struct OAuthControlPlaneTests {
       }
       await revoking.waitUntilPaused()
       #expect(await fixture.service.cloudflareRuntimes[profile.id] == nil)
+      #expect(
+        try fixture.database.oauthTransaction { try $0.requests(tunnelID: profile.id) }.isEmpty)
+      #expect(
+        try fixture.database.oauthTransaction { try $0.grants(tunnelID: profile.id) }.allSatisfy {
+          $0.revokedAt != nil
+        })
+      #expect(
+        try fixture.database.oauthTransaction { try $0.code(digest: OAuthSecret.digest(code)) }
+          == nil)
+      await #expect(throws: OAuthError.invalidRequest) {
+        try await fixture.service.authorizeOAuthClient(pairingCode: pending.request.pairingCode)
+      }
       let starting = Task {
         try await fixture.service.startCloudflareTunnel(
           profileID: profile.id, gatewayService: fixture.gatewayService)
@@ -316,8 +525,28 @@ struct OAuthControlPlaneTests {
         #expect(
           await fixture.secrets.valueAsynchronously(
             for: profile.accessTokenReference, authenticationUI: .fail) == nil)
-        #expect(try await fixture.server().grants(approver: .localApp).first?.id == grant.id)
-        #expect(try await fixture.server().grants(approver: .localApp).first?.revokedAt != nil)
+        #expect(
+          try await fixture.server().grants(approver: .localApp).contains {
+            $0.id == grant.id && $0.revokedAt != nil
+          })
+        _ = try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: "synthetic-recreated")
+        #expect(try await fixture.server().pendingRequests(approver: .localApp).isEmpty)
+        await #expect(throws: OAuthError.invalidRequest) {
+          try await fixture.service.authorizeOAuthClient(pairingCode: pending.request.pairingCode)
+        }
+        await #expect(throws: OAuthError.invalidRequest) {
+          try await fixture.server().status(statusToken: pairing.statusToken, address: "fixture")
+        }
+        await #expect(throws: OAuthError.invalidGrant) {
+          try await fixture.server().token(
+            [
+              "grant_type": "authorization_code", "client_id": fixture.fields["client_id"]!,
+              "redirect_uri": fixture.fields["redirect_uri"]!, "code": code,
+              "code_verifier": String(repeating: "a", count: 43),
+              "resource": fixture.configuration.resource,
+            ], address: "delivered")
+        }
         // A listener retaining the deleted profile's credential must refuse its token.
         let retained = GatewayHTTPRuntime(
           configuration: .init(), registry: RotationRegistry(), host: "127.0.0.1",
@@ -569,10 +798,13 @@ struct OAuthControlPlaneTests {
     let approve = try #require(
       GatewayClientControl.contracts.first { $0.name == "clients.authorize" })
     _ = try approve.validate(
-      .object(["pairing_code": .string("ABCDEF"), "authorization_revision": .integer(7)]))
+      .object([
+        "pairing_code": .string("ABCDEF"),
+        "authorization_digest": .string(String(repeating: "a", count: 64)),
+      ]))
     #expect(throws: (any Error).self) {
       try approve.validate(
-        .object(["pairing_code": .string("ABCDEF"), "authorization_revision": .string("7")]))
+        .object(["pairing_code": .string("ABCDEF"), "authorization_digest": .integer(7)]))
     }
   }
 }
@@ -589,7 +821,11 @@ private final class ControlFixture: Sendable {
     tunnelID: "tunnel", tunnelName: "named", hostname: "gateway.example",
     clientAllowlist: ["client.example"])
 
-  init(tokenDidRead: @escaping @Sendable () async throws -> Void = {}) throws {
+  init(
+    tokenDidRead: @escaping @Sendable () async throws -> Void = {},
+    approvalWillCommit: @escaping @Sendable () async throws -> Void = {},
+    manifestWillPublish: @escaping @Sendable () async throws -> Void = {}
+  ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "oauth-control-" + UUID().uuidString)
     let directories = AppControlPlaneServiceDirectories(
@@ -636,10 +872,11 @@ private final class ControlFixture: Sendable {
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()),
       launchAtLoginController: UnusedPlatform(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(), platform: platform,
-      cloudflareAccessTokenDidRead: tokenDidRead)
+      oauthApprovalWillCommit: approvalWillCommit, cloudflareAccessTokenDidRead: tokenDidRead)
     gatewayService = AppGatewayService(
       controlPlane: service,
-      socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
+      socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")),
+      manifestWillPublish: manifestWillPublish)
     operations = AppControlPlaneOperations(controlPlane: service, gatewayService: gatewayService)
   }
 

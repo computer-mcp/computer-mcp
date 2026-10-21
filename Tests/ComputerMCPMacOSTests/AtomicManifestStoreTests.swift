@@ -507,7 +507,9 @@ final class AtomicManifestStoreTests {
             _ = try store.activate(
               manifest: Self.manifest(name: name), expectedDigest: original.digest)
             return name
-          } catch AtomicManifestStoreError.staleDigest {
+          } catch let error as AtomicManifestStoreError
+            where error == .staleDigest || error == .changeInProgress
+          {
             return nil
           }
         }

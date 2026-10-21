@@ -70,6 +70,15 @@ struct GatewayOAuthTransaction: OAuthStoreTransaction {
       ])
   }
 
+  func endAuthorizations(tunnelID: String) throws {
+    try database.execute(
+      sql:
+        "DELETE FROM oauthAuthorizationCodes WHERE grantID IN (SELECT id FROM oauthGrants WHERE tunnelID = ?)",
+      arguments: [tunnelID])
+    try database.execute(
+      sql: "DELETE FROM oauthAuthorizationRequests WHERE tunnelID = ?", arguments: [tunnelID])
+  }
+
   func audit(_ event: AuditEvent) throws {
     try database.execute(
       sql: """

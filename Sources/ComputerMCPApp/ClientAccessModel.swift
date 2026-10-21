@@ -12,7 +12,7 @@ struct ClientAccessSnapshot: Sendable {
   var oauthRequests: [OAuthPendingAuthorization] = []
   var oauthGrants: [OAuthGrant] = []
   /// Profiles the control plane accepts when approving a tunnel client.
-  var remoteProfiles: [ProfileGrant] = []
+  var remoteProfiles: [OAuthApprovalProfile] = []
   /// Public hostnames keyed by Cloudflare tunnel ID.
   var tunnelHosts: [String: String] = [:]
 }
@@ -36,7 +36,7 @@ protocol ClientAccessManaging {
   func revokeClientTrust(id: String, expectedRevision: Int64) async throws
   func approveOAuthRequest(
     _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
-    expectedAuthorizationRevision: Int64
+    expectedAuthorizationDigest: String
   )
     async throws
   func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws
@@ -62,7 +62,7 @@ extension ClientAccessManaging {
   }
   func approveOAuthRequest(
     _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
-    expectedAuthorizationRevision: Int64
+    expectedAuthorizationDigest: String
   )
     async throws
   {
@@ -201,7 +201,7 @@ final class ClientAccessModel: ObservableObject {
 
   /// Approvable profiles from the least to the most access, Cloudflare Observe first.
   var oauthProfileOptions: [ProfileGrant] {
-    (snapshot?.remoteProfiles ?? []).sorted {
+    (snapshot?.remoteProfiles ?? []).map(\.grant).sorted {
       ($0.mode.accessRank, $0.id == .cloudflareObserve ? 0 : 1, $0.id.rawValue)
         < ($1.mode.accessRank, $1.id == .cloudflareObserve ? 0 : 1, $1.id.rawValue)
     }
@@ -231,7 +231,11 @@ final class ClientAccessModel: ObservableObject {
       return false
     }
     guard let current = oauthProfile(for: request), current.id == reviewed.id,
-      current.mode == reviewed.mode, current.authorizationRevision == reviewed.authorizationRevision
+      current.mode == reviewed.mode,
+      let reviewedDigest = try? OAuthApprovalProfile(grant: reviewed).authorizationDigest,
+      let displayed = snapshot?.remoteProfiles.first(where: {
+        $0.grant.id == reviewed.id && $0.authorizationDigest == reviewedDigest
+      })
     else {
       errorMessage = AppLocalization.string(
         "The profile for this sign-in changed. Review it and approve again.")
@@ -239,7 +243,7 @@ final class ClientAccessModel: ObservableObject {
     }
     let approved = await perform {
       try await self.controlPlane.approveOAuthRequest(
-        request, profile: reviewed.id, expectedAuthorizationRevision: reviewed.authorizationRevision
+        request, profile: reviewed.id, expectedAuthorizationDigest: displayed.authorizationDigest
       )
     }
     if approved { oauthProfileChoices[request.id] = nil }

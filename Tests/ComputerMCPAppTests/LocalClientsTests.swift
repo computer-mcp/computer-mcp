@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
@@ -307,6 +308,37 @@ struct LocalClientsTests {
     await previewing.value
     #expect(fixture.fake.fetchCount == 0)
     #expect(model.uncertainClients == [.codex])
+  }
+
+  @Test
+  func aReviewOpenWhenItsClientBecomesUncertainCannotBeConfirmed() async throws {
+    let fixture = try LocalClientsFixture()
+    let location = ClientRegistrationLocation(
+      configurationFile: fixture.desktopFile.path, configurationVariable: nil,
+      configurationValue: nil)
+    let gate = Gate()
+    fixture.fake.previewGate = { await gate.wait() }
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    var opened: LocalClientReview?
+    let observation = model.$review.sink { if let review = $0 { opened = review } }
+    defer { observation.cancel() }
+    let previewing = Task { await model.beginReview(.claudeDesktop, operation: .register) }
+    await gate.started()
+    await model.reload()
+    fixture.fake.statusOverride = [
+      .init(
+        client: .claudeDesktop, state: .notRegistered, uncertain: true, location: location,
+        observedEntry: nil)
+    ]
+    fixture.fake.previewGate = nil
+    gate.release()
+    await previewing.value
+    let review = try #require(opened)
+    #expect(fixture.fake.fetchCount == 1)
+    #expect(model.uncertainClients == [.claudeDesktop])
+    #expect(model.review == nil)
+    await model.confirm(review)
+    #expect(fixture.fake.applied.isEmpty)
   }
 
   @Test

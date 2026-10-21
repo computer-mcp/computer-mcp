@@ -65,7 +65,7 @@ final class LocalClientsModel: ObservableObject {
       statuses = loaded
       let unconfirmed = loaded.filter(\.uncertain).map(\.client)
       uncertain = !unconfirmed.isEmpty
-      uncertainClients.formUnion(unconfirmed)
+      markUncertain(unconfirmed)
       loadError = nil
     } catch {
       loadError = AppLocalization.errorDescription(error)
@@ -83,7 +83,7 @@ final class LocalClientsModel: ObservableObject {
         client: client, operation: operation)
       if plan.display.refusalCode == .uncertain {
         uncertain = true
-        uncertainClients.insert(client)
+        markUncertain([client])
         outcome = LocalClientOutcome(
           title: AppLocalization.string("Result unknown"),
           message: Self.message(for: .uncertain, client: client))
@@ -101,7 +101,9 @@ final class LocalClientsModel: ObservableObject {
 
   /// Applies exactly the plan the owner reviewed; the service refuses it if anything changed.
   func confirm(_ reviewed: LocalClientReview) async {
-    guard !callInFlight, review?.id == reviewed.id else { return }
+    guard !callInFlight, review?.id == reviewed.id,
+      !uncertainClients.contains(reviewed.plan.display.client)
+    else { return }
     review = nil
     let plan = reviewed.plan
     let client = plan.display.client
@@ -118,11 +120,17 @@ final class LocalClientsModel: ObservableObject {
     }
     busyClient = nil
     if uncertain {
-      uncertainClients.insert(client)
+      markUncertain([client])
     } else {
       pendingReload = pendingReload ?? false
     }
     await finishCall(uncertain: uncertain)
+  }
+
+  /// Records clients whose last process exit is unconfirmed and closes any review of them.
+  private func markUncertain(_ clients: [RegistrationClient]) {
+    uncertainClients.formUnion(clients)
+    if let open = review, clients.contains(open.plan.display.client) { review = nil }
   }
 
   /// Ends the running call and runs the coalesced read unless the call left anything uncertain.

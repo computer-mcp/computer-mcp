@@ -83,82 +83,89 @@ struct OAuthControlPlaneTests {
     }
   }
 
-  @Test(arguments: [false, true])
-  func accessTokenRotationDuringStartupUsesTheCurrentCredential(rotateBeforeRead: Bool) async throws
-  {
-    let gate = StartupTokenGate()
-    let fixture = try ControlFixture(tokenDidRead: { await gate.pause() })
-    defer { fixture.remove() }
-    let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
-    await fixture.secrets.setAsynchronously("synthetic-tunnel", for: profile.tunnelTokenReference)
-    await fixture.secrets.setAsynchronously("old-fixture-access", for: profile.accessTokenReference)
-    var newToken: String?
-    if rotateBeforeRead {
-      newToken = try await fixture.service.saveCloudflareTunnelConfiguration(
-        profile, tunnelToken: nil, regenerateAccessToken: true
-      ).generatedAccessToken
-    }
-    let starting = Task {
-      try await fixture.service.startCloudflareTunnel(
-        profileID: profile.id, gatewayService: fixture.gatewayService)
-    }
-    await gate.waitUntilRead()
-    if !rotateBeforeRead {
-      newToken = try await fixture.service.saveCloudflareTunnelConfiguration(
-        profile, tunnelToken: nil, regenerateAccessToken: true
-      ).generatedAccessToken
-    }
-    await gate.resume()
-    do {
-      _ = try await starting.value
-      let current = try #require(newToken)
-      #expect(try await fixture.post(port: profile.localPort, token: "old-fixture-access") == 401)
-      #expect(try await fixture.post(port: profile.localPort, token: current) == 400)
-      _ = try await fixture.service.stopCloudflareTunnel(profileID: profile.id)
-      try await fixture.service.deleteCloudflareTunnelConfiguration(id: profile.id)
-      #expect(await fixture.service.cloudflareAccessCredentials[profile.id] == nil)
-      await fixture.gatewayService.stop()
-    } catch {
+  // These integration cases publish manifests through the macOS exclusive-rename
+  // adapter. Linux manifest recovery-record publication reports ENOSYS.
+  #if os(macOS)
+    @Test(arguments: [false, true])
+    func accessTokenRotationDuringStartupUsesTheCurrentCredential(rotateBeforeRead: Bool)
+      async throws
+    {
+      let gate = StartupTokenGate()
+      let fixture = try ControlFixture(tokenDidRead: { await gate.pause() })
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      await fixture.secrets.setAsynchronously("synthetic-tunnel", for: profile.tunnelTokenReference)
+      await fixture.secrets.setAsynchronously(
+        "old-fixture-access", for: profile.accessTokenReference)
+      var newToken: String?
+      if rotateBeforeRead {
+        newToken = try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: nil, regenerateAccessToken: true
+        ).generatedAccessToken
+      }
+      let starting = Task {
+        try await fixture.service.startCloudflareTunnel(
+          profileID: profile.id, gatewayService: fixture.gatewayService)
+      }
+      await gate.waitUntilRead()
+      if !rotateBeforeRead {
+        newToken = try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: nil, regenerateAccessToken: true
+        ).generatedAccessToken
+      }
       await gate.resume()
-      _ = await starting.result
-      try? await fixture.service.stop()
-      await fixture.gatewayService.stop()
-      throw error
+      do {
+        _ = try await starting.value
+        let current = try #require(newToken)
+        #expect(try await fixture.post(port: profile.localPort, token: "old-fixture-access") == 401)
+        #expect(try await fixture.post(port: profile.localPort, token: current) == 400)
+        _ = try await fixture.service.stopCloudflareTunnel(profileID: profile.id)
+        try await fixture.service.deleteCloudflareTunnelConfiguration(id: profile.id)
+        #expect(await fixture.service.cloudflareAccessCredentials[profile.id] == nil)
+        await fixture.gatewayService.stop()
+      } catch {
+        await gate.resume()
+        _ = await starting.result
+        try? await fixture.service.stop()
+        await fixture.gatewayService.stop()
+        throw error
+      }
     }
-  }
 
-  @Test func failedRotationRestoresTheCredentialAndSecretTogether() async throws {
-    let fixture = try ControlFixture()
-    defer { fixture.remove() }
-    let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
-    await fixture.secrets.setAsynchronously("synthetic-tunnel", for: profile.tunnelTokenReference)
-    let original = try #require(
-      try await fixture.service.saveCloudflareTunnelConfiguration(
-        profile, tunnelToken: nil, regenerateAccessToken: true
-      ).generatedAccessToken)
-    let credential = try #require(await fixture.service.cloudflareAccessCredentials[profile.id])
-    fixture.loader.rejectStagedManifest = true
-    await #expect(throws: (any Error).self) {
-      try await fixture.service.saveCloudflareTunnelConfiguration(
-        profile, tunnelToken: nil, regenerateAccessToken: true)
+    @Test func failedRotationRestoresTheCredentialAndSecretTogether() async throws {
+      let fixture = try ControlFixture()
+      defer { fixture.remove() }
+      let profile = try #require(try await fixture.service.cloudflareTunnelConfigurations().first)
+      await fixture.secrets.setAsynchronously("synthetic-tunnel", for: profile.tunnelTokenReference)
+      let original = try #require(
+        try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: nil, regenerateAccessToken: true
+        ).generatedAccessToken)
+      let credential = try #require(await fixture.service.cloudflareAccessCredentials[profile.id])
+      fixture.loader.rejectStagedManifest = true
+      await #expect(throws: (any Error).self) {
+        try await fixture.service.saveCloudflareTunnelConfiguration(
+          profile, tunnelToken: nil, regenerateAccessToken: true)
+      }
+      fixture.loader.rejectStagedManifest = false
+      #expect(
+        await fixture.secrets.valueAsynchronously(
+          for: profile.accessTokenReference, authenticationUI: .fail) == original)
+      // A fresh listener shares the restored digest rather than reading a captured value.
+      let runtime = GatewayHTTPRuntime(
+        configuration: .init(), registry: RotationRegistry(), host: "127.0.0.1",
+        port: profile.localPort, publicBaseURL: nil, accessCredential: credential)
+      try await runtime.startListening()
+      do {
+        #expect(try await fixture.post(port: profile.localPort, token: original) == 400)
+        await runtime.stop()
+      } catch {
+        await runtime.stop()
+        throw error
+      }
     }
-    fixture.loader.rejectStagedManifest = false
-    #expect(
-      await fixture.secrets.valueAsynchronously(
-        for: profile.accessTokenReference, authenticationUI: .fail) == original)
-    // A fresh listener shares the restored digest rather than reading a captured value.
-    let runtime = GatewayHTTPRuntime(
-      configuration: .init(), registry: RotationRegistry(), host: "127.0.0.1",
-      port: profile.localPort, publicBaseURL: nil, accessCredential: credential)
-    try await runtime.startListening()
-    do {
-      #expect(try await fixture.post(port: profile.localPort, token: original) == 400)
-      await runtime.stop()
-    } catch {
-      await runtime.stop()
-      throw error
-    }
-  }
+
+  #endif
 
   @Test(arguments: [GatewayCallerKind.localApp, .localCLI])
   func ownerRevocationClosesTheLiveListenersStreams(caller: GatewayCallerKind) async throws {

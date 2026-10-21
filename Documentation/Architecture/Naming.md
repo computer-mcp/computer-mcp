@@ -8,7 +8,7 @@ stable responsibility or protocol concept, never a temporary delivery phase.
 | Surface | Name |
 | --- | --- |
 | Human-readable name | Computer MCP |
-| Swift module | Layered `ComputerMCPCore`, `ComputerMCPPlatform*`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPToolKit`, `ComputerMCPTools*`, `ComputerMCPDelivery`, `ComputerMCPPlugins`, `ComputerMCPComputerUse`, `ComputerMCPGateway`, `ComputerMCPControlPlane`, `ComputerMCPMacOS`, `ComputerMCPApp`, and `computer_mcp`; see [Package](Package.md#structure) |
+| Swift module | Layered `ComputerMCPCore`, `ComputerMCPPlatform*`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPToolKit`, `ComputerMCPTools*`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`, `ComputerMCPPlugins`, `ComputerMCPComputerUse`, `ComputerMCPGateway`, `ComputerMCPControlPlane`, `ComputerMCPMacOS`, `ComputerMCPApp`, and `computer_mcp`; see [Package](Package.md#structure) |
 | App | `Computer MCP.app` |
 | Embedded CLI | `computer-mcp` |
 | Validation package | Computer MCP Validation Suite |

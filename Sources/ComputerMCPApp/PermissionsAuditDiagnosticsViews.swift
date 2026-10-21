@@ -465,7 +465,8 @@ struct DiagnosticsView: View {
           .foregroundStyle(.secondary)
           Spacer()
           Button {
-            manifestEditor = ManifestEditorPresentation(content: snapshot.manifest.content)
+            manifestEditor = ManifestEditorPresentation(
+              content: snapshot.manifest.content, baseDigest: snapshot.manifest.digest)
           } label: {
             Label("Edit", systemImage: "pencil")
           }
@@ -578,15 +579,19 @@ struct DiagnosticsView: View {
 private struct ManifestEditorPresentation: Identifiable {
   let id = UUID()
   var content: String
+  /// The manifest the editor opened, kept for the whole edit.
+  let baseDigest: String
 }
 
 private struct ManifestEditorView: View {
   @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var model: ComputerMCPAppModel
   @State private var content: String
+  private let baseDigest: String
 
   init(presentation: ManifestEditorPresentation) {
     _content = State(initialValue: presentation.content)
+    baseDigest = presentation.baseDigest
   }
 
   var body: some View {
@@ -624,7 +629,7 @@ private struct ManifestEditorView: View {
         }
         .keyboardShortcut(.cancelAction)
         Button("Validate and Activate") {
-          model.saveManifest(content)
+          model.saveManifest(content, expectedDigest: baseDigest)
           dismiss()
         }
         .accessibilityIdentifier("manifest.validate-and-activate")

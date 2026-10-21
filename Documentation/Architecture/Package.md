@@ -62,6 +62,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsMCP/` | Platform-neutral MCP builtin and configured providers, downstream discovery, validated catalogs, host risk descriptors and context-preserving calls |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPDelivery/` | Platform-neutral delivery provider, scoped worktree edits, repository locks, atomic file journals, landing and recovery |
+| `Sources/ComputerMCPAuthorization/` | Platform-neutral OAuth state machine, discovery metadata, injected CIMD identification, rate limits and transactional grant/token store contract; macOS URLSession CIMD transport |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
 | `Sources/ComputerMCPPlugins/` | Platform-neutral plugin manifests, bundled inventory and distribution, catalogs, installation/recovery, contribution resolution, archive preparation and the injected plugin state store contract |
 | `Sources/ComputerMCPComputerUse/` | macOS Computer Use provider, observation and action service, native Accessibility and screen capture adapter, and permission readings |
@@ -94,6 +95,13 @@ read capabilities and asynchronous dispatch. `GatewayClientControlProvider` supp
 local HTTP client-control contracts and validated calls for the admitted generation.
 The control plane implements these with `GatewayRemoteManagement` and
 `GatewayHTTPClientControl`, which dispatches through `GatewayClientControl.http`.
+OAuth administration is exposed by the App control socket. Gateway implements
+Authorization's store on GRDB; the `remote-oauth` migration follows
+`gateway-initial` and creates `oauthAuthorizationRequests`, `oauthGrants`,
+`oauthAuthorizationCodes` and `oauthTokens`. State import restores only the
+original exported tables and leaves OAuth state empty. The existing Crypto
+dependency supplies SHA-256; the existing NIO dependency pins public CIMD
+destinations for URLSession through a bounded per-request CONNECT transport.
 Proxy clients accept Platform's `SecretStore`; MCP HTTP authentication keeps its
 explicit noninteractive `.fail` reads. Bound host services receive their Git
 executable through `PlatformServices`.

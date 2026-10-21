@@ -646,6 +646,12 @@ struct CloudflareTunnelSave: AsyncParsableCommand {
   @Option(name: .long) var localPort = 8_765
   @Option(name: .long) var metricsPort = 20_241
   @Option(name: .long) var cloudflaredPath: String?
+  @Flag(
+    name: .long, inversion: .prefixedNo,
+    help: "Enable OAuth pairing, or disable it with --no-oauth-enabled.")
+  var oauthEnabled: Bool?
+  @Option(name: .long, help: "Replace the exact CIMD host allowlist; repeat for each host.")
+  var oauthClientHost: [String] = []
   @Flag(name: .long, help: "Read a new named-tunnel token from standard input.")
   var tunnelTokenStdin = false
   @Flag(name: .long, help: "Generate and return a replacement Computer MCP access token.")
@@ -662,6 +668,10 @@ struct CloudflareTunnelSave: AsyncParsableCommand {
       "regenerate_access_token": .bool(regenerateAccessToken),
     ]
     if let cloudflaredPath { arguments["cloudflared_path"] = .string(cloudflaredPath) }
+    if let oauthEnabled { arguments["oauth_enabled"] = .bool(oauthEnabled) }
+    if !oauthClientHost.isEmpty {
+      arguments["oauth_client_allowlist"] = .array(oauthClientHost.map(JSONValue.string))
+    }
     if let token = try readSecretFromStandardInput(
       when: tunnelTokenStdin,
       label: "Named-tunnel token"

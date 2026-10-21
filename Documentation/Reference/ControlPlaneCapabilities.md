@@ -11,7 +11,7 @@ Each entry contains `id`, `cli_command`, `surface`, `read_only`, `destructive`,
 `idempotent`, and `local_only`. The embedded CLI reads the catalog directly, so
 it remains available when the App is stopped. The same catalog validates the
 current-user control socket and is never part of a remote profile's MCP tool
-list. Standalone HTTP hosts expose the same six `clients` contracts on their
+list. Standalone HTTP hosts expose the six session/trust `clients` contracts on their
 explicit private owner socket; they do not expose App lifecycle or configuration
 commands.
 
@@ -19,6 +19,7 @@ commands.
 | --- | --- | --- | --- |
 | App | status, start, stop, restart, launch at login | `app …` | Home and Settings |
 | Client access | list, explicit Full Access consent, limit/end connection access, saved trust list/revoke | `clients …` | Client access |
+| OAuth client access | pending pairing requests, local approval/denial, grant list/revocation | `clients authorizations`, `clients authorize`, `clients deny`, `clients grants`, `clients revoke-grant` | Client access |
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
 | Workspaces | list, canonical add, remove, profile enable/disable, deduplication | `workspace …` | Workspaces |
@@ -77,3 +78,43 @@ commands only with `--api-key-stdin` or `--tunnel-token-stdin`. They never enter
 argv, manifests, examples, capability output, or audit payloads. Generated
 Cloudflare access tokens are returned once to the owner-only caller and stored
 in Keychain.
+
+## OAuth owner operations
+
+These contracts use the App's current-user owner control socket or local App
+control-plane API. They are absent from remote MCP catalogs and the standalone
+HTTP owner socket. OAuth approval retains separate Full Access session consent.
+
+| Operation | Arguments and result |
+| --- | --- |
+| `clients.authorizations` | Optional `tunnel_id`, `id`, `after_id`, `limit` (default 100, maximum 200). Returns `authorizations` with ID, tunnel ID, pairing code, client/redirect hosts and creation/expiry times; plus `next_after_id`. |
+| `clients.authorize` | Required `pairing_code`; optional `tunnel_id`, `profile_id`, `authorization_digest` (a SHA-256 hex string). Omission of `profile_id` selects `cloudflare-observe` only while its effective mode is read-only; otherwise an explicit `profile_id` is required. When supplied, `authorization_digest` must match the chosen profile's current effective authorization digest or approval fails and the owner must review the profile again. Approves one unexpired pending request with a profile permitting `cloudflare-tunnel`; returns the grant. Ambiguous codes require `tunnel_id`. `profile.list` and `profile.show` include `authorization_digest`. |
+| `clients.deny` | Required `pairing_code`, optional `tunnel_id`. Denies one pending request. |
+| `clients.grants` | Same paging/filter fields as authorizations. Returns `grants`, including revoked records, and `next_after_id`. Grants carry client ID, redirect host, profile, resource, scope and creation/last-use/revocation times. |
+| `clients.revoke_grant` | Required grant `id`. Immediately invalidates all grant tokens; repeated revocation is harmless. |
+
+The local `authorizeOAuthClient` API follows the same default: omitting
+`profileID` selects `cloudflare-observe` only in effective read-only mode;
+otherwise the caller must choose an explicit profile. Its optional
+`expectedAuthorizationDigest` binds approval to the reviewed
+`OAuthApprovalProfile.authorizationDigest`, computed from the effective grant.
+The App snapshot carries this digest with each remote profile, and the App
+always supplies the digest of the profile it displayed.
+
+`tunnel.cloudflare.save` accepts optional `oauth_enabled` and
+`oauth_client_allowlist` (an array of exact lowercase hosts). New connections
+default to disabled OAuth and `["claude.ai", "claude.com"]`; omission preserves
+an existing connection. No client registry or client secret is created.
+
+The optional `expected_tunnel_digest` (`expectedTunnelDigest` in the local save
+API) binds a save to the tunnel configuration the caller opened. The digest is
+lowercase SHA-256 hex over the saved `CloudflareTunnelTransportConfig` encoded as
+compact JSON with sorted keys and unescaped slashes. It includes `id`,
+`tunnel_name`, `public_hostname`, `gateway_profile`, `local_port`, `metrics_port`,
+`cloudflared_path` when present, `oauth_enabled` and `oauth_client_allowlist` in
+its saved order. Credential values and runtime status are excluded. The App
+carries this digest in its tunnel summary and existing-tunnel editor draft.
+Save compares it with the current tunnel while holding both the tunnel mutation
+slot and configuration publication lock; a mismatch refuses the save with a
+stale-configuration error and requires reopening the tunnel. New tunnels and
+owner CLI saves omit the digest and retain their existing save behavior.

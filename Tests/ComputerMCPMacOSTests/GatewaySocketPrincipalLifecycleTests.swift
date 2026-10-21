@@ -60,7 +60,8 @@ struct GatewaySocketPrincipalLifecycleTests {
           startupTimeoutMs: 5000, requestTimeoutMs: 5000,
           toolRisks: ["hang": .readOnly, "finish": .readOnly])
       ]), workspaceDirectory: root)
-    _ = try await control.activateManifest(configuration.exportedTOML())
+    _ = try await control.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await control.configurationDigest())
     try database.saveWorkspace(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
     let service = AppGatewayService(
       controlPlane: control,

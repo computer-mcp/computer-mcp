@@ -60,6 +60,7 @@ package struct GatewayManifestConfigurationLoader: ManifestConfigurationLoading 
 
 package final class AtomicManifestStore: @unchecked Sendable {
   internal let manifestURL: URL
+  let publicationLock = ConfigurationPublicationLock()
 
   private let database: GatewayDatabase
   private let loader: any ManifestConfigurationLoading
@@ -178,7 +179,9 @@ package final class AtomicManifestStore: @unchecked Sendable {
   }
 
   @discardableResult
-  internal func rollback(to revisionID: String) throws -> ConfigurationRevision {
+  internal func rollback(to revisionID: String, expectedDigest: String) throws
+    -> ConfigurationRevision
+  {
     guard
       let revision = try database.configurationRevisions(limit: 1_000).first(where: {
         $0.id == revisionID
@@ -186,14 +189,17 @@ package final class AtomicManifestStore: @unchecked Sendable {
     else {
       throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
-    return try write(manifest: revision.manifest, reason: .rolledBack)
+    return try write(
+      manifest: revision.manifest, reason: .rolledBack, expectedDigest: expectedDigest)
   }
 
   private func write(manifest: String, reason: ManifestChangeReason, expectedDigest: String? = nil)
     throws
     -> ConfigurationRevision
   {
-    try commit(prepare(manifest: manifest, reason: reason, expectedDigest: expectedDigest))
+    guard publicationLock.tryAcquire() else { throw AtomicManifestStoreError.changeInProgress }
+    defer { publicationLock.release() }
+    return try commit(prepare(manifest: manifest, reason: reason, expectedDigest: expectedDigest))
   }
 
   func prepare(
@@ -209,6 +215,9 @@ package final class AtomicManifestStore: @unchecked Sendable {
       }
       let previous = try files.currentData()
       let persisted = try database.configurationState()
+      guard previous == nil || expectedDigest != nil else {
+        throw AtomicManifestStoreError.staleDigest
+      }
       if let expectedDigest {
         guard let previous, try Self.digest(of: previous) == expectedDigest else {
           throw AtomicManifestStoreError.staleDigest
@@ -248,6 +257,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
       var revision = prepared.revision
       revision.activatedAt = Date()
       let persisted: GatewayDatabase.ConfigurationState
+      let activeTunnelIDs = Set(prepared.configuration.transports.cloudflare.map(\.id))
       if prepared.reason == .externalReload {
         // The editor owns these bytes. Admission records them without rewriting
         // the file or creating a new filesystem event on a failed DB commit.
@@ -255,7 +265,8 @@ package final class AtomicManifestStore: @unchecked Sendable {
           throw AtomicManifestStoreError.staleDigest
         }
         persisted = try database.activateConfigurationRevision(
-          revision, expected: prepared.persisted, resolution: resolution
+          revision, expected: prepared.persisted, resolution: resolution,
+          activeTunnelIDs: activeTunnelIDs
         ) { _ in
           guard try files.currentData() == prepared.previous else {
             throw AtomicManifestStoreError.staleDigest
@@ -268,7 +279,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
         try ManifestFileTransaction.writeAndSynchronize(Data(revision.manifest.utf8), to: stagedURL)
         persisted = try files.commit(
           stagedURL: stagedURL, previous: prepared.previous, revision: revision,
-          expected: prepared.persisted, resolution: resolution)
+          expected: prepared.persisted, resolution: resolution, activeTunnelIDs: activeTunnelIDs)
       }
       configuration = prepared.configuration
       admissionID = UUID()
@@ -323,7 +334,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
     lock.unlock()
   }
 
-  private static func digest(of data: Data) throws -> String {
+  package static func digest(of data: Data) throws -> String {
     guard !data.isEmpty else {
       throw AtomicManifestStoreError.invalidManifestEncoding
     }

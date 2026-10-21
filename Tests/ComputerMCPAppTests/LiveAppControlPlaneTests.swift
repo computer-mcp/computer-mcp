@@ -19,6 +19,65 @@ import Testing
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
   @Test
+  func tunnelEditorPassesItsOpenedDigestThroughToTheControlPlane() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      var initial = CloudflareEditorPresentation.new.draft
+      initial.tunnelName = "named"
+      initial.publicHostname = "gateway.example"
+      initial.cloudflaredPath = "/tools/cloudflared"
+      initial.tunnelToken = "synthetic-tunnel"
+      initial.oauthEnabled = true
+      initial.oauthClientAllowlist = ["client.example", "second.example"]
+      #expect(initial.expectedTunnelDigest == nil)
+      _ = try await fixture.app.saveCloudflareTunnelConfiguration(initial)
+
+      let summary = try #require(try await fixture.app.fetchCloudflareTunnels().first)
+      let profile = try #require(
+        try await fixture.controlPlane.cloudflareTunnelConfigurations().first)
+      #expect(try summary.configurationDigest == profile.configurationDigest)
+      var draft = CloudflareEditorPresentation.edit(summary).draft
+      #expect(draft.expectedTunnelDigest == summary.configurationDigest)
+      #expect(draft.cloudflaredPath == initial.cloudflaredPath)
+      draft.tunnelName = "first-edit"
+      _ = try await fixture.app.saveCloudflareTunnelConfiguration(draft)
+
+      let opened = try #require(try await fixture.app.fetchCloudflareTunnels().first)
+      var stale = CloudflareEditorPresentation.edit(opened).draft
+      var disabled = profile
+      disabled.tunnelName = opened.tunnelName
+      disabled.oauthEnabled = false
+      _ = try await fixture.controlPlane.saveCloudflareTunnelConfiguration(
+        disabled, tunnelToken: nil)
+      stale.tunnelName = "unrelated-edit"
+      await #expect(throws: CloudflareTunnelError.staleConfiguration(opened.id)) {
+        try await fixture.app.saveCloudflareTunnelConfiguration(stale)
+      }
+      let current = try #require(try await fixture.app.fetchCloudflareTunnels().first)
+      #expect(current.tunnelName == opened.tunnelName)
+      #expect(!current.oauthEnabled)
+      #expect(current.oauthClientAllowlist == opened.oauthClientAllowlist)
+      #expect(current.configurationDigest != opened.configurationDigest)
+    }
+  }
+
+  @Test
+  func manifestEditorSavesOnlyAgainstTheManifestItOpened() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      try await fixture.app.startApplication()
+      let opened = try await fixture.app.fetchDiagnostics().manifest
+      let first = opened.content + "\n# first edit\n"
+      try await fixture.app.saveManifest(first, expectedDigest: opened.digest)
+      await #expect(throws: (any Error).self) {
+        try await fixture.app.saveManifest(
+          opened.content + "\n# stale edit\n", expectedDigest: opened.digest)
+      }
+      let current = try await fixture.app.fetchDiagnostics().manifest
+      #expect(current.content == first)
+      #expect(current.digest != opened.digest)
+    }
+  }
+
+  @Test
   func incompatibleCallerConsentCannotEnableTheShellFacility() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()
@@ -48,7 +107,9 @@ final class LiveAppControlPlaneTests {
             id: .chatGPTOperate, capabilities: ["file.read"], workspaces: ["*"],
             allowedCallers: [.localMCP], mode: .workspaceOperations)
         ], workspaceDirectory: fixture.root)
-      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.controlPlane.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
       try await fixture.app.startApplication()
       try await fixture.app.registerWorkspace(at: fixture.root)
@@ -94,7 +155,7 @@ final class LiveAppControlPlaneTests {
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
       _ = try await fixture.controlPlane.activateManifest(
         GatewayConfiguration(policy: .init(shellEnabled: true), workspaceDirectory: fixture.root)
-          .exportedTOML())
+          .exportedTOML(), expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.setGatewayDesiredRunning(gatewayRunning)
       try await fixture.app.startApplication()
       let client = AppControlPlaneServiceClient(
@@ -296,7 +357,9 @@ final class LiveAppControlPlaneTests {
             allowedCallers: [.secureTunnel], mode: .workspaceOperations)
         ], builtin: .init(enabled: ["system.time", "file.read", "file.write"]),
         workspaceDirectory: fixture.root)
-      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.controlPlane.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.database.saveWorkspace(
         .init(id: "project", displayName: "My Project", rootPath: fixture.root.path))
       try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)

@@ -186,7 +186,8 @@ struct MCPHTTPAuthenticationTests {
             toolRisks: ["inspect": .readOnly], authentication: binding)
         ]
       }
-      _ = try await fixture.host.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
       try fixture.database.saveWorkspace(
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
       try fixture.database.saveProfile(

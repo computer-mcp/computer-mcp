@@ -14,6 +14,37 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized)
 final class CloudflareTunnelTests {
+  @Test func configurationSavesPreserveOmittedOAuthSettingsAndPublishExplicitChanges() async throws
+  {
+    let fixture = try CloudflareControlPlaneFixture()
+    defer { fixture.cleanup() }
+    let profile = CloudflareTunnelConfiguration(
+      id: "oauth", tunnelName: "named", publicHostname: "gateway.example",
+      oauthEnabled: true, oauthClientAllowlist: ["client.example"],
+      tunnelTokenReference: try SecretReference(account: "cloudflare.oauth.tunnel-token"),
+      accessTokenReference: try SecretReference(account: "cloudflare.oauth.access-token"))
+    _ = try await fixture.controlPlane.saveCloudflareTunnelConfiguration(
+      profile, tunnelToken: "fixture-tunnel-token")
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.controlPlane, gatewayService: fixture.gatewayService)
+    let input = CloudflareTunnelConfigurationInput(
+      id: "oauth", tunnelName: "named", publicHostname: "gateway.example",
+      gatewayProfile: .cloudflareObserve)
+    let saved = try await operations.saveCloudflareTunnelConfiguration(input)
+    #expect(saved.profile.oauthEnabled)
+    #expect(saved.profile.oauthClientAllowlist == ["client.example"])
+    var update = input
+    update.oauthEnabled = false
+    update.oauthClientAllowlist = ["second.example"]
+    _ = try await operations.saveCloudflareTunnelConfiguration(update)
+    let current = try await fixture.controlPlane.activeConfiguration().transports.cloudflare.first
+    #expect(current?.oauthEnabled == false)
+    #expect(current?.oauthClientAllowlist == ["second.example"])
+    let toml = try await fixture.controlPlane.activeConfiguration().exportedTOML()
+    #expect(toml.contains("oauth_enabled = false"))
+    #expect(toml.contains("oauth_client_allowlist"))
+  }
+
   @Test
   func truncatedVersionCannotAuthorizeTunnelStartup() async throws {
     let fixture = try CloudflareControlPlaneFixture()
@@ -86,7 +117,8 @@ final class CloudflareTunnelTests {
       .init(
         id: .cloudflareObserve, capabilities: ["workspace.list", "fixture.inspect"],
         workspaces: ["fixture"], allowedCallers: [.cloudflareTunnel], mcpServers: ["fixture"]))
-    _ = try await controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await controlPlane.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await controlPlane.configurationDigest())
     try fixture.database.saveWorkspace(
       RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path))
     let pending = Task {
@@ -122,7 +154,10 @@ final class CloudflareTunnelTests {
         #expect(try await second.value.state == .stopped)
       } else {
         configuration.server.name = "changed-during-origin-start"
-        _ = try await controlPlane.activateManifest(configuration.exportedTOML())
+        _ = try await controlPlane.activateManifest(
+          configuration.exportedTOML(),
+          expectedDigest: try? await controlPlane.configurationDigest()
+        )
         try Data().write(to: release)
       }
       switch await pending.result {
@@ -219,6 +254,10 @@ final class CloudflareTunnelTests {
   {
     let fixture = try CloudflareControlPlaneFixture()
     defer { fixture.cleanup() }
+    let workspace = try await fixture.controlPlane.registerWorkspace(
+      at: fixture.temporaryDirectory.url, displayName: "Fixture")
+    _ = try await fixture.controlPlane.setWorkspaceEnabled(
+      true, workspaceID: workspace.id, profileID: .cloudflareObserve)
     let ports = try availableLoopbackPorts(count: 2)
     let executable = try fixture.makeFakeCloudflared()
     let tokenReference = try SecretReference(account: "cloudflare.primary.tunnel-token")
@@ -277,8 +316,33 @@ final class CloudflareTunnelTests {
       #expect(scope.caller == .cloudflareTunnel)
       #expect(scope.profileID == .cloudflareObserve)
       #expect(try await client.listToolNames().contains("workspace.list"))
+      let observed = try await client.call(toolName: "workspace.list", arguments: .object([:]))
+      #expect(observed.result.objectValue?["isError"]?.boolValue != true, "\(observed.result)")
+      let verified = try await fixture.controlPlane.readinessSnapshot(
+        journey: .cloudflare,
+        gateway: fixture.gatewayService.snapshot(), cliInstallation: nil)
+      #expect(verified.status == .verified)
       try await operations.endControlSession(id: scope.id, expectedRevision: scope.revision)
       #expect(try await client.listToolNames().isEmpty)
+
+      let replacement = try await fixture.controlPlane.saveCloudflareTunnelConfiguration(
+        profile,
+        tunnelToken: nil, regenerateAccessToken: true)
+      let unverified = try await fixture.controlPlane.readinessSnapshot(
+        journey: .cloudflare,
+        gateway: fixture.gatewayService.snapshot(), cliInstallation: nil)
+      #expect(unverified.status == .ready)
+      #expect(unverified.verifiedRequest == nil)
+      await #expect(throws: (any Error).self) { try await client.listToolNames() }
+      let renewedClient = try await GatewayClientSession.connectHTTP(
+        endpoint: try #require(URL(string: "http://127.0.0.1:\(ports[0])/mcp")),
+        accessToken: try #require(replacement.generatedAccessToken))
+      _ = try await renewedClient.call(toolName: "workspace.list", arguments: .object([:]))
+      let reverified = try await fixture.controlPlane.readinessSnapshot(
+        journey: .cloudflare,
+        gateway: fixture.gatewayService.snapshot(), cliInstallation: nil)
+      #expect(reverified.status == .verified)
+      await renewedClient.disconnect()
 
       let tokenFile = fixture.directories.runtime.appendingPathComponent(
         "cloudflare-primary-token"

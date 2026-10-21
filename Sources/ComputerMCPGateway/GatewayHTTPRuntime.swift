@@ -1,8 +1,8 @@
+import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPTransport
 import ComputerMCPTunnels
-import Crypto
 import Foundation
 import Logging
 import MCP
@@ -14,6 +14,9 @@ package struct GatewayHTTPLimits: Sendable {
   package static let v1 = GatewayHTTPLimits(
     maxHeaderBytes: 16 * 1_024,
     maxBodyBytes: 8 * 1_024 * 1_024,
+    maxOAuthBodyBytes: 16 * 1_024,
+    requestBodyTimeout: 15,
+    maxUnauthenticatedConnections: 32,
     maxSessions: 128,
     sessionIdleTimeout: 15 * 60,
     cleanupInterval: 60
@@ -21,6 +24,9 @@ package struct GatewayHTTPLimits: Sendable {
 
   let maxHeaderBytes: Int
   let maxBodyBytes: Int
+  let maxOAuthBodyBytes: Int
+  let requestBodyTimeout: TimeInterval
+  let maxUnauthenticatedConnections: Int
   let maxSessions: Int
   let sessionIdleTimeout: TimeInterval
   let cleanupInterval: TimeInterval
@@ -28,17 +34,26 @@ package struct GatewayHTTPLimits: Sendable {
   init(
     maxHeaderBytes: Int = GatewayHTTPLimits.v1.maxHeaderBytes,
     maxBodyBytes: Int = GatewayHTTPLimits.v1.maxBodyBytes,
+    maxOAuthBodyBytes: Int = GatewayHTTPLimits.v1.maxOAuthBodyBytes,
+    requestBodyTimeout: TimeInterval = GatewayHTTPLimits.v1.requestBodyTimeout,
+    maxUnauthenticatedConnections: Int = GatewayHTTPLimits.v1.maxUnauthenticatedConnections,
     maxSessions: Int = GatewayHTTPLimits.v1.maxSessions,
     sessionIdleTimeout: TimeInterval = GatewayHTTPLimits.v1.sessionIdleTimeout,
     cleanupInterval: TimeInterval = GatewayHTTPLimits.v1.cleanupInterval
   ) {
     precondition(maxHeaderBytes > 0)
     precondition(maxBodyBytes > 0)
+    precondition(maxOAuthBodyBytes > 0)
+    precondition(requestBodyTimeout > 0)
+    precondition(maxUnauthenticatedConnections > 0)
     precondition(maxSessions > 0)
     precondition(sessionIdleTimeout > 0)
     precondition(cleanupInterval > 0)
     self.maxHeaderBytes = maxHeaderBytes
     self.maxBodyBytes = maxBodyBytes
+    self.maxOAuthBodyBytes = maxOAuthBodyBytes
+    self.requestBodyTimeout = requestBodyTimeout
+    self.maxUnauthenticatedConnections = maxUnauthenticatedConnections
     self.maxSessions = maxSessions
     self.sessionIdleTimeout = sessionIdleTimeout
     self.cleanupInterval = cleanupInterval
@@ -48,17 +63,23 @@ package struct GatewayHTTPLimits: Sendable {
 /// An App listener borrows host generations while retaining its own session lifecycle.
 package struct GatewayHTTPManagedSessions: Sendable {
   package let makeSession: @Sendable (String) async throws -> GatewayControlSessionServing
+  package let makeOAuthSession:
+    (@Sendable (String, GatewayProfileID) async throws -> GatewayControlSessionServing)?
   let closeSession: @Sendable (String) async -> Void
   package let shutdown: @Sendable () async -> Void
 
   package init(
     makeSession: @escaping @Sendable (String) async throws -> GatewayControlSessionServing,
     closeSession: @escaping @Sendable (String) async -> Void,
-    shutdown: @escaping @Sendable () async -> Void
+    shutdown: @escaping @Sendable () async -> Void,
+    makeOAuthSession: (
+      @Sendable (String, GatewayProfileID) async throws -> GatewayControlSessionServing
+    )? = nil
   ) {
     self.makeSession = makeSession
     self.closeSession = closeSession
     self.shutdown = shutdown
+    self.makeOAuthSession = makeOAuthSession
   }
 }
 
@@ -96,21 +117,26 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
     port: Int,
     publicBaseURL: String?,
     accessToken: String? = nil,
+    accessCredential: HTTPAccessTokenCredential? = nil,
     logger: Logger? = nil,
     limits: GatewayHTTPLimits = .v1,
-    control: GatewayHTTPControlConfiguration? = nil
+    control: GatewayHTTPControlConfiguration? = nil,
+    oauth: GatewayOAuthHTTP? = nil
   ) {
     self.init(
       configuration: configuration, source: .registry(registry), host: host, port: port,
-      publicBaseURL: publicBaseURL, accessToken: accessToken, logger: logger, limits: limits,
-      control: control)
+      publicBaseURL: publicBaseURL, accessToken: accessToken, accessCredential: accessCredential,
+      logger: logger, limits: limits,
+      control: control, oauth: oauth)
   }
 
   package init(
     configuration: GatewayConfiguration, source: GatewayHTTPSessionSource,
     host: String, port: Int, publicBaseURL: String?, accessToken: String? = nil,
+    accessCredential: HTTPAccessTokenCredential? = nil,
     logger: Logger? = nil, limits: GatewayHTTPLimits = .v1,
-    control: GatewayHTTPControlConfiguration? = nil
+    control: GatewayHTTPControlConfiguration? = nil,
+    oauth: GatewayOAuthHTTP? = nil
   ) {
     self.configuration = configuration
     self.host = host
@@ -126,7 +152,9 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
       accessToken: accessToken,
       logger: resolvedLogger,
       limits: limits,
-      control: control
+      control: control,
+      oauth: oauth,
+      accessCredential: accessCredential
     )
   }
 
@@ -150,6 +178,8 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
   internal func activeSessionCount() async -> Int {
     await app.activeSessionCount()
   }
+
+  internal func activeOAuthRequestCount() async -> Int { await app.activeOAuthRequestCount() }
 
   internal func boundPort() async -> Int? {
     await app.boundPort()
@@ -180,6 +210,7 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
 }
 
 package actor GatewayHTTPApp {
+  func activeOAuthRequestCount() -> Int { oauthRequestTasks.count }
   private struct SessionContext {
     let principalID: String
     let controlSession: GatewayControlSession?
@@ -197,6 +228,7 @@ package actor GatewayHTTPApp {
   private let configuration: GatewayConfiguration
   private let source: GatewayHTTPSessionSource
   private let authenticator: HTTPBearerAuthenticator
+  private let oauth: GatewayOAuthHTTP?
   private var listeningPort: Int
   private let effectivePublicBaseURL: String?
   private let logger: Logger
@@ -206,6 +238,10 @@ package actor GatewayHTTPApp {
   private var sessions: [String: SessionContext] = [:]
   private var principalRegistries: [String: any GatewayAsyncToolServing] = [:]
   private var pendingSessionIDs = Set<String>()
+  private var oauthRequestTasks: [UUID: Task<HTTPResponse, Never>] = [:]
+  /// Revocation tombstones remain until every admission for that principal returns.
+  private var inFlightOAuthAdmissions: [String: Int] = [:]
+  private var revokedPrincipals = Set<String>()
   private var pendingSessionWaiters: [CheckedContinuation<Void, Never>] = []
   private var retiringSessions: [String: Task<Void, Never>] = [:]
   private var cleanupTask: Task<Void, Never>?
@@ -226,7 +262,9 @@ package actor GatewayHTTPApp {
     accessToken: String?,
     logger: Logger,
     limits: GatewayHTTPLimits,
-    control: GatewayHTTPControlConfiguration?
+    control: GatewayHTTPControlConfiguration?,
+    oauth: GatewayOAuthHTTP? = nil,
+    accessCredential: HTTPAccessTokenCredential? = nil
   ) {
     self.configuration = configuration
     self.source = source
@@ -234,11 +272,13 @@ package actor GatewayHTTPApp {
     self.effectivePublicBaseURL = publicBaseURL ?? configuration.server.http.publicBaseURL
     self.authenticator = HTTPBearerAuthenticator(
       configuration: configuration.server.http,
-      accessToken: accessToken
+      accessToken: accessToken,
+      accessCredential: accessCredential
     )
     self.logger = logger
     self.limits = limits
     self.control = control
+    self.oauth = oauth
   }
 
   package func startListening(host: String, port: Int) async throws {
@@ -251,6 +291,14 @@ package actor GatewayHTTPApp {
     stopCompleted = false
     stopTask = nil
     generation = UUID()
+    if let oauth {
+      await oauth.sessions.attach { [weak self] principal in
+        await self?.endOAuthSessions(principalID: principal)
+      }
+      await oauth.server.setSessionRevoker { [sessions = oauth.sessions] principal in
+        await sessions.end(principalID: principal)
+      }
+    }
     defer {
       isStarting = false
       let waiters = startupWaiters
@@ -270,22 +318,36 @@ package actor GatewayHTTPApp {
       mcpPath: configuration.server.http.path,
       healthPath: configuration.server.http.healthPath,
       authenticator: authenticator,
+      oauth: oauth,
       limits: limits
     )
+    let connections = GatewayHTTPConnectionAdmission(limit: limits.maxUnauthenticatedConnections)
     let bootstrap = ServerBootstrap(group: group)
       .serverChannelOption(ChannelOptions.backlog, value: 256)
       .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
       .childChannelInitializer { channel in
-        channel.pipeline.configureHTTPServerPipeline(
-          withDecoderLimitConfiguration: decoderLimits
-        ).flatMap {
+        let readBoundary = ingressPolicy.oauth == nil ? nil : GatewayHTTPReadBoundary()
+        let boundaryAdded =
+          readBoundary.map { channel.pipeline.addHandler($0) }
+          ?? channel.eventLoop.makeSucceededVoidFuture()
+        return boundaryAdded.flatMap {
+          channel.pipeline.configureHTTPServerPipeline(
+            withDecoderLimitConfiguration: decoderLimits
+          )
+        }.flatMap {
           channel.pipeline.addHandler(
-            GatewayHTTPHandler(app: self, ingressPolicy: ingressPolicy)
+            GatewayHTTPHandler(
+              app: self, ingressPolicy: ingressPolicy, connections: connections,
+              readBoundary: readBoundary)
           )
         }
       }
       .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
       .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 1)
+      .childChannelOption(ChannelOptions.autoRead, value: false)
+      .childChannelOption(
+        ChannelOptions.recvAllocator,
+        value: GatewayHTTPReadAllocator(capacity: oauth == nil ? 16 * 1_024 : 1))
 
     logger.info(
       "Starting computer-mcp HTTP gateway",
@@ -368,6 +430,12 @@ package actor GatewayHTTPApp {
     if activeChannel?.isActive == true {
       try? await activeChannel?.close()
     }
+    // A disconnected channel can cancel its handler while OAuth still owns store work.
+    // Admission is closed before this snapshot, and every admitted task is joined.
+    let oauthTasks = Array(oauthRequestTasks.values)
+    for task in oauthTasks { task.cancel() }
+    for task in oauthTasks { _ = await task.value }
+    oauthRequestTasks.removeAll()
     // Stop managed admission before joining in-progress MCP initialization.
     if case .managed(let owner) = source { await owner.shutdown() }
     await stopAllSessions()
@@ -387,38 +455,142 @@ package actor GatewayHTTPApp {
     stopCompleted = true
   }
 
-  package func handle(_ request: HTTPRequest) async -> HTTPResponse {
+  func admit(_ request: HTTPRequest) async -> GatewayHTTPAdmissionResult {
+    guard !isStopping else {
+      return .rejected(gatewayHTTPError(statusCode: 503, code: "server_stopping"))
+    }
     let path = normalizedHTTPPath(request.path ?? "/")
-    let http = configuration.server.http
-
-    if request.method.uppercased() == "OPTIONS" {
-      return cors(.ok(headers: [:]), request: request)
+    let address = Self.clientAddress(request)
+    if GatewayOAuthHTTP.paths.contains(path) {
+      do {
+        guard let oauth, try oauth.configuration(for: request) != nil else {
+          return .rejected(gatewayHTTPError(statusCode: 404, code: "not_found"))
+        }
+        try await oauth.server.checkRate(address: address)
+        return .accepted(.init(oauthRateChecked: true))
+      } catch let error as OAuthError { return .rejected(GatewayOAuthHTTP.failure(error)) } catch {
+        return .rejected(gatewayHTTPError(statusCode: 503, code: "admission_unavailable"))
+      }
     }
-
-    if path == http.healthPath {
-      return cors(json(["ok": true, "name": configuration.server.name]), request: request)
+    guard path == normalizedHTTPPath(configuration.server.http.path),
+      request.method.uppercased() != "OPTIONS"
+    else { return .accepted(.init()) }
+    if let principal = authenticator.authenticatedPrincipalID(for: request) {
+      return .accepted(.init(principalID: principal))
     }
-
-    guard path == normalizedHTTPPath(http.path) else {
-      return cors(.error(statusCode: 404, .invalidRequest("Not Found")), request: request)
+    do {
+      if let oauth, try oauth.enabledConfiguration() != nil {
+        let active = try oauth.configuration(for: request)
+        if active != nil,
+          let grant = try await oauth.server.authenticate(
+            accessToken: HTTPBearerAuthenticator.accessToken(from: request) ?? "", address: address)
+        {
+          return .accepted(.init(principalID: grant.principalID, oauthProfileID: grant.profileID))
+        }
+        if active == nil { try await oauth.server.checkRate(address: address) }
+        try await oauth.server.authenticationFailed()
+        return .rejected(cors(GatewayOAuthHTTP.unauthorized(active), request: request))
+      }
+    } catch let error as OAuthError {
+      return .rejected(cors(GatewayOAuthHTTP.failure(error), request: request))
+    } catch {
+      return .rejected(gatewayHTTPError(statusCode: 503, code: "authentication_unavailable"))
     }
-
-    if let authError = authenticator.authorizationError(for: request) {
-      return cors(authError, request: request)
+    if let error = authenticator.authorizationError(for: request) {
+      return .rejected(cors(error, request: request))
     }
-
-    let principalID =
-      authenticator.authenticatedPrincipalID(for: request)
-      ?? "http-anonymous:\(generation.uuidString)"
-    let response = await handleMCP(request, principalID: principalID)
-    return cors(response, request: request)
+    return .accepted(.init(principalID: "http-anonymous:\(generation.uuidString)"))
   }
 
-  private func handleMCP(_ request: HTTPRequest, principalID: String) async -> HTTPResponse {
+  package func handle(_ request: HTTPRequest, admission: GatewayHTTPRequestAdmission? = nil) async
+    -> HTTPResponse
+  {
+    let admitted: GatewayHTTPRequestAdmission
+    if let admission {
+      admitted = admission
+    } else {
+      switch await admit(request) {
+      case .accepted(let value): admitted = value
+      case .rejected(let response): return response
+      }
+    }
+    let path = normalizedHTTPPath(request.path ?? "/")
+    if GatewayOAuthHTTP.paths.contains(path) {
+      guard let oauth else { return gatewayHTTPError(statusCode: 404, code: "not_found") }
+      guard !isStopping else { return gatewayHTTPError(statusCode: 503, code: "server_stopping") }
+      let id = UUID()
+      let task = Task {
+        await oauth.handle(
+          request, address: Self.clientAddress(request), rateChecked: admitted.oauthRateChecked)
+      }
+      oauthRequestTasks[id] = task
+      defer { oauthRequestTasks.removeValue(forKey: id) }
+      return await withTaskCancellationHandler {
+        await task.value
+      } onCancel: {
+        task.cancel()
+      }
+    }
+    if request.method.uppercased() == "OPTIONS" { return cors(.ok(headers: [:]), request: request) }
+    if path == configuration.server.http.healthPath {
+      return cors(json(["ok": true, "name": configuration.server.name]), request: request)
+    }
+    guard path == normalizedHTTPPath(configuration.server.http.path),
+      let principalID = admitted.principalID
+    else {
+      return cors(.error(statusCode: 404, .invalidRequest("Not Found")), request: request)
+    }
+    // A request admitted before rotation must not use the retired static credential.
+    if principalID.hasPrefix("credential:"),
+      authenticator.authenticatedPrincipalID(for: request) != principalID
+    {
+      return cors(
+        GatewayOAuthHTTP.unauthorized(try? oauth?.configuration(for: request)), request: request)
+    }
+    let isOAuthPrincipal = principalID.hasPrefix("oauth:")
+    if isOAuthPrincipal { inFlightOAuthAdmissions[principalID, default: 0] += 1 }
+    defer {
+      if isOAuthPrincipal {
+        let remaining = (inFlightOAuthAdmissions[principalID] ?? 1) - 1
+        if remaining == 0 {
+          inFlightOAuthAdmissions.removeValue(forKey: principalID)
+          revokedPrincipals.remove(principalID)
+        } else {
+          inFlightOAuthAdmissions[principalID] = remaining
+        }
+      }
+    }
+    if isOAuthPrincipal {
+      guard let oauth,
+        (try? await oauth.server.grantIsLive(id: String(principalID.dropFirst("oauth:".count))))
+          == true
+      else {
+        return cors(
+          GatewayOAuthHTTP.unauthorized(try? oauth?.configuration(for: request)), request: request)
+      }
+    }
+    return cors(
+      await handleMCP(request, principalID: principalID, oauthProfileID: admitted.oauthProfileID),
+      request: request)
+  }
+
+  private static func clientAddress(_ request: HTTPRequest) -> String {
+    request.header("CF-Connecting-IP") ?? request.header("X-Computer-MCP-Peer-Address") ?? "unknown"
+  }
+
+  private func handleMCP(
+    _ request: HTTPRequest, principalID: String, oauthProfileID: GatewayProfileID?
+  ) async -> HTTPResponse {
+    guard !revokedPrincipals.contains(principalID) else {
+      return GatewayOAuthHTTP.unauthorized(nil)
+    }
     guard !isStopping, channel != nil else {
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
     await reapIdleSessions(at: Date())
+    guard !revokedPrincipals.contains(principalID) else {
+      return GatewayOAuthHTTP.unauthorized(nil)
+    }
     guard !isStopping, channel != nil else {
       return gatewayHTTPError(statusCode: 503, code: "server_stopping")
     }
@@ -450,7 +622,8 @@ package actor GatewayHTTPApp {
     }
 
     if request.method.uppercased() == "POST", isInitializeRequest(request.body) {
-      return await createSessionAndHandle(request, principalID: principalID)
+      return await createSessionAndHandle(
+        request, principalID: principalID, oauthProfileID: oauthProfileID)
     }
 
     if sessionID != nil {
@@ -462,7 +635,9 @@ package actor GatewayHTTPApp {
     )
   }
 
-  private func createSessionAndHandle(_ request: HTTPRequest, principalID: String) async
+  private func createSessionAndHandle(
+    _ request: HTTPRequest, principalID: String, oauthProfileID: GatewayProfileID?
+  ) async
     -> HTTPResponse
   {
     let sessionID = UUID().uuidString
@@ -492,7 +667,8 @@ package actor GatewayHTTPApp {
     let controlSession: GatewayControlSession?
     let sessionRegistry: any GatewayAsyncToolServing
     do {
-      (sessionRegistry, controlSession) = try await makeSessionRegistry(principalID: principalID)
+      (sessionRegistry, controlSession) = try await makeSessionRegistry(
+        principalID: principalID, oauthProfileID: oauthProfileID)
     } catch {
       return gatewayHTTPError(statusCode: 500, code: "control_session_unavailable")
     }
@@ -511,10 +687,14 @@ package actor GatewayHTTPApp {
       return .error(statusCode: 500, .internalError(error.localizedDescription))
     }
 
-    guard !isStopping, channel != nil else {
+    guard !isStopping, channel != nil, !revokedPrincipals.contains(principalID) else {
+      let response =
+        revokedPrincipals.contains(principalID)
+        ? GatewayOAuthHTTP.unauthorized(nil)
+        : gatewayHTTPError(statusCode: 503, code: "server_stopping")
       await closeControlSession(controlSession)
       await server.stop()
-      return gatewayHTTPError(statusCode: 503, code: "server_stopping")
+      return response
     }
     sessions[sessionID] = SessionContext(
       principalID: principalID,
@@ -527,14 +707,21 @@ package actor GatewayHTTPApp {
     return await transport.handleRequest(request)
   }
 
-  private func makeSessionRegistry(principalID: String) async throws
+  private func makeSessionRegistry(principalID: String, oauthProfileID: GatewayProfileID?)
+    async throws
     -> (any GatewayAsyncToolServing, GatewayControlSession?)
   {
     switch source {
     case .managed(let owner):
+      if let oauthProfileID {
+        guard let makeSession = owner.makeOAuthSession else { throw OAuthError.accessDenied }
+        let serving = try await makeSession(principalID, oauthProfileID)
+        return (serving, serving.session)
+      }
       let serving = try await owner.makeSession(principalID)
       return (serving, serving.session)
     case .registry(let registry):
+      guard oauthProfileID == nil else { throw OAuthError.accessDenied }
       let admitted: any GatewayAsyncToolServing
       if let existing = principalRegistries[principalID] {
         admitted = existing
@@ -673,6 +860,14 @@ package actor GatewayHTTPApp {
     retiringSessions.removeValue(forKey: sessionID)
   }
 
+  private func endOAuthSessions(principalID: String) async {
+    if inFlightOAuthAdmissions[principalID] != nil {
+      revokedPrincipals.insert(principalID)
+    }
+    let ids = sessions.filter { $0.value.principalID == principalID }.map(\.key)
+    for id in ids { await removeSession(id) }
+  }
+
   private func stopAllSessions() async {
     let sessionIDs = Set(sessions.keys).union(retiringSessions.keys)
     for sessionID in sessionIDs { await removeSession(sessionID) }
@@ -783,10 +978,22 @@ package actor GatewayHTTPApp {
   }
 }
 
+package struct GatewayHTTPRequestAdmission: Sendable {
+  var principalID: String?
+  var oauthProfileID: GatewayProfileID?
+  var oauthRateChecked = false
+}
+
+enum GatewayHTTPAdmissionResult: Sendable {
+  case accepted(GatewayHTTPRequestAdmission)
+  case rejected(HTTPResponse)
+}
+
 internal struct GatewayHTTPIngressPolicy: Sendable {
   let mcpPath: String
   let healthPath: String
   let authenticator: HTTPBearerAuthenticator
+  let oauth: GatewayOAuthHTTP?
   let limits: GatewayHTTPLimits
 
   func rejection(for head: HTTPRequestHead) -> HTTPResponse? {
@@ -798,6 +1005,7 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
     let method = head.method.rawValue.uppercased()
     if path != normalizedHTTPPath(mcpPath),
       path != normalizedHTTPPath(healthPath),
+      !(oauthEnabled && GatewayOAuthHTTP.paths.contains(path)),
       method != "OPTIONS"
     {
       return gatewayHTTPError(statusCode: 404, code: "not_found")
@@ -807,18 +1015,20 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
       guard headerValues(named: HTTPHeaderName.authorization, in: head.headers).count <= 1 else {
         return gatewayHTTPError(statusCode: 400, code: "ambiguous_authorization")
       }
-      let request = HTTPRequest(
-        method: method,
-        headers: Dictionary(
-          head.headers.map { ($0.name, $0.value) },
-          uniquingKeysWith: { _, newest in newest }
-        ),
-        path: head.uri
-      )
-      if let authError = authenticator.authorizationError(for: request) {
-        return authError
+      if !oauthEnabled {
+        let request = HTTPRequest(
+          method: method,
+          headers: Dictionary(
+            head.headers.map { ($0.name, $0.value) }, uniquingKeysWith: { _, value in value }),
+          path: head.uri)
+        if let rejection = authenticator.authorizationError(for: request) { return rejection }
       }
     }
+
+    guard headerValues(named: "Host", in: head.headers).count == 1,
+      headerValues(named: "CF-Connecting-IP", in: head.headers).count <= 1,
+      headerValues(named: HTTPHeaderName.authorization, in: head.headers).count <= 1
+    else { return gatewayHTTPError(statusCode: 400, code: "ambiguous_headers") }
 
     let contentLengths = headerValues(named: "Content-Length", in: head.headers)
     guard contentLengths.count <= 1 else {
@@ -833,11 +1043,24 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
       guard let byteCount = Int(contentLength), byteCount >= 0 else {
         return gatewayHTTPError(statusCode: 400, code: "invalid_content_length")
       }
-      if byteCount > limits.maxBodyBytes {
+      if byteCount > bodyLimit(for: head), !requiresAsynchronousAdmission(head) {
         return gatewayHTTPError(statusCode: 413, code: "request_body_too_large")
       }
     }
     return nil
+  }
+
+  var oauthEnabled: Bool { (try? oauth?.enabledConfiguration()) != nil }
+
+  func requiresAsynchronousAdmission(_ head: HTTPRequestHead) -> Bool {
+    oauthEnabled
+      && (GatewayOAuthHTTP.paths.contains(normalizedHTTPPath(head.uri))
+        || (normalizedHTTPPath(head.uri) == normalizedHTTPPath(mcpPath) && head.method != .OPTIONS))
+  }
+
+  func bodyLimit(for head: HTTPRequestHead) -> Int {
+    GatewayOAuthHTTP.paths.contains(normalizedHTTPPath(head.uri))
+      ? limits.maxOAuthBodyBytes : limits.maxBodyBytes
   }
 
   private func headerValues(named name: String, in headers: HTTPHeaders) -> [String] {
@@ -853,29 +1076,31 @@ internal struct GatewayHTTPIngressPolicy: Sendable {
   }
 }
 
-internal struct HTTPBearerAuthenticator: Sendable {
+/// Shared by ingress and the listener; the lock publishes credential rotation atomically.
+internal final class HTTPBearerAuthenticator: @unchecked Sendable {
   private let authenticationRequired: Bool
-  private let expectedDigest: [UInt8]?
+  private let credential: HTTPAccessTokenCredential
 
   init(
     configuration: HTTPServerConfig,
     accessToken: String? = nil,
+    accessCredential: HTTPAccessTokenCredential? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
     let explicitToken = accessToken.flatMap { $0.isEmpty ? nil : $0 }
     let environmentToken = configuration.accessTokenEnv.flatMap { environment[$0] }
       .flatMap { $0.isEmpty ? nil : $0 }
-    self.authenticationRequired = explicitToken != nil || configuration.accessTokenEnv != nil
-    self.expectedDigest = (explicitToken ?? environmentToken).map(Self.digest)
+    self.authenticationRequired =
+      accessCredential != nil || explicitToken != nil || configuration.accessTokenEnv != nil
+    self.credential =
+      accessCredential ?? HTTPAccessTokenCredential(token: explicitToken ?? environmentToken)
   }
 
   func authorizationError(for request: HTTPRequest) -> HTTPResponse? {
     guard authenticationRequired else {
       return nil
     }
-    let candidateDigest = Self.digest(accessToken(from: request) ?? "")
-    guard let expectedDigest,
-      Self.constantTimeEqual(candidateDigest, expectedDigest)
+    guard authenticatedPrincipalID(for: request) != nil
     else {
       return unauthorized()
     }
@@ -884,13 +1109,11 @@ internal struct HTTPBearerAuthenticator: Sendable {
 
   /// A credential identifies one shared principal, regardless of the HTTP session or client name.
   func authenticatedPrincipalID(for request: HTTPRequest) -> String? {
-    guard authenticationRequired, authorizationError(for: request) == nil,
-      let expectedDigest
-    else { return nil }
-    return "credential:sha256:" + expectedDigest.map { String(format: "%02x", $0) }.joined()
+    guard authenticationRequired else { return nil }
+    return credential.principalID(for: Self.accessToken(from: request))
   }
 
-  private func accessToken(from request: HTTPRequest) -> String? {
+  static func accessToken(from request: HTTPRequest) -> String? {
     guard let header = request.header(HTTPHeaderName.authorization),
       header.lowercased().hasPrefix("bearer ")
     else {
@@ -912,10 +1135,6 @@ internal struct HTTPBearerAuthenticator: Sendable {
     return difference == 0
   }
 
-  private static func digest(_ value: String) -> [UInt8] {
-    Array(SHA256.hash(data: Data(value.utf8)))
-  }
-
   private func unauthorized() -> HTTPResponse {
     let data =
       (try? JSONSerialization.data(
@@ -933,6 +1152,24 @@ internal struct HTTPBearerAuthenticator: Sendable {
   }
 }
 
+/// Counts sockets until MCP authentication succeeds. The lock covers all child event loops.
+private final class GatewayHTTPConnectionAdmission: @unchecked Sendable {
+  private let lock = NSLock()
+  private let limit: Int
+  private var count = 0
+  init(limit: Int) { self.limit = limit }
+  func reserve() -> Bool {
+    lock.withLock {
+      guard count < limit else { return false }
+      count += 1
+      return true
+    }
+  }
+  func release() { lock.withLock { count -= 1 } }
+}
+
+/// Mutable channel state is confined to the channel's event loop. Async admission
+/// returns through that loop; disconnect cancels the outstanding task and deadline.
 private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
@@ -940,86 +1177,217 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
   private struct RequestState {
     var head: HTTPRequestHead
     var body = ByteBuffer()
+    var admission: GatewayHTTPRequestAdmission?
+    var ended = false
   }
 
   private let app: GatewayHTTPApp
   private let ingressPolicy: GatewayHTTPIngressPolicy
+  private let connections: GatewayHTTPConnectionAdmission
+  private let readBoundary: GatewayHTTPReadBoundary?
   private let allocator = ByteBufferAllocator()
   private var state: RequestState?
   private var rejectedRequest = false
+  private var awaitingAdmission = false
+  private var handlingRequest = false
+  private var reservedConnection = false
+  private var admissionTask: Task<Void, Never>?
+  private var requestTask: Task<Void, Never>?
+  private var deadline: Scheduled<Void>?
 
-  init(app: GatewayHTTPApp, ingressPolicy: GatewayHTTPIngressPolicy) {
+  init(
+    app: GatewayHTTPApp, ingressPolicy: GatewayHTTPIngressPolicy,
+    connections: GatewayHTTPConnectionAdmission, readBoundary: GatewayHTTPReadBoundary?
+  ) {
     self.app = app
     self.ingressPolicy = ingressPolicy
+    self.connections = connections
+    self.readBoundary = readBoundary
+  }
+
+  func channelActive(context: ChannelHandlerContext) {
+    reservedConnection = connections.reserve()
+    guard reservedConnection else {
+      reject(
+        gatewayHTTPError(statusCode: 503, code: "unauthenticated_connection_capacity_exceeded"),
+        context: context)
+      return
+    }
+    armDeadline(context: context)
+    context.fireChannelActive()
+    context.read()
+  }
+
+  func channelInactive(context: ChannelHandlerContext) {
+    deadline?.cancel()
+    deadline = nil
+    admissionTask?.cancel()
+    admissionTask = nil
+    requestTask?.cancel()
+    requestTask = nil
+    state = nil
+    releaseConnection()
+    context.fireChannelInactive()
+  }
+
+  func channelReadComplete(context: ChannelHandlerContext) {
+    context.fireChannelReadComplete()
+    if !awaitingAdmission && !rejectedRequest && !handlingRequest { context.read() }
   }
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    guard !rejectedRequest else { return }
     switch unwrapInboundIn(data) {
     case .head(let head):
-      let writer = SendableChannelContext(context: context)
       if let rejection = ingressPolicy.rejection(for: head) {
-        state = nil
-        rejectedRequest = true
-        write(rejection, writer: writer, version: head.version, closeAfterWrite: true)
+        reject(rejection, context: context, version: head.version)
         return
       }
-      rejectedRequest = false
       state = RequestState(head: head)
+      armDeadline(context: context)
+      if ingressPolicy.requiresAsynchronousAdmission(head) {
+        awaitingAdmission = true
+        let request = makeRequest(state!, peerAddress: context.remoteAddress?.ipAddress)
+        let writer = SendableChannelContext(context: context)
+        admissionTask = Task {
+          let result = await self.app.admit(request)
+          guard !Task.isCancelled else { return }
+          writer.context.eventLoop.execute {
+            guard writer.context.channel.isActive, !self.rejectedRequest else { return }
+            self.admissionTask = nil
+            self.awaitingAdmission = false
+            switch result {
+            case .rejected(let response):
+              self.reject(response, context: writer.context, version: head.version)
+            case .accepted(let admission):
+              self.state?.admission = admission
+              if admission.principalID != nil { self.releaseConnection() }
+              if let length = head.headers.first(name: "Content-Length").flatMap(Int.init),
+                length > self.ingressPolicy.bodyLimit(for: head)
+              {
+                self.reject(
+                  gatewayHTTPError(statusCode: 413, code: "request_body_too_large"),
+                  context: writer.context, version: head.version)
+                return
+              }
+              if self.state?.ended == true {
+                self.dispatch(context: writer.context)
+              } else {
+                self.configureBodyRead(context: writer.context)
+                writer.context.read()
+              }
+            }
+          }
+        }
+      } else {
+        if normalizedHTTPPath(head.uri) == normalizedHTTPPath(ingressPolicy.mcpPath),
+          head.method != .OPTIONS
+        {
+          releaseConnection()
+        }
+        configureBodyRead(context: context)
+      }
 
     case .body(var body):
-      guard !rejectedRequest, var requestState = state else {
+      // Header-granular reads prevent the decoder from reading ahead into a body
+      // while admission is pending, even if TCP delivered head and body together.
+      guard !awaitingAdmission, var requestState = state else {
+        reject(gatewayHTTPError(statusCode: 400, code: "body_before_admission"), context: context)
         return
       }
       guard
         requestState.body.readableBytes + body.readableBytes
-          <= ingressPolicy.limits.maxBodyBytes
+          <= ingressPolicy.bodyLimit(for: requestState.head)
       else {
-        state = nil
-        rejectedRequest = true
-        write(
-          gatewayHTTPError(statusCode: 413, code: "request_body_too_large"),
-          writer: SendableChannelContext(context: context),
-          version: requestState.head.version,
-          closeAfterWrite: true
-        )
+        reject(
+          gatewayHTTPError(statusCode: 413, code: "request_body_too_large"), context: context,
+          version: requestState.head.version)
         return
       }
       requestState.body.writeBuffer(&body)
       state = requestState
 
     case .end:
-      if rejectedRequest {
-        rejectedRequest = false
-        state = nil
-        return
-      }
-      guard let state else {
-        return
-      }
-      self.state = nil
-      let request = makeRequest(state)
-      let writer = SendableChannelContext(context: context)
-      let version = state.head.version
-      Task {
-        let response = await self.app.handle(request)
-        self.write(response, writer: writer, version: version)
+      state?.ended = true
+      if !awaitingAdmission { dispatch(context: context) }
+    }
+  }
+
+  private func configureBodyRead(context: ChannelHandlerContext) {
+    if let state { readBoundary?.beginBody(state.head, channel: context.channel) }
+  }
+
+  private func armDeadline(context: ChannelHandlerContext) {
+    deadline?.cancel()
+    let writer = SendableChannelContext(context: context)
+    deadline = context.eventLoop.scheduleTask(
+      in: .milliseconds(Int64(ingressPolicy.limits.requestBodyTimeout * 1_000))
+    ) {
+      self.reject(
+        gatewayHTTPError(statusCode: 408, code: "request_body_timeout"), context: writer.context,
+        version: self.state?.head.version ?? .http1_1)
+    }
+  }
+
+  private func releaseConnection() {
+    if reservedConnection {
+      reservedConnection = false
+      connections.release()
+    }
+  }
+
+  private func reject(
+    _ response: HTTPResponse, context: ChannelHandlerContext, version: HTTPVersion = .http1_1
+  ) {
+    guard !rejectedRequest else { return }
+    rejectedRequest = true
+    state = nil
+    deadline?.cancel()
+    deadline = nil
+    admissionTask?.cancel()
+    admissionTask = nil
+    // Closing head responses also cover idle sockets, before the pipelining
+    // handler has seen a request. Write through the HTTP encoder directly.
+    let responseContext =
+      (try? context.pipeline.syncOperations.context(
+        handlerType: ByteToMessageHandler<HTTPRequestDecoder>.self)) ?? context
+    write(
+      response, writer: SendableChannelContext(context: responseContext), version: version,
+      closeAfterWrite: true)
+  }
+
+  private func dispatch(context: ChannelHandlerContext) {
+    guard let state else { return }
+    self.state = nil
+    deadline?.cancel()
+    deadline = nil
+    handlingRequest = true
+    readBoundary?.finishRequest(channel: context.channel)
+    let request = makeRequest(state, peerAddress: context.remoteAddress?.ipAddress)
+    let writer = SendableChannelContext(context: context)
+    requestTask = Task {
+      let response = await self.app.handle(request, admission: state.admission)
+      guard !Task.isCancelled else { return }
+      self.write(response, writer: writer, version: state.head.version)
+      writer.context.eventLoop.execute {
+        self.handlingRequest = false
+        if self.reservedConnection { self.armDeadline(context: writer.context) }
+        if !self.rejectedRequest { writer.context.read() }
       }
     }
   }
 
-  private func makeRequest(_ state: RequestState) -> HTTPRequest {
+  private func makeRequest(_ state: RequestState, peerAddress: String?) -> HTTPRequest {
     var body = state.body
     let data = Data(body.readBytes(length: body.readableBytes) ?? [])
     var headers: [String: String] = [:]
-    for header in state.head.headers {
-      headers[header.name] = header.value
+    for header in state.head.headers { headers[header.name] = header.value }
+    headers = headers.filter {
+      $0.key.caseInsensitiveCompare("X-Computer-MCP-Peer-Address") != .orderedSame
     }
+    headers["X-Computer-MCP-Peer-Address"] = peerAddress ?? "unknown"
     return HTTPRequest(
-      method: state.head.method.rawValue,
-      headers: headers,
-      body: data,
-      path: state.head.uri
-    )
+      method: state.head.method.rawValue, headers: headers, body: data, path: state.head.uri)
   }
 
   private func write(
@@ -1072,6 +1440,7 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
       }
       let body = response.bodyData ?? Data()
       responseHeaders.replaceOrAdd(name: "Content-Length", value: "\(body.count)")
+      if closeAfterWrite { responseHeaders.replaceOrAdd(name: "Connection", value: "close") }
       let head = HTTPResponseHead(
         version: version,
         status: status,

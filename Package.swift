@@ -147,6 +147,20 @@ let neutralTargets: [Target] =
         "ComputerMCPTestSupport",
       ]),
     .target(
+      name: "ComputerMCPAuthorization",
+      dependencies: [
+        "ComputerMCPCore", .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPAuthorizationTests",
+      dependencies: [
+        "ComputerMCPAuthorization", "ComputerMCPCore",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]),
+    .target(
       name: "ComputerMCPDelivery",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
@@ -254,6 +268,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPGateway",
       dependencies: [
+        "ComputerMCPAuthorization",
         "ComputerMCPPlugins", "ComputerMCPToolsWorkspace", "ComputerMCPConfiguration",
         "ComputerMCPCore", "ComputerMCPPersistence", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPDownstream",
@@ -272,6 +287,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPGatewayTests",
       dependencies: [
+        "ComputerMCPAuthorization",
         "ComputerMCPConfiguration",
         "ComputerMCPCore",
         "ComputerMCPDownstream",
@@ -298,6 +314,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPControlPlane",
       dependencies: [
+        "ComputerMCPAuthorization",
         "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsWorkspace",
         "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
         "ComputerMCPPersistence", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
@@ -309,7 +326,10 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPControlPlaneTests",
       dependencies: [
+        "ComputerMCPAuthorization", "ComputerMCPConfiguration",
+        "ComputerMCPDownstream", "ComputerMCPProcess",
         "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPCore",
+        "ComputerMCPPersistence", .product(name: "GRDB", package: "GRDB.swift"),
         "ComputerMCPPlatform", "ComputerMCPTunnels", "ComputerMCPTestSupport",
       ]
     ),
@@ -476,6 +496,7 @@ let neutralTargets: [Target] =
       .executableTarget(
         name: "ComputerMCPApp",
         dependencies: [
+          "ComputerMCPAuthorization",
           "ComputerMCPPlugins",
           "ComputerMCPComputerUse",
           "ComputerMCPToolsSkills",
@@ -591,6 +612,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPAppTests",
         dependencies: [
+          "ComputerMCPAuthorization",
           "ComputerMCPPlugins",
           "ComputerMCPApp", "ComputerMCPControlPlane", "ComputerMCPGateway",
           "ComputerMCPMacOS",

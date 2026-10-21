@@ -35,6 +35,11 @@ computer-mcp clients limit [--control-socket <control-socket>] <id> [--expected-
 computer-mcp clients end [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
 computer-mcp clients trusts [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
 computer-mcp clients revoke [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
+computer-mcp clients authorizations [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>] [--tunnel-id <tunnel-id>]
+computer-mcp clients authorize [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>] [--profile <profile>] [--authorization-digest <authorization-digest>]
+computer-mcp clients deny [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>]
+computer-mcp clients grants [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>] [--tunnel-id <tunnel-id>]
+computer-mcp clients revoke-grant [--control-socket <control-socket>] <id>
 computer-mcp doctor [--journey <journey>] [--json] [--control-socket <control-socket>]
 computer-mcp build-info
 computer-mcp config path [--control-socket <control-socket>]
@@ -73,7 +78,7 @@ computer-mcp tunnel cloudflare doctor [--control-socket <control-socket>] <id>
 computer-mcp tunnel cloudflare start [--control-socket <control-socket>] <id>
 computer-mcp tunnel cloudflare stop [--control-socket <control-socket>] <id>
 computer-mcp tunnel cloudflare logs [--control-socket <control-socket>] <id>
-computer-mcp tunnel cloudflare save [--control-socket <control-socket>] <id> --tunnel-name <tunnel-name> --public-hostname <public-hostname> --gateway-profile <gateway-profile> [--local-port <local-port>] [--metrics-port <metrics-port>] [--cloudflared-path <cloudflared-path>] [--tunnel-token-stdin] [--regenerate-access-token]
+computer-mcp tunnel cloudflare save [<options>] <id> --tunnel-name <tunnel-name> --public-hostname <public-hostname> --gateway-profile <gateway-profile>
 computer-mcp tunnel cloudflare remove [--control-socket <control-socket>] <id>
 computer-mcp tools list [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
 computer-mcp tools inspect <name> [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
@@ -128,6 +133,38 @@ computer-mcp bridge [--socket <socket>] [--tunnel-credential-file <tunnel-creden
 Use `--help` on any command for the authoritative options and exit behavior.
 
 ## Client access
+
+OAuth pairing and grants use the local App control socket:
+
+```sh
+computer-mcp clients authorizations
+computer-mcp clients authorize <pairing-code> --profile cloudflare-observe
+computer-mcp clients deny <pairing-code>
+computer-mcp clients grants
+computer-mcp clients revoke-grant <grant-id>
+```
+
+`authorizations` and `grants` page their named result arrays with `--id`,
+`--after-id`, `--limit` (default 100, maximum 200) and optional `--tunnel-id`.
+Pending rows include pairing code, client host, redirect host and expiry.
+`authorize` and `deny` accept `--tunnel-id` to resolve ambiguous codes. Approval
+defaults to `cloudflare-observe` only while its effective mode is read-only.
+Otherwise approval requires an explicit `--profile`. The selected profile must
+allow `cloudflare-tunnel`. Pairing lasts ten minutes and decisions are single-use.
+Pass `--authorization-digest <digest>` to bind approval to the chosen
+profile's reviewed `authorization_digest` from `profile show` (also returned by
+`profile list`). The digest covers effective authorization from the active
+manifest and persisted permission overrides. If its mode or
+permissions have changed, approval fails; review the current profile before
+trying again. The argument is optional for CLI approvals.
+Grant revocation immediately invalidates its tokens. OAuth approval retains
+the existing separate Full Access session consent requirement.
+
+Enable OAuth per connection with `tunnel cloudflare save … --oauth-enabled`;
+use `--no-oauth-enabled` to disable it. Repeat `--oauth-client-host <host>` to
+replace its exact CIMD host allowlist. Omission preserves current settings on
+save; new connections default off with hosts `claude.ai` and `claude.com`.
+See [Cloudflare OAuth setup](CloudflareRunbook.md#oauth-client-pairing).
 
 `clients list` returns `sessions` sorted by ID and a `next_after_id` cursor.
 Each row includes the connection's exact `revision` and matching

@@ -47,7 +47,9 @@ final class AppControlPlaneServiceTests {
           allowedCallers: [.localMCP], mode: .workspaceOperations)
       ],
       builtin: .init(enabled: ["system.time"]), workspaceDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let gateway = AppGatewayService.live(
@@ -114,7 +116,9 @@ final class AppControlPlaneServiceTests {
       builtin: .init(enabled: ["system.time", "file.read", "file.write"]),
       workspaceDirectory: fixture.root)
     configuration.policy.shellEnabled = true
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveWorkspace(
       .init(id: "project", displayName: "My Project", rootPath: fixture.root.path))
     let before = try fixture.database.configurationState()
@@ -136,7 +140,9 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let options = try await fixture.controlPlane.profilePermissionOptions(
       profileID: .chatGPTOperate)
     switch change {
@@ -145,7 +151,9 @@ final class AppControlPlaneServiceTests {
         profileID: .chatGPTOperate, capabilityIDs: ["system.time"])
     case "manifest":
       configuration.policy.shellEnabled = true
-      _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.controlPlane.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try? await fixture.controlPlane.configurationDigest())
     case "external-edit":
       try (configuration.exportedTOML() + "\n# Unadmitted external edit\n").write(
         to: fixture.directories.manifest, atomically: true, encoding: .utf8)
@@ -181,7 +189,9 @@ final class AppControlPlaneServiceTests {
           id: .chatGPTOperate, capabilities: ["system.time"], workspaces: ["fixture"],
           allowedCallers: [.localMCP], mode: .workspaceOperations)
       ], workspaceDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let service = AppGatewayService(
@@ -200,7 +210,9 @@ final class AppControlPlaneServiceTests {
           id: firstScope.id, expectedRevision: firstScope.revision)
       }
       configuration.policy.shellEnabled = true
-      _ = try await operations.activateManifest(configuration.exportedTOML())
+      _ = try await operations.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try await operations.controlPlane.configurationDigest())
       let approved = try await operations.approveControlSession(
         id: firstScope.id, expectedRevision: firstScope.revision)
       #expect(approved.fullAccessConsent?.lifetime == .thisSession)
@@ -255,7 +267,9 @@ final class AppControlPlaneServiceTests {
         id: limited.id, lifetime: .alwaysAllowClient, expectedRevision: limited.revision,
         expectedTrustRevision: revokedTrust.revision)
       configuration.profiles[0].mode = .readOnly
-      _ = try await operations.activateManifest(configuration.exportedTOML())
+      _ = try await operations.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try await operations.controlPlane.configurationDigest())
       let changed = try #require(
         await operations.controlSessions().first { $0.id == limited.id })
       #expect(changed.fullAccessConsent == nil)
@@ -282,7 +296,9 @@ final class AppControlPlaneServiceTests {
           id: .chatGPTOperate, capabilities: ["*"], workspaces: ["fixture"],
           allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
       ], builtin: .init(enabled: ["system.time", "file.write"]), workspaceDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let service = AppGatewayService(
@@ -357,7 +373,9 @@ final class AppControlPlaneServiceTests {
           id: .cloudflareObserve, capabilities: ["workspace.list"],
           allowedCallers: [.cloudflareTunnel]),
       ], workspaceDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
       try fixture.database.saveWorkspace(
         RegisteredWorkspace(
@@ -443,7 +461,8 @@ final class AppControlPlaneServiceTests {
   func startJoinsOwnedListenerCleanup(stopBeforeObservation: Bool) async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let socketURL = fixture.root.appendingPathComponent("gateway.sock")
     let service = AppGatewayService(
       controlPlane: fixture.controlPlane,
@@ -487,7 +506,9 @@ final class AppControlPlaneServiceTests {
         .init(id: id, capabilities: ["file.read"], allowedCallers: [.localMCP], mode: .readOnly)
       ],
       workspaceDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let saved = try await fixture.controlPlane.updateProfilePermissions(
       profileID: id, mode: .workspaceOperations, confirmationPolicy: .allWrites,
       capabilityIDs: ["file.read", "file.write"], allowedCallers: [.cloudflareTunnel],
@@ -516,7 +537,8 @@ final class AppControlPlaneServiceTests {
   func hostApprovalRequiresLocalResolutionAndPermissionEditsInvalidateIt() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let grant = try await fixture.controlPlane.updateProfilePermissions(
       profileID: .chatGPTOperate, mode: .workspaceOperations)
     let ticket = OperationTicket(
@@ -544,7 +566,8 @@ final class AppControlPlaneServiceTests {
   func workspaceRevocationNarrowsAnExplicitWorkspaceWildcard() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     for id in ["one", "two"] {
       try fixture.database.saveWorkspace(
         .init(id: id, displayName: id, rootPath: fixture.root.path))
@@ -570,7 +593,8 @@ final class AppControlPlaneServiceTests {
   func localControlRoundTripsPermissionChangesAndOperationApproval() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let gateway = AppGatewayService.live(
       controlPlane: fixture.controlPlane, directories: fixture.directories)
     let service = ControlSocketService(
@@ -658,7 +682,9 @@ final class AppControlPlaneServiceTests {
           allowedCallers: Array(ProfileGrant.operate.allowedCallers), mode: .localFullAccess)
       ]
     }
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let workspace = RegisteredWorkspace(
       id: "fixture", displayName: "Fixture", rootPath: fixture.root.path,
       bookmarkIsStale: change == "workspace")
@@ -733,7 +759,9 @@ final class AppControlPlaneServiceTests {
       case "cancel": pending.cancel()
       case "configuration":
         current.server.name = "changed-while-discovering"
-        _ = try await fixture.controlPlane.activateManifest(current.exportedTOML())
+        _ = try await fixture.controlPlane.activateManifest(
+          current.exportedTOML(),
+          expectedDigest: try? await fixture.controlPlane.configurationDigest())
       case "workspace":
         var updated = workspace
         updated.displayName = "Changed while discovering"
@@ -824,7 +852,9 @@ final class AppControlPlaneServiceTests {
           args: [script.path, fixture.root.path, "tools"], exposure: .reexport,
           prefix: "fixture", allowAnyTool: true, startupTimeoutMs: 5000)
       ]), workspaceDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveWorkspace(
       RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     await #expect(throws: AppControlPlaneServiceError.unknownWorkspace("missing")) {
@@ -862,7 +892,8 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture(providerDiscovery: probe)
     defer { fixture.cleanup() }
     try await fixture.controlPlane.start()
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let refreshing = Task { try await fixture.controlPlane.refreshProviders() }
     do {
       var events = started.makeAsyncIterator()
@@ -874,7 +905,8 @@ final class AppControlPlaneServiceTests {
       } else {
         _ = try await fixture.controlPlane.activateManifest(
           validManifest.replacingOccurrences(
-            of: "computer-mcp-test", with: "changed-provider-config"))
+            of: "computer-mcp-test", with: "changed-provider-config"),
+          expectedDigest: try? await fixture.controlPlane.configurationDigest())
       }
       probe.release.signal()
       switch await refreshing.result {
@@ -1125,7 +1157,8 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture(gatewayExecutablePath: executable.path)
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
-      GatewayConfiguration(workspaceDirectory: fixture.root).exportedTOML())
+      GatewayConfiguration(workspaceDirectory: fixture.root).exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let gateway = AppGatewayService.live(
       controlPlane: fixture.controlPlane, directories: fixture.directories)
     let socket = ControlSocketService(
@@ -1186,7 +1219,9 @@ final class AppControlPlaneServiceTests {
     defer { fixture.cleanup() }
     var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
     configuration.cli.commands = [.init(id: "personal", executable: "/bin/echo")]
-    _ = try await fixture.controlPlane.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let packageRoot = fixture.root.appendingPathComponent("package")
     try FileManager.default.createDirectory(
       at: packageRoot.appendingPathComponent("skills"), withIntermediateDirectories: true)
@@ -1318,7 +1353,8 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
-      GatewayConfiguration(workspaceDirectory: fixture.root).exportedTOML())
+      GatewayConfiguration(workspaceDirectory: fixture.root).exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let gateway = AppGatewayService.live(
       controlPlane: fixture.controlPlane, directories: fixture.directories)
     try await gateway.start(profile: .chatGPTOperate)
@@ -1369,7 +1405,9 @@ final class AppControlPlaneServiceTests {
   {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(GatewayConfiguration().exportedTOML())
+    _ = try await fixture.controlPlane.activateManifest(
+      GatewayConfiguration().exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let store = PluginStore(database: fixture.database, platform: MacOSPlatform.services)
     _ = try await store.setSettings(
       .init(mcp: ["native": .init(registrationID: "plugin-native")]), for: "test-package",
@@ -1381,7 +1419,8 @@ final class AppControlPlaneServiceTests {
       mcp_servers = ['plugin-native']
       """
     #expect(throws: ConfigurationError.self) { try GatewayConfiguration.load(text: text) }
-    _ = try await fixture.controlPlane.activateManifest(text)
+    _ = try await fixture.controlPlane.activateManifest(
+      text, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let exported = try await fixture.controlPlane.effectiveConfigurationForExport().exportedTOML()
     let loaded = try await fixture.controlPlane.parseManifest(exported)
     #expect(loaded.mcp.servers.isEmpty)
@@ -1393,7 +1432,9 @@ final class AppControlPlaneServiceTests {
   func testOwnerOnlyControlSocketOperatesTheAppControlPlaneWithoutStartingTransport() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(DefaultGatewayConfiguration.manifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      DefaultGatewayConfiguration.manifest,
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let gatewayService = AppGatewayService.live(
       controlPlane: fixture.controlPlane,
       directories: fixture.directories
@@ -1701,7 +1742,9 @@ final class AppControlPlaneServiceTests {
   func testControlSocketAndAppAdapterShareLifecycleAwareOperations() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(DefaultGatewayConfiguration.manifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      DefaultGatewayConfiguration.manifest,
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let gatewayService = AppGatewayService.live(
       controlPlane: fixture.controlPlane,
       directories: fixture.directories
@@ -1846,8 +1889,7 @@ final class AppControlPlaneServiceTests {
       [[profiles]]
       id = "chatgpt-operate"
       mcp_servers = ["fixture-mcp"]
-      """
-    )
+      """, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let exported = try await fixture.controlPlane.effectiveConfigurationForExport()
     let reloaded = try GatewayConfiguration.load(text: exported.exportedTOML())
     let grant = try #require(reloaded.profiles.first { $0.id == .chatGPTOperate })
@@ -1874,8 +1916,7 @@ final class AppControlPlaneServiceTests {
       id = "manifest-workspace"
       display_name = "Manifest Workspace"
       path = "Manifest Workspace"
-      """
-    )
+      """, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let workspaceURL = fixture.root.appendingPathComponent("Exported Workspace")
     try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
     let workspace = try await fixture.controlPlane.registerWorkspace(
@@ -1959,7 +2000,8 @@ final class AppControlPlaneServiceTests {
     )
     defer { fixture.cleanup() }
     try await fixture.controlPlane.start()
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
 
     let states = try await fixture.controlPlane.refreshProviders()
     #expect((states.map(\.id)) == (["tunnel-client"]))
@@ -2016,7 +2058,9 @@ final class AppControlPlaneServiceTests {
       controller.resumeStateQuery()
       fixture.cleanup()
     }
-    _ = try await fixture.controlPlane.activateManifest(DefaultGatewayConfiguration.manifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      DefaultGatewayConfiguration.manifest,
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
 
     let clock = ContinuousClock()
     let startedAt = clock.now
@@ -2035,7 +2079,8 @@ final class AppControlPlaneServiceTests {
   func testUnknownTunnelProfileFailsClosedAndSecretIsNotPersistedInFiles() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
 
     do {
       _ = try await fixture.controlPlane.startOpenAITunnel(profileID: "missing")
@@ -2060,7 +2105,8 @@ final class AppControlPlaneServiceTests {
   func testDeletingTunnelProfileAlsoDeletesItsKeychainCredential() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let reference = try SecretReference(account: "tunnel.deletable.openai-api-key")
     let profile = OpenAITunnelConfiguration(
       id: "deletable",
@@ -2131,7 +2177,8 @@ final class AppControlPlaneServiceTests {
       adapter.resumeSecretRead()
       fixture.cleanup()
     }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
     let credentialTask = Task {
       try await fixture.controlPlane.hasOpenAITunnelAPIKey(reference: reference)
@@ -2164,7 +2211,8 @@ final class AppControlPlaneServiceTests {
   func testActiveProfileAndFullShellSettingsPersistThroughControlPlane() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
 
     let initialProfile = try await fixture.controlPlane.activeGatewayProfile()
     #expect((initialProfile) == (.chatGPTObserve))
@@ -2191,8 +2239,7 @@ final class AppControlPlaneServiceTests {
 
       [policy]
       shell_enabled = true
-      """
-    )
+      """, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     _ = try await fixture.controlPlane.updateProfilePermissions(
       profileID: .chatGPTOperate, mode: .localFullAccess)
     let grant = try await fixture.controlPlane.setFullShellEnabled(
@@ -2221,7 +2268,8 @@ final class AppControlPlaneServiceTests {
   func testWorkspaceGrantCanBeChangedForAProfile() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let workspaceURL = fixture.root.appendingPathComponent("Granted Workspace")
     try FileManager.default.createDirectory(
       at: workspaceURL,
@@ -2263,8 +2311,7 @@ final class AppControlPlaneServiceTests {
       profileManifest(
         observeCapabilities: ["workspace.list", "workspace.describe", "file.exists"],
         observeSecureTunnelAccess: true
-      )
-    )
+      ), expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let workspaceURL = fixture.root.appendingPathComponent("Evolving Workspace")
     try FileManager.default.createDirectory(
       at: workspaceURL,
@@ -2281,8 +2328,7 @@ final class AppControlPlaneServiceTests {
       profileManifest(
         observeCapabilities: ["workspace.list", "workspace.describe", "file.read"],
         observeSecureTunnelAccess: false
-      )
-    )
+      ), expectedDigest: try? await fixture.controlPlane.configurationDigest())
 
     let profileGrants = try await fixture.controlPlane.profileGrants()
     let grant = try #require(
@@ -2320,7 +2366,8 @@ final class AppControlPlaneServiceTests {
   func testGatewayAndTunnelDesiredStatePersistsAcrossRuntimeStops() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let profile = OpenAITunnelConfiguration(
       id: "recoverable",
       tunnelClientProfile: "computer-mcp",
@@ -2365,7 +2412,8 @@ final class AppControlPlaneServiceTests {
   func testOperateTunnelRefusesAnEmptyCapabilitySurface() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let profile = OpenAITunnelConfiguration(
       id: "empty-operate",
       tunnelClientProfile: "computer-mcp",
@@ -2414,8 +2462,7 @@ final class AppControlPlaneServiceTests {
 
       [builtin]
       enabled = ["system.time"]
-      """
-    )
+      """, expectedDigest: try? await fixture.controlPlane.configurationDigest())
 
     let socketURL = URL(
       fileURLWithPath: "/tmp/cm-\(UUID().uuidString.prefix(8))/gateway.sock"
@@ -2552,7 +2599,8 @@ final class AppControlPlaneServiceTests {
   {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(validManifest)
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let socketURL = URL(
       fileURLWithPath: "/tmp/cm-\(UUID().uuidString.prefix(8))/gateway.sock"
     )

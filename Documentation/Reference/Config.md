@@ -148,12 +148,24 @@ gateway_profile = "cloudflare-observe"
 local_port = 8765
 metrics_port = 20241
 cloudflared_path = "/usr/local/bin/cloudflared"
+oauth_enabled = false
+oauth_client_allowlist = ["claude.ai", "claude.com"]
 ```
 
 Desired running IDs remain in GRDB. OpenAI API keys, Cloudflare Tunnel Tokens,
 and generated Computer MCP Access Tokens use canonical accounts in the signed
 App's environment-specific Data Protection Keychain service and never appear
 in TOML.
+
+`oauth_enabled` defaults to `false`. When enabled, the connection's public HTTPS
+origin serves OAuth discovery, pairing, token and revocation routes. The
+`oauth_client_allowlist` contains exact lowercase CIMD hostnames, with no wildcard,
+scheme, port or path; its default is `claude.ai` and `claude.com`. An empty list
+admits no new clients. The owner control plane can update both settings while the
+listener is running. Omitting them from an existing connection's CLI save
+preserves their current values. Each locally approved grant selects its own
+remote gateway profile; `gateway_profile` remains the Access Token's profile.
+See [Cloudflare OAuth pairing](CloudflareRunbook.md#oauth-client-pairing).
 
 `http_proxy` is optional. When it is absent, the App follows the active fixed
 macOS HTTPS proxy and then the fixed HTTP proxy; an explicit value takes

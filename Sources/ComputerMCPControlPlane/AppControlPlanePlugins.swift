@@ -42,6 +42,9 @@ extension AppControlPlaneService {
     pluginRecoveryAttempted = true
     configurationMutationInProgress = true
     defer { configurationMutationInProgress = false }
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     try? await recoverPluginFiles(using: PluginStore(database: database, platform: platform))
   }
 
@@ -89,6 +92,9 @@ extension AppControlPlaneService {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     configurationMutationInProgress = true
     defer { configurationMutationInProgress = false }
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     let inputs = try gatewayInputs()
     let manifestStore = manifestStore
     let bundledPlugins = bundledPlugins

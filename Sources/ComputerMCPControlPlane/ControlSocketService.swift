@@ -450,12 +450,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
         payload = try encodedPayload(grant)
       case "profile.list":
-        payload = try encodedPayload(try await controlPlane.profileGrants())
+        payload = .array(
+          try await controlPlane.profileGrants().map { grant in
+            try profilePayload(grant)
+          })
       case "profile.show":
         let profile = try requiredProfile(in: object)
         guard let grant = try await controlPlane.profileGrants().first(where: { $0.id == profile })
         else { throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue) }
-        payload = try encodedPayload(grant)
+        payload = try profilePayload(grant)
       case "profile.activate":
         payload = try encodedPayload(
           try await operations.activateProfile(requiredProfile(in: object))
@@ -772,8 +775,12 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
               localPort: object["local_port"]?.intValue ?? 8_765,
               metricsPort: object["metrics_port"]?.intValue ?? 20_241,
               cloudflaredPath: object["cloudflared_path"]?.stringValue,
+              oauthEnabled: object["oauth_enabled"]?.boolValue,
+              oauthClientAllowlist: object["oauth_client_allowlist"]?.arrayValue?.compactMap(
+                \.stringValue),
               tunnelToken: object["tunnel_token"]?.stringValue,
-              regenerateAccessToken: object["regenerate_access_token"]?.boolValue ?? false
+              regenerateAccessToken: object["regenerate_access_token"]?.boolValue ?? false,
+              expectedTunnelDigest: object["expected_tunnel_digest"]?.stringValue
             )
           )
         )
@@ -843,6 +850,13 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       )
       return result
     }
+  }
+
+  private func profilePayload(_ grant: ProfileGrant) throws -> JSONValue {
+    var fields = try encodedPayload(grant).objectValue ?? [:]
+    fields["authorization_digest"] = .string(
+      try OAuthApprovalProfile(grant: grant).authorizationDigest)
+    return .object(fields)
   }
 
   private func configurationOperation(
@@ -1257,8 +1271,11 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         "local_port": .integer,
         "metrics_port": .integer,
         "cloudflared_path": .string,
+        "oauth_enabled": .boolean,
+        "oauth_client_allowlist": .strings,
         "tunnel_token": .string,
         "regenerate_access_token": .boolean,
+        "expected_tunnel_digest": .string,
       ],
       required: ["id", "tunnel_name", "public_hostname", "gateway_profile"],
       readOnly: false

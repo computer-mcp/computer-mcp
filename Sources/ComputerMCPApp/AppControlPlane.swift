@@ -256,15 +256,19 @@ struct OpenAITunnelLogSnapshot: Sendable {
 
 struct CloudflareTunnelSummary: Identifiable, Sendable {
   var id: String
+  var configurationDigest: String
   var tunnelName: String
   var publicHostname: String
   var profileID: String
   var state: ServiceState
   var localPort: Int
   var metricsPort: Int
+  var cloudflaredPath: String?
   var processIdentifier: Int32?
   var connectedAt: Date?
   var lastError: String?
+  var oauthEnabled = false
+  var oauthClientAllowlist: [String] = []
 }
 
 struct LocalMCPConnectionSummary: Sendable {
@@ -298,6 +302,13 @@ struct CloudflareTunnelConfigurationDraft: Identifiable, Sendable {
   var cloudflaredPath: String?
   var tunnelToken: String?
   var regenerateAccessToken: Bool
+  var oauthEnabled = false
+  var oauthClientAllowlist = CloudflareTunnelConfigurationDraft.defaultOAuthClients
+  var expectedTunnelDigest: String? = nil
+}
+
+extension CloudflareTunnelConfigurationDraft {
+  static let defaultOAuthClients = ["claude.ai", "claude.com"]
 }
 
 struct CloudflareTunnelLogSnapshot: Sendable {
@@ -392,6 +403,8 @@ struct ManifestRevisionSummary: Identifiable, Sendable {
 struct ManifestSnapshot: Sendable {
   var path: String
   var content: String
+  /// Digest of `content` as the manifest store computes it; edits publish against it.
+  var digest: String
   var revisions: [ManifestRevisionSummary]
 }
 
@@ -468,7 +481,7 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func previewCodexRegistration() async throws -> CodexMCPInstallInvocation
   func installCodexRegistration() async throws -> CommandResult
 
-  func saveManifest(_ content: String) async throws
+  func saveManifest(_ content: String, expectedDigest: String) async throws
   func rollbackManifest(to revisionID: String) async throws
   func exportDiagnostics(to destination: URL) async throws
 }
@@ -594,7 +607,9 @@ final class UnavailableControlPlane: AppControlPlane {
     throw unavailable()
   }
   func installCodexRegistration() async throws -> CommandResult { throw unavailable() }
-  func saveManifest(_ content: String) async throws { throw unavailable() }
+  func saveManifest(_ content: String, expectedDigest: String) async throws {
+    throw unavailable()
+  }
   func rollbackManifest(to revisionID: String) async throws { throw unavailable() }
   func exportDiagnostics(to destination: URL) async throws { throw unavailable() }
 

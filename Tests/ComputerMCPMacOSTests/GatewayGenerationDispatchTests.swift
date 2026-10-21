@@ -256,7 +256,9 @@ struct GatewayGenerationDispatchTests {
           toolName: "fixture.start", arguments: .object(["handle": .string("second")])))
       #expect(firstPID != secondPID)
       let firstOwner = try #require(try await owners(firstClient, kind: "mcpResource").first)
-      _ = try await operations.activateManifest(fixture.externalManifest(version: 2))
+      _ = try await operations.activateManifest(
+        fixture.externalManifest(version: 2),
+        expectedDigest: try await operations.controlPlane.configurationDigest())
       let firstCurrent = try await firstClient.call(toolName: "fixture.identity")
       let secondCurrent = try await secondClient.call(toolName: "fixture.identity")
       #expect(value(firstCurrent, "version") == .integer(2))
@@ -445,7 +447,8 @@ struct GatewayGenerationDispatchTests {
     var configuration = try await fixture.control.activeConfiguration()
     configuration.mcp.servers = []
     configuration.profiles = []
-    _ = try await fixture.service.changeManifest(configuration.exportedTOML())
+    _ = try await fixture.service.changeManifest(
+      configuration.exportedTOML(), expectedDigest: try await fixture.control.configurationDigest())
     var snapshot = try await fixture.installPlugin(version: 1, managed: true, archives: archives)
     snapshot = try await fixture.service.changePlugins(
       .settings(
@@ -553,7 +556,9 @@ struct GatewayGenerationDispatchTests {
         secondAudit.socketConnectionID != nil
           && firstAudit.socketConnectionID != secondAudit.socketConnectionID)
       #expect(firstAudit.profileID == .localAdmin && secondAudit.transport == "control_socket")
-      _ = try await fixture.service.changeManifest(fixture.externalManifest(version: 2))
+      _ = try await fixture.service.changeManifest(
+        fixture.externalManifest(version: 2),
+        expectedDigest: try await fixture.control.configurationDigest())
       let current = try await call("fixture.identity")
       #expect(current.objectValue?["version"] == .integer(2))
       #expect(current.objectValue?["pid"] != first.objectValue?["pid"])
@@ -655,7 +660,9 @@ struct GatewayGenerationDispatchTests {
           "server": .string("fixture"), "tool": .string("wait"), "arguments": .object([:]),
           "request_id": .string("background"), "wait_for_result": .bool(false),
         ])
-      _ = try await fixture.service.changeManifest(fixture.externalManifest(version: 2))
+      _ = try await fixture.service.changeManifest(
+        fixture.externalManifest(version: 2),
+        expectedDigest: try await fixture.control.configurationDigest())
       let native = try await adminCall(client, "fixture.identity")
       #expect(native.objectValue?["version"] == .integer(2))
       _ = try await approvedAdminCall(
@@ -1266,7 +1273,9 @@ struct GatewayGenerationDispatchTests {
         .settings(pluginID: "live-fixture", settings), expectedRevision: snapshot.state.revision)
       var configuration = try await fixture.control.activeConfiguration()
       configuration.mcp.servers = []
-      _ = try await fixture.control.activateManifest(configuration.exportedTOML())
+      _ = try await fixture.control.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try? await fixture.control.configurationDigest())
       #expect(try await !client.listTools().contains { $0.name == "fixture.identity" })
       let changes = GatewayToolChangeBroadcaster()
       let events = changes.stream()
@@ -1408,7 +1417,8 @@ struct GatewayGenerationDispatchTests {
     bookmark.arm()
     let mutation = Task {
       if change == "manifest" {
-        _ = try await fixture.service.changeManifest(manifest)
+        _ = try await fixture.service.changeManifest(
+          manifest, expectedDigest: try await fixture.control.configurationDigest())
       } else if change == "repair" {
         _ = try await fixture.service.changeWorkspaces(
           .repair(id: "fixture", root: fixture.root, displayName: nil))
@@ -1461,7 +1471,9 @@ struct GatewayGenerationDispatchTests {
         capabilities: ["workspace.list"], workspaces: ["fixture"], allowedCallers: [.localMCP])
     }
     let configuration = GatewayConfiguration(profiles: profiles, workspaceDirectory: fixture.root)
-    _ = try await fixture.control.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.control.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await fixture.control.configurationDigest()
+    )
     for profile in profiles { try fixture.database.saveProfile(profile.grant) }
     try await fixture.service.start(profile: profiles[0].id)
     var clients: [GatewayClientSession] = []
@@ -1514,7 +1526,9 @@ struct GatewayGenerationDispatchTests {
       configuration.profiles.append(profile)
       try fixture.database.saveProfile(profile.grant)
     }
-    _ = try await fixture.control.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.control.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await fixture.control.configurationDigest()
+    )
     configuration.server.name = "published"
     let manifestCandidate = try configuration.exportedTOML()
     try await fixture.service.start(profile: .chatGPTOperate)
@@ -1530,7 +1544,8 @@ struct GatewayGenerationDispatchTests {
     bookmark.arm()
     let mutation = Task {
       if change == "manifest" {
-        _ = try await fixture.service.changeManifest(manifestCandidate)
+        _ = try await fixture.service.changeManifest(
+          manifestCandidate, expectedDigest: try await fixture.control.configurationDigest())
       } else if change == "repair" {
         _ = try await fixture.service.changeWorkspaces(
           .repair(id: "fixture", root: fixture.root, displayName: nil))
@@ -2543,7 +2558,8 @@ private struct GenerationFixture: Sendable {
             }))
       ]), workspaceDirectory: root)
     if try database.profiles().isEmpty { try database.saveProfile(profile.grant) }
-    _ = try await control.activateManifest(configuration.exportedTOML())
+    _ = try await control.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await control.configurationDigest())
   }
 
   func installPlugin(version: Int, managed: Bool, archives: ArchiveFixture) async throws

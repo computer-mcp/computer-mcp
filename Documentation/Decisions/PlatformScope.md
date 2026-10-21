@@ -67,6 +67,13 @@ product decision.
   descriptor inheritance and plugin HTTP requests (catalog fetches and archive
   downloads) also have only macOS implementations. Plugin HTTP requests fail with
   `networkUnavailable` on Linux before sending a request.
+- OAuth authorization, grant/token storage and injected CIMD identification build
+  and test on Linux. The CIMD HTTP adapter uses URLSession on macOS; on Linux it
+  fails with `networkUnavailable` before sending a request.
+- Automated CIMD transport coverage verifies that an allowlisted `localhost`
+  is refused by the real macOS fetcher without connecting to a local document
+  listener. Redirect rejection, DNS pinning and TLS against public hosts belong
+  to the live Remote OAuth validation (M9 sub-plan part 3), not automated tests.
 - The owned-process primitive passes inherited descriptors only through Darwin
   spawn file actions. On Linux it rejects configurations that need them, so
   connected stdio MCP transports, which inherit their ownership lock, do not start

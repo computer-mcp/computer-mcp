@@ -596,7 +596,8 @@ struct MCPRegistrationControlFixture: Sendable {
   func seedRegistration(_ server: MCPServerConfig) async throws {
     var configuration = try configuration()
     configuration.mcp.servers.append(server)
-    _ = try await host.activateManifest(configuration.exportedTOML())
+    _ = try await host.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await host.configurationDigest())
   }
 
   func configuration() throws -> GatewayConfiguration {

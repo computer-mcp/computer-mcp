@@ -4,6 +4,7 @@ import SwiftUI
 import Testing
 
 @testable import ComputerMCPApp
+@testable import ComputerMCPAuthorization
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
@@ -143,6 +144,204 @@ struct ClientAccessTests {
     }
     #expect(service.approvals.isEmpty && service.actions.isEmpty)
   }
+
+  @Test
+  func signInApprovalDefaultsToReadOnlyAndKeepsTheOwnersChoice() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let observeProfile = ProfileGrant.cloudflareObserve
+    let operateProfile = ProfileGrant.cloudflareOperate
+    service.remoteProfiles = [operateProfile, observeProfile]
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    #expect(model.pendingOAuthRequests.map(\.pairingCode) == ["K7M2QP", "R4TX9H"])
+    #expect(model.oauthProfileOptions.map(\.id) == [.cloudflareObserve, .cloudflareOperate])
+    #expect(model.statusText == AppLocalization.formatted("Sign-in requests waiting: %@", "2"))
+    let first = model.pendingOAuthRequests[0]
+    let second = model.pendingOAuthRequests[1]
+    let observe = try #require(model.oauthProfile(for: first))
+    #expect(observe.id == .cloudflareObserve && observe.mode == .readOnly)
+    #expect(await model.approve(first, reviewed: observe))
+    model.chooseOAuthProfile(.cloudflareOperate, for: second)
+    model.chooseOAuthProfile(.chatGPTOperate, for: second)
+    let operate = try #require(model.oauthProfile(for: second))
+    #expect(operate.id == .cloudflareOperate)
+    #expect(await model.approve(second, reviewed: operate))
+    #expect(
+      service.actions == [
+        "oauth-approve:K7M2QP:cloudflare:cloudflare-observe",
+        "oauth-approve:R4TX9H:cloudflare:cloudflare-operate",
+      ])
+    #expect(model.oauthProfileChoices.isEmpty)
+    #expect(
+      service.oauthApprovalDigests == [
+        try OAuthApprovalProfile(grant: observeProfile).authorizationDigest,
+        try OAuthApprovalProfile(grant: operateProfile).authorizationDigest,
+      ])
+    #expect(service.approvals.isEmpty)
+  }
+
+  @Test
+  func reviewedPermissionsMustMatchEvenWhenTheAccessModeIsUnchanged() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let request = try #require(model.pendingOAuthRequests.first)
+    let reviewed = try #require(model.oauthProfile(for: request))
+    var current = reviewed
+    current.capabilityIDs.insert("file.read")
+    service.remoteProfiles = [current]
+    await model.reload()
+    #expect(!(await model.approve(request, reviewed: reviewed)))
+    #expect(model.errorMessage != nil)
+    #expect(service.actions.isEmpty)
+  }
+
+  @Test
+  func aProfileNamedObserveThatAllowsChangesIsNeverTheDefault() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let request = try #require(model.pendingOAuthRequests.first)
+    let reviewed = try #require(model.oauthProfile(for: request))
+    var observe = ProfileGrant.cloudflareObserve
+    observe.mode = .workspaceOperations
+    service.remoteProfiles = [observe, .cloudflareOperate]
+    await model.reload()
+    #expect(model.oauthProfile(for: request) == nil)
+    #expect(!(await model.approve(request, reviewed: reviewed)))
+    #expect(model.errorMessage != nil)
+    #expect(service.actions.isEmpty)
+  }
+
+  @Test
+  func aChosenProfileWhoseAccessChangesMustBeChosenAgain() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let request = try #require(model.pendingOAuthRequests.first)
+    model.chooseOAuthProfile(.cloudflareOperate, for: request)
+    let reviewed = try #require(model.oauthProfile(for: request))
+    var operate = ProfileGrant.cloudflareOperate
+    operate.mode = .localFullAccess
+    service.remoteProfiles = [operate, .cloudflareObserve]
+    await model.reload()
+    #expect(model.oauthProfile(for: request) == nil)
+    #expect(!(await model.approve(request, reviewed: reviewed)))
+    #expect(service.actions.isEmpty)
+    model.chooseOAuthProfile(.cloudflareObserve, for: request)
+    let observe = try #require(model.oauthProfile(for: request))
+    #expect(await model.approve(request, reviewed: observe))
+    #expect(service.actions == ["oauth-approve:K7M2QP:cloudflare:cloudflare-observe"])
+  }
+
+  @Test
+  func expiredSignInRequestsLeaveTheListAndCannotBeApproved() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let expired = OAuthPendingAuthorization(
+      id: "c-request", tunnelID: "cloudflare", pairingCode: "W3NC8J", clientHost: "claude.ai",
+      redirectHost: "claude.ai", createdAt: Date(timeIntervalSinceNow: -700),
+      expiresAt: Date(timeIntervalSinceNow: -100))
+    service.oauthRequests.append(expired)
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    #expect(model.pendingOAuthRequests.map(\.pairingCode) == ["K7M2QP", "R4TX9H"])
+    #expect(model.statusText == AppLocalization.formatted("Sign-in requests waiting: %@", "2"))
+    #expect(!(await model.approve(expired, reviewed: .cloudflareObserve)))
+    #expect(model.errorMessage != nil)
+    #expect(service.actions.isEmpty)
+  }
+
+  @Test
+  func signInCannotBeApprovedWithoutATunnelProfile() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    service.remoteProfiles = []
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let request = try #require(model.pendingOAuthRequests.first)
+    #expect(model.oauthProfile(for: request) == nil)
+    #expect(!(await model.approve(request, reviewed: .cloudflareObserve)))
+    #expect(service.actions.isEmpty)
+  }
+
+  @Test
+  func denyAndRevokeUseTheSelectedRecordsAndHideRevokedGrants() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    #expect(model.activeOAuthGrants.map(\.id) == ["recent", "older"])
+    let request = try #require(model.pendingOAuthRequests.last)
+    model.chooseOAuthProfile(.cloudflareOperate, for: request)
+    await model.deny(request)
+    #expect(model.oauthProfileChoices.isEmpty)
+    await model.revoke(model.activeOAuthGrants[1])
+    #expect(service.actions == ["oauth-deny:R4TX9H:cloudflare", "oauth-revoke:older"])
+    service.failWrite = true
+    await model.revoke(model.activeOAuthGrants[0])
+    #expect(model.errorMessage != nil)
+    #expect(service.actions.count == 3)
+  }
+
+  @Test
+  func cloudflareEditorRendersSignInSettings() throws {
+    let model = ComputerMCPAppModel(
+      controlPlane: UnavailableControlPlane(), onboardingPreferences: CompletedOnboarding())
+    var presentation = CloudflareEditorPresentation.new
+    presentation.draft.tunnelName = "computer-mcp-release"
+    presentation.draft.publicHostname = "mcp.example.com"
+    presentation.draft.oauthEnabled = true
+    for dark in [false, true] {
+      let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+      try render(
+        CloudflareTunnelEditorView(presentation: presentation).environmentObject(model)
+          .environment(\.locale, Locale(identifier: "en")),
+        size: .init(width: 600, height: 700), appearance: appearance,
+        name: dark ? "cloudflare-editor-oauth-dark" : "cloudflare-editor-oauth-light")
+    }
+  }
+
+  @Test
+  func signInRequestsAndRemoteClientsRenderWithoutIssuingWrites() async throws {
+    let service = ClientAccessFake()
+    service.oauth = true
+    let model = ClientAccessModel(controlPlane: service)
+    for dark in [false, true] {
+      let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+      await model.reload()
+      try render(
+        ClientAccessView(model: model).padding(24).environment(\.locale, Locale(identifier: "en")),
+        size: .init(width: 900, height: 900),
+        appearance: appearance,
+        name: dark ? "client-access-oauth-dark" : "client-access-oauth-light")
+      service.remoteProfiles = []
+      await model.reload()
+      try render(
+        ClientAccessView(model: model).padding(24).environment(\.locale, Locale(identifier: "en")),
+        size: .init(width: 900, height: 900),
+        appearance: appearance,
+        name: dark ? "client-access-oauth-no-profile-dark" : "client-access-oauth-no-profile-light")
+      service.remoteProfiles = [.cloudflareOperate]
+      await model.reload()
+      try render(
+        ClientAccessView(model: model).padding(24).environment(\.locale, Locale(identifier: "en")),
+        size: .init(width: 900, height: 900), appearance: appearance,
+        name: dark ? "client-access-oauth-choose-dark" : "client-access-oauth-choose-light")
+      service.remoteProfiles = [.cloudflareOperate, .cloudflareObserve]
+    }
+    #expect(service.actions.isEmpty)
+  }
+}
+
+@MainActor
+private struct CompletedOnboarding: OnboardingPreferenceStoring {
+  var completedVersion: Int { UserDefaultsOnboardingPreferences.currentVersion }
+  func markCompleted(version: Int) {}
 }
 
 @MainActor
@@ -169,11 +368,64 @@ private final class ClientAccessFake: ClientAccessManaging {
   var onFetch: (() async -> ClientAccessSnapshot)?
   var approvals: [ClientConsentDraft] = []
   var actions: [String] = []
+  var oauth = false
+  var remoteProfiles: [ProfileGrant] = [.cloudflareOperate, .cloudflareObserve]
+  var oauthRequests = [
+    OAuthPendingAuthorization(
+      id: "a-request", tunnelID: "cloudflare", pairingCode: "R4TX9H", clientHost: "claude.ai",
+      redirectHost: "claude.ai", createdAt: Date(timeIntervalSinceNow: -60),
+      expiresAt: Date(timeIntervalSinceNow: 540)),
+    OAuthPendingAuthorization(
+      id: "b-request", tunnelID: "cloudflare", pairingCode: "K7M2QP", clientHost: "claude.com",
+      redirectHost: "claude.ai", createdAt: Date(timeIntervalSinceNow: -120),
+      expiresAt: Date(timeIntervalSinceNow: 480)),
+  ]
+  let oauthGrants = [
+    OAuthGrant(
+      id: "older", tunnelID: "cloudflare", clientID: "https://claude.ai/oauth/mcp-client.json",
+      redirectHost: "claude.ai", profileID: .cloudflareObserve,
+      resource: "https://mcp.example.com/mcp", scope: "mcp",
+      createdAt: Date(timeIntervalSinceNow: -86_400)),
+    OAuthGrant(
+      id: "recent", tunnelID: "cloudflare", clientID: "https://claude.com/oauth/client.json",
+      redirectHost: "claude.ai", profileID: .cloudflareOperate,
+      resource: "https://mcp.example.com/mcp", scope: "mcp",
+      createdAt: Date(timeIntervalSinceNow: -172_800), lastUsedAt: Date(timeIntervalSinceNow: -30)),
+    OAuthGrant(
+      id: "revoked", tunnelID: "cloudflare", clientID: "https://claude.ai/oauth/mcp-client.json",
+      redirectHost: "claude.ai", profileID: .cloudflareObserve,
+      resource: "https://mcp.example.com/mcp", scope: "mcp",
+      createdAt: Date(timeIntervalSinceNow: -3_600), revokedAt: Date(timeIntervalSinceNow: -60)),
+  ]
 
   func fetchClientAccess() async throws -> ClientAccessSnapshot {
     if let onFetch { return await onFetch() }
     if failRead { throw AppControlPlaneError.unavailable("Read unavailable") }
-    return .init(sessions: [session], trusts: [trust])
+    guard oauth else { return .init(sessions: [session], trusts: [trust]) }
+    return .init(
+      sessions: [session], trusts: [trust], oauthRequests: oauthRequests,
+      oauthGrants: oauthGrants,
+      remoteProfiles: try remoteProfiles.map { try OAuthApprovalProfile(grant: $0) },
+      tunnelHosts: ["cloudflare": "mcp.example.com"])
+  }
+  var oauthApprovalDigests: [String] = []
+  func approveOAuthRequest(
+    _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
+    expectedAuthorizationDigest: String
+  )
+    async throws
+  {
+    actions.append("oauth-approve:\(request.pairingCode):\(request.tunnelID):\(profile.rawValue)")
+    oauthApprovalDigests.append(expectedAuthorizationDigest)
+    if failWrite { throw AppControlPlaneError.unavailable("Write unavailable") }
+  }
+  func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws {
+    actions.append("oauth-deny:\(request.pairingCode):\(request.tunnelID)")
+    if failWrite { throw AppControlPlaneError.unavailable("Write unavailable") }
+  }
+  func revokeOAuthGrant(id: String) async throws {
+    actions.append("oauth-revoke:\(id)")
+    if failWrite { throw AppControlPlaneError.unavailable("Write unavailable") }
   }
   func grantClientFullAccess(
     id: String, lifetime: GatewayFullAccessLifetime,

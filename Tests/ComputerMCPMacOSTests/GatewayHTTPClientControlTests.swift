@@ -180,8 +180,9 @@ struct GatewayHTTPClientControlTests {
       let second = try await fixture.connect()
       let control = try await GatewayClientSession.connectSocket(
         configuration: .init(socketURL: fixture.socket, clientIdentity: .localCLI))
-      #expect(
-        Set(try await control.listToolNames()) == Set(GatewayClientControl.contracts.map(\.name)))
+      let names = Set(try await control.listToolNames())
+      #expect(names == Set(GatewayClientControl.sessionContracts.map(\.name)))
+      #expect(names.isDisjoint(with: GatewayClientControl.oauthContracts.map(\.name)))
       let page = try await fixture.owner.call(
         "clients.list", arguments: .object(["limit": .integer(1)]))
       let cursor = try #require(page.objectValue?["next_after_id"]?.stringValue)

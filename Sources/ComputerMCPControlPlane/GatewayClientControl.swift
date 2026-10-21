@@ -7,7 +7,31 @@ enum GatewayClientControl: Sendable {
   case app(AppControlPlaneOperations)
   case http(GatewayHTTPApp, generation: UUID)
 
-  static let contracts: [ControlToolContract] = [
+  static let oauthContracts: [ControlToolContract] = [
+    .init(
+      "clients.authorizations",
+      arguments: ["tunnel_id": .string, "id": .string, "after_id": .string, "limit": .integer],
+      readOnly: true),
+    .init(
+      "clients.authorize",
+      arguments: [
+        "pairing_code": .string, "tunnel_id": .string, "profile_id": .string,
+        "authorization_digest": .string,
+      ],
+      required: ["pairing_code"], readOnly: false),
+    .init(
+      "clients.deny", arguments: ["pairing_code": .string, "tunnel_id": .string],
+      required: ["pairing_code"], readOnly: false),
+    .init(
+      "clients.grants",
+      arguments: ["tunnel_id": .string, "id": .string, "after_id": .string, "limit": .integer],
+      readOnly: true),
+    .init("clients.revoke_grant", arguments: ["id": .string], required: ["id"], readOnly: false),
+  ]
+
+  static let contracts = oauthContracts + sessionContracts
+
+  static let sessionContracts: [ControlToolContract] = [
     .init(
       "clients.list", arguments: ["id": .string, "after_id": .string, "limit": .integer],
       readOnly: true),
@@ -34,6 +58,55 @@ enum GatewayClientControl: Sendable {
 
   func call(name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
     switch name {
+    case "clients.authorizations", "clients.authorize", "clients.deny", "clients.grants",
+      "clients.revoke_grant":
+      guard case .app(let owner) = self else {
+        throw GatewayToolError.invalidArguments(
+          "OAuth client access is administered through the App control socket.")
+      }
+      let service = owner.controlPlane
+      let tunnelID = arguments["tunnel_id"]?.stringValue
+      switch name {
+      case "clients.authorizations":
+        return try await page(
+          service.oauthAuthorizations(tunnelID: tunnelID, approver: .localCLI),
+          key: "authorizations", arguments: arguments
+        ) {
+          try ControlToolResponse.encodedPayload($0)
+        }
+      case "clients.authorize":
+        let profileID: GatewayProfileID?
+        if let rawProfile = arguments["profile_id"]?.stringValue {
+          guard let selected = GatewayProfileID(rawValue: rawProfile) else {
+            throw GatewayToolError.invalidArguments("profile_id is invalid.")
+          }
+          profileID = selected
+        } else {
+          profileID = nil
+        }
+        let authorizationDigest = arguments["authorization_digest"]?.stringValue
+        let grant = try await service.authorizeOAuthClient(
+          pairingCode: string("pairing_code", arguments),
+          tunnelID: tunnelID, profileID: profileID,
+          expectedAuthorizationDigest: authorizationDigest, approver: .localCLI)
+        return try ControlToolResponse.encodedPayload(grant)
+      case "clients.deny":
+        let code = try string("pairing_code", arguments)
+        try await service.denyOAuthAuthorization(
+          pairingCode: code, tunnelID: tunnelID, approver: .localCLI)
+        return .object(["denied": .string(code)])
+      case "clients.grants":
+        return try await page(
+          service.oauthGrants(tunnelID: tunnelID, approver: .localCLI), key: "grants",
+          arguments: arguments
+        ) {
+          try ControlToolResponse.encodedPayload($0)
+        }
+      default:
+        let id = try string("id", arguments)
+        try await service.revokeOAuthGrant(id: id, approver: .localCLI)
+        return .object(["revoked": .string(id)])
+      }
     case "clients.list":
       let sessions = try await sessions()
       let trusts = try await trusts()
@@ -169,13 +242,14 @@ package struct GatewayHTTPClientControl: GatewayClientControlProvider {
   package init() {}
 
   package func listTools() throws -> [MCPTool] {
-    try GatewayClientControl.contracts.map { try $0.tool() }
+    try GatewayClientControl.sessionContracts.map { try $0.tool() }
   }
 
   package func callTool(
     name: String, arguments: JSONValue?, owner: GatewayHTTPApp, generation: UUID
   ) async throws -> JSONValue {
-    guard let contract = GatewayClientControl.contracts.first(where: { $0.name == name }) else {
+    guard let contract = GatewayClientControl.sessionContracts.first(where: { $0.name == name })
+    else {
       throw GatewayToolError.unknownTool(name)
     }
     let object = try contract.validate(arguments)

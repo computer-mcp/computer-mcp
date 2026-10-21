@@ -77,7 +77,8 @@ struct CombinedPluginWorkflowTests {
       roots: [
         .init(id: "manual-skills", path: manualSkills.deletingLastPathComponent().path)
       ])
-    _ = try await fixture.host.activateManifest(configuration.exportedTOML())
+    _ = try await fixture.host.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
     try fixture.database.saveWorkspace(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let grant = ProfileGrant(

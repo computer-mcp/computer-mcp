@@ -213,7 +213,36 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func fetchClientAccess() async throws -> ClientAccessSnapshot {
     let sessions = await operations.controlSessions()
-    return try ClientAccessSnapshot(sessions: sessions, trusts: operations.clientTrusts())
+    // Mirrors the authorization server's rule for profiles a tunnel client may receive.
+    let remoteProfiles = try await controlPlane.oauthApprovalProfiles()
+    let tunnelHosts = Dictionary(
+      try await controlPlane.cloudflareTunnelConfigurations().map { ($0.id, $0.publicHostname) },
+      uniquingKeysWith: { first, _ in first })
+    return try await ClientAccessSnapshot(
+      sessions: sessions, trusts: operations.clientTrusts(),
+      oauthRequests: controlPlane.oauthAuthorizations(),
+      oauthGrants: controlPlane.oauthGrants(), remoteProfiles: remoteProfiles,
+      tunnelHosts: tunnelHosts)
+  }
+
+  func approveOAuthRequest(
+    _ request: OAuthPendingAuthorization, profile: GatewayProfileID,
+    expectedAuthorizationDigest: String
+  )
+    async throws
+  {
+    _ = try await controlPlane.authorizeOAuthClient(
+      pairingCode: request.pairingCode, tunnelID: request.tunnelID, profileID: profile,
+      expectedAuthorizationDigest: expectedAuthorizationDigest)
+  }
+
+  func denyOAuthRequest(_ request: OAuthPendingAuthorization) async throws {
+    try await controlPlane.denyOAuthAuthorization(
+      pairingCode: request.pairingCode, tunnelID: request.tunnelID)
+  }
+
+  func revokeOAuthGrant(id: String) async throws {
+    try await controlPlane.revokeOAuthGrant(id: id)
   }
 
   func grantClientFullAccess(
@@ -348,15 +377,19 @@ final class LiveAppControlPlane: AppControlPlane {
       summaries.append(
         CloudflareTunnelSummary(
           id: profile.id,
+          configurationDigest: try profile.configurationDigest,
           tunnelName: profile.tunnelName,
           publicHostname: profile.publicHostname,
           profileID: profile.gatewayProfile.rawValue,
           state: (status?.state ?? .stopped).appState,
           localPort: profile.localPort,
           metricsPort: profile.metricsPort,
+          cloudflaredPath: profile.cloudflaredPath,
           processIdentifier: status?.processID,
           connectedAt: status?.startedAt,
-          lastError: status?.lastError
+          lastError: status?.lastError,
+          oauthEnabled: profile.oauthEnabled,
+          oauthClientAllowlist: profile.oauthClientAllowlist
         ))
     }
     return summaries
@@ -489,10 +522,11 @@ final class LiveAppControlPlane: AppControlPlane {
         )
       }
     )
-    let manifestContent = try String(
-      contentsOf: controlPlane.directories.manifest,
-      encoding: .utf8
-    )
+    let manifestData = try Data(contentsOf: controlPlane.directories.manifest)
+    guard let manifestContent = String(data: manifestData, encoding: .utf8) else {
+      throw CocoaError(.fileReadInapplicableStringEncoding)
+    }
+    let manifestDigest = try AtomicManifestStore.digest(of: manifestData)
     var foundCurrentRevision = false
     let revisions = try await controlPlane.configurationHistory().map { revision in
       let isCurrent =
@@ -518,6 +552,7 @@ final class LiveAppControlPlane: AppControlPlane {
       manifest: ManifestSnapshot(
         path: controlPlane.directories.manifest.path,
         content: manifestContent,
+        digest: manifestDigest,
         revisions: revisions
       )
     )
@@ -775,8 +810,11 @@ final class LiveAppControlPlane: AppControlPlane {
         localPort: draft.localPort,
         metricsPort: draft.metricsPort,
         cloudflaredPath: draft.cloudflaredPath,
+        oauthEnabled: draft.oauthEnabled,
+        oauthClientAllowlist: draft.oauthClientAllowlist,
         tunnelToken: draft.tunnelToken,
-        regenerateAccessToken: draft.regenerateAccessToken
+        regenerateAccessToken: draft.regenerateAccessToken,
+        expectedTunnelDigest: draft.expectedTunnelDigest
       )
     )
     return result.generatedAccessToken
@@ -844,8 +882,8 @@ final class LiveAppControlPlane: AppControlPlane {
     return result
   }
 
-  func saveManifest(_ content: String) async throws {
-    _ = try await operations.activateManifest(content)
+  func saveManifest(_ content: String, expectedDigest: String) async throws {
+    _ = try await operations.activateManifest(content, expectedDigest: expectedDigest)
   }
 
   func rollbackManifest(to revisionID: String) async throws {

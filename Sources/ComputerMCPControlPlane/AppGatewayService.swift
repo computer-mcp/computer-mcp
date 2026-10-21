@@ -135,6 +135,7 @@ package actor AppGatewayService {
   package nonisolated let socketConfiguration: GatewaySocketConfiguration
 
   private let controlPlane: AppControlPlaneService
+  private let manifestWillPublish: @Sendable () async throws -> Void
   private let platform: PlatformServices
   private var controlSessionRecords: [String: (key: RuntimeKey, session: GatewayControlSession)] =
     [:]
@@ -170,8 +171,10 @@ package actor AppGatewayService {
 
   package init(
     controlPlane: AppControlPlaneService,
-    socketConfiguration: GatewaySocketConfiguration
+    socketConfiguration: GatewaySocketConfiguration,
+    manifestWillPublish: @escaping @Sendable () async throws -> Void = {}
   ) {
+    self.manifestWillPublish = manifestWillPublish
     self.controlPlane = controlPlane
     self.platform = controlPlane.platform
     self.socketConfiguration = socketConfiguration
@@ -377,7 +380,15 @@ package actor AppGatewayService {
         return admitted.serving
       },
       closeSession: { [weak self] sessionID in await self?.closeControlSession(id: sessionID) },
-      shutdown: { [weak self] in await self?.stopHTTPListener(id: id) })
+      shutdown: { [weak self] in await self?.stopHTTPListener(id: id) },
+      makeOAuthSession: { [weak self] principalID, grantProfileID in
+        guard let self else { throw GatewaySocketError.notConnected }
+        let admitted = try await self.makeServingSession(
+          key: RuntimeKey(
+            principalID: principalID, profileID: grantProfileID, caller: .cloudflareTunnel,
+            owner: .http(id)), epoch: id, trace: trace)
+        return admitted.serving
+      })
   }
 
   private func stopHTTPListener(id: UUID) async {
@@ -391,14 +402,10 @@ package actor AppGatewayService {
       await stopRuntimes(owner: .http(id))
       // Publication can still own candidates for this invalidated listener.
       // These joins are bounded by the HTTP owner capacity and cannot be cancelled.
-      if configurationChangeInProgress {
+      if preparingRuntimeCount > 0 {
         await withCheckedContinuation { publicationDrainWaiters.append($0) }
       }
-      if httpTerminalSessions.isEmpty, administrationEpoch == nil,
-        state != .running, state != .starting
-      {
-        await stopManifestMonitoring()
-      }
+      await stopUnusedManifestMonitoring()
     }
     httpShutdownTasks[id] = stopping
     await stopping.value
@@ -1157,7 +1164,7 @@ package actor AppGatewayService {
   }
 
   func changeManifest(
-    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String? = nil
+    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String
   ) async throws -> ConfigurationRevision {
     let revision = try await withConfigurationChange {
       try await publishManifest(manifest, reason: reason, expectedDigest: expectedDigest)
@@ -1168,12 +1175,13 @@ package actor AppGatewayService {
   }
 
   private func publishManifest(
-    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String?
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String
   ) async throws -> ConfigurationRevision {
     try await controlPlane.applyManifestChange(
       manifest, reason: reason, expectedDigest: expectedDigest
     ) { [self] _, prepared in
-      try await preparePublication(
+      try await manifestWillPublish()
+      return try await preparePublication(
         inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
         storage: nil
       ) { resolution, install in
@@ -1263,6 +1271,13 @@ package actor AppGatewayService {
     }
   }
 
+  private func stopUnusedManifestMonitoring() async {
+    guard !configurationChangeInProgress, httpTerminalSessions.isEmpty,
+      administrationEpoch == nil, state != .running, state != .starting
+    else { return }
+    await stopManifestMonitoring()
+  }
+
   private func stopManifestMonitoring() async {
     manifestEpoch = nil
     let admittedObserver = manifestObserver
@@ -1296,6 +1311,11 @@ package actor AppGatewayService {
       publicationDrainWaiters.removeAll()
       for waiter in drainWaiters { waiter.resume() }
       releaseLifecycle()
+      // A reload may remove its last HTTP owner. Its observer must return from
+      // this publication before another task can cancel and join that observer.
+      if manifestMonitor != nil {
+        Task { await self.stopUnusedManifestMonitoring() }
+      }
     }
     // Finish admissions that already own construction; later new keys wait above.
     let pending = pendingRuntimes.values.map(\.task)

@@ -1,3 +1,4 @@
+import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
@@ -9,7 +10,7 @@ import Crypto
 import Foundation
 import GRDB
 
-package final class GatewayDatabase: @unchecked Sendable {
+package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   private let connection: GatewayDatabaseConnection
   private var writer: any DatabaseWriter { connection.writer }
   private let profileChangeLock = NSLock()
@@ -36,6 +37,18 @@ package final class GatewayDatabase: @unchecked Sendable {
 
   package init(connection: GatewayDatabaseConnection) {
     self.connection = connection
+  }
+
+  package func oauthTransaction<Result>(
+    _ body: (any OAuthStoreTransaction) throws -> Result
+  ) throws -> Result {
+    try writer.write { try body(GatewayOAuthTransaction(database: $0)) }
+  }
+
+  package func reconcileOAuthTunnels(activeIDs: Set<String>) throws {
+    try writer.write {
+      try GatewayOAuthTransaction(database: $0).reconcileTunnels(activeIDs: activeIDs)
+    }
   }
 
   /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
@@ -1034,7 +1047,7 @@ package final class GatewayDatabase: @unchecked Sendable {
   /// A recovery journal restores file state if SQLite rolls this transaction back.
   package func activateConfigurationRevision(
     _ revision: ConfigurationRevision, expected: ConfigurationState,
-    resolution: GatewayConfigurationResolution,
+    resolution: GatewayConfigurationResolution, activeTunnelIDs: Set<String>,
     replaceManifest: (ConfigurationState) throws -> Void
   ) throws -> ConfigurationState {
     let committed = try writer.write { database in
@@ -1042,6 +1055,7 @@ package final class GatewayDatabase: @unchecked Sendable {
         throw GatewayDatabaseError.configurationChanged
       }
       try Self.applyRuntimeResolution(resolution, in: database)
+      try GatewayOAuthTransaction(database: database).reconcileTunnels(activeIDs: activeTunnelIDs)
       try ConfigurationRevisionRecord(revision).insert(database)
       let state = try Self.configurationState(in: database)
       try replaceManifest(state)

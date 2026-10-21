@@ -106,8 +106,13 @@ main-thread dispatch before entering macOS AX/AppKit behavior.
 The App's Client access page presents connected socket/HTTP sessions separately
 from saved client approvals. Its ObservableObject feature model captures the
 reviewed session and trust revisions; refresh cannot rebase an open confirmation.
-The menu shows current control status and directs the owner to that page. A failed
-refresh remains unavailable while retaining the last visible records.
+Pending OAuth sign-in requests and live grants appear on the same page. Approval
+offers the profiles the authorization server accepts, preselects only a read-only
+one, and submits only the profile and access level the owner reviewed before the
+request expires.
+The menu shows current control status, or the number of waiting sign-in requests,
+and directs the owner to that page. A failed refresh remains unavailable while
+retaining the last visible records.
 
 Restricted permission editing uses the host's current classified tool catalog,
 registered projects and composed MCP integrations. The App presents readable
@@ -156,3 +161,42 @@ CLI command, surface, read/write classification, destructive hint,
 idempotence, and local-only ownership. The library exposes the same catalog on
 the owner control socket, whose MCP schemas and tests must cover it exactly,
 without publishing it to remote gateway profiles.
+
+## OAuth approval consistency
+
+`OAuthApprovalProfile` pairs each resolved remote grant with its
+`authorization_digest`. The digest is the lowercase SHA-256 hex of compact UTF-8
+JSON, with keys sorted and slashes unescaped. Its keys are `mode`, `capabilities`,
+`workspaces`, `callers`, `full_shell_enabled`, `mcp_servers` and
+`confirmation_policy`. Set-valued fields are arrays sorted by their string
+values; the other values are the grant's enum raw values or Boolean. Profile
+identity and persistence revision are excluded. `profile.list` and
+`profile.show` include the digest, and the App's Client access snapshot carries
+it alongside each profile.
+
+`AtomicManifestStore.publicationLock` serializes active-configuration reads
+through publication across the control-plane and gateway actors. Writers read
+their merge base under this lock and pass its admitted manifest digest to
+preparation; file admission and database comparisons remain second guards.
+Permission writers may prepare catalogs before acquiring the lock, then reread
+and compare all configuration inputs under it before publishing.
+The lock covers manifest activation, import, rollback, external reload,
+OpenAI and Cloudflare tunnel saves and deletion, profile permission edits,
+workspace changes and plugin publication. Secret I/O before a Cloudflare save
+can suspend independently; omitted OAuth fields are resolved again from the
+current configuration under the publication lock.
+
+When both are needed, acquire the tunnel mutation slot before the configuration
+publication lock. Approval holds both while resolving the effective profile,
+checking the reviewed digest and committing the grant. Configuration publication
+never acquires a tunnel slot. Gateway publications acquire their listener
+lifecycle admission before entering the publication lock, and tunnel deletion
+stops and joins the listener before acquiring the publication lock. This avoids
+waiting for a listener publication while holding the lock it needs.
+
+Deletion holds the tunnel slot while one OAuth store transaction revokes every
+grant and removes every pairing request and unexchanged authorization code for
+the tunnel. Revoked grants remain as audit-owned records. Session cleanup and
+manifest removal follow that transaction, so a failed removal leaves the
+configured tunnel with its authorizations ended. Recreating an ID and hostname
+cannot resume any of those pairings or codes.

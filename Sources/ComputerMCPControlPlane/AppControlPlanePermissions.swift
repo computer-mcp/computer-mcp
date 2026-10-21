@@ -30,7 +30,10 @@ extension AppControlPlaneService {
   func applyRemoteWorkspaceGrant(
     id: String, enabled: Bool, profile: GatewayControlProfile, expectedRevision: Int64,
     inputs: GatewayInputs, authorization: GatewayManagementAuthorization
-  ) throws -> ProfileGrant {
+  ) async throws -> ProfileGrant {
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
     try requireCurrentGatewayInputs(inputs)
     guard profile.grant.authorizationRevision == expectedRevision,
       inputs.workspaces.contains(where: { $0.id == id })

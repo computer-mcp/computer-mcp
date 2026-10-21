@@ -35,12 +35,79 @@ Authorization: Bearer <computer-mcp-access-token>
 
 发起一次只读工具调用，回到 Cloudflare 页面选择 **Check for Request**。只有当前
 Named Tunnel、Profile、Caller 和启动时间均匹配的成功审计请求才会进入 Verified。
+该请求还必须来自当前访问令牌或仍有效的 OAuth 授权，并匹配该凭据的配置档。
+OAuth 配对和令牌端点的事件不会建立 Verified。
+
+## OAuth 配对
+
+每条连接默认关闭 OAuth。可在 App 的 Cloudflare 连接编辑器中打开「允许通过 OAuth
+登录」，并在「允许的客户端主机」中编辑允许列表。已有连接也可通过所有者 CLI 开启；
+省略令牌参数会保留已保存的凭据：
+
+```sh
+computer-mcp tunnel cloudflare save partner --tunnel-name computer-mcp-release --public-hostname mcp.example.com --gateway-profile cloudflare-observe --oauth-enabled
+computer-mcp clients authorizations
+computer-mcp clients authorize <pairing-code> --profile cloudflare-observe
+computer-mcp clients deny <pairing-code>
+computer-mcp clients grants
+computer-mcp clients revoke-grant <grant-id>
+```
+
+重复 `--oauth-client-host <host>` 可替换 CIMD 客户端主机允许列表；默认允许
+`claude.ai` 和 `claude.com`，按完整主机名匹配。`--no-oauth-enabled` 关闭 OAuth；
+保存已有连接时，省略这些选项会保留原设置。清单键为 `oauth_enabled` 和
+`oauth_client_allowlist`，更改可作用于运行中的监听器。
+
+客户端连接 `https://<hostname>/mcp`，通过 CIMD、S256 PKCE 和本机批准获得授权。
+隧道路由需保留公网 Host，并转发 `/.well-known/…`、`/oauth/…` 和 `/mcp`。
+浏览器只显示客户端主机、回调主机和六位配对码；请在 Mac 上核对同码后批准。
+App 的「客户端权限」页在「登录请求」中列出同一请求及其连接，按访问级别分组提供
+允许 `cloudflare-tunnel` 的配置方案，并预选只读方案（优先 Cloudflare 观察）；没有
+只读方案时需明确选择，所选方案的访问级别变化后须重新选择。过期请求不能批准。
+「已登录的远程客户端」列出仍有效的授权及其连接、配置方案、批准时间和最近使用时间，
+可直接撤销。
+配对十分钟过期，公网页面不能批准。CLI 与控制面仅在 `cloudflare-observe` 的
+实际模式仍为只读时默认使用它；否则须明确指定 `--profile`（控制面为
+`profile_id`）。完全访问仍需本机逐会话同意。批准或拒绝可加 `--tunnel-id`
+区分不同连接的同码请求。
+
+授权码单次使用、有效期六十秒；访问令牌有效一小时。刷新令牌每次使用都会轮换，
+三十天未使用即过期；重用已轮换的刷新令牌会吊销整个授权。数据库只保存令牌和
+授权码的 SHA-256 摘要，日志、审计和钥匙串都不保存 OAuth 原值。吊销授权立即
+拒绝其令牌，并结束该授权的网关会话和已打开的数据流；刷新令牌重用或吊销刷新
+令牌也会结束这些会话与流。审计记录授权吊销和会话结束（`oauth.sessions_ended`）。
+替换 Computer MCP 访问令牌也会立即更新监听器，包括正在启动的监听器。
+独立的 Cloudflare Access 策略仍需允许该客户端访问相关路径。
+
+HTTP 在请求头阶段进行准入：开启 OAuth 时，`/mcp` 验证凭据期间暂停读取请求体，
+失败即返回带资源元数据挑战的 401 并关闭连接；未开启时保持同步 Bearer 验证。
+OAuth 路径也在请求头阶段扣除地址限流额度。请求头和 OAuth 请求体上限均为
+16 KiB，已认证 MCP 请求体上限为 8 MiB；声明长度或流入字节超限均返回 413 并
+关闭。请求体须在请求头后 15 秒内完成，首次请求头也限时 15 秒，否则返回 408
+并关闭。每个监听器最多容纳 32 条尚未认证的连接，超额返回 503 并关闭。公开
+OAuth 连接在 MCP 认证或断开前保留名额，空闲限时同为 15 秒。
+
+每条隧道最多保留 128 个待批准或已批准但未交付的配对请求，同一客户端地址
+最多三个。CIMD 获取前先预留名额：同一地址最多一个获取请求，整条隧道最多
+四个并发获取。超过限制直接返回 429 `temporarily_unavailable`，不发起获取；
+失败或取消会释放名额。
+
+令牌端点的 400 错误码：参数缺失、为空、重复或内容类型不支持为
+`invalid_request`；授权类型不支持为 `unsupported_grant_type`；scope 不是
+`mcp` 为 `invalid_scope`；授权码、刷新令牌、客户端 ID、回调、PKCE 或 resource
+错误、过期、重用或绑定不符为 `invalid_grant`。客户端认证方式不支持时返回
+401 `invalid_client`，`WWW-Authenticate` 挑战与所尝试的 Authorization 方案一致
+（Basic 请求返回 `Basic`）。授权端点在验证回调后以 `unsupported_response_type` 或
+`invalid_scope` 重定向。回调保留已有查询，追加参数中的 `+` 编码为 `%2B`，
+空格编码为 `%20`。
 
 ## 恢复
 
 - `cloudflared` 不兼容：通过官方安装渠道升级后 Retry。
-- Token 被撤销：编辑连接并保存新 Token；旧 Verified 状态会立即失效。
-- 401：核对 Computer MCP Access Token，而不是 Tunnel Token。
+- 替换 Computer MCP 访问令牌或吊销 OAuth 授权：对应的 Verified 证据立即失效；
+  新凭据需重新完成成功的工具请求。
+- Cloudflare 隧道令牌被撤销：编辑连接并保存新令牌，重新诊断和启动。
+- 401：核对 Computer MCP 访问令牌或 OAuth 授权、刷新状态，而不是隧道令牌。
 - Cloudflare 连接成功但无 MCP：核对 hostname 路由、origin 端口和 `/mcp` 路径。
 - 停止连接会清理临时 `0600` Token 文件和 loopback origin，不会删除 Cloudflare 账号内的 Tunnel。
 

@@ -19,7 +19,9 @@ final class AtomicManifestStoreTests {
   func rejectedExternalBytesRemainUnmodifiedAndUnadmitted(data: Data?) throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let original = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     if let data {
       try data.write(to: fixture.manifestURL, options: .atomic)
     } else {
@@ -40,7 +42,9 @@ final class AtomicManifestStoreTests {
   func rejectedExternalDatabaseCommitDoesNotRewriteTheEditorFile() throws {
     let fixture = try ManifestStoreFixture(persistent: true)
     defer { fixture.cleanup() }
-    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let original = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let text = Self.manifest(name: "external")
     try Data(text.utf8).write(to: fixture.manifestURL, options: .atomic)
     let before = try #require(FileFingerprint.current(of: fixture.manifestURL))
@@ -71,7 +75,9 @@ final class AtomicManifestStoreTests {
   func preparedPublicationCommitsFileAndResolutionTogether(outcome: String) throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let original = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     try fixture.database.saveWorkspace(
       .init(id: "workspace", displayName: "Workspace", rootPath: fixture.root.path))
     let before = try fixture.database.configurationState()
@@ -117,7 +123,9 @@ final class AtomicManifestStoreTests {
   func failedMetadataWriteRestoresFileAndRevisionAuthority() throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let original = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let manager = RejectingManifestMetadata(manifestURL: fixture.manifestURL)
     let store = try AtomicManifestStore(
       manifestURL: fixture.manifestURL, database: fixture.database,
@@ -126,7 +134,9 @@ final class AtomicManifestStoreTests {
       fileManager: manager)
     #expect(try store.activeConfiguration().server.name == "original")
     #expect(throws: ManifestWriteFailure.self) {
-      try store.activate(manifest: Self.manifest(name: "rejected"))
+      try store.activate(
+        manifest: Self.manifest(name: "rejected"),
+        expectedDigest: try? store.admittedDigest(for: store.activeConfiguration()))
     }
     #expect(manager.didReject)
     #expect(try Data(contentsOf: fixture.manifestURL) == Data(original.manifest.utf8))
@@ -143,7 +153,9 @@ final class AtomicManifestStoreTests {
   func deferredDatabaseCommitFailureRestoresReplacedFile() throws {
     let fixture = try ManifestStoreFixture(persistent: true)
     defer { fixture.cleanup() }
-    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let original = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let connection = try DatabaseQueue(path: try #require(fixture.database.fileURL).path)
     defer { try? connection.close() }
     try connection.write {
@@ -163,7 +175,11 @@ final class AtomicManifestStoreTests {
         database: fixture.database, applications: MacOSPlatform.services.applications),
       fileManager: manager)
     let proposed = Self.manifest(name: "rejected")
-    #expect(throws: DatabaseError.self) { try store.activate(manifest: proposed) }
+    #expect(throws: DatabaseError.self) {
+      try store.activate(
+        manifest: proposed,
+        expectedDigest: try? store.admittedDigest(for: store.activeConfiguration()))
+    }
     // The deferred constraint fails at COMMIT, after the real replacement completed.
     #expect(manager.replacedData == Data(proposed.utf8))
     #expect(try Data(contentsOf: fixture.manifestURL) == Data(original.manifest.utf8))
@@ -183,7 +199,9 @@ final class AtomicManifestStoreTests {
         database: fixture.database, applications: MacOSPlatform.services.applications),
       fileManager: manager)
     #expect(throws: ManifestWriteFailure.self) {
-      try store.activate(manifest: Self.manifest(name: "rejected"))
+      try store.activate(
+        manifest: Self.manifest(name: "rejected"),
+        expectedDigest: try? store.admittedDigest(for: store.activeConfiguration()))
     }
     #expect(manager.didReject)
     #expect(try fixture.files.currentData() == nil)
@@ -196,7 +214,9 @@ final class AtomicManifestStoreTests {
   func concurrentEditsDuringValidationNeverPublishStaleBytes(editActive: Bool) throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let original = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let external = Self.manifest(name: "external")
     let store = try AtomicManifestStore(
       manifestURL: fixture.manifestURL, database: fixture.database,
@@ -226,7 +246,9 @@ final class AtomicManifestStoreTests {
     if initialActivation {
       previous = nil
     } else {
-      _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+      _ = try fixture.store.activate(
+        manifest: Self.manifest(name: "original"),
+        expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
       previous = try Data(contentsOf: fixture.manifestURL)
     }
     let revision = Self.recoveryRevision(name: "candidate")
@@ -258,7 +280,9 @@ final class AtomicManifestStoreTests {
   func recoveryPreservesUnrecognizedExternalEdits(committed: Bool) throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    _ = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let previous = try Data(contentsOf: fixture.manifestURL)
     let revision = Self.recoveryRevision(name: "candidate")
     try fixture.writeJournal(revision, previous: previous)
@@ -290,7 +314,9 @@ final class AtomicManifestStoreTests {
   func invalidRecoveryEvidenceDoesNotMutateFiles(kind: String) throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    _ = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let previous = try Data(contentsOf: fixture.manifestURL)
     var revision = Self.recoveryRevision(name: "candidate")
     if kind == "digest" { revision.digest = "invalid" }
@@ -320,7 +346,9 @@ final class AtomicManifestStoreTests {
   func cooperatingStoresSerializeReviewedPublication() throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    let first = try fixture.store.activate(manifest: Self.manifest(name: "first"))
+    let first = try fixture.store.activate(
+      manifest: Self.manifest(name: "first"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let other = try AtomicManifestStore(
       manifestURL: fixture.manifestURL, database: fixture.database,
       loader: GatewayManifestConfigurationLoader(
@@ -343,14 +371,18 @@ final class AtomicManifestStoreTests {
   func committedRevisionSurvivesRecoveryRecordCleanupFailure() throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    _ = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let manager = RejectingRecoveryCleanup(recoveryURL: fixture.files.recoveryURL)
     let store = try AtomicManifestStore(
       manifestURL: fixture.manifestURL, database: fixture.database,
       loader: GatewayManifestConfigurationLoader(
         database: fixture.database, applications: MacOSPlatform.services.applications),
       fileManager: manager)
-    let revision = try store.activate(manifest: Self.manifest(name: "committed"))
+    let revision = try store.activate(
+      manifest: Self.manifest(name: "committed"),
+      expectedDigest: try? store.admittedDigest(for: store.activeConfiguration()))
     #expect(try store.activeConfiguration().server.name == "committed")
     #expect(try fixture.database.configurationRevision(id: revision.id)?.digest == revision.digest)
     #expect(try permissions(at: fixture.files.recoveryURL) == 0o600)
@@ -375,7 +407,9 @@ final class AtomicManifestStoreTests {
   func unadmittedDiskChangesPreserveActiveReadsAndInvalidatePublication(text: String) throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    _ = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let original = try fixture.store.activeConfiguration()
     try text.write(to: fixture.manifestURL, atomically: true, encoding: .utf8)
     #expect(try fixture.store.activeConfiguration() == original)
@@ -385,7 +419,12 @@ final class AtomicManifestStoreTests {
     }
     #expect(!published)
     #expect(try fixture.store.history().count == 1)
-    _ = try fixture.store.activate(manifest: Self.manifest(name: "managed"))
+    #expect(throws: AtomicManifestStoreError.staleDigest) {
+      try fixture.store.activate(manifest: Self.manifest(name: "managed"))
+    }
+    _ = try fixture.store.activate(
+      manifest: Self.manifest(name: "managed"),
+      expectedDigest: try AtomicManifestStore.digest(of: Data(text.utf8)))
     #expect(try fixture.store.activeConfiguration().server.name == "managed")
     #expect(throws: AtomicManifestStoreError.staleDigest) {
       try fixture.store.withCurrentConfiguration(original) { published = true }
@@ -400,7 +439,9 @@ final class AtomicManifestStoreTests {
   func externalFileNotificationsRequireExplicitAdmission() async throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    _ = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    _ = try fixture.store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let monitor = try DirectoryEventFileChangeMonitor(fileURL: fixture.manifestURL)
     var invalidations = monitor.changes.makeAsyncIterator()
     _ = await invalidations.next()
@@ -430,7 +471,9 @@ final class AtomicManifestStoreTests {
     let stream = fixture.store.changes()
     let eventTask = Task { await stream.first(where: { _ in true }) }
 
-    let revision = try fixture.store.activate(manifest: validManifest(name: "first"))
+    let revision = try fixture.store.activate(
+      manifest: validManifest(name: "first"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let event = await eventTask.value
 
     #expect((event?.revision.id) == (revision.id))
@@ -454,9 +497,15 @@ final class AtomicManifestStoreTests {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
     let original = validManifest(name: "original")
-    _ = try fixture.store.activate(manifest: original)
+    _ = try fixture.store.activate(
+      manifest: original,
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
 
-    expectThrows(try fixture.store.activate(manifest: "schema_version = 999\n"))
+    expectThrows(
+      try fixture.store.activate(
+        manifest: "schema_version = 999\n",
+        expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
+    )
 
     #expect((try String(contentsOf: fixture.manifestURL, encoding: .utf8)) == (original))
     #expect((try fixture.store.activeConfiguration().server.name) == ("original"))
@@ -466,10 +515,16 @@ final class AtomicManifestStoreTests {
   func testRollbackCreatesNewActivatedRevision() throws {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
-    let first = try fixture.store.activate(manifest: validManifest(name: "first"))
-    _ = try fixture.store.activate(manifest: validManifest(name: "second"))
+    let first = try fixture.store.activate(
+      manifest: validManifest(name: "first"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
+    _ = try fixture.store.activate(
+      manifest: validManifest(name: "second"),
+      expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
 
-    let rollback = try fixture.store.rollback(to: first.id)
+    let rollback = try fixture.store.rollback(
+      to: first.id,
+      expectedDigest: try fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
 
     #expect((rollback.id) != (first.id))
     #expect((rollback.digest) == (first.digest))
@@ -485,7 +540,8 @@ final class AtomicManifestStoreTests {
     expectThrows(try fixture.store.activeConfiguration()) { error in
       #expect((error as? AtomicManifestStoreError) == (.manifestMissing))
     }
-    expectThrows(try fixture.store.rollback(to: "missing")) { error in
+    expectThrows(try fixture.store.rollback(to: "missing", expectedDigest: "unavailable")) {
+      error in
       #expect((error as? AtomicManifestStoreError) == (.unknownRevision("missing")))
     }
   }
@@ -499,7 +555,9 @@ final class AtomicManifestStoreTests {
     let fixture = try ManifestStoreFixture()
     defer { fixture.cleanup() }
     let store = fixture.store
-    let original = try store.activate(manifest: Self.manifest(name: "original"))
+    let original = try store.activate(
+      manifest: Self.manifest(name: "original"),
+      expectedDigest: try? store.admittedDigest(for: store.activeConfiguration()))
     let winners = try await withThrowingTaskGroup(of: String?.self) { group in
       for name in ["first", "second"] {
         group.addTask {
@@ -507,7 +565,9 @@ final class AtomicManifestStoreTests {
             _ = try store.activate(
               manifest: Self.manifest(name: name), expectedDigest: original.digest)
             return name
-          } catch AtomicManifestStoreError.staleDigest {
+          } catch let error as AtomicManifestStoreError
+            where error == .staleDigest || error == .changeInProgress
+          {
             return nil
           }
         }

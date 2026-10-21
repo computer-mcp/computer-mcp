@@ -31,6 +31,22 @@ package struct AppControlCapability: Codable, Equatable, Sendable, Identifiable 
 package enum AppControlCapabilityCatalog {
   package static let all: [AppControlCapability] = [
     item(
+      "clients.authorizations", "computer-mcp clients authorizations",
+      "List pending OAuth pairing requests for local approval.", readOnly: true),
+    item(
+      "clients.authorize", "computer-mcp clients authorize",
+      "Approve one OAuth pairing code, optionally bound to a reviewed authorization digest.",
+      idempotent: false),
+    item(
+      "clients.deny", "computer-mcp clients deny",
+      "Deny one pending OAuth pairing code.", idempotent: false),
+    item(
+      "clients.grants", "computer-mcp clients grants",
+      "List OAuth grants and their revocation state.", readOnly: true),
+    item(
+      "clients.revoke_grant", "computer-mcp clients revoke-grant",
+      "Revoke one OAuth grant and invalidate its tokens.", destructive: true),
+    item(
       "clients.list", "computer-mcp clients list",
       "List connected client access and exact approval revisions.", readOnly: true),
     item(

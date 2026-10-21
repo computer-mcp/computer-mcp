@@ -236,6 +236,18 @@ uses OpenAI Secure MCP Tunnel. Reviewed public MCP consumers can use a
 loopback-only, bearer-protected origin behind a Cloudflare remotely managed
 named tunnel.
 
+Cloudflare connections support optional OAuth for public CIMD clients such as
+claude.ai. Turn on **Allow sign-in with OAuth** in the App's Cloudflare
+connection editor, or use the owner CLI or manifest. When a client signs in,
+compare the six-character pairing code on its browser page with the request in
+**Client access**, choose its profile and approve; `computer-mcp clients
+authorizations` and `computer-mcp clients authorize <code>` do the same from a
+terminal. Grants default to Observe and retain the existing local Full Access
+consent boundary. See the
+[OAuth setup and revocation steps](Documentation/Reference/CloudflareRunbook.md#oauth-client-pairing).
+Verified follows the current Access Token or a live OAuth grant; replacing or
+revoking that credential requires fresh verification for its replacement.
+
 The gateway then resolves the exact tool, binds caller/profile/workspace,
 checks policy and any operation ticket, obtains action consent when needed,
 dispatches one bounded adapter, and records the redacted outcome. Standalone

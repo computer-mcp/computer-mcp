@@ -97,6 +97,7 @@ final class ProductReadinessTests {
         occurredAt: startedAt.addingTimeInterval(1),
         requestID: "verified-cloudflare",
         caller: .cloudflareTunnel,
+        principalDigest: "current-credential",
         tunnelInstanceID: "cloudflare",
         tunnelProfileID: "production",
         profileID: .cloudflareObserve,
@@ -132,6 +133,49 @@ final class ProductReadinessTests {
     let firstCheck = try #require(checks.first)
     #expect(Set(firstCheck.keys) == ["id", "status", "required", "summary", "detail"])
     #expect(String(decoding: data, as: UTF8.self).contains("secret") == false)
+  }
+
+  @Test func cloudflareVerificationRequiresCurrentCredentialAndGrantProfile() throws {
+    var input = baseInput()
+    var tunnel = try readyCloudflareTunnel(accessTokenPresent: true)
+    tunnel.credentialProfiles = ["new-token": .cloudflareObserve, "live-grant": .cloudflareOperate]
+    input.cloudflareTunnels = [tunnel]
+    func event(
+      _ principal: String?, profile: GatewayProfileID = .cloudflareObserve,
+      capability: String = "workspace.list"
+    ) -> AuditEvent {
+      AuditEvent(
+        occurredAt: startedAt.addingTimeInterval(1), requestID: "request",
+        caller: .cloudflareTunnel,
+        principalDigest: principal, tunnelInstanceID: "cloudflare", tunnelProfileID: "production",
+        profileID: profile,
+        capabilityID: capability, decision: .allowed)
+    }
+    for principal in [nil, "old-token", "revoked-grant"] as [String?] {
+      input.auditEvents = [event(principal)]
+      #expect(
+        ProductReadinessEvaluator.evaluate(journey: .cloudflare, input: input).verifiedRequest
+          == nil)
+    }
+    input.auditEvents = [event("new-token")]
+    #expect(
+      ProductReadinessEvaluator.evaluate(journey: .cloudflare, input: input).status == .verified)
+    input.auditEvents = [event("live-grant", profile: .cloudflareOperate)]
+    #expect(
+      ProductReadinessEvaluator.evaluate(journey: .cloudflare, input: input).status == .verified)
+    input.auditEvents = [event("live-grant", profile: .cloudflareObserve)]
+    #expect(
+      ProductReadinessEvaluator.evaluate(journey: .cloudflare, input: input).verifiedRequest == nil)
+    input.auditEvents = [
+      event("live-grant", profile: .cloudflareOperate, capability: "oauth.tokens_issued")
+    ]
+    #expect(
+      ProductReadinessEvaluator.evaluate(journey: .cloudflare, input: input).verifiedRequest == nil)
+    tunnel.credentialProfiles.removeValue(forKey: "live-grant")
+    input.cloudflareTunnels = [tunnel]
+    input.auditEvents = [event("live-grant", profile: .cloudflareOperate)]
+    #expect(
+      ProductReadinessEvaluator.evaluate(journey: .cloudflare, input: input).verifiedRequest == nil)
   }
 
   private func baseInput() -> ProductReadinessInput {
@@ -213,7 +257,8 @@ final class ProductReadinessTests {
       ),
       dependencyAvailable: true,
       tunnelTokenPresent: true,
-      accessTokenPresent: accessTokenPresent
+      accessTokenPresent: accessTokenPresent,
+      credentialProfiles: accessTokenPresent ? ["current-credential": .cloudflareObserve] : [:]
     )
   }
 }

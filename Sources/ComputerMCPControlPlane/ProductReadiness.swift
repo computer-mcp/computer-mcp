@@ -1,3 +1,4 @@
+import ComputerMCPAuthorization
 import ComputerMCPCore
 import ComputerMCPTunnels
 import Foundation
@@ -194,19 +195,23 @@ package struct CloudflareTunnelReadinessInput: Equatable, Sendable {
   package var dependencyAvailable: Bool
   package var tunnelTokenPresent: Bool
   package var accessTokenPresent: Bool
+  /// Only current credentials may establish verification, bound to their own profile.
+  package var credentialProfiles: [String: GatewayProfileID]
 
   package init(
     configuration: CloudflareTunnelConfiguration,
     status: CloudflareTunnelStatus,
     dependencyAvailable: Bool,
     tunnelTokenPresent: Bool,
-    accessTokenPresent: Bool
+    accessTokenPresent: Bool,
+    credentialProfiles: [String: GatewayProfileID] = [:]
   ) {
     self.configuration = configuration
     self.status = status
     self.dependencyAvailable = dependencyAvailable
     self.tunnelTokenPresent = tunnelTokenPresent
     self.accessTokenPresent = accessTokenPresent
+    self.credentialProfiles = credentialProfiles
   }
 }
 
@@ -661,7 +666,8 @@ package enum ProductReadinessEvaluator {
   ) -> ProductVerifiedRequest? {
     verifiedRequest(in: input.auditEvents) { event in
       event.caller == .cloudflareTunnel
-        && event.profileID == tunnel.configuration.gatewayProfile
+        && event.principalDigest.flatMap { tunnel.credentialProfiles[$0] } == event.profileID
+        && !event.capabilityID.hasPrefix("oauth.")
         && event.tunnelInstanceID == tunnel.configuration.id
         && event.tunnelProfileID == tunnel.configuration.tunnelName
         && event.decision == .allowed
@@ -739,6 +745,21 @@ extension AppControlPlaneService {
           lastError: nil
         )
       let credential = try await cloudflareCredentialState(for: configuration)
+      var credentialProfiles: [String: GatewayProfileID] = [:]
+      if let token = try await keychainSecretValue(for: configuration.accessTokenReference),
+        let digest = AuditEvent.verifiedPrincipalDigest(
+          "credential:sha256:" + OAuthSecret.digest(token))
+      {
+        credentialProfiles[digest] = configuration.gatewayProfile
+      }
+      if configuration.oauthEnabled {
+        for grant in try await oauthServer(for: configuration).grants(approver: .localApp)
+        where grant.revokedAt == nil && grant.resource == configuration.mcpURL?.absoluteString {
+          if let digest = AuditEvent.verifiedPrincipalDigest(grant.principalID) {
+            credentialProfiles[digest] = grant.profileID
+          }
+        }
+      }
       cloudflareInputs.append(
         CloudflareTunnelReadinessInput(
           configuration: configuration,
@@ -749,7 +770,8 @@ extension AppControlPlaneService {
               names: ["cloudflared"]
             ),
           tunnelTokenPresent: credential.tunnelTokenPresent,
-          accessTokenPresent: credential.accessTokenPresent
+          accessTokenPresent: credential.accessTokenPresent,
+          credentialProfiles: credentialProfiles
         )
       )
     }

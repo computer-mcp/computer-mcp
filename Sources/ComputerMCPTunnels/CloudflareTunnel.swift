@@ -11,6 +11,8 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
   package var localPort: Int
   package var metricsPort: Int
   package var cloudflaredPath: String?
+  package var oauthEnabled: Bool
+  package var oauthClientAllowlist: [String]
   package var tunnelTokenReference: SecretReference
   package var accessTokenReference: SecretReference
 
@@ -22,6 +24,8 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
     case localPort = "local_port"
     case metricsPort = "metrics_port"
     case cloudflaredPath = "cloudflared_path"
+    case oauthEnabled = "oauth_enabled"
+    case oauthClientAllowlist = "oauth_client_allowlist"
     case tunnelTokenReference = "tunnel_token_reference"
     case accessTokenReference = "access_token_reference"
   }
@@ -34,6 +38,8 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
     localPort: Int = 8_765,
     metricsPort: Int = 20_241,
     cloudflaredPath: String? = nil,
+    oauthEnabled: Bool = false,
+    oauthClientAllowlist: [String] = ["claude.ai", "claude.com"],
     tunnelTokenReference: SecretReference,
     accessTokenReference: SecretReference
   ) {
@@ -44,8 +50,18 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
     self.localPort = localPort
     self.metricsPort = metricsPort
     self.cloudflaredPath = cloudflaredPath
+    self.oauthEnabled = oauthEnabled
+    self.oauthClientAllowlist = oauthClientAllowlist
     self.tunnelTokenReference = tunnelTokenReference
     self.accessTokenReference = accessTokenReference
+  }
+
+  package var transportConfiguration: CloudflareTunnelTransportConfig {
+    CloudflareTunnelTransportConfig(
+      id: id, tunnelName: tunnelName, publicHostname: publicHostname,
+      gatewayProfile: gatewayProfile, localPort: localPort, metricsPort: metricsPort,
+      cloudflaredPath: cloudflaredPath, oauthEnabled: oauthEnabled,
+      oauthClientAllowlist: oauthClientAllowlist)
   }
 
   package var publicBaseURL: URL? {
@@ -57,6 +73,7 @@ package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Iden
   }
 
   package func validate() throws {
+    try CloudflareTunnelTransportConfig.validateOAuthClientAllowlist(oauthClientAllowlist)
     try validateConfigIdentifier(id, label: "transports.cloudflare.id")
     for (label, value) in [("tunnel name", tunnelName)] {
       guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -290,6 +307,7 @@ package enum CloudflareTunnelError: Error, LocalizedError, Equatable {
   case profileNotFound(String)
   case processLaunchFailed(String)
   case profileCallerMismatch(String)
+  case staleConfiguration(String)
   case unsupportedCloudflaredVersion(String?)
 
   package var errorDescription: String? {
@@ -303,6 +321,8 @@ package enum CloudflareTunnelError: Error, LocalizedError, Equatable {
     case .processLaunchFailed(let message): "cloudflared failed to launch: \(message)"
     case .profileCallerMismatch(let id):
       "Gateway profile '\(id)' does not allow the cloudflare-tunnel caller."
+    case .staleConfiguration(let id):
+      "Cloudflare tunnel '\(id)' configuration changed. Reopen the tunnel and review it before saving."
     case .unsupportedCloudflaredVersion(let version):
       "cloudflared 2025.4.0 or newer is required for token-file"
         + (version.map { "; found \($0)" } ?? "; the installed version could not be determined")

@@ -13,7 +13,8 @@ struct ProcessTableTests {
     try Data("held".utf8).write(to: url)
     let opened = directory.appendingPathComponent("alias")
     try FileManager.default.linkItem(at: url, to: opened)
-    #expect(try ProcessTable.processesHoldingOpen(path: url.path).isEmpty)
+    let parent = ProcessInfo.processInfo.processIdentifier
+    #expect(try !ProcessTable.processesHoldingOpen(path: url.path).contains(parent))
 
     let openedURL = throughHardLink ? opened : url
     let holder = try FileHandle(forReadingFrom: openedURL)
@@ -34,14 +35,19 @@ struct ProcessTableTests {
       if child.isRunning { child.terminate() }
       child.waitUntilExit()
     }
-    let expected = [ProcessInfo.processInfo.processIdentifier, child.processIdentifier].sorted()
+    // Processes that concurrent tests fork share the holder descriptor until they execute.
+    func holders() throws -> Set<Int32> {
+      let found = try ProcessTable.processesHoldingOpen(path: url.path)
+      #expect(found == found.sorted())
+      return Set(found).intersection([parent, child.processIdentifier])
+    }
     #expect(output.fileHandleForReading.readData(ofLength: 6) == Data("ready\n".utf8))
-    #expect(try ProcessTable.processesHoldingOpen(path: url.path) == expected)
+    #expect(try holders() == [parent, child.processIdentifier])
 
     try holder.close()
-    #expect(try ProcessTable.processesHoldingOpen(path: url.path) == [child.processIdentifier])
+    #expect(try holders() == [child.processIdentifier])
     try input.fileHandleForWriting.close()
     child.waitUntilExit()
-    #expect(try ProcessTable.processesHoldingOpen(path: url.path).isEmpty)
+    #expect(try holders().isEmpty)
   }
 }

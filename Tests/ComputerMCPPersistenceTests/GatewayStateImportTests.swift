@@ -76,13 +76,7 @@ struct GatewayStateImportTests {
     let before = try Self.dump(directory.database)
     let holder = try FileHandle(forReadingFrom: directory.database)
 
-    #expect(
-      throws: GatewayStateImportError.databaseInUse(
-        path: directory.database.path,
-        processIDs: [
-          ProcessInfo.processInfo.processIdentifier
-        ])
-    ) {
+    Self.expectInUse(directory.database.path) {
       try Self.importState(Self.export(), into: directory.database)
     }
     #expect(try Self.dump(directory.database) == before)
@@ -217,7 +211,8 @@ struct GatewayStateImportTests {
       #expect(directory.entries() == ["gateway.sqlite.import", "gateway.sqlite.lock"])
     }
     try withExtendedLifetime(retained) { () throws in
-      #expect(try ProcessTable.processesHoldingOpen(path: directory.database.path).isEmpty)
+      #expect(
+        try !ProcessTable.processesHoldingOpen(path: directory.database.path).contains(getpid()))
       #expect(directory.entries() == ["gateway.sqlite", "gateway.sqlite.lock"])
     }
   }
@@ -276,10 +271,7 @@ struct GatewayStateImportTests {
       path: directory.database.path)
     let before = try Data(contentsOf: directory.database)
     _ = withExtendedLifetime(connection) {
-      #expect(
-        throws: GatewayStateImportError.databaseInUse(
-          path: directory.database.path, processIDs: [getpid()])
-      ) {
+      Self.expectInUse(directory.database.path) {
         try Self.importState(Self.export(), into: directory.database)
       }
     }
@@ -296,10 +288,7 @@ struct GatewayStateImportTests {
       #expect(throws: StateImportInProgress(path: directory.database.path)) {
         try GatewayDatabaseConnection(path: directory.database.path)
       }
-      #expect(
-        throws: GatewayStateImportError.databaseInUse(
-          path: directory.database.path, processIDs: [getpid()])
-      ) {
+      Self.expectInUse(directory.database.path) {
         try GatewayStateImport.run(exportFile: file, database: directory.database) { _ in }
       }
     }
@@ -418,10 +407,7 @@ struct GatewayStateImportTests {
     try Self.interruptReplacement(in: directory, at: .stagedRenamed)
     let lock = try FileLock(path: directory.lock.path, mode: .exclusive)
     let before = try directory.snapshot()
-    #expect(
-      throws: GatewayStateImportError.databaseInUse(
-        path: directory.database.path, processIDs: [getpid()])
-    ) {
+    Self.expectInUse(directory.database.path) {
       try Self.importState(Self.export(), into: directory.database)
     }
     #expect(try directory.snapshot() == before)
@@ -444,13 +430,13 @@ struct GatewayStateImportTests {
     let holder = try FileHandle(forReadingFrom: url)
     defer { try? holder.close() }
     let before = try directory.snapshot()
-    let expected = GatewayStateImportError.databaseInUse(path: url.path, processIDs: [getpid()])
-
-    #expect(throws: expected) {
+    Self.expectInUse(url.path) {
       try Self.importState(Self.export(), into: directory.database)
     }
     #expect(try directory.snapshot() == before)
-    #expect(expected.localizedDescription.contains(url.path))
+    #expect(
+      GatewayStateImportError.databaseInUse(path: url.path, processIDs: [getpid()])
+        .localizedDescription.contains(url.path))
   }
 
   @Test(arguments: ["database", "previous", "staged"], GatewayStateImport.Paths.sidecars)
@@ -815,6 +801,24 @@ struct GatewayStateImportTests {
       try FileManager.default.removeItem(at: directory.staged)
     }
     if step == .recordRemoved { try FileManager.default.removeItem(at: directory.replacing) }
+  }
+
+  /// A process that a concurrent test forks shares this process's descriptors until it
+  /// executes, so the reported holders include this process and may include such a child.
+  private static func expectInUse(
+    _ path: String, sourceLocation: SourceLocation = #_sourceLocation,
+    _ operation: () throws -> Void
+  ) {
+    let error = #expect(throws: GatewayStateImportError.self, sourceLocation: sourceLocation) {
+      try operation()
+    }
+    guard case .databaseInUse(let reportedPath, let processIDs)? = error else {
+      Issue.record(
+        "Expected databaseInUse, got \(String(describing: error))", sourceLocation: sourceLocation)
+      return
+    }
+    #expect(reportedPath == path, sourceLocation: sourceLocation)
+    #expect(processIDs.contains(getpid()), sourceLocation: sourceLocation)
   }
 
   private static func renameFile(_ source: URL, to destination: URL) throws {

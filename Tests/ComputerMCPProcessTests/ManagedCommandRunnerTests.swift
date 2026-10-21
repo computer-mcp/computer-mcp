@@ -77,7 +77,9 @@ struct ManagedCommandRunnerTests {
         timeoutMilliseconds: 1000, maxOutputBytes: 1024)
     }
     #expect(result.timedOut && result.exitCode != nil)
-    #expect(started.duration(to: .now) < .seconds(5))
+    // Reclaiming ends the run long before the children's 30-second sleep; the bound leaves room
+    // for scheduling delay on small shared runners.
+    #expect(started.duration(to: .now) < .seconds(10))
     let pids = try String(contentsOf: receipt, encoding: .utf8).split(separator: "\n").compactMap {
       Int32($0)
     }

@@ -108,7 +108,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     let context = InvocationContext.empty
     var definitions = Self.gatewayDefinitions(
       builtins: Set(configuration.builtin.enabled),
-      skillsEnabled: configuration.skills.enabled,
       hasMCPProviders: !configuration.mcp.servers.isEmpty,
       toolMeta: workspaceScope.toolMeta
     )
@@ -225,74 +224,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
         mcpClient.closeConnection(
           server: mcpServer(requiredString("server", in: object), context: context),
           context: context))
-
-    case "skills.roots":
-      try requireSkillsEnabled()
-      return try textResult(skillsRoots())
-
-    case "skills.list":
-      try requireSkillsEnabled()
-      return try textResult(skillsList(arguments: object))
-
-    case "skills.describe":
-      try requireSkillsEnabled()
-      return try textResult(skillsDescribe(arguments: object))
-
-    case "skills.validate":
-      try requireSkillsEnabled()
-      return try textResult(skillsValidate(arguments: object))
-
-    case "skills.frontmatter":
-      try requireSkillsEnabled()
-      return try textResult(skillsFrontmatter(arguments: object))
-
-    case "skills.read":
-      try requireSkillsEnabled()
-      return try textResult(skillsRead(arguments: object))
-
-    case "skills.files":
-      try requireSkillsEnabled()
-      return try textResult(skillsFiles(arguments: object))
-
-    case "skills.read_file":
-      try requireSkillsEnabled()
-      return try textResult(skillsReadFile(arguments: object))
-
-    case "skills.read_files":
-      try requireSkillsEnabled()
-      return try textResult(skillsReadFiles(arguments: object))
-
-    case "skills.read_package":
-      try requireSkillsEnabled()
-      return try textResult(skillsReadPackage(arguments: object))
-
-    case "skills.outline":
-      try requireSkillsEnabled()
-      return try textResult(skillsOutline(arguments: object))
-
-    case "skills.section":
-      try requireSkillsEnabled()
-      return try textResult(skillsSection(arguments: object))
-
-    case "skills.tables":
-      try requireSkillsEnabled()
-      return try textResult(skillsTables(arguments: object))
-
-    case "skills.links":
-      try requireSkillsEnabled()
-      return try textResult(skillsLinks(arguments: object))
-
-    case "skills.link_check":
-      try requireSkillsEnabled()
-      return try textResult(skillsLinkCheck(arguments: object))
-
-    case "skills.search":
-      try requireSkillsEnabled()
-      return try textResult(skillsSearch(arguments: object))
-
-    case "skills.search_files":
-      try requireSkillsEnabled()
-      return try textResult(skillsSearchFiles(arguments: object))
 
     case "workspace.info":
       try requireBuiltinEnabled(name)
@@ -674,26 +605,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
       try requireBuiltinEnabled(name)
       return try textResult(outlineFile(arguments: object))
 
-    case "markdown.links":
-      try requireBuiltinEnabled(name)
-      return try textResult(markdownLinks(arguments: object))
-
-    case "markdown.tables":
-      try requireBuiltinEnabled(name)
-      return try textResult(markdownTables(arguments: object))
-
-    case "markdown.section":
-      try requireBuiltinEnabled(name)
-      return try textResult(markdownSection(arguments: object))
-
-    case "markdown.frontmatter":
-      try requireBuiltinEnabled(name)
-      return try textResult(markdownFrontmatter(arguments: object))
-
-    case "markdown.link_check":
-      try requireBuiltinEnabled(name)
-      return try textResult(markdownLinkCheck(arguments: object))
-
     case "file.tail":
       try requireBuiltinEnabled(name)
       return try textResult(tailFile(arguments: object))
@@ -721,70 +632,6 @@ package final class GatewayToolRegistry: @unchecked Sendable {
     case "file.resolve":
       try requireBuiltinEnabled(name)
       return try textResult(resolveFilePath(arguments: object))
-
-    case "image.info":
-      try requireBuiltinEnabled(name)
-      return try textResult(imageInfo(arguments: object))
-
-    case "pdf.info":
-      try requireBuiltinEnabled(name)
-      return try textResult(pdfInfo(arguments: object))
-
-    case "pdf.text":
-      try requireBuiltinEnabled(name)
-      return try textResult(pdfText(arguments: object))
-
-    case "media.info":
-      try requireBuiltinEnabled(name)
-      return try textResult(mediaInfo(arguments: object))
-
-    case "json.read":
-      try requireBuiltinEnabled(name)
-      return try textResult(readJSON(arguments: object))
-
-    case "jsonl.read":
-      try requireBuiltinEnabled(name)
-      return try textResult(readJSONLines(arguments: object))
-
-    case "json.write":
-      try requireBuiltinEnabled(name)
-      return try textResult(writeJSON(arguments: object))
-
-    case "toml.read":
-      try requireBuiltinEnabled(name)
-      return try textResult(readTOML(arguments: object))
-
-    case "yaml.read":
-      try requireBuiltinEnabled(name)
-      return try textResult(readYAML(arguments: object))
-
-    case "xml.read":
-      try requireBuiltinEnabled(name)
-      return try textResult(readXML(arguments: object))
-
-    case "plist.read":
-      try requireBuiltinEnabled(name)
-      return try textResult(readPropertyList(arguments: object))
-
-    case "structured.get":
-      try requireBuiltinEnabled(name)
-      return try textResult(getStructuredValue(arguments: object))
-
-    case "plist.write":
-      try requireBuiltinEnabled(name)
-      return try textResult(writePropertyList(arguments: object))
-
-    case "csv.read":
-      try requireBuiltinEnabled(name)
-      return try textResult(readCSV(arguments: object))
-
-    case "sqlite.schema":
-      try requireBuiltinEnabled(name)
-      return try textResult(sqliteSchema(arguments: object))
-
-    case "sqlite.query":
-      try requireBuiltinEnabled(name)
-      return try textResult(sqliteQuery(arguments: object))
 
     case "file.hash":
       try requireBuiltinEnabled(name)

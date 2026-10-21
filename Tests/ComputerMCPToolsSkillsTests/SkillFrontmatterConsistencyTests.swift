@@ -1,10 +1,11 @@
+import ComputerMCPConfiguration
+import ComputerMCPCore
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import Foundation
 import Testing
 
-@testable import ComputerMCP
-@testable import ComputerMCPConfiguration
-@testable import ComputerMCPCore
+@testable import ComputerMCPToolsSkills
 
 @Suite
 final class SkillFrontmatterConsistencyTests {
@@ -40,15 +41,15 @@ final class SkillFrontmatterConsistencyTests {
         # Literal
         """
     )
-    let registry = registry(root: root)
+    let provider = provider(root: root)
 
     try assertDescriptionConsistency(
-      registry: registry,
+      provider: provider,
       name: "folded-skill",
       expected: "Draft, revise, or review interaction copy while preserving the product voice."
     )
     try assertDescriptionConsistency(
-      registry: registry,
+      provider: provider,
       name: "literal-skill",
       expected: "First line.\nSecond line."
     )
@@ -70,10 +71,10 @@ final class SkillFrontmatterConsistencyTests {
         # Malformed
         """
     )
-    let registry = registry(root: root)
+    let provider = provider(root: root)
 
     let list = try payload(
-      registry.callTool(name: "skills.list", arguments: .object([:]), context: .empty))
+      provider.callTool(.init(name: "skills.list", arguments: .object([:]), context: .empty)))
     let listed = try #require(
       list.objectValue?["skills"]?.arrayValue?.first {
         $0.objectValue?["directory_name"] == .string("malformed-skill")
@@ -82,10 +83,10 @@ final class SkillFrontmatterConsistencyTests {
     #expect((listed["name"]) == (.string("malformed-skill")))
     #expect((listed["description"]) == (.null))
 
-    let describe = try call(registry, tool: "skills.describe", name: "malformed-skill")
+    let describe = try call(provider, tool: "skills.describe", name: "malformed-skill")
     #expect((describe.objectValue?["description"]) == (.null))
 
-    let validate = try call(registry, tool: "skills.validate", name: "malformed-skill")
+    let validate = try call(provider, tool: "skills.validate", name: "malformed-skill")
     let issueCodes = validate.objectValue?["issues"]?.arrayValue?.compactMap {
       $0.objectValue?["code"]?.stringValue
     }
@@ -93,7 +94,7 @@ final class SkillFrontmatterConsistencyTests {
     #expect(issueCodes?.contains("invalid_frontmatter_yaml") == true)
     #expect((validate.objectValue?["frontmatter"]?.objectValue?["parse_error"]?.stringValue) != nil)
 
-    let frontmatter = try call(registry, tool: "skills.frontmatter", name: "malformed-skill")
+    let frontmatter = try call(provider, tool: "skills.frontmatter", name: "malformed-skill")
     #expect((frontmatter.objectValue?["found"]) == (.bool(true)))
     #expect((frontmatter.objectValue?["parsed"]) == (.bool(false)))
     #expect((frontmatter.objectValue?["value"]) == (.null))
@@ -101,20 +102,20 @@ final class SkillFrontmatterConsistencyTests {
   }
 
   private func assertDescriptionConsistency(
-    registry: GatewayToolRegistry,
+    provider: SkillsToolProvider,
     name: String,
     expected: String
   ) throws {
     let list = try payload(
-      registry.callTool(name: "skills.list", arguments: .object([:]), context: .empty))
+      provider.callTool(.init(name: "skills.list", arguments: .object([:]), context: .empty)))
     let listed = try #require(
       list.objectValue?["skills"]?.arrayValue?.first {
         $0.objectValue?["name"] == .string(name)
       }?.objectValue
     )
-    let describe = try call(registry, tool: "skills.describe", name: name)
-    let validate = try call(registry, tool: "skills.validate", name: name)
-    let frontmatter = try call(registry, tool: "skills.frontmatter", name: name)
+    let describe = try call(provider, tool: "skills.describe", name: name)
+    let validate = try call(provider, tool: "skills.validate", name: name)
+    let frontmatter = try call(provider, tool: "skills.frontmatter", name: name)
 
     let descriptions = [
       listed["description"]?.stringValue,
@@ -128,30 +129,32 @@ final class SkillFrontmatterConsistencyTests {
     #expect((frontmatter.objectValue?["parsed"]) == (.bool(true)))
   }
 
-  private func registry(root: URL) -> GatewayToolRegistry {
-    GatewayToolRegistry(
-      configuration: .fixture(
-        skills: SkillsConfig(
-          enabled: true,
-          roots: [SkillRootConfig(id: "fixtures", path: root.path)]
+  private func provider(root: URL) -> SkillsToolProvider {
+    SkillsToolProvider(
+      environment: ToolEnvironment(
+        configuration: .fixture(
+          skills: SkillsConfig(
+            enabled: true,
+            roots: [SkillRootConfig(id: "fixtures", path: root.path)]
+          )
         )
-      )
-    )
+      ))
   }
 
   private func call(
-    _ registry: GatewayToolRegistry,
+    _ provider: SkillsToolProvider,
     tool: String,
     name: String
   ) throws -> JSONValue {
     try payload(
-      registry.callTool(
-        name: tool,
-        arguments: .object([
-          "root_id": .string("fixtures"),
-          "name": .string(name),
-        ]), context: .empty
-      )
+      provider.callTool(
+        .init(
+          name: tool,
+          arguments: .object([
+            "root_id": .string("fixtures"),
+            "name": .string(name),
+          ]), context: .empty
+        ))
     )
   }
 

@@ -10,15 +10,17 @@ package struct RegisteredCommands: Sendable {
   private let configuration: GatewayConfiguration
   private let commandRunner: any CommandRunning
   private let environment: [String: String]
+  private let sqliteCommand: CLICommandConfig?
   package let execution: CLIProcessExecution
 
   package init(
     configuration: GatewayConfiguration, commandRunner: any CommandRunning,
-    environment: [String: String]
+    environment: [String: String], sqliteCommand: CLICommandConfig? = nil
   ) {
     self.configuration = configuration
     self.commandRunner = commandRunner
     self.environment = environment
+    self.sqliteCommand = sqliteCommand
     self.execution = CLIProcessExecution(
       maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
   }
@@ -27,7 +29,8 @@ package struct RegisteredCommands: Sendable {
     command: CLICommandConfig,
     args: [String],
     timeout: Int?,
-    requireArbitraryArgs: Bool
+    requireArbitraryArgs: Bool,
+    maxOutputBytes: Int? = nil
   ) throws -> CommandResult {
     if requireArbitraryArgs && (!command.allowAnyArgs || command.tree != nil) {
       throw GatewayToolError.disabled(
@@ -42,7 +45,7 @@ package struct RegisteredCommands: Sendable {
       environment: command.env,
       timeoutMilliseconds: timeout ?? command.defaultTimeoutMs
         ?? configuration.policy.defaultTimeoutMs,
-      maxOutputBytes: configuration.policy.maxOutputBytes
+      maxOutputBytes: maxOutputBytes ?? configuration.policy.maxOutputBytes
     )
   }
 
@@ -80,6 +83,13 @@ package struct RegisteredCommands: Sendable {
     ExecutableInspection.inspect(
       executable, workingDirectory: base ?? defaultBase,
       environment: environment.merging(overrides) { _, value in value })
+  }
+
+  package func sqliteCLICommand() throws -> CLICommandConfig {
+    guard let sqliteCommand else {
+      throw GatewayToolError.disabled("SQLite inspection is unavailable on this platform.")
+    }
+    return sqliteCommand
   }
 
   package func gitCLICommand() throws -> CLICommandConfig {

@@ -1,31 +1,23 @@
 @preconcurrency import AVFoundation
-import AppKit
 import ComputerMCPCore
-import ComputerMCPToolKit
+import ComputerMCPPlatform
 import Foundation
 import ImageIO
 import PDFKit
 
-extension GatewayToolRegistry {
-  internal func imageInfo(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let path = try requiredString("path", in: object)
-    let includeProperties = try optionalBool("include_properties", in: object) ?? false
-    let maxPropertyDepth = optionalInt("max_property_depth", in: object) ?? 2
-    try validateBoundedNonNegative(maxPropertyDepth, name: "max_property_depth", upperBound: 6)
+package struct DarwinMediaInspector: MediaInspector {
+  package init() {}
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
-    guard info.type == "file" else {
-      throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
-    }
-
+  package func imageInfo(at url: URL, includeProperties: Bool, maxPropertyDepth: Int) throws
+    -> [String: JSONValue]?
+  {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-      throw GatewayToolError.invalidArguments("Unable to read image metadata: \(path)")
+      return nil
     }
 
     let imageCount = CGImageSourceGetCount(source)
     guard imageCount > 0 else {
-      throw GatewayToolError.invalidArguments("Unable to read image metadata: \(path)")
+      return nil
     }
 
     let typeIdentifier = CGImageSourceGetType(source).map { String($0) }
@@ -45,11 +37,6 @@ extension GatewayToolRegistry {
     var propertiesTruncated = false
 
     var result: [String: JSONValue] = [
-      "operation": .string("image.info"),
-      "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
-      "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "type_identifier": typeIdentifier.map(JSONValue.string) ?? .null,
       "mime_type": typeIdentifier.flatMap(imageMIMEType(for:)).map(JSONValue.string) ?? .null,
       "frame_count": .integer(Int64(imageCount)),
@@ -81,7 +68,7 @@ extension GatewayToolRegistry {
     result["properties_truncated"] = .bool(propertiesTruncated)
     result["truncated"] = .bool(propertiesTruncated)
 
-    return .object(result)
+    return result
   }
 
   private func intImageProperty(_ properties: [CFString: Any]?, _ key: CFString) -> Int? {
@@ -211,14 +198,13 @@ extension GatewayToolRegistry {
     }
     if let string = value as? String {
       if string.utf8.count > 4_096 {
-        let preview = utf8Preview(string, maxBytes: 4_096)
         truncated = true
-        return .string(preview.text)
+        return .string(utf8Preview(string, maxBytes: 4_096).text)
       }
       return .string(string)
     }
     if let date = value as? Date {
-      return .string(iso8601String(date))
+      return .string(ISO8601DateFormatter().string(from: date))
     }
     if let data = value as? Data {
       let maxBytes = 256
@@ -303,20 +289,11 @@ extension GatewayToolRegistry {
     return .object(object)
   }
 
-  internal func pdfInfo(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let path = try requiredString("path", in: object)
-    let maxPages = optionalInt("max_pages", in: object) ?? 20
-    let includePageBoxes = try optionalBool("include_page_boxes", in: object) ?? true
-    let includeAttributes = try optionalBool("include_attributes", in: object) ?? true
-    try validateBoundedNonNegative(maxPages, name: "max_pages", upperBound: 10_000)
-
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
-    guard info.type == "file" else {
-      throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
-    }
+  package func pdfInfo(at url: URL, maxPages: Int, includePageBoxes: Bool, includeAttributes: Bool)
+    throws -> [String: JSONValue]?
+  {
     guard let document = PDFDocument(url: url) else {
-      throw GatewayToolError.invalidArguments("Unable to read PDF metadata: \(path)")
+      return nil
     }
 
     let pageCount = document.pageCount
@@ -346,11 +323,6 @@ extension GatewayToolRegistry {
 
     var attributesTruncated = false
     var result: [String: JSONValue] = [
-      "operation": .string("pdf.info"),
-      "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
-      "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "page_count": .integer(Int64(pageCount)),
       "returned_page_count": .integer(Int64(pages.count)),
       "pages_truncated": .bool(pageCount > returnedPageCount),
@@ -372,25 +344,14 @@ extension GatewayToolRegistry {
     result["attributes_truncated"] = .bool(attributesTruncated)
     result["truncated"] = .bool(pageCount > returnedPageCount || attributesTruncated)
 
-    return .object(result)
+    return result
   }
 
-  internal func pdfText(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let path = try requiredString("path", in: object)
-    let startPage = optionalInt("start_page", in: object) ?? 1
-    let maxPages = optionalInt("max_pages", in: object) ?? 10
-    let maxCharacters = optionalInt("max_characters", in: object) ?? 100_000
-    try validateBoundedPositive(startPage, name: "start_page", upperBound: 1_000_000)
-    try validateBoundedPositive(maxPages, name: "max_pages", upperBound: 10_000)
-    try validateBoundedPositive(maxCharacters, name: "max_characters", upperBound: 5_000_000)
-
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
-    guard info.type == "file" else {
-      throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
-    }
+  package func pdfText(at url: URL, startPage: Int, maxPages: Int, maxCharacters: Int) throws
+    -> [String: JSONValue]?
+  {
     guard let document = PDFDocument(url: url) else {
-      throw GatewayToolError.invalidArguments("Unable to read PDF text: \(path)")
+      return nil
     }
     guard !document.isLocked else {
       throw GatewayToolError.invalidArguments("Unable to read PDF text: document is locked.")
@@ -401,12 +362,7 @@ extension GatewayToolRegistry {
 
     let pageCount = document.pageCount
     if pageCount == 0 {
-      return .object([
-        "operation": .string("pdf.text"),
-        "path": .string(url.path),
-        "workspace_relative_path": .string(info.workspaceRelativePath),
-        "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
-        "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
+      return [
         "page_count": .number(0),
         "start_page": .integer(Int64(startPage)),
         "max_pages": .integer(Int64(maxPages)),
@@ -417,7 +373,7 @@ extension GatewayToolRegistry {
         "text_truncated": .bool(false),
         "truncated": .bool(false),
         "pages": .array([]),
-      ])
+      ]
     }
     guard startPage <= pageCount else {
       throw GatewayToolError.invalidArguments(
@@ -471,12 +427,7 @@ extension GatewayToolRegistry {
     }
 
     let pageRangeTruncated = exclusiveEndIndex < pageCount
-    return .object([
-      "operation": .string("pdf.text"),
-      "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
-      "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
+    return [
       "page_count": .integer(Int64(pageCount)),
       "start_page": .integer(Int64(startPage)),
       "max_pages": .integer(Int64(maxPages)),
@@ -487,7 +438,7 @@ extension GatewayToolRegistry {
       "text_truncated": .bool(textTruncated),
       "truncated": .bool(pageRangeTruncated || textTruncated),
       "pages": .array(pages),
-    ])
+    ]
   }
 
   private func pdfRectJSON(_ rect: CGRect) -> JSONValue {
@@ -543,14 +494,13 @@ extension GatewayToolRegistry {
     }
     if let string = value as? String {
       if string.utf8.count > 4_096 {
-        let preview = utf8Preview(string, maxBytes: 4_096)
         truncated = true
-        return .string(preview.text)
+        return .string(utf8Preview(string, maxBytes: 4_096).text)
       }
       return .string(string)
     }
     if let date = value as? Date {
-      return .string(iso8601String(date))
+      return .string(ISO8601DateFormatter().string(from: date))
     }
     if let array = value as? [Any] {
       guard depth > 0 else {
@@ -599,19 +549,9 @@ extension GatewayToolRegistry {
     return .string(String(describing: value))
   }
 
-  internal func mediaInfo(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let path = try requiredString("path", in: object)
-    let maxTracks = optionalInt("max_tracks", in: object) ?? 20
-    let loadTimeoutMS = optionalInt("load_timeout_ms", in: object) ?? 5_000
-    try validateBoundedNonNegative(maxTracks, name: "max_tracks", upperBound: 1_000)
-    try validateBoundedPositive(loadTimeoutMS, name: "load_timeout_ms", upperBound: 600_000)
-
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
-    guard info.type == "file" else {
-      throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
-    }
-
+  package func mediaInfo(at url: URL, maxTracks: Int, loadTimeoutMS: Int) throws -> [String:
+    JSONValue]
+  {
     let duration: CMTime
     let tracks: [AVAssetTrack]
     let isPlayable: Bool
@@ -656,13 +596,7 @@ extension GatewayToolRegistry {
         ))
     }
 
-    return .object([
-      "operation": .string("media.info"),
-      "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
-      "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
-      "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
-      "extension": .string((info.workspaceRelativePath as NSString).pathExtension.lowercased()),
+    return [
       "duration_seconds": finiteMediaSeconds(duration).map(JSONValue.number) ?? .null,
       "duration_timescale": .integer(Int64(duration.timescale)),
       "is_playable": .bool(isPlayable),
@@ -678,7 +612,7 @@ extension GatewayToolRegistry {
       "load_timeout_ms": .integer(Int64(loadTimeoutMS)),
       "tracks": .array(trackRows),
       "truncated": .bool(tracks.count > trackRows.count),
-    ])
+    ]
   }
 
   private func mediaTrackJSON(

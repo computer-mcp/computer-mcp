@@ -1,10 +1,8 @@
 import ComputerMCPCore
 import ComputerMCPToolKit
 import Foundation
-import TOML
-import Yams
 
-extension GatewayToolRegistry {
+extension StructuredToolProvider {
   internal func markdownLinks(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
     let includeImages = try optionalBool("include_images", in: object) ?? true
@@ -102,7 +100,7 @@ extension GatewayToolRegistry {
     ])
   }
 
-  internal func markdownTablesInContent(
+  package func markdownTablesInContent(
     _ content: String,
     includeCodeBlocks: Bool
   ) -> [MarkdownTableInfo] {
@@ -246,7 +244,7 @@ extension GatewayToolRegistry {
     return "none"
   }
 
-  internal func markdownFenceToggleLine(_ trimmedLine: String) -> Bool {
+  package func markdownFenceToggleLine(_ trimmedLine: String) -> Bool {
     trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~")
   }
 
@@ -539,7 +537,7 @@ extension GatewayToolRegistry {
     )
   }
 
-  internal func markdownFrontmatterFormats(_ requestedFormat: String) throws -> Set<String> {
+  package func markdownFrontmatterFormats(_ requestedFormat: String) throws -> Set<String> {
     let normalized = requestedFormat.lowercased()
     switch normalized {
     case "auto":
@@ -551,7 +549,7 @@ extension GatewayToolRegistry {
     }
   }
 
-  internal func markdownFrontmatterOpening(
+  package func markdownFrontmatterOpening(
     _ line: String,
     allowedFormats: Set<String>
   ) -> (format: String, delimiter: String)? {
@@ -564,7 +562,7 @@ extension GatewayToolRegistry {
     return nil
   }
 
-  internal func markdownFrontmatterClosing(_ line: String, format: String) -> Bool {
+  package func markdownFrontmatterClosing(_ line: String, format: String) -> Bool {
     switch format {
     case "yaml":
       return line == "---" || line == "..."
@@ -778,7 +776,7 @@ extension GatewayToolRegistry {
     )
   }
 
-  internal func markdownLinksInContent(
+  package func markdownLinksInContent(
     _ content: String,
     sourceURL: URL,
     includeImages: Bool,
@@ -823,7 +821,7 @@ extension GatewayToolRegistry {
     return links
   }
 
-  internal func markdownReferenceDefinitions(_ links: [MarkdownLinkInfo]) -> [String:
+  package func markdownReferenceDefinitions(_ links: [MarkdownLinkInfo]) -> [String:
     MarkdownLinkInfo]
   {
     var definitions: [String: MarkdownLinkInfo] = [:]
@@ -839,7 +837,7 @@ extension GatewayToolRegistry {
     return definitions
   }
 
-  internal func markdownReferenceKey(_ label: String) -> String {
+  package func markdownReferenceKey(_ label: String) -> String {
     label
       .split(whereSeparator: \.isWhitespace)
       .joined(separator: " ")
@@ -1168,7 +1166,7 @@ extension GatewayToolRegistry {
     )
   }
 
-  internal func markdownAnchorScan(url: URL, maxBytes: Int) throws -> MarkdownAnchorScanResult {
+  package func markdownAnchorScan(url: URL, maxBytes: Int) throws -> MarkdownAnchorScanResult {
     let handle = try FileHandle(forReadingFrom: url)
     defer {
       try? handle.close()
@@ -1205,7 +1203,7 @@ extension GatewayToolRegistry {
     )
   }
 
-  internal func markdownAnchorKey(_ value: String) -> String {
+  package func markdownAnchorKey(_ value: String) -> String {
     (value.removingPercentEncoding ?? value)
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
@@ -1557,7 +1555,7 @@ extension GatewayToolRegistry {
     )
   }
 
-  internal func markdownDestinationScheme(_ destination: String) -> String? {
+  package func markdownDestinationScheme(_ destination: String) -> String? {
     guard let colon = destination.firstIndex(of: ":") else {
       return nil
     }
@@ -1576,7 +1574,7 @@ extension GatewayToolRegistry {
     return scheme
   }
 
-  internal func markdownDestinationPathAndFragment(_ destination: String) -> (
+  package func markdownDestinationPathAndFragment(_ destination: String) -> (
     path: String, fragment: String?
   ) {
     let pathEnd =
@@ -1593,18 +1591,18 @@ extension GatewayToolRegistry {
   }
 }
 
-internal struct MarkdownLinkInfo {
-  var line: Int
-  var kind: String
-  var label: String?
-  var referenceLabel: String?
-  var destination: String?
-  var title: String?
-  var raw: String
-  var isImage: Bool
-  var target: MarkdownLinkTargetInfo?
+package struct MarkdownLinkInfo {
+  package var line: Int
+  package var kind: String
+  package var label: String?
+  package var referenceLabel: String?
+  package var destination: String?
+  package var title: String?
+  package var raw: String
+  package var isImage: Bool
+  package var target: MarkdownLinkTargetInfo?
 
-  var json: JSONValue {
+  package var json: JSONValue {
     .object([
       "line": .integer(Int64(line)),
       "kind": .string(kind),
@@ -1627,17 +1625,17 @@ private struct MarkdownLinkInventory {
   var links: [MarkdownLinkInfo]
 }
 
-internal struct MarkdownTableInfo {
-  var startLine: Int
-  var endLine: Int
-  var headerLine: Int
-  var delimiterLine: Int
-  var headers: [String]
-  var alignments: [String]
-  var rows: [MarkdownTableRowInfo]
-  var raw: String
+package struct MarkdownTableInfo {
+  package var startLine: Int
+  package var endLine: Int
+  package var headerLine: Int
+  package var delimiterLine: Int
+  package var headers: [String]
+  package var alignments: [String]
+  package var rows: [MarkdownTableRowInfo]
+  package var raw: String
 
-  func json(maxRowsPerTable: Int) -> JSONValue {
+  package func json(maxRowsPerTable: Int) -> JSONValue {
     let returnedRows = Array(rows.prefix(maxRowsPerTable))
     return .object([
       "start_line": .integer(Int64(startLine)),
@@ -1657,11 +1655,11 @@ internal struct MarkdownTableInfo {
   }
 }
 
-internal struct MarkdownTableRowInfo {
-  var line: Int
-  var cells: [String]
+package struct MarkdownTableRowInfo {
+  package var line: Int
+  package var cells: [String]
 
-  func json(columnCount: Int) -> JSONValue {
+  package func json(columnCount: Int) -> JSONValue {
     let returnedCells = Array(cells.prefix(columnCount))
     let missingCount = max(0, columnCount - returnedCells.count)
     let normalizedCells = returnedCells + Array(repeating: "", count: missingCount)
@@ -1729,15 +1727,15 @@ private struct MarkdownLinkCheckResult {
   }
 }
 
-internal struct MarkdownLinkTargetInfo {
-  var kind: String
-  var scheme: String? = nil
-  var fragment: String? = nil
-  var targetPath: String? = nil
-  var targetWorkspaceRelativePath: String? = nil
-  var targetWorkspaceContained: Bool? = nil
+package struct MarkdownLinkTargetInfo {
+  package var kind: String
+  package var scheme: String? = nil
+  package var fragment: String? = nil
+  package var targetPath: String? = nil
+  package var targetWorkspaceRelativePath: String? = nil
+  package var targetWorkspaceContained: Bool? = nil
 
-  var json: JSONValue {
+  package var json: JSONValue {
     .object([
       "kind": .string(kind),
       "scheme": scheme.map(JSONValue.string) ?? .null,
@@ -1749,8 +1747,8 @@ internal struct MarkdownLinkTargetInfo {
   }
 }
 
-internal struct MarkdownAnchorScanResult {
-  var anchors: Set<String>
-  var bytesScanned: Int
-  var truncated: Bool
+package struct MarkdownAnchorScanResult {
+  package var anchors: Set<String>
+  package var bytesScanned: Int
+  package var truncated: Bool
 }

@@ -7,6 +7,7 @@ package struct SkillsToolProvider: GatewayToolProvider {
   package static let toolCount = toolDefinitions(toolMeta: nil).count
 
   package let id = "skills"
+  package let namespaces = ["skills"]
   let environment: ToolEnvironment
   let structured: StructuredToolProvider
 

@@ -3,6 +3,7 @@ import ComputerMCPToolKit
 
 package struct ProcessToolProvider: GatewayToolProvider {
   package let id = "process"
+  package let namespaces = ["process"]
   let environment: ToolEnvironment
 
   package init(environment: ToolEnvironment) {

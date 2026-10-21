@@ -1,4 +1,6 @@
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPToolsSystem
 import Foundation
 import Testing
 
@@ -15,8 +17,10 @@ final class GatewayMCPToolSurfaceTests {
       mcp: MCPSectionConfig(),
       builtin: BuiltinConfig(enabled: ["system.time"])
     )
-    let surface = GatewayMCPToolSurface(
-      registry: GatewayToolRegistry(configuration: configuration)
+    let surface = try GatewayMCPToolSurface(
+      registry: GatewayProviderRouter(providers: [
+        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
+      ])
     )
 
     #expect((try surface.listTools(context: .empty).map(\.name)) == (["system.time"]))

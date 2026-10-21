@@ -1,6 +1,8 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPToolsMCP
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -65,7 +67,8 @@ struct GatewayInvocationContextTests {
   }
 
   @Test(arguments: [false, true])
-  func directRegistryResolvesInHostScopeAndExecutesWithLiveSession(asynchronous: Bool) async throws
+  func directConfiguredToolsResolveInHostScopeAndExecutesWithLiveSession(asynchronous: Bool)
+    async throws
   {
     let fixture = try InvocationFixture(reexportTools: true)
     let configuration = fixture.configuration
@@ -81,7 +84,8 @@ struct GatewayInvocationContextTests {
           grant: try session?.apply(to: grant, context: executionContext) ?? grant,
           derivesObserveGrant: false)
       })
-    let registry = GatewayToolRegistry(configuration: configuration, mcpClient: client)
+    let provider = ConfiguredMCPToolProvider(
+      environment: ToolEnvironment(configuration: configuration), mcpClient: client)
     let route = InvocationRouteProbe()
     let admission = try #require(
       InvocationAdmission(
@@ -94,11 +98,13 @@ struct GatewayInvocationContextTests {
     let initialDiscoveries = fixture.client.discoveries.count
     func call(_ tool: String) async throws -> JSONValue {
       if asynchronous {
-        return try await registry.callToolAsync(
-          name: "fixture." + tool, arguments: .object([:]), context: context)
+        return try await provider.callToolAsync(
+          .init(
+            name: "fixture." + tool, arguments: .object([:]), context: context))
       }
-      return try registry.callTool(
-        name: "fixture." + tool, arguments: .object([:]), context: context)
+      return try provider.callTool(
+        .init(
+          name: "fixture." + tool, arguments: .object([:]), context: context))
     }
     do {
       try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
@@ -119,10 +125,8 @@ struct GatewayInvocationContextTests {
       #expect((observed.continuation as? InvocationRouteProbe) === route)
       #expect(observed.admission?.hostInvocationID == admission.hostInvocationID)
       #expect(observed.admission?.reference == admission.reference)
-      await registry.shutdown()
       await fixture.runtime.shutdown()
     } catch {
-      await registry.shutdown()
       await fixture.runtime.shutdown()
       throw error
     }
@@ -169,8 +173,8 @@ struct GatewayInvocationContextTests {
     }
   }
 
-  @Test(arguments: ["sync", "async", "fallback", "async-fallback"], [false, true])
-  func directRegistryReusesTheHostCatalogWithCallerContext(
+  @Test(arguments: ["sync", "async"], [false, true])
+  func directConfiguredToolsReuseTheHostCatalogWithCallerContext(
     path: String, selectedContinuation: Bool
   ) async throws {
     let fixture = try InvocationFixture(reexportTools: true)
@@ -179,7 +183,8 @@ struct GatewayInvocationContextTests {
     other.id = "other"
     other.prefix = "other"
     configuration.mcp.servers.insert(other, at: 0)
-    let registry = GatewayToolRegistry(configuration: configuration, mcpClient: fixture.client)
+    let provider = ConfiguredMCPToolProvider(
+      environment: ToolEnvironment(configuration: configuration), mcpClient: fixture.client)
     let selected = MCPContinuationTarget(
       workspaceID: "fixture", reference: .init(serverID: fixture.server.id, toolName: "inspect"),
       connectionID: UUID(), instanceID: UUID(), resources: [:])
@@ -187,7 +192,7 @@ struct GatewayInvocationContextTests {
       session: fixture.session, continuation: selectedContinuation ? selected : nil)
     let initialDiscoveries = fixture.client.discoveries.count
     do {
-      _ = try registry.listTools(context: context)
+      _ = try provider.definitions()
       #expect(
         Array(fixture.client.discoveredServers.dropFirst(initialDiscoveries)) == [
           "other", "fixture",
@@ -200,21 +205,13 @@ struct GatewayInvocationContextTests {
       let result: JSONValue
       switch path {
       case "async":
-        result = try await registry.callToolAsync(
-          name: "fixture.inspect", arguments: .object([:]), context: context)
-      case "fallback":
-        result = try registry.callTool(
-          definition: .init(
-            name: "fixture.inspect", description: "Fixture", inputSchema: .object([:])),
-          arguments: .object([:]), context: context)
-      case "async-fallback":
-        result = try await registry.callToolAsync(
-          definition: .init(
-            name: "fixture.inspect", description: "Fixture", inputSchema: .object([:])),
-          arguments: .object([:]), context: context)
+        result = try await provider.callToolAsync(
+          .init(
+            name: "fixture.inspect", arguments: .object([:]), context: context))
       default:
-        result = try registry.callTool(
-          name: "fixture.inspect", arguments: .object([:]), context: context)
+        result = try provider.callTool(
+          .init(
+            name: "fixture.inspect", arguments: .object([:]), context: context))
       }
       #expect(result.objectValue?["isError"] == .bool(false))
       #expect(fixture.client.discoveries.count == catalogDiscoveries)
@@ -224,10 +221,8 @@ struct GatewayInvocationContextTests {
         (observed.continuation as? MCPContinuationTarget)?.connectionID
           == (selectedContinuation ? selected.connectionID : nil))
       #expect(fixture.client.calls.count == 1)
-      await registry.shutdown()
       await fixture.runtime.shutdown()
     } catch {
-      await registry.shutdown()
       await fixture.runtime.shutdown()
       throw error
     }

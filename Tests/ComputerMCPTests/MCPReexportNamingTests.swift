@@ -4,6 +4,7 @@ import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
 import ComputerMCPToolsGit
+import ComputerMCPToolsMCP
 import ComputerMCPToolsShell
 import Foundation
 import Testing
@@ -13,86 +14,102 @@ import Testing
 @testable import ComputerMCPCore
 
 struct MCPReexportNamingTests {
-  @Test(arguments: ["", "namespace"], [false, true])
-  func freshDirectCallsResolveDistinctNamesAcrossSharedPrefixes(
-    prefix: String, asynchronous: Bool
-  ) async throws {
-    let firstName = prefix.isEmpty ? "left" : "child.read"
-    let secondPrefix = prefix.isEmpty ? "" : "\(prefix).child"
-    let client = ReexportNamingClient(["first": [firstName], "second": ["right"]])
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(
-        mcp: .init(servers: [
-          Self.server("second", prefix: secondPrefix), Self.server("first", prefix: prefix),
-        ])),
-      mcpClient: client)
-    let exposed = prefix.isEmpty ? firstName : "\(prefix).\(firstName)"
-    let secondName = secondPrefix.isEmpty ? "right" : "\(secondPrefix).right"
-    func call(_ name: String) async throws -> JSONValue {
-      if asynchronous {
-        return try await registry.callToolAsync(
-          name: name, arguments: .object([:]), context: .empty)
-      }
-      return try registry.callTool(name: name, arguments: .object([:]), context: .empty)
-    }
-    #expect(try await call(exposed) == .string("first:\(firstName)"))
-    #expect(try await call(secondName) == .string("second:right"))
-    #expect(client.discoveredServers == ["second", "first"])
-    await #expect(throws: GatewayToolError.unknownTool("missing")) { try await call("missing") }
-    #expect(client.discoveredServers == ["second", "first"])
+  @Test(arguments: [
+    "system.inspect", "network.inspect", "macos.inspect", "mcp.inspect", "git.inspect",
+  ])
+  func configuredRoutesKeepTheirProviderAcrossNamespaces(name: String) throws {
+    let environment = ToolEnvironment(
+      configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")])))
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: environment, mcpClient: ReexportNamingClient(["first": [name]]))
+    let snapshot = try GatewayToolCatalogSnapshot(providers: registry.providers())
+    let route = try #require(snapshot.routes[name])
+    #expect(route.provider.id == "configured")
+    #expect(route.provider.namespaces.isEmpty)
+    #expect(route.capability.mcpReference == .init(serverID: "first", toolName: name))
   }
 
   @Test
-  func directCallsUseTheMostRecentSuccessfulListing() throws {
-    let client = ReexportNamingClient(["first": ["left"], "second": ["right"]])
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(
-        mcp: .init(servers: [Self.server("first", prefix: ""), Self.server("second", prefix: "")])),
-      mcpClient: client)
-    _ = try registry.listTools(context: .empty)
-    client.replace("second", names: ["left"])
-    #expect(throws: GatewayToolError.invalidArguments("Reexported tool name conflicts: left")) {
-      try registry.listTools(context: .empty)
-    }
-    let failedDiscoveries = client.discoveredServers.count
-    #expect(
-      try registry.callTool(name: "right", arguments: .object([:]), context: .empty)
-        == .string("second:right"))
-    #expect(client.discoveredServers.count == failedDiscoveries)
-    client.replace("first", names: [])
-    client.replace("second", names: ["fresh"])
-    _ = try registry.definitions(context: .empty)
-    let successfulDiscoveries = client.discoveredServers.count
-    for name in ["left", "right"] {
-      #expect(throws: GatewayToolError.unknownTool(name)) {
-        try registry.callTool(name: name, arguments: .object([:]), context: .empty)
-      }
-    }
-    #expect(
-      try registry.callTool(name: "fresh", arguments: .object([:]), context: .empty)
-        == .string("second:fresh"))
-    #expect(client.discoveredServers.count == successfulDiscoveries)
-  }
-
-  @Test(arguments: ["", "namespace"], ["codex.app.status", "file.read"])
-  func explicitPrefixPreservesSchemaAndRegistrationIdentity(prefix: String, name: String) throws {
-    let client = ReexportNamingClient(["first": [name]])
-    let server = Self.server("first", prefix: prefix)
-    let configuration = GatewayConfiguration(mcp: .init(servers: [server]))
+  func downstreamToolsListWithTheirNamespaceProvidersBeforeTreesAndComputerUse() async throws {
+    let workspace = try ScopedTemporaryDirectory()
+    let treeURL = workspace.url.appendingPathComponent("tree.json")
+    try JSONEncoder().encode(CLITreeGatewayTests.tree(CLITreeGatewayTests.printCommand()))
+      .write(to: treeURL)
+    var configuration = GatewayConfiguration.fixture(
+      cli: .init(commands: [
+        .init(
+          id: "printf", executable: "/usr/bin/printf", allowAnyArgs: false,
+          tree: .init(kind: .file, path: treeURL.path))
+      ]),
+      mcp: .init(servers: [
+        Self.server("first", prefix: "mcp"), Self.server("second", prefix: "custom"),
+      ]),
+      tools: [
+        .init(name: "git.zulu", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "custom.alias", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "git.alpha", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "mcpish.alias", adapter: .mcp, source: "first", tool: "inspect"),
+        .init(name: "skills.alias", adapter: .mcp, source: "first", tool: "inspect"),
+      ],
+      builtin: .init(enabled: [
+        "file.read", "file.stat", "git.root", "git.status", "system.time", "network.interfaces",
+        "macos.screens", "macos.user_directories",
+      ]),
+      skills: .init(enabled: true, roots: [.init(id: "fixture", path: workspace.url.path)]))
+    configuration.workspaceDirectory = workspace.url
     try configuration.validate()
-    let decoded = try GatewayConfiguration.load(text: configuration.exportedTOML())
-    #expect(decoded.mcp.servers[0].prefix == prefix)
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
-    let exposed = prefix.isEmpty ? name : "\(prefix).\(name)"
-    let tool = try #require(registry.listTools(context: .empty).first { $0.name == exposed })
-    let original = try #require(client.listTools(server: server, context: .empty).first)
-    #expect(tool.inputSchema == original.inputSchema && tool.outputSchema == original.outputSchema)
-    #expect(tool.title == original.title && tool.annotations == original.annotations)
-    #expect(tool.mcpReference == .init(serverID: "first", toolName: name))
-    #expect(
-      try registry.callTool(name: exposed, arguments: .object([:]), context: .empty)
-        == .string("first:\(name)"))
+    let environment = ToolEnvironment(configuration: configuration)
+    let treeTools = try CLIToolProvider(environment: environment).treeProviders().flatMap {
+      try $0.definitions().map(\.tool.name)
+    }
+    try #require(treeTools.count == 1)
+    let client = ReexportNamingClient([
+      "first": ["zeta", "inspect"], "second": ["inspect", "alpha"],
+    ])
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: environment, mcpClient: client)
+    let router = try GatewayProviderRouter(registry: registry)
+    do {
+      let discoveries = client.discoveredServers
+      let expected =
+        [
+          "cli.list", "cli.describe", "cli.status", "cli.help", "cli.exec",
+          "process.spawn", "process.list", "process.read", "process.cancel",
+          "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
+          "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
+          "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
+          "mcp.requests.list", "mcp.requests.cancel", "mcp.connections.close", "mcp.requests.read",
+          "mcp.zeta", "mcp.inspect",
+          "skills.roots", "skills.list", "skills.describe", "skills.validate", "skills.frontmatter",
+          "skills.read", "skills.files", "skills.read_file", "skills.read_files",
+          "skills.read_package", "skills.outline", "skills.section", "skills.tables",
+          "skills.links", "skills.link_check", "skills.search", "skills.search_files",
+          "skills.alias",
+          "file.read", "file.stat", "git.root", "git.status", "git.zulu", "git.alpha",
+          "system.time", "network.interfaces", "macos.screens", "macos.user_directories",
+          "custom.alias", "mcpish.alias", "custom.inspect", "custom.alpha",
+        ] + treeTools + [
+          "computer.permissions", "computer.displays", "computer.screenshot", "computer.windows",
+          "computer.pointer.position", "computer.pointer.move", "computer.pointer.click",
+          "computer.keyboard.key", "computer.keyboard.text", "computer.scroll",
+          "computer.accessibility.query", "computer.accessibility.action", "computer.verify",
+        ]
+      #expect(discoveries == ["first", "first", "first", "first", "first", "first", "second"])
+      #expect(try router.listTools(context: .empty).map(\.name) == expected)
+      client.replace("first", names: ["fresh"])
+      #expect(try router.listTools(context: .empty).map(\.name) == expected)
+      #expect(
+        try router.callTool(name: "git.alpha", arguments: nil, context: .empty)
+          == .string("first:inspect"))
+      #expect(
+        try await router.callToolAsync(name: "mcp.inspect", arguments: nil, context: .empty)
+          == .string("first:inspect"))
+      #expect(client.discoveredServers == discoveries)
+      await router.shutdown()
+    } catch {
+      await router.shutdown()
+      throw error
+    }
   }
 
   @Test
@@ -112,37 +129,6 @@ struct MCPReexportNamingTests {
       base: ReexportNamingClient(["first": ["codex.app.status", "ungranted"]]), policy: policy)
     #expect(
       try client.listTools(server: server, context: .empty).map(\.name) == ["codex.app.status"])
-  }
-
-  @Test
-  func directResolutionUsesListingPermissionsAndVisibility() throws {
-    var first = Self.server("first", prefix: "")
-    first.allowAnyTool = false
-    first.allowedTools = ["inspect"]
-    first.toolRisks = ["inspect": .readOnly]
-    let configuration = GatewayConfiguration.fixture(
-      mcp: .init(servers: [Self.server("second", prefix: ""), first]))
-    let base = ReexportNamingClient([
-      "first": ["inspect", "blocked"], "second": ["inspect", "hidden"],
-    ])
-    let client = AuthorizedMCPClient(
-      base: base,
-      policy: .init(
-        configuration: configuration,
-        grant: .init(
-          id: .chatGPTObserve, capabilityIDs: [], allowedCallers: [.secureTunnel],
-          mcpServerIDs: ["first"]), derivesObserveGrant: false))
-    let registry = GatewayToolRegistry(configuration: configuration, mcpClient: client)
-    #expect(
-      try registry.callTool(name: "inspect", arguments: nil, context: .empty)
-        == .string("first:inspect"))
-    for name in ["blocked", "hidden"] {
-      #expect(throws: GatewayToolError.unknownTool(name)) {
-        try registry.callTool(name: name, arguments: nil, context: .empty)
-      }
-    }
-    #expect(base.discoveredServers == ["first", "first"])
-    #expect(base.calls == ["first:inspect"])
   }
 
   @Test
@@ -169,7 +155,8 @@ struct MCPReexportNamingTests {
     let configuration = GatewayConfiguration.fixture(
       mcp: .init(servers: [Self.server("first", prefix: ""), Self.server("second", prefix: "")]))
     try configuration.validate()
-    let registry = GatewayToolRegistry(configuration: configuration, mcpClient: client)
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: ToolEnvironment(configuration: configuration), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     do {
       #expect(
@@ -198,60 +185,14 @@ struct MCPReexportNamingTests {
       mcp: .init(servers: [Self.server("first", prefix: "")]),
       policy: .init(shellEnabled: true), builtin: .init(enabled: ["git.status"]))
     let environment = ToolEnvironment(configuration: configuration)
-    let registry = GatewayToolRegistry(
-      toolEnvironment: environment, mcpClient: ReexportNamingClient(["first": [name]]))
+    let client = ReexportNamingClient(["first": [name]])
     #expect(throws: (any Error).self) {
-      _ = try GatewayProviderRouter(
-        registry: registry,
-        additionalProviders: {
-          [
-            CLIToolProvider(environment: environment), GitToolProvider(environment: environment),
-            ShellToolProvider(environment: environment),
-            ProcessToolProvider(environment: environment),
-          ]
-        })
+      _ = try GatewayProviderRouter(providers: [
+        ConfiguredMCPToolProvider(environment: environment, mcpClient: client),
+        CLIToolProvider(environment: environment), GitToolProvider(environment: environment),
+        ShellToolProvider(environment: environment), ProcessToolProvider(environment: environment),
+      ])
     }
-  }
-
-  @Test(arguments: [false, true])
-  func directCallsRejectCatalogConflictsLikeListing(asynchronous: Bool) async throws {
-    let client = ReexportNamingClient(["first": ["inspect", "mcp.tools.list"]])
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")])),
-      mcpClient: client)
-    let conflict = GatewayToolError.invalidArguments(
-      "Reexported tool name conflicts: mcp.tools.list")
-    await #expect(throws: conflict) {
-      if asynchronous {
-        return try await registry.callToolAsync(name: "inspect", arguments: nil, context: .empty)
-      }
-      return try registry.callTool(name: "inspect", arguments: nil, context: .empty)
-    }
-    #expect(throws: conflict) { try registry.listTools(context: .empty) }
-    #expect(client.calls.isEmpty)
-    client.replace("first", names: ["inspect"])
-    #expect(
-      try registry.callTool(name: "inspect", arguments: nil, context: .empty)
-        == .string("first:inspect"))
-  }
-
-  @Test
-  func asyncGatewayFallbackValidatesTheCatalogBeforeCallingDownstream() async throws {
-    let client = ReexportNamingClient(["first": ["inspect", "mcp.tools.list"]])
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")])),
-      mcpClient: client)
-    await #expect(
-      throws: GatewayToolError.invalidArguments("Reexported tool name conflicts: mcp.tools.list")
-    ) {
-      try await registry.callToolAsync(
-        definition: .init(
-          name: "mcp.tools.call", description: "Gateway", inputSchema: .object([:])),
-        arguments: .object(["server": .string("first"), "tool": .string("inspect")]),
-        context: .empty)
-    }
-    #expect(client.discoveredServers == ["first"])
-    #expect(client.calls.isEmpty)
   }
 
   @Test(arguments: [
@@ -275,11 +216,12 @@ struct MCPReexportNamingTests {
   @Test
   func reservedCoreNameDuringRefreshDoesNotReplaceTheValidatedCatalog() async throws {
     let client = ReexportNamingClient(["first": ["available"]])
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")])),
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: ToolEnvironment(
+        configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")]))),
       mcpClient: client)
     let router = try GatewayProviderRouter(
-      registry: registry, additionalProviders: { [] }, reservedToolNames: ["workspace.list"])
+      registry: registry, reservedToolNames: ["workspace.list"])
     do {
       client.replace("first", names: ["workspace.list"])
       await #expect(throws: GatewayProviderRouterError.duplicateTool("workspace.list")) {
@@ -287,6 +229,9 @@ struct MCPReexportNamingTests {
       }
       #expect(try router.listTools(context: .empty).contains { $0.name == "available" })
       #expect(try !router.listTools(context: .empty).contains { $0.name == "workspace.list" })
+      #expect(
+        try router.callTool(name: "available", arguments: nil, context: .empty)
+          == .string("first:available"))
       client.replace("first", names: ["recovered"])
       try await router.refreshTools(context: .empty)
       #expect(

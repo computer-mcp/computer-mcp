@@ -2,86 +2,6 @@ import ComputerMCPCore
 import Foundation
 import NIOConcurrencyHelpers
 
-internal struct GatewayDomainToolProvider: GatewayToolProvider, Sendable {
-  internal let id: String
-  private let registry: GatewayToolRegistry
-  private let toolDefinitions: [ToolDefinition]
-
-  internal init(
-    id: String,
-    registry: GatewayToolRegistry,
-    definitions: [ToolDefinition]
-  ) {
-    self.id = id
-    self.registry = registry
-    self.toolDefinitions = definitions
-  }
-
-  internal func definitions() throws -> [ToolDefinition] {
-    toolDefinitions
-  }
-
-  internal func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
-    guard let definition = toolDefinitions.first(where: { $0.tool.name == invocation.name }) else {
-      throw GatewayToolError.unknownTool(invocation.name)
-    }
-    return try registry.callTool(
-      definition: definition.tool, arguments: invocation.arguments, context: invocation.context)
-  }
-
-  internal func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
-    try Task.checkCancellation()
-    guard let definition = toolDefinitions.first(where: { $0.tool.name == invocation.name }) else {
-      throw GatewayToolError.unknownTool(invocation.name)
-    }
-    return try await registry.callToolAsync(
-      definition: definition.tool, arguments: invocation.arguments, context: invocation.context)
-  }
-}
-
-internal enum GatewayToolDomain: String, CaseIterable, Sendable {
-  case cli
-  case process
-  case shell
-  case mcp
-  case skills
-  case workspace
-  case file
-  case structured
-  case git
-  case system
-  case network
-  case macos
-  case configured
-
-  fileprivate static func classify(_ name: String) -> GatewayToolDomain {
-    if name.hasPrefix("cli.") { return .cli }
-    if name.hasPrefix("process.") { return .process }
-    if name.hasPrefix("shell.") { return .shell }
-    if name.hasPrefix("mcp.") { return .mcp }
-    if name.hasPrefix("skills.") { return .skills }
-    if name.hasPrefix("workspace.") { return .workspace }
-    if name.hasPrefix("file.") || name.hasPrefix("archive.") { return .file }
-    if name.hasPrefix("json.") || name.hasPrefix("jsonl.") || name.hasPrefix("toml.")
-      || name.hasPrefix("yaml.") || name.hasPrefix("xml.") || name.hasPrefix("plist.")
-      || name.hasPrefix("csv.") || name.hasPrefix("sqlite.")
-      || name.hasPrefix("structured.") || name.hasPrefix("markdown.")
-      || name.hasPrefix("image.") || name.hasPrefix("pdf.") || name.hasPrefix("media.")
-    {
-      return .structured
-    }
-    if name.hasPrefix("git.") { return .git }
-    if name.hasPrefix("system.") || name.hasPrefix("logs.") || name.hasPrefix("service.")
-      || name.hasPrefix("env.")
-    {
-      return .system
-    }
-    if name.hasPrefix("network.") { return .network }
-    if name.hasPrefix("macos.") { return .macos }
-    return .configured
-  }
-}
-
 internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private struct State {
     var snapshot: GatewayToolCatalogSnapshot
@@ -155,39 +75,15 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
 
   internal convenience init(
     registry: GatewayToolRegistry,
-    additionalProviders: @escaping @Sendable () throws -> [any GatewayToolProvider] = { [] },
     reservedToolNames: Set<String> = [],
     retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false }
   ) throws {
     try self.init(
-      source: {
-        // The host catalog is built independently of any caller invocation.
-        let definitions = try registry.definitions(context: .empty)
-        let providers =
-          GatewayToolDomain.allCases.compactMap { domain -> (any GatewayToolProvider)? in
-            let definitions = definitions.filter {
-              GatewayToolDomain.classify($0.tool.name) == domain
-            }
-            guard !definitions.isEmpty else { return nil }
-            return GatewayDomainToolProvider(
-              id: domain.rawValue, registry: registry, definitions: definitions)
-          } + (try additionalProviders())
-        // Provider IDs define the host catalog order; extra providers retain their source order.
-        let order = Dictionary(
-          uniqueKeysWithValues: GatewayToolDomain.allCases.enumerated().map {
-            ($0.element.rawValue, $0.offset)
-          })
-        return providers.enumerated().sorted {
-          let left = order[$0.element.id] ?? order.count
-          let right = order[$1.element.id] ?? order.count
-          return left == right ? $0.offset < $1.offset : left < right
-        }.map(\.element)
-      },
-      invalidations: registry.toolChanges(context: .empty),
-      refreshInterval: registry.hasReexportedMCPServers || registry.hasCLITrees
-        ? .seconds(30) : nil,
+      source: registry.providers,
+      invalidations: registry.invalidations,
+      refreshInterval: registry.refreshInterval,
       reservedToolNames: reservedToolNames,
-      mcpPolicyResolver: { try registry.downstreamPolicy(for: $0, context: $1) },
+      mcpPolicyResolver: registry.downstreamPolicy,
       retainsContinuation: retainsContinuation,
       shutdownSource: { await registry.shutdown() }
     )

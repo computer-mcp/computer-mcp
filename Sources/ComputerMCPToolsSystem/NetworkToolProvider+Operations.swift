@@ -1,10 +1,17 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPToolKit
-import Darwin
 import Foundation
 
-extension GatewayToolRegistry {
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
+
+extension NetworkToolProvider {
   internal func networkInterfaces(arguments object: [String: JSONValue]) throws -> JSONValue {
     let interface = try optionalString("interface", in: object)
     let timeout = optionalInt("timeout_ms", in: object) ?? 10_000
@@ -19,7 +26,7 @@ extension GatewayToolRegistry {
     }
 
     let result = try commandRunner.run(
-      executable: "/sbin/ifconfig",
+      executable: registeredCommands.builtinExecutable("ifconfig"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -39,7 +46,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
 
     let result = try commandRunner.run(
-      executable: "/usr/sbin/scutil",
+      executable: registeredCommands.builtinExecutable("scutil"),
       arguments: ["--dns"],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -62,7 +69,7 @@ extension GatewayToolRegistry {
 
     var hints = addrinfo()
     hints.ai_family = try addressFamilyValue(family)
-    hints.ai_socktype = SOCK_STREAM
+    hints.ai_socktype = streamSocketType
     hints.ai_protocol = 0
 
     var result: UnsafeMutablePointer<addrinfo>?
@@ -126,7 +133,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
 
     let result = try commandRunner.run(
-      executable: "/usr/sbin/scutil",
+      executable: registeredCommands.builtinExecutable("scutil"),
       arguments: ["--proxy"],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -150,7 +157,7 @@ extension GatewayToolRegistry {
 
     let arguments = ["-listallnetworkservices"]
     let result = try commandRunner.run(
-      executable: "/usr/sbin/networksetup",
+      executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -176,7 +183,7 @@ extension GatewayToolRegistry {
 
     let arguments = ["-listallhardwareports"]
     let result = try commandRunner.run(
-      executable: "/usr/sbin/networksetup",
+      executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -206,7 +213,7 @@ extension GatewayToolRegistry {
 
     let discoveryArguments = ["-listallhardwareports"]
     let discovery = try commandRunner.run(
-      executable: "/usr/sbin/networksetup",
+      executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: discoveryArguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -245,7 +252,7 @@ extension GatewayToolRegistry {
 
     let powerArguments = ["-getairportpower", wifiPort.device]
     let power = try commandRunner.run(
-      executable: "/usr/sbin/networksetup",
+      executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: powerArguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -255,7 +262,7 @@ extension GatewayToolRegistry {
 
     let networkArguments = ["-getairportnetwork", wifiPort.device]
     let network = try commandRunner.run(
-      executable: "/usr/sbin/networksetup",
+      executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: networkArguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -372,7 +379,7 @@ extension GatewayToolRegistry {
 
     let arguments = ["--nc", "list"]
     let result = try commandRunner.run(
-      executable: "/usr/sbin/scutil",
+      executable: registeredCommands.builtinExecutable("scutil"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -506,7 +513,7 @@ extension GatewayToolRegistry {
     let currentArguments = ["-getcurrentlocation"]
     let listArguments = ["-listlocations"]
     let current = try commandRunner.run(
-      executable: "/usr/sbin/networksetup",
+      executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: currentArguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -514,7 +521,7 @@ extension GatewayToolRegistry {
       maxOutputBytes: maxOutputBytes
     )
     let locations = try commandRunner.run(
-      executable: "/usr/sbin/networksetup",
+      executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: listArguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -552,7 +559,7 @@ extension GatewayToolRegistry {
     }
 
     let result = try commandRunner.run(
-      executable: "/usr/sbin/netstat",
+      executable: registeredCommands.builtinExecutable("netstat"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -587,7 +594,7 @@ extension GatewayToolRegistry {
     }
 
     let result = try commandRunner.run(
-      executable: "/usr/sbin/netstat",
+      executable: registeredCommands.builtinExecutable("netstat"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -614,7 +621,7 @@ extension GatewayToolRegistry {
 
     let arguments = ["-an"]
     let result = try commandRunner.run(
-      executable: "/usr/sbin/arp",
+      executable: registeredCommands.builtinExecutable("arp"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -644,7 +651,7 @@ extension GatewayToolRegistry {
 
     let arguments = ["-c", "\(count)", host]
     let result = try commandRunner.run(
-      executable: "/sbin/ping",
+      executable: registeredCommands.builtinExecutable("ping"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -681,7 +688,7 @@ extension GatewayToolRegistry {
 
     let arguments = ["-G", "\(connectTimeoutSeconds)", "-zv", host, "\(port)"]
     let result = try commandRunner.run(
-      executable: "/usr/bin/nc",
+      executable: registeredCommands.builtinExecutable("nc"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -752,7 +759,7 @@ extension GatewayToolRegistry {
     ]
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/curl",
+      executable: registeredCommands.builtinExecutable("curl"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -805,7 +812,7 @@ extension GatewayToolRegistry {
 
     let arguments = ["-nP", "-iTCP", "-sTCP:LISTEN"]
     let result = try commandRunner.run(
-      executable: "/usr/sbin/lsof",
+      executable: registeredCommands.builtinExecutable("lsof"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -891,11 +898,11 @@ extension GatewayToolRegistry {
 
   private func socketTypeName(_ socketType: Int32) -> String {
     switch socketType {
-    case SOCK_STREAM:
+    case streamSocketType:
       return "stream"
-    case SOCK_DGRAM:
+    case datagramSocketType:
       return "datagram"
-    case SOCK_RAW:
+    case rawSocketType:
       return "raw"
     default:
       return "unknown"
@@ -918,7 +925,8 @@ extension GatewayToolRegistry {
     guard status == 0 else {
       return nil
     }
-    return stringFromNullTerminatedCString(host)
+    let endIndex = host.firstIndex(of: 0) ?? host.endIndex
+    return String(decoding: host[..<endIndex].map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 }
 
@@ -950,3 +958,13 @@ private struct NetworkConnectionService {
     ])
   }
 }
+
+#if canImport(Darwin)
+  private let streamSocketType = SOCK_STREAM
+  private let datagramSocketType = SOCK_DGRAM
+  private let rawSocketType = SOCK_RAW
+#else
+  private let streamSocketType = Int32(SOCK_STREAM.rawValue)
+  private let datagramSocketType = Int32(SOCK_DGRAM.rawValue)
+  private let rawSocketType = Int32(SOCK_RAW.rawValue)
+#endif

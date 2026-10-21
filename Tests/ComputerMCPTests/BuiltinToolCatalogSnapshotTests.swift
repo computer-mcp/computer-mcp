@@ -6,9 +6,11 @@ import ComputerMCPToolKit
 import ComputerMCPToolsCLI
 import ComputerMCPToolsFiles
 import ComputerMCPToolsGit
+import ComputerMCPToolsMCP
 import ComputerMCPToolsShell
 import ComputerMCPToolsSkills
 import ComputerMCPToolsStructured
+import ComputerMCPToolsSystem
 import ComputerMCPToolsWorkspace
 import Foundation
 import Testing
@@ -25,7 +27,7 @@ struct BuiltinToolCatalogSnapshotTests {
     let configuration = GatewayConfiguration.fixture(
       cli: .init(commands: hasCLI ? [.init(id: "fixture", executable: "/unused/catalog-cli")] : []),
       mcp: .init(), policy: .init(shellEnabled: shellEnabled))
-    let (registry, additionalProviders) = MacOSToolProviders().makeProviders(
+    let registry = MacOSToolProviders().makeProviders(
       configuration: configuration, commandRunner: RecordingCommandRunner(),
       processManager: ManagedProcessRegistry(), shellManager: SubprocessShellRuntime(),
       mcpClient: CatalogDiscoveryStub(),
@@ -33,7 +35,7 @@ struct BuiltinToolCatalogSnapshotTests {
         runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
         workspaceID: "catalog", rootURL: configuration.workspaceDirectory, readOnly: false))
     do {
-      let snapshot = try GatewayToolCatalogSnapshot(providers: additionalProviders())
+      let snapshot = try GatewayToolCatalogSnapshot(providers: registry.providers())
       for name in ["process.spawn", "process.list", "process.read", "process.cancel"] {
         #expect(snapshot.routes[name]?.provider.id == (hasCLI ? "process" : nil))
       }
@@ -52,30 +54,74 @@ struct BuiltinToolCatalogSnapshotTests {
 
   @Test
   func builtinDefinitionsDeclareMatchingCapabilityIDs() throws {
-    var definitions = GatewayToolRegistry.gatewayDefinitions(
-      builtins: Set(DefaultGatewayConfiguration.enabledBuiltinCapabilities),
-      hasMCPProviders: true,
-      toolMeta: nil)
-
     let environment = ToolEnvironment(
       configuration: .fixture(
         policy: .init(shellEnabled: true),
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
         skills: .init(enabled: true)))
-    definitions += try WorkspaceToolProvider(environment: environment).definitions()
-    definitions += try FilesToolProvider(environment: environment).definitions()
-    definitions += try SkillsToolProvider(environment: environment).definitions()
-    definitions += try StructuredToolProvider(environment: environment).definitions()
-    definitions += try GitToolProvider(environment: environment).definitions()
-    definitions += try CLIToolProvider(environment: environment).definitions()
-    definitions += try ProcessToolProvider(environment: environment).definitions()
-    definitions += try ShellToolProvider(environment: environment).definitions()
+    let providers: [any GatewayToolProvider] = [
+      WorkspaceToolProvider(environment: environment), FilesToolProvider(environment: environment),
+      SkillsToolProvider(environment: environment),
+      StructuredToolProvider(environment: environment),
+      GitToolProvider(environment: environment), CLIToolProvider(environment: environment),
+      ProcessToolProvider(environment: environment), ShellToolProvider(environment: environment),
+      SystemToolProvider(environment: environment), NetworkToolProvider(environment: environment),
+      MacOSToolProvider(environment: environment),
+      MCPToolProvider(environment: environment, mcpClient: CatalogDiscoveryStub()),
+    ]
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: environment, mcpClient: CatalogDiscoveryStub())
+    let snapshot = try GatewayToolCatalogSnapshot(providers: registry.providers())
+    let definitions = try providers.flatMap { provider in
+      try provider.definitions().map { definition in
+        let route = try #require(snapshot.routes[definition.tool.name])
+        #expect(route.provider.id == provider.id)
+        #expect(ObjectIdentifier(type(of: route.provider)) == ObjectIdentifier(type(of: provider)))
+        #expect(route.tool.json == definition.tool.json)
+        #expect(route.capability == definition.capability)
+        #expect(definition.tool.annotations != nil)
+        return definition
+      }
+    }
 
     #expect(definitions.count == 239)
     #expect(Set(definitions.map(\.tool.name)).count == definitions.count)
     for definition in definitions {
       #expect(definition.capability.id == definition.tool.name)
       #expect(definition.tool.mcpReference == nil)
+    }
+  }
+
+  @Test
+  func builtinProviderNamespacesAreDisjointAndCoverEveryDefinition() async throws {
+    let environment = ToolEnvironment(
+      configuration: .fixture(
+        policy: .init(shellEnabled: true),
+        builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
+        skills: .init(enabled: true)))
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: environment, mcpClient: CatalogDiscoveryStub())
+    do {
+      let providers = try registry.providers().filter { $0.id != "computer-use" }
+      #expect(providers.count == 12)
+      var namespaces: Set<String> = []
+      for provider in providers {
+        #expect(!provider.namespaces.isEmpty, "Provider: \(provider.id)")
+        for namespace in provider.namespaces {
+          #expect(namespaces.insert(namespace).inserted, "Shared namespace: \(namespace)")
+        }
+        let definitions = try provider.definitions()
+        #expect(!definitions.isEmpty, "Provider: \(provider.id)")
+        for definition in definitions {
+          #expect(
+            provider.namespaces.contains { definition.tool.name.hasPrefix("\($0).") },
+            "Tool \(definition.tool.name) must belong to provider \(provider.id)")
+        }
+      }
+      await registry.shutdown()
+    } catch {
+      await registry.shutdown()
+      throw error
     }
   }
 

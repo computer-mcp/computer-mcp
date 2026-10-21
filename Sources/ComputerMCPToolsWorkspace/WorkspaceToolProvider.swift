@@ -4,6 +4,7 @@ import ComputerMCPToolKit
 
 package struct WorkspaceToolProvider: GatewayToolProvider {
   package let id = "workspace"
+  package let namespaces = ["workspace"]
   let environment: ToolEnvironment
   let configuration: GatewayConfiguration
 

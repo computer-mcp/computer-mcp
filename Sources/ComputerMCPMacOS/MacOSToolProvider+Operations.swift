@@ -3,7 +3,7 @@ import ComputerMCPCore
 import ComputerMCPToolKit
 import Foundation
 
-extension GatewayToolRegistry {
+extension MacOSToolProvider {
   internal func macOSUserDirectories(arguments object: [String: JSONValue]) throws -> JSONValue {
     let includeMissing = try optionalBool("include_missing", in: object) ?? true
     let includeSystem = try optionalBool("include_system", in: object) ?? true

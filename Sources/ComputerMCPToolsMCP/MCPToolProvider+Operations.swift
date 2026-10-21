@@ -1,9 +1,10 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPDownstream
 import ComputerMCPToolKit
 import Foundation
 
-extension GatewayToolRegistry {
+extension MCPToolProvider {
   internal func requireMCPProviders() throws {
     guard !configuration.mcp.servers.isEmpty else {
       throw GatewayToolError.disabled(

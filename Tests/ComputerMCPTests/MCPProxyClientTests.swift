@@ -1,4 +1,6 @@
+import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import Foundation
 import Testing
 
@@ -55,8 +57,10 @@ final class MCPProxyClientTests {
       #expect(discovered.last?.annotations?.readOnlyHint == true)
       #expect(discovered.last?.outputSchema?.objectValue?["type"] == .string("object"))
 
-      let registry = GatewayToolRegistry(
-        configuration: .fixture(mcp: MCPSectionConfig(servers: [server])), mcpClient: client)
+      let registry = try GatewayProviderRouter(
+        registry: MacOSToolProviders().makeProviders(
+          toolEnvironment: ToolEnvironment(
+            configuration: .fixture(mcp: MCPSectionConfig(servers: [server]))), mcpClient: client))
       let exposed = try registry.listTools(context: .empty).map(\.name)
       #expect(exposed.contains("paged.sample"))
       #expect(!exposed.contains("paged.hidden"))

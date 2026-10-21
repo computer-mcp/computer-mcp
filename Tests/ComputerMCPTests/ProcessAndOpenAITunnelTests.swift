@@ -2,6 +2,7 @@ import ComputerMCPMacOS
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsFiles
+import ComputerMCPToolsSystem
 import Foundation
 import Testing
 
@@ -274,7 +275,9 @@ final class ProcessAndOpenAITunnelTests {
 
     let audit = try ChatGPTProfileAuditor().audit(
       configuration: configuration,
-      registry: GatewayToolRegistry(configuration: configuration),
+      registry: GatewayProviderRouter(providers: [
+        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
+      ]),
       allowWriteTools: false
     )
 
@@ -351,7 +354,9 @@ final class ProcessAndOpenAITunnelTests {
 
     let audit = try ChatGPTProfileAuditor().audit(
       configuration: configuration,
-      registry: GatewayToolRegistry(configuration: configuration),
+      registry: GatewayProviderRouter(providers: [
+        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
+      ]),
       allowWriteTools: false
     )
 

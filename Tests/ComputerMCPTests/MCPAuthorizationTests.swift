@@ -1,6 +1,8 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPToolsMCP
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -111,8 +113,9 @@ struct MCPAuthorizationTests {
     let server = MCPServerConfig(
       id: "remote", transport: .stdio, command: "/bin/cat",
       exposure: .reexport, prefix: "mcp", allowedTools: ["inspect"])
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(mcp: .init(servers: [server])), mcpClient: client)
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: ToolEnvironment(
+        configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     let definition = try #require(
       router.listTools(context: .empty).first { $0.name == "mcp.inspect" })
@@ -128,10 +131,11 @@ struct MCPAuthorizationTests {
     let server = MCPServerConfig(
       id: "remote", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "remote", allowedTools: ["inspect"], toolRisks: ["inspect": .readOnly])
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(
-        mcp: .init(servers: [server]),
-        tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")]),
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: ToolEnvironment(
+        configuration: .fixture(
+          mcp: .init(servers: [server]),
+          tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")])),
       mcpClient: CatalogClient())
     let router = try GatewayProviderRouter(registry: registry)
     #expect(try router.capability(named: "remote.inspect", context: .empty).risk == .readOnly)
@@ -140,21 +144,23 @@ struct MCPAuthorizationTests {
 
   @Test
   func emptySelectionDeniesAliasesAndGenericCalls() throws {
-    let registry = GatewayToolRegistry(
+    let registryEnvironment = ToolEnvironment(
       configuration: .fixture(
         mcp: .init(servers: [MCPServerConfig(id: "remote", transport: .stdio, command: "/bin/cat")]
         ),
-        tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")]),
-      mcpClient: CatalogClient())
-    #expect(try !registry.listTools(context: .empty).contains { $0.name == "alias.inspect" })
+        tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")]))
+    let registry = ConfiguredMCPToolProvider(
+      environment: registryEnvironment, mcpClient: CatalogClient())
+    #expect(try !registry.definitions().map(\.tool).contains { $0.name == "alias.inspect" })
     #expect(throws: (any Error).self) {
-      try registry.callTool(name: "alias.inspect", arguments: .object([:]), context: .empty)
+      try registry.callTool(.init(name: "alias.inspect", arguments: .object([:]), context: .empty))
     }
     #expect(throws: (any Error).self) {
-      try registry.callTool(
-        name: "mcp.tools.call",
-        arguments: .object(["server": .string("remote"), "tool": .string("inspect")]),
-        context: .empty)
+      try MCPToolProvider(environment: registryEnvironment, mcpClient: CatalogClient()).callTool(
+        .init(
+          name: "mcp.tools.call",
+          arguments: .object(["server": .string("remote"), "tool": .string("inspect")]),
+          context: .empty))
     }
   }
 
@@ -169,15 +175,20 @@ struct MCPAuthorizationTests {
         id: "second", transport: .stdio, command: "/bin/cat",
         exposure: .reexport, prefix: "shared.nested", allowAnyTool: true),
     ]
-    let registry = GatewayToolRegistry(
-      configuration: .fixture(mcp: .init(servers: servers)), mcpClient: client)
+    let registry = MacOSToolProviders().makeProviders(
+      toolEnvironment: ToolEnvironment(
+        configuration: .fixture(mcp: .init(servers: servers))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
-    for serving in [
-      registry.callTool(name:arguments:context:), router.callTool(name:arguments:context:),
-    ] {
-      let result = try serving("shared.nested.inspect", .object([:]), .empty)
-      #expect(result == .string("second:inspect"))
-    }
+    let direct = ConfiguredMCPToolProvider(
+      environment: ToolEnvironment(configuration: .fixture(mcp: .init(servers: servers))),
+      mcpClient: client)
+    let invocation = ToolInvocation(
+      name: "shared.nested.inspect", arguments: .object([:]), context: .empty)
+    #expect(try direct.callTool(invocation) == .string("second:inspect"))
+    #expect(
+      try router.callTool(
+        name: invocation.name, arguments: invocation.arguments, context: invocation.context)
+        == .string("second:inspect"))
   }
 
   @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve, .chatGPTOperate])

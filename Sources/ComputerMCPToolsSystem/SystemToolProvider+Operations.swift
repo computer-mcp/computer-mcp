@@ -1,9 +1,17 @@
 import ComputerMCPCore
+import ComputerMCPPlatform
 import ComputerMCPToolKit
-import Darwin
 import Foundation
 
-extension GatewayToolRegistry {
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
+
+extension SystemToolProvider {
   internal func systemInfo() throws -> JSONValue {
     let processInfo = ProcessInfo.processInfo
     return .object([
@@ -59,7 +67,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/sw_vers",
+      executable: registeredCommands.builtinExecutable("sw_vers"),
       arguments: [],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -71,7 +79,7 @@ extension GatewayToolRegistry {
 
     return .object([
       "operation": .string("system.software"),
-      "source": .string("/usr/bin/sw_vers"),
+      "source": .string(result.executable),
       "product": .object([
         "name": fields["ProductName"].map(JSONValue.string) ?? .null,
         "version": fields["ProductVersion"].map(JSONValue.string) ?? .null,
@@ -147,80 +155,28 @@ extension GatewayToolRegistry {
   }
 
   internal func systemMemory() throws -> JSONValue {
-    var stats = vm_statistics64()
-    var count = mach_msg_type_number_t(
-      MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
-    let result = withUnsafeMutablePointer(to: &stats) { pointer in
-      pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
-        host_statistics64(mach_host_self(), HOST_VM_INFO64, rebound, &count)
-      }
+    guard let probe = environment.systemProbe else {
+      throw GatewayToolError.disabled("System memory inspection is unavailable on this platform.")
     }
-    guard result == KERN_SUCCESS else {
-      throw GatewayToolError.executionFailed(
-        "host_statistics64 failed: \(String(cString: mach_error_string(result)))")
-    }
-
-    var rawPageSize: vm_size_t = 0
-    let pageSizeResult = host_page_size(mach_host_self(), &rawPageSize)
-    guard pageSizeResult == KERN_SUCCESS else {
-      throw GatewayToolError.executionFailed(
-        "host_page_size failed: \(String(cString: mach_error_string(pageSizeResult)))")
-    }
-    let pageSize = UInt64(rawPageSize)
-    let freePages = UInt64(stats.free_count)
-    let activePages = UInt64(stats.active_count)
-    let inactivePages = UInt64(stats.inactive_count)
-    let wiredPages = UInt64(stats.wire_count)
-    let speculativePages = UInt64(stats.speculative_count)
-    let compressedPages = UInt64(stats.compressor_page_count)
-    let purgeablePages = UInt64(stats.purgeable_count)
-    let internalPages = UInt64(stats.internal_page_count)
-    let externalPages = UInt64(stats.external_page_count)
-
+    let statistics = try probe.memoryStatistics()
     return .object([
       "operation": .string("system.memory"),
       "source": .string("host_statistics64"),
-      "physical_memory_bytes": try .integer(exactly: ProcessInfo.processInfo.physicalMemory),
-      "page_size_bytes": try .integer(exactly: pageSize),
-      "pages": .object([
-        "free": try .integer(exactly: freePages),
-        "active": try .integer(exactly: activePages),
-        "inactive": try .integer(exactly: inactivePages),
-        "wired": try .integer(exactly: wiredPages),
-        "speculative": try .integer(exactly: speculativePages),
-        "compressed": try .integer(exactly: compressedPages),
-        "purgeable": try .integer(exactly: purgeablePages),
-        "internal": try .integer(exactly: internalPages),
-        "external": try .integer(exactly: externalPages),
-      ]),
-      "bytes": .object([
-        "free": try .integer(exactly: freePages * pageSize),
-        "active": try .integer(exactly: activePages * pageSize),
-        "inactive": try .integer(exactly: inactivePages * pageSize),
-        "wired": try .integer(exactly: wiredPages * pageSize),
-        "speculative": try .integer(exactly: speculativePages * pageSize),
-        "compressed": try .integer(exactly: compressedPages * pageSize),
-        "purgeable": try .integer(exactly: purgeablePages * pageSize),
-        "internal": try .integer(exactly: internalPages * pageSize),
-        "external": try .integer(exactly: externalPages * pageSize),
-      ]),
-      "events": .object([
-        "pageins": try .integer(exactly: stats.pageins),
-        "pageouts": try .integer(exactly: stats.pageouts),
-        "faults": try .integer(exactly: stats.faults),
-        "copy_on_write_faults": try .integer(exactly: stats.cow_faults),
-        "compressions": try .integer(exactly: stats.compressions),
-        "decompressions": try .integer(exactly: stats.decompressions),
-        "swapins": try .integer(exactly: stats.swapins),
-        "swapouts": try .integer(exactly: stats.swapouts),
-      ]),
+      "physical_memory_bytes": try .integer(exactly: statistics.physicalMemoryBytes),
+      "page_size_bytes": try .integer(exactly: statistics.pageSizeBytes),
+      "pages": .object(try statistics.pageCounts.mapValues { try .integer(exactly: $0) }),
+      "bytes": .object(
+        try statistics.pageCounts.mapValues {
+          try .integer(exactly: $0 * statistics.pageSizeBytes)
+        }),
+      "events": .object(try statistics.eventCounts.mapValues { try .integer(exactly: $0) }),
     ])
   }
 
   internal func systemLoad() throws -> JSONValue {
     var loads = [Double](repeating: 0, count: 3)
     let sampleCount = loads.withUnsafeMutableBufferPointer { buffer in
-      getloadavg(buffer.baseAddress, Int32(buffer.count))
+      getloadavg(buffer.baseAddress!, Int32(buffer.count))
     }
     guard sampleCount >= 0 else {
       throw GatewayToolError.executionFailed("getloadavg failed.")
@@ -261,6 +217,10 @@ extension GatewayToolRegistry {
 
   internal func systemCPU() throws -> JSONValue {
     let processInfo = ProcessInfo.processInfo
+    guard let probe = environment.systemProbe else {
+      throw GatewayToolError.disabled("System CPU inspection is unavailable on this platform.")
+    }
+    let hardware = probe.cpuHardware()
     var unameInfo = utsname()
     let machine =
       uname(&unameInfo) == 0
@@ -280,33 +240,36 @@ extension GatewayToolRegistry {
       ]),
       "hardware": .object([
         "machine": machine,
-        "model_identifier": sysctlString("hw.model").map(JSONValue.string) ?? .null,
-        "brand_string": sysctlString("machdep.cpu.brand_string").map(JSONValue.string) ?? .null,
-        "physical_cpu_count": sysctlInteger("hw.physicalcpu").map { .integer(Int64($0)) } ?? .null,
-        "logical_cpu_count": sysctlInteger("hw.logicalcpu").map { .integer(Int64($0)) } ?? .null,
-        "physical_cpu_max": sysctlInteger("hw.physicalcpu_max").map { .integer(Int64($0)) }
+        "model_identifier": hardware.modelIdentifier.map(JSONValue.string) ?? .null,
+        "brand_string": hardware.brandString.map(JSONValue.string) ?? .null,
+        "physical_cpu_count": hardware.physicalCPUCount.map { .integer(Int64($0)) } ?? .null,
+        "logical_cpu_count": hardware.logicalCPUCount.map { .integer(Int64($0)) } ?? .null,
+        "physical_cpu_max": hardware.physicalCPUMax.map { .integer(Int64($0)) }
           ?? .null,
-        "logical_cpu_max": sysctlInteger("hw.logicalcpu_max").map { .integer(Int64($0)) } ?? .null,
-        "cpu_frequency_hz": sysctlInteger("hw.cpufrequency").map { .integer(Int64($0)) } ?? .null,
-        "cpu_frequency_min_hz": sysctlInteger("hw.cpufrequency_min").map { .integer(Int64($0)) }
+        "logical_cpu_max": hardware.logicalCPUMax.map { .integer(Int64($0)) } ?? .null,
+        "cpu_frequency_hz": hardware.frequencyHz.map { .integer(Int64($0)) } ?? .null,
+        "cpu_frequency_min_hz": hardware.minimumFrequencyHz.map { .integer(Int64($0)) }
           ?? .null,
-        "cpu_frequency_max_hz": sysctlInteger("hw.cpufrequency_max").map { .integer(Int64($0)) }
+        "cpu_frequency_max_hz": hardware.maximumFrequencyHz.map { .integer(Int64($0)) }
           ?? .null,
-        "arm64_supported": sysctlInteger("hw.optional.arm64").map { .bool($0 != 0) } ?? .null,
+        "arm64_supported": hardware.arm64Supported.map(JSONValue.bool) ?? .null,
       ]),
     ])
   }
 
   internal func systemThermal() throws -> JSONValue {
     let processInfo = ProcessInfo.processInfo
-    let thermalState = processInfo.thermalState
+    guard let probe = environment.systemProbe else {
+      throw GatewayToolError.disabled("System thermal inspection is unavailable on this platform.")
+    }
+    let condition = probe.thermalCondition()
 
     return .object([
       "operation": .string("system.thermal"),
       "source": .string("ProcessInfo"),
-      "thermal_state": .string(thermalStateName(thermalState)),
-      "thermal_state_rank": .integer(Int64(thermalStateRank(thermalState))),
-      "low_power_mode_enabled": .bool(processInfo.isLowPowerModeEnabled),
+      "thermal_state": .string(condition.state.rawValue),
+      "thermal_state_rank": .integer(Int64(condition.state.rank)),
+      "low_power_mode_enabled": .bool(condition.lowPowerModeEnabled),
       "processor_count": .integer(Int64(processInfo.processorCount)),
       "active_processor_count": .integer(Int64(processInfo.activeProcessorCount)),
     ])
@@ -440,7 +403,7 @@ extension GatewayToolRegistry {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/pmset",
+      executable: registeredCommands.builtinExecutable("pmset"),
       arguments: ["-g", "batt"],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -493,7 +456,7 @@ extension GatewayToolRegistry {
       "pid=,ppid=,user=,stat=,pcpu=,pmem=,etime=,comm=",
     ]
     let result = try commandRunner.run(
-      executable: "/bin/ps",
+      executable: registeredCommands.builtinExecutable("ps"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -542,7 +505,7 @@ extension GatewayToolRegistry {
     let allMatches = try optionalBool("all_matches", in: object) ?? false
     try validateExecutableLookupName(executable)
 
-    let paths = pathExecutables(executable, allMatches: allMatches, environment: environment)
+    let paths = pathExecutables(executable, allMatches: allMatches, environment: processEnvironment)
 
     return .object([
       "operation": .string("system.which"),
@@ -552,7 +515,8 @@ extension GatewayToolRegistry {
       "paths": .array(paths.map(JSONValue.string)),
       "match_count": .integer(Int64(paths.count)),
       "all_matches": .bool(allMatches),
-      "path_entry_count": .integer(Int64(pathSearchDirectories(environment: environment).count)),
+      "path_entry_count": .integer(
+        Int64(pathSearchDirectories(environment: processEnvironment).count)),
     ])
   }
 
@@ -561,8 +525,8 @@ extension GatewayToolRegistry {
     let maxEntries = optionalInt("max_entries", in: object) ?? 200
     try validateBoundedPositive(maxEntries, name: "max_entries", upperBound: 1_000)
 
-    let directories = pathSearchDirectories(environment: environment)
-    let hasProcessPath = environment["PATH"] != nil
+    let directories = pathSearchDirectories(environment: processEnvironment)
+    let hasProcessPath = processEnvironment["PATH"] != nil
     var entries: [JSONValue] = []
     var omittedCount = 0
     var seenStandardizedPaths: [String: Int] = [:]
@@ -660,7 +624,7 @@ extension GatewayToolRegistry {
     }
 
     let result = try commandRunner.run(
-      executable: "/usr/bin/log",
+      executable: registeredCommands.builtinExecutable("log"),
       arguments: arguments,
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -748,7 +712,7 @@ extension GatewayToolRegistry {
       ? "system/\(label)"
       : "\(domain)/\(uid)/\(label)"
     let result = try commandRunner.run(
-      executable: "/bin/launchctl",
+      executable: registeredCommands.builtinExecutable("launchctl"),
       arguments: ["print", target],
       workingDirectory: configuration.workspaceDirectory,
       environment: [:],
@@ -939,83 +903,6 @@ extension GatewayToolRegistry {
       pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<T>.size) { buffer in
         String(cString: buffer)
       }
-    }
-  }
-
-  private func sysctlString(_ name: String) -> String? {
-    var size = 0
-    guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else {
-      return nil
-    }
-
-    var buffer = [CChar](repeating: 0, count: size)
-    guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else {
-      return nil
-    }
-    return stringFromNullTerminatedCString(buffer)
-  }
-
-  private func sysctlInteger(_ name: String) -> Int64? {
-    var size = 0
-    guard sysctlbyname(name, nil, &size, nil, 0) == 0 else {
-      return nil
-    }
-
-    switch size {
-    case MemoryLayout<Int32>.size:
-      var value: Int32 = 0
-      var valueSize = size
-      guard sysctlbyname(name, &value, &valueSize, nil, 0) == 0 else {
-        return nil
-      }
-      return Int64(value)
-
-    case MemoryLayout<Int64>.size:
-      var value: Int64 = 0
-      var valueSize = size
-      guard sysctlbyname(name, &value, &valueSize, nil, 0) == 0 else {
-        return nil
-      }
-      return value
-
-    default:
-      return nil
-    }
-  }
-
-  internal func stringFromNullTerminatedCString(_ buffer: [CChar]) -> String {
-    let endIndex = buffer.firstIndex(of: 0) ?? buffer.endIndex
-    let bytes = buffer[..<endIndex].map { UInt8(bitPattern: $0) }
-    return String(decoding: bytes, as: UTF8.self)
-  }
-
-  private func thermalStateName(_ state: ProcessInfo.ThermalState) -> String {
-    switch state {
-    case .nominal:
-      return "nominal"
-    case .fair:
-      return "fair"
-    case .serious:
-      return "serious"
-    case .critical:
-      return "critical"
-    @unknown default:
-      return "unknown"
-    }
-  }
-
-  private func thermalStateRank(_ state: ProcessInfo.ThermalState) -> Int {
-    switch state {
-    case .nominal:
-      return 0
-    case .fair:
-      return 1
-    case .serious:
-      return 2
-    case .critical:
-      return 3
-    @unknown default:
-      return -1
     }
   }
 

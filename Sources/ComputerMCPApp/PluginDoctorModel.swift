@@ -1,5 +1,5 @@
 import Combine
-import ComputerMCP
+import ComputerMCPControlPlane
 import ComputerMCPPlugins
 import Foundation
 

@@ -6,16 +6,19 @@ Accepted.
 
 ## Context
 
-The package has an internal Swift implementation target shared by its two
+The package has internal Swift implementation targets shared by its two
 executable products. Maintainer-facing target documentation should live with
 the target it documents, while repository-level architecture and reference
 material belongs under `Documentation/`.
 
 ## Decision
 
-Place DocC source at `Sources/ComputerMCP/ComputerMCP.docc/`. Do not place
-target API DocC catalogs under repository-level `Documentation/`, and do not
-check in generated `.doccarchive` output.
+Place gateway runtime DocC source at
+`Sources/ComputerMCPGateway/ComputerMCPGateway.docc/`, with `ComputerMCPGateway`
+as its landing page. Link symbols owned by that target; name types from other
+targets as code text with their owning target. Keep target API DocC catalogs
+with their targets, outside repository-level `Documentation/`, and do not check
+in generated `.doccarchive` output.
 
 ## Consequences
 
@@ -34,4 +37,4 @@ check in generated `.doccarchive` output.
 ## Related Documentation
 
 - [Documentation Architecture](../Architecture/Documentation.md)
-- [DocC Catalog](../../Sources/ComputerMCP/ComputerMCP.docc/ComputerMCP.md)
+- [DocC Catalog](../../Sources/ComputerMCPGateway/ComputerMCPGateway.docc/ComputerMCPGateway.md)

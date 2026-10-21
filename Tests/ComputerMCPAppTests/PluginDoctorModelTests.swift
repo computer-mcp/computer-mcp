@@ -3,8 +3,8 @@ import Foundation
 import SwiftUI
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPApp
+@testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlugins
 

@@ -17,13 +17,16 @@ concurrency:
 jobs:
   linux-core:
     runs-on: ubuntu-24.04
-    container: swift:6.2.4-noble
+    container:
+      image: swift:6.2.4-noble
+      # Owned process groups finish only once PID 1 reaps their orphaned members.
+      options: --init
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install SQLite headers and the test interpreter
-        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev python3
+      - name: Install SQLite headers and test tools
+        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev python3 zsh
       - name: Build neutral targets
         run: swift build
       - name: Test neutral targets

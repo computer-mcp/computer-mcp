@@ -1,11 +1,14 @@
 import AppKit
-import ComputerMCP
+import ComputerMCPComputerUse
+import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPMacOS
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlugins
 import ComputerMCPProcess
+import ComputerMCPToolsSkills
 import ComputerMCPTunnels
 import Foundation
 
@@ -1116,7 +1119,7 @@ final class LiveAppControlPlane: AppControlPlane {
           state: inProcessState,
           version: nil,
           executablePath: nil,
-          toolCount: GatewayToolCounts.skills,
+          toolCount: SkillsToolProvider.toolCount,
           lastDoctorMessage: AppLocalization.formatted(
             "%@ registered root(s)",
             String(configuration.skills.roots.count)
@@ -1168,7 +1171,7 @@ final class LiveAppControlPlane: AppControlPlane {
         state: inProcessState,
         version: nil,
         executablePath: nil,
-        toolCount: GatewayToolCounts.computerUse,
+        toolCount: ComputerUseGatewayProvider.toolCount,
         lastDoctorMessage: "TCC permissions are checked without prompting.",
         lastError: nil,
         lifecycleManaged: false

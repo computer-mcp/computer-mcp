@@ -1,7 +1,8 @@
 import ArgumentParser
-import ComputerMCP
 import ComputerMCPConfiguration
+import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPMacOS
 import ComputerMCPTransport
 import Foundation

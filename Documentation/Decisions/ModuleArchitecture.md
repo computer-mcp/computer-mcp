@@ -114,13 +114,17 @@ above them and supplied by the composition root:
 | `MCPProcessOwnershipError` | `Downstream` | plugin store errors in process ownership; directory identity itself is a `Platform` value |
 | `HTTPOriginLifecycle` | `Tunnels` | `GatewayHTTPRuntime` in Cloudflare runtime state |
 | `OpenAITunnelHTTPProxyResolving` | `Tunnels` | system proxy lookup in tunnel supervision; `PlatformDarwin` reads system settings and `MacOS` supplies the conformance that parses them in `Tunnels` |
-| Control error classification | `Gateway` | control-plane error types in the HTTP adapter and control responses |
-| Client control | `Gateway` | `GatewayClientControl` in the HTTP client registry |
+| `AuditErrorClassifying` | `Core` | concrete Computer Use error checks in gateway runtime audit classification; errors supply an optional audit decision and code |
+| `ControlErrorClassifying` | `Gateway` | concrete control-plane error checks in control responses; errors supply an optional audit decision and code |
+| `GatewayControlError` | `Gateway` | the HTTP Full Shell approval precondition, with localized messages and the existing audit and control-response defaults |
+| `GatewayManagementProvider` | `Gateway` | control-plane management definitions, read capabilities, name lookup and asynchronous dispatch; `PlatformServices` reserves contract names independently of provider availability |
+| `GatewayClientControlProvider` | `Gateway` | control-plane client-control contracts, argument validation and HTTP generation dispatch |
 | `SecretStore` | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |
 | Workspace grant store | `Platform` | `WorkspaceBookmarkService` in gateway and control plane |
 | Login item controller | `Platform` | the `SMAppService` controller in the control plane |
-| Distribution environment | `Platform` | the App distribution environment in control-plane storage |
-| Computer Use provider and permission status | `Core`, `Platform` | direct Computer Use references in the gateway and control plane; the composition root registers the provider |
+| Distribution identity and environment | `Platform` | Foundation values for signed App metadata, namespace selection and control-plane storage directories |
+| Default manifest | supplied by `MacOS` | the macOS configuration extension; the neutral control-plane service receives the manifest as a constructor argument |
+| `GatewayToolProvider` and `ComputerUsePermissionReading` | `Core`, `Platform` | the composition root registers the Computer Use provider and injects its service for control-plane permission snapshots |
 | Archive extractor | `Platform` | the `libarchive`-based extractor, which moves to `PlatformDarwin`; archive limits, errors, staging directories and directory identity become `Platform` values |
 | Directory identity capture and private staging | `Platform` | descriptor-anchored private directory creation/recovery, identity capture/matching and exclusive rename; implemented in `PlatformDarwin`, including birth time and volume UUID |
 | Application locator | `Platform` | Launch Services application lookup in plugin dependency resolution |
@@ -148,12 +152,10 @@ cycles, no upward edges and no neutral target that depends on a Darwin target.
   then plugins, Computer Use, gateway and control plane. The shared target is
   removed when it is empty. `Delivery` and `Authorization` are new targets
   created with their capabilities; no existing declarations move into them.
-- `Scripts/verify-module-graph.py` checks the planned allocation against all
-  target directories during extraction, including macOS imports in extracted
-  neutral targets, and checks the target dependencies declared in
-  `Package.swift` against the layer rules. `Scripts/module-graph.json` holds the
-  layers and the planned allocation; its allocation entries are removed as
-  targets are extracted.
+- `Scripts/verify-module-graph.py package` checks the target dependencies declared
+  in `Package.swift` against the layer rules and platform boundaries.
+  `Scripts/module-graph.json` holds the layers, permitted same-layer dependencies,
+  platform rules and test support targets.
 - Neutral targets do not import macOS frameworks or reference macOS executable
   paths. As targets are extracted, `Scripts/verify-package-boundary.sh` is
   extended to reject both, and a Linux CI job builds and tests the extracted

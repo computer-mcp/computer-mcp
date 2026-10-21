@@ -15,7 +15,7 @@ material, decision history, and API documentation.
 - `Documentation/Architecture/` owns current architecture truth.
 - `Documentation/Reference/` owns exhaustive operational details.
 - `Documentation/Decisions/` owns accepted rationale.
-- `Sources/ComputerMCP/ComputerMCP.docc/` owns target-level API documentation.
+- `Sources/ComputerMCPGateway/ComputerMCPGateway.docc/` owns target-level API documentation.
 
 ## Current Structure
 

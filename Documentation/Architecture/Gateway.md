@@ -9,6 +9,15 @@ direct registrations and plugin contributions share the registry, routing,
 authorization and lifecycle. The gateway does not plan, rank, select or
 semantically rewrite tools.
 
+`ComputerMCPGateway` owns the platform-neutral runtime, provider router, admission,
+approvals, receipts, continuations, host services, HTTP adapter, domain stores,
+owned work and audit. `ComputerMCPMacOS` supplies platform services and assembles
+tool providers. The control plane supplies management through
+`GatewayManagementProvider` and local HTTP client control through
+`GatewayClientControlProvider`; the gateway retains generation checks, authorization
+and audit. Proxy authentication uses the injected `SecretStore` with noninteractive
+MCP HTTP reads, and bound host services use the injected Git executable.
+
 ## App-owned Topology
 
 ```text

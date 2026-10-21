@@ -9,6 +9,16 @@ import Testing
 
 struct SkillsToolProviderContractTests {
   @Test
+  func testSkillsToolCountMatchesTheFullCatalog() throws {
+    let skills = try SkillsToolProvider(
+      environment: ToolEnvironment(configuration: .fixture(skills: .init(enabled: true)))
+    )
+    .definitions()
+    #expect(!skills.isEmpty)
+    #expect(SkillsToolProvider.toolCount == skills.count)
+  }
+
+  @Test
   func rejectsNamesOutsideItsDomain() throws {
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(

@@ -17,7 +17,7 @@ Use this guide for agent work in this repository.
   `Documentation/Reference/Release.md`. Use `Scripts/version.py` for version
   updates/checks and `Scripts/release.py` for shared CI and release stages.
 - For API documentation, keep DocC source with the target at
-  `Sources/ComputerMCP/ComputerMCP.docc/`.
+  `Sources/ComputerMCPGateway/ComputerMCPGateway.docc/`.
 - For GitHub collaboration files, edit `.github/` or the root governance files,
   not repository architecture documents.
 
@@ -88,7 +88,6 @@ swift-format format --in-place --recursive --configuration .swift-format Package
 swift-format lint --strict --recursive --configuration .swift-format Package.swift Sources Tests
 /usr/bin/swift build
 /usr/bin/swift test
-python3 Scripts/verify-module-graph.py plan
 python3 Scripts/verify-module-graph.py package
 ```
 

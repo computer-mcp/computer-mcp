@@ -1,4 +1,7 @@
-import ComputerMCP
+import ComputerMCPComputerUse
+import ComputerMCPConfiguration
+import ComputerMCPControlPlane
+import ComputerMCPGateway
 import ComputerMCPPersistence
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlugins
@@ -12,7 +15,7 @@ extension AppControlPlaneService {
     keychainService: String,
     keychainAccessGroup: String
   ) throws -> AppControlPlaneService {
-    let resolvedDirectories = try directories ?? .standard()
+    let resolvedDirectories = try directories ?? .standard(environment: .production)
     try resolvedDirectories.prepare()
     let database = try GatewayDatabase(path: resolvedDirectories.database.path)
     try resolvedDirectories.secureDatabaseFiles()
@@ -31,6 +34,7 @@ extension AppControlPlaneService {
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
       secretStore: secretStore, executableSearchDirectories: platform.executableSearchDirectories,
       proxyResolver: SystemNetworkProxyResolver())
+    let defaultManifest = DefaultGatewayConfiguration.manifest
     if !FileManager.default.fileExists(atPath: resolvedDirectories.manifest.path) {
       _ = try manifestStore.activate(manifest: defaultManifest)
     }
@@ -38,9 +42,12 @@ extension AppControlPlaneService {
       directories: resolvedDirectories,
       database: database,
       manifestStore: manifestStore,
+      defaultManifest: defaultManifest,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
       gatewayExecutablePath: gatewayExecutablePath,
+      launchAtLoginController: SMAppServiceLaunchAtLoginController(),
+      computerUsePermissionReader: ComputerUseService(),
       platform: platform,
       bundledPlugins: bundledPlugins
     )

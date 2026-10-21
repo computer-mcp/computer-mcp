@@ -1,5 +1,5 @@
 import AppKit
-import ComputerMCP
+import ComputerMCPControlPlane
 import SwiftUI
 
 struct JourneyView: View {

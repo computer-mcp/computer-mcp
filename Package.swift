@@ -239,6 +239,68 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPGateway",
+      dependencies: [
+        "ComputerMCPPlugins", "ComputerMCPToolsWorkspace", "ComputerMCPConfiguration",
+        "ComputerMCPCore", "ComputerMCPPersistence", "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPDownstream",
+        "ComputerMCPTransport", "ComputerMCPTunnels",
+        .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "GRDB", package: "GRDB.swift"),
+        .product(name: "MCP", package: "swift-sdk"),
+        .product(name: "Logging", package: "swift-log"),
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ],
+      exclude: ["ComputerMCPGateway.docc"]
+    ),
+    .testTarget(
+      name: "ComputerMCPGatewayTests",
+      dependencies: [
+        "ComputerMCPConfiguration",
+        "ComputerMCPCore",
+        "ComputerMCPDownstream",
+        "ComputerMCPGateway",
+        "ComputerMCPPersistence",
+        "ComputerMCPPlatform",
+        "ComputerMCPPlatformPOSIX",
+        "ComputerMCPPlugins",
+        "ComputerMCPProcess",
+        "ComputerMCPTestSupport",
+        "ComputerMCPToolKit",
+        "ComputerMCPToolsCLI",
+        "ComputerMCPToolsFiles",
+        "ComputerMCPToolsGit",
+        "ComputerMCPToolsMCP",
+        "ComputerMCPToolsShell",
+        "ComputerMCPToolsSystem",
+        "ComputerMCPToolsWorkspace",
+        .product(name: "GRDB", package: "GRDB.swift"),
+        .product(name: "MCP", package: "swift-sdk"),
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+      ]
+    ),
+    .target(
+      name: "ComputerMCPControlPlane",
+      dependencies: [
+        "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsWorkspace",
+        "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
+        "ComputerMCPPersistence", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        "ComputerMCPProcess", "ComputerMCPTransport", "ComputerMCPTunnels",
+        .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "MCP", package: "swift-sdk"),
+      ]
+    ),
+    .testTarget(
+      name: "ComputerMCPControlPlaneTests",
+      dependencies: [
+        "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPCore",
+        "ComputerMCPPlatform", "ComputerMCPTunnels", "ComputerMCPTestSupport",
+      ]
+    ),
+    .target(
       name: "ComputerMCPTunnels",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -270,7 +332,10 @@ let neutralTargets: [Target] =
     ),
     .testTarget(
       name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
-    .testTarget(name: "ComputerMCPPlatformTests", dependencies: ["ComputerMCPPlatform"]),
+    .testTarget(
+      name: "ComputerMCPPlatformTests",
+      dependencies: ["ComputerMCPPlatform", "ComputerMCPTestSupport"]
+    ),
     .testTarget(
       name: "ComputerMCPToolKitTests",
       dependencies: [
@@ -344,9 +409,21 @@ let neutralTargets: [Target] =
         ]
       ),
       .target(
+        name: "ComputerMCPComputerUse",
+        dependencies: ["ComputerMCPCore", "ComputerMCPPlatform"]
+      ),
+      .testTarget(
+        name: "ComputerMCPComputerUseTests",
+        dependencies: [
+          "ComputerMCPComputerUse", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPTestSupport",
+        ]
+      ),
+      .target(
         name: "ComputerMCPMacOS",
         dependencies: [
           "ComputerMCPPlugins",
+          "ComputerMCPComputerUse",
           "ComputerMCPToolsShell",
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
@@ -357,51 +434,24 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsSystem",
           "ComputerMCPToolsMCP",
           "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPConfiguration",
+          "ComputerMCPCore",
+          "ComputerMCPPlatform",
           "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",
           "ComputerMCPTunnels", "ComputerMCPToolKit",
         ]
-      ),
-      .target(
-        name: "ComputerMCP",
-        dependencies: [
-          "ComputerMCPPlugins",
-          "ComputerMCPToolsSkills",
-          "ComputerMCPToolsFiles",
-          "ComputerMCPToolsWorkspace",
-          "ComputerMCPDownstream",
-          "ComputerMCPConfiguration",
-          "ComputerMCPCore",
-          "ComputerMCPPersistence",
-          "ComputerMCPPlatform",
-          "ComputerMCPPlatformDarwin",
-          "ComputerMCPPlatformPOSIX",
-          "ComputerMCPProcess",
-          "ComputerMCPToolKit",
-          "ComputerMCPTransport",
-          "ComputerMCPTunnels",
-          .product(name: "MCP", package: "swift-sdk"),
-          .product(name: "GRDB", package: "GRDB.swift"),
-          .product(name: "Logging", package: "swift-log"),
-          .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
-          .product(name: "NIOCore", package: "swift-nio"),
-          .product(name: "NIOHTTP1", package: "swift-nio"),
-          .product(name: "NIOPosix", package: "swift-nio"),
-          .product(name: "Subprocess", package: "swift-subprocess"),
-          .product(name: "TOML", package: "swift-toml"),
-        ],
-        exclude: ["ComputerMCP.docc"]
       ),
       .executableTarget(
         name: "computer-mcp",
         dependencies: [
           "ComputerMCPPlugins", "ComputerMCPPlatformDarwin",
           "ComputerMCPToolsCLI",
-          "ComputerMCP",
+          "ComputerMCPControlPlane", "ComputerMCPGateway",
           "ComputerMCPMacOS",
           "ComputerMCPConfiguration",
           "ComputerMCPCore",
+          "ComputerMCPPersistence",
           "ComputerMCPPlatform",
           "ComputerMCPProcess",
           "ComputerMCPTransport",
@@ -413,11 +463,14 @@ let neutralTargets: [Target] =
         name: "ComputerMCPApp",
         dependencies: [
           "ComputerMCPPlugins",
+          "ComputerMCPComputerUse",
+          "ComputerMCPToolsSkills",
           "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
+          "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPMacOS",
+          "ComputerMCPConfiguration",
+          "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
-          "ComputerMCPTransport",
           "ComputerMCPTunnels",
         ],
         resources: [
@@ -427,9 +480,56 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPMacOSTests",
         dependencies: [
-          "ComputerMCPMacOS", "ComputerMCPToolKit", "ComputerMCPCore",
-          "ComputerMCPConfiguration", "ComputerMCPTestSupport",
-        ]),
+          "ComputerMCPComputerUse",
+          "ComputerMCPControlPlane",
+          "ComputerMCPConfiguration",
+          "ComputerMCPCore",
+          "ComputerMCPDownstream",
+          "ComputerMCPGateway",
+          "ComputerMCPMacOS",
+          "ComputerMCPPersistence",
+          "ComputerMCPPlatform",
+          "ComputerMCPPlatformDarwin",
+          "ComputerMCPPlatformPOSIX",
+          "ComputerMCPPlugins",
+          "ComputerMCPProcess",
+          "ComputerMCPTestSupport",
+          "ComputerMCPToolKit",
+          "ComputerMCPToolsCLI",
+          "ComputerMCPToolsFiles",
+          "ComputerMCPToolsSystem",
+          "ComputerMCPToolsGit",
+          "ComputerMCPToolsMCP",
+          "ComputerMCPToolsShell",
+          "ComputerMCPToolsSkills",
+          "ComputerMCPToolsStructured",
+          "ComputerMCPToolsWorkspace",
+          "ComputerMCPTransport",
+          "ComputerMCPTunnels",
+          .product(name: "Crypto", package: "swift-crypto"),
+          .product(name: "GRDB", package: "GRDB.swift"),
+          .product(name: "MCP", package: "swift-sdk"),
+          .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        ],
+        resources: [.copy("Fixtures")]
+      ),
+      .testTarget(
+        name: "ComputerMCPControlPlaneDarwinTests",
+        dependencies: [
+          "ComputerMCPControlPlane", "ComputerMCPComputerUse", "ComputerMCPGateway",
+          "ComputerMCPCore", "ComputerMCPTransport", "ComputerMCPTestSupport",
+        ]
+      ),
+      .testTarget(
+        name: "ComputerMCPGatewayDarwinTests",
+        dependencies: [
+          "ComputerMCPCore",
+          "ComputerMCPGateway",
+          "ComputerMCPPlatform",
+          "ComputerMCPProcess",
+          "ComputerMCPTestSupport",
+        ]
+      ),
       .testTarget(
         name: "ComputerMCPPlatformDarwinTests",
         dependencies: [
@@ -474,36 +574,12 @@ let neutralTargets: [Target] =
         ]
       ),
       .testTarget(
-        name: "ComputerMCPTests",
-        dependencies: [
-          "ComputerMCPPlugins",
-          "ComputerMCPToolsShell",
-          "ComputerMCPToolsCLI",
-          "ComputerMCPToolsGit",
-          "ComputerMCPToolsStructured",
-          "ComputerMCPToolsSkills",
-          "ComputerMCPToolsFiles",
-          "ComputerMCPToolsWorkspace",
-          "ComputerMCPToolsSystem",
-          "ComputerMCPToolsMCP",
-          "ComputerMCPDownstream",
-          "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration", "ComputerMCPCore",
-          "ComputerMCPPlatform",
-          "ComputerMCPPersistence", "ComputerMCPPlatformDarwin", "ComputerMCPPlatformPOSIX",
-          "ComputerMCPProcess",
-          "ComputerMCPToolKit",
-          "ComputerMCPTransport",
-          "ComputerMCPTunnels",
-          "ComputerMCPTestSupport",
-          .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
-        ],
-        resources: [.copy("Fixtures")]
-      ),
-      .testTarget(
         name: "ComputerMCPAppTests",
         dependencies: [
           "ComputerMCPPlugins",
-          "ComputerMCPApp", "ComputerMCP", "ComputerMCPMacOS", "ComputerMCPConfiguration",
+          "ComputerMCPApp", "ComputerMCPControlPlane", "ComputerMCPGateway",
+          "ComputerMCPMacOS",
+          "ComputerMCPConfiguration",
           "ComputerMCPCore",
           "ComputerMCPPlatform", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTransport",

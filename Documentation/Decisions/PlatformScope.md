@@ -17,8 +17,11 @@ without restructuring the core:
   future Linux host: process groups and signals, Unix-domain sockets and peer
   credentials, file locks and path resolution.
 - `ComputerMCPPlatformDarwin` holds macOS implementations: Keychain, security
-  bookmarks, Launch Services, TCC and Accessibility probes, login items, Finder
+  bookmarks, Launch Services, login items, Finder
   and media frameworks, and the system, network and macOS command probes.
+- `ComputerMCPComputerUse` holds the native Computer Use provider, Accessibility
+  and screen capture operations, and non-prompting TCC permission readings. Its
+  service implements the permission-reading protocol defined in `ComputerMCPPlatform`.
 - The macOS composition root assembles these implementations for the App and the
   CLI.
 
@@ -64,7 +67,20 @@ product decision.
   descriptor inheritance and plugin HTTP requests (catalog fetches and archive
   downloads) also have only macOS implementations. Plugin HTTP requests fail with
   `networkUnavailable` on Linux before sending a request.
+- The owned-process primitive passes inherited descriptors only through Darwin
+  spawn file actions. On Linux it rejects configurations that need them, so
+  connected stdio MCP transports, which inherit their ownership lock, do not start
+  there yet. Its supervisor runs under `/bin/sh` on macOS and `/bin/bash` on
+  Linux, where `/bin/sh` may lack job control without a terminal. A process
+  group counts as finished only after its orphaned members are reaped, so a Linux
+  container needs an init process as PID 1 (`docker run --init`), as the Linux CI
+  job uses.
+- Extended attributes are read only through Darwin calls. On Linux, approvals
+  that bind extended-attribute state fail with `operations.state_unavailable`.
 - Until a Linux host adopts a backpressured HTTP client, the Linux streaming
   bridge fails when more than 32 MiB of response bytes wait in its own queue.
   The triggering callback can overshoot by one chunk. Foundation buffers
   redirect bodies internally on both platforms, outside this queue bound.
+- Manifest recovery-record publication uses an atomic exclusive rename on macOS.
+  The Linux branch reports `AtomicManifestStoreError.posix` with `ENOSYS` when
+  publishing a recovery record.

@@ -1,5 +1,5 @@
-import ComputerMCP
 import ComputerMCPCore
+import ComputerMCPGateway
 import SwiftUI
 
 struct ClientAccessView: View {

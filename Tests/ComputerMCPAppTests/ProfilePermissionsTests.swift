@@ -3,9 +3,9 @@ import Foundation
 import SwiftUI
 import Testing
 
-@testable import ComputerMCP
 @testable import ComputerMCPApp
 @testable import ComputerMCPConfiguration
+@testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 
 @MainActor

@@ -1,7 +1,8 @@
 import AppKit
-import ComputerMCP
 import ComputerMCPConfiguration
+import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPMacOS
 import SwiftUI
 
 struct PermissionsView: View {

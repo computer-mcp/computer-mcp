@@ -1,5 +1,5 @@
 {
-  "description": "Planned allocation of Sources/ComputerMCP declarations and Tests/ComputerMCPTests Swift sources to targets. See Documentation/Decisions/ModuleArchitecture.md. A cut 'A->B' is a reference from declaration A to type B that is replaced by an injected interface.",
+  "description": "Target layers, permitted same-layer dependencies, platform boundaries and test support targets. See Documentation/Decisions/ModuleArchitecture.md.",
   "layers": [
     {
       "name": "base",
@@ -54,12 +54,6 @@
       ]
     },
     {
-      "name": "transitional",
-      "targets": [
-        "ComputerMCP"
-      ]
-    },
-    {
       "name": "composition-root",
       "targets": [
         "ComputerMCPMacOS"
@@ -106,7 +100,7 @@
     "CSystemArchive",
     "ComputerMCPPlatformDarwin",
     "ComputerMCPComputerUse",
-    "ComputerMCP",
+    "ComputerMCPComputerUseTests",
     "ComputerMCPMacOS",
     "ComputerMCPApp",
     "computer-mcp",
@@ -114,7 +108,10 @@
     "ComputerMCPToolsFilesDarwinTests",
     "ComputerMCPToolsWorkspaceDarwinTests",
     "ComputerMCPToolsSystemDarwinTests",
-    "ComputerMCPPluginsDarwinTests"
+    "ComputerMCPPluginsDarwinTests",
+    "ComputerMCPMacOSTests",
+    "ComputerMCPGatewayDarwinTests",
+    "ComputerMCPControlPlaneDarwinTests"
   ],
   "macos_imports": [
     "AVFoundation",
@@ -155,150 +152,7 @@
   "posix_paths": [
     "/usr/bin/env"
   ],
-  "executables": [
-    "ComputerMCPApp",
-    "computer-mcp"
-  ],
   "test_support": [
     "ComputerMCPTestSupport"
-  ],
-  "residual": "ComputerMCP",
-  "removed": [],
-  "types": {
-    "ChatGPTProfileAuditor": "ComputerMCPControlPlane",
-    "ComputerMCPProductContracts": "ComputerMCPControlPlane",
-    "ControlToolContract": "ComputerMCPControlPlane",
-    "ControlToolResponse": "ComputerMCPGateway",
-    "GatewayDatabase": "ComputerMCPGateway",
-    "GatewayManagementAuthorization": "ComputerMCPGateway",
-    "GatewayToolCounts": "ComputerMCPGateway",
-    "GatewayToolProviderFactory": "ComputerMCPGateway",
-    "HTTPClientControlRegistry": "ComputerMCPGateway",
-    "MCPRuntimeAdapter": "ComputerMCPGateway",
-    "ManifestFileTransaction": "ComputerMCPControlPlane",
-    "ManifestRecoveryRecord": "ComputerMCPControlPlane",
-    "PlatformServices": "ComputerMCPGateway"
-  },
-  "extensions": {
-    "CloudflareTunnel.swift:AppControlPlaneService": "ComputerMCPControlPlane",
-    "GatewayDatabase.swift:GatewayClientTrust": "ComputerMCPGateway",
-    "GatewayDatabase.swift:GatewayDatabase": "ComputerMCPGateway"
-  },
-  "files": {
-    "^PlatformServices": "ComputerMCPGateway",
-    "^GatewayRemoteManagement": "ComputerMCPControlPlane",
-    "^MCPToolCatalogNotifier": "ComputerMCPGateway",
-    "^(MCPProxyClient|MCPContinuationDirectory|MCPProviderContinuation|MCPCallCancellation)": "ComputerMCPGateway",
-    "^MCPProviderWork": "ComputerMCPGateway",
-    "^GatewayHTTPRuntime": "ComputerMCPGateway",
-    "^ComputerUse": "ComputerMCPComputerUse",
-    "^MCPRegistration": "ComputerMCPControlPlane",
-    "^MCPRuntimeAdapter": "ComputerMCPGateway",
-    "^GatewayDatabase": "ComputerMCPGateway",
-    "^DefaultGatewayConfiguration\\+macOS": "ComputerMCPMacOS",
-    "^ManifestFile": "ComputerMCPControlPlane",
-    "^(AppControl|AppGatewayService|AppFileLogger|ControlSocketService|GatewayClientControl|HTTPClientControlRegistry|ProductReadiness|EmbeddedCLIInstaller|CodexMCPInstaller|ExternalProviderDiscovery|AtomicManifestStore|ControlTool)": "ComputerMCPControlPlane",
-    "^(MCPTool(Risk|AccessPolicy)|ComputerMCPProductContracts|GatewayToolCounts)": "ComputerMCPCore",
-    "^(Gateway|MCPHost|MCPBoundHostServices|MCPExecutionRecord)": "ComputerMCPGateway",
-    "^(ChatGPTProfileAuditor|CloudflareTunnel)": "ComputerMCPControlPlane"
-  },
-  "cuts": [
-    "AppControlPlaneService->ComputerUseService",
-    "AppControlPlaneService->KeychainSecretStore",
-    "AppControlPlaneService->SMAppServiceLaunchAtLoginController",
-    "AppControlPlaneServiceDirectories->AppDistributionEnvironment",
-    "ControlToolResponse->AppControlPlaneServiceError",
-    "GatewayHTTPApp->AppControlPlaneServiceError",
-    "GatewayRuntime->ComputerUseGatewayProviderError",
-    "GatewayRuntime->GatewayRemoteManagement",
-    "GatewayToolCounts->ComputerUseGatewayProvider",
-    "HTTPClientControlRegistry->GatewayClientControl",
-    "MCPConnectionPool->KeychainSecretStore",
-    "MCPProxyClient->KeychainSecretStore",
-    "MCPProxyConnection->KeychainSecretStore"
-  ],
-  "tests": {
-    "AppControlPlaneServiceTests.swift": "ComputerMCPControlPlaneTests",
-    "AppControlSocketTests.swift": "ComputerMCPControlPlaneTests",
-    "AppFileLoggerTests.swift": "ComputerMCPControlPlaneTests",
-    "ArtifactProvenanceTests.swift": "ComputerMCPGatewayTests",
-    "AtomicManifestStoreTests.swift": "ComputerMCPControlPlaneTests",
-    "AuditPrincipalIsolationTests.swift": "ComputerMCPGatewayTests",
-    "BuiltinToolCatalogSnapshotTests.swift": "ComputerMCPGatewayTests",
-    "BundledPluginsTests.swift": "ComputerMCPGatewayTests",
-    "CloudflareTunnelTests.swift": "ComputerMCPControlPlaneTests",
-    "ComputerUseGatewayProviderTests.swift": "ComputerMCPComputerUseTests",
-    "ComputerUseServiceTests.swift": "ComputerMCPComputerUseTests",
-    "DefaultGatewayConfigurationTests.swift": "ComputerMCPMacOSTests",
-    "EmbeddedCLIInstallerTests.swift": "ComputerMCPControlPlaneTests",
-    "GatewayConstructionTests.swift": "ComputerMCPGatewayTests",
-    "GatewayControlSessionTests.swift": "ComputerMCPGatewayTests",
-    "GatewayDatabaseTests.swift": "ComputerMCPGatewayTests",
-    "GatewayExecutionOwnersTests.swift": "ComputerMCPGatewayTests",
-    "GatewayFullAccessConsentTests.swift": "ComputerMCPGatewayTests",
-    "GatewayGenerationDispatchTests.swift": "ComputerMCPControlPlaneTests",
-    "GatewayHTTPClientControlTests.swift": "ComputerMCPControlPlaneTests",
-    "GatewayHTTPLifecycleTests.swift": "ComputerMCPGatewayTests",
-    "GatewayHTTPRuntimeTests.swift": "ComputerMCPGatewayTests",
-    "GatewayHostRecoveryTests.swift": "ComputerMCPGatewayTests",
-    "GatewayInvocationContextTests.swift": "ComputerMCPGatewayTests",
-    "GatewayMCPCallTests.swift": "ComputerMCPGatewayTests",
-    "GatewayMCPToolSurfaceTests.swift": "ComputerMCPGatewayTests",
-    "GatewayOwnedWorkTests.swift": "ComputerMCPGatewayTests",
-    "GatewayPermissionLifecycleTests.swift": "ComputerMCPGatewayTests",
-    "GatewayRemoteManagementTests.swift": "ComputerMCPControlPlaneTests",
-    "GatewayRuntimePreparationTests.swift": "ComputerMCPGatewayTests",
-    "GatewayRuntimeTests.swift": "ComputerMCPGatewayTests",
-    "GatewaySocketPrincipalLifecycleTests.swift": "ComputerMCPControlPlaneTests",
-    "GatewayStateImportVerificationTests.swift": "ComputerMCPGatewayTests",
-    "GatewayTerminalSessionsTests.swift": "ComputerMCPGatewayTests",
-    "GatewayToolCatalogTests.swift": "ComputerMCPGatewayTests",
-    "GatewayToolProviderTests.swift": "ComputerMCPGatewayTests",
-    "GatewayToolRegistryTests.swift": "ComputerMCPGatewayTests",
-    "GatewayWorkspaceAvailabilityTests.swift": "ComputerMCPGatewayTests",
-    "GatewayWorkspaceScopeTests.swift": "ComputerMCPGatewayTests",
-    "GitHubPluginReleasesTests.swift": "ComputerMCPGatewayTests",
-    "HTTPBearerAuthenticatorTests.swift": "ComputerMCPGatewayTests",
-    "KeychainSecretStore+Testing.swift": "ComputerMCPGatewayTests",
-    "LocalPermissionCLIAcceptanceTests.swift": "ComputerMCPControlPlaneTests",
-    "MCPAuthorizationTests.swift": "ComputerMCPGatewayTests",
-    "MCPBoundHostServicesTests.swift": "ComputerMCPGatewayTests",
-    "MCPCallCancellationTests.swift": "ComputerMCPGatewayTests",
-    "MCPConnectionLifecycleTests.swift": "ComputerMCPGatewayTests",
-    "MCPDerivedWorkspaceRegistrationTests.swift": "ComputerMCPGatewayTests",
-    "MCPEventCursorTests.swift": "ComputerMCPGatewayTests",
-    "MCPExecutionRecordTests.swift": "ComputerMCPGatewayTests",
-    "MCPHTTPAuthenticationTests.swift": "ComputerMCPControlPlaneTests",
-    "MCPHostContextTests.swift": "ComputerMCPGatewayTests",
-    "MCPHostInvocationTests.swift": "ComputerMCPGatewayTests",
-    "MCPHostSessionTests.swift": "ComputerMCPGatewayTests",
-    "MCPProfileGrantTests.swift": "ComputerMCPGatewayTests",
-    "MCPProviderContinuationTests.swift": "ComputerMCPGatewayTests",
-    "MCPProviderWorkNativeTests.swift": "ComputerMCPGatewayTests",
-    "MCPProviderWorkTests.swift": "ComputerMCPGatewayTests",
-    "MCPProxyClientTests.swift": "ComputerMCPGatewayTests",
-    "MCPReexportNamingTests.swift": "ComputerMCPGatewayTests",
-    "MCPRegistrationControlPlaneTests.swift": "ComputerMCPControlPlaneTests",
-    "MCPRegistrationManagementTests.swift": "ComputerMCPControlPlaneTests",
-    "MCPRiskFloorTests.swift": "ComputerMCPGatewayTests",
-    "MCPUpstreamCancellationTests.swift": "ComputerMCPGatewayTests",
-    "MCPWorkspaceTests.swift": "ComputerMCPGatewayTests",
-    "NativeCLITreeIntegrationTests.swift": "ComputerMCPGatewayTests",
-    "OperationApprovalPreviewTests.swift": "ComputerMCPGatewayTests",
-    "OperationProviderBindingTests.swift": "ComputerMCPGatewayTests",
-    "OperationStateScopeTests.swift": "ComputerMCPGatewayTests",
-    "PluginControlPlaneTests.swift": "ComputerMCPControlPlaneTests",
-    "PluginResolverTests.swift": "ComputerMCPGatewayTests",
-    "PluginStoreInstallationTests.swift": "ComputerMCPGatewayTests",
-    "PluginStoreTests.swift": "ComputerMCPGatewayTests",
-    "ProcessAndOpenAITunnelTests.swift": "ComputerMCPControlPlaneTests",
-    "ProductReadinessTests.swift": "ComputerMCPControlPlaneTests",
-    "ShellSessionRuntimeTests.swift": "ComputerMCPGatewayTests",
-    "StandaloneToolCommandTests.swift": "ComputerMCPControlPlaneTests",
-    "VerificationScriptDependencyTests.swift": "ComputerMCPControlPlaneTests",
-    "WorkspaceRepairTests.swift": "ComputerMCPGatewayTests",
-    "CLITreeGatewayTests.swift": "ComputerMCPGatewayTests",
-    "CLIExecutableCheckGatewayTests.swift": "ComputerMCPGatewayTests",
-    "CombinedPluginWorkflowTests.swift": "ComputerMCPControlPlaneTests"
-  }
+  ]
 }

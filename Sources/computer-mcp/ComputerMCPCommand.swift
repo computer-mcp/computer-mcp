@@ -1,7 +1,8 @@
 import ArgumentParser
-import ComputerMCP
 import ComputerMCPConfiguration
+import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPMacOS
 import ComputerMCPPlatform
 import ComputerMCPTransport
@@ -147,7 +148,9 @@ struct ServeHTTP: AsyncParsableCommand {
       port: port,
       publicBaseURL: publicBaseURL,
       control: controlSocket.map {
-        GatewayHTTPControlConfiguration(socketURL: URL(fileURLWithPath: $0), database: database)
+        GatewayHTTPControlConfiguration(
+          socketURL: URL(fileURLWithPath: $0), database: database,
+          clientControl: GatewayHTTPClientControl())
       }
     )
   }
@@ -193,7 +196,8 @@ struct Bridge: AsyncParsableCommand {
     if let socket {
       socketPath = socket
     } else {
-      socketPath = try AppControlPlaneServiceDirectories.standard().gatewaySocket.path
+      socketPath = try AppControlPlaneServiceDirectories.standard(environment: .production)
+        .gatewaySocket.path
     }
     let credentialURL = tunnelCredentialFile.map {
       URL(fileURLWithPath: $0).standardizedFileURL

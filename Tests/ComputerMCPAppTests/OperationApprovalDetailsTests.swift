@@ -1,4 +1,5 @@
-import ComputerMCP
+import ComputerMCPControlPlane
+import ComputerMCPGateway
 import Foundation
 import Testing
 

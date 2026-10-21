@@ -58,7 +58,7 @@ path.
 ## Builtin catalog snapshot
 
 `BuiltinToolCatalogSnapshotTests` compares the complete host-owned MCP catalog
-with `Tests/ComputerMCPTests/Fixtures/builtin-tool-catalog.json`. It enables every
+with `Tests/ComputerMCPMacOSTests/Fixtures/builtin-tool-catalog.json`. It enables every
 default builtin, skills, CLI/MCP gateway surfaces, processes and Full Shell,
 and includes runtime discovery, execution owners, operations, Computer Use and
 remote management. An isolated workspace, an in-memory database, empty plugin
@@ -73,15 +73,16 @@ and fields. Update it **only for intentional changes that receive review**:
 ```sh
 COMPUTER_MCP_UPDATE_CATALOG_SNAPSHOT=1 /usr/bin/swift test \
   --filter BuiltinToolCatalogSnapshotTests
-git diff -- Tests/ComputerMCPTests/Fixtures/builtin-tool-catalog.json
+git diff -- Tests/ComputerMCPMacOSTests/Fixtures/builtin-tool-catalog.json
 /usr/bin/swift test --filter BuiltinToolCatalogSnapshotTests
 ```
 
-`Scripts/module-graph.json` maps Swift sources relative to
-`Tests/ComputerMCPTests` to their planned `<owner>Tests` targets. This includes
-test support files; copied `Fixtures` resources are excluded. `python3
-Scripts/verify-module-graph.py plan` rejects missing or stale mappings and test
-targets whose owner does not appear in `layers`.
+`python3 Scripts/verify-module-graph.py package` checks declared SwiftPM target
+dependencies against the layers, permitted same-layer edges and macOS boundaries
+in `Scripts/module-graph.json`. The package boundary gate checks neutral source
+imports and system paths. Tests live with their owning targets under
+`Tests/<Target>Tests/`; macOS composition tests and their copied fixtures live in
+`Tests/ComputerMCPMacOSTests/`.
 
 ## Command hierarchy
 
@@ -153,7 +154,7 @@ processes stop; cleanup failure fails validation.
 
 ## Disposable GUI target
 
-`Tests/ComputerMCPTests/Fixtures/gui_acceptance.swift` is an AppKit target for
+`Tests/ComputerMCPMacOSTests/Fixtures/gui_acceptance.swift` is an AppKit target for
 manual Validation Runs. It exposes a counter and two buttons, writes its PID,
 counter and running state to an explicitly supplied receipt, and closes after
 120 seconds. It is a copied test resource, not an automatically launched test.
@@ -163,9 +164,9 @@ Build a private target from the repository root:
 GUI_RUN=$(mktemp -d /tmp/computer-mcp-gui.XXXXXX)
 GUI_APP="$GUI_RUN/GUI Fixture.app"
 mkdir -p "$GUI_APP/Contents/MacOS"
-cp Tests/ComputerMCPTests/Fixtures/gui_acceptance.plist "$GUI_APP/Contents/Info.plist"
+cp Tests/ComputerMCPMacOSTests/Fixtures/gui_acceptance.plist "$GUI_APP/Contents/Info.plist"
 /usr/bin/swiftc -swift-version 6 -parse-as-library \
-  Tests/ComputerMCPTests/Fixtures/gui_acceptance.swift \
+  Tests/ComputerMCPMacOSTests/Fixtures/gui_acceptance.swift \
   -o "$GUI_APP/Contents/MacOS/GUIFixture" -framework AppKit
 /usr/bin/open -n -W "$GUI_APP" --args "$GUI_RUN/state.json"
 ```

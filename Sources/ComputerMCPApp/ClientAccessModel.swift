@@ -1,6 +1,6 @@
 import Combine
-import ComputerMCP
 import ComputerMCPCore
+import ComputerMCPGateway
 import CryptoKit
 import Foundation
 

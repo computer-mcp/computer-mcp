@@ -2,7 +2,11 @@
 
 Computer MCP has one App-owned local administration domain with two presentation
 adapters: SwiftUI and the embedded `computer-mcp` CLI. Neither adapter owns
-business rules or runtime coordination.
+business rules or runtime coordination. `ComputerMCPControlPlane` owns the shared
+administration implementation and builds on macOS and Linux. The macOS composition
+root supplies the secret store, login item controller, Computer Use permission
+reader and default manifest. Distribution identity and environment values belong
+to `ComputerMCPPlatform`.
 
 ```text
 SwiftUI actions ─┐
@@ -24,8 +28,10 @@ candidates leave the admitted configuration active.
 `AppControlPlaneService` owns durable state and direct domain mechanisms:
 manifest revisions, GRDB records, security-scoped bookmarks, Keychain secrets,
 provider discovery, Tunnel supervisors, and launch at login.
-On first launch it activates `DefaultGatewayConfiguration.manifest` when the
-manifest is absent. Codex discovery preserves the selected absolute executable
+When the manifest is absent, the macOS live factory activates
+`DefaultGatewayConfiguration.manifest` before constructing the service. Secret
+value reads explicitly permit Keychain interaction with `.allow`; metadata-only
+presence checks explicitly use `.fail`. Codex discovery preserves the selected absolute executable
 entry path, including symbolic links, so package-manager upgrades can replace
 the target. Existing manifests remain user-owned configuration.
 `AppGatewayService` owns the private gateway socket, App HTTP principal runtimes

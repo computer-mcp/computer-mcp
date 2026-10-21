@@ -16,12 +16,10 @@ package struct HTTPStreamProcessFixture {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let script = root.appendingPathComponent("server.py")
     try Self.script.write(to: script, atomically: true, encoding: .utf8)
-    // The standard utility path selects the system interpreter; the caller's PATH can
-    // resolve another installation that has not been validated with this fixture.
     let process = try ManagedLineProcess(
       configuration: .init(
         executable: "/usr/bin/env", arguments: ["python3", script.path, root.path],
-        environment: ProcessInfo.processInfo.environment.merging(["PATH": "/usr/bin:/bin"]) {
+        environment: ProcessInfo.processInfo.environment.merging(["PATH": systemUtilityPath]) {
           $1
         },
         workingDirectory: root, terminationGraceMilliseconds: 100, killGraceMilliseconds: 2_000))

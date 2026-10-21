@@ -1,4 +1,4 @@
-import ComputerMCP
+import ComputerMCPControlPlane
 import ComputerMCPDownstream
 import SwiftUI
 

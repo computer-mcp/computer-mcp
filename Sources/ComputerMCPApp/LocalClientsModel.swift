@@ -35,6 +35,8 @@ final class LocalClientsModel: ObservableObject {
 
   private let controlPlane: any LocalClientRegistering
   private var loadGeneration = 0
+  /// No status read starts while a change runs: its outcome decides whether reading is safe.
+  private var applying = false
 
   init(controlPlane: any LocalClientRegistering) { self.controlPlane = controlPlane }
 
@@ -45,6 +47,7 @@ final class LocalClientsModel: ObservableObject {
   /// Reading states starts each client's CLI, so callers reload on demand, not on a timer.
   /// After an uncertain change only an explicit reload reads again.
   func reload(explicit: Bool = false) async {
+    guard !applying else { return }
     if explicit {
       uncertainClients = []
     } else if !uncertainClients.isEmpty {
@@ -56,6 +59,7 @@ final class LocalClientsModel: ObservableObject {
       let loaded = try await controlPlane.fetchClientRegistrations()
       guard generation == loadGeneration else { return }
       statuses = loaded
+      uncertainClients.formUnion(loaded.filter(\.uncertain).map(\.client))
       loadError = nil
     } catch {
       guard generation == loadGeneration else { return }
@@ -68,9 +72,16 @@ final class LocalClientsModel: ObservableObject {
     busyClient = client
     defer { busyClient = nil }
     do {
-      review = LocalClientReview(
-        plan: try await controlPlane.previewClientRegistration(client: client, operation: operation)
-      )
+      let plan = try await controlPlane.previewClientRegistration(
+        client: client, operation: operation)
+      if plan.display.refusalCode == .uncertain {
+        uncertainClients.insert(client)
+        outcome = LocalClientOutcome(
+          title: AppLocalization.string("Result unknown"),
+          message: Self.message(for: .uncertain, client: client))
+      } else {
+        review = LocalClientReview(plan: plan)
+      }
     } catch {
       outcome = Self.failure(error, client: client)
     }
@@ -85,6 +96,7 @@ final class LocalClientsModel: ObservableObject {
     let plan = reviewed.plan
     let client = plan.display.client
     busyClient = client
+    applying = true
     var uncertain = false
     do {
       let result = try await controlPlane.applyClientRegistration(plan)
@@ -95,6 +107,7 @@ final class LocalClientsModel: ObservableObject {
       outcome = Self.failure(error, client: client)
     }
     busyClient = nil
+    applying = false
     if uncertain {
       uncertainClients.insert(client)
     } else {
@@ -123,12 +136,15 @@ final class LocalClientsModel: ObservableObject {
           name, stepDescription(step), AppLocalization.string(result.finalState.localClientLabel)))
     case .failed:
       var sentences = [message(for: result.errorCode ?? .processFailed, client: plan.client)]
-      if let restore = result.steps.last(where: { $0.step == "restore" }) {
+      switch result.recovery {
+      case .restored:
+        sentences.append(AppLocalization.string("The previous entry was restored."))
+      case .notRestored:
         sentences.append(
-          restore.outcome == .succeeded
-            ? AppLocalization.string("The previous entry was restored.")
-            : AppLocalization.formatted(
-              "The previous entry couldn't be restored. Check %@'s settings.", name))
+          AppLocalization.formatted(
+            "The previous entry couldn't be restored. Check %@'s settings.", name))
+      case nil:
+        break
       }
       sentences.append(
         AppLocalization.formatted(

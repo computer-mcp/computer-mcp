@@ -1,5 +1,7 @@
 import AppKit
 import ComputerMCPCore
+import ComputerMCPPlatform
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import Foundation
 import SwiftUI
@@ -128,7 +130,7 @@ struct LocalClientsTests {
   }
 
   @Test(arguments: [false, true])
-  func aFailedReplacementSaysWhetherTheEntryWasRestored(restored: Bool) async throws {
+  func restorationFollowsTheReconciledEntryNotTheRestoreExit(restored: Bool) async throws {
     let fixture = try LocalClientsFixture()
     let plan = try await fixture.fake.previewClientRegistration(
       client: .claudeDesktop, operation: .register
@@ -139,10 +141,11 @@ struct LocalClientsTests {
         steps: [
           .init(step: "remove", outcome: .succeeded, exitCode: 0),
           .init(step: "add", outcome: .failed, exitCode: 1),
-          .init(step: "restore", outcome: restored ? .succeeded : .failed, exitCode: 1),
+          .init(step: "restore", outcome: .timedOut, exitCode: nil),
         ],
         finalState: restored ? .different : .notRegistered, finalEntry: nil,
-        appliesAfter: plan.appliesAfter), plan: plan)
+        appliesAfter: plan.appliesAfter, recovery: restored ? .restored : .notRestored),
+      plan: plan)
     let restoration =
       restored
       ? AppLocalization.string("The previous entry was restored.")
@@ -154,6 +157,74 @@ struct LocalClientsTests {
         AppLocalization.formatted(
           "It now shows: %@.",
           AppLocalization.string(restored ? "Different entry" : "Not connected"))))
+  }
+
+  @Test
+  func noStatusReadStartsWhileAChangeRuns() async throws {
+    let fixture = try LocalClientsFixture()
+    let (started, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    var release: CheckedContinuation<Void, Never>?
+    fixture.fake.applyGate = {
+      await withCheckedContinuation {
+        release = $0
+        signal.yield(())
+      }
+    }
+    fixture.fake.applyOverride = { plan in
+      ClientRegistrationResult(
+        outcome: .uncertain, errorCode: .uncertain,
+        steps: [.init(step: "register", outcome: .uncertain, exitCode: nil)],
+        finalState: .notRegistered, finalEntry: nil, appliesAfter: plan.display.appliesAfter)
+    }
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    await model.beginReview(.claudeDesktop, operation: .register)
+    let review = try #require(model.review)
+    let applying = Task { await model.confirm(review) }
+    var iterator = started.makeAsyncIterator()
+    _ = await iterator.next()
+    let reads = fixture.fake.fetchCount
+    await model.reload()
+    await model.reload(explicit: true)
+    #expect(fixture.fake.fetchCount == reads)
+    release?.resume()
+    await applying.value
+    #expect(fixture.fake.fetchCount == reads)
+    #expect(model.uncertainClients == [.claudeDesktop])
+  }
+
+  @Test
+  func anUncertainStatusPausesAutomaticReads() async throws {
+    let fixture = try LocalClientsFixture()
+    let location = ClientRegistrationLocation(
+      configurationFile: fixture.desktopFile.path, configurationVariable: nil,
+      configurationValue: nil)
+    fixture.fake.statusOverride = [
+      .init(
+        client: .codex, state: .unavailable, uncertain: true, location: location,
+        observedEntry: nil),
+      .init(
+        client: .claudeDesktop, state: .notRegistered, location: location, observedEntry: nil),
+    ]
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    await model.reload()
+    #expect(model.uncertainClients == [.codex])
+    await model.reload()
+    #expect(fixture.fake.fetchCount == 1)
+    await model.beginReview(.codex, operation: .register)
+    #expect(fixture.fake.previewCount == 0)
+  }
+
+  @Test
+  func anUncertainPreviewMarksTheClientUnknown() async throws {
+    let fixture = try LocalClientsFixture(runner: UnconfirmedProbeRunner())
+    let model = LocalClientsModel(controlPlane: fixture.fake)
+    await model.beginReview(.codex, operation: .register)
+    #expect(model.review == nil)
+    #expect(model.uncertainClients == [.codex])
+    #expect(model.outcome?.title == AppLocalization.string("Result unknown"))
+    let reads = fixture.fake.fetchCount
+    await model.reload()
+    #expect(fixture.fake.fetchCount == reads)
   }
 
   @Test
@@ -250,7 +321,7 @@ private final class LocalClientsFixture {
   let desktopFile: URL
   let fake: LocalClientsFake
 
-  init() throws {
+  init(runner: (any RegistrationProcessRunning)? = nil) throws {
     temporary = try ScopedTemporaryDirectory()
     let executable = temporary.url.appendingPathComponent("computer-mcp")
     try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
@@ -262,12 +333,29 @@ private final class LocalClientsFixture {
     let support = temporary.url.appendingPathComponent("Claude", isDirectory: true)
     try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
     desktopFile = support.appendingPathComponent("claude_desktop_config.json")
-    let service = ClientRegistrationService(
-      homeDirectory: temporary.url.appendingPathComponent("home"),
-      stateDirectory: temporary.url.appendingPathComponent("state"),
-      executableSearchDirectories: [], environment: [:],
-      desktop: ClaudeDesktopRegistration(
-        configurationFile: desktopFile, isInstalled: { true }, isRunning: { false }))
+    var searchDirectories: [String] = []
+    if runner != nil {
+      let bin = temporary.url.appendingPathComponent("bin", isDirectory: true)
+      try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+      let codex = bin.appendingPathComponent("codex")
+      try FileManager.default.copyItem(at: executable, to: codex)
+      searchDirectories = [bin.path]
+    }
+    let desktop = ClaudeDesktopRegistration(
+      configurationFile: desktopFile, isInstalled: { true }, isRunning: { false })
+    let home = temporary.url.appendingPathComponent("home")
+    let state = temporary.url.appendingPathComponent("state")
+    let service =
+      if let runner {
+        ClientRegistrationService(
+          homeDirectory: home, stateDirectory: state,
+          executableSearchDirectories: searchDirectories, environment: [:],
+          processRunner: runner, desktop: desktop)
+      } else {
+        ClientRegistrationService(
+          homeDirectory: home, stateDirectory: state,
+          executableSearchDirectories: searchDirectories, environment: [:], desktop: desktop)
+      }
     fake = LocalClientsFake(service: service, server: server)
   }
 
@@ -289,6 +377,7 @@ private final class LocalClientsFake: LocalClientRegistering {
   var statusOverride: [ClientRegistrationStatus]?
   var applyOverride: ((ClientRegistrationPlan) -> ClientRegistrationResult)?
   var previewGate: (() async -> Void)?
+  var applyGate: (() async -> Void)?
   var applied: [String] = []
   var fetchCount = 0
   var previewCount = 0
@@ -313,7 +402,20 @@ private final class LocalClientsFake: LocalClientRegistering {
     -> ClientRegistrationResult
   {
     applied.append(plan.fingerprint)
+    if let applyGate { await applyGate() }
     if let applyOverride { return applyOverride(plan) }
     return try service.apply(plan)
+  }
+}
+
+/// Reports every client process as ending without a confirmed exit.
+private struct UnconfirmedProbeRunner: RegistrationProcessRunning {
+  func run(
+    executable: String, arguments: [String], environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    .init(
+      executable: executable, arguments: arguments, exitCode: nil, timedOut: true, stdout: "",
+      stderr: "", stdoutTruncated: false, stderrTruncated: false)
   }
 }

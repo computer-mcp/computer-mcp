@@ -19,6 +19,9 @@ final class LiveAppControlPlane: AppControlPlane {
   private let operations: AppControlPlaneOperations
   private let controlSocketService: ControlSocketService?
   private let fileLogger: AppFileLogger
+  private let registrationService: ClientRegistrationService
+  private let registrationOperations = BlockingOperationExecutor(
+    label: "computer-mcp.client-registration")
   private let permissionRequester: any SystemPermissionRequesting
   private var reconnectAttempts: [String: Int] = [:]
   private var nextReconnectAt: [String: Date] = [:]
@@ -51,6 +54,7 @@ final class LiveAppControlPlane: AppControlPlane {
     )
     self.fileLogger = try AppFileLogger(directory: controlPlane.directories.logs)
     self.permissionRequester = MacOSSystemPermissionRequester()
+    self.registrationService = MacOSPlatform.clientRegistrationService()
     fileLogger.append(.info, event: "app.control_plane.initialized")
   }
 
@@ -59,7 +63,8 @@ final class LiveAppControlPlane: AppControlPlane {
     gatewayService: AppGatewayService,
     fileLogger: AppFileLogger,
     controlSocketService: ControlSocketService? = nil,
-    permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester()
+    permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester(),
+    registrationService: ClientRegistrationService? = nil
   ) {
     self.controlPlane = controlPlane
     self.gatewayService = gatewayService
@@ -70,6 +75,9 @@ final class LiveAppControlPlane: AppControlPlane {
     self.controlSocketService = controlSocketService
     self.fileLogger = fileLogger
     self.permissionRequester = permissionRequester
+    self.registrationService =
+      registrationService
+      ?? MacOSPlatform.clientRegistrationService()
     fileLogger.append(.info, event: "app.control_plane.initialized")
   }
 
@@ -847,39 +855,33 @@ final class LiveAppControlPlane: AppControlPlane {
     )
   }
 
-  func previewCodexRegistration() async throws -> CodexMCPInstallInvocation {
-    let connection = try await localMCPConnection()
-    let socketPath = gatewayService.socketConfiguration.socketURL.path
-    return try await Task.detached {
-      try CodexMCPInstaller().planApp(
-        codexCLI: nil,
-        serverName: "computer-mcp",
-        executablePath: connection.command,
-        socketPath: socketPath
-      )
-    }.value
+  private var registrationCommand: ClientRegistrationCommand {
+    .app(
+      executable: controlPlane.gatewayExecutablePath,
+      socket: gatewayService.socketConfiguration.socketURL.path)
   }
 
-  func installCodexRegistration() async throws -> CommandResult {
-    let connection = try await localMCPConnection()
-    let socketPath = gatewayService.socketConfiguration.socketURL.path
-    let result = try await Task.detached {
-      try CodexMCPInstaller().installApp(
-        codexCLI: nil,
-        serverName: "computer-mcp",
-        executablePath: connection.command,
-        socketPath: socketPath
-      )
-    }.value
-    guard result.exitCode == 0 else {
-      let message =
-        [result.stderr, result.stdout]
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .first { !$0.isEmpty }
-        ?? "Codex MCP registration exited without a diagnostic message."
-      throw AppControlPlaneError.unavailable(message)
+  func fetchClientRegistrations() async throws -> [ClientRegistrationStatus] {
+    let service = registrationService
+    let command = registrationCommand
+    return try await registrationOperations.perform { try service.statuses(server: command) }
+  }
+
+  func previewClientRegistration(client: RegistrationClient, operation: ClientRegistrationOperation)
+    async throws -> ClientRegistrationPlan
+  {
+    let service = registrationService
+    let command = registrationCommand
+    return try await registrationOperations.perform {
+      try service.preview(client: client, operation: operation, server: command)
     }
-    return result
+  }
+
+  func applyClientRegistration(_ plan: ClientRegistrationPlan) async throws
+    -> ClientRegistrationResult
+  {
+    let service = registrationService
+    return try await registrationOperations.perform { try service.apply(plan) }
   }
 
   func saveManifest(_ content: String, expectedDigest: String) async throws {

@@ -13,10 +13,15 @@ App 只记录 onboarding 版本；“已完成”从真实依赖、配置、进�
 ## 本地 MCP 客户端
 
 1. 在 Home 查看 App、Gateway 和 CLI 状态。
-2. 复制 App 展示的 command 与 arguments 到本地 MCP 客户端。
-3. Codex 用户选择 **Register with Codex**，核对预览后确认。注册命令使用 App-owned
-   bridge，不读取 TOML。
+2. 在 **Connect a local MCP client** 中，点 Codex、Claude Code 或 Claude Desktop
+   旁的 **连接…**，核对设置文件与命令后确认。确认 Claude Desktop 的更改前先退出
+   Claude Desktop。**更新…** 替换同名的不同条目，**移除…** 删除它，两者都先经过同样的核对。
+3. 新建 Codex 或 Claude Code 会话，或重新打开 Claude Desktop。
 4. 发起一次工具调用并刷新；出现匹配 `local-mcp` 的成功审计请求后状态为 Verified。
+
+其他客户端可在 **其他 MCP 客户端** 中复制 stdio 命令。内嵌 CLI 也提供同样的注册：
+`computer-mcp install <client> --app --dry-run` 与 `computer-mcp uninstall <client>`，
+见[CLI 参考](../CLI.md#local-client-registration)。
 
 可选安装 CLI：
 

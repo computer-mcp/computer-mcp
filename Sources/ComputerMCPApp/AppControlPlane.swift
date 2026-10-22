@@ -418,7 +418,7 @@ struct DiagnosticsSnapshot: Sendable {
 
 @MainActor
 protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging,
-  ProfilePermissionManaging
+  ProfilePermissionManaging, LocalClientRegistering
 {
   func startApplication() async throws
   func maintainApplication() async
@@ -478,8 +478,6 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func installCommandLineTool() async throws -> EmbeddedCLIInstallationStatus
   func commandLineToolStatus() async throws -> EmbeddedCLIInstallationStatus
   func localMCPConnection() async throws -> LocalMCPConnectionSummary
-  func previewCodexRegistration() async throws -> CodexMCPInstallInvocation
-  func installCodexRegistration() async throws -> CommandResult
 
   func saveManifest(_ content: String, expectedDigest: String) async throws
   func rollbackManifest(to revisionID: String) async throws
@@ -603,10 +601,13 @@ final class UnavailableControlPlane: AppControlPlane {
     throw unavailable()
   }
   func localMCPConnection() async throws -> LocalMCPConnectionSummary { throw unavailable() }
-  func previewCodexRegistration() async throws -> CodexMCPInstallInvocation {
-    throw unavailable()
-  }
-  func installCodexRegistration() async throws -> CommandResult { throw unavailable() }
+  func fetchClientRegistrations() async throws -> [ClientRegistrationStatus] { throw unavailable() }
+  func previewClientRegistration(client: RegistrationClient, operation: ClientRegistrationOperation)
+    async throws -> ClientRegistrationPlan
+  { throw unavailable() }
+  func applyClientRegistration(_ plan: ClientRegistrationPlan) async throws
+    -> ClientRegistrationResult
+  { throw unavailable() }
   func saveManifest(_ content: String, expectedDigest: String) async throws {
     throw unavailable()
   }

@@ -416,7 +416,9 @@ struct Install: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "install",
     abstract: "Install computer-mcp into local MCP clients.",
-    subcommands: [CLIInstall.self, Codex.self]
+    subcommands: [
+      CLIInstall.self, InstallCodex.self, InstallClaudeCode.self, InstallClaudeDesktop.self,
+    ]
   )
 }
 
@@ -424,99 +426,10 @@ struct Uninstall: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "uninstall",
     abstract: "Remove user-scoped Computer MCP integrations.",
-    subcommands: [CLIUninstall.self]
+    subcommands: [
+      CLIUninstall.self, UninstallCodex.self, UninstallClaudeCode.self, UninstallClaudeDesktop.self,
+    ]
   )
-}
-
-struct Codex: ParsableCommand {
-  static let configuration = CommandConfiguration(
-    commandName: "codex",
-    abstract: "Register this gateway as an external MCP server for Codex."
-  )
-
-  @Option(name: .long, help: "Path to a standalone computer-mcp TOML configuration.")
-  var config: String?
-
-  @Flag(name: .long, help: "Register the App-owned bridge without using a TOML manifest.")
-  var app = false
-
-  @Option(name: .long, help: "Path to the App gateway socket; requires --app.")
-  var socket: String?
-
-  @Option(name: .long, help: "MCP server name to register in Codex.")
-  var name = "computer-mcp"
-
-  @Option(name: .long, help: "Optional path to Codex CLI.")
-  var codexCLI: String?
-
-  @Option(name: .long, help: "Optional path to the computer-mcp executable.")
-  var serverExecutable: String?
-
-  @Flag(name: .long, help: "Print the planned codex mcp add invocation without running it.")
-  var dryRun = false
-
-  mutating func run() throws {
-    guard app != (config != nil) else {
-      throw ValidationError("Pass exactly one of --app or --config.")
-    }
-    guard app || socket == nil else {
-      throw ValidationError("--socket requires --app.")
-    }
-    let executablePath = try serverExecutable ?? currentExecutableURL().path
-    let installer = CodexMCPInstaller()
-    let invocation: CodexMCPInstallInvocation
-    if app {
-      invocation = try installer.planApp(
-        codexCLI: codexCLI,
-        serverName: name,
-        executablePath: executablePath,
-        socketPath: socket
-      )
-    } else {
-      guard let config else {
-        throw ValidationError("--config is required outside App mode.")
-      }
-      _ = try GatewayConfiguration.load(path: config)
-      invocation = try installer.plan(
-        codexCLI: codexCLI,
-        serverName: name,
-        configPath: config,
-        executablePath: executablePath
-      )
-    }
-
-    if dryRun {
-      printJSON(try JSONValue.encoded(invocation))
-      return
-    }
-
-    let result: CommandResult
-    if app {
-      result = try installer.installApp(
-        codexCLI: codexCLI,
-        serverName: name,
-        executablePath: executablePath,
-        socketPath: socket
-      )
-    } else {
-      guard let config else {
-        throw ValidationError("--config is required outside App mode.")
-      }
-      result = try installer.install(
-        codexCLI: codexCLI,
-        serverName: name,
-        configPath: config,
-        executablePath: executablePath
-      )
-    }
-    if !result.stdout.isEmpty {
-      print(result.stdout, terminator: "")
-    }
-    if !result.stderr.isEmpty {
-      fputs(result.stderr, stderr)
-    }
-    throw ExitCode(result.exitCode ?? 0)
-  }
 }
 
 func printJSON(_ value: JSONValue) {

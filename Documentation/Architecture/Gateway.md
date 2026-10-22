@@ -157,7 +157,11 @@ Codex has two distinct relationships:
 - Computer MCP can invoke the [Codex plugin](https://github.com/computer-mcp/plugin-codex)
   through the ordinary MCP registration contract.
 - Codex can use Computer MCP as an external MCP server through
-  `computer-mcp install codex`.
+  `computer-mcp install codex --app`. Claude Code and Claude Desktop use the
+  same bridge through `install claude-code --app` and
+  `install claude-desktop --app`. The control plane previews a client-specific
+  plan, then rechecks its fingerprint under the per-user writer lock before
+  applying it. Client registration grants no gateway authority.
 
 These relationships share no implicit authority. Both are evaluated by the
 same explicit gateway profile and workspace policy.

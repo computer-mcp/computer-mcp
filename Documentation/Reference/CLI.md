@@ -124,7 +124,12 @@ computer-mcp plugins uninstall <installation-id> [--control-socket <control-sock
 computer-mcp plugins recover [--control-socket <control-socket>] --expected-revision <expected-revision>
 computer-mcp install cli [--status] [--replace-invalid-link]
 computer-mcp uninstall cli
-computer-mcp install codex [--config <config>] [--app] [--socket <socket>] [--name <name>] [--codex-cli <codex-cli>] [--server-executable <server-executable>] [--dry-run]
+computer-mcp install codex [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>] [--config <config>] [--app] [--socket <socket>] [--server-executable <server-executable>]
+computer-mcp install claude-code [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>] [--config <config>] [--app] [--socket <socket>] [--server-executable <server-executable>]
+computer-mcp install claude-desktop [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>] [--config <config>] [--app] [--socket <socket>] [--server-executable <server-executable>]
+computer-mcp uninstall codex [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>]
+computer-mcp uninstall claude-code [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>]
+computer-mcp uninstall claude-desktop [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>]
 computer-mcp serve stdio --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>]
 computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>] [--control-socket <control-socket>]
 computer-mcp bridge [--socket <socket>] [--tunnel-credential-file <tunnel-credential-file>] [--tunnel-profile-id <tunnel-profile-id>] [--client-identity <client-identity>]
@@ -378,27 +383,159 @@ permissions. Their results establish only the reported probe scope, not full
 integration readiness. For non-executing package checks, use
 `plugins doctor <id>`; see [Plugin Packages](PluginPackages.md).
 
-## Codex consumer registration
+## Local client registration
 
-App mode registers the installed or embedded CLI bridge and does not use TOML:
+`install` and `uninstall` support `codex`, `claude-code` and `claude-desktop`.
+Registration installs only the generated stdio command under `computer-mcp`,
+or the name selected with `--name`. It grants no gateway permissions.
+
+App mode registers the running CLI's absolute path and the App Gateway Socket:
 
 ```sh
 computer-mcp install codex --app --dry-run
+computer-mcp install claude-code --app --dry-run
+computer-mcp install claude-desktop --app --dry-run
 computer-mcp install codex --app
 ```
 
-For a specific App instance, pass `--socket` with `--app` to register its gateway
-socket. The App's local connection command and Codex registration use that App's
-embedded CLI and gateway socket, including when a Development App is running.
+Use the embedded CLI at
+`/Applications/Computer MCP.app/Contents/Resources/computer-mcp`, or its installed
+symlink. `--server-executable` selects a different executable. `--socket` with
+`--app` selects a particular App instance; the default is the production App's
+Gateway Socket. The App's Home connects, updates and removes each client with
+its own embedded CLI and socket; it retains the reviewed plan and applies that
+exact plan.
 
-Standalone registration remains explicit:
+Standalone mode validates the manifest before planning and registers
+`serve stdio --config <absolute-path>`:
 
 ```sh
-computer-mcp install codex --config Examples/computer-mcp.toml --dry-run
+computer-mcp install claude-code --config Examples/computer-mcp.toml --dry-run
 ```
 
-`--app` and `--config` are mutually exclusive and exactly one is required. A
-dry run prints the complete secret-free invocation without changing Codex.
+Exactly one of `--app` and `--config` is required for install. `--client-cli`
+selects the Codex or Claude Code executable explicitly; Claude Desktop rejects
+it. Otherwise discovery uses the host's executable directories followed by
+`~/.local/bin`, independently of inherited `PATH`. `--server-executable` is
+available only for install. Removal needs neither a manifest nor an existing
+server executable:
+
+```sh
+computer-mcp uninstall codex --dry-run
+computer-mcp uninstall claude-code --name computer-mcp --dry-run
+computer-mcp uninstall claude-desktop --dry-run
+```
+
+The states are `unavailable`, `not_registered`, `registered`, `different` and
+`unreadable`. Registered means exact command and argument string equality;
+a symlink or an old App path is different. Only positively observed absence
+means not registered. Unavailable or unreadable clients cannot be changed.
+An already registered install, or removal of an absent entry, is a no-op.
+Service status JSON includes `uncertain`: it is true when the status read or
+the client's version probe ended without a confirmed process exit. In that case,
+`state` reports the last observed state.
+
+`--dry-run` prints the displayable schema-1 plan as snake_case JSON:
+
+```json
+{
+  "schema_version": 1,
+  "client": "claude-code",
+  "operation": "register",
+  "server_name": "computer-mcp",
+  "location": {
+    "configuration_file": "/home/alex/.claude.json",
+    "configuration_variable": "CLAUDE_CONFIG_DIR"
+  },
+  "state": "different",
+  "observed_entry": {
+    "type": "stdio",
+    "command": "user-server",
+    "argument_count": 2,
+    "environment_names": ["TOKEN"],
+    "header_names": []
+  },
+  "server": {"executable": "/path/computer-mcp", "arguments": ["bridge", "--client-identity", "local-mcp", "--socket", "/path/gateway.sock"]},
+  "actions": [
+    {"step": "remove", "command": {"executable": "/path/claude", "arguments": ["mcp", "remove", "--scope", "user", "computer-mcp"]}},
+    {"step": "add", "command": {"executable": "/path/claude", "arguments": ["mcp", "add", "--scope", "user", "computer-mcp", "--", "/path/computer-mcp", "bridge", "--client-identity", "local-mcp", "--socket", "/path/gateway.sock"]}}
+  ],
+  "requires_confirmation": true,
+  "warnings": [],
+  "applies_after": "Start a new Claude Code session.",
+  "fingerprint": "<64 hexadecimal SHA-256 characters>"
+}
+```
+
+Optional fields are omitted. A bound configuration directory appears as
+`configuration_value`; when Claude Code's override was absent, that field is
+absent and the child variable stays unset. Desktop actions contain `file`, a
+redacted `before` entry summary when present, and `after` with the generated
+command for registration. Desktop plans ask you to close the App and other
+programs that edit its configuration. A refused plan includes `refusal_code`.
+
+The fingerprint hashes the complete private plan: client, operation, name,
+bound location, client executable, exact child environment, observed state and
+complete named entry, generated server command, actions, refusal and warnings.
+The private entry and recovery payload are never printed. The observed summary
+shows only type, command or URL origin, argument count, and environment/header
+names. Argument values, URL userinfo/path/query/fragment, environment/header
+values and unrelated configuration fields are excluded.
+
+Without `--dry-run`, safe changes apply directly. Replacing or removing a
+`different` entry exits 1 with `confirmation_required` and the displayable plan.
+Review a dry run, then repeat the same command with `--expect <fingerprint>`.
+Any entry change causes `changed_since_preview`. Apply takes a per-user writer
+lock and rechecks the bound location before writing.
+
+| Client | Reads | Writes | Takes effect |
+| --- | --- | --- | --- |
+| Codex | `mcp get <name> --json` with bound `CODEX_HOME` (default `~/.codex`) | `mcp add <name> -- <command>` or `mcp remove <name>` | New session |
+| Claude Code | Only the named entry in `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` | CLI `mcp remove/add --scope user`; replacement recovery uses private `add-json` only while absent | New session |
+| Claude Desktop | Named entry in `~/Library/Application Support/Claude/claude_desktop_config.json` | Same-directory atomic rename preserving other fields and existing mode; new files use `0600` and require an existing support directory | Reopen App |
+
+Claude Code replacement requires a restorable stdio entry containing only
+`type`, `command`, `args`, `env`, or HTTP/SSE with only `type`, `url`, `headers`.
+An absent `type` implies stdio; a present value must be `"stdio"`, `"http"` or
+`"sse"`. The complete serialized recovery invocation must fit the runtime
+`ARG_MAX`, including the child environment and argument/environment pointers,
+with a 2 KiB safety margin. Otherwise replacement is refused as
+`unsupported_entry` before planning removal.
+A failed step with confirmed process exit is reconciled against the file;
+recovery never removes another writer's entry. Desktop rejects symbolic links,
+nonregular files, malformed/nonobject JSON and a running Desktop App. Its final
+check compares bytes, inode, mode and size. Other client writers remain subject
+to their own CLI protections; an existing Desktop file can still be overwritten
+by a writer racing after the final check.
+
+Registration processes receive exactly `HOME`, `USER`, `LOGNAME`, `TMPDIR`,
+`LANG`, the bound configuration variable when present, and a `PATH` beginning
+with the client executable's directory followed by host search directories and
+`~/.local/bin`. Processes have a 30-second deadline and a 1 MiB limit per output
+stream. On timeout the process group receives SIGKILL and its direct child is
+reaped before reconciliation. Failure to confirm exit within two seconds
+returns `uncertain` and runs no later step. Raw client stdout/stderr are private.
+An unconfirmed probe or read takes precedence over fingerprint comparison in
+apply and the CLI's `--expect` check. Its result names the step and the last
+observed state; apply retains the reviewed observation when its recheck is
+unconfirmed.
+
+Exit codes: **0** for a successful preview/apply or no-op, **1** for refusal or
+failure, **2** for an uncertain process outcome, **64** for invalid CLI options.
+Apply JSON includes `outcome`, `steps` (step, outcome, optional exit_code),
+`final_state`, optional redacted `final_entry` and `error_code`, and
+`applies_after`. Optional `recovery` reports the reconciled state after a Claude
+Code replacement removed the original entry, failed to install the planned entry
+and attempted recovery: `restored` when the confirmed read equals the original
+private entry, or `not_restored` when it confirms a different entry or absence.
+This comparison is independent of the restore process's exit status, including
+a timeout with confirmed exit. It exposes no entry contents and is omitted in
+every other case, including unreadable reconciliation and uncertain outcomes.
+Stable error codes are `changed_since_preview`,
+`confirmation_required`, `unsupported_entry`, `client_running`, `unavailable`,
+`unreadable`, `writer_busy`, `write_failed`, `invalid_input`,
+`invalid_server_executable`, `support_directory_missing`, `process_failed`,
+and `uncertain`.
 
 ## Workspace registration repair
 

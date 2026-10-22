@@ -4,6 +4,7 @@ import SwiftUI
 
 struct HomeView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
+  @ObservedObject var localClients: LocalClientsModel
 
   var body: some View {
     VStack(spacing: 0) {
@@ -15,6 +16,7 @@ struct HomeView: View {
           gatewayAction
           RefreshButton {
             model.refresh(.home)
+            Task { await localClients.reload(explicit: true) }
           }
         }
       }
@@ -32,21 +34,22 @@ struct HomeView: View {
         statusContent(snapshot)
       }
     }
-    .sheet(item: $model.codexRegistrationPresentation) { presentation in
-      CodexRegistrationConfirmation(presentation: presentation)
-        .environmentObject(model)
+    .sheet(item: $localClients.review) { review in
+      LocalClientReviewSheet(model: localClients, review: review)
     }
     .alert(
-      "Codex registration complete",
+      Text(verbatim: localClients.outcome?.title ?? ""),
       isPresented: Binding(
-        get: { model.codexRegistrationMessage != nil },
-        set: { if !$0 { model.dismissCodexRegistrationMessage() } }
-      )
-    ) {
-      Button("OK") { model.dismissCodexRegistrationMessage() }
-    } message: {
-      Text(verbatim: AppLocalization.string(model.codexRegistrationMessage ?? ""))
+        get: { localClients.outcome != nil },
+        set: { if !$0 { localClients.outcome = nil } }
+      ),
+      presenting: localClients.outcome
+    ) { _ in
+      Button("OK") { localClients.outcome = nil }
+    } message: { outcome in
+      Text(verbatim: outcome.message)
     }
+    .task { await localClients.reload() }
   }
 
   @ViewBuilder
@@ -206,50 +209,45 @@ struct HomeView: View {
           )
         }
 
-        switch model.localMCPConnection {
-        case .idle, .loading:
-          ProgressView().accessibilityLabel("Preparing local MCP command")
-        case .failed(let message):
-          Label(AppLocalization.string(message), systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.orange)
-          Button("Retry") { model.refresh(.home) }
-        case .loaded(let connection):
-          LabeledContent("CLI") {
-            Text(verbatim: connection.cliInstallation.state.localizedLabel)
-          }
-          LabeledContent("Command") {
-            Text(connection.command)
-              .font(.system(.caption, design: .monospaced))
-              .textSelection(.enabled)
-              .lineLimit(2)
-              .truncationMode(.middle)
-          }
-          LabeledContent("Arguments") {
-            Text(connection.arguments.joined(separator: " "))
-              .font(.system(.caption, design: .monospaced))
-              .textSelection(.enabled)
-          }
-          HStack {
+        LocalClientRows(model: localClients)
+
+        DisclosureGroup {
+          switch model.localMCPConnection {
+          case .idle, .loading:
+            ProgressView().accessibilityLabel("Preparing local MCP command")
+          case .failed(let message):
+            Label(AppLocalization.string(message), systemImage: "exclamationmark.triangle")
+              .foregroundStyle(.orange)
+            Button("Retry") { model.refresh(.home) }
+          case .loaded(let connection):
+            LabeledContent("CLI") {
+              Text(verbatim: connection.cliInstallation.state.localizedLabel)
+            }
+            LabeledContent("Command") {
+              Text(connection.command)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            }
+            LabeledContent("Arguments") {
+              Text(connection.arguments.joined(separator: " "))
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+            }
             Button {
               NSPasteboard.general.clearContents()
               NSPasteboard.general.setString(connection.displayCommand, forType: .string)
             } label: {
               Label("Copy stdio Command", systemImage: "doc.on.doc")
             }
-            Button {
-              model.previewCodexRegistration()
-            } label: {
-              Label("Register with Codex", systemImage: "chevron.left.forwardslash.chevron.right")
-            }
-            .disabled(
-              model.isActionRunning("codex.preview")
-                || model.isActionRunning("codex.install")
-            )
           }
+        } label: {
+          Text("Other MCP clients", bundle: AppLocalization.resourceBundle)
         }
 
         Text(
-          "The Codex consumer registration uses the App-owned bridge."
+          "Each client runs the App-owned bridge. Changes to a client's settings are shown for review first."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -368,60 +366,6 @@ private struct HomeRecommendation {
   let detail: String
   let buttonLabel: String
   let action: () -> Void
-}
-
-private struct CodexRegistrationConfirmation: View {
-  @Environment(\.dismiss) private var dismiss
-  @EnvironmentObject private var model: ComputerMCPAppModel
-
-  let presentation: CodexRegistrationPresentation
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text("Register Computer MCP with Codex?")
-        .font(.title2.weight(.semibold))
-      Text("Review the exact command before Computer MCP changes your Codex MCP registration.")
-        .foregroundStyle(.secondary)
-      Text(displayCommand)
-        .font(.system(.callout, design: .monospaced))
-        .textSelection(.enabled)
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-      Text("No API keys, tunnel tokens, or TOML paths are included.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      HStack {
-        Spacer()
-        Button("Cancel") { dismiss() }
-          .keyboardShortcut(.cancelAction)
-        Button("Register") {
-          model.installCodexRegistration()
-          dismiss()
-        }
-        .keyboardShortcut(.defaultAction)
-      }
-    }
-    .padding(22)
-    .frame(width: 640)
-  }
-
-  private var displayCommand: String {
-    ([presentation.invocation.codexCLI] + presentation.invocation.arguments)
-      .map(shellToken)
-      .joined(separator: " ")
-  }
-
-  private func shellToken(_ value: String) -> String {
-    guard !value.isEmpty,
-      value.unicodeScalars.allSatisfy({
-        CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._/:")).contains($0)
-      })
-    else {
-      return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-    return value
-  }
 }
 
 struct WorkspacesView: View {

@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
@@ -75,6 +76,33 @@ final class LiveAppControlPlaneTests {
       #expect(current.content == first)
       #expect(current.digest != opened.digest)
     }
+  }
+
+  @Test
+  func codexConfirmationAppliesOnlyTheReviewedPlan() async throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let executable = temporary.url.appendingPathComponent("server")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let client = temporary.url.appendingPathComponent("codex")
+    try FileManager.default.copyItem(at: executable, to: client)
+    let runner = AppRegistrationTestRunner()
+    let service = ClientRegistrationService(
+      homeDirectory: temporary.url, stateDirectory: temporary.url.appendingPathComponent("state"),
+      executableSearchDirectories: [temporary.url.path], environment: [:], processRunner: runner)
+    let fixture = try AppControlPlaneFixture(
+      registrationService: service, gatewayExecutablePath: executable.path)
+    let model = ComputerMCPAppModel(controlPlane: fixture.app)
+    await model.localClients.beginReview(.codex, operation: .register)
+    let reviewed = try #require(model.localClients.review)
+    #expect(reviewed.plan.display.state == .notRegistered)
+    runner.changeEntry()
+    await model.localClients.confirm(reviewed)
+    #expect(
+      model.localClients.outcome?.message
+        == LocalClientsModel.message(for: .changedSincePreview, client: .codex))
+    #expect(runner.writeCount == 0)
+    await fixture.cleanup()
   }
 
   @Test
@@ -570,7 +598,9 @@ private final class AppControlPlaneFixture {
 
   init(
     permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester(),
-    keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter()
+    keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter(),
+    registrationService: ClientRegistrationService? = nil,
+    gatewayExecutablePath: String = "computer-mcp"
   ) throws {
     root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -612,6 +642,7 @@ private final class AppControlPlaneFixture {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
+      gatewayExecutablePath: gatewayExecutablePath,
       launchAtLoginController: AppTestLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: MacOSPlatform.services
@@ -628,7 +659,8 @@ private final class AppControlPlaneFixture {
       gatewayService: gatewayService,
       fileLogger: try AppFileLogger(directory: directories.logs),
       controlSocketService: controlSocket,
-      permissionRequester: permissionRequester
+      permissionRequester: permissionRequester,
+      registrationService: registrationService
     )
   }
 
@@ -691,4 +723,29 @@ private struct AppTestLaunchAtLoginController: LaunchAtLoginControlling {
   }
 
   func setEnabled(_ enabled: Bool) throws {}
+}
+
+/// Lock-protected state is shared with the control plane's blocking executor.
+private final class AppRegistrationTestRunner: RegistrationProcessRunning, @unchecked Sendable {
+  private let lock = NSLock()
+  private var changed = false
+  private var writes = 0
+  var writeCount: Int { lock.withLock { writes } }
+  func changeEntry() { lock.withLock { changed = true } }
+  func run(
+    executable: String, arguments: [String], environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    lock.withLock {
+      let get = arguments.contains("get")
+      if arguments.contains("add") { writes += 1 }
+      return .init(
+        executable: executable, arguments: arguments, exitCode: get && !changed ? 1 : 0,
+        timedOut: false,
+        stdout: get && changed
+          ? "{\"transport\":{\"type\":\"stdio\",\"command\":\"changed\",\"args\":[]}}" : "",
+        stderr: get && !changed ? "No MCP server named computer-mcp" : "",
+        stdoutTruncated: false, stderrTruncated: false)
+    }
+  }
 }

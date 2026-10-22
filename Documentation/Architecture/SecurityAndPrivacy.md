@@ -251,6 +251,39 @@ that credential's profile and the current tunnel start. OAuth protocol events
 cannot establish Verified; replacement or revocation removes the affected
 credential's verification evidence.
 
+## Local Client Configuration
+
+Local registration writes the generated server command and arguments only.
+Codex and Claude Code changes go through their own CLIs with a configuration
+location bound at preview. Codex is queried with `mcp get --json`; Claude Code's
+user-scope file is read directly because its health-query commands start
+servers. Claude Desktop's configuration is changed only while its App is
+closed. No manifest contents, tokens or credential values are registered.
+
+The complete named entry is retained privately for comparison and Claude Code
+recovery. Other fields in a JSON file are parsed to preserve the file and are
+never retained in a plan. Displayable entries contain only type, command or URL
+origin, argument count, and environment/header names. Argument values, URL
+userinfo/path/query/fragment, environment/header values, client stdout/stderr
+and `add-json` recovery payloads are never printed, logged or returned in errors.
+
+An advisory writer lock serializes the App and CLI, and apply rechecks the
+private plan's fingerprint. Other programs retain their client's own write
+protections. Desktop rejects symlinks and nonregular files, compares bytes,
+inode, mode and size immediately before rename, and uses exclusive rename to
+create a missing file only inside an existing support directory. Temporary
+files start at `0600` before content is written; replacement preserves the
+existing mode and new files stay `0600`. Another program writing an existing
+Desktop file after the final check can lose its update, so plans ask users to
+close other configuration editors.
+
+Client executables are selected from an explicit path or host search directories
+and `~/.local/bin`. Their exact environment contains only basic user/locale/temp
+variables, the bound client configuration variable and a constructed PATH.
+Timeout kills the process group; recovery waits for confirmed exit. An uncertain
+exit stops the sequence and is never reported as success. Unsupported Claude
+Code entries cannot be replaced because they cannot be restored faithfully.
+
 ## TCC And Computer Use
 
 Screen Recording and Accessibility permissions belong to the signed App.

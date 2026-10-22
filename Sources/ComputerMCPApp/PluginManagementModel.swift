@@ -21,6 +21,7 @@ final class PluginManagementModel: ObservableObject {
   @Published private(set) var isSaving = false
   @Published private(set) var isCancelling = false
   @Published private(set) var errorMessage: String?
+  @Published private(set) var refusal: PluginCompatibilityRefusal?
   @Published var selectedID: String?
 
   let controlPlane: any PluginManaging
@@ -59,6 +60,7 @@ final class PluginManagementModel: ObservableObject {
     guard !isSaving else { return false }
     isSaving = true
     errorMessage = nil
+    refusal = nil
     // In-flight reads cannot replace a committed result or its actionable failure.
     refreshGeneration += 1
     isRefreshing = false
@@ -102,11 +104,12 @@ final class PluginManagementModel: ObservableObject {
   }
 
   func report(_ error: any Error) {
+    refusal = error as? PluginCompatibilityRefusal ?? (error as? ControlSocketCallError)?.refusal
     if case PluginCatalogError.httpStatus(let status) = error {
       errorMessage = AppLocalization.formatted(
         "GitHub request failed with HTTP %@.", String(status))
     } else {
-      errorMessage = AppLocalization.errorDescription(error)
+      errorMessage = refusal?.message ?? AppLocalization.errorDescription(error)
     }
   }
 
@@ -114,6 +117,7 @@ final class PluginManagementModel: ObservableObject {
     guard next.state.revision >= (snapshot?.state.revision ?? 0) else { return }
     snapshot = next
     errorMessage = nil
+    refusal = nil
     if !pluginIDs.contains(selectedID ?? "") {
       selectedID = pluginIDs.first
     }

@@ -36,10 +36,6 @@ extension PluginStore {
     download: GitHubPluginDownload = GitHubPluginDownload()
   ) async throws -> PluginStoreMutation {
     try artifact.validate()
-    guard
-      artifact.compatibility?.permits(
-        platform: PluginHost.platform, architecture: architecture) ?? true
-    else { throw PluginArchiveError.incompatiblePackage }
     return try await installArchive(
       expectedSHA256: artifact.sha256, pluginID: artifact.declaration.pluginID,
       version: artifact.declaration.version, hostVersion: hostVersion, architecture: architecture,
@@ -47,7 +43,8 @@ extension PluginStore {
       expectedRevision: expectedRevision,
       githubRelease: artifact,
       prepareArchive: { identity in
-        try await releases.revalidate(artifact)
+        try await releases.revalidate(
+          artifact, hostVersion: hostVersion, architecture: architecture)
         let directory = try self.directoryFactory.recover(identity)
         var descriptor: Int32 = -1
         defer { if descriptor >= 0 { close(descriptor) } }
@@ -74,7 +71,8 @@ extension PluginStore {
         else {
           throw PluginCatalogError.invalidProvenance
         }
-        try await releases.revalidate(artifact)
+        try await releases.revalidate(
+          artifact, hostVersion: hostVersion, architecture: architecture)
       })
   }
 

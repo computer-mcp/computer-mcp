@@ -265,13 +265,14 @@ package struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
   package var capabilityID: String
   package var decision: String
   package var errorCode: String?
+  package var errorDetailsJSON: String?
   package var durationMilliseconds: Int?
   package var inputDigest: String?
   package var outputDigest: String?
   package var outputByteCount: Int?
   package var outputTruncated: Bool?
 
-  package init(_ value: AuditEvent) {
+  package init(_ value: AuditEvent) throws {
     self.id = value.id
     self.occurredAt = value.occurredAt
     self.requestID = value.requestID
@@ -290,6 +291,9 @@ package struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
     self.capabilityID = value.capabilityID
     self.decision = value.decision.rawValue
     self.errorCode = value.errorCode
+    self.errorDetailsJSON = try value.errorDetails.map {
+      String(decoding: try JSONEncoder().encode($0), as: UTF8.self)
+    }
     self.durationMilliseconds = value.durationMilliseconds
     self.inputDigest = value.inputDigest
     self.outputDigest = value.outputDigest
@@ -323,6 +327,9 @@ package struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
       capabilityID: capabilityID,
       decision: decision,
       errorCode: errorCode,
+      errorDetails: try errorDetailsJSON.map {
+        try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+      },
       durationMilliseconds: durationMilliseconds,
       inputDigest: inputDigest,
       outputDigest: outputDigest,

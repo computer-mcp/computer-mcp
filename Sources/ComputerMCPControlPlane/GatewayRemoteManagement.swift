@@ -187,8 +187,11 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
   }
 
   static func pluginIDs(_ snapshot: PluginHostSnapshot) -> [String] {
-    Set(snapshot.state.installations.map(\.pluginID) + snapshot.bundled.map { $0.manifest.id })
-      .sorted()
+    Set(
+      snapshot.state.installations.map(\.pluginID) + snapshot.bundled.map { $0.manifest.id }
+        + snapshot.issues.compactMap { $0.refusal?.pluginID }
+    )
+    .sorted()
   }
 
   static func requireTrustedPlugin(_ id: String, snapshot: PluginHostSnapshot) throws {
@@ -225,6 +228,15 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
         ?? .null,
       "bundled": .bool(snapshot.bundled.contains { $0.manifest.id == id }),
     ]
+    let refusals =
+      (snapshot.diagnostics.compactMap(\.refusal)
+      + snapshot.issues.compactMap(\.refusal)).filter { $0.pluginID == id }
+      .reduce(into: [PluginCompatibilityRefusal]()) { values, refusal in
+        if !values.contains(refusal) { values.append(refusal) }
+      }
+    if !refusals.isEmpty {
+      result["refusals"] = .array(try refusals.map(ControlToolResponse.encodedPayload))
+    }
     guard details else { return .object(result) }
     let remaining = installations.filter { $0.id > afterID }
     let selected = Array(remaining.prefix(limit))

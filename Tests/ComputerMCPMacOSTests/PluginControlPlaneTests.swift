@@ -18,6 +18,138 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
+  @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])
+  func malformedGitHubManifestDiagnosticSurvivesControlClientAndCLI(declaration: String)
+    async throws
+  {
+    let artifact = pluginArtifactFixture()
+    let http = ReleaseHTTPFake()
+    await http.setManifest(
+      releaseManifestFixture.replacingOccurrences(of: "plugin_api = 1", with: declaration))
+    let fixture = try PluginControlFixture(
+      worker: "/usr/bin/true", releases: GitHubPluginReleases(http: http),
+      bundled: .init(packages: [], issues: []))
+    defer { fixture.remove() }
+    let invalid = PluginManifestError.invalid("plugin_api must be a positive integer.")
+    await #expect(throws: invalid) {
+      try await fixture.gateway.changePlugins(.installRelease(artifact), expectedRevision: 0)
+    }
+    let selection = fixture.root.appendingPathComponent("selection.json")
+    try CanonicalJSONCoding.encoder().encode(artifact).write(to: selection)
+    try await fixture.socket.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      await #expect {
+        try await client.call(
+          "plugin.install_release",
+          arguments: .object([
+            "artifact": try ControlToolResponse.encodedPayload(artifact),
+            "expected_revision": .integer(0),
+          ]))
+      } throws: { error in
+        let failure = error as? ControlSocketCallError
+        return failure?.code == "plugin.invalid_manifest"
+          && failure?.message == invalid.errorDescription && failure?.refusal == nil
+      }
+      let result = try await fixture.cli([
+        "install-release", selection.path, "--expected-revision", "0",
+      ])
+      #expect(result.exitCode == 1)
+      let error = try JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8))
+        .objectValue?["error"]?.objectValue
+      #expect(error?["code"] == .string("plugin.invalid_manifest"))
+      #expect(error?["message"] == invalid.errorDescription.map(JSONValue.string))
+      #expect(error?["refusal"] == nil)
+      let events = try fixture.database.auditEvents(limit: 10)
+        .filter { $0.capabilityID == "plugin.install_release" }
+      #expect(events.count == 2)
+      #expect(
+        events.allSatisfy { $0.errorCode == "plugin.invalid_manifest" && $0.errorDetails == nil })
+      #expect(try fixture.database.pluginStoreSnapshot() == PluginStoreSnapshot())
+      #expect(try fixture.database.pluginOwnedDirectories().isEmpty)
+      #expect(await http.assetPages.isEmpty)
+    } catch {
+      await fixture.socket.stop()
+      throw error
+    }
+    await fixture.socket.stop()
+  }
+
+  @Test
+  func refusalSurvivesControlClientCLIAndPersistedAuditRecords() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let text = PluginStoreFixture.manifest.replacingOccurrences(
+      of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true")
+    let root = try files.makePackage(directory: "future", text: text)
+    let fixture = try PluginControlFixture(bundled: .init(packages: [], issues: []))
+    defer { fixture.remove() }
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "test-package", version: PluginVersion("1.2.3"), declared: 2))
+    await #expect(throws: refusal) {
+      try await fixture.gateway.changePlugins(.registerDevelopment(root), expectedRevision: 0)
+    }
+    try await fixture.socket.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      await #expect {
+        try await client.call(
+          "plugin.register",
+          arguments: .object([
+            "path": .string(root.path), "expected_revision": .integer(0),
+          ]))
+      } throws: { error in
+        let failure = error as? ControlSocketCallError
+        return failure?.code == refusal.code && failure?.message == refusal.message
+          && failure?.refusal == refusal
+      }
+      let result = try await fixture.cli(["register", root.path, "--expected-revision", "0"])
+      #expect(result.exitCode == 1)
+      let error = try JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8))
+        .objectValue?["error"]?.objectValue
+      #expect(error?["code"] == .string(refusal.code))
+      #expect(error?["message"] == .string(refusal.message))
+      let encodedRefusal = try ControlToolResponse.encodedPayload(refusal)
+      #expect(error?["refusal"] == encodedRefusal)
+      let events = try fixture.database.auditEvents(limit: 10)
+        .filter { $0.capabilityID == "plugin.register" }
+      #expect(events.count == 2)
+      #expect(events.allSatisfy { $0.errorCode == refusal.code && $0.decision == .failed })
+      for event in events { #expect(event.errorDetails == encodedRefusal) }
+      #expect(try fixture.database.pluginStoreSnapshot() == PluginStoreSnapshot())
+    } catch {
+      await fixture.socket.stop()
+      throw error
+    }
+    await fixture.socket.stop()
+  }
+
+  @Test(arguments: ["minimum", "maximum", "platform"])
+  func selectedSourceValidationCarriesCompatibilityRefusals(fault: String) async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let otherArchitecture = PluginHost.architecture == "arm64" ? "x86_64" : "arm64"
+    let constraint =
+      fault == "minimum"
+      ? "minimum_host = '99.0.0'"
+      : fault == "maximum" ? "maximum_host = '0.0.1'" : "architectures = ['\(otherArchitecture)']"
+    let text = PluginStoreFixture.manifest.replacingOccurrences(
+      of: "[[dependencies]]", with: "[compatibility]\n\(constraint)\n[[dependencies]]")
+    let root = try files.makePackage(directory: "constrained", text: text)
+    let fixture = try PluginControlFixture(bundled: .init(packages: [], issues: []))
+    defer { fixture.remove() }
+    _ = try await fixture.gateway.changePlugins(.registerDevelopment(root), expectedRevision: 0)
+    let refusal = try #require(
+      PluginManifest.parse(text).refusal(
+        host: PluginVersion(ComputerMCPCLI.version), architecture: PluginHost.architecture))
+    await #expect(throws: refusal) {
+      try await fixture.gateway.changePlugins(
+        .enabled(pluginID: "test-package", true), expectedRevision: 1)
+    }
+    #expect(try fixture.database.pluginStoreSnapshot().revision == 1)
+  }
+
   @Test
   func doctorChecksDisabledPackagesThroughOwnerCLIWithoutChangingHostState() async throws {
     let files = try PluginStoreFixture()
@@ -226,6 +358,7 @@ struct PluginControlPlaneTests {
         "skills": .array(declaration.skills.map(JSONValue.string)),
       ])
       release["compatibility"] = .object([
+        "plugin_api": .integer(1),
         "platforms": .array([.string("macos")]),
         "architectures": .array([.string("arm64"), .string("x86_64")]),
         "minimum_host": .string("0.1.0"), "maximum_host": .null,
@@ -235,6 +368,10 @@ struct PluginControlPlaneTests {
         .object([
           "id": .integer(selected.assetID), "name": .string(selected.name),
           "size": .integer(selected.size), "sha256": .string(selected.sha256),
+          "compatibility": .object([
+            "platforms": .array([.string("macos")]),
+            "architectures": .array([.string("arm64"), .string("x86_64")]),
+          ]),
           "url": .string(
             "https://github.com/computer-mcp/combined/releases/download/v1.2.3/combined.zip"),
         ])

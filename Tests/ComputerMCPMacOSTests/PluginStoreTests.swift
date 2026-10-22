@@ -10,6 +10,39 @@ import Testing
 @testable import ComputerMCPPlugins
 
 struct PluginStoreTests {
+  @Test
+  func unreadableFutureSchemaSurvivesStoreAndBundledInventoryIssues() async throws {
+    let fixture = try PluginStoreFixture()
+    defer { fixture.cleanup() }
+    let database = try GatewayDatabase(path: fixture.databaseURL.path)
+    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    _ = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
+    _ = try await store.setEnabled(true, for: "test-package", expectedRevision: 1)
+    let text = PluginStoreFixture.manifest.replacingOccurrences(
+      of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true")
+    try text.write(
+      to: fixture.packageRoot.appendingPathComponent(PluginManifest.filename), atomically: true,
+      encoding: .utf8)
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "test-package", version: PluginVersion("1.2.3"), declared: 2))
+    let resolution = try await fixture.resolve(store)
+    #expect(resolution.plugins.isEmpty)
+    #expect(resolution.issues.first?.refusal == refusal)
+    #expect(resolution.issues.first?.message == refusal.message)
+    let bundledRoot = try fixture.makePackage(directory: "Plugins/source", text: text)
+    let bundled = BundledPlugins.load(directory: bundledRoot.deletingLastPathComponent())
+    #expect(bundled.issues.first { $0.pluginID == "source" }?.refusal == refusal)
+    let report = try PluginDoctorReport.inspect(
+      pluginID: "test-package", state: await store.snapshot(),
+      bundled: .init(packages: [], issues: []),
+      hostVersion: PluginVersion("1.0.0"), architecture: "arm64",
+      applications: MacOSPlatform.services.applications)
+    #expect(report.refusal == refusal)
+    #expect(report.checks.first?.refusal == refusal)
+    #expect(report.version == refusal.version)
+  }
+
   @Test(arguments: ["workspace", "profile"])
   func configurationChangesDuringPreflightRejectPluginCommit(change: String) async throws {
     let fixture = try PluginStoreFixture()

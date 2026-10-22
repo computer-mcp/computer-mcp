@@ -122,19 +122,18 @@ struct PluginManifestTests {
         id = 'guidance'
         path = 'skills'
         """)
-    let compatibility = try #require(manifest.compatibility)
     #expect(
-      try compatibility.permits(
-        host: PluginVersion("1.2.0+build.2"), architecture: "arm64", platform: "macos"))
+      try manifest.refusal(
+        host: PluginVersion("1.2.0+build.2"), architecture: "arm64", platform: "macos") == nil)
     #expect(
-      try !compatibility.permits(
-        host: PluginVersion("1.2.0-alpha"), architecture: "arm64", platform: "macos"))
+      try manifest.refusal(
+        host: PluginVersion("1.2.0-alpha"), architecture: "arm64", platform: "macos") != nil)
     #expect(
-      try !compatibility.permits(
-        host: PluginVersion("2.0.0"), architecture: "arm64", platform: "macos"))
+      try manifest.refusal(
+        host: PluginVersion("2.0.0"), architecture: "arm64", platform: "macos") != nil)
     #expect(
-      try !compatibility.permits(
-        host: PluginVersion("1.3.0"), architecture: "x86_64", platform: "macos"))
+      try manifest.refusal(
+        host: PluginVersion("1.3.0"), architecture: "x86_64", platform: "macos") != nil)
   }
 
   @Test(arguments: [
@@ -177,8 +176,8 @@ struct PluginManifestTests {
         ]))
     #expect(compatibility.platforms == ["macos"])
     #expect(
-      try !compatibility.permits(
-        host: PluginVersion("1.2.3"), architecture: "arm64", platform: "windows"))
+      try manifest.refusal(
+        host: PluginVersion("1.2.3"), architecture: "arm64", platform: "windows") != nil)
   }
 
   @Test(arguments: [

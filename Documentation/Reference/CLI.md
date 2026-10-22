@@ -20,6 +20,13 @@ The installer creates `~/.local/bin/computer-mcp` without `sudo`. It will not
 replace a regular file or an unrelated valid link. Add that directory to
 `PATH` if Doctor reports it missing.
 
+## Build identity
+
+`computer-mcp build-info` emits JSON by default; `--format human` prints readable
+fields. Both include `plugin_api` with `minimum` and `maximum`, currently `1` and
+`1`. The range identifies supported plugin manifest schemas and runtime contracts;
+see [Plugin Packages](PluginPackages.md#compatibility-refusals).
+
 ## Command surface
 
 ```text
@@ -41,7 +48,7 @@ computer-mcp clients deny [--control-socket <control-socket>] <pairing-code> [--
 computer-mcp clients grants [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>] [--tunnel-id <tunnel-id>]
 computer-mcp clients revoke-grant [--control-socket <control-socket>] <id>
 computer-mcp doctor [--journey <journey>] [--json] [--control-socket <control-socket>]
-computer-mcp build-info
+computer-mcp build-info [--format <format>]
 computer-mcp config path [--control-socket <control-socket>]
 computer-mcp config show [--control-socket <control-socket>]
 computer-mcp config defaults

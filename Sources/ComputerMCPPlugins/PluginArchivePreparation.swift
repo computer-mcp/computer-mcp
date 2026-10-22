@@ -73,24 +73,22 @@ package struct PluginArchivePreparation: Sendable {
       let package: PluginPackage
       do {
         package = try PluginPackage.load(at: job.url.appendingPathComponent("payload"))
+      } catch let refusal as PluginCompatibilityRefusal {
+        throw refusal
+      } catch let invalid as PluginManifestError {
+        throw invalid
       } catch {
         throw PluginArchiveError.invalidPackage
       }
       guard package.manifest.id == pluginID, package.manifest.version == version else {
         throw PluginArchiveError.identityMismatch
       }
-      guard
-        package.manifest.compatibility?.permits(host: hostVersion, architecture: architecture)
-          ?? true
-      else { throw PluginArchiveError.incompatiblePackage }
-      let target =
-        package.manifest.compatibility?.artifactTarget(
-          named: artifactName ?? archive.lastPathComponent)
-        ?? (package.manifest.compatibility == nil ? .macOS : nil)
-      guard
-        target?.permits(
-          platform: PluginPlatformCompatibility.currentPlatform, architecture: architecture) == true
-      else { throw PluginArchiveError.incompatiblePackage }
+      if let refusal = package.manifest.refusal(
+        host: hostVersion, architecture: architecture,
+        artifactName: artifactName ?? archive.lastPathComponent)
+      {
+        throw refusal
+      }
       try job.finish()
       try Task.checkCancellation()
       result = try await operation(package, receipt)

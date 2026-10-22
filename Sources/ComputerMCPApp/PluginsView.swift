@@ -41,7 +41,11 @@ struct PluginsView: View {
         }
         .disabled(model.snapshot == nil || model.isSaving)
       }.padding(.horizontal, 20).padding(.vertical, 12)
-      if let error = model.errorMessage {
+      if let refusal = model.refusal {
+        PluginRefusalNotice(refusal: refusal) { sheet = .search }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(16)
+      } else if let error = model.errorMessage {
         Text(verbatim: error)
           .foregroundStyle(.red)
           .textSelection(.enabled)
@@ -62,8 +66,13 @@ struct PluginsView: View {
             List(model.pluginIDs, id: \.self, selection: $model.selectedID) { id in
               VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: id)
-                Text(snapshot.state.settings[id]?.enabled == true ? "Enabled" : "Disabled")
-                  .font(.caption).foregroundStyle(.secondary)
+                if let refusal = Self.refusals(for: id, in: snapshot).first {
+                  PluginRefusalStatus(refusal: refusal)
+                    .font(.caption).foregroundStyle(.secondary)
+                } else {
+                  Text(snapshot.state.settings[id]?.enabled == true ? "Enabled" : "Disabled")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
               }
               .tag(id)
             }
@@ -124,6 +133,14 @@ struct PluginsView: View {
 
   private func details(id: String, snapshot: PluginHostSnapshot) -> some View {
     Form {
+      let refusals = Self.refusals(for: id, in: snapshot)
+      if !refusals.isEmpty {
+        Section {
+          ForEach(Array(refusals.enumerated()), id: \.offset) { _, refusal in
+            PluginRefusalNotice(refusal: refusal) { sheet = .search }
+          }
+        }
+      }
       Section {
         LabeledContent("Plugin", value: id)
         LabeledContent("Status") {
@@ -241,17 +258,23 @@ struct PluginsView: View {
           "Resolved registrations do not confirm a working connection. Caller permissions still apply."
         )
         .foregroundStyle(.secondary)
-        ForEach(snapshot.issues.filter { $0.pluginID == id }, id: \.message) { issue in
+        ForEach(snapshot.issues.filter { $0.pluginID == id && $0.refusal == nil }, id: \.message) {
+          issue in
           Text(verbatim: issue.message).textSelection(.enabled)
         }
-        ForEach(Array(snapshot.diagnostics.filter { $0.pluginID == id }.enumerated()), id: \.offset)
-        { _, diagnostic in
+        ForEach(
+          Array(
+            snapshot.diagnostics.filter { $0.pluginID == id && $0.refusal == nil }.enumerated()),
+          id: \.offset
+        ) { _, diagnostic in
           VStack(alignment: .leading, spacing: 4) {
             switch diagnostic.code {
             case .dependencyUnavailable: Text("Dependency unavailable")
             case .executableUnavailable: Text("Executable unavailable")
             case .executableUnverified: Text("Executable needs verification")
-            case .hostIncompatible: Text("Host incompatible")
+            case .hostUpdateRequired, .pluginUpdateRequired, .platformUnsupported:
+              // Refusals are presented by the notice at the top of the details.
+              EmptyView()
             }
             if let dependency = diagnostic.dependencyID { Text(verbatim: dependency) }
             if let inspection = diagnostic.executable {
@@ -272,6 +295,20 @@ struct PluginsView: View {
     }
     .formStyle(.grouped)
     .disabled(model.isSaving)
+  }
+}
+
+extension PluginsView {
+  /// Distinct refusals across this plugin's sources, in the order the host reported them.
+  fileprivate static func refusals(for id: String, in snapshot: PluginHostSnapshot)
+    -> [PluginCompatibilityRefusal]
+  {
+    let reported =
+      snapshot.issues.filter { $0.pluginID == id }.compactMap(\.refusal)
+      + snapshot.diagnostics.filter { $0.pluginID == id }.compactMap(\.refusal)
+    return reported.reduce(into: []) { distinct, refusal in
+      if !distinct.contains(refusal) { distinct.append(refusal) }
+    }
   }
 }
 

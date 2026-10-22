@@ -113,6 +113,8 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   package var capabilityID: String
   package var decision: AuditDecision
   package var errorCode: String?
+  /// Structured domain refusal details; contains no invocation arguments or credentials.
+  package var errorDetails: JSONValue?
   package var durationMilliseconds: Int?
   package var inputDigest: String?
   package var outputDigest: String?
@@ -138,6 +140,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     capabilityID: String,
     decision: AuditDecision,
     errorCode: String? = nil,
+    errorDetails: JSONValue? = nil,
     durationMilliseconds: Int? = nil,
     inputDigest: String? = nil,
     outputDigest: String? = nil,
@@ -162,6 +165,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     self.capabilityID = capabilityID
     self.decision = decision
     self.errorCode = errorCode
+    self.errorDetails = errorDetails
     self.durationMilliseconds = durationMilliseconds
     self.inputDigest = inputDigest
     self.outputDigest = outputDigest

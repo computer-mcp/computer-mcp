@@ -19,10 +19,12 @@ package struct ControlSocketSnapshot: Codable, Equatable, Sendable {
 package struct ControlSocketCallError: Error, LocalizedError, Sendable {
   package let code: String
   package let message: String
+  package let refusal: PluginCompatibilityRefusal?
 
-  package init(code: String, message: String) {
+  package init(code: String, message: String, refusal: PluginCompatibilityRefusal? = nil) {
     self.code = code
     self.message = message
+    self.refusal = refusal
   }
 
   package var errorDescription: String? { "\(code): \(message)" }
@@ -241,7 +243,11 @@ package actor AppControlPlaneServiceClient {
           .objectValue?["error"]?.objectValue
         throw ControlSocketCallError(
           code: error?["code"]?.stringValue ?? "control.operation_failed",
-          message: error?["message"]?.stringValue ?? "The App control operation failed."
+          message: error?["message"]?.stringValue ?? "The App control operation failed.",
+          refusal: try error?["refusal"].map {
+            try CanonicalJSONCoding.decoder().decode(
+              PluginCompatibilityRefusal.self, from: JSONEncoder().encode($0))
+          }
         )
       }
       return report.result.objectValue?["structuredContent"] ?? report.result
@@ -817,13 +823,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       return result
     } catch {
       let disposition = ControlToolResponse.auditDisposition(for: error)
-      let message = ControlToolResponse.errorMessage(error)
       let result = ControlToolResponse.envelope(
         .object([
-          "error": .object([
-            "code": .string(disposition.code),
-            "message": .string(message),
-          ])
+          "error": try ControlToolResponse.errorPayload(error)
         ]),
         requestID: requestID,
         capabilityID: name,
@@ -841,6 +843,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           capabilityID: name,
           decision: disposition.decision,
           errorCode: disposition.code,
+          errorDetails: try (error as? PluginCompatibilityRefusal).map {
+            try ControlToolResponse.encodedPayload($0)
+          },
           durationMilliseconds: ControlToolResponse.milliseconds(startedAt.duration(to: .now)),
           inputDigest: inputDigest,
           outputDigest: ControlToolResponse.digest(outputData),

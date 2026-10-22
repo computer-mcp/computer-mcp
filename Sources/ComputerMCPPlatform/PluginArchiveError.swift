@@ -13,7 +13,6 @@ package enum PluginArchiveError: String, Error, Codable, Equatable, LocalizedErr
   case timedOut = "timed_out"
   case invalidPackage = "invalid_package"
   case identityMismatch = "identity_mismatch"
-  case incompatiblePackage = "incompatible_package"
   case resourceLimitUnavailable = "resource_limit_unavailable"
 
   package var errorDescription: String? {
@@ -32,7 +31,6 @@ package enum PluginArchiveError: String, Error, Codable, Equatable, LocalizedErr
     case .invalidPackage: "Plugin archive does not contain a valid package."
     case .identityMismatch:
       "Plugin package identity or version does not match the selected artifact."
-    case .incompatiblePackage: "Plugin package is incompatible with this host."
     case .resourceLimitUnavailable: "Cannot establish plugin archive worker resource limits."
     }
   }

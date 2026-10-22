@@ -55,15 +55,6 @@ package struct PluginCompatibility: Codable, Equatable, Sendable {
     if !artifacts.isEmpty { try c.encode(artifacts, forKey: .artifacts) }
   }
 
-  package func permits(
-    host: PluginVersion, architecture: String,
-    platform: String = PluginPlatformCompatibility.currentPlatform
-  ) -> Bool {
-    (minimumHost.map { !host.precedes($0) } ?? true)
-      && (maximumHost.map { host.precedes($0) } ?? true)
-      && target.permits(platform: platform, architecture: architecture)
-  }
-
   package func artifactTarget(named name: String?) -> PluginPlatformCompatibility? {
     artifacts.isEmpty ? target : artifacts.first { $0.name == name }?.target
   }
@@ -102,15 +93,36 @@ package struct PluginArtifactDeclaration: Codable, Equatable, Sendable {
   }
 }
 
-extension PluginSource {
-  func permits(manifest: PluginManifest, host: PluginVersion, architecture: String) -> Bool {
-    guard let compatibility = manifest.compatibility else {
-      return PluginPlatformCompatibility.macOS.permits(
-        platform: PluginPlatformCompatibility.currentPlatform, architecture: architecture)
+extension PluginManifest {
+  func refusal(
+    host: PluginVersion, architecture: String,
+    platform: String = PluginPlatformCompatibility.currentPlatform,
+    artifactName: String? = nil
+  ) -> PluginCompatibilityRefusal? {
+    let target = compatibility?.target ?? .macOS
+    let artifacts: [PluginPlatformCompatibility]
+    if let compatibility, !compatibility.artifacts.isEmpty {
+      artifacts =
+        artifactName.map { name in
+          compatibility.artifacts.filter { $0.name == name }.map(\.target)
+        } ?? compatibility.artifacts.map(\.target)
+    } else {
+      artifacts = [target]
     }
-    guard compatibility.permits(host: host, architecture: architecture) else { return false }
-    guard kind == .artifact else { return true }
-    return compatibility.artifactTarget(named: artifactName ?? githubRelease?.name)?.permits(
-      platform: PluginPlatformCompatibility.currentPlatform, architecture: architecture) == true
+    return PluginCompatibilityRefusal.evaluate(
+      pluginID: id, version: version, pluginAPI: pluginAPI,
+      target: target, artifacts: artifacts,
+      minimumHost: compatibility?.minimumHost, maximumHost: compatibility?.maximumHost,
+      host: host, architecture: architecture, platform: platform)
+  }
+}
+
+extension PluginSource {
+  func refusal(manifest: PluginManifest, host: PluginVersion, architecture: String)
+    -> PluginCompatibilityRefusal?
+  {
+    manifest.refusal(
+      host: host, architecture: architecture,
+      artifactName: kind == .artifact ? artifactName ?? githubRelease?.name ?? "" : nil)
   }
 }

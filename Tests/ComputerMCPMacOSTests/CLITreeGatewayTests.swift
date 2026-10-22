@@ -82,6 +82,7 @@ struct CLITreeGatewayTests {
       id = 'tree-test'
       name = 'Tree test'
       version = '1.0.0'
+      plugin_api = 1
       [[dependencies]]
       id = 'printf'
       commands = ['printf']

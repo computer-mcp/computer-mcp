@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 import GRDB
 import Testing
@@ -46,7 +47,9 @@ final class GatewayDatabaseSchemaTests {
     let connection = try GatewayDatabaseConnection(path: path)
     let after = try Self.schema(connection.writer)
     let oldNames = Set(before.map(\.name))
-    #expect(after.filter { oldNames.contains($0.name) } == before)
+    #expect(
+      after.filter { oldNames.contains($0.name) && $0.name != "auditEvents" }
+        == before.filter { $0.name != "auditEvents" })
     let additions = after.filter { !oldNames.contains($0.name) }
     #expect(
       Set(additions.filter { $0.type == "table" }.map(\.name)) == [
@@ -55,7 +58,7 @@ final class GatewayDatabaseSchemaTests {
     try connection.writer.read { (database: Database) throws in
       #expect(
         try String.fetchAll(database, sql: "SELECT identifier FROM grdb_migrations ORDER BY rowid")
-          == ["gateway-initial", "remote-oauth"])
+          == ["gateway-initial", "remote-oauth", "audit-error-details"])
       #expect(
         try String.fetchOne(
           database, sql: "SELECT value FROM runtimeSettings WHERE key = 'fixture'") == "preserved")
@@ -64,6 +67,38 @@ final class GatewayDatabaseSchemaTests {
           "digest", "grantID", "kind", "expiresAt", "payloadJSON",
         ])
       #expect(try Row.fetchAll(database, sql: "PRAGMA foreign_key_list(oauthTokens)").count == 1)
+    }
+  }
+
+  @Test func auditErrorDetailsPreserveEarlierRowsAndRoundTripStructuredValues() throws {
+    let earlier = try DatabaseQueue(path: path)
+    try GatewayDatabaseConnection.migrator.migrate(earlier, upTo: "remote-oauth")
+    try earlier.write { database in
+      try database.execute(
+        sql: """
+          INSERT INTO auditEvents
+            (id, occurredAt, requestID, caller, profileID, capabilityID, decision, errorCode)
+          VALUES ('old', '2026-10-21', 'before', ?, ?, 'plugin.register', 'failed', 'fixture')
+          """,
+        arguments: [GatewayCallerKind.localCLI.rawValue, GatewayProfileID.localAdmin.rawValue])
+    }
+    try earlier.close()
+    let connection = try GatewayDatabaseConnection(path: path)
+    let details = JSONValue.object([
+      "plugin_id": .string("fixture"), "reason": .string("host_update_required"),
+      "requirement": .object(["plugin_api": .object(["declared": .integer(2)])]),
+    ])
+    let event = AuditEvent(
+      requestID: "after", caller: .localCLI, profileID: .localAdmin,
+      capabilityID: "plugin.register", decision: .failed,
+      errorCode: "plugin.host_update_required", errorDetails: details)
+    try connection.writer.write { database in
+      let old = try #require(try AuditEventRecord.fetchOne(database, key: "old"))
+      #expect(try old.value().errorDetails == nil)
+      #expect(old.errorCode == "fixture")
+      try AuditEventRecord(event).insert(database)
+      let stored = try #require(try AuditEventRecord.fetchOne(database, key: event.id))
+      #expect(try stored.value().errorDetails == details)
     }
   }
 

@@ -9,6 +9,14 @@
     {
       "assets": [
         {
+          "compatibility": {
+            "architectures": [
+              "arm64"
+            ],
+            "platforms": [
+              "macos"
+            ]
+          },
           "id": 30,
           "name": "example.zip",
           "sha256": "c27fccbd79b21735f54896b847d155c7c044995c56c2202303ad4a99fa5f0b44",
@@ -25,7 +33,8 @@
         "minimum_host": "1.0.0",
         "platforms": [
           "macos"
-        ]
+        ],
+        "plugin_api": 1
       },
       "contributions": {
         "cli": [],
@@ -61,6 +70,6 @@
       "withdrawn": false
     }
   ],
-  "revision": "5c751086b1b61120cc2addc21d5a2e3f6d7baa22299774277bddfe762d6f4651",
-  "schema_version": 1
+  "revision": "9ea0036192dadaf54ec2b52d3dcb64a6bf549bdf0979a8cacca5804a18c69d0d",
+  "schema_version": 3
 }

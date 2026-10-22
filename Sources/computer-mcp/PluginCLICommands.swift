@@ -1,6 +1,7 @@
 import ArgumentParser
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPPlugins
 import ComputerMCPProcess
 import Foundation
@@ -37,7 +38,8 @@ struct Plugins: AsyncParsableCommand {
       commandName: "list",
       abstract: "Read sources, settings, contribution origins and resolution diagnostics as JSON.")
     func run() async throws {
-      printJSON(try await connection.client().call("plugin.list"))
+      try await Plugins.perform(
+        "plugin.list", arguments: [:], connection: connection, mutation: false)
     }
   }
 
@@ -47,9 +49,8 @@ struct Plugins: AsyncParsableCommand {
       commandName: "show", abstract: "Read one plugin's recorded source and settings.")
     @Argument var id: String
     func run() async throws {
-      printJSON(
-        try await connection.client().call(
-          "plugin.show", arguments: .object(["id": .string(id)])))
+      try await Plugins.perform(
+        "plugin.show", arguments: ["id": .string(id)], connection: connection, mutation: false)
     }
   }
 
@@ -101,19 +102,8 @@ struct Plugins: AsyncParsableCommand {
         "query": .string(query), "page": .number(Double(page)), "refresh": .bool(refresh),
       ]
       args["kind"] = kind.map(JSONValue.string)
-      do {
-        printJSON(try await connection.client().call("plugin.search", arguments: .object(args)))
-      } catch {
-        let failure = error as? ControlSocketCallError
-        printJSON(
-          .object([
-            "error": .object([
-              "code": .string(failure?.code ?? "control.unavailable"),
-              "message": .string(failure?.message ?? "The App control socket is unavailable."),
-            ])
-          ]))
-        throw ExitCode.failure
-      }
+      try await Plugins.perform(
+        "plugin.search", arguments: args, connection: connection, mutation: false)
     }
   }
 
@@ -126,9 +116,8 @@ struct Plugins: AsyncParsableCommand {
     func run() async throws {
       var args = revision.arguments
       args["path"] = .string(URL(fileURLWithPath: path).standardizedFileURL.path)
-      printJSON(
-        try await revision.connection.client().call(
-          "plugin.register", arguments: .object(args)))
+      try await Plugins.perform(
+        "plugin.register", arguments: args, connection: revision.connection)
     }
   }
 
@@ -137,7 +126,7 @@ struct Plugins: AsyncParsableCommand {
       commandName: "artifacts",
       abstract: "List release versions and installable archives from the cached official catalog.",
       discussion:
-        "Use repository and repository_id from plugins search. Defaults to the latest compatible stable release; --tag selects a catalog version, including prereleases. Withdrawn or incompatible releases have no installable archives. Versions, prerequisites and asset pages use the local catalog. Save one complete artifacts entry as JSON for install-release; installation independently revalidates GitHub."
+        "Use repository and repository_id from plugins search. Defaults to the latest compatible stable release; --tag selects a catalog version, including prereleases. Withdrawn releases and releases refused for this host have no installable archives; refusals identify which side to update or which Mac target is required. Versions, prerequisites and asset pages use the local catalog. Save one complete artifacts entry as JSON for install-release; installation independently revalidates GitHub."
     )
     @Argument(help: "Official owner/repository from search.") var repository: String
     @Option(name: .long, help: "Stable repository_id from search.") var repositoryID: Int64
@@ -286,18 +275,18 @@ struct Plugins: AsyncParsableCommand {
       return result
     } catch {
       let failure = error as? ControlSocketCallError
-      printJSON(
-        .object([
-          "error": .object([
-            "code": .string(failure?.code ?? "control.unavailable"),
-            "message": .string(
-              failure?.message
-                ?? (mutation
-                  ? "The App control socket is unavailable. Read list/show before retrying a change whose outcome is unknown."
-                  : "The App control socket is unavailable.")
-            ),
-          ])
-        ]))
+      var fields: [String: JSONValue] = [
+        "code": .string(failure?.code ?? "control.unavailable"),
+        "message": .string(
+          failure?.message
+            ?? (mutation
+              ? "The App control socket is unavailable. Read list/show before retrying a change whose outcome is unknown."
+              : "The App control socket is unavailable.")),
+      ]
+      if let refusal = failure?.refusal {
+        fields["refusal"] = try ControlToolResponse.encodedPayload(refusal)
+      }
+      printJSON(.object(["error": .object(fields)]))
       throw ExitCode.failure
     }
   }
@@ -321,9 +310,8 @@ struct Plugins: AsyncParsableCommand {
       var args = revision.arguments
       args["id"] = .string(id)
       args["settings"] = try .encoded(settings)
-      printJSON(
-        try await revision.connection.client().call(
-          "plugin.configure", arguments: .object(args)))
+      try await Plugins.perform(
+        "plugin.configure", arguments: args, connection: revision.connection)
     }
   }
 
@@ -347,9 +335,9 @@ struct Plugins: AsyncParsableCommand {
   private static func setEnabled(_ enabled: Bool, id: String, revision: Revision) async throws {
     var args = revision.arguments
     args["id"] = .string(id)
-    printJSON(
-      try await revision.connection.client().call(
-        enabled ? "plugin.enable" : "plugin.disable", arguments: .object(args)))
+    try await Plugins.perform(
+      enabled ? "plugin.enable" : "plugin.disable", arguments: args,
+      connection: revision.connection)
   }
 
   struct Select: AsyncParsableCommand {
@@ -370,9 +358,8 @@ struct Plugins: AsyncParsableCommand {
       var args = revision.arguments
       args["id"] = .string(id)
       args["installation_id"] = installationID.map(JSONValue.string)
-      printJSON(
-        try await revision.connection.client().call(
-          "plugin.select", arguments: .object(args)))
+      try await Plugins.perform(
+        "plugin.select", arguments: args, connection: revision.connection)
     }
   }
 
@@ -387,9 +374,8 @@ struct Plugins: AsyncParsableCommand {
     func run() async throws {
       var args = revision.arguments
       args["installation_id"] = .string(installationID)
-      printJSON(
-        try await revision.connection.client().call(
-          "plugin.remove", arguments: .object(args)))
+      try await Plugins.perform(
+        "plugin.remove", arguments: args, connection: revision.connection)
     }
   }
 }

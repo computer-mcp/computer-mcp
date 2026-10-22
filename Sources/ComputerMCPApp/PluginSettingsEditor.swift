@@ -100,7 +100,13 @@ struct PluginSettingsEditor: View {
       .formStyle(.grouped)
       .disabled(model.isSaving)
       if let error = model.errorMessage {
-        Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled).padding(16)
+        if let refusal = model.refusal {
+          PluginRefusalNotice(refusal: refusal)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+        } else {
+          Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled).padding(16)
+        }
       }
       Divider()
       HStack {

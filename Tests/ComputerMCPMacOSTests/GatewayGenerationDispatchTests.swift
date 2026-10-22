@@ -2569,6 +2569,7 @@ private struct GenerationFixture: Sendable {
       id = 'live-fixture'
       name = 'Live Fixture'
       version = '\(version).0.0'
+      plugin_api = 1
       [compatibility]
       minimum_host = '0.1.0'
       architectures = ['arm64', 'x86_64']

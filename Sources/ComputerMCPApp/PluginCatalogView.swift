@@ -53,7 +53,9 @@ struct PluginCatalogView: View {
           Text("Search", bundle: AppLocalization.resourceBundle)
         }.disabled(model.isLoading)
       }
-      if let error = model.errorMessage {
+      if let refusal = model.refusal {
+        PluginRefusalNotice(refusal: refusal)
+      } else if let error = model.errorMessage {
         VStack(alignment: .leading, spacing: 4) {
           Text(verbatim: error).foregroundStyle(.red)
           if model.result != nil {

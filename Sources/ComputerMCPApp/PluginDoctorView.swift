@@ -73,7 +73,11 @@ struct PluginDoctorView: View {
                 .accessibilityHidden(true)
                 Text(statusLabel(check.status)).font(.headline)
               }
-              Text(AppLocalization.string(check.message)).textSelection(.enabled)
+              if let refusal = check.refusal {
+                PluginRefusalNotice(refusal: refusal)
+              } else {
+                Text(AppLocalization.string(check.message)).textSelection(.enabled)
+              }
               if let component = check.componentID { Text(component).font(.caption) }
               if let dependency = check.dependencyID {
                 LabeledContent {
@@ -117,7 +121,14 @@ struct PluginDoctorView: View {
       }
       .formStyle(.grouped)
       if let errorMessage = model.errorMessage {
-        Text(errorMessage).foregroundStyle(.red).textSelection(.enabled).padding(12)
+        // A refusal in a completed report is shown on its check; this one failed the request.
+        if let refusal = model.refusal {
+          PluginRefusalNotice(refusal: refusal)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+        } else {
+          Text(errorMessage).foregroundStyle(.red).textSelection(.enabled).padding(12)
+        }
       }
       Divider()
       HStack {

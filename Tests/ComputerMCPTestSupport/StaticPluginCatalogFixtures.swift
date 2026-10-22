@@ -7,7 +7,7 @@ import Testing
 package func staticCatalogFixture() throws -> Data {
   let url = try #require(
     Bundle.module.url(
-      forResource: "plugin-catalog-v1", withExtension: "json", subdirectory: "Fixtures"))
+      forResource: "plugin-catalog-v3", withExtension: "json", subdirectory: "Fixtures"))
   return try Data(contentsOf: url)
 }
 
@@ -24,7 +24,7 @@ package func staticCatalogData(_ edit: (inout [String: JSONValue]) -> Void) thro
 
 package func staticCatalogResponse(_ data: Data) -> PluginCatalogHTTPResponse {
   .init(
-    status: 200, headers: ["content-type": "application/json", "etag": "\"fixture-v1\""], body: data
+    status: 200, headers: ["content-type": "application/json", "etag": "\"fixture-v3\""], body: data
   )
 }
 

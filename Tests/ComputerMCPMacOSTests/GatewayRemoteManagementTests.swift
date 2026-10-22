@@ -13,6 +13,69 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(2)))
 struct GatewayRemoteManagementTests {
   @Test
+  func pluginRefusalSurvivesGatewayResponsesAndAuditStorage() async throws {
+    let archive = try await PreparationFixture.make(
+      directoryFactory: MacOSPlatform.services.pluginDirectories)
+    defer { archive.files.remove() }
+    let http = ReleaseHTTPFake()
+    await http.setManifest(
+      releaseManifestFixture.replacingOccurrences(
+        of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
+    let fixture = try PluginControlFixture(
+      worker: archive.preparation.workerExecutable.path,
+      releases: GitHubPluginReleases(http: http), bundled: .load(directory: nil))
+    defer { fixture.remove() }
+    let client = try await connect(fixture)
+    do {
+      _ = try await approve(fixture)
+      let refusal = try #require(
+        PluginAPIVersions.supported.refusal(
+          pluginID: "combined", version: PluginVersion("1.2.3"), declared: 2))
+      let error = try await call(
+        client, "plugin.install",
+        [
+          "artifact": try ControlToolResponse.encodedPayload(pluginArtifactFixture()),
+          "expected_revision": .integer(0),
+        ], fails: true)
+      let encoded = try ControlToolResponse.encodedPayload(refusal)
+      #expect(error.objectValue?["code"] == .string(refusal.code))
+      #expect(error.objectValue?["refusal"] == encoded)
+      let event = try #require(
+        fixture.database.auditEvents(limit: 20).first { $0.capabilityID == "plugin.install" })
+      #expect(event.errorCode == refusal.code && event.errorDetails == encoded)
+      #expect(try fixture.database.pluginStoreSnapshot() == PluginStoreSnapshot())
+      #expect(try fixture.database.pluginOwnedDirectories().isEmpty)
+      #expect(await http.assetPages.isEmpty)
+    } catch {
+      await client.disconnect()
+      await fixture.gateway.stop()
+      throw error
+    }
+    await client.disconnect()
+    await fixture.gateway.stop()
+  }
+
+  @Test
+  func pluginInventoryRetainsRefusalsWithoutALoadableBundledManifest() throws {
+    let refusal = try #require(
+      PluginAPIVersions.supported.refusal(
+        pluginID: "future", version: PluginVersion("1.0.0"), declared: 2))
+    let snapshot = try PluginHostSnapshot(
+      state: PluginStoreSnapshot(),
+      bundled: .init(
+        packages: [],
+        issues: [
+          .init(pluginID: "future", message: refusal.message, refusal: refusal)
+        ]), applications: MacOSPlatform.services.applications)
+    #expect(GatewayRemoteManagement.pluginIDs(snapshot) == ["future"])
+    let expected = try ControlToolResponse.encodedPayload(refusal)
+    for details in [true, false] {
+      let value = try GatewayRemoteManagement.plugin("future", snapshot: snapshot, details: details)
+      #expect(value.objectValue?["refusals"]?.arrayValue == [expected])
+    }
+  }
+
+  @Test
   func connectedWorkspaceManagementUsesConsentAndPreservesItAcrossPublication() async throws {
     let fixture = try PluginControlFixture(bundled: .load(directory: nil))
     defer { fixture.remove() }

@@ -31,7 +31,8 @@ package enum PluginManifestFixture {
       path = 'skills'
       """
 
-  package static let header = "id = 'test-package'\nname = 'Test package'\nversion = '1.2.3'\n"
+  package static let header =
+    "id = 'test-package'\nname = 'Test package'\nversion = '1.2.3'\nplugin_api = 1\n"
   package static let combined =
     header + """
       [[dependencies]]

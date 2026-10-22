@@ -69,6 +69,7 @@ package struct PluginCatalogIssue: Codable, Equatable, Sendable {
   package let code: String
   package let message: String
   package var httpStatus: Int? = nil
+  package var refusal: PluginCompatibilityRefusal? = nil
 }
 
 package struct PluginCatalogSearchResult: Codable, Sendable {

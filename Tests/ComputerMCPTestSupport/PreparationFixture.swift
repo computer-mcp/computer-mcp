@@ -15,6 +15,7 @@ package struct PreparationFixture: Sendable {
     id = 'combined'
     name = 'Combined'
     version = '1.2.3'
+    plugin_api = 1
     [compatibility]
     minimum_host = '0.1.0'
     architectures = ['arm64']

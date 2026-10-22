@@ -49,7 +49,10 @@ package struct BundledPlugins: Sendable {
           }
           packages.append(package)
         } catch {
-          issues.append(.init(pluginID: name, message: error.localizedDescription))
+          issues.append(
+            .init(
+              pluginID: name, message: error.localizedDescription,
+              refusal: error as? PluginCompatibilityRefusal))
         }
       }
       let duplicates = Dictionary(grouping: packages, by: { $0.manifest.id })

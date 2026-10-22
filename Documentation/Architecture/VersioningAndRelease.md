@@ -37,6 +37,25 @@ Every version update records component, change kind and rationale in the change
 review and changelog. Numeric checks enforce declared rules; they do not infer
 API compatibility. Review and regression evidence support that decision.
 
+## Plugin API and bundled adoption
+
+Every plugin declares a positive integer `plugin_api` for its complete manifest
+schema and runtime contract. Any manifest field addition, removal or reinterpretation,
+or runtime contract change, defines a new API version. The host supports one closed
+range of consecutive versions, currently `1...1`, reported by `computer-mcp
+build-info`. Removing the oldest supported API is a breaking host change.
+`minimum_host` and `maximum_host` constrain host releases within an API version.
+Package SemVer, host SemVer and plugin API versions advance independently. The
+[Plugin API decision](../Decisions/PluginAPI.md) owns the accepted rationale;
+[Plugin Packages](../Reference/PluginPackages.md) owns decoding and refusals.
+
+Bundled archives are reproducibly built in their plugin repositories from accepted
+commits and pinned by SHA-256 in `Resources/PluginArchives/index.json`. Preparation
+checks the API, platform/artifact and host range for every requested App architecture.
+Before the first release, an archive may be adopted from an accepted commit before
+that plugin version is published. A host release requires that plugin release with
+the same archive digest to be public first.
+
 ## Updates and drift checks
 
 `Scripts/version.py update --version … --build … --kind … --reason …` changes

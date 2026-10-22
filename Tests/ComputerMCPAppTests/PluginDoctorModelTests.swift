@@ -149,6 +149,7 @@ private func doctorReport(revision: Int64 = 7, resolutionSource: String = "unres
     id = 'sample'
     name = 'Sample'
     version = '1.0.0'
+    plugin_api = 1
     [[dependencies]]
     id = 'vendor'
     commands = ['fixture-runtime']

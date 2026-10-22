@@ -17,15 +17,18 @@ struct PluginPlatformCompatibilityTests {
     let mac = PluginSource(kind: .artifact, root: root, artifactName: "mac.zip")
     let intel = PluginSource(kind: .artifact, root: root, artifactName: "intel.zip")
     #expect(
-      try mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64"))
+      try mac.refusal(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64")
+        == nil)
     #expect(
-      try !mac.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64"))
+      try mac.refusal(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64")
+        != nil)
     #expect(
-      try intel.permits(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64")
+      try intel.refusal(manifest: manifest, host: PluginVersion("1.2.3"), architecture: "x86_64")
+        == nil
     )
     #expect(
-      try !PluginSource(kind: .artifact, root: root).permits(
-        manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64"))
+      try PluginSource(kind: .artifact, root: root).refusal(
+        manifest: manifest, host: PluginVersion("1.2.3"), architecture: "arm64") != nil)
     #expect(try JSONDecoder().decode(PluginSource.self, from: JSONEncoder().encode(mac)) == mac)
   }
 

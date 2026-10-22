@@ -51,17 +51,13 @@ package enum BundledPluginDistribution {
           expectedSHA256: artifact.sha256, pluginID: artifact.id, version: artifact.version,
           hostVersion: hostVersion, architecture: architectures[0]
         ) { package, _ in
-          guard
-            architectures.allSatisfy({
-              let compatibility = package.manifest.compatibility
-              let target =
-                compatibility?.artifactTarget(named: artifact.archive)
-                ?? (compatibility == nil ? .macOS : nil)
-              return (compatibility?.permits(host: hostVersion, architecture: $0) ?? true)
-                && target?.permits(
-                  platform: PluginPlatformCompatibility.currentPlatform, architecture: $0) == true
-            })
-          else { throw PluginArchiveError.incompatiblePackage }
+          for architecture in architectures {
+            if let refusal = package.manifest.refusal(
+              host: hostVersion, architecture: architecture, artifactName: artifact.archive)
+            {
+              throw refusal
+            }
+          }
           try adopt(
             package: package, name: artifact.id, destination: outputDescriptor,
             directoryFactory: directoryFactory)

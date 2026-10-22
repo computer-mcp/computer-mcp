@@ -13,8 +13,8 @@ Use this guide for agent work in this repository.
   and the brand section of `Documentation/Architecture/ProductIdentity.md`;
   update imported brand files only with the organization's `Brand/brand.py sync`.
 - For version, dependency, packaging or release work, read
-  `Documentation/Architecture/VersioningAndRelease.md` and
-  `Documentation/Reference/Release.md`. Use `Scripts/version.py` for version
+  `VERSIONING.md` for version rules and `Documentation/Reference/Release.md`
+  for release facts and procedure. Use `Scripts/version.py` for version
   updates/checks and `Scripts/release.py` for shared CI and release stages.
 - For API documentation, keep DocC source with the target at
   `Sources/ComputerMCPGateway/ComputerMCPGateway.docc/`.

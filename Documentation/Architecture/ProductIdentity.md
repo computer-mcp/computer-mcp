@@ -82,5 +82,6 @@ website. `Resources/ComputerMCPApp/AppIcon.icon`, `Documentation/Brand/` and
 `.github/brand/` are imports locked by `.github/brand/brand.lock.json`; update
 them with the organization repository's `python3 Brand/brand.py sync`, and CI
 verifies the lock. An App icon change alters candidate bytes; follow
-[Versioning and Release](VersioningAndRelease.md) for the compatible patch
-candidate and exact installed acceptance.
+[Versioning](../../VERSIONING.md) for version rules and the
+[Release Reference](../Reference/Release.md#evidence-reuse-and-invalidation)
+for candidate and installed acceptance.

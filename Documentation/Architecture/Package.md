@@ -17,12 +17,9 @@ targets, and CI builds and tests them there.
 ## Dependencies
 
 Requirements follow the organization's
-[Versioning rules](https://github.com/computer-mcp/.github/blob/master/VERSIONING.md):
-organization forks and dependencies below `1.0.0` use `exact:`; other dependencies
-at or above `1.0.0` use `.upToNextMinor(from:)` at process, transport or security
-boundaries and `from:` elsewhere. The fork rule takes precedence. Floors are the
-adopted resolved versions, and committed lockfiles record the selected revisions.
-CI checks for lockfile drift.
+[Versioning rules](https://github.com/computer-mcp/.github/blob/master/VERSIONING.md).
+The [Release Reference](../Reference/Release.md#dependencies-and-verified-combinations)
+owns dependency verification and the combinations exercised by release checks.
 
 | Package | Requirement | Role |
 | --- | --- | --- |
@@ -230,13 +227,11 @@ Their shared fixtures in `ComputerMCPTestSupport` use injected directory service
 and application lookup substitutes.
 
 The release scripts assemble the SwiftPM App executable and embedded CLI into a
-standard `.app`, sign both code objects, and package the bundle in a DMG. The
-official candidate workflow builds an exact trusted-master commit through the
-protected GitHub Actions `production` Environment. Installed acceptance binds
-the signed and notarized artifacts before publication creates a signed `v*` tag
-on that commit and publishes the same bytes. Local development signing verifies
-distribution structure; it does not supply an official candidate. See
-[Versioning and Release](VersioningAndRelease.md) for the evidence policy.
+standard `.app`, sign both code objects, and package the bundle in a DMG.
+The [Release Reference](../Reference/Release.md) owns protected candidate
+construction, publication, optional installed diagnostics, and evidence reuse.
+Local development signing verifies distribution structure; it does not supply
+an official candidate.
 
 The GitHub release job imports a password-protected Developer ID PKCS#12 file
 and provisioning profile into an ephemeral runner Keychain, authenticates

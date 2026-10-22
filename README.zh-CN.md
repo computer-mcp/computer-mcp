@@ -238,6 +238,7 @@ TOML 模式只用于开发和诊断，不共享 App 的 Bookmark 或 Keychain �
 - [常见故障](Documentation/Reference/Troubleshooting.md)
 - [架构](Documentation/Architecture/README.md)
 - [安全与隐私](Documentation/Architecture/SecurityAndPrivacy.md)
+- [版本规则](VERSIONING.md)
 - [发布流程](Documentation/Reference/Release.md)
 
 ## 开发与贡献

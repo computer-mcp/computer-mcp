@@ -6,10 +6,9 @@ package target and is never embedded in the App, embedded CLI, or DMG.
 
 ## Scope and release authority
 
-[Versioning and Release](../Architecture/VersioningAndRelease.md) owns formal
-candidate, installed acceptance, and publication requirements.
-`Scripts/release-checks.json` owns their executable checks; the
-[Release Reference](Release.md) owns operator commands.
+The [Release Reference](Release.md) owns formal candidate acceptance,
+installed diagnostics, publication, and operator commands.
+`Scripts/release-checks.json` owns their executable checks.
 
 The Validation Suite supplies test cases, fixtures, correlated evidence, and
 specialized readiness reports. Its `report release-manifest` workflow is an

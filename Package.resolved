@@ -1,5 +1,5 @@
 {
-  "originHash" : "4f0b5d6cdfd1129b30a2fc7c58916df3c7221b06fbd7fa00942c8ddf213bfb18",
+  "originHash" : "730cbbfa3e19898ac28b5acf731ec0779389e76fd16041d04affa03bf278162d",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/computer-mcp/swift-sdk.git",
       "state" : {
-        "revision" : "61914e07e36440e0a4ee08d9f4644f20e4fa41f4",
-        "version" : "0.13.1-computer-mcp.1"
+        "revision" : "0603094e1c1a6fe249ebb1a1fd71c499cc2c55a3",
+        "version" : "0.13.2-computer-mcp.1"
       }
     },
     {
@@ -96,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-subprocess.git",
       "state" : {
-        "revision" : "13d087685b95d64d6aac9b94500d347bbe84c39b",
-        "version" : "0.4.0"
+        "revision" : "dbe21bd7dfd4ffef8c32588918542a8abfa1b54c",
+        "version" : "1.0.2"
       }
     },
     {

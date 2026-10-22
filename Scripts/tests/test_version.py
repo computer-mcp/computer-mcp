@@ -62,6 +62,22 @@ class VersionTests(unittest.TestCase):
             with self.subTest(current=current), self.assertRaises(ValueError):
                 version.check_progress(current, self.data)
 
+    def test_breaking_change_increments_minor_before_stability(self):
+        data = {**self.data, "version": "0.1.0"}
+        self.assertEqual(version.check_bump(data, "0.2.0", 20, "breaking")["version"], "0.2.0")
+        for target in ("0.1.1", "0.2.1", "1.0.0"):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "breaking requires version 0.2.0"):
+                version.check_bump(data, target, 20, "breaking")
+
+    def test_breaking_change_increments_major_from_stability(self):
+        for current, expected in (("1.0.0", "2.0.0"), ("2.3.4", "3.0.0")):
+            data = {**self.data, "version": current}
+            with self.subTest(current=current):
+                self.assertEqual(version.check_bump(data, expected, 20, "breaking")["version"], expected)
+                major, minor, _ = version.version_tuple(current)
+                with self.assertRaisesRegex(ValueError, f"breaking requires version {expected}"):
+                    version.check_bump(data, f"{major}.{minor + 1}.0", 20, "breaking")
+
     def git(self, *args):
         return version.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                             "-c", "commit.gpgsign=false", *args], self.root)

@@ -23,9 +23,9 @@ This directory contains detailed operational reference material.
   authentication, lifecycle, and verification.
 - [Validation](Validation.md): Validation Test Cases, Capability Coverage,
   evidence correlation, and Production Readiness reporting.
-- [Release](Release.md): protected candidate builds, Apple credentials,
-  notarization, exact artifact acceptance, signed-tag publication, and local
-  rehearsal scope.
+- [Release](Release.md): version sources, compatibility, dependency verification,
+  derived metadata, protected candidate builds, acceptance, publication,
+  evidence reuse, commands, and artifact retention.
 - [Troubleshooting](Troubleshooting.md): common failures and checks.
 - [简体中文](zh-CN/README.md): mirrored onboarding and recovery guides.
 

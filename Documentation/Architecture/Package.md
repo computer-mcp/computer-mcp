@@ -16,18 +16,29 @@ targets, and CI builds and tests them there.
 
 ## Dependencies
 
-| Package | Role |
-| --- | --- |
-| `computer-mcp/swift-sdk` compatibility fork | MCP server/client protocol, exact integer wire values, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
-| ArgumentParser | CLI parsing |
-| swift-toml and Yams | TOML config and Skill YAML frontmatter |
-| SwiftNIO | HTTP and Unix-socket transport adapters; shared lock primitives through `NIOConcurrencyHelpers` |
-| swift-subprocess | Process, Shell, and streaming lifecycle |
-| swift-system | `FilePath` for process launches where the System framework is unavailable |
-| GRDB | Transactional App metadata and redacted audit; system SQLite on Linux |
-| swift-log | Runtime logging integration |
-| swift-crypto | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway` and `ComputerMCPControlPlane` targets on macOS and Linux |
-| macOS system `libarchive.2` | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
+Requirements follow the organization's
+[Versioning rules](https://github.com/computer-mcp/.github/blob/master/VERSIONING.md).
+The [Release Reference](../Reference/Release.md#dependencies-and-verified-combinations)
+owns dependency verification and the combinations exercised by release checks.
+
+| Package | Requirement | Role |
+| --- | --- | --- |
+| `computer-mcp/swift-sdk` compatibility fork | `exact: "0.13.2-computer-mcp.1"` | MCP server/client protocol, exact integer wire values, decoding errors answered under the request they belong to, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
+| ArgumentParser | `from: "1.8.2"` | CLI parsing |
+| swift-toml | `from: "2.0.0"` | TOML config |
+| Yams | `from: "6.2.2"` | Skill YAML frontmatter |
+| SwiftNIO | `.upToNextMinor(from: "2.101.2")` | HTTP and Unix-socket transport adapters; shared lock primitives through `NIOConcurrencyHelpers` |
+| swift-subprocess | `.upToNextMinor(from: "1.0.2")` | Process, Shell, and streaming lifecycle |
+| swift-system | `from: "1.7.2"` | `FilePath` for process launches where the System framework is unavailable |
+| GRDB | `from: "7.11.1"` | Transactional App metadata and redacted audit; system SQLite on Linux |
+| swift-log | `from: "1.14.0"` | Runtime logging integration |
+| swift-crypto | `.upToNextMinor(from: "4.5.2")` | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway` and `ComputerMCPControlPlane` targets on macOS and Linux |
+| macOS system `libarchive.2` | OS-provided | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
+
+`Tools/Validation` uses `from: "1.8.2"` for ArgumentParser and deliberately keeps
+the unmodified upstream `modelcontextprotocol/swift-sdk` at `exact: "0.12.1"`.
+Its [README](../../Tools/Validation/README.md) owns this independent-client
+exception for gateway interoperability checks.
 
 `CSystemArchive` is an internal system-library module with the minimal C ABI
 declarations used by the archive reader. macOS SDKs provide `libarchive.2.tbd`
@@ -47,7 +58,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors, audit error classification and the session authority interface |
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for distribution identity and environment, secrets, workspaces, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
-| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
+| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, workspace path resolution, process-table queries, child-input signal handling, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |
@@ -216,13 +227,11 @@ Their shared fixtures in `ComputerMCPTestSupport` use injected directory service
 and application lookup substitutes.
 
 The release scripts assemble the SwiftPM App executable and embedded CLI into a
-standard `.app`, sign both code objects, and package the bundle in a DMG. The
-official candidate workflow builds an exact trusted-master commit through the
-protected GitHub Actions `production` Environment. Installed acceptance binds
-the signed and notarized artifacts before publication creates a signed `v*` tag
-on that commit and publishes the same bytes. Local development signing verifies
-distribution structure; it does not supply an official candidate. See
-[Versioning and Release](VersioningAndRelease.md) for the evidence policy.
+standard `.app`, sign both code objects, and package the bundle in a DMG.
+The [Release Reference](../Reference/Release.md) owns protected candidate
+construction, publication, optional installed diagnostics, and evidence reuse.
+Local development signing verifies distribution structure; it does not supply
+an official candidate.
 
 The GitHub release job imports a password-protected Developer ID PKCS#12 file
 and provisioning profile into an ephemeral runner Keychain, authenticates
@@ -291,6 +300,12 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   without a terminal. Descriptor inheritance, including MCP ownership locks,
   uses Darwin spawn file actions; Linux rejects configurations that require
   inherited descriptors.
+  Child-input owners install a process-wide no-op SIGPIPE handler once when the
+  disposition is default, preserving an embedder's existing handler or SIG_IGN.
+  The host reports broken child-input pipes as write errors. A caught handler
+  resets to default on exec; SIG_IGN would survive exec and leak into children
+  launched by Foundation Process on Linux.
+  `ManagedLineProcess` and `ShellSession` share the child-input contract below.
   The HTTP client transport uses Foundation URLSession and a bounded SSE decoder.
   macOS reads native asynchronous bytes; Linux bridges data-delegate callbacks
   into the response byte stream. Each POST response and the standalone GET event channel own
@@ -349,3 +364,52 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
 The independent `plugin-codex` repository pins and verifies `swift-codex` in
 its own build and release checks. Host builds verify their own linked package
 graph; bundled plugin archives retain their separate dependency notices.
+
+## Child input lifecycle
+
+Every owner of a child's `StandardInputWriter` uses `ChildProcessInput` to own
+admission, writes and descriptor close:
+
+1. Writes enter one FIFO queue per child. Only one library write is outstanding
+   at a time. Explicit EOF, including a shell write with `close: true` and an
+   empty close-only call, takes its turn after earlier operations.
+2. Cancelling a caller before admission promptly removes its waiter and throws
+   `CancellationError`, without writing. A caller cancelled while receiving the
+   turn passes it on. Already-cancelled callers never write.
+3. Once admitted, the input owner's task completes the whole write independently
+   of caller cancellation. The caller awaits that result. Only the process's I/O
+   cancellation or closure as it ends can cut the write short.
+4. A short write fails as a closed managed transport or a shell session that is
+   no longer running. If some bytes were written, the owner retires input before
+   handing off the turn; queued and later data or EOF operations fail closed.
+   A zero-byte result fails that operation but leaves input available for the
+   next waiter. Library errors propagate unchanged.
+5. Close, cancellation and shutdown stop admission and fail queued waiters, while
+   process termination proceeds independently of the input queue. Teardown joins
+   the admitted operation before calling `finish()`. Every `run` body also joins
+   input before returning, since swift-subprocess automatically closes it then.
+   Thus a resumed write cannot use a descriptor that teardown has already closed.
+
+Managed close delivers EOF first when input is idle. With an admitted operation
+it signals the owned process group immediately after startup has published its
+identity. SIGTERM escalates to SIGKILL after `terminationGraceMilliseconds`;
+managed close then allows `killGraceMilliseconds` for exit and reports a
+termination timeout if necessary. Startup identity has a separate five-second
+bound. Idle close can use one additional termination grace for EOF delivery.
+Shell cancellation sends SIGTERM immediately and escalates after its configured
+termination grace. These signal paths never wait for input to drain. When the
+owned process exits, swift-subprocess cancels its I/O and releases the outstanding
+write even if a descendant still holds stdin open; joining input adds no pipe
+drain timeout to termination escalation. `pendingWrites` counts queued plus
+outstanding operations, including explicit EOF.
+
+Shell callers running in tasks use `writeAsync`, including the shell tool
+provider, so their cancellation reaches admission. The synchronous `write`
+bridge serves blocking callers and is unavailable from async code.
+
+With swift-subprocess 1.0.2, each write registers its descriptor again, and a
+second registration ends the first write's wait. Calling-task or process I/O
+cancellation can return a short count. `finish()` immediately unregisters and
+closes the descriptor, while a resumed write may still hold its descriptor
+number. The FIFO queue, independent admitted task, short-write check and teardown
+join together protect that descriptor's lifetime and the child's frame boundaries.

@@ -51,6 +51,10 @@ swift run computer-mcp config validate --config Examples/computer-mcp.toml
 CI runs `python3 Scripts/release.py run --run ci --profile ci`, which needs
 `actionlint`, `jq`, and `ripgrep`; run it locally to reproduce a CI failure.
 
+For version rules, read [Versioning](VERSIONING.md). The
+[Release Reference](Documentation/Reference/Release.md) owns version sources,
+release procedure and checks.
+
 If your change affects a CLI command, include the command output or a concise
 summary in the pull request.
 

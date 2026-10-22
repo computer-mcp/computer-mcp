@@ -74,6 +74,20 @@ extension ShellToolProvider {
   }
 
   internal func writeShellSession(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let (id, data, close) = try shellInputWrite(arguments: object)
+    return try environment.shellManager.write(sessionID: id, data: data, close: close).json
+  }
+
+  internal func writeShellSessionAsync(arguments object: [String: JSONValue]) async throws
+    -> JSONValue
+  {
+    let (id, data, close) = try shellInputWrite(arguments: object)
+    return try await environment.shellManager.writeAsync(sessionID: id, data: data, close: close)
+      .json
+  }
+
+  private func shellInputWrite(arguments object: [String: JSONValue]) throws -> (String, Data, Bool)
+  {
     let text = object["text"]?.stringValue
     let base64 = object["base64"]?.stringValue
     guard text == nil || base64 == nil else {
@@ -95,11 +109,7 @@ extension ShellToolProvider {
         "Shell input exceeds policy.max_shell_input_bytes."
       )
     }
-    return try environment.shellManager.write(
-      sessionID: requiredString("session_id", in: object),
-      data: data,
-      close: object["close"]?.boolValue ?? false
-    ).json
+    return (try requiredString("session_id", in: object), data, object["close"]?.boolValue ?? false)
   }
 
   internal func cancelShellSession(arguments object: [String: JSONValue]) throws -> JSONValue {

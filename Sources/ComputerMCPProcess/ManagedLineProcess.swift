@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import Foundation
 import Subprocess
 
@@ -158,6 +159,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
   package init(configuration: Configuration) throws {
     try configuration.validate()
+    installBrokenPipeHandler()
     // Copy while the caller still owns its descriptors. Launch and shutdown may race,
     // so asynchronous spawn must never refer to a descriptor the caller can close/reuse.
     var configuration = configuration
@@ -209,10 +211,8 @@ package final class ManagedLineProcess: @unchecked Sendable {
   }
 
   private func performClose() async {
-    let handles = await state.beginShutdown()
-    let finishInput = Task {
-      try? await handles.writer?.finish()
-    }
+    let writing = await state.beginShutdown()
+    let finishInput = Task { await state.finishInput() }
 
     // The child has a separate job-control group. Do not kill its supervisor before
     // it publishes that group's identity, or a concurrently spawned child could escape.
@@ -225,9 +225,9 @@ package final class ManagedLineProcess: @unchecked Sendable {
       try? await Task.sleep(for: .milliseconds(10))
     }
 
-    // Start EOF delivery without waiting for a back-pressured pipe writer. The
-    // bounded process wait and signal escalation below remain authoritative.
-    if await waitForExit(milliseconds: configuration.terminationGraceMilliseconds) {
+    // Idle input can deliver EOF first. A blocked writer needs termination now;
+    // joining it must never delay the signal escalation that releases its I/O.
+    if !writing, await waitForExit(milliseconds: configuration.terminationGraceMilliseconds) {
       await launchTask.value
       await finishInput.value
       return
@@ -259,6 +259,20 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
   package func snapshot() async -> ManagedLineProcessSnapshot {
     await state.snapshot()
+  }
+
+  internal func inputSnapshot() async -> ChildProcessInput.Snapshot {
+    await state.inputSnapshot()
+  }
+
+  internal func observeInput(_ observer: @escaping @Sendable (ChildProcessInput.Event) -> Void)
+    async
+  {
+    await state.observeInput(observer)
+  }
+
+  internal func beforeInputWriteSettles(_ hook: @escaping @Sendable () async -> Void) async {
+    await state.beforeInputWriteSettles(hook)
   }
 
   private func waitForExit(milliseconds: Int) async -> Bool {
@@ -335,20 +349,24 @@ package final class ManagedLineProcess: @unchecked Sendable {
           environment: .custom(environment),
           workingDirectory: FilePath(configuration.workingDirectory.path),
           platformOptions: platformOptions,
-          output: FileDescriptorOutput.fileDescriptor(
+          input: .inputWriter,
+          output: .fileDescriptor(
             standardOutput.writeEnd,
             closeAfterSpawningProcess: true
-          )
-        ) { execution, inputWriter, stderr in
+          ),
+          error: .sequence
+        ) { execution in
           for handle in configuration.inheritedDescriptors.values { try? handle.close() }
           try? configuration.ownershipHandle?.close()
           await state.attach(
             execution: execution,
-            inputWriter: inputWriter
+            inputWriter: execution.standardInputWriter
           )
           guard let processID = await waitForProcessID(at: supervisor.processIDFile)
           else {
             try? execution.send(signal: .kill, toProcessGroup: true)
+            await state.finishInput()
+            await state.inputBodyReturning()
             throw ManagedLineProcessError.launchFailed(
               "The process supervisor did not report the child PID."
             )
@@ -358,10 +376,12 @@ package final class ManagedLineProcess: @unchecked Sendable {
             _ = await state.signalChildGroup(SIGTERM)
           }
           do {
-            for try await _ in stderr {}
+            for try await _ in execution.standardError {}
           } catch {
             await state.recordStreamError(error)
           }
+          await state.finishInput()
+          await state.inputBodyReturning()
         }
         await outputReader.stop(drainRemainingOutput: true)
         await state.finish(status: outcome.terminationStatus)
@@ -498,18 +518,18 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
 }
 
-private struct ManagedLineProcessShutdownHandles: Sendable {
-  var execution: Execution?
-  var writer: StandardInputWriter?
-}
+private typealias ManagedLineExecution = Execution<
+  CustomWriteInput, FileDescriptorOutput, SequenceOutput
+>
 
 private actor ManagedLineProcessState {
   private let continuation: AsyncThrowingStream<String, Error>.Continuation
   private let maximumMessageBytes: Int
   private let ownerProcessID: Int32
   private var state: ManagedLineProcessSnapshot.State = .starting
-  private var execution: Execution?
-  private var inputWriter: StandardInputWriter?
+  private var execution: ManagedLineExecution?
+  private let input = ChildProcessInput(
+    closedError: ManagedLineProcessError.closed, inputClosedError: ManagedLineProcessError.closed)
   private var processID: Int32?
   private var supervisorProcessID: Int32?
   private var startedAt: Date?
@@ -517,12 +537,10 @@ private actor ManagedLineProcessState {
   private var exitCode: Int32?
   private var signal: Int32?
   private var terminationEscalated = false
-  private var pendingWrites = 0
   private var lastError: String?
   private var outputBuffer = Data()
   private var shutdownRequested = false
   private var launchFinished = false
-  private var readyWaiters: [CheckedContinuation<Void, Error>] = []
 
   init(
     continuation: AsyncThrowingStream<String, Error>.Continuation,
@@ -534,42 +552,52 @@ private actor ManagedLineProcessState {
     self.ownerProcessID = ownerProcessID
   }
 
-  func attach(execution: Execution, inputWriter: StandardInputWriter) {
+  func attach(execution: ManagedLineExecution, inputWriter: StandardInputWriter) async {
     self.execution = execution
-    self.inputWriter = inputWriter
+    await input.attach(inputWriter, ready: false)
     supervisorProcessID = Int32(execution.processIdentifier.value)
     startedAt = Date()
     if shutdownRequested {
       state = .stopping
-      failReadyWaiters(ManagedLineProcessError.closed)
+      input.stop()
     }
   }
 
-  func attachChild(processID: Int32) {
+  func attachChild(processID: Int32) async {
     self.processID = processID
     guard !shutdownRequested else { return }
     state = .running
-    let waiters = readyWaiters
-    readyWaiters.removeAll()
-    for waiter in waiters {
-      waiter.resume()
-    }
+    await input.activate()
   }
 
   func send(line: String) async throws {
-    try await waitUntilReady()
-    guard state == .running, let inputWriter else {
+    try Task.checkCancellation()
+    guard state == .starting || state == .running else {
+      if state == .failed {
+        throw ManagedLineProcessError.launchFailed(lastError ?? "Unknown launch failure.")
+      }
       throw ManagedLineProcessError.closed
     }
     guard line.utf8.count <= maximumMessageBytes else {
       throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
     }
     guard !line.contains("\n") else { throw ManagedLineProcessError.invalidConfiguration }
-    let frame = Data((line + "\n").utf8)
-    pendingWrites += 1
-    defer { pendingWrites -= 1 }
-    _ = try await inputWriter.write(Array(frame))
+    _ = try await input.write(Data((line + "\n").utf8), close: false)
   }
+
+  func inputSnapshot() -> ChildProcessInput.Snapshot { input.snapshot }
+
+  func observeInput(_ observer: @escaping @Sendable (ChildProcessInput.Event) -> Void) async {
+    await input.observe(observer)
+  }
+
+  func beforeInputWriteSettles(_ hook: @escaping @Sendable () async -> Void) async {
+    await input.beforeWriteSettles(hook)
+  }
+
+  func finishInput() async { await input.finish() }
+
+  func inputBodyReturning() async { await input.bodyReturning() }
 
   func appendStandardOutput(_ data: Data) throws {
     guard !data.isEmpty else { return }
@@ -610,16 +638,16 @@ private actor ManagedLineProcessState {
     }
   }
 
-  func beginShutdown() -> ManagedLineProcessShutdownHandles {
+  func beginShutdown() -> Bool {
     shutdownRequested = true
-    failReadyWaiters(ManagedLineProcessError.closed)
+    input.stop()
     if state == .starting || state == .running {
       state = .stopping
     }
-    return .init(execution: execution, writer: inputWriter)
+    return input.snapshot.pendingWrites > 0
   }
 
-  func runningExecution() -> Execution? {
+  func runningExecution() -> ManagedLineExecution? {
     guard !hasFinished() else { return nil }
     return execution
   }
@@ -651,13 +679,12 @@ private actor ManagedLineProcessState {
     case .signaled(let code):
       signal = code
     }
-    inputWriter = nil
+    input.stop()
     execution = nil
     stoppedAt = Date()
     if state != .failed {
       state = .stopped
     }
-    failReadyWaiters(ManagedLineProcessError.closed)
     continuation.finish()
   }
 
@@ -667,12 +694,11 @@ private actor ManagedLineProcessState {
     state = .failed
     lastError = Self.safeMessage(error)
     stoppedAt = Date()
-    inputWriter = nil
     execution = nil
     let launchError = ManagedLineProcessError.launchFailed(
       Self.safeMessage(error)
     )
-    failReadyWaiters(launchError)
+    input.stop(throwing: launchError)
     continuation.finish(throwing: launchError)
   }
 
@@ -682,7 +708,7 @@ private actor ManagedLineProcessState {
     let error = ManagedLineProcessError.terminationTimedOut(processID: processID)
     lastError = Self.safeMessage(error)
     stoppedAt = Date()
-    failReadyWaiters(error)
+    input.stop(throwing: error)
     continuation.finish(throwing: error)
   }
 
@@ -702,35 +728,10 @@ private actor ManagedLineProcessState {
       exitCode: exitCode,
       signal: signal,
       terminationEscalated: terminationEscalated,
-      pendingWrites: pendingWrites,
+      pendingWrites: input.snapshot.pendingWrites,
       hasExited: hasFinished(),
       lastError: lastError
     )
-  }
-
-  private func waitUntilReady() async throws {
-    switch state {
-    case .running:
-      return
-    case .starting:
-      try await withCheckedThrowingContinuation { continuation in
-        readyWaiters.append(continuation)
-      }
-    case .stopping, .stopped:
-      throw ManagedLineProcessError.closed
-    case .failed:
-      throw ManagedLineProcessError.launchFailed(
-        lastError ?? "Unknown launch failure."
-      )
-    }
-  }
-
-  private func failReadyWaiters(_ error: Error) {
-    let waiters = readyWaiters
-    readyWaiters.removeAll()
-    for waiter in waiters {
-      waiter.resume(throwing: error)
-    }
   }
 
   private static func safeMessage(_ error: Error) -> String {

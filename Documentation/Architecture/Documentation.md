@@ -23,9 +23,10 @@ material, decision history, and API documentation.
 | --- | --- |
 | `README.md` | Public guide and entry index |
 | `AGENTS.md` | Agent route and operational guardrails |
+| `VERSIONING.md` | Organization version-rule adoption and host additions |
 | `Documentation/README.md` | Repository documentation reading index |
 | `Documentation/Architecture/` | Current architecture truth |
-| `Documentation/Reference/` | CLI, protocol, tools, permissions, troubleshooting |
+| `Documentation/Reference/` | CLI, protocol, tools, permissions, troubleshooting, release facts and procedure |
 | `Documentation/Decisions/` | Accepted decisions |
 | `Documentation/Proposals/` | Active design-in-progress |
 | `.github/` | GitHub collaboration configuration |

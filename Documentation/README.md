@@ -8,14 +8,18 @@ lives with the Swift target in `Sources/ComputerMCPGateway/ComputerMCPGateway.do
 - [Architecture](Architecture/README.md): current package, runtime,
   permission, and documentation architecture.
 - [Reference](Reference/README.md): CLI, MCP protocol, tool schemas,
-  permissions, and troubleshooting.
+  permissions, releases, and troubleshooting.
+- [Release](Reference/Release.md): version sources, compatibility, candidate
+  acceptance, publication, evidence reuse, and artifact retention.
 - [Decisions](Decisions/README.md): accepted decision records.
 - [Proposals](Proposals/README.md): active design-in-progress, when present.
 
 ## Placement Rules
 
-- Current truth belongs in `Documentation/Architecture/`.
+- Current architecture truth belongs in `Documentation/Architecture/`.
 - Exhaustive user or operator reference belongs in `Documentation/Reference/`.
+- Version rules belong in [Versioning](../VERSIONING.md), which adopts the
+  organization rules and states the host's additions.
 - Adopted rationale belongs in `Documentation/Decisions/`.
 - Active alternatives belong in `Documentation/Proposals/`.
 - Repository collaboration configuration and CODEOWNERS belong in `.github/`;

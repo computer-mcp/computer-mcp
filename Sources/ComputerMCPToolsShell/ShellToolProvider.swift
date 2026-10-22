@@ -2,6 +2,8 @@ import ComputerMCPCore
 import ComputerMCPToolKit
 
 package struct ShellToolProvider: GatewayToolProvider {
+  private static let blocking = BlockingOperationExecutor(
+    label: "computer-mcp.shell-calls", serial: false)
   package let id = "shell"
   package let namespaces = ["shell"]
   let environment: ToolEnvironment
@@ -47,4 +49,15 @@ package struct ShellToolProvider: GatewayToolProvider {
       throw GatewayToolError.unknownTool(name)
     }
   }
+
+  package func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
+    try Task.checkCancellation()
+    if invocation.name == "shell.write" {
+      try requireShellEnabled()
+      return try textResult(
+        await writeShellSessionAsync(arguments: invocation.arguments?.objectValue ?? [:]))
+    }
+    return try await Self.blocking.perform { try self.callTool(invocation) }
+  }
+
 }

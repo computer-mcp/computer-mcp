@@ -283,6 +283,7 @@ commands and schemas belong in [Reference](Documentation/Reference/README.md).
 - [Troubleshooting](Documentation/Reference/Troubleshooting.md)
 - [Architecture](Documentation/Architecture/README.md)
 - [Security and privacy](Documentation/Architecture/SecurityAndPrivacy.md)
+- [Versioning rules](VERSIONING.md)
 - [Release process](Documentation/Reference/Release.md)
 
 ## Development and contributing

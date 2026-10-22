@@ -28,7 +28,7 @@ let loggingDependency: Package.Dependency =
   .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0")
 
 let mcpDependency: Package.Dependency =
-  .package(url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.1-computer-mcp.1")
+  .package(url: "https://github.com/computer-mcp/swift-sdk.git", exact: "0.13.2-computer-mcp.1")
 
 // Platform-neutral targets; they build on macOS and on Linux.
 let neutralTargets: [Target] =

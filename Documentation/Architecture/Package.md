@@ -23,7 +23,7 @@ owns dependency verification and the combinations exercised by release checks.
 
 | Package | Requirement | Role |
 | --- | --- | --- |
-| `computer-mcp/swift-sdk` compatibility fork | `exact: "0.13.1-computer-mcp.1"` | MCP server/client protocol, exact integer wire values, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
+| `computer-mcp/swift-sdk` compatibility fork | `exact: "0.13.2-computer-mcp.1"` | MCP server/client protocol, exact integer wire values, decoding errors answered under the request they belong to, stdio framing with complete POSIX frame writes, and HTTP server session semantics |
 | ArgumentParser | `from: "1.8.2"` | CLI parsing |
 | swift-toml | `from: "2.0.0"` | TOML config |
 | Yams | `from: "6.2.2"` | Skill YAML frontmatter |

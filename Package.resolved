@@ -1,5 +1,5 @@
 {
-  "originHash" : "c442aaf93b8338f4c60b97823304543a33ec4db983c0c3c2a9cbaa869aee4c13",
+  "originHash" : "730cbbfa3e19898ac28b5acf731ec0779389e76fd16041d04affa03bf278162d",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/computer-mcp/swift-sdk.git",
       "state" : {
-        "revision" : "61914e07e36440e0a4ee08d9f4644f20e4fa41f4",
-        "version" : "0.13.1-computer-mcp.1"
+        "revision" : "0603094e1c1a6fe249ebb1a1fd71c499cc2c55a3",
+        "version" : "0.13.2-computer-mcp.1"
       }
     },
     {

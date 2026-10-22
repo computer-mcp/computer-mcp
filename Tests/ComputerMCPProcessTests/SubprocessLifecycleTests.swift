@@ -529,20 +529,25 @@ struct SubprocessLifecycleTests {
     }
   }
 
-  @Test
-  func foundationChildStartsWithDefaultSIGPIPE() async throws {
-    let runtime = SubprocessShellRuntime()
-    let result = try await BlockingOperationExecutor(label: "test.foundation-sigpipe").perform {
-      try ProcessCommandRunner().run(
-        executable: "/bin/sh", arguments: ["-c", "kill -PIPE $$; echo survived"],
-        workingDirectory: FileManager.default.temporaryDirectory, environment: [:],
-        timeoutMilliseconds: 2_000, maxOutputBytes: 64)
+  #if canImport(Darwin)
+    /// Foundation's Process on Linux passes the spawning thread's signal mask and ignored
+    /// dispositions to children; only Darwin's Process resets them.
+    @Test
+    func foundationChildStartsWithDefaultSIGPIPE() async throws {
+      // Creating a runtime installs the broken-pipe handler before the child is spawned.
+      let runtime = SubprocessShellRuntime()
+      let result = try await BlockingOperationExecutor(label: "test.foundation-sigpipe").perform {
+        try ProcessCommandRunner().run(
+          executable: "/bin/sh", arguments: ["-c", "kill -PIPE $$; echo survived"],
+          workingDirectory: FileManager.default.temporaryDirectory, environment: [:],
+          timeoutMilliseconds: 2_000, maxOutputBytes: 64)
+      }
+      #expect(!result.timedOut)
+      #expect(result.exitCode == SIGPIPE)
+      #expect(result.stdout.isEmpty)
+      await runtime.shutdown()
     }
-    #expect(!result.timedOut)
-    #expect(result.exitCode == SIGPIPE)
-    #expect(result.stdout.isEmpty)
-    await runtime.shutdown()
-  }
+  #endif
 
   #if canImport(Darwin)
     @Test

@@ -37,6 +37,21 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPPermissionsTests", dependencies: ["ComputerMCPPermissions"]),
     .target(name: "ComputerMCPSandbox"),
+    .target(
+      name: "ComputerMCPEgress",
+      dependencies: [
+        "ComputerMCPSandbox",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPEgressTests",
+      dependencies: [
+        "ComputerMCPEgress", "ComputerMCPSandbox",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]),
     .testTarget(name: "ComputerMCPSandboxTests", dependencies: ["ComputerMCPSandbox"]),
     .target(
       name: "ComputerMCPCore",
@@ -592,8 +607,9 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPPlatformDarwinTests",
         dependencies: [
+          .product(name: "NIOCore", package: "swift-nio"),
           "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
-          "ComputerMCPSandbox", "ComputerMCPProcess",
+          "ComputerMCPSandbox", "ComputerMCPEgress", "ComputerMCPProcess",
           "ComputerMCPExecutionProbe", "computer-mcp-execution-bootstrap", "ComputerMCPTestSupport",
         ], resources: [.copy("Fixtures")]
       ),

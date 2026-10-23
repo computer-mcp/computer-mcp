@@ -24,6 +24,7 @@
     {
       "name": "services",
       "targets": [
+        "ComputerMCPEgress",
         "ComputerMCPConfiguration",
         "ComputerMCPPersistence",
         "ComputerMCPProcess",
@@ -68,8 +69,8 @@
       "name": "front-ends",
       "targets": [
         "ComputerMCPApp",
-        "computer-mcp",
-        "ComputerMCPExecutionProbe"
+        "ComputerMCPExecutionProbe",
+        "computer-mcp"
       ]
     }
   ],
@@ -108,7 +109,6 @@
   ],
   "macos_only": [
     "ComputerMCPExecutionProbe",
-    "computer-mcp-execution-bootstrap",
     "CSystemArchive",
     "CDarwinExecution",
     "ComputerMCPPlatformDarwin",
@@ -124,7 +124,8 @@
     "ComputerMCPPluginsDarwinTests",
     "ComputerMCPMacOSTests",
     "ComputerMCPGatewayDarwinTests",
-    "ComputerMCPControlPlaneDarwinTests"
+    "ComputerMCPControlPlaneDarwinTests",
+    "computer-mcp-execution-bootstrap"
   ],
   "macos_imports": [
     "AVFoundation",

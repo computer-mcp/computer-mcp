@@ -2,7 +2,9 @@
 
 Computer MCP is a SwiftPM package that builds layered internal targets, the
 `computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only the App and
-CLI are package products. On Linux the manifest declares the platform-neutral
+CLI are the declared package products. A private Darwin execution bootstrap ships
+in the App's `Contents/Helpers`; a standalone CLI uses a sibling bootstrap binary.
+On Linux the manifest declares the platform-neutral
 targets, and CI builds and tests them there.
 
 Neutral tool providers receive executable bindings from their host. Linux uses
@@ -11,6 +13,9 @@ extraction. ZIP creation uses `zip`; listing and member reads use `zipinfo` and
 `unzip`. SQLite inspection requires a SQLite CLI binding independently of the
 system SQLite library. Absent bindings return an unavailable-tool error before
 executing that utility or creating destinations; neutral providers do not install utilities.
+
+The [execution environment](ExecutionEnvironment.md) describes the sandbox,
+launch identity, outbound proxy and their validation entry points.
 
 ## Constraints
 
@@ -67,6 +72,9 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, project path resolution, process-table queries, child-input signal handling, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads; Linux descriptor metadata and libc adapters |
 | `Sources/CSystemPOSIX/` | Internal C bridge for Linux GNU spawn and exclusive rename declarations and descriptor xattr signatures; uses the system libc without an external dependency |
+| `Sources/ComputerMCPSandbox/` | Neutral execution configuration, explicit environments, launch and route-observation contracts |
+| `Sources/ComputerMCPEgress/` | Execution-scoped proxy, destination policy, bounded relay and revocation |
+| `Sources/ComputerMCPExecutionBootstrap/` | Private Darwin identity handshake before Foundation launches execute user commands |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |

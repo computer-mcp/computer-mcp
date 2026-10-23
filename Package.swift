@@ -36,6 +36,8 @@ let neutralTargets: [Target] =
     .target(name: "ComputerMCPPermissions"),
     .testTarget(
       name: "ComputerMCPPermissionsTests", dependencies: ["ComputerMCPPermissions"]),
+    .target(name: "ComputerMCPSandbox"),
+    .testTarget(name: "ComputerMCPSandboxTests", dependencies: ["ComputerMCPSandbox"]),
     .target(
       name: "ComputerMCPCore",
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]
@@ -61,8 +63,7 @@ let neutralTargets: [Target] =
       name: "ComputerMCPProcess",
       dependencies: [
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-        "ComputerMCPPlatformPOSIX",
-        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        "ComputerMCPPlatformPOSIX", .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         .product(name: "Subprocess", package: "swift-subprocess"),
         .product(
           name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
@@ -443,10 +444,13 @@ let neutralTargets: [Target] =
     ],
     targets: neutralTargets + [
       .systemLibrary(name: "CSystemArchive"),
+      .target(name: "CDarwinExecution"),
       .target(
         name: "ComputerMCPPlatformDarwin",
         dependencies: [
-          "CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+          "CDarwinExecution", "CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPPlatformPOSIX",
+          "ComputerMCPSandbox",
         ]
       ),
       .target(
@@ -580,8 +584,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPPlatformDarwinTests",
         dependencies: [
           "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
-          "ComputerMCPTestSupport",
-        ]
+          "ComputerMCPSandbox", "ComputerMCPTestSupport",
+        ], resources: [.copy("Fixtures")]
       ),
       .testTarget(
         name: "ComputerMCPToolsFilesDarwinTests",

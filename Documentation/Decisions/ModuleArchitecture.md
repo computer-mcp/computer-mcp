@@ -18,14 +18,14 @@ every target keeps `package` access; no declaration is `public`.
 | Composition | `ComputerMCPControlPlane`, `ComputerMCPGateway` | neutral |
 | Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
 | Services | `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels` | neutral |
-| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `CSystemPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive` | neutral; POSIX; macOS |
-| Base | `ComputerMCPCore`; lower `ComputerMCPPermissions` (Foundation only) | neutral |
+| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `CSystemPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution` | neutral; POSIX; macOS |
+| Base | `ComputerMCPCore`, `ComputerMCPSandbox`; lower `ComputerMCPPermissions` (Foundation only) | neutral |
 
 Dependencies inside a layer are limited to these:
 
 - Platform: `PlatformPOSIX` and `PlatformDarwin` use `Platform`;
   `PlatformPOSIX` may use `CSystemPOSIX` for Linux libc declarations;
-  `PlatformDarwin` may use `PlatformPOSIX` and `CSystemArchive`.
+  `PlatformDarwin` may use `PlatformPOSIX`, `CSystemArchive` and `CDarwinExecution`.
 - Services: `Process`, `Transport`, `Downstream` and `Tunnels` may use
   `Configuration`; `Downstream` and `Tunnels` may use `Process`; `Downstream` may use
   `Transport`.
@@ -40,6 +40,9 @@ Dependencies inside a layer are limited to these:
 - `Core`: JSON values, gateway models, policy and capability descriptors, tool
   definitions and the provider protocol, workspace identity, product version
   metadata, invocation values and protocols, and the blocking executor.
+- `Sandbox`: dependency-free execution configuration and explicit environment values;
+  contains no gateway, tool definitions, or permission storage. Seatbelt profile
+  generation lives in `PlatformDarwin`.
 - `Platform`: the platform service protocols listed below and their value types.
 - `Configuration`: manifest model and defaults, including MCP HTTP
   authentication values.

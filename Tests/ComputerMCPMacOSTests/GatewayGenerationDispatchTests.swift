@@ -16,6 +16,10 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
   @Test(arguments: [false, true])
@@ -2500,12 +2504,15 @@ private struct GenerationFixture: Sendable {
       manifestStore: try AtomicManifestStore(
         manifestURL: directories.manifest, database: database,
         loader: GatewayManifestConfigurationLoader(
-          database: database, applications: MacOSPlatform.services.applications)),
+          database: database,
+          applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)),
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       gatewayExecutablePath: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -2514,14 +2521,18 @@ private struct GenerationFixture: Sendable {
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: PlatformServices(
+        launcher: testExecutionLauncher(),
         projectGrants: bookmarkService,
-        pluginDirectories: MacOSPlatform.services.pluginDirectories,
-        applications: MacOSPlatform.services.applications,
-        toolProviders: MacOSPlatform.services.toolProviders,
-        managementToolNames: MacOSPlatform.services.managementToolNames,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
-        gitExecutable: MacOSPlatform.services.gitExecutable,
-        fileChanges: MacOSPlatform.services.fileChanges),
+        pluginDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications,
+        toolProviders: MacOSPlatform.services(launcher: testExecutionLauncher()).toolProviders,
+        managementToolNames: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .managementToolNames,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
+        gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
       bundledPlugins: .init(packages: [], issues: []))
     service = AppGatewayService(
       controlPlane: control,

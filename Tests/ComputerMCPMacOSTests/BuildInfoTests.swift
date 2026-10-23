@@ -2,8 +2,13 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPProcess
+import ComputerMCPTestSupport
 import Foundation
 import Testing
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct BuildInfoTests {
   @Test
@@ -12,7 +17,7 @@ struct BuildInfoTests {
       .deletingLastPathComponent().deletingLastPathComponent()
     let executable = repository.appendingPathComponent(".build/debug/computer-mcp")
     func run(_ arguments: [String]) throws -> CommandResult {
-      try ProcessCommandRunner().run(
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path, arguments: ["build-info"] + arguments,
         workingDirectory: repository, environment: [:], timeoutMilliseconds: 10_000,
         maxOutputBytes: 16_384)

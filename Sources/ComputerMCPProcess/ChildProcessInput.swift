@@ -81,7 +81,7 @@ internal actor ChildProcessInput {
   /// Does not cancel the admitted task. Process termination cancels the library's I/O.
   nonisolated func stop(throwing error: (any Error)? = nil) {
     shared.withLockedValue { $0.error = error ?? closedError }
-    Task { await self.rejectWaiters() }
+    ExecutionTasks.start { await self.rejectWaiters() }
   }
 
   func write(_ data: Data, close: Bool) async throws -> Int {
@@ -105,11 +105,11 @@ internal actor ChildProcessInput {
 
       // An unstructured owner task shields a whole frame from caller cancellation.
       // It releases admission itself, even if the caller has not resumed yet.
-      let task = Task { try await self.performWrite(data, close: close) }
+      let task = ExecutionTasks.startThrowing { try await self.performWrite(data, close: close) }
       writeTask = task
       return try await task.value
     } onCancel: {
-      Task { await self.cancelWaiter(id) }
+      ExecutionTasks.start { await self.cancelWaiter(id) }
     }
   }
 
@@ -229,10 +229,8 @@ internal actor ChildProcessInput {
   private func finishWriter() async throws {
     if let finishTask { return try await finishTask.value }
     guard let writer else { return }
-    let task = Task {
-      self.observer?(.finishStarted)
-      try await writer.finish()
-    }
+    observer?(.finishStarted)
+    let task = ExecutionTasks.startThrowing { try await writer.finish() }
     finishTask = task
     try await task.value
   }

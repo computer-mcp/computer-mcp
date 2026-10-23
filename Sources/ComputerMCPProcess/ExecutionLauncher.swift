@@ -4,10 +4,18 @@ import Foundation
 /// Constructs the entire child environment before handing an admitted command to an OS backend.
 /// Callers supply authorization separately; a mode is a launch instruction, not a permission grant.
 package struct ExecutionLauncher: Sendable {
+  package var supportsRecovery: Bool { platform.supportsRecovery }
+  package var bootSessionID: String? { platform.bootSessionID }
+  package var hostSystemReadPaths: [SandboxPath] { platform.hostSystemReadPaths }
+
   private let platform: any ExecutionPlatform
 
   package init(platform: any ExecutionPlatform = UnsupportedExecutionPlatform()) {
     self.platform = platform
+  }
+
+  package func interrupt(_ members: [ExecutionMember]) async throws {
+    try await platform.interrupt(members)
   }
 
   package func start(

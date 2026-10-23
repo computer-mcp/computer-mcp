@@ -1,7 +1,7 @@
 import Foundation
 
 /// Identifies the physical folder admitted by a runtime, including replacement at the same path.
-package struct ProjectRootIdentity: Hashable, Sendable {
+package struct ProjectRootIdentity: Codable, Hashable, Sendable {
   let path: String
   let device: UInt64
   let inode: UInt64

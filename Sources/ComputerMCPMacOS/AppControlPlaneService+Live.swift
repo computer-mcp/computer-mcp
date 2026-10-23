@@ -32,6 +32,7 @@ extension AppControlPlaneService {
       accessGroup: keychainAccessGroup
     )
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
+      launcher: platform.launcher,
       secretStore: secretStore, executableSearchDirectories: platform.executableSearchDirectories,
       proxyResolver: SystemNetworkProxyResolver())
     let defaultManifest = DefaultGatewayConfiguration.manifest

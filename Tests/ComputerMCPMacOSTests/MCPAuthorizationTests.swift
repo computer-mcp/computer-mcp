@@ -11,6 +11,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct MCPAuthorizationTests {
   @Test
   func genericCallsUseTheSameHostRiskAndOperationTickets() async throws {
@@ -27,7 +31,7 @@ struct MCPAuthorizationTests {
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
         mcp: .init(servers: [server])), database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: client)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
     let arguments: JSONValue = .object([
       "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
     ])
@@ -88,7 +92,8 @@ struct MCPAuthorizationTests {
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         mcp: .init(servers: [server])),
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: CatalogClient())
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      mcpClient: CatalogClient())
     #expect(
       try runtime.listTools(context: .empty).contains { $0.name == "remote.inspect" }
         == hostReadOnly)
@@ -115,6 +120,7 @@ struct MCPAuthorizationTests {
       exposure: .reexport, prefix: "mcp", allowedTools: ["inspect"])
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     let definition = try #require(
@@ -133,6 +139,7 @@ struct MCPAuthorizationTests {
       prefix: "remote", allowedTools: ["inspect"], toolRisks: ["inspect": .readOnly])
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           mcp: .init(servers: [server]),
           tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")])),
@@ -145,6 +152,7 @@ struct MCPAuthorizationTests {
   @Test
   func emptySelectionDeniesAliasesAndGenericCalls() throws {
     let registryEnvironment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .fixture(
         mcp: .init(servers: [MCPServerConfig(id: "remote", transport: .stdio, command: "/bin/cat")]
         ),
@@ -177,10 +185,12 @@ struct MCPAuthorizationTests {
     ]
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: servers))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     let direct = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(mcp: .init(servers: servers))),
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(mcp: .init(servers: servers))),
       mcpClient: client)
     let invocation = ToolInvocation(
       name: "shared.nested.inspect", arguments: .object([:]), context: .empty)

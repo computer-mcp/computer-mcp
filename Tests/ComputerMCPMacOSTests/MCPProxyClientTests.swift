@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 
 final class MCPProxyClientTests {
@@ -60,6 +64,7 @@ final class MCPProxyClientTests {
       let registry = try GatewayProviderRouter(
         registry: MacOSToolProviders().makeProviders(
           toolEnvironment: ToolEnvironment(
+            launcher: testExecutionLauncher(),
             configuration: .fixture(mcp: MCPSectionConfig(servers: [server]))), mcpClient: client))
       let exposed = try registry.listTools(context: .empty).map(\.name)
       #expect(exposed.contains("paged.sample"))

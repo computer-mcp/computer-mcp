@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import ComputerMCPToolKit
 
 package struct NetworkToolProvider: GatewayToolProvider {
@@ -25,6 +26,11 @@ package struct NetworkToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    let policy: HostExecutionPolicy = .networkDiagnostic
+    return try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+  }
+
+  private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
     let name = invocation.name
     let object = invocation.arguments?.objectValue ?? [:]
     switch name {

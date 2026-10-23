@@ -374,7 +374,8 @@ graph; bundled plugin archives retain their separate dependency notices.
 
 ## Child input lifecycle
 
-Every owner of a child's `StandardInputWriter` uses `ChildProcessInput` to own
+Managed transport `StandardInputWriter` and execution `DescriptorInputWriter`
+adapters use `ChildProcessInput` to own
 admission, writes and descriptor close:
 
 1. Writes enter one FIFO queue per child. Only one library write is outstanding
@@ -403,12 +404,12 @@ identity. SIGTERM escalates to SIGKILL after `terminationGraceMilliseconds`;
 managed close then allows `killGraceMilliseconds` for exit and reports a
 termination timeout if necessary. Startup identity has a separate five-second
 bound. Idle close can use one additional termination grace for EOF delivery.
-Shell cancellation sends SIGTERM immediately and escalates after its configured
-termination grace. These signal paths never wait for input to drain. When the
-owned process exits, swift-subprocess cancels its I/O and releases the outstanding
-write even if a descendant still holds stdin open; joining input adds no pipe
-drain timeout to termination escalation. `pendingWrites` counts queued plus
-outstanding operations, including explicit EOF.
+Shell cancellation delegates to `ExecutionOwnership`, whose termination and
+confirmation do not wait for input to drain. The descriptor adapter uses
+nonblocking writes, stops them on execution cancellation or exit, joins admitted
+input, then closes the descriptor. Managed transport I/O remains owned by
+swift-subprocess. `pendingWrites` counts queued plus outstanding operations,
+including explicit EOF.
 
 Shell callers running in tasks use `writeAsync`, including the shell tool
 provider, so their cancellation reaches admission. The synchronous `write`

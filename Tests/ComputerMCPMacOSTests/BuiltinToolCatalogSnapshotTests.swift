@@ -21,6 +21,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct BuiltinToolCatalogSnapshotTests {
   @Test(arguments: [(false, true), (true, true), (false, false), (true, false)])
   func shellAndProcessRoutesKeepSeparateProviderOwnership(
@@ -31,14 +35,17 @@ struct BuiltinToolCatalogSnapshotTests {
       mcp: .init(), policy: .init(shellEnabled: shellEnabled))
     let registry = MacOSToolProviders().makeProviders(
       configuration: configuration, commandRunner: RecordingCommandRunner(),
-      processManager: ManagedProcessRegistry(), shellManager: SubprocessShellRuntime(),
+      processManager: ManagedProcessRegistry(launcher: testExecutionLauncher()),
+      shellManager: ShellSessionRuntime(launcher: testExecutionLauncher()),
       mcpClient: CatalogDiscoveryStub(),
       hostContext: .init(
         runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
         projectID: "catalog", rootURL: configuration.projectDirectory, readOnly: false))
     do {
       let snapshot = try GatewayToolCatalogSnapshot(providers: registry.providers())
-      for name in ["process.spawn", "process.list", "process.read", "process.cancel"] {
+      for name in [
+        "process.spawn", "process.list", "process.read", "process.write", "process.cancel",
+      ] {
         #expect(snapshot.routes[name]?.provider.id == (hasCLI ? "process" : nil))
       }
       for name in [
@@ -57,6 +64,7 @@ struct BuiltinToolCatalogSnapshotTests {
   @Test
   func builtinDefinitionsDeclareMatchingCapabilityIDs() throws {
     let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .fixture(
         policy: .init(shellEnabled: true),
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
@@ -87,7 +95,7 @@ struct BuiltinToolCatalogSnapshotTests {
       }
     }
 
-    #expect(definitions.count == 241)
+    #expect(definitions.count == 242)
     #expect(Set(definitions.map(\.tool.name)).count == definitions.count)
     for definition in definitions {
       #expect(definition.capability.id == definition.tool.name)
@@ -98,6 +106,7 @@ struct BuiltinToolCatalogSnapshotTests {
   @Test
   func builtinProviderNamespacesAreDisjointAndCoverEveryDefinition() async throws {
     let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .fixture(
         policy: .init(shellEnabled: true),
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
@@ -153,7 +162,8 @@ struct BuiltinToolCatalogSnapshotTests {
       registeredProjects: [
         .init(id: "catalog", displayName: "Catalog", rootPath: project.url.path)
       ],
-      platform: MacOSPlatform.services, mcpClient: CatalogDiscoveryStub(), plugins: [],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      mcpClient: CatalogDiscoveryStub(), plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
       remoteManagement: GatewayRemoteManagement(call: { _, _, _ in
         throw GatewayToolError.executionFailed("Catalog discovery must not execute management.")

@@ -9,12 +9,17 @@ import Testing
 
 @testable import ComputerMCPToolsSystem
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class SystemToolProviderDarwinTests {
   @Test
   func testSystemMemoryReturnsReadOnlyVMStats() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.memory"])
         ),
@@ -42,6 +47,7 @@ final class SystemToolProviderDarwinTests {
   func testSystemCPUReturnsReadOnlyProcessorSummary() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.cpu"])
         ),
@@ -73,6 +79,7 @@ final class SystemToolProviderDarwinTests {
   func testSystemThermalReturnsReadOnlyConditionSummary() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.thermal"])
         ),

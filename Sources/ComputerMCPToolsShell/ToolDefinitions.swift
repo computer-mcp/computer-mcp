@@ -6,7 +6,8 @@ extension ProcessToolProvider {
       ToolDefinition(
         tool: MCPTool(
           name: "process.spawn",
-          description: "Spawn a registered CLI command for long-running work.",
+          description:
+            "Spawn a registered CLI command without a time limit. Retain the latest output up to policy.max_output_bytes (default 8 MiB); read, write or cancel using the stable process_id.",
           inputSchema: objectSchema(
             properties: [
               "id": stringSchema("Registered CLI id."),
@@ -43,9 +44,16 @@ extension ProcessToolProvider {
       ToolDefinition(
         tool: MCPTool(
           name: "process.read",
-          description: "Read buffered stdout/stderr and status for a spawned process.",
+          description:
+            "Read stdout/stderr from absolute byte cursors and the execution status, limits, dropped bytes and end reason.",
           inputSchema: objectSchema(
-            properties: ["process_id": stringSchema("Process id returned by process.spawn.")],
+            properties: [
+              "process_id": stringSchema("Process id returned by process.spawn."),
+              "stdout_cursor": integerSchema("Absolute stdout byte cursor. Defaults to 0."),
+              "stderr_cursor": integerSchema("Absolute stderr byte cursor. Defaults to 0."),
+              "max_bytes": integerSchema(
+                "Maximum bytes per stream. Defaults to policy.max_output_bytes."),
+            ],
             required: ["process_id"]
           ),
           annotations: MCPToolAnnotations(
@@ -60,8 +68,27 @@ extension ProcessToolProvider {
       ),
       ToolDefinition(
         tool: MCPTool(
+          name: "process.write",
+          description:
+            "Write UTF-8 text or Base64 bytes to a spawned process and optionally close stdin.",
+          inputSchema: objectSchema(
+            properties: [
+              "process_id": stringSchema("Process id returned by process.spawn."),
+              "text": stringSchema("Optional UTF-8 input."),
+              "base64": stringSchema("Optional Base64 input."),
+              "close": boolSchema("Close stdin after writing. Defaults to false."),
+            ], required: ["process_id"]),
+          annotations: MCPToolAnnotations(
+            readOnlyHint: false, destructiveHint: true,
+            idempotentHint: false, openWorldHint: true), meta: toolMeta),
+        capability: CapabilityDescriptor(
+          id: "process.write", risk: .fullShell,
+          projectRequirement: .required, localOnly: false, usesNetwork: false)),
+      ToolDefinition(
+        tool: MCPTool(
           name: "process.cancel",
-          description: "Terminate a spawned process.",
+          description:
+            "Cancel a spawned execution and its descendants through the execution owner.",
           inputSchema: objectSchema(
             properties: ["process_id": stringSchema("Process id returned by process.spawn.")],
             required: ["process_id"]
@@ -87,7 +114,7 @@ extension ShellToolProvider {
         tool: MCPTool(
           name: "shell.run",
           description:
-            "Run one Full Shell command synchronously through this MCP gateway. Supports shell-script or explicit argv mode, cwd, environment, bounded stdout/stderr, timeout, and process-group cancellation. This grants the caller the effective authority of the current macOS user and is exposed only when the active profile enables Full Shell.",
+            "Run one Full Shell command synchronously through this MCP gateway. Supports shell-script or explicit argv mode, cwd, environment, bounded stdout/stderr, timeout (default 120000 ms, at most 600000 ms), and execution-tree cancellation. This grants the caller the effective authority of the current macOS user and is exposed only when the active profile enables Full Shell.",
           inputSchema: shellLaunchSchema(includeTimeout: true, includeStandardInput: true),
           annotations: MCPToolAnnotations(
             readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true),
@@ -103,7 +130,7 @@ extension ShellToolProvider {
         tool: MCPTool(
           name: "shell.spawn",
           description:
-            "Start a long-lived Full Shell session through this MCP gateway. Continue interacting only through shell.write, shell.read, and shell.cancel using the returned session_id.",
+            "Start a Full Shell execution with no time limit by default and the latest 8 MiB output retained unless policy sets another limit. Continue interacting only through shell.write, shell.read, and shell.cancel using the returned session_id.",
           inputSchema: shellLaunchSchema(includeTimeout: true, includeStandardInput: false),
           annotations: MCPToolAnnotations(
             readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true),
@@ -195,7 +222,7 @@ extension ShellToolProvider {
         tool: MCPTool(
           name: "shell.cancel",
           description:
-            "Terminate a gateway-owned Full Shell process group, escalating from SIGTERM to SIGKILL after the configured grace period.",
+            "Cancel a gateway-owned Full Shell execution and its descendants, using the execution owner to send SIGTERM then SIGKILL and confirm completion.",
           inputSchema: objectSchema(
             properties: [
               "session_id": stringSchema("Session id returned by shell.spawn.")

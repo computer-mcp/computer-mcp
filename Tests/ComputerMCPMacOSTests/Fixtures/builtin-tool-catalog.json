@@ -14370,7 +14370,7 @@
       "risk" : "destructive",
       "usesNetwork" : false
     },
-    "description" : "Terminate a spawned process.",
+    "description" : "Cancel a spawned execution and its descendants through the execution owner.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -14467,10 +14467,14 @@
       "risk" : "read-only",
       "usesNetwork" : false
     },
-    "description" : "Read buffered stdout/stderr and status for a spawned process.",
+    "description" : "Read stdout/stderr from absolute byte cursors and the execution status, limits, dropped bytes and end reason.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
+        "max_bytes" : {
+          "description" : "Maximum bytes per stream. Defaults to policy.max_output_bytes.",
+          "type" : "integer"
+        },
         "process_id" : {
           "description" : "Process id returned by process.spawn.",
           "type" : "string"
@@ -14478,6 +14482,14 @@
         "project_id" : {
           "description" : "Stable project id returned by project.list.",
           "type" : "string"
+        },
+        "stderr_cursor" : {
+          "description" : "Absolute stderr byte cursor. Defaults to 0.",
+          "type" : "integer"
+        },
+        "stdout_cursor" : {
+          "description" : "Absolute stdout byte cursor. Defaults to 0.",
+          "type" : "integer"
         }
       },
       "required" : [
@@ -14520,7 +14532,7 @@
       "risk" : "full-shell",
       "usesNetwork" : false
     },
-    "description" : "Spawn a registered CLI command for long-running work.",
+    "description" : "Spawn a registered CLI command without a time limit. Retain the latest output up to policy.max_output_bytes (default 8 MiB); read, write or cancel using the stable process_id.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -14560,6 +14572,71 @@
       "type" : "object"
     },
     "title" : "Process Spawn"
+  },
+  "process.write" : {
+    "_meta" : {
+      "securitySchemes" : [
+        {
+          "type" : "noauth"
+        }
+      ]
+    },
+    "annotations" : {
+      "destructiveHint" : true,
+      "idempotentHint" : false,
+      "openWorldHint" : true,
+      "readOnlyHint" : false
+    },
+    "capability" : {
+      "localOnly" : false,
+      "projectRequirement" : "required",
+      "risk" : "full-shell",
+      "usesNetwork" : false
+    },
+    "description" : "Write UTF-8 text or Base64 bytes to a spawned process and optionally close stdin.",
+    "inputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "base64" : {
+          "description" : "Optional Base64 input.",
+          "type" : "string"
+        },
+        "close" : {
+          "description" : "Close stdin after writing. Defaults to false.",
+          "type" : "boolean"
+        },
+        "process_id" : {
+          "description" : "Process id returned by process.spawn.",
+          "type" : "string"
+        },
+        "project_id" : {
+          "description" : "Stable project id returned by project.list.",
+          "type" : "string"
+        },
+        "text" : {
+          "description" : "Optional UTF-8 input.",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "process_id"
+      ],
+      "type" : "object"
+    },
+    "name" : "process.write",
+    "outputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "result" : {
+
+        }
+      },
+      "required" : [
+        "result"
+      ],
+      "type" : "object"
+    },
+    "title" : "Process Write"
   },
   "profile.limit" : {
     "_meta" : null,
@@ -17277,7 +17354,7 @@
       "risk" : "full-shell",
       "usesNetwork" : false
     },
-    "description" : "Terminate a gateway-owned Full Shell process group, escalating from SIGTERM to SIGKILL after the configured grace period.",
+    "description" : "Cancel a gateway-owned Full Shell execution and its descendants, using the execution owner to send SIGTERM then SIGKILL and confirm completion.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -17451,7 +17528,7 @@
       "risk" : "full-shell",
       "usesNetwork" : false
     },
-    "description" : "Run one Full Shell command synchronously through this MCP gateway. Supports shell-script or explicit argv mode, cwd, environment, bounded stdout/stderr, timeout, and process-group cancellation. This grants the caller the effective authority of the current macOS user and is exposed only when the active profile enables Full Shell.",
+    "description" : "Run one Full Shell command synchronously through this MCP gateway. Supports shell-script or explicit argv mode, cwd, environment, bounded stdout/stderr, timeout (default 120000 ms, at most 600000 ms), and execution-tree cancellation. This grants the caller the effective authority of the current macOS user and is exposed only when the active profile enables Full Shell.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -17543,7 +17620,7 @@
       "risk" : "full-shell",
       "usesNetwork" : false
     },
-    "description" : "Start a long-lived Full Shell session through this MCP gateway. Continue interacting only through shell.write, shell.read, and shell.cancel using the returned session_id.",
+    "description" : "Start a Full Shell execution with no time limit by default and the latest 8 MiB output retained unless policy sets another limit. Continue interacting only through shell.write, shell.read, and shell.cancel using the returned session_id.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -19486,7 +19563,7 @@
       "risk" : "read-only",
       "usesNetwork" : false
     },
-    "description" : "Return a bounded read-only macOS process snapshot using fixed /bin/ps argv. This reports executable command names, not full argument strings.",
+    "description" : "Return a bounded read-only macOS process snapshot through native host APIs. Command includes readable arguments; otherwise it contains the executable path or name with [arguments unavailable]. Unreadable CPU, memory, or elapsed values are null.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {

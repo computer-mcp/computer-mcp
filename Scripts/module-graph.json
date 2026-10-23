@@ -104,6 +104,7 @@
     "ComputerMCPControlPlane->ComputerMCPGateway"
   ],
   "macos_only": [
+    "ComputerMCPDarwinTestSupport",
     "ComputerMCPExecutionProbe",
     "CSystemArchive",
     "CDarwinExecution",
@@ -120,8 +121,7 @@
     "ComputerMCPPluginsDarwinTests",
     "ComputerMCPMacOSTests",
     "ComputerMCPGatewayDarwinTests",
-    "ComputerMCPControlPlaneDarwinTests",
-    "computer-mcp-execution-bootstrap"
+    "ComputerMCPControlPlaneDarwinTests"
   ],
   "macos_imports": [
     "AVFoundation",
@@ -164,6 +164,7 @@
     "/usr/bin/env"
   ],
   "test_support": [
+    "ComputerMCPDarwinTestSupport",
     "ComputerMCPTestSupport"
   ]
 }

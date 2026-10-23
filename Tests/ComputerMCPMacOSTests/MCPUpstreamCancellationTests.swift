@@ -10,6 +10,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPUpstreamCancellationTests {
   @Test(arguments: ["reexport", "alias", "generic"], [false, true])
@@ -40,7 +44,7 @@ struct MCPUpstreamCancellationTests {
     ]
     let native = try await GatewayRuntime.make(
       configuration: configuration, registeredProjects: projects,
-      platform: MacOSPlatform.services)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let origin =
       overHTTP
       ? GatewayHTTPRuntime(
@@ -63,7 +67,7 @@ struct MCPUpstreamCancellationTests {
         ]
         runtime = try await GatewayRuntime.make(
           configuration: configuration, registeredProjects: projects,
-          platform: MacOSPlatform.services)
+          platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       } else {
         downstreamWait = "wait"
         runtime = native

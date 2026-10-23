@@ -9,6 +9,15 @@ import Testing
 
 final class GatewayConfigurationTests {
   @Test
+  func executionDefaultsMatchDecodedPolicy() throws {
+    let decoded = try JSONDecoder().decode(PolicyConfig.self, from: Data("{}".utf8))
+    #expect(decoded.defaultTimeoutMs == 120_000)
+    #expect(decoded.maxOutputBytes == 8_388_608)
+    #expect(decoded.defaultTimeoutMs == PolicyConfig().defaultTimeoutMs)
+    #expect(decoded.maxOutputBytes == PolicyConfig().maxOutputBytes)
+  }
+
+  @Test
   func testSchemaV1SupportsValidatedCustomProfilesAndCallerSpecificDefaults() throws {
     let custom = try #require(GatewayProfileID(rawValue: "partner-observe"))
     #expect(GatewayProfileID(rawValue: "partner/observe") == nil)
@@ -187,7 +196,7 @@ final class GatewayConfigurationTests {
     let config = try GatewayConfiguration.load(path: path)
 
     #expect((config.server.name) == ("test-gateway"))
-    #expect((config.policy.defaultTimeoutMs) == (30_000))
+    #expect(config.policy.defaultTimeoutMs == 120_000)
     #expect(!(config.policy.shellEnabled))
     #expect((config.cli.commands.first?.id) == ("echo"))
     #expect((config.cli.commands.first?.interface?.formatFlag) == ("--format"))

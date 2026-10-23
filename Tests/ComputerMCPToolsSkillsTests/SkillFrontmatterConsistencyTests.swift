@@ -7,6 +7,10 @@ import Testing
 
 @testable import ComputerMCPToolsSkills
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite
 final class SkillFrontmatterConsistencyTests {
   @Test
@@ -132,6 +136,7 @@ final class SkillFrontmatterConsistencyTests {
   private func provider(root: URL) -> SkillsToolProvider {
     SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,

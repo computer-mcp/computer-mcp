@@ -12,6 +12,10 @@ import Testing
 
 @testable import ComputerMCPToolsStructured
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class StructuredMediaToolProviderTests {
   @Test
@@ -38,6 +42,7 @@ final class StructuredMediaToolProviderTests {
 
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["image.info"]),
           projectDirectory: directory
@@ -74,6 +79,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["image.info"]),
           projectDirectory: directory
@@ -117,6 +123,7 @@ final class StructuredMediaToolProviderTests {
 
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.info"]),
           projectDirectory: directory
@@ -160,6 +167,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.info"]),
           projectDirectory: directory
@@ -201,6 +209,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.text"]),
           projectDirectory: directory
@@ -268,6 +277,7 @@ final class StructuredMediaToolProviderTests {
     try writeTextPDF(pages: ["Only page"], to: pdfURL)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.text"]),
           projectDirectory: directory
@@ -330,6 +340,7 @@ final class StructuredMediaToolProviderTests {
 
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["media.info"]),
           projectDirectory: directory
@@ -372,6 +383,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["media.info"]),
           projectDirectory: directory

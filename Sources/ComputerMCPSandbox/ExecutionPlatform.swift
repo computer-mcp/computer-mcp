@@ -30,11 +30,15 @@ package struct ExecutionCommand: Sendable {
 
 package struct ExecutionExit: Sendable, Equatable {
   package let status: Int32
+  package let signal: Int32?
 
-  package init(status: Int32) { self.status = status }
+  package init(status: Int32, signal: Int32? = nil) {
+    self.status = status
+    self.signal = signal
+  }
 }
 
-package struct ExecutionMember: Hashable, Sendable {
+package struct ExecutionMember: Codable, Hashable, Sendable {
   package let processID: Int32
   /// Stable across exec; distinct for each use of a PID.
   package let identity: UInt64
@@ -87,6 +91,9 @@ package struct ExecutionCompletionFailure: Error, Sendable, CustomStringConverti
 /// Concurrent callers share confirmation: the earliest deadline fails all current waiters and
 /// retains resources while the ownership handle continues background cleanup and observation.
 package protocol ExecutionOwnership: Sendable {
+  /// Installed during bindOwnership; invoked before the target can execute.
+  func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void)
+
   /// Return identities whose exit is unconfirmed, including after a deadline. Running sandboxes
   /// return known identities; classification begins after root exit or cancellation.
   func members() async throws -> [ExecutionMember]
@@ -118,11 +125,26 @@ extension ExecutionOwnership {
 /// Streams are caller-owned descriptors, duplicated before start returns.
 /// bindOwnership installs nonblocking lifecycle callbacks before spawning any process.
 package protocol ExecutionPlatform: Sendable {
+  var supportsRecovery: Bool { get }
+  var bootSessionID: String? { get }
+  var hostSystemReadPaths: [SandboxPath] { get }
+  func interrupt(_ members: [ExecutionMember]) async throws
   func start(
     _ command: ExecutionCommand, sandbox: SandboxConfiguration?, method: ExecutionLaunchMethod,
     input: Int32, output: Int32, error: Int32,
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void
   ) async throws -> any ExecutionOwnership
+}
+
+extension ExecutionPlatform {
+  package var supportsRecovery: Bool { false }
+  package var bootSessionID: String? { nil }
+  package var hostSystemReadPaths: [SandboxPath] { [] }
+  package func interrupt(_ members: [ExecutionMember]) async throws {
+    guard members.isEmpty else {
+      throw ExecutionEnvironmentError.unavailable("Execution recovery is unavailable")
+    }
+  }
 }
 
 package struct UnsupportedExecutionPlatform: ExecutionPlatform {

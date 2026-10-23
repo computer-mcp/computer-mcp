@@ -13,6 +13,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   private let sentinel: DarwinExecutionSentinel?
   private var marker: ExecutionSandboxMarker?
   private let bestEffort: Bool
+  private var launchHandlers: [@Sendable (ExecutionMember) throws -> Void] = []
   private var root: DarwinProcessIdentity?
   private var state = DarwinExecutionScan()
   private var cancellationStarted: ContinuousClock.Instant?
@@ -44,6 +45,27 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     bestEffort = marker == nil
   }
 
+  /// Recovered identities are revalidated before signalling; old numeric PIDs alone confer no ownership.
+  func recover(_ identities: [DarwinProcessIdentity]) throws {
+    var anchor: DarwinProcessSnapshot?
+    for identity in identities {
+      if let snapshot = try table.read(identity.pid), snapshot.identity == identity,
+        snapshot.state != .zombie,
+        try table.read(identity.pid)?.identity == identity
+      {
+        anchor = snapshot
+        break
+      }
+    }
+    lock.withLock {
+      root = identities.first
+      state.known.formUnion(identities)
+      state.group = anchor.flatMap { $0.group > 0 ? $0.group : nil }
+      rootExit = .success(ExecutionExit(status: 128 + SIGTERM, signal: SIGTERM))
+      startMonitor()
+    }
+  }
+
   func starting(_ continuation: CheckedContinuation<any ExecutionOwnership, Error>) {
     lock.withLock {
       startup = continuation
@@ -51,7 +73,11 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     }
   }
 
-  func launched(_ identity: DarwinProcessIdentity) {
+  func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {
+    lock.withLock { launchHandlers.append(handler) }
+  }
+
+  func launched(_ identity: DarwinProcessIdentity) throws {
     // The bootstrap establishes its own process group and session before the identity handshake.
     lock.withLock {
       root = identity
@@ -59,6 +85,8 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
       state.group = bestEffort ? identity.pid : nil
       startMonitor()
     }
+    let handlers = lock.withLock { launchHandlers }
+    for handler in handlers { try handler(identity.member) }
   }
 
   private func startMonitor() {
@@ -599,11 +627,13 @@ private struct DarwinExecutionScan: Sendable {
     _ zombie: DarwinProcessSnapshot, table: DarwinExecutionProcessTable,
     marker: ExecutionSandboxMarker, check: () throws -> Void
   ) throws -> Bool {
-    // Traced members can be reparented to a debugger, then exec can rewrite p_puniqueid.
-    // Parent provenance requires readable BSD flags proving the zombie is untraced.
-    // Traced or unreadable zombies remain members or unclassifiable until reaped.
     // Members can also be parented by launchd after adoption or this host's launcher;
     // other live parents prove nonmembership only while p_puniqueid names that exact parent.
+    // Parent provenance requires readable BSD flags proving the zombie is untraced; traced or
+    // unreadable zombies remain members or unclassifiable until reaped. This trusts processes
+    // with debugging rights over members: one can reparent a member to itself, and exec then
+    // rewrites p_puniqueid (the traced flag clears on detach). Only the owner's tools hold
+    // task rights over a sandboxed member, and they already control it.
     guard zombie.isTraced == false, zombie.parentID > 1, zombie.parentID != getpid() else {
       return false
     }

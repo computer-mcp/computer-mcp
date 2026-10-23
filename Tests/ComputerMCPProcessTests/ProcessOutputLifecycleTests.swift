@@ -6,6 +6,10 @@ import Testing
 
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -153,17 +157,9 @@ struct ProcessOutputLifecycleTests {
       try await withThrowingTaskGroup(of: Void.self) { group in
         for lane in 0..<8 {
           group.addTask {
-            let blocking = BlockingOperationExecutor(label: "test.output-churn.\(lane)")
             for _ in 0..<64 {
               try Task.checkCancellation()
               let payload = Data(repeating: UInt8(lane), count: 256)
-              let collector = OutputCollector(limit: 64)
-              try collector.pipe.fileHandleForWriting.write(contentsOf: payload)
-              try collector.pipe.fileHandleForWriting.close()
-              try await blocking.perform { collector.stop(processHasExited: true) }
-              #expect(collector.dataValue == payload.prefix(64))
-              #expect(collector.truncated)
-
               let pipe = Pipe()
               let output = Output()
               let reader = try ProcessOutputReader(
@@ -192,7 +188,7 @@ struct ProcessOutputLifecycleTests {
         for lane in 0..<8 {
           group.addTask {
             let blocking = BlockingOperationExecutor(label: "test.command-churn.\(lane)")
-            let runner = ManagedCommandRunner()
+            let runner = ManagedCommandRunner(launcher: testExecutionLauncher())
             for _ in 0..<16 {
               try Task.checkCancellation()
               let result = try await blocking.perform {
@@ -203,8 +199,7 @@ struct ProcessOutputLifecycleTests {
                   timeoutMilliseconds: 2000, maxOutputBytes: 64)
               }
               #expect(result.exitCode == 7 && !result.timedOut)
-              #expect(result.stdout == String(repeating: "0", count: 64))
-              #expect(result.stderr == String(repeating: "0", count: 64))
+              #expect(result.stdout + result.stderr == String(repeating: "0", count: 64))
               #expect(result.stdoutTruncated && result.stderrTruncated)
             }
           }

@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
@@ -6,6 +7,10 @@ import Testing
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite
 
@@ -130,7 +135,8 @@ final class DefaultGatewayConfigurationTests {
         profileID: .chatGPTObserve,
         projectID: project.id
       ),
-      registeredProjects: [project], platform: MacOSPlatform.services
+      registeredProjects: [project],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )
     let observeTools = try observeGateway.listTools(context: .empty)
     #expect(
@@ -150,7 +156,8 @@ final class DefaultGatewayConfigurationTests {
         profileID: .chatGPTOperate,
         projectID: project.id
       ),
-      registeredProjects: [project], platform: MacOSPlatform.services
+      registeredProjects: [project],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )
     let operateNames = Set(try operateGateway.listTools(context: .empty).map(\.name))
     #expect(operateNames.isSuperset(of: Set(observeTools.map(\.name))))
@@ -183,7 +190,8 @@ final class DefaultGatewayConfigurationTests {
 
     let localGateway = try GatewayRuntime(
       configuration: localAdmin,
-      database: GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services
+      database: GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )
     let localNames = Set(try localGateway.listTools(context: .empty).map(\.name))
     #expect(localNames.contains("cli.exec"))

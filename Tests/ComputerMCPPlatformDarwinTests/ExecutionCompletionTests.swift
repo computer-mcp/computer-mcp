@@ -1,4 +1,5 @@
 import ComputerMCPSandbox
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
@@ -7,7 +8,7 @@ import Testing
 
 // Blocking kernel fixtures share the dispatch thread pool; deadline assertions need each
 // scenario to run without competing blocked fixtures consuming its scheduling budget.
-@Suite(.serialized) struct ExecutionCompletionTests {
+@Suite(.nativeIntegration, .serialized) struct ExecutionCompletionTests {
   @Test func missingKernelSentinelCannotConfirmAnEmptyExecution() async throws {
     let fixture = try SimulatedExecution(configure: { $0.omitKernel = true })
     fixture.rootExited()
@@ -750,7 +751,7 @@ final class SimulatedExecution: Sendable {
     owner = DarwinExecutionOwnership(
       marker: marker, sentinel: sandboxed ? SimulatedProcessTable.sentinel() : nil,
       table: processes.table, observationInterval: observationInterval)
-    owner.launched(Self.root)
+    try owner.launched(Self.root)
   }
 
   var markerExists: Bool { markerPath.map { FileManager.default.fileExists(atPath: $0) } ?? false }

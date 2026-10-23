@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct MCPProfileGrantTests {
   @Test(arguments: [false, true], [false, true])
   func catalogReplacementDoesNotTransferRegistrationOrAliasAuthority(
@@ -40,7 +44,7 @@ struct MCPProfileGrantTests {
       registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
-      platform: MacOSPlatform.services, mcpClient: client)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
     do {
       #expect(try runtime.listTools(context: .empty).contains { $0.name == publicName })
       _ = try runtime.callTool(name: publicName, arguments: .object([:]), context: .empty)
@@ -334,7 +338,7 @@ struct MCPProfileGrantTests {
       registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
-      platform: MacOSPlatform.services, mcpClient: client)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
     #expect(try !runtime.listTools(context: .empty).contains { $0.name == "alpha.inspect" })
     #expect(try runtime.listTools(context: .empty).contains { $0.name == "beta.inspect" })
     for (name, arguments) in [
@@ -489,7 +493,8 @@ private struct ProfileRuntimeFixture {
     try GatewayRuntime(
       configuration: configuration,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: ProfileCatalogClient())
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      mcpClient: ProfileCatalogClient())
   }
 
   func cleanup() { try? FileManager.default.removeItem(at: root) }

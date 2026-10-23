@@ -45,6 +45,7 @@ package enum ComputerMCPProductContracts {
     let gateway = try GatewayConfiguration.load(path: configurationURL.path)
     let providers = try ExternalProviderDiscovery(
       configuration: gateway,
+      commandRunner: ManagedCommandRunner(launcher: platform.launcher, policy: .readOnly),
       systemSearchDirectories: platform.executableSearchDirectories
     ).discover().sorted {
       $0.providerID < $1.providerID

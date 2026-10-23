@@ -35,6 +35,41 @@ import System
       withExtendedLifetime(owner) {}
       return
     }
+    if arguments.count == 4, arguments[1] == "journal-host" {
+      let root = URL(fileURLWithPath: arguments[2])
+      let launcher = ExecutionLauncher(platform: DarwinExecutionPlatform())
+      let sessions = GatewayTerminalSessions()
+      try sessions.enablePersistence(at: root, launcher: launcher)
+      let runtime = ShellSessionRuntime(
+        launcher: launcher, sessions: sessions,
+        scope: .isolated(UUID(uuidString: arguments[3])!))
+      let id = try runtime.spawn(
+        request: .init(
+          mode: .argv, executable: "/bin/sh",
+          argv: ["-c", "sleep 60 & echo ready:$!; wait"]), defaultShell: "/bin/sh",
+        defaultWorkingDirectory: root, timeoutMilliseconds: nil, maxOutputBytes: 4096,
+        maxSessions: 1)
+      for _ in 0..<100 {
+        let value = try runtime.read(
+          sessionID: id, stdoutCursor: 0, stderrCursor: 0,
+          maxReadBytes: 4096, encoding: .utf8)
+        if let text = value.stdout.text, text.hasPrefix("ready:"),
+          let end = text.firstIndex(of: "\n"),
+          let pid = Int32(text[text.index(text.startIndex, offsetBy: 6)..<end]), pid > 0
+        {
+          // A read can observe output that arrived after its checkpoint was captured.
+          // Persist the complete receipt before simulating the host crash.
+          _ = try runtime.read(
+            sessionID: id, stdoutCursor: 0, stderrCursor: 0,
+            maxReadBytes: 4096, encoding: .utf8)
+          try FileHandle.standardOutput.write(contentsOf: Data(id.utf8))
+          _exit(0)
+        }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      await runtime.shutdown()
+      throw ExecutionEnvironmentError.launchFailed("Journal fixture did not receive a ready line")
+    }
     if arguments.count >= 3, arguments[1] == "child" {
       describe(arguments[2])
       if arguments.count == 3 {

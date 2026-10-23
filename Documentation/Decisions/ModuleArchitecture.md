@@ -43,15 +43,17 @@ Dependencies inside a layer are limited to these:
 - `Sandbox`: dependency-free execution configuration values and platform contracts;
   contains no gateway, tool definitions, or permission storage. Seatbelt lives in
   `PlatformDarwin`, supplied to the process launcher through the sandbox contract.
-- `computer-mcp-execution-bootstrap`: private Darwin launch handshake executable;
-  establishes the child identity and an isolated session before executing the target command.
+- `computer-mcp-execution-bootstrap`: private launch handshake executable;
+  holds the target before exec for host ownership admission. Darwin establishes an
+  isolated session; Linux uses the launcher's isolated process group.
 - `Platform`: the platform service protocols listed below and their value types.
 - `Configuration`: manifest model and defaults, including MCP HTTP
   authentication values.
 - `Persistence`: the database connection, schema and transaction API. Each domain
   owns its own store on top of it.
 - `Process`: bounded process execution, managed processes, shell sessions and
-  executable discovery.
+  executable discovery. An injected `ExecutionLauncher` owns launches; session
+  storage and its optional recovery journal own output and cursor retention.
 - `Egress`: execution-scoped CONNECT/SOCKS listeners, destination policy, bounded
   relaying and revocation, independent of MCP routing and permission storage.
 - `Transport`: socket and stream primitives and MCP framing.
@@ -170,3 +172,7 @@ cycles, no upward edges and no neutral target that depends on a Darwin target.
   neutral targets.
 - A builtin tool catalog snapshot (names, metadata, schemas and descriptors)
   guards extraction; it changes only for reviewed, intended differences.
+- `ComputerMCPDarwinTestSupport` is a macOS-only test adapter that injects the
+  Darwin execution backend and locates the private bootstrap for integration
+  tests. Production neutral modules and `ComputerMCPTestSupport` retain their
+  platform-independent dependencies.

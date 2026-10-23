@@ -7,8 +7,8 @@ extension ShellToolProvider {
   internal func runShell(arguments object: [String: JSONValue]) throws -> JSONValue {
     let timeout =
       optionalInt("timeout_ms", in: object) ?? environment.configuration.policy.defaultTimeoutMs
-    guard timeout > 0 else {
-      throw GatewayToolError.invalidArguments("timeout_ms must be greater than zero.")
+    guard (1...ExecutionLimits.maximumTimeoutMilliseconds).contains(timeout) else {
+      throw GatewayToolError.invalidArguments("timeout_ms must be between 1 and 600000.")
     }
     return try environment.shellManager.run(
       request: shellLaunchRequest(arguments: object),
@@ -17,15 +17,14 @@ extension ShellToolProvider {
       standardInput: try shellStandardInput(arguments: object),
       timeoutMilliseconds: timeout,
       maxOutputBytes: environment.configuration.policy.maxOutputBytes,
-      maxSessions: environment.configuration.policy.maxShellSessions,
-      terminationGraceMilliseconds: environment.configuration.policy.shellTerminationGraceMs
+      maxSessions: environment.configuration.policy.maxShellSessions
     ).json
   }
 
   internal func spawnShell(arguments object: [String: JSONValue]) throws -> JSONValue {
     let timeout = optionalInt("timeout_ms", in: object)
-    if let timeout, timeout <= 0 {
-      throw GatewayToolError.invalidArguments("timeout_ms must be greater than zero when set.")
+    if let timeout, !(1...ExecutionLimits.maximumTimeoutMilliseconds).contains(timeout) {
+      throw GatewayToolError.invalidArguments("timeout_ms must be between 1 and 600000 when set.")
     }
     let id = try environment.shellManager.spawn(
       request: shellLaunchRequest(arguments: object),
@@ -33,10 +32,15 @@ extension ShellToolProvider {
       defaultWorkingDirectory: environment.configuration.projectDirectory,
       timeoutMilliseconds: timeout,
       maxOutputBytes: environment.configuration.policy.maxOutputBytes,
-      maxSessions: environment.configuration.policy.maxShellSessions,
-      terminationGraceMilliseconds: environment.configuration.policy.shellTerminationGraceMs
+      maxSessions: environment.configuration.policy.maxShellSessions
     )
-    return .object(["session_id": .string(id)])
+    return .object([
+      "session_id": .string(id),
+      "limits": .object([
+        "timeout_ms": timeout.map { .integer(Int64($0)) } ?? .null,
+        "output_bytes": .integer(Int64(environment.configuration.policy.maxOutputBytes)),
+      ]),
+    ])
   }
 
   internal func listShellSessions(arguments object: [String: JSONValue]) throws -> JSONValue {

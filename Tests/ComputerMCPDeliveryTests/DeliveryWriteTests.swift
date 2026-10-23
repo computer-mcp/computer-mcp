@@ -173,7 +173,7 @@ struct DeliveryWriteTests {
           wrappingGit: """
             for argument do
               if test "$argument" = add; then
-                \(quote(fixture.executable)) "$@" || exit $?
+                \(quote(fixture.interceptedExecutable)) "$@" || exit $?
                 blob=$(\(quote(fixture.executable)) hash-object -w outside.txt) || exit $?
                 \(quote(fixture.executable)) update-index --cacheinfo "100644,$blob,notes/log.md"
                 exit $?

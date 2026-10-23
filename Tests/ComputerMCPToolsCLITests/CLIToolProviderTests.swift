@@ -159,42 +159,36 @@ final class CLIToolProviderTests {
   }
 
   @Test
-  func testCLIHelpReturnsRawHelpAndExecContext() throws {
-    let runner = RecordingCommandRunner()
-    let config = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(commands: [
-        CLICommandConfig(
-          id: "echo",
-          executable: "/bin/echo",
-          interface: CLIInterfaceConfig(formatFlag: "--format", defaultFormat: "json")
-        )
-      ])
-    )
+  func helpReturnsMetadataWithoutStartingExecutable() throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let script = temporary.url.appendingPathComponent("command")
+    let marker = temporary.url.appendingPathComponent("marker")
+    try Data("#!/bin/sh\ntouch '\(marker.path)'\n".utf8).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: config, commandRunner: runner))
-
-    let result = try provider.callTool(
-      .init(
-        name: "cli.help",
-        arguments: .object([
-          "id": .string("echo"),
-          "path": .array([.string("sub")]),
-        ]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
-
-    #expect((runner.calls.first?.arguments) == (["sub", "--help"]))
-    #expect((payload.objectValue?["path"]) == (.array([.string("sub")])))
-    #expect((payload.objectValue?["help_argv"]) == (.array([.string("sub"), .string("--help")])))
-    #expect((payload.objectValue?["exec_context"]?.objectValue?["tool"]) == (.string("cli.exec")))
-    #expect(
-      (payload.objectValue?["exec_context"]?.objectValue?["argv_prefix"])
-        == (.array([.string("sub")])))
-    #expect(
-      (payload.objectValue?["interface"]?.objectValue?["format_flag"]) == (.string("--format")))
-    #expect((payload.objectValue?["stdout"]) == (.string("ok")))
-    #expect((payload.objectValue?["stderr"]) == (.string("")))
-    #expect((payload.objectValue?["exit_code"]) == (.number(0)))
+      environment: ToolEnvironment(
+        configuration: .fixture(
+          cli: .init(commands: [
+            .init(id: "fixture", executable: script.path, description: "Registered help")
+          ]))))
+    let payload = try decodeTextPayload(
+      provider.callTool(
+        .init(
+          name: "cli.help",
+          arguments: .object([
+            "id": .string("fixture")
+          ]), context: .empty)))
+    #expect(payload.objectValue?["description"] == .string("Registered help"))
+    #expect(payload.objectValue?["executed"] == .bool(false))
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    #expect(throws: (any Error).self) {
+      _ = try provider.callTool(
+        .init(
+          name: "cli.help",
+          arguments: .object([
+            "id": .string("fixture"), "path": .array([.string("unregistered")]),
+          ]), context: .empty))
+    }
   }
 
   @Test

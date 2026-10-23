@@ -70,6 +70,23 @@ package final class RecordingCommandRunner: CommandRunning, @unchecked Sendable 
     )
   }
 
+  package func runToFile(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+    outputDescriptor: Int32
+  ) throws -> CommandResult {
+    let result = try runData(
+      executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+      maxOutputBytes: maxOutputBytes)
+    try FileHandle(fileDescriptor: outputDescriptor, closeOnDealloc: false).write(
+      contentsOf: result.stdout)
+    return CommandResult(
+      executable: result.executable, arguments: result.arguments, exitCode: result.exitCode,
+      timedOut: result.timedOut, stdout: "", stderr: result.stderrString,
+      stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated)
+  }
+
   package func runData(
     executable: String,
     arguments: [String],

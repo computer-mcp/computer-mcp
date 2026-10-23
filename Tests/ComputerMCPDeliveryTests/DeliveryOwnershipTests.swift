@@ -132,8 +132,7 @@ struct DeliveryOwnershipTests {
       #expect(try fixture.git(["rev-parse", journal.branch]) == journal.base)
       if journalFailure {
         #expect(
-          try fixture.read("notes/log.md", at: URL(fileURLWithPath: journal.worktree))
-            == "alpha\nstable\n")
+          try FileManager.default.contentsOfDirectory(atPath: journal.worktree) == [".git"])
       }
     }
   }
@@ -334,7 +333,7 @@ struct DeliveryOwnershipTests {
         wrappingGit: """
           for argument do
             if test "$argument" = sparse-checkout; then
-              \(quote(fixture.executable)) "$@" || exit $?
+              \(quote(fixture.interceptedExecutable)) "$@" || exit $?
               \(quote(fixture.executable)) branch other HEAD || exit $?
               \(quote(fixture.executable)) symbolic-ref HEAD refs/heads/other
               exit $?

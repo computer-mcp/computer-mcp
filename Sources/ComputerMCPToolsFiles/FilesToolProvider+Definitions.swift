@@ -859,7 +859,7 @@ extension FilesToolProvider {
         tool: MCPTool(
           name: "archive.extract",
           description:
-            "Extract a project-contained zip or tar archive into a project-contained destination using fixed argv. This defaults to dry-run, validates entry paths, refuses link entries, and requires confirm_extract=true when dry_run is false.",
+            "Extract a project-contained zip or tar archive using fixed argv. Defaults to dry-run; validates one listing, refuses unsafe paths, links and special files, extracts once into staging inside the destination, checks the tree, preserves member modification times, and publishes with anchored renames. Requires confirm_extract=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema("Project-relative or in-project absolute archive path."),
@@ -945,7 +945,7 @@ extension FilesToolProvider {
         tool: MCPTool(
           name: "file.download",
           description:
-            "Download an absolute HTTP or HTTPS URL to a project-contained file using fixed /usr/bin/curl argv. This defaults to dry-run, writes through a deterministic temp file, rejects credentials in URLs, sends no custom headers/cookies/request body, and requires confirm_download=true when dry_run is false.",
+            "Download an absolute HTTP or HTTPS URL to a project-contained file using fixed /usr/bin/curl argv. This defaults to dry-run, streams into a host-opened temporary descriptor and rechecks the destination, rejects credentials in URLs, sends no custom headers/cookies/request body, and requires confirm_download=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "url": stringSchema("Absolute http or https URL to download."),
@@ -1277,7 +1277,7 @@ extension FilesToolProvider {
         tool: MCPTool(
           name: "file.copy",
           description:
-            "Copy a file or directory between two project-contained paths. Does not overwrite unless requested.",
+            "Copy a file or directory between two project-contained paths. On macOS preserves data, extended attributes, resource forks, ACLs, mode and times. Does not overwrite unless requested.",
           inputSchema: objectSchema(
             properties: [
               "source": stringSchema(
@@ -1376,7 +1376,7 @@ extension FilesToolProvider {
         tool: MCPTool(
           name: "file.trash",
           description:
-            "Move a project-contained file or directory to the macOS Trash. This is a write operation.",
+            "Move a project-contained file or directory to the macOS Trash. Refuses the project root and checks every member for protected paths and unsafe types before the platform move. Allows multiply linked regular files. This is a write operation.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(

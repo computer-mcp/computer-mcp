@@ -173,8 +173,8 @@ struct DeliveryConcurrencyTests {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
       try fixture.advanceDuringCommit()
-      try fixture.hook(
-        "post-rewrite",
+      try fixture.interceptGit(
+        "after-rebase",
         body: """
           mkdir -p private
           git mv notes/log.md private/log.md
@@ -184,7 +184,7 @@ struct DeliveryConcurrencyTests {
         wrappingGit: """
           for argument do
             if test "$argument" = rebase; then
-              \(quote(fixture.executable)) "$@" || exit $?
+              \(quote(fixture.interceptedExecutable)) "$@" || exit $?
               exit 79
             fi
           done

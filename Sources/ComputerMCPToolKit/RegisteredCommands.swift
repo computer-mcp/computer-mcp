@@ -52,6 +52,89 @@ package struct RegisteredCommands: Sendable {
     )
   }
 
+  package func validateProjectGitLayout(at project: URL) throws {
+    let command = configuration.cli.commands.first { $0.id == "git" }
+    try ProjectGitLayout.validate(
+      project: project,
+      environment: environment.merging(command?.env ?? [:]) { _, value in value },
+      invocation: command.map { try resolveCLIInvocation($0) })
+  }
+
+  package func runHostGit(
+    command: CLICommandConfig, args: [String], timeout: Int?, maxOutputBytes: Int? = nil
+  ) throws -> CommandResult {
+    let invocation = try resolveCLIInvocation(command)
+    let home = try PrivateProcessHome()
+    defer { withExtendedLifetime(home) {} }
+    let sourceEnvironment = self.environment.merging(command.env) { _, value in value }
+    let environment = HostGitConfiguration.environment(
+      sourceEnvironment, home: home.url)
+    let directory = command.resolvedWorkingDirectory(base: configuration.projectDirectory)
+    let limit = timeout ?? command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs
+    let keys = try commandRunner.runIsolated(
+      executable: invocation.executable,
+      arguments: invocation.arguments + HostGitConfiguration.arguments + [
+        "config", "--null", "--name-only", "--list", "--no-includes",
+      ],
+      workingDirectory: directory, environment: environment,
+      timeoutMilliseconds: limit, maxOutputBytes: 1_048_576)
+    guard keys.exitCode == 0, !keys.timedOut, !keys.stdoutTruncated else {
+      throw GatewayToolError.executionFailed("Cannot inspect Git program configuration.")
+    }
+    var options = try HostGitConfiguration.overrides(for: keys.stdout)
+    if let operation = args.first,
+      ["commit", "merge", "rebase", "tag", "stash", "cherry-pick", "revert"].contains(operation)
+    {
+      for key in ["user.name", "user.email"] {
+        let identity = try commandRunner.runIsolated(
+          executable: invocation.executable,
+          arguments: invocation.arguments + HostGitConfiguration.arguments
+            + ["config", "--null", "--get", key],
+          workingDirectory: directory,
+          environment: HostGitConfiguration.identityEnvironment(sourceEnvironment),
+          timeoutMilliseconds: limit, maxOutputBytes: 65_536)
+        guard !identity.timedOut, !identity.stdoutTruncated,
+          identity.exitCode == 0 || identity.exitCode == 1
+        else { throw GatewayToolError.executionFailed("Cannot read Git author identity.") }
+        if identity.exitCode == 0 {
+          options += ["-c", "\(key)=\(String(identity.stdout.dropLast()))"]
+        }
+      }
+    }
+    let operation = args.drop(while: { $0 == "--no-optional-locks" }).first
+    let takesPathspecs =
+      operation.map {
+        [
+          "add", "blame", "checkout", "clean", "commit", "diff", "grep", "log", "ls-files",
+          "ls-tree", "reset", "restore", "rm", "show", "status",
+        ].contains($0)
+      } ?? false
+    let stashPaths = args.starts(with: ["stash", "push"]) || args.starts(with: ["stash", "show"])
+    let pathspecOptions = takesPathspecs || stashPaths ? ["--literal-pathspecs"] : []
+    return try commandRunner.runIsolated(
+      executable: invocation.executable,
+      arguments: invocation.arguments + HostGitConfiguration.arguments
+        + options + pathspecOptions + args,
+      workingDirectory: directory, environment: environment,
+      timeoutMilliseconds: limit,
+      maxOutputBytes: maxOutputBytes ?? configuration.policy.maxOutputBytes)
+  }
+
+  package func runSQLite(
+    command: CLICommandConfig, args: [String], timeout: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    let invocation = try resolveCLIInvocation(command)
+    let home = try PrivateProcessHome()
+    defer { withExtendedLifetime(home) {} }
+    var isolated = environment.merging(command.env) { _, value in value }
+    isolated["HOME"] = home.url.path
+    return try commandRunner.runIsolated(
+      executable: invocation.executable,
+      arguments: invocation.arguments + ["-init", "/dev/null", "-safe"] + args,
+      workingDirectory: command.resolvedWorkingDirectory(base: configuration.projectDirectory),
+      environment: isolated, timeoutMilliseconds: timeout, maxOutputBytes: maxOutputBytes)
+  }
+
   package func resolveCLIInvocation(_ command: CLICommandConfig) throws
     -> (executable: String, arguments: [String])
   {

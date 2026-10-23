@@ -574,11 +574,10 @@ extension ProjectToolProvider {
       arguments.append(contentsOf: paths)
     }
 
-    let result = try registeredCommands.runRegisteredCLI(
+    let result = try registeredCommands.runHostGit(
       command: command,
       args: arguments,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let changes = parseGitStatusPorcelainZ(result.stdout)
     let returnedChanges = Array(changes.prefix(maxResults))

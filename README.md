@@ -146,6 +146,32 @@ Plugin execution settings and runtime permissions are documented by each plugin.
 Callbacks into Computer MCP require the corresponding host capabilities and
 local confirmation.
 
+File and structured-data writes check directory handles, refuse observed symlinks
+and existing files with multiple hard links, and protect Git metadata and
+configuration. Created files receive a final descriptor link-count check;
+concurrent links can
+expose bytes before that check; see the [tool reference](Documentation/Reference/Tools.md#file-mutation-boundaries).
+Metadata changes recheck the opened inode and restore mode, times and affected xattrs on
+failure. Archive extraction validates one listing and runs tar once with a staging
+directory descriptor, streaming contents into host-created files in the
+destination before checked publication. Cleanup removes only inodes recorded at
+creation; foreign entries remain in staging and the error names the retained path.
+Extraction preserves member modification times; directory modes and times are
+restored deepest first after publication and staging cleanup.
+An existing destination keeps its own mode and times.
+`file.trash` refuses the project root and checks all members first; hard links are
+allowed. Checks do not provide atomic isolation from concurrent writers; details
+and rollback limits are in the tool reference. SQLite queries use safe
+mode, and CLI help returns registered metadata without executing commands.
+Writes protect every `.git` path component after Unicode normalization and
+case-insensitive comparison. A layout check at file-access creation refuses all
+project writes for a root `.git` symlink or an in-project Git directory or common
+directory outside a `.git` path. Host Git refuses local configuration includes
+before every call.
+In-process file moves stay on one volume; copy and then delete when crossing volumes.
+Host Git operations disable repository programs; `git.commit` commits only its
+explicit `paths`, preserving other staged changes.
+
 See [Security and Privacy](Documentation/Architecture/SecurityAndPrivacy.md) for
 the complete trust model and [SECURITY.md](SECURITY.md) for reporting a
 vulnerability.

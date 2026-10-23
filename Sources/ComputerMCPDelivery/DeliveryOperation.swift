@@ -18,8 +18,7 @@ extension DeliveryRepository {
       var failure: DeliveryFailure?
       do {
         try cancellation.check()
-        var arguments = ["worktree", "add", "-b", request.branch]
-        if scope.sparse { arguments.append("--no-checkout") }
+        let arguments = ["worktree", "add", "--no-checkout", "-b", request.branch]
         _ = try Self.checkedPath(scope.worktreeRoot + "/" + operationID, inside: root)
         guard !FileManager.default.fileExists(atPath: worktree.path) else {
           throw DeliveryFailure(
@@ -48,14 +47,14 @@ extension DeliveryRepository {
           }
           try requireWorktree(journal, at: base).run(
             ["sparse-checkout", "set", "--no-cone", "--"] + patterns, at: worktree)
-          let checkoutGit = try requireWorktree(journal, at: base)
-          guard try FileManager.default.contentsOfDirectory(atPath: worktree.path) == [".git"]
-          else {
-            throw DeliveryFailure(
-              reason: .cleanupFailed, detail: "Worktree changed before checkout: \(worktree.path)")
-          }
-          try checkoutGit.run(["checkout", "--no-overwrite-ignore"], at: worktree)
         }
+        let checkoutGit = try requireWorktree(journal, at: base)
+        guard try FileManager.default.contentsOfDirectory(atPath: worktree.path) == [".git"]
+        else {
+          throw DeliveryFailure(
+            reason: .cleanupFailed, detail: "Worktree changed before checkout: \(worktree.path)")
+        }
+        try checkoutGit.run(["checkout", "--no-overwrite-ignore"], at: worktree)
         journal.files = try edit(request, journal: &journal, git: worktreeGit)
         try cancellation.check()
         let stagingGit = try requireWorktree(journal, at: base)
@@ -107,7 +106,7 @@ extension DeliveryRepository {
           (error as? DeliveryFailure)
           ?? DeliveryFailure(
             reason: .gitFailed, detail: boundedDeliveryText(error.localizedDescription))
-        // A hook, timeout or failed journal write can leave a commit despite a failed command.
+        // A timeout or failed journal write can leave a commit despite a failed command.
         do {
           _ = try worktreeForCleanup(journal)
           if journal.commit == nil,
@@ -156,7 +155,8 @@ extension DeliveryRepository {
       try io.beforeMergeCheck(journal)
       try requireMainBranch(scope.defaultBranch)
       try git.requireRegularOriginalHead(at: main)
-      // No intervening Git command may separate this baseline check from the merge it guards.
+      try git.requireNoFilters(merging: journal.commit!, at: main)
+      // Check the baseline immediately before starting the merge.
       if try git.revision("HEAD", at: main) == validatedBase {
         // Git applies an existing merge autostash even when creation is disabled.
         let autostash = common.appendingPathComponent("MERGE_AUTOSTASH")
@@ -186,7 +186,7 @@ extension DeliveryRepository {
         let currentDefault = try git.revision("refs/heads/\(scope.defaultBranch)", at: root),
         currentDefault != validatedBase
       else { return }
-      // A post-merge hook may have advanced HEAD after the delivery commit landed.
+      // Another writer may advance HEAD after the delivery commit lands.
       guard try !git.isAncestor(journal.commit!, of: currentDefault, at: root) else { return }
       guard try rebase(&journal, onto: currentDefault, paths: paths) else { return }
       validatedBase = currentDefault

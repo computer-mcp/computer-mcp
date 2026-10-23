@@ -587,7 +587,7 @@ struct DeliveryRecoveryTests {
           *" --no-optional-locks "*) ;;
           *" rev-parse "*|*" merge-base "*|*" show-ref "*|*" worktree list "*) exit 88 ;;
         esac
-        exec \(quote(fixture.executable)) "$@"
+        exec \(quote(fixture.interceptedExecutable)) "$@"
         """
       try Data(script.utf8).write(to: wrapper)
       try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
@@ -669,8 +669,8 @@ struct DeliveryRecoveryTests {
     // The first commit holds the repository lock long enough for the second call to queue.
     let entered = fixture.root.appendingPathComponent(".git/entered")
     let release = fixture.root.appendingPathComponent(".git/release")
-    try fixture.hook(
-      "pre-commit",
+    try fixture.interceptGit(
+      "before-commit",
       body:
         "touch \(quote(entered.path))\nwhile ! test -f \(quote(release.path)); do sleep 0.02; done")
     let first = fixture.provider()

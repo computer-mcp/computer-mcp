@@ -48,7 +48,8 @@ final class DeliveryFixture: @unchecked Sendable {
         projects: [.init(id: "fixture", path: root.path)],
         cli: .init(commands: [
           .init(
-            id: "git", executable: executable, env: commandEnvironment, defaultTimeoutMs: timeout)
+            id: "git", executable: interceptedExecutable, env: commandEnvironment,
+            defaultTimeoutMs: timeout)
         ]),
         builtin: .init(enabled: ["delivery.scopes.list", "delivery.apply"]),
         delivery: .init(scopes: [scope ?? self.scope]), projectDirectory: root),
@@ -65,8 +66,9 @@ final class DeliveryFixture: @unchecked Sendable {
   ) throws
     -> DeliveryToolProvider
   {
-    let wrapper = temporary.url.appendingPathComponent("git-wrapper")
-    let script = "#!\(try testExecutable("sh"))\n" + body + "\nexec \(quote(executable)) \"$@\"\n"
+    let wrapper = temporary.url.appendingPathComponent("custom-git-wrapper")
+    let script =
+      "#!\(try testExecutable("sh"))\n" + body + "\nexec \(quote(interceptedExecutable)) \"$@\"\n"
     try Data(script.utf8).write(to: wrapper)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
     var configuration = tools(scope: scope, timeout: timeout).configuration
@@ -163,7 +165,34 @@ final class DeliveryFixture: @unchecked Sendable {
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
   }
 
-  /// Hook-created commits model other writers that do not participate in the delivery lock.
+  var interceptedExecutable: String {
+    let wrapper = temporary.url.appendingPathComponent("intercepted-git")
+    return FileManager.default.fileExists(atPath: wrapper.path) ? wrapper.path : executable
+  }
+
+  func interceptGit(_ event: String, body: String) throws {
+    let script = temporary.url.appendingPathComponent(event)
+    try Data(("#!/bin/sh\nset -eu\n" + body + "\n").utf8).write(to: script)
+    let wrapper = temporary.url.appendingPathComponent("intercepted-git")
+    let source = """
+      #!/bin/sh
+      event=
+      for argument do
+        case "$argument" in commit|rebase|merge) event=$argument; break;; esac
+      done
+      before=\(quote(temporary.url.path))/before-$event
+      after=\(quote(temporary.url.path))/after-$event
+      if test -f "$before"; then /bin/sh "$before" || exit $?; fi
+      \(quote(executable)) "$@"
+      status=$?
+      if test "$status" = 0 && test -f "$after"; then /bin/sh "$after"; fi
+      exit "$status"
+      """
+    try Data(source.utf8).write(to: wrapper)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+  }
+
+  /// Process interceptors model writers outside the delivery lock.
   func advanceDuringCommit(conflict: Bool = false, twice: Bool = false) throws {
     let main = quote(root.path)
     let git = quote(executable)
@@ -171,8 +200,8 @@ final class DeliveryFixture: @unchecked Sendable {
       "env -i PATH=\(quote(systemUtilityPath)) HOME=\(quote(temporary.url.path)) \(git) -C \(main) -c core.hooksPath=/dev/null"
     let content = conflict ? "gamma\\nstable\\n" : "concurrent\\n"
     let path = conflict ? "notes/log.md" : "concurrent.txt"
-    try hook(
-      "post-commit",
+    try interceptGit(
+      "after-commit",
       body: """
         if test "$(git branch --show-current)" = docs/entry && ! test -f \(main)/advanced; then
           touch \(main)/advanced
@@ -180,13 +209,12 @@ final class DeliveryFixture: @unchecked Sendable {
           \(clean) add -- \(path)
           \(clean) commit -m 'test: advance default'
           rm \(main)/advanced
-          # Disable this hook after its single simulated external write.
-          rm \(main)/.git/hooks/post-commit
+          rm "$0"
         fi
         """)
     if twice {
-      try hook(
-        "post-rewrite",
+      try interceptGit(
+        "after-rebase",
         body: """
           printf 'second\\n' > \(main)/second.txt
           \(clean) add -- second.txt

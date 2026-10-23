@@ -497,8 +497,8 @@ struct DeliveryGitConfigurationTests {
       try fixture.git(["config", "merge.autoStash", "true"])
       try fixture.git(["config", "branch.main.mergeOptions", "--autostash"])
       let path = target ? "notes/log.md" : "outside.txt"
-      try fixture.hook(
-        "post-merge", body: "cat \(quote(path)) > .git/merge-hook-content")
+      try fixture.interceptGit(
+        "after-merge", body: "cat \(quote(path)) > .git/merge-observed-content")
       let io = DeliveryIO(beforeMergeCheck: { _ in
         try fixture.write(path, "external main work\n")
         if staged { try fixture.git(["add", "--", path]) }
@@ -522,7 +522,7 @@ struct DeliveryGitConfigurationTests {
             == Data(contentsOf: fixture.root.appendingPathComponent(".git/main-index-before-merge"))
         )
       } else {
-        #expect(try fixture.read(".git/merge-hook-content") == "external main work\n")
+        #expect(try fixture.read(".git/merge-observed-content") == "external main work\n")
       }
     }
   }

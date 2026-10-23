@@ -18,7 +18,7 @@ bundled. Swift targets keep `package` access; no declaration is `public`.
 | Composition root | `ComputerMCPMacOS` | macOS |
 | Composition | `ComputerMCPControlPlane`, `ComputerMCPGateway` | neutral |
 | Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
-| Services | `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels` | neutral |
+| Services | `ComputerMCPEgress`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels` | neutral |
 | Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution`, `computer-mcp-execution-bootstrap` | neutral; POSIX; macOS |
 | Base | `ComputerMCPCore`, `ComputerMCPSandbox` | neutral |
 
@@ -52,6 +52,8 @@ Dependencies inside a layer are limited to these:
   owns its own store on top of it.
 - `Process`: bounded process execution, managed processes, shell sessions and
   executable discovery.
+- `Egress`: execution-scoped CONNECT/SOCKS listeners, destination policy, bounded
+  relaying and revocation, independent of MCP routing and permission storage.
 - `Transport`: socket and stream primitives and MCP framing.
 - `Downstream`: downstream MCP clients, child-process transports, catalog
   loading and value bridging.

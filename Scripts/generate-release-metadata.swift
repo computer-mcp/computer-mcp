@@ -505,7 +505,7 @@ private func makeNotices(
   }
   text += "\nADAPTED SOURCE: Anthropic sandbox-runtime (Apache-2.0)\n"
   text += "https://github.com/anthropics/sandbox-runtime/tree/aceba124fd725f4a43d7016ed3f5651d61f83115\n"
-  text += "Modified for Swift and execution-specific TCP port rules.\n\n"
+  text += "Modified for Swift, per-execution TCP listeners, and route-aware destination checks.\n\n"
   text += try String(contentsOf: sandboxLicense, encoding: .utf8)
   return Data(text.utf8)
 }

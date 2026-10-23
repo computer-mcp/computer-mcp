@@ -2,8 +2,13 @@
 
 Computer MCP is a SwiftPM package that builds layered internal targets, the
 `computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only the App and
-CLI are package products. On Linux the manifest declares the platform-neutral
+CLI are the declared package products. A private Darwin execution bootstrap ships
+in the App's `Contents/Helpers`; a standalone CLI uses a sibling bootstrap binary.
+On Linux the manifest declares the platform-neutral
 targets, and CI builds and tests them there.
+
+The [execution environment](ExecutionEnvironment.md) describes the sandbox,
+launch identity, outbound proxy and their validation entry points.
 
 ## Constraints
 
@@ -59,6 +64,9 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for distribution identity and environment, secrets, projects, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, project opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, project path resolution, process-table queries, child-input signal handling, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
+| `Sources/ComputerMCPSandbox/` | Neutral execution configuration, explicit environments, launch and route-observation contracts |
+| `Sources/ComputerMCPEgress/` | Execution-scoped proxy, destination policy, bounded relay and revocation |
+| `Sources/ComputerMCPExecutionBootstrap/` | Private Darwin identity handshake before Foundation launches execute user commands |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |

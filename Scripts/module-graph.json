@@ -4,6 +4,7 @@
     {
       "name": "base",
       "targets": [
+        "ComputerMCPPermissions",
         "ComputerMCPCore"
       ]
     },
@@ -68,6 +69,7 @@
     }
   ],
   "allow": [
+    "ComputerMCPCore->ComputerMCPPermissions",
     "ComputerMCPPlatformPOSIX->ComputerMCPPlatform",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatform",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatformPOSIX",

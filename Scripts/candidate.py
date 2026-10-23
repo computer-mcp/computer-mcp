@@ -183,7 +183,8 @@ def download(run, work, commit):
 def reuse_ci(runner, profile):
     """Trust GitHub's immutable artifact, never a caller-supplied receipt/key."""
     commit = runner.source["commit"]
-    deadline = time.monotonic() + 5400
+    # Outlasts the validate job of the matching master CI run (120 minutes).
+    deadline = time.monotonic() + 7800
     while True:
         runs = api("actions/workflows/ci.yml/runs?branch=master&event=push&per_page=100")["workflow_runs"]
         matching = [r for r in runs if r["head_sha"] == commit]

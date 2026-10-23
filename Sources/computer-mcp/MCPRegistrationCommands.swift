@@ -91,7 +91,7 @@ struct MCPRegistrations: AsyncParsableCommand {
         "Requires the registration and receipt digests from a reviewed doctor report. The host rechecks the process lock and confirmed host-service cleanup. Running processes, damaged records and unconfirmed authorization cleanup cannot be cleared. Does not stop or start processes, change grants or replay calls."
     )
     @Argument var id: String
-    @Option(name: .long) var workspaceID: String
+    @Option(name: .long) var projectID: String
     @Option(name: .long) var receiptID: String
     @Option(name: .long) var expectedReceiptDigest: String
     @Option(name: .long) var expectedCurrentDigest: String
@@ -101,7 +101,7 @@ struct MCPRegistrations: AsyncParsableCommand {
         try await connection.client().call(
           "mcp.process.recover",
           arguments: .object([
-            "id": .string(id), "workspace_id": .string(workspaceID),
+            "id": .string(id), "project_id": .string(projectID),
             "receipt_id": .string(receiptID),
             "expected_receipt_digest": .string(expectedReceiptDigest),
             "expected_current_digest": .string(expectedCurrentDigest),
@@ -156,16 +156,16 @@ struct MCPRegistrations: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
       commandName: "doctor", abstract: "Check one MCP's launch, connection and catalog as JSON.",
       discussion:
-        "Actively initializes only the selected enabled MCP in the named registered workspace, then closes the probe. It uses a read-only host callback scope without persistence access. It does not call downstream tools, change grants, enable registrations, install dependencies or prove production permissions. Disabled registrations are reported without launching. Exit 1 means connection health was not verified."
+        "Actively initializes only the selected enabled MCP in the named registered project, then closes the probe. It uses a read-only host callback scope without persistence access. It does not call downstream tools, change grants, enable registrations, install dependencies or prove production permissions. Disabled registrations are reported without launching. Exit 1 means connection health was not verified."
     )
     @Argument var id: String
-    @Option(name: .long) var workspaceID: String
+    @Option(name: .long) var projectID: String
     @OptionGroup var connection: AppControlConnectionOptions
     func run() async throws {
       let report = try await connection.client().call(
         "mcp.doctor",
         arguments: .object([
-          "id": .string(id), "workspace_id": .string(workspaceID),
+          "id": .string(id), "project_id": .string(projectID),
         ]))
       printJSON(report)
       if report.objectValue?["status"] != .string("passed") { throw ExitCode.failure }

@@ -101,7 +101,7 @@ public struct CapabilityCoverageEntry: Codable, Equatable, Sendable {
   public var toolName: String
   public var domain: String
   public var risk: String
-  public var workspaceRequirement: String
+  public var projectRequirement: String
   public var localOnly: Bool
   public var usesNetwork: Bool
   public var contract: CapabilityLayerResult
@@ -398,7 +398,7 @@ public struct ProductionReadinessReportBuilder: Sendable {
             toolName: tool.name,
             domain: tool.domain,
             risk: tool.risk,
-            workspaceRequirement: tool.workspaceRequirement,
+            projectRequirement: tool.projectRequirement,
             localOnly: tool.localOnly,
             usesNetwork: tool.usesNetwork,
             contract: contract,
@@ -593,7 +593,7 @@ public struct ProductionReadinessReportBuilder: Sendable {
 
   private static let fixtureDomains: Set<String> = [
     "archive", "csv", "file", "git", "image", "json", "jsonl", "markdown", "media",
-    "pdf", "plist", "skills", "sqlite", "structured", "toml", "workspace", "xml", "yaml",
+    "pdf", "plist", "skills", "sqlite", "structured", "toml", "project", "xml", "yaml",
   ]
 }
 

@@ -3,7 +3,7 @@ import Foundation
 
 package struct FileInfo {
   package var path: String
-  package var workspaceRelativePath: String
+  package var projectRelativePath: String
   package var type: String
   package var size: Int64?
   package var createdAt: Date?
@@ -17,7 +17,7 @@ package struct FileInfo {
   package var json: JSONValue {
     .object([
       "path": .string(path),
-      "workspace_relative_path": .string(workspaceRelativePath),
+      "project_relative_path": .string(projectRelativePath),
       "type": .string(type),
       "size_bytes": size.map { .integer(Int64($0)) } ?? .null,
       "created_at": createdAt.map { .string(iso8601String($0)) } ?? .null,

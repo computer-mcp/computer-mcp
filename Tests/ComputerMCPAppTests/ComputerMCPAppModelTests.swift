@@ -67,7 +67,7 @@ final class ComputerMCPAppModelTests {
   @Test
   func testProfileActivationRefreshesProfileDependentSections() {
     let refresh = ComputerMCPAppModel.profileActivationRefresh
-    #expect((refresh) == ([.profiles, .workspaces, .home, .providers, .tunnels]))
+    #expect((refresh) == ([.profiles, .projects, .home, .providers, .tunnels]))
   }
 
   @MainActor

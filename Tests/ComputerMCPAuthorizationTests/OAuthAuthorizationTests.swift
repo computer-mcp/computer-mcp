@@ -481,7 +481,7 @@ private final class MemoryTransaction: OAuthStoreTransaction {
   var state: MemoryOAuthState
   init(state: MemoryOAuthState) { self.state = state }
   func profile(id: GatewayProfileID) throws -> ProfileGrant? { nil }
-  func workspaceIDs() throws -> Set<String> { [] }
+  func projectIDs() throws -> Set<String> { [] }
   func requests(tunnelID: String) throws -> [OAuthAuthorizationRequest] {
     state.requests.values.filter { $0.tunnelID == tunnelID }
   }

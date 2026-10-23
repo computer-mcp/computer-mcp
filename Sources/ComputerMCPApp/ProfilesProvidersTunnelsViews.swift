@@ -9,7 +9,7 @@ struct ProfilesView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader(
+      ProjectHeader(
         "Client access",
         subtitle: "Choose what connected clients can do"
       ) {
@@ -59,9 +59,9 @@ struct ProfilesView: View {
     DisclosureGroup {
       switch model.profiles {
       case .idle, .loading:
-        LoadingWorkspaceView(title: "Loading profiles")
+        LoadingProjectView(title: "Loading profiles")
       case .failed(let message):
-        FailedWorkspaceView(message: message) { model.refresh(.profiles) }
+        FailedProjectView(message: message) { model.refresh(.profiles) }
       case .loaded(let profiles):
         ForEach(profiles.filter(\.isEnabled)) { profile in
           profileRow(profile)
@@ -134,7 +134,7 @@ struct ProvidersView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader(
+      ProjectHeader(
         "Providers",
         subtitle: "CLI, MCP, Computer Use, and external runtimes"
       ) {
@@ -148,13 +148,13 @@ struct ProvidersView: View {
 
       switch model.providers {
       case .idle, .loading:
-        LoadingWorkspaceView(title: "Loading providers")
+        LoadingProjectView(title: "Loading providers")
       case .failed(let message):
-        FailedWorkspaceView(message: message) {
+        FailedProjectView(message: message) {
           model.refresh(.providers)
         }
       case .loaded(let providers) where providers.isEmpty:
-        EmptyWorkspaceView(
+        EmptyProjectView(
           title: "No providers configured",
           detail: "Register providers in the active configuration before starting them.",
           systemImage: "shippingbox"
@@ -177,7 +177,7 @@ struct ProvidersView: View {
       content: {
         MCPRegistrationsView(model: model.mcpRegistrations) { pluginID in
           model.pluginManagement.selectedID = pluginID
-          model.selectedWorkspace = .plugins
+          model.selectedSection = .plugins
         }
       }
     )
@@ -308,7 +308,7 @@ struct TunnelsView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader(
+      ProjectHeader(
         "Tunnels",
         subtitle: "Independent OpenAI Secure MCP and Cloudflare named tunnel lifecycles"
       ) {
@@ -396,13 +396,13 @@ struct TunnelsView: View {
   private var openAIContent: some View {
     switch model.openAITunnels {
     case .idle, .loading:
-      LoadingWorkspaceView(title: "Loading OpenAI tunnels")
+      LoadingProjectView(title: "Loading OpenAI tunnels")
     case .failed(let message):
-      FailedWorkspaceView(message: message) {
+      FailedProjectView(message: message) {
         model.refresh(.tunnels)
       }
     case .loaded(let tunnels) where tunnels.isEmpty:
-      EmptyWorkspaceView(
+      EmptyProjectView(
         title: "No tunnels configured",
         detail: "Add a Tunnel manifest and local Keychain credentials.",
         systemImage: "point.3.connected.trianglepath.dotted"
@@ -435,11 +435,11 @@ struct TunnelsView: View {
   private var cloudflareContent: some View {
     switch model.cloudflareTunnels {
     case .idle, .loading:
-      LoadingWorkspaceView(title: "Loading Cloudflare tunnels")
+      LoadingProjectView(title: "Loading Cloudflare tunnels")
     case .failed(let message):
-      FailedWorkspaceView(message: message) { model.refresh(.tunnels) }
+      FailedProjectView(message: message) { model.refresh(.tunnels) }
     case .loaded(let tunnels) where tunnels.isEmpty:
-      EmptyWorkspaceView(
+      EmptyProjectView(
         title: "No named tunnels configured",
         detail:
           "Add a remotely managed named tunnel. Quick Tunnel and noauth are Validation development-only.",
@@ -731,9 +731,9 @@ private struct CloudflareTunnelLogsView: View {
       Divider()
       switch model.cloudflareTunnelLogs[tunnel.id] ?? .idle {
       case .idle, .loading:
-        LoadingWorkspaceView(title: "Loading redacted Cloudflare logs")
+        LoadingProjectView(title: "Loading redacted Cloudflare logs")
       case .failed(let message):
-        FailedWorkspaceView(message: message) { model.loadCloudflareTunnelLogs(id: tunnel.id) }
+        FailedProjectView(message: message) { model.loadCloudflareTunnelLogs(id: tunnel.id) }
       case .loaded(let logs):
         VStack(alignment: .leading, spacing: 12) {
           if logs.truncated { Label("Showing bounded log tails", systemImage: "scissors") }
@@ -962,9 +962,9 @@ private struct OpenAITunnelLogsView: View {
       Group {
         switch model.openAITunnelLogs[tunnel.id] ?? .idle {
         case .idle, .loading:
-          LoadingWorkspaceView(title: "Loading redacted Tunnel logs")
+          LoadingProjectView(title: "Loading redacted Tunnel logs")
         case .failed(let message):
-          FailedWorkspaceView(message: message) {
+          FailedProjectView(message: message) {
             model.loadOpenAITunnelLogs(id: tunnel.id)
           }
         case .loaded(let snapshot):

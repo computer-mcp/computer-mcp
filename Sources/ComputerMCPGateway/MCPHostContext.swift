@@ -4,7 +4,7 @@ import ComputerMCPDownstream
 import ComputerMCPPlatform
 import Foundation
 
-/// Workspace launch provenance and gateway-owned authority and lifecycle state.
+/// Project launch provenance and gateway-owned authority and lifecycle state.
 package struct MCPHostContext: MCPHostEnvironment {
   package let launchMetadata: MCPHostLaunchMetadata
   package let tools: MCPHostToolDirectory?
@@ -19,17 +19,17 @@ package struct MCPHostContext: MCPHostEnvironment {
   /// Verified admission evidence for host ownership writes, never inferred from caller provenance.
   let verifiedPrincipalID: String?
 
-  package var workspaceRoot: URL { URL(fileURLWithPath: launchMetadata.workspace.rootPath) }
+  package var projectRoot: URL { URL(fileURLWithPath: launchMetadata.project.rootPath) }
   package var providesHostServices: Bool { tools != nil }
 
   package init(
-    runtimeID: UUID, context: ExecutionContext, workspaceID: String, rootURL: URL,
-    readOnly: Bool, tools: MCPHostToolDirectory? = nil, managedWorkspaceRoot: URL? = nil,
+    runtimeID: UUID, context: ExecutionContext, projectID: String, rootURL: URL,
+    readOnly: Bool, tools: MCPHostToolDirectory? = nil, managedProjectRoot: URL? = nil,
     processOwnershipRoot: URL? = nil, executionDatabase: GatewayDatabase? = nil
   ) {
     launchMetadata = MCPHostLaunchMetadata(
-      runtimeID: runtimeID, context: context, workspaceID: workspaceID, rootURL: rootURL,
-      readOnly: readOnly, managedWorkspaceRoot: managedWorkspaceRoot)
+      runtimeID: runtimeID, context: context, projectID: projectID, rootURL: rootURL,
+      readOnly: readOnly, managedProjectRoot: managedProjectRoot)
     self.tools = tools
     self.processOwnershipRoot = processOwnershipRoot
     self.executionDatabase = executionDatabase

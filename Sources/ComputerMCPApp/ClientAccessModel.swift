@@ -100,7 +100,7 @@ final class ClientAccessModel: ObservableObject {
 
   var controllingSessions: [GatewayControlSessionSnapshot] {
     (snapshot?.sessions ?? []).filter {
-      $0.currentAccess == .workspaceOperations || $0.currentAccess == .localFullAccess
+      $0.currentAccess == .projectOperations || $0.currentAccess == .localFullAccess
     }
   }
 
@@ -296,7 +296,7 @@ extension GatewayPermissionMode {
   var accessRank: Int {
     switch self {
     case .readOnly: 0
-    case .workspaceOperations: 1
+    case .projectOperations: 1
     case .localFullAccess: 2
     }
   }
@@ -304,7 +304,7 @@ extension GatewayPermissionMode {
   var clientAccessLabel: String {
     switch self {
     case .readOnly: "Observe"
-    case .workspaceOperations: "Control — Restricted Access"
+    case .projectOperations: "Control — Restricted Access"
     case .localFullAccess: "Control — Full Access"
     }
   }
@@ -315,7 +315,7 @@ extension GatewayControlSessionSnapshot {
     guard !ended, profile?.grant.allowedCallers.contains(caller) == true else { return nil }
     guard fullAccessConsent == nil else { return .localFullAccess }
     return accessLimit == .readOnly || profile?.grant.mode == .readOnly
-      ? .readOnly : .workspaceOperations
+      ? .readOnly : .projectOperations
   }
 }
 

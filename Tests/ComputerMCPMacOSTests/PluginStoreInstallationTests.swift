@@ -149,7 +149,7 @@ struct PluginStoreInstallationTests {
     var proposed = original.plugins
     proposed.settings[record.pluginID]?.enabled = true
     let state = GatewayDatabase.ConfigurationState(
-      workspaces: original.workspaces, workspaceAliases: original.workspaceAliases,
+      projects: original.projects, projectAliases: original.projectAliases,
       profiles: original.profiles, plugins: proposed)
     let storage = try PluginInstallationStorage(
       at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
@@ -166,7 +166,7 @@ struct PluginStoreInstallationTests {
         context.trustedPrincipalID = principal
         candidates.append(
           try await GatewayRuntime.prepare(
-            configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+            configuration: GatewayConfiguration(projectDirectory: fixture.files.root),
             context: context, database: database, state: state,
             platform: MacOSPlatform.services,
             bundledPlugins: BundledPlugins(packages: [], issues: []), artifactStorage: storage))
@@ -212,7 +212,7 @@ struct PluginStoreInstallationTests {
         proposed, bundled: bundled, applications: MacOSPlatform.services.applications
       ).plugins : nil
     let runtime = try await GatewayRuntime.make(
-      configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
+      configuration: GatewayConfiguration(projectDirectory: fixture.files.root),
       database: database, platform: MacOSPlatform.services, plugins: plugins, pluginState: proposed,
       bundledPlugins: bundled)
     var authenticated: GatewayRuntime?
@@ -251,12 +251,12 @@ struct PluginStoreInstallationTests {
     var active = PluginStoreSnapshot()
     active.revision = 2
     try database.savePluginStoreSnapshot(active, expectedRevision: 1)
-    let workspace = RegisteredWorkspace(
+    let project = RegisteredProject(
       id: "duplicate", displayName: "Fixture", rootPath: fixture.files.root.path)
-    await #expect(throws: GatewayRuntimeError.duplicateWorkspaceID("duplicate")) {
+    await #expect(throws: GatewayRuntimeError.duplicateProjectID("duplicate")) {
       try await GatewayRuntime.make(
-        configuration: GatewayConfiguration(workspaceDirectory: fixture.files.root),
-        database: database, registeredWorkspaces: [workspace, workspace],
+        configuration: GatewayConfiguration(projectDirectory: fixture.files.root),
+        database: database, registeredProjects: [project, project],
         platform: MacOSPlatform.services, pluginState: proposed,
         bundledPlugins: BundledPlugins(packages: [], issues: []))
     }
@@ -290,7 +290,7 @@ struct PluginStoreInstallationTests {
     let artifact = try #require(database.pluginOwnedDirectories().first).identity
     let root = try #require(database.mcpProcessOwnershipRoot)
     let owner = try MCPProcessOwnership.acquire(
-      root: root, workspace: fixture.files.root, registration: "native", artifact: artifact)
+      root: root, project: fixture.files.root, registration: "native", artifact: artifact)
     let inherited = try fcntl(owner.supervisorHandle().fileDescriptor, F_DUPFD_CLOEXEC, 10)
     try #require(inherited >= 0)
     let handle = FileHandle(fileDescriptor: inherited, closeOnDealloc: true)
@@ -308,11 +308,11 @@ struct PluginStoreInstallationTests {
         try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
       let receipt = try #require(
         MCPProcessOwnership.inspect(
-          root: root, workspace: fixture.files.root, registration: "native"
+          root: root, project: fixture.files.root, registration: "native"
         )
         .first)
       try MCPProcessOwnership.recover(
-        root: root, workspace: fixture.files.root, registration: "native", id: receipt.id,
+        root: root, project: fixture.files.root, registration: "native", id: receipt.id,
         expectedDigest: receipt.digest)
     } else {
       try owner.finish(confirmed: true)
@@ -435,7 +435,7 @@ struct PluginStoreInstallationTests {
     let databaseURL = fixture.files.root.appendingPathComponent("gateway.sqlite")
     let database = try GatewayDatabase(path: databaseURL.path)
     let store = PluginStore(database: database, platform: MacOSPlatform.services)
-    try database.saveWorkspace(
+    try database.saveProject(
       .init(id: "unrelated", displayName: "Keep", rootPath: fixture.files.root.path))
     let first = try await fixture.install(into: store, revision: 0)
     #expect(first.issues.isEmpty)
@@ -485,7 +485,7 @@ struct PluginStoreInstallationTests {
     #expect(final.snapshot.selectedInstallations.isEmpty)
     #expect(final.snapshot.settings["combined"] == settings)
     #expect(try database.pluginOwnedDirectories().isEmpty)
-    #expect(try database.workspace(id: "unrelated")?.displayName == "Keep")
+    #expect(try database.project(id: "unrelated")?.displayName == "Keep")
     #expect(try fixture.currentDigest() == fixture.digest)
     #expect(
       try FileManager.default.contentsOfDirectory(atPath: fixture.installationRoot.path) == [
@@ -526,7 +526,7 @@ struct PluginStoreInstallationTests {
       try FileManager.default.contentsOfDirectory(atPath: fixture.installationRoot.path).count == 2)
   }
 
-  @Test(arguments: ["plugin", "workspace", "profile"])
+  @Test(arguments: ["plugin", "project", "profile"])
   func suspendedInstallationRechecksConfigurationAndHoldsTheCrossStoreLock(change: String)
     async throws
   {
@@ -560,13 +560,13 @@ struct PluginStoreInstallationTests {
       switch change {
       case "plugin":
         _ = try await other.setEnabled(false, for: "another", expectedRevision: 0)
-      case "workspace":
-        try concurrent.saveWorkspace(
-          RegisteredWorkspace(id: "added", displayName: "Added", rootPath: fixture.files.root.path))
+      case "project":
+        try concurrent.saveProject(
+          RegisteredProject(id: "added", displayName: "Added", rootPath: fixture.files.root.path))
       default:
         try concurrent.saveProfile(
           ProfileGrant(
-            id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: [],
+            id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: [],
             allowedCallers: [.localCLI]))
       }
       let changed = try database.configurationState()
@@ -842,7 +842,7 @@ struct PluginInstallationStorageTests {
     let processRoot = fixture.installationRoot.deletingLastPathComponent().appendingPathComponent(
       "processes")
     let owner = try MCPProcessOwnership.acquire(
-      root: processRoot, workspace: fixture.installationRoot, registration: "mcp",
+      root: processRoot, project: fixture.installationRoot, registration: "mcp",
       artifact: identity)
     defer { try? owner.finish(confirmed: true) }
     #expect(throws: PluginStoreError.artifactInUse) {

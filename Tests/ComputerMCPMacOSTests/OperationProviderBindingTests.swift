@@ -90,8 +90,8 @@ private struct ProviderBindingFixture {
   let profile = ProfileGrantConfig(
     id: .chatGPTOperate,
     capabilities: ["operations.prepare", "operations.commit", "review.mutate", "mcp.tools.call"],
-    workspaces: ["fixture"], allowedCallers: [.secureTunnel], mcpServers: ["alpha", "beta"],
-    mode: .workspaceOperations, confirmationPolicy: .riskBased)
+    projects: ["fixture"], allowedCallers: [.secureTunnel], mcpServers: ["alpha", "beta"],
+    mode: .projectOperations, confirmationPolicy: .riskBased)
 
   init() throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -137,13 +137,13 @@ private struct ProviderBindingFixture {
           source: changed && scenario == .serverMapping ? "beta" : "alpha",
           tool: changed && scenario == .toolMapping ? "replace" : "mutate",
           risk: CapabilityRisk.externalWrite.rawValue)
-      ], workspaceDirectory: root)
+      ], projectDirectory: root)
     return try GatewayRuntime(
       configuration: configuration,
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-owner"),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, mcpClient: client, plugins: [plugin])
   }
 
@@ -151,7 +151,7 @@ private struct ProviderBindingFixture {
     let result = try runtime.callTool(
       name: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string("fixture"),
+        "project_id": .string("fixture"),
         "tool": .string(generic ? "mcp.tools.call" : "review.mutate"),
         "arguments": arguments(generic: generic),
       ]), context: .empty)
@@ -170,7 +170,7 @@ private struct ProviderBindingFixture {
     try runtime.callTool(
       name: "operations.commit",
       arguments: .object([
-        "workspace_id": .string("fixture"), "ticket_id": .string(ticket),
+        "project_id": .string("fixture"), "ticket_id": .string(ticket),
         "tool": .string(generic ? "mcp.tools.call" : "review.mutate"),
         "arguments": arguments(generic: generic),
       ]), context: .empty)

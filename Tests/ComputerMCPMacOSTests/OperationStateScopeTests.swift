@@ -18,8 +18,8 @@ struct OperationStateScopeTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let database = try GatewayDatabase(inMemory: ())
     let profile = ProfileGrantConfig(
-      id: .chatGPTOperate, capabilities: ["*"], workspaces: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+      id: .chatGPTOperate, capabilities: ["*"], projects: ["fixture"],
+      allowedCallers: [.secureTunnel], mode: .projectOperations)
     try database.saveProfile(profile.grant)
     let client = StateScopeMCPClient()
     let server = MCPServerConfig(
@@ -33,9 +33,9 @@ struct OperationStateScopeTests {
             name: "review.change", adapter: .mcp, source: "external", tool: tool,
             risk: CapabilityRisk.destructive.rawValue)
         ]),
-      context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture"),
+      context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture"),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, mcpClient: client)
     do {
       let input: JSONValue =
@@ -85,8 +85,8 @@ struct OperationStateScopeTests {
     try Data("before".utf8).write(to: unrelated)
     let database = try GatewayDatabase(inMemory: ())
     let profile = ProfileGrantConfig(
-      id: .chatGPTOperate, capabilities: ["*"], workspaces: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+      id: .chatGPTOperate, capabilities: ["*"], projects: ["fixture"],
+      allowedCallers: [.secureTunnel], mode: .projectOperations)
     try database.saveProfile(profile.grant)
     let server = MCPServerConfig(
       id: "external", transport: .stdio, command: "/usr/bin/false", exposure: .reexport,
@@ -94,9 +94,9 @@ struct OperationStateScopeTests {
       toolRisks: ["mutate": .destructive, "file.write": .destructive])
     let runtime = try GatewayRuntime(
       configuration: .init(profiles: [profile], mcp: .init(servers: [server])),
-      context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture"),
+      context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture"),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, mcpClient: StateScopeMCPClient())
     do {
       let target: JSONValue =
@@ -142,29 +142,29 @@ struct OperationStateScopeTests {
   }
 
   @Test
-  func boundWorkspaceRevocationHidesToolsAndUnboundCatalogDoesNotRevealContents() async throws {
+  func boundProjectRevocationHidesToolsAndUnboundCatalogDoesNotRevealContents() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    try Data("private workspace content".utf8).write(to: root.appendingPathComponent("private.txt"))
+    try Data("private project content".utf8).write(to: root.appendingPathComponent("private.txt"))
     let database = try GatewayDatabase(inMemory: ())
     let profile = ProfileGrantConfig(
       id: .chatGPTOperate,
-      capabilities: ["workspace.list", "workspace.describe", "file.read", "file.write"],
-      workspaces: ["fixture"], allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+      capabilities: ["project.list", "project.describe", "file.read", "file.write"],
+      projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations)
     try database.saveProfile(profile.grant)
     let context = ExecutionContext(
-      caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture")
+      caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture")
     let runtime = try GatewayRuntime(
       configuration: .init(
         profiles: [profile], builtin: .init(enabled: ["file.read", "file.write"])),
       context: context, database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services)
     do {
       #expect(try runtime.listTools(context: .empty).contains { $0.name == "file.read" })
       var revoked = try #require(database.profiles().first)
-      revoked.workspaceIDs = []
+      revoked.projectIDs = []
       try database.saveProfile(revoked, expectedRevision: revoked.authorizationRevision)
       #expect(try runtime.listTools(context: .empty).isEmpty)
       #expect(throws: (any Error).self) {
@@ -172,20 +172,20 @@ struct OperationStateScopeTests {
           name: "file.read", arguments: .object(["path": .string("private.txt")]), context: .empty)
       }
       var unbound = context
-      unbound.workspaceID = nil
+      unbound.projectID = nil
       #expect(
         try runtime.listTools(context: unbound, invocationContext: .empty).contains {
           $0.name == "file.read"
         })
       let list = try runtime.callTool(
-        name: "workspace.list", arguments: .object([:]), context: unbound, invocationContext: .empty
+        name: "project.list", arguments: .object([:]), context: unbound, invocationContext: .empty
       )
       #expect(
-        list.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["workspaces"]
+        list.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["projects"]
           == .array([]))
       #expect(throws: (any Error).self) {
         try runtime.callTool(
-          name: "workspace.describe", arguments: .object(["workspace_id": .string("fixture")]),
+          name: "project.describe", arguments: .object(["project_id": .string("fixture")]),
           context: unbound, invocationContext: .empty)
       }
       await runtime.shutdown()

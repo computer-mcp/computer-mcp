@@ -44,9 +44,9 @@ struct SkillsToolProviderContractTests {
   }
 
   @Test
-  func asynchronousFrontmatterUsesSharedParsingOutsideWorkspace() async throws {
+  func asynchronousFrontmatterUsesSharedParsingOutsideProject() async throws {
     let root = try ScopedTemporaryDirectory()
-    let workspace = try ScopedTemporaryDirectory()
+    let project = try ScopedTemporaryDirectory()
     let skill = root.url.appendingPathComponent("example")
     try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
     try """
@@ -61,7 +61,7 @@ struct SkillsToolProviderContractTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           skills: .init(enabled: true, roots: [.init(id: "fixture", path: root.url.path)]),
-          workspaceDirectory: workspace.url)))
+          projectDirectory: project.url)))
     let invocation = ToolInvocation(
       name: "skills.frontmatter",
       arguments: .object(["root_id": .string("fixture"), "name": .string("example")]),

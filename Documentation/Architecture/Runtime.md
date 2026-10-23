@@ -20,24 +20,24 @@ and that socket.
 | `CloudflareTunnelManager` | Own loopback HTTP, named-tunnel token file, cloudflared, metrics, and cleanup |
 | `AppFileLogger` | Bounded, rotated, redacted lifecycle JSONL |
 
-Fresh installation is a valid fail-closed server with no workspace. It supports
-MCP initialization and workspace onboarding tools without granting filesystem
+Fresh installation is a valid fail-closed server with no project. It supports
+MCP initialization and project onboarding tools without granting filesystem
 access.
 
-Workspace registrations and live access are separate. A missing directory or
-failed bookmark affects that workspace, not initialization or other healthy
-workspaces. `workspace.list` and `workspace.describe` expose `access.status`
-and a stable resolution error for workspaces visible to the caller. Management
+Project registrations and live access are separate. A missing directory or
+failed bookmark affects that project, not initialization or other healthy
+projects. `project.list` and `project.describe` expose `access.status`
+and a stable resolution error for projects visible to the caller. Management
 CLI and App health checks resolve access explicitly and close their temporary
-scope. No provider is created for an inaccessible workspace; if all are
-inaccessible, core diagnostics remain available. Explicit workspace selection
+scope. No provider is created for an inaccessible project; if all are
+inaccessible, core diagnostics remain available. Explicit project selection
 never falls back to another directory, and grants are checked before revealing
 access errors. A runtime created without access needs fresh construction after
 the directory or authorization is restored.
 Duplicate registration IDs and invalid provider configuration still reject
 construction.
 
-Every new workspace execution revalidates its current registration and bookmark
+Every new project execution revalidates its current registration and bookmark
 access, then compares the resolved folder with the runtime's admitted physical
 identity (canonical path, device, inode and available creation time). Replacing a
 folder at the same path, redirecting a symlink, or losing bookmark access denies
@@ -45,7 +45,7 @@ new calls, including continuations selected through an old owner. Existing work
 retains its owner and is not terminated by this check. Terminal result retention
 uses the same physical identity. Temporary validation scopes are balanced;
 bookmark resolution does not display system UI or persist a refreshed bookmark
-during a call. Workspace diagnostics report current access failures without
+during a call. Project diagnostics report current access failures without
 executing providers. These checks do not grant macOS privacy permissions or
 provide an operating-system filesystem sandbox.
 
@@ -62,11 +62,11 @@ it does not acknowledge cleanup inside an independently crashed downstream
 service or make an unknown write result safe to replay.
 
 Product entry points construct runtimes through `GatewayRuntime.make`. It moves
-synchronous discovery onto a blocking queue and retains each acquired workspace
+synchronous discovery onto a blocking queue and retains each acquired project
 access, registry and router as construction progresses. Failed or cancelled
 construction joins the same cleanup that a completed runtime uses. Registry
 ownership transfers to its router after successful catalog validation. Cleanup
-runs in reverse acquisition order, retaining workspace access until its provider
+runs in reverse acquisition order, retaining project access until its provider
 cleanup finishes. Concurrent runtime or router shutdown callers await one shared
 completion task. The synchronous initializer starts cleanup when it fails;
 callers that need the completion boundary use the asynchronous factory.
@@ -76,7 +76,7 @@ local tool execution and socket-session creation construct GatewayRuntime on a
 blocking-operation queue. Downstream discovery therefore does not occupy the
 control actor or Swift's cooperative executor. Before publishing a runtime or
 derived catalog, the service checks cancellation and compares the current
-manifest, registered workspaces, persisted profiles and plugin selection with
+manifest, registered projects, persisted profiles and plugin selection with
 the inputs captured before discovery. A changed input rejects the pending
 result and closes the constructed runtime; callers refresh before retrying.
 Profile mutations also validate their inputs before starting discovery.
@@ -97,13 +97,13 @@ discarded and automatically retried when configuration changes.
 Cloudflare startup has one owned task per profile. Stop cancels and joins a
 pending start before closing any published origin and process; concurrent stops
 join the same task, and replacement starts are refused during either transition.
-Startup rechecks the host configuration, workspace, grant and plugin inputs
+Startup rechecks the host configuration, project, grant and plugin inputs
 around origin creation and process publication. Its downstream MCP client uses
 the host's credential provider. Version probes use the bounded command runner on
 the provider-probe queue, with the inherited launch environment captured
 explicitly; truncated, timed-out or failed probes cannot authorize startup.
 
-MCP connection diagnostics resolve a single registration and a registered workspace
+MCP connection diagnostics resolve a single registration and a registered project
 through the App control plane. An ephemeral GatewayRuntime retains the selected
 launch configuration and standard connection lifecycle, with an explicit read-only
 diagnostic profile and no database authority. Discovery runs after host context
@@ -121,7 +121,7 @@ access. Removal requires the host's tool mappings and profile references to be
 resolved first; it does not delete external dependencies.
 
 SwiftUI and the embedded CLI both call `AppControlPlaneOperations` for
-mutations. Workspace, profile, manifest, provider, gateway, and Tunnel actions
+mutations. Project, profile, manifest, provider, gateway, and Tunnel actions
 therefore share validation, running-gateway restart, desired-Tunnel
 reconnection, and rollback behavior. The CLI reaches that layer through the
 owner-only control socket; it does not open App storage as a second service
@@ -220,7 +220,7 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   execution reuses managed process sessions with per-call ownership and cancellation.
   Status, raw help/exec, tree exporters and projected calls use the registry's
   host environment with registration overrides. Relative executable paths and
-  PATH entries resolve against the configured CLI workspace directory. Default
+  PATH entries resolve against the configured CLI project directory. Default
   raw command runners capture that host environment; tree execution receives
   the complete merged environment without adding ambient process values.
   Declared executable checks run inside each authorized call, before target argv,
@@ -235,11 +235,11 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   completion joins both output readers, including inherited pipe writers.
 - Downstream MCP: persistent MCP SDK clients over stdio or Streamable
   HTTP, including tools, resources, prompts, list-changed events, and
-  cancellation. Each workspace registry owns an independently scoped client,
+  cancellation. Each project registry owns an independently scoped client,
   connection pool, and tool-change stream. Authorization wrappers preserve the
   host policy when creating that scope. Stopping one registry closes its own
-  sessions, not another workspace's sessions with the same registration IDs.
-- Builtin/Skills: bounded typed operations inside resolved workspace or Skill
+  sessions, not another project's sessions with the same registration IDs.
+- Builtin/Skills: bounded typed operations inside resolved project or Skill
   roots.
 - Computer Use: native macOS observation/action service with non-prompting TCC
   preflight, main-thread AX action dispatch, host-process self-target denial,
@@ -317,7 +317,7 @@ retirement. Neither transition retries an issued tool call.
 
 HTTP registrations may select a Keychain bearer-token reference bound to their
 exact endpoint. Only host configuration or plugin host settings own this
-binding; package manifests do not. App-owned runtimes, workspace-scoped clients
+binding; package manifests do not. App-owned runtimes, project-scoped clients
 and connection diagnostics use the same Keychain provider. Each HTTP exchange
 resolves its current value off the UI thread with authentication prompts
 disabled. Missing credentials fail before a request is sent. HTTP sessions are
@@ -354,8 +354,8 @@ signalled. The supervisor also cleans up when its owner exits. This is process
 ownership, not an OS sandbox, and does not claim containment of descendants
 that deliberately leave the group.
 
-For stdio, the scoped client's workspace directory is the base for an absent,
-empty, `workspace`, or relative registration `cwd`. The transport resolves the
+For stdio, the scoped client's project directory is the base for an absent,
+empty, `project`, or relative registration `cwd`. The transport resolves the
 command and its interpreters in that directory using the scoped host
 environment plus registration overrides. It retains the resolved lookup path,
 including a selected symlink, for launch. This runtime context is not serialized
@@ -363,17 +363,17 @@ into plugin declarations or the source manifest. Explicit connection validation
 uses the configuration directory and closes its client on success or failure.
 
 Gateway-owned stdio sessions also receive immutable caller/profile, runtime,
-workspace and transport provenance through a protected launch environment
+project and transport provenance through a protected launch environment
 entry. Direct and plugin registrations use the same injection path. Each call
 must retain its connection's caller/profile/transport identity; its request ID
-and selected granted workspace can vary. This metadata is neither a grant nor
+and selected granted project can vary. This metadata is neither a grant nor
 an OS sandbox. See [MCP Protocol](../Reference/MCPProtocol.md#downstream-host-context)
 for the wire contract and authorization boundary.
 
 ## Scoped Plugin Host Services
 
 Callback-enabled owned stdio adapters receive a private standard MCP endpoint.
-The host retains caller grants, workspace registrations, approval authority and
+The host retains caller grants, project registrations, approval authority and
 audit; the adapter owns domain state and vendor protocol execution.
 `MCPHostInvocation` records the live outer call without exporting a credential.
 The host sends only its correlation UUID in downstream request metadata.
@@ -392,25 +392,25 @@ Private services match that reference, current grants and, for destructive
 removal, the executing operation ticket. Binding is lazy so plugin catalog
 startup does not depend on a partially constructed Gateway runtime.
 
-Callback-enabled calls require a bound workspace, including the generic MCP
-entry point. A sole registered workspace can be selected automatically;
+Callback-enabled calls require a bound project, including the generic MCP
+entry point. A sole registered project can be selected automatically;
 multiple registrations require an explicit selection. Host authorization keeps
 its initialization source: configuration and builtin grants can exist without
 a profile row, while runtimes initialized with persisted authority require that
 row to remain present. Current persisted restrictions are reapplied to callbacks.
 
-`MCPBoundHostServices` owns the atomic derived-workspace registration ledger
+`MCPBoundHostServices` owns the atomic derived-project registration ledger
 and projects bounded diagnostics. Its private namespace permits only
-invocation inspection, workspace registration, verified removal, and diagnostic reads for matching
+invocation inspection, project registration, verified removal, and diagnostic reads for matching
 live invocations. Plugins declare their semantic actions in tool metadata;
-host operation tickets and workspace grants remain in the Gateway Database.
+host operation tickets and project grants remain in the Gateway Database.
 
 See [Scoped host services](../Reference/HostServices.md) for configuration,
 wire surface, scope checks, bounds and recovery behavior.
 
 ## Tool Catalog Lifecycle
 
-Each workspace router owns an immutable snapshot of tool definitions,
+Each project router owns an immutable snapshot of tool definitions,
 capabilities, and exact provider routes. Complete discovery and validation run
 before an atomic replacement. Reexport naming is resolved from the explicit
 host prefix choice, including an empty prefix that preserves native tool names.
@@ -432,7 +432,7 @@ manual refresh behavior, and client update requirements.
 ## Downstream process ownership
 
 Stdio MCP launches acquire a private ownership receipt before spawning. Its
-scope is the canonical workspace root and registration ID within the host's
+scope is the canonical project root and registration ID within the host's
 recovery storage. A file-backed Gateway database uses a sibling
 `<database filename>.mcp-processes` directory; clients without a file-backed
 database use `computer-mcp-mcp-processes` in the process's platform temporary
@@ -477,9 +477,9 @@ are separate: an installation recovery operation cannot clear process receipts.
 ## Policy And Results
 
 Every call is bound to `ExecutionContext` containing a verified authorization
-principal, caller provenance, profile, and optional workspace id. `GatewayPolicy`
+principal, caller provenance, profile, and optional project id. `GatewayPolicy`
 checks the provider's `CapabilityDescriptor` against the explicit grant mode,
-capabilities, workspace access, and confirmation policy. `operations.prepare`
+capabilities, project access, and confirmation policy. `operations.prepare`
 binds the exact arguments and supported target state to a short-lived,
 single-use ticket. A `pending_approval` ticket requires local App or management
 CLI approval before `operations.commit`; preparing a ticket or supplying a

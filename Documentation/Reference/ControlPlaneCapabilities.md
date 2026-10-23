@@ -22,8 +22,8 @@ commands.
 | OAuth client access | pending pairing requests, local approval/denial, grant list/revocation | `clients authorizations`, `clients authorize`, `clients deny`, `clients grants`, `clients revoke-grant` | Client access |
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
-| Workspaces | list, canonical add, remove, profile enable/disable, deduplication | `workspace …` | Workspaces |
-| Profiles | list, show, activate, workspace grant/revoke, permission mode, confirmation policy, advanced grants | `profile …` | Connection defaults and restricted permission selection |
+| Projects | list, canonical add, remove, profile enable/disable, deduplication | `project …` | Projects |
+| Profiles | list, show, activate, project grant/revoke, permission mode, confirmation policy, advanced grants | `profile …` | Connection defaults and restricted permission selection |
 | Providers | recorded health and bounded Doctor refresh | `providers list|doctor` | Providers |
 | Permissions | non-prompting TCC status; list, approve, or deny exact host operation tickets | `permissions status`, `permissions approvals …` | Permissions and pending host approvals; TCC prompting remains an explicit local UI action |
 | Audit | bounded redacted event list | `audit list` | Audit |
@@ -36,17 +36,17 @@ commands.
 App-managed gateway connections expose typed management through their verified
 session. The host applies the same capability policy, execution metadata and audit
 as other tools. Full Access must already have explicit local consent; normal
-workspace changes and verified official plugin changes need no additional prompt.
+project changes and verified official plugin changes need no additional prompt.
 Standalone fixed-manifest gateways expose their configured execution tools and
 optional local client-consent socket.
 
 | Tools | Inputs and authority |
 | --- | --- |
-| `workspace.list`, `workspace.describe` | Inspect workspaces within the current grant; describe takes `workspace_id`. |
-| `workspace.add` | Full Access; absolute `path`, optional `display_name`. |
-| `workspace.repair` | Full Access; `id`, new `path`, reviewed `expected_root_path`, optional `display_name`. |
-| `workspace.remove` | Full Access; `id`, reviewed `expected_root_path`. Removes the registration, preserving files and retained work. |
-| `workspace.grant` | Full Access; `id`, `enabled`, `expected_profile_revision`. Changes only the connection's profile. A changed profile invalidates its prior Full consent. |
+| `project.list`, `project.describe` | Inspect projects within the current grant; describe takes `project_id`. |
+| `project.add` | Full Access; absolute `path`, optional `display_name`. |
+| `project.repair` | Full Access; `id`, new `path`, reviewed `expected_root_path`, optional `display_name`. |
+| `project.remove` | Full Access; `id`, reviewed `expected_root_path`. Removes the registration, preserving files and retained work. |
+| `project.grant` | Full Access; `id`, `enabled`, `expected_profile_revision`. Changes only the connection's profile. A changed profile invalidates its prior Full consent. |
 | `profile.show` | Inspect the connection's own session, profile and revisions. |
 | `profile.limit` | `mode` (`observe` or `restricted`) and `expected_revision`; may only reduce this session's access. |
 | `plugin.list`, `plugin.describe` | Inspect safe plugin summaries and exact store revision. Both accept `after_id` and `limit` (default 50, maximum 200); describe takes `id` and pages its installations. |

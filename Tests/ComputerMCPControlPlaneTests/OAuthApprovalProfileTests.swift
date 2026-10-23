@@ -8,13 +8,13 @@ struct OAuthApprovalProfileTests {
   @Test func digestHasACanonicalCrossPlatformEncoding() throws {
     var grant = ProfileGrant(
       id: .cloudflareObserve, capabilityIDs: ["file.write", "file.read"],
-      workspaceIDs: ["z", "a"], allowedCallers: [.localCLI, .cloudflareTunnel],
-      mcpServerIDs: ["two", "one"], mode: .workspaceOperations,
+      projectIDs: ["z", "a"], allowedCallers: [.localCLI, .cloudflareTunnel],
+      mcpServerIDs: ["two", "one"], mode: .projectOperations,
       confirmationPolicy: .allWrites)
     let digest = try OAuthApprovalProfile(grant: grant).authorizationDigest
-    #expect(digest == "b1edbbfd51125b84cdf116dc9cd019127e726a90cd7d6a3263c103d5ba3837c0")
+    #expect(digest == "e8306ba71960006b18d3f20d849982ff45e7de46eef91d56c476c261d7881d0d")
     grant.capabilityIDs = Set(["file.read", "file.write"])
-    grant.workspaceIDs = Set(["a", "z"])
+    grant.projectIDs = Set(["a", "z"])
     grant.allowedCallers = Set([.cloudflareTunnel, .localCLI])
     grant.mcpServerIDs = Set(["one", "two"])
     grant.authorizationRevision += 42
@@ -27,13 +27,13 @@ struct OAuthApprovalProfileTests {
     let digest = try OAuthApprovalProfile(grant: original).authorizationDigest
     var variants: [ProfileGrant] = []
     var changed = original
-    changed.mode = .workspaceOperations
+    changed.mode = .projectOperations
     variants.append(changed)
     changed = original
     changed.capabilityIDs.insert("file.read")
     variants.append(changed)
     changed = original
-    changed.workspaceIDs.insert("workspace")
+    changed.projectIDs.insert("project")
     variants.append(changed)
     changed = original
     changed.allowedCallers.insert(.localCLI)

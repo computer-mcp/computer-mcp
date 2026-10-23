@@ -143,7 +143,7 @@ final class LiveAppControlPlane: AppControlPlane {
       serviceState: service.state.appState,
       version: ComputerMCPCLI.version,
       activeProfileName: service.profileID?.rawValue ?? activeProfile.rawValue,
-      activeWorkspaceCount: try await controlPlane.workspaces().count,
+      activeProjectCount: try await controlPlane.projects().count,
       providerCount: providers.count,
       runningProviderCount: providers.filter { $0.state == .running }.count,
       runningTunnelCount:
@@ -173,12 +173,12 @@ final class LiveAppControlPlane: AppControlPlane {
     return snapshots
   }
 
-  func fetchWorkspaces() async throws -> [WorkspaceSummary] {
+  func fetchProjects() async throws -> [ProjectSummary] {
     let activeProfile = try await controlPlane.activeGatewayProfile()
     let grant = try await controlPlane.profileGrants().first { $0.id == activeProfile }
-    return try await controlPlane.workspaceAccessReports().map { report in
-      let workspace = report.workspace
-      let health: WorkspaceHealth
+    return try await controlPlane.projectAccessReports().map { report in
+      let project = report.project
+      let health: ProjectHealth
       switch report.error {
       case nil:
         health = .available
@@ -187,16 +187,16 @@ final class LiveAppControlPlane: AppControlPlane {
       default:
         health = .unavailable
       }
-      return WorkspaceSummary(
-        id: workspace.id,
-        displayName: workspace.displayName,
-        path: workspace.rootPath,
+      return ProjectSummary(
+        id: project.id,
+        displayName: project.displayName,
+        path: project.rootPath,
         health: health,
         activeProfileID: activeProfile.rawValue,
-        isEnabled: grant?.workspaceIDs.contains("*") == true
-          || grant?.workspaceIDs.contains(workspace.id) == true,
-        isSelected: grant?.workspaceIDs.contains("*") == true
-          || grant?.workspaceIDs.contains(workspace.id) == true,
+        isEnabled: grant?.projectIDs.contains("*") == true
+          || grant?.projectIDs.contains(project.id) == true,
+        isSelected: grant?.projectIDs.contains("*") == true
+          || grant?.projectIDs.contains(project.id) == true,
         lastResolvedAt: report.error == nil ? Date() : nil,
         healthDetail: report.error?.localizedDescription
       )
@@ -298,18 +298,18 @@ final class LiveAppControlPlane: AppControlPlane {
       id: id, expectedBindingDigest: expectedBindingDigest, token: token)
   }
 
-  func doctorMCPRegistration(id: String, workspaceID: String) async throws
+  func doctorMCPRegistration(id: String, projectID: String) async throws
     -> MCPRegistrationDoctorReport
   {
-    try await controlPlane.doctorMCPRegistration(id: id, workspaceID: workspaceID)
+    try await controlPlane.doctorMCPRegistration(id: id, projectID: projectID)
   }
 
   func recoverMCPProcessReceipt(
-    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    id: String, projectID: String, receiptID: String, expectedReceiptDigest: String,
     expectedCurrentDigest: String
   ) async throws {
     try await controlPlane.recoverMCPProcessReceipt(
-      id: id, workspaceID: workspaceID, receiptID: receiptID,
+      id: id, projectID: projectID, receiptID: receiptID,
       expectedReceiptDigest: expectedReceiptDigest, expectedCurrentDigest: expectedCurrentDigest)
   }
 
@@ -451,8 +451,8 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   func fetchAudit() async throws -> [AuditEntrySummary] {
-    let workspaces = Dictionary(
-      uniqueKeysWithValues: try await controlPlane.workspaces().map { ($0.id, $0.displayName) }
+    let projects = Dictionary(
+      uniqueKeysWithValues: try await controlPlane.projects().map { ($0.id, $0.displayName) }
     )
     return try await controlPlane.auditEvents().map { event in
       let summary: String
@@ -470,7 +470,7 @@ final class LiveAppControlPlane: AppControlPlane {
         decision: event.decision.appDecision,
         caller: "\(event.caller.rawValue) / \(event.profileID.rawValue)",
         capability: event.capabilityID,
-        workspaceName: event.workspaceID.flatMap { workspaces[$0] },
+        projectName: event.projectID.flatMap { projects[$0] },
         summary: summary,
         inputDigest: event.inputDigest,
         outputByteCount: event.outputByteCount
@@ -582,28 +582,28 @@ final class LiveAppControlPlane: AppControlPlane {
     _ = try await controlPlane.setLaunchAtLoginEnabled(enabled)
   }
 
-  func registerWorkspace(at url: URL) async throws {
-    let workspace = try await operations.registerWorkspace(at: url)
+  func registerProject(at url: URL) async throws {
+    let project = try await operations.registerProject(at: url)
     fileLogger.append(
       .info,
-      event: "workspace.registered",
-      fields: ["workspace_id": workspace.id]
+      event: "project.registered",
+      fields: ["project_id": project.id]
     )
   }
 
-  func repairWorkspace(id: String, at url: URL) async throws {
-    let workspace = try await operations.repairWorkspace(id: id, at: url)
-    fileLogger.append(.info, event: "workspace.repaired", fields: ["workspace_id": workspace.id])
+  func repairProject(id: String, at url: URL) async throws {
+    let project = try await operations.repairProject(id: id, at: url)
+    fileLogger.append(.info, event: "project.repaired", fields: ["project_id": project.id])
   }
 
-  func removeWorkspace(id: String) async throws {
-    try await operations.removeWorkspace(id: id)
-    fileLogger.append(.info, event: "workspace.removed", fields: ["workspace_id": id])
+  func removeProject(id: String) async throws {
+    try await operations.removeProject(id: id)
+    fileLogger.append(.info, event: "project.removed", fields: ["project_id": id])
   }
 
-  func setWorkspaceEnabled(
+  func setProjectEnabled(
     _ enabled: Bool,
-    workspaceID: String,
+    projectID: String,
     profileID: String
   ) async throws {
     guard let profile = GatewayProfileID(rawValue: profileID) else {
@@ -611,17 +611,17 @@ final class LiveAppControlPlane: AppControlPlane {
         AppLocalization.formatted("Unknown gateway profile: %@", profileID)
       )
     }
-    _ = try await operations.setWorkspaceEnabled(
+    _ = try await operations.setProjectEnabled(
       enabled,
-      workspaceID: workspaceID,
+      projectID: projectID,
       profileID: profile
     )
     fileLogger.append(
       .info,
-      event: enabled ? "workspace.granted" : "workspace.revoked",
+      event: enabled ? "project.granted" : "project.revoked",
       fields: [
         "profile_id": profileID,
-        "workspace_id": workspaceID,
+        "project_id": projectID,
       ]
     )
   }
@@ -651,7 +651,7 @@ final class LiveAppControlPlane: AppControlPlane {
     _ = try await operations.updateProfilePermissions(
       profileID: grant.id, mode: grant.mode, confirmationPolicy: grant.confirmationPolicy,
       fullShellEnabled: grant.fullShellEnabled, capabilityIDs: grant.capabilityIDs,
-      workspaceIDs: grant.workspaceIDs, mcpServerIDs: grant.mcpServerIDs,
+      projectIDs: grant.projectIDs, mcpServerIDs: grant.mcpServerIDs,
       allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision,
       reviewedOptions: reviewed)
     fileLogger.append(
@@ -1316,8 +1316,8 @@ extension GatewayProfileID {
 extension GatewayPermissionMode {
   fileprivate var summary: String {
     switch self {
-    case .readOnly: "Read selected tools and workspaces without changing them."
-    case .workspaceOperations:
+    case .readOnly: "Read selected tools and projects without changing them."
+    case .projectOperations:
       "Control selected capabilities, projects, and integrations."
     case .localFullAccess:
       "Control selected capabilities. Full Access requires approval for a connected client."
@@ -1326,7 +1326,7 @@ extension GatewayPermissionMode {
   fileprivate var riskLevel: RiskLevel {
     switch self {
     case .readOnly: .low
-    case .workspaceOperations: .elevated
+    case .projectOperations: .elevated
     case .localFullAccess: .high
     }
   }

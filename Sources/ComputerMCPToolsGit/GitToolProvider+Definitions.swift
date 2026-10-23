@@ -19,7 +19,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.root", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -46,7 +46,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.config", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -66,7 +66,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.remotes", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -86,7 +86,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.worktrees", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -106,7 +106,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stashes", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -124,7 +124,7 @@ extension GitToolProvider {
               "context_lines": integerSchema(
                 "Optional patch context lines when patch is true, 0 through 100."),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ]
           ),
@@ -134,7 +134,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stash_show", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -147,10 +147,10 @@ extension GitToolProvider {
             properties: [
               "message": stringSchema("Required stash message, up to 10000 characters."),
               "paths": stringArraySchema(
-                "Literal workspace-relative paths passed after --. Required unless all_paths is true."
+                "Literal project-relative paths passed after --. Required unless all_paths is true."
               ),
               "all_paths": boolSchema(
-                "Whether to allow stashing all tracked workspace changes instead of passing explicit paths. Defaults to false."
+                "Whether to allow stashing all tracked project changes instead of passing explicit paths. Defaults to false."
               ),
               "include_untracked": boolSchema(
                 "Whether to include untracked files with --include-untracked. Defaults to false."
@@ -159,7 +159,7 @@ extension GitToolProvider {
                 "Whether to keep staged changes in the index with --keep-index. Defaults to false."
               ),
               "dry_run": boolSchema(
-                "Whether to preview matching workspace changes with git status --porcelain without creating a stash."
+                "Whether to preview matching project changes with git status --porcelain without creating a stash."
               ),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ],
@@ -171,7 +171,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stash_push", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -191,7 +191,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tags", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -216,7 +216,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_show", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -245,8 +245,8 @@ extension GitToolProvider {
           meta: toolMeta
         ),
         capability: CapabilityDescriptor(
-          id: "git.tag_create", risk: .workspaceWrite,
-          workspaceRequirement: .required,
+          id: "git.tag_create", risk: .projectWrite,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -273,7 +273,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_delete", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -281,11 +281,11 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.ignored",
           description:
-            "Return read-only git check-ignore output for explicit workspace-relative paths through the registered git CLI provider.",
+            "Return read-only git check-ignore output for explicit project-relative paths through the registered git CLI provider.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Required literal workspace-relative paths passed after --."),
+                "Required literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ],
             required: ["paths"]
@@ -296,7 +296,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.ignored", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -316,7 +316,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.submodules", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -328,7 +328,7 @@ extension GitToolProvider {
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ]
           ),
@@ -338,7 +338,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.files", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -346,12 +346,12 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.grep",
           description:
-            "Search Git-tracked workspace content with fixed-string git grep through the registered git CLI provider. This is read-only, uses fixed argv, does not run shell commands, and returns file.read_lines context for selected matches.",
+            "Search Git-tracked project content with fixed-string git grep through the registered git CLI provider. This is read-only, uses fixed argv, does not run shell commands, and returns file.read_lines context for selected matches.",
           inputSchema: objectSchema(
             properties: [
               "query": stringSchema("Required literal fixed string to search for."),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "case_sensitive": boolSchema(
                 "Whether matching is case-sensitive. Defaults to true."),
               "max_results": integerSchema(
@@ -366,7 +366,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.grep", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -374,11 +374,11 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.blame",
           description:
-            "Return bounded read-only git blame output for one workspace-relative file through the registered git CLI provider.",
+            "Return bounded read-only git blame output for one project-relative file through the registered git CLI provider.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Required literal workspace-relative file path passed after --."),
+                "Required literal project-relative file path passed after --."),
               "start_line": integerSchema("Optional one-based start line. Defaults to 1."),
               "max_lines": integerSchema(
                 "Optional maximum line count, 1 through 1000. Defaults to 200."),
@@ -392,7 +392,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.blame", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -400,11 +400,11 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.file_history",
           description:
-            "Return bounded read-only commit history for one workspace-relative file through the registered git CLI provider. Defaults to --follow and returns structured commit rows without changing refs or the working tree.",
+            "Return bounded read-only commit history for one project-relative file through the registered git CLI provider. Defaults to --follow and returns structured commit rows without changing refs or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Required literal workspace-relative file path passed after --."),
+                "Required literal project-relative file path passed after --."),
               "limit": integerSchema(
                 "Maximum history entries to ask Git for, 1 through 200. Defaults to 50."),
               "max_results": integerSchema(
@@ -425,7 +425,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.file_history", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -433,14 +433,14 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.file_at_revision",
           description:
-            "Return bounded UTF-8 content for one workspace-relative file at a constrained Git revision through the registered git CLI provider. This uses fixed git show <revision>:<path> argv and does not change refs or the working tree.",
+            "Return bounded UTF-8 content for one project-relative file at a constrained Git revision through the registered git CLI provider. This uses fixed git show <revision>:<path> argv and does not change refs or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "revision": stringSchema(
                 "Required constrained Git revision token such as HEAD, a branch or tag name, a remote branch, or a commit hash."
               ),
               "path": stringSchema(
-                "Required literal workspace-relative file path read from that revision."),
+                "Required literal project-relative file path read from that revision."),
               "max_bytes": integerSchema(
                 "Maximum UTF-8 bytes of file content to return. Defaults to 65536 or policy.max_output_bytes if lower."
               ),
@@ -454,7 +454,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.file_at_revision", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -462,11 +462,11 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.staged_file",
           description:
-            "Return bounded UTF-8 content for one workspace-relative file from the Git index through the registered git CLI provider. This uses fixed git show :<path> argv and does not change refs, the index, or the working tree.",
+            "Return bounded UTF-8 content for one project-relative file from the Git index through the registered git CLI provider. This uses fixed git show :<path> argv and does not change refs, the index, or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Required literal workspace-relative file path read from the staged Git index."
+                "Required literal project-relative file path read from the staged Git index."
               ),
               "max_bytes": integerSchema(
                 "Maximum UTF-8 bytes of staged file content to return. Defaults to 65536 or policy.max_output_bytes if lower."
@@ -481,7 +481,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.staged_file", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -493,7 +493,7 @@ extension GitToolProvider {
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ]
           ),
@@ -503,7 +503,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.conflicts", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -515,7 +515,7 @@ extension GitToolProvider {
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ]
           ),
@@ -525,7 +525,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.status", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -545,7 +545,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tracking_status", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -562,7 +562,7 @@ extension GitToolProvider {
                 "Whether to preview only ignored files using -X. Cannot be combined with include_ignored."
               ),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "max_results": integerSchema(
                 "Maximum parsed preview rows and raw lines to return, 1 through 5000. Defaults to 200."
               ),
@@ -575,7 +575,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.clean_preview", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -587,7 +587,7 @@ extension GitToolProvider {
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --. Cannot be combined with all_paths=true."
+                "Optional literal project-relative paths passed after --. Cannot be combined with all_paths=true."
               ),
               "all_paths": boolSchema(
                 "Whether to clean the whole repository instead of explicit paths. Defaults to false."
@@ -612,7 +612,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.clean", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -637,7 +637,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.reflog", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -667,7 +667,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.refs", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -703,7 +703,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.compare_refs", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -727,7 +727,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.resolve_ref", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -752,7 +752,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.merge_base", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -779,7 +779,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.is_ancestor", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -795,7 +795,7 @@ extension GitToolProvider {
               "context_lines": integerSchema(
                 "Optional unified diff context lines, 0 through 100."),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ]
           ),
@@ -805,7 +805,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -818,7 +818,7 @@ extension GitToolProvider {
             properties: [
               "staged": boolSchema("Whether to summarize staged changes with --cached."),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "max_results": integerSchema(
                 "Maximum file and summary rows to return, 1 through 5000. Defaults to 200."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
@@ -830,7 +830,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff_summary", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -843,7 +843,7 @@ extension GitToolProvider {
             properties: [
               "staged": boolSchema("Whether to check staged changes with --cached."),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "max_results": integerSchema(
                 "Maximum parsed issue rows and raw lines to return, 1 through 5000. Defaults to 200."
               ),
@@ -856,7 +856,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff_check", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -878,7 +878,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -907,8 +907,8 @@ extension GitToolProvider {
           meta: toolMeta
         ),
         capability: CapabilityDescriptor(
-          id: "git.branch_create", risk: .workspaceWrite,
-          workspaceRequirement: .required,
+          id: "git.branch_create", risk: .projectWrite,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -937,7 +937,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_delete", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -968,7 +968,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_rename", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -998,7 +998,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_switch", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -1011,7 +1011,7 @@ extension GitToolProvider {
             properties: [
               "limit": integerSchema("Maximum commits to return, 1 through 200."),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ]
           ),
@@ -1021,7 +1021,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.log", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -1048,7 +1048,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.commit_files", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -1065,7 +1065,7 @@ extension GitToolProvider {
               "context_lines": integerSchema(
                 "Optional patch context lines when patch is true, 0 through 100."),
               "paths": stringArraySchema(
-                "Optional literal workspace-relative paths passed after --."),
+                "Optional literal project-relative paths passed after --."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ]
           ),
@@ -1075,7 +1075,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.show", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -1083,11 +1083,11 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.add",
           description:
-            "Stage explicit workspace-relative paths through the registered git CLI provider. This is a write operation.",
+            "Stage explicit project-relative paths through the registered git CLI provider. This is a write operation.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Required literal workspace-relative paths passed after --."),
+                "Required literal project-relative paths passed after --."),
               "intent_to_add": boolSchema("Whether to use --intent-to-add."),
               "dry_run": boolSchema(
                 "Whether to preview with git add --dry-run without changing the index."),
@@ -1101,7 +1101,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.add", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -1109,11 +1109,11 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.unstage",
           description:
-            "Unstage explicit workspace-relative paths through the registered git CLI provider using git restore --staged. This is a write operation on the Git index.",
+            "Unstage explicit project-relative paths through the registered git CLI provider using git restore --staged. This is a write operation on the Git index.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Required literal workspace-relative paths passed after --."),
+                "Required literal project-relative paths passed after --."),
               "dry_run": boolSchema(
                 "Whether to preview staged path matches with git diff --cached --name-only without changing the index."
               ),
@@ -1127,7 +1127,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.unstage", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -1135,11 +1135,11 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.restore_worktree",
           description:
-            "Discard unstaged working-tree changes for explicit workspace-relative paths through the registered git CLI provider using git restore --worktree. This is a destructive write operation and requires confirm_discard=true when dry_run is false.",
+            "Discard unstaged working-tree changes for explicit project-relative paths through the registered git CLI provider using git restore --worktree. This is a destructive write operation and requires confirm_discard=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
-                "Required literal workspace-relative paths passed after --."),
+                "Required literal project-relative paths passed after --."),
               "dry_run": boolSchema(
                 "Whether to preview matching unstaged path changes with git diff --name-only without changing files. Defaults to true."
               ),
@@ -1156,7 +1156,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.restore_worktree", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -1182,8 +1182,8 @@ extension GitToolProvider {
           meta: toolMeta
         ),
         capability: CapabilityDescriptor(
-          id: "git.commit", risk: .workspaceWrite,
-          workspaceRequirement: .required,
+          id: "git.commit", risk: .projectWrite,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),

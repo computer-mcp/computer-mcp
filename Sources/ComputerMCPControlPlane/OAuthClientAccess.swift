@@ -83,7 +83,7 @@ extension AppControlPlaneService {
         $0.id == (profileID ?? .cloudflareObserve)
       })
     else { throw OAuthError.invalidRequest }
-    let derivesWorkspaces =
+    let derivesProjects =
       base.id == .cloudflareObserve
       && !inputs.configuration.profiles.contains { $0.id == base.id }
     let willCommit = oauthApprovalWillCommit
@@ -96,11 +96,11 @@ extension AppControlPlaneService {
           })
         else { throw OAuthError.invalidRequest }
         var profile = base
-        if derivesWorkspaces { profile.workspaceIDs = try transaction.workspaceIDs() }
+        if derivesProjects { profile.projectIDs = try transaction.projectIDs() }
         if let persisted = try transaction.profile(id: base.id) {
           profile = profile.applyingPersistedRuntimeState(persisted)
           if persisted.authorizationRevision == 0, profile.capabilityIDs.contains("*") {
-            profile.workspaceIDs.formUnion(try transaction.workspaceIDs())
+            profile.projectIDs.formUnion(try transaction.projectIDs())
           }
         }
         if let expectedAuthorizationDigest,

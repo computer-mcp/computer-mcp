@@ -72,7 +72,7 @@ package enum PluginResolver {
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> ResolvedPlugin {
     try settings.validate()
-    guard try WorkspacePathResolver.canonicalWorkspace(source.root) == plugin.root else {
+    guard try ProjectPathResolver.canonicalProject(source.root) == plugin.root else {
       throw PluginManifestError.invalid("Source root does not match the loaded package.")
     }
     let manifest = plugin.manifest
@@ -121,7 +121,7 @@ package enum PluginResolver {
     }
 
     func path(_ relative: String?) throws -> String? {
-      try relative.map { try WorkspacePathResolver.resolve($0, relativeTo: plugin.root).path }
+      try relative.map { try ProjectPathResolver.resolve($0, relativeTo: plugin.root).path }
     }
 
     func executable(_ reference: PluginExecutable, componentID: String, cwd: String?) throws
@@ -233,7 +233,7 @@ package enum PluginResolver {
       } catch PackageFileError.invalid(let reason) {
         throw PluginManifestError.invalid(reason)
       }
-      let root = try WorkspacePathResolver.resolve(contribution.path, relativeTo: plugin.root)
+      let root = try ProjectPathResolver.resolve(contribution.path, relativeTo: plugin.root)
       skills.append(SkillRootConfig(id: id, path: root.path, description: contribution.description))
       try record(contribution.id, kind: .skills, id: id)
     }
@@ -279,7 +279,7 @@ package enum PluginResolver {
       } catch PackageFileError.invalid(let reason) {
         throw PluginManifestError.invalid(reason)
       }
-      command = try WorkspacePathResolver.resolve(relative, relativeTo: plugin.root).path
+      command = try ProjectPathResolver.resolve(relative, relativeTo: plugin.root).path
     } else if let id = reference.dependency {
       command = dependencyExecutables[id].flatMap { $0.isFileURL ? $0.path : nil }
     } else {

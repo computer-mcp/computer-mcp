@@ -3,7 +3,7 @@ import Foundation
 private final class ValidationAuditMemoryStore: @unchecked Sendable {
   private let lock = NSLock()
   private var events: [AuditEvent] = []
-  private var registeredWorkspaces: [RegisteredWorkspace] = []
+  private var registeredProjects: [RegisteredProject] = []
 
   func append(_ event: AuditEvent) {
     lock.lock()
@@ -23,10 +23,10 @@ private final class ValidationAuditMemoryStore: @unchecked Sendable {
     return Array(events.suffix(max(0, limit)).reversed())
   }
 
-  func workspaces() -> [RegisteredWorkspace] {
+  func projects() -> [RegisteredProject] {
     lock.lock()
     defer { lock.unlock() }
-    return registeredWorkspaces
+    return registeredProjects
   }
 }
 
@@ -83,30 +83,30 @@ public struct GatewayDatabase: Sendable {
     try auditEvents(requestID: requestID).first
   }
 
-  public func workspaces() throws -> [RegisteredWorkspace] {
+  public func projects() throws -> [RegisteredProject] {
     switch storage {
     case .memory(let store):
-      return store.workspaces()
+      return store.projects()
     case .product:
-      let data = try ValidationProductCommand().run(["workspace", "list"])
-      return try Self.decodeWorkspaceListResponse(data)
+      let data = try ValidationProductCommand().run(["project", "list"])
+      return try Self.decodeProjectListResponse(data)
     }
   }
 
-  static func decodeWorkspaceListResponse(_ data: Data) throws -> [RegisteredWorkspace] {
+  static func decodeProjectListResponse(_ data: Data) throws -> [RegisteredProject] {
     let value = try ValidationCanonicalJSONCoding.decoder().decode(JSONValue.self, from: data)
     guard
       let rows = value.objectValue?["result"]?.arrayValue
-        ?? value.objectValue?["workspaces"]?.arrayValue
+        ?? value.objectValue?["projects"]?.arrayValue
     else {
       throw ValidationProcessError.launchFailed(
-        "The shipped workspace list response has no workspace collection."
+        "The shipped project list response has no project collection."
       )
     }
     return try rows.map { row in
       let data = try ValidationCanonicalJSONCoding.encoder().encode(row)
       return try ValidationCanonicalJSONCoding.decoder().decode(
-        RegisteredWorkspace.self,
+        RegisteredProject.self,
         from: data
       )
     }

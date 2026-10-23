@@ -33,21 +33,21 @@ package final class MCPHostToolDirectory: @unchecked Sendable {
     release(invocation.id, work: false)
   }
 
-  func retain(id: UUID, workspaceID: String, origin: String) throws -> InvocationLease {
-    try retain(id: id, workspaceID: workspaceID, origin: origin, work: false)
+  func retain(id: UUID, projectID: String, origin: String) throws -> InvocationLease {
+    try retain(id: id, projectID: projectID, origin: origin, work: false)
   }
 
   /// The provider work ledger bounds and owns these references separately from active requests.
-  func retainWork(id: UUID, workspaceID: String, origin: String) throws -> InvocationLease {
-    try retain(id: id, workspaceID: workspaceID, origin: origin, work: true)
+  func retainWork(id: UUID, projectID: String, origin: String) throws -> InvocationLease {
+    try retain(id: id, projectID: projectID, origin: origin, work: true)
   }
 
-  private func retain(id: UUID, workspaceID: String, origin: String, work: Bool) throws
+  private func retain(id: UUID, projectID: String, origin: String, work: Bool) throws
     -> InvocationLease
   {
     try lock.withLock {
       guard runtime != nil, var entry = invocations[id],
-        entry.invocation.context.workspaceID == workspaceID,
+        entry.invocation.context.projectID == projectID,
         entry.invocation.reference.serverID == origin
       else { throw MCPError.invalidParams("No matching active host invocation.") }
       if work { entry.workOwners += 1 } else { entry.requestOwners += 1 }
@@ -67,13 +67,13 @@ package final class MCPHostToolDirectory: @unchecked Sendable {
       }
     }
   }
-  func active(workspaceID: String, origin: String, includingRetainedWork: Bool = false)
+  func active(projectID: String, origin: String, includingRetainedWork: Bool = false)
     -> [MCPHostInvocation]
   {
     lock.withLock {
       invocations.values.filter { includingRetainedWork || $0.requestOwners > 0 }
         .map(\.invocation).filter {
-          $0.context.workspaceID == workspaceID && $0.reference.serverID == origin
+          $0.context.projectID == projectID && $0.reference.serverID == origin
         }
     }
   }
@@ -121,7 +121,7 @@ final class MCPHostSession: MCPHostSessionHandle {
     childHandle = pair.1
     let transport = try MCPInheritedSocketTransport(takingOwnershipOf: pair.0)
     self.transport = transport
-    let workspaceID = context.launchMetadata.workspace.id
+    let projectID = context.launchMetadata.project.id
     let origin = registration.id
     let sessionID = UUID().uuidString
     let services = MCPHostSessionServices(directory: directory, context: context, origin: origin)
@@ -134,7 +134,7 @@ final class MCPHostSession: MCPHostSessionHandle {
       await server.withMethodHandler(MCP.ListTools.self) { params in
         guard params.cursor == nil else { throw MCPError.invalidParams("Unknown tools cursor.") }
         let tools = try directory.resolve().hostToolCatalog(
-          workspaceID: workspaceID, origin: origin)
+          projectID: projectID, origin: origin)
         return .init(tools: tools.map(\.sdkTool) + (try await services.tools()))
       }
       await server.withMethodHandler(MCP.CallTool.self) { params in
@@ -145,7 +145,7 @@ final class MCPHostSession: MCPHostSessionHandle {
             return try await services.call(name: params.name, arguments: arguments)
           }
           let result = try await directory.resolve().callHostTool(
-            name: params.name, arguments: arguments, workspaceID: workspaceID,
+            name: params.name, arguments: arguments, projectID: projectID,
             origin: origin, requestID: "host:" + sessionID + ":" + UUID().uuidString)
           return try result.sdkCallToolResult()
         }

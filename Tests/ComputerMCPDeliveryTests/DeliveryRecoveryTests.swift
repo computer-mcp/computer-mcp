@@ -15,6 +15,36 @@ struct DeliveryRecoveryTests {
       afterMerge, duringRebase
   }
 
+  @Test(arguments: [false, true])
+  func recoveryReadsProjectIdentityFromVersionOneJournals(finished: Bool) async throws {
+    try await deliveryTest {
+      let fixture = try DeliveryFixture()
+      let journal = try interrupted(fixture, at: .beforeWorktree)
+      let repository = try fixture.repository()
+      if finished { try repository.withLock { try repository.recover() } }
+      let url = fixture.root.appendingPathComponent(
+        ".git/computer-mcp/delivery/\(journal.operationID).json")
+      var object = try #require(
+        try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+      object["workspace"] = object.removeValue(forKey: "project")
+      let original = try JSONSerialization.data(withJSONObject: object)
+      try original.write(to: url)
+      try repository.withLock { try repository.recover() }
+      let recovered = try DeliveryJournal.read(from: url)
+      #expect(recovered.project == journal.project)
+      #expect(recovered.phase == .finished)
+      let after = try Data(contentsOf: url)
+      if finished {
+        #expect(after == original)
+      } else {
+        let current = try #require(try JSONSerialization.jsonObject(with: after) as? [String: Any])
+        #expect(current["workspace"] == nil)
+        #expect(current["project"] as? String == journal.project)
+      }
+      try fixture.assertClean()
+    }
+  }
+
   @Test(arguments: Interruption.allCases)
   func recoverInterruptedGitStates(at point: Interruption) async throws {
     try await deliveryTest {
@@ -565,7 +595,7 @@ struct DeliveryRecoveryTests {
       configuration.cli.commands[0].executable = wrapper.path
       let tools = ToolEnvironment(configuration: configuration, environment: fixture.environment)
       let repository = try DeliveryRepository(
-        scope: fixture.scope, workspace: fixture.root, git: DeliveryGit(environment: tools))
+        scope: fixture.scope, project: fixture.root, git: DeliveryGit(environment: tools))
       try repository.withLock { try repository.recover() }
       let pending = try #require(fixture.journals().first)
       #expect(pending.phase == .cleanupPending)
@@ -713,8 +743,8 @@ struct DeliveryRecoveryTests {
       let linked = fixture.temporary.url.appendingPathComponent("linked")
       try fixture.git(["worktree", "add", "-b", "other", linked.path])
       var configuration = fixture.tools().configuration
-      configuration.workspaceDirectory = linked
-      configuration.workspaces[0].path = linked.path
+      configuration.projectDirectory = linked
+      configuration.projects[0].path = linked.path
       let provider = DeliveryToolProvider(
         environment: .init(configuration: configuration, environment: fixture.environment),
         io: .init(beforeCleanup: { _ in throw CocoaError(.fileWriteNoPermission) }),
@@ -832,7 +862,7 @@ struct DeliveryRecoveryTests {
     let operationID = UUID().uuidString.lowercased()
     let worktree = fixture.root.appendingPathComponent(".claude/worktrees/" + operationID)
     var journal = DeliveryJournal(
-      operationID: operationID, workspace: "fixture", scope: "notes",
+      operationID: operationID, project: "fixture", scope: "notes",
       repository: fixture.root.path, defaultBranch: "main", branch: "docs/entry",
       worktree: worktree.path,
       base: try fixture.git(["rev-parse", "main"]))

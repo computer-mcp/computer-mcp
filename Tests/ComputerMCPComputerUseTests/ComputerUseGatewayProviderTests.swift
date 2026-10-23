@@ -58,7 +58,7 @@ final class ComputerUseGatewayProviderTests {
   }
 
   @Test
-  func testCapabilitiesHaveNoWorkspaceRequirementAndCorrectRisk() throws {
+  func testCapabilitiesHaveNoProjectRequirementAndCorrectRisk() throws {
     let provider = ComputerUseGatewayProvider(
       service: ComputerUseService(adapter: ProviderComputerUseAdapter())
     )
@@ -67,7 +67,7 @@ final class ComputerUseGatewayProviderTests {
       uniqueKeysWithValues: definitions.map { ($0.tool.name, $0.capability) }
     )
 
-    #expect(descriptors.values.allSatisfy { $0.workspaceRequirement == .none })
+    #expect(descriptors.values.allSatisfy { $0.projectRequirement == .none })
     #expect((descriptors["computer.screenshot"]?.risk) == (.readOnly))
     #expect((descriptors["computer.screenshot"]?.tccServices) == (["screen-recording"]))
     #expect((descriptors["computer.pointer.click"]?.risk) == (.externalWrite))

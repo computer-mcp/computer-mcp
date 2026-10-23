@@ -86,14 +86,14 @@ struct GatewayInvocationContextTests {
     let serving = GatewayControlSessionServing(base: fixture.runtime, session: fixture.session)
     let connectionID = UUID()
     let lease = fixture.runtime.ownedWork.retain(
-      .mcpObservation, workspaceID: "fixture", registrationID: "fixture",
+      .mcpObservation, projectID: "fixture", registrationID: "fixture",
       resourceID: "observation", connectionID: connectionID)
     defer { lease.finish() }
     let owner = GatewayOwnerSelection(
-      runtimeID: fixture.runtime.generationID, workspaceID: "fixture", ownershipID: lease.id)
+      runtimeID: fixture.runtime.generationID, projectID: "fixture", ownershipID: lease.id)
     func call(_ tool: String) async throws -> JSONValue {
       let arguments = JSONValue.object([
-        "workspace_id": .string("fixture"), "owner": owner.json,
+        "project_id": .string("fixture"), "owner": owner.json,
         "tool": .string("mcp.tools.call"), "arguments": .object(fixture.arguments(tool: tool)),
       ])
       if envelope {
@@ -205,7 +205,7 @@ struct GatewayInvocationContextTests {
     let fixture = try InvocationFixture()
     let session = fixture.session
     let route = MCPContinuationTarget(
-      workspaceID: "fixture", reference: .init(serverID: "fixture", toolName: "inspect"),
+      projectID: "fixture", reference: .init(serverID: "fixture", toolName: "inspect"),
       connectionID: UUID(), instanceID: UUID(), resources: [:])
     do {
       var arguments = fixture.arguments(tool: "inspect")
@@ -254,7 +254,7 @@ struct GatewayInvocationContextTests {
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(configuration: configuration), mcpClient: fixture.client)
     let selected = MCPContinuationTarget(
-      workspaceID: "fixture", reference: .init(serverID: fixture.server.id, toolName: "inspect"),
+      projectID: "fixture", reference: .init(serverID: fixture.server.id, toolName: "inspect"),
       connectionID: UUID(), instanceID: UUID(), resources: [:])
     let context = InvocationContext(
       session: fixture.session, continuation: selectedContinuation ? selected : nil)
@@ -340,7 +340,7 @@ struct GatewayInvocationContextTests {
     let context = InvocationContext(
       admission: admission, session: fixture.session, continuation: route)
     let arguments = JSONValue.object([
-      "server": .string("fixture"), "workspace_id": .string("fixture"),
+      "server": .string("fixture"), "project_id": .string("fixture"),
     ])
     do {
       if asynchronous {
@@ -471,9 +471,9 @@ struct GatewayInvocationContextTests {
       let result = try await MCPRuntimeAdapter.$requestTrace.withValue(trace) {
         if asynchronous {
           return try await fixture.runtime.callToolAsync(
-            name: "workspace.list", arguments: nil, context: .empty)
+            name: "project.list", arguments: nil, context: .empty)
         }
-        return try fixture.runtime.callTool(name: "workspace.list", arguments: nil, context: .empty)
+        return try fixture.runtime.callTool(name: "project.list", arguments: nil, context: .empty)
       }
       let requestID = try #require(
         result.objectValue?["_meta"]?.objectValue?["computer_mcp"]?.objectValue?["request_id"]?
@@ -484,7 +484,7 @@ struct GatewayInvocationContextTests {
       #expect(audit.tunnelInstanceID == trace.tunnelInstanceID)
       #expect(audit.tunnelProfileID == trace.tunnelProfileID)
       _ = try await fixture.runtime.callToolAsync(
-        name: "workspace.list", arguments: nil, context: .empty)
+        name: "project.list", arguments: nil, context: .empty)
       let next = try #require(fixture.database.auditEvents().first { $0.requestID != requestID })
       #expect(next.transport == nil)
       #expect(next.socketConnectionID == nil)
@@ -499,7 +499,7 @@ struct GatewayInvocationContextTests {
 }
 
 private struct InvocationFixture {
-  let workspace: ScopedTemporaryDirectory
+  let project: ScopedTemporaryDirectory
   let database: GatewayDatabase
   let client: InvocationClientSpy
   let configuration: GatewayConfiguration
@@ -516,25 +516,25 @@ private struct InvocationFixture {
       id: "fixture", transport: .stdio, command: "/unused/context-provider",
       exposure: reexportTools ? .reexport : .gateway, prefix: reexportTools ? "fixture" : nil,
       allowedTools: ["inspect", "change"],
-      toolRisks: ["inspect": .readOnly, "change": .workspaceWrite], hostServices: true)
-    workspace = try ScopedTemporaryDirectory()
+      toolRisks: ["inspect": .readOnly, "change": .projectWrite], hostServices: true)
+    project = try ScopedTemporaryDirectory()
     database = try GatewayDatabase(inMemory: ())
     client = InvocationClientSpy(result: result)
     configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
-          allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
+          id: .localAdmin, capabilities: ["*"], projects: ["fixture"],
+          allowedCallers: [.localMCP], mode: .projectOperations, confirmationPolicy: .never)
       ],
-      mcp: .init(servers: [server]), workspaceDirectory: workspace.url)
+      mcp: .init(servers: [server]), projectDirectory: project.url)
     runtime = try GatewayRuntime(
       configuration: configuration,
       context: .init(
         caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "context-client"),
       database: database,
-      registeredWorkspaces: [
-        .init(id: "fixture", displayName: "Fixture", rootPath: workspace.url.path)
+      registeredProjects: [
+        .init(id: "fixture", displayName: "Fixture", rootPath: project.url.path)
       ],
       platform: MacOSPlatform.services, mcpClient: client, plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
@@ -543,7 +543,7 @@ private struct InvocationFixture {
 
   func arguments(tool: String) -> [String: JSONValue] {
     [
-      "server": .string("fixture"), "tool": .string(tool), "workspace_id": .string("fixture"),
+      "server": .string("fixture"), "tool": .string(tool), "project_id": .string("fixture"),
       "arguments": .object([:]),
     ]
   }

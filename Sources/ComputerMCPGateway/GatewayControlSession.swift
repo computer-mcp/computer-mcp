@@ -10,7 +10,7 @@ package enum GatewayFullAccessLifetime: String, Codable, CaseIterable, Sendable 
 package struct GatewayControlProfile: Codable, Equatable, Sendable {
   package let grant: ProfileGrant
   package let persisted: Bool
-  // Configured Observe profiles derive their visible read tools and workspaces at runtime.
+  // Configured Observe profiles derive their visible read tools and projects at runtime.
   package var configuredGrant: ProfileGrant? = nil
 
   func hasSameAuthorization(as other: Self) -> Bool {
@@ -47,7 +47,7 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
   package let changes = GatewayToolChangeBroadcaster()
   private let lock = NSLock()
   private var currentRevision: Int64 = 0
-  private var accessLimit = GatewayPermissionMode.workspaceOperations
+  private var accessLimit = GatewayPermissionMode.projectOperations
   private var fullAccessConsent: GatewayFullAccessConsent?
   private let database: GatewayDatabase?
   private var profile: GatewayControlProfile?
@@ -62,7 +62,7 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
     self.caller = caller
     self.database = database
     self.profile = profile
-    accessLimit = profile?.grant.mode == .readOnly ? .readOnly : .workspaceOperations
+    accessLimit = profile?.grant.mode == .readOnly ? .readOnly : .projectOperations
   }
 
   func restoreTrustedAccess() throws {
@@ -152,7 +152,7 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
 
   private func clearConsent(mode: GatewayPermissionMode?) {
     fullAccessConsent = nil
-    accessLimit = mode == .readOnly ? .readOnly : .workspaceOperations
+    accessLimit = mode == .readOnly ? .readOnly : .projectOperations
     if currentRevision < Int64.max { currentRevision += 1 } else { ended = true }
     changes.send()
   }
@@ -226,15 +226,15 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
         effective.mode = .localFullAccess
         effective.fullShellEnabled = true
         effective.capabilityIDs = ["*"]
-        effective.workspaceIDs = ["*"]
+        effective.projectIDs = ["*"]
         effective.confirmationPolicy = .never
       }
       switch accessLimit {
       case .readOnly:
         effective.mode = .readOnly
         effective.fullShellEnabled = false
-      case .workspaceOperations:
-        if effective.mode == .localFullAccess { effective.mode = .workspaceOperations }
+      case .projectOperations:
+        if effective.mode == .localFullAccess { effective.mode = .projectOperations }
         effective.fullShellEnabled = false
       case .localFullAccess:
         break

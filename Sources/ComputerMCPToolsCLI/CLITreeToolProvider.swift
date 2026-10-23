@@ -9,7 +9,7 @@ import Foundation
 struct CLITreeToolProvider: GatewayToolProvider {
   let registration: CLICommandConfig
   let tree: CLITree
-  let workspace: URL
+  let project: URL
   let execution: CLIProcessExecution
   let timeoutMilliseconds: Int
   let maxOutputBytes: Int
@@ -38,7 +38,7 @@ struct CLITreeToolProvider: GatewayToolProvider {
             ])
           ])),
         capability: CapabilityDescriptor(
-          id: name, risk: .fullShell, workspaceRequirement: .required))
+          id: name, risk: .fullShell, projectRequirement: .required))
     }
   }
 
@@ -48,7 +48,7 @@ struct CLITreeToolProvider: GatewayToolProvider {
       invocation.arguments ?? .object([:]), command: command)
     let result = try execution.run(
       executable: registration.executable, invocation: commandInvocation,
-      cwd: registration.resolvedWorkingDirectory(base: workspace) ?? workspace,
+      cwd: registration.resolvedWorkingDirectory(base: project) ?? project,
       environment: registration.env, timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks,
       interpreterBindings: registration.interpreterBindings)
@@ -62,7 +62,7 @@ struct CLITreeToolProvider: GatewayToolProvider {
       invocation.arguments ?? .object([:]), command: command)
     let result = try await execution.runAsync(
       executable: registration.executable, invocation: commandInvocation,
-      cwd: registration.resolvedWorkingDirectory(base: workspace) ?? workspace,
+      cwd: registration.resolvedWorkingDirectory(base: project) ?? project,
       environment: registration.env, timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes, executableChecks: tree.executableChecks,
       interpreterBindings: registration.interpreterBindings)

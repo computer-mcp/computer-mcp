@@ -7,7 +7,7 @@ authority, not sandboxing an arbitrary remote shell.
 Authorization has two levels: the host first decides whether a capability is
 permitted at all; the user or caller then decides whether a permitted
 higher-risk action is approved now. Changes preserve or strengthen registered
-workspace boundaries, profile capability and caller binding, path and symlink
+project boundaries, profile capability and caller binding, path and symlink
 validation, explicit approval for mutation, registered tool dispatch, local-only
 sensitive execution, request audit, credential and sensitive-text redaction,
 fail-closed defaults, verified control of external processes, and bounded
@@ -15,16 +15,16 @@ input, output, persistence and lifecycle resources.
 
 ## Authority Boundaries
 
-- Each profile explicitly defines permission mode, capabilities, workspaces,
+- Each profile explicitly defines permission mode, capabilities, projects,
   allowed callers and confirmation policy. Its name and transport do not
   determine its permission mode.
-- `read-only` permits host-classified reads. `workspace-operations` permits
+- `read-only` permits host-classified reads. `project-operations` permits
   granted typed operations, subject to their path and confirmation rules.
   `local-full-access` additionally permits separately enabled arbitrary
   execution; choosing this mode alone does not enable Shell or grant tools.
 - `local-admin` is local-only and rejected for remote callers.
-- All workspace operations resolve a stable registered id and normalized path.
-- More than one workspace requires explicit selection.
+- All project operations resolve a stable registered id and normalized path.
+- More than one project requires explicit selection.
 - Unknown tools, providers, paths, and capabilities fail
   closed.
 - Remote callers cannot approve host tickets or expand their own grants.
@@ -32,7 +32,7 @@ input, output, persistence and lifecycle resources.
 Arbitrary shell execution is equivalent to the current user's effective terminal
 authority. The effective grant must permit `local-full-access` and Full Shell,
 and the static TOML Shell policy must explicitly enable the facility. Both the
-facility and client Full Access are off by default. Workspace bookmarks are
+facility and client Full Access are off by default. Project bookmarks are
 routing and audit context, not containment for an approved arbitrary command.
 
 Downstream MCP annotations are presentation hints, not host authorization.
@@ -62,7 +62,7 @@ Tunnel admission binds the registered bridge identity; authenticated HTTP
 binds the validated credential. A connection id is tracing information, not
 authority. Reconnection with the same credential retains the same principal;
 clients sharing a credential share principal-level grants. Client-supplied labels
-cannot establish a separate principal. Profile, workspace and caller checks still apply.
+cannot establish a separate principal. Profile, project and caller checks still apply.
 
 The App gateway and standalone HTTP gateway bind each admitted MCP session to a
 host-created authorization object. The local owner can limit or end that session
@@ -85,7 +85,7 @@ listeners. The App's local owner operations manage both socket and HTTP scopes.
 
 The local control plane can explicitly approve Full Access for a selected
 session. The default lifetime is This Session. Its effective grant includes
-all enabled capabilities and workspaces and permits normal operations without
+all enabled capabilities and projects and permits normal operations without
 repeated confirmation. Verified caller admission, local-only actions, the static
 Shell policy and macOS permissions remain enforced; the principal never becomes
 `local-admin`. This decision does not change the persisted profile.
@@ -100,7 +100,7 @@ another session's approval. Selecting This Session replaces that client's
 persistent trust; revocation removes it from existing and future sessions.
 
 Consent binds the configured or persisted profile authorization and its source.
-Derived Observe catalog or workspace additions alone do not change that authorization. Database grants are reread for admission; atomic configuration
+Derived Observe catalog or project additions alone do not change that authorization. Database grants are reread for admission; atomic configuration
 publication updates the session baseline for current and retained invocations.
 A changed profile invalidates consent and advances the session revision. A
 TOML-only profile remains configuration-owned after approval. Disconnecting,
@@ -115,14 +115,14 @@ ambiguous sessions cannot borrow one another's permissions.
 
 The default `risk-based` policy requires local confirmation for host-classified
 destructive, external-write and arbitrary-execution operations. `all-writes`
-also confirms workspace writes; `never` is an explicit local operator choice.
+also confirms project writes; `never` is an explicit local operator choice.
 Classification cannot inspect all effects hidden inside an arbitrary script.
-Workspace checks remain application-level validation, not an OS sandbox.
+Project checks remain application-level validation, not an OS sandbox.
 
 A ticket moves through `pending_approval`, `approved`, `denied` or `expired`;
 an operation not requiring confirmation starts `prepared`. Approval is an
 owner-only App/management CLI action. A model-supplied `confirm` field is not
-approval. Commit binds the verified principal, exact arguments, workspace,
+approval. Commit binds the verified principal, exact arguments, project,
 reviewed target state and authorization revision, then consumes the ticket
 once. Approval does not grant a missing capability. Changing the grant
 invalidates its pending tickets and prevents newly unauthorized calls;
@@ -188,7 +188,7 @@ It can only poll a separate opaque status handle. Approval and denial require th
 local App control plane or owner CLI. Pairing expires after ten minutes. Approval
 creates a grant for the selected remote profile, default `cloudflare-observe`.
 Its principal is `oauth:<grant ID>` and its caller is `cloudflare-tunnel`.
-OAuth authenticates that identity; profile, workspace and per-session Full Access
+OAuth authenticates that identity; profile, project and per-session Full Access
 consent still apply. Client secrets and Dynamic Client Registration are not part
 of this authorization surface.
 
@@ -307,7 +307,7 @@ SwiftUI adapter or owner-only `computer-mcp` control CLI.
 ## Plugin execution
 
 The host authorizes plugin invocations through caller identity, profile and
-registered workspace. Plugin runtime permissions and vendor configuration belong
+registered project. Plugin runtime permissions and vendor configuration belong
 to the plugin; see the [Codex plugin](https://github.com/computer-mcp/plugin-codex) for its execution model.
 
 Callbacks into host tools require current host grants and operation approvals.
@@ -322,7 +322,7 @@ Security-policy refusals return stable bracketed codes and are stored with the
 GRDB audit decision `denied`, not the generic execution decision `failed`.
 Representative codes include:
 
-- `policy.workspace_denied` for traversal, symlink escape, and cross-workspace
+- `policy.project_denied` for traversal, symlink escape, and cross-project
   access;
 - `operations.approval_required`, `operations.ticket_invalid`, and
   `operations.ticket_expired_or_used` for operation approval and consumption;
@@ -334,7 +334,7 @@ audit row rather than inferring a denial from message text alone.
 
 ## Persistence And Logging
 
-GRDB stores workspaces, profiles, provider health, manifest revisions,
+GRDB stores projects, profiles, provider health, manifest revisions,
 operation tickets, OAuth requests/grants and credential digests, bounded MCP execution receipts and redacted audit metadata. The Data Protection Keychain
 stores transport keys and access token values.
 App logs are JSONL, mode `0600`, rotated, bounded, and redact secret-like

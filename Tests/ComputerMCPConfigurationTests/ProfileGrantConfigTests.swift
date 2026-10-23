@@ -12,15 +12,15 @@ struct ProfileGrantConfigTests {
     #expect(config.allowedCallers.isEmpty)
     #expect(config.mode == .readOnly)
     #expect(config.confirmationPolicy == .riskBased)
-    #expect(!config.grant.permitsRisk(.workspaceWrite))
+    #expect(!config.grant.permitsRisk(.projectWrite))
   }
 
   @Test
   func explicitModeDoesNotInferTransportFromProfileName() throws {
     let config = try decode(
-      #"{"id":"chatgpt-operate","mode":"workspace-operations","capabilities":["file.write"]}"#)
+      #"{"id":"chatgpt-operate","mode":"project-operations","capabilities":["file.write"]}"#)
     #expect(config.allowedCallers.isEmpty)
-    #expect(config.mode == .workspaceOperations)
+    #expect(config.mode == .projectOperations)
   }
 
   @Test
@@ -28,15 +28,15 @@ struct ProfileGrantConfigTests {
     let observe = try decode(#"{"id":"cloudflare-observe","capabilities":["*"]}"#)
     #expect(observe.mode == .readOnly)
     #expect(observe.allowedCallers == [.cloudflareTunnel])
-    #expect(!observe.grant.permitsRisk(.workspaceWrite))
+    #expect(!observe.grant.permitsRisk(.projectWrite))
 
     let operate = try decode(
-      #"{"id":"chatgpt-operate","capabilities":["file.write"],"workspaces":["workspace"]}"#)
-    #expect(operate.mode == .workspaceOperations)
+      #"{"id":"chatgpt-operate","capabilities":["file.write"],"projects":["project"]}"#)
+    #expect(operate.mode == .projectOperations)
     #expect(operate.allowedCallers == [.secureTunnel])
     #expect(!operate.fullShellEnabled)
     #expect(operate.capabilities == ["file.write"])
-    #expect(operate.workspaces == ["workspace"])
+    #expect(operate.projects == ["project"])
 
     let fullAccess = try decode(
       #"{"id":"chatgpt-operate","full_shell_enabled":true,"capabilities":["shell.run"]}"#)
@@ -47,7 +47,7 @@ struct ProfileGrantConfigTests {
 
     let custom = try decode(
       #"{"id":"custom","capabilities":["file.write"],"allowed_callers":["local-mcp"]}"#)
-    #expect(custom.mode == .workspaceOperations)
+    #expect(custom.mode == .projectOperations)
     #expect(custom.allowedCallers == [.localMCP])
   }
 
@@ -65,23 +65,23 @@ struct ProfileGrantConfigTests {
   func currentPolicyRoundTripsExplicitly() throws {
     let config = ProfileGrantConfig(
       id: GatewayProfileID(rawValue: "external-client")!, capabilities: ["file.write"],
-      workspaces: ["one"], allowedCallers: [.cloudflareTunnel],
-      mode: .workspaceOperations, confirmationPolicy: .allWrites)
+      projects: ["one"], allowedCallers: [.cloudflareTunnel],
+      mode: .projectOperations, confirmationPolicy: .allWrites)
     let data = try JSONEncoder().encode(config)
     #expect(try JSONDecoder().decode(ProfileGrantConfig.self, from: data) == config)
     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    #expect(object["mode"] as? String == "workspace-operations")
+    #expect(object["mode"] as? String == "project-operations")
     #expect(object["confirmation_policy"] as? String == "all-writes")
   }
 
   @Test
   func storedLegacyGrantMigratesWithoutAddingCapabilities() throws {
     let json =
-      #"{"id":"chatgpt-operate","capabilityIDs":["file.write"],"workspaceIDs":["one"],"allowedCallers":["secure-tunnel"],"fullShellEnabled":false}"#
+      #"{"id":"chatgpt-operate","capabilityIDs":["file.write"],"projectIDs":["one"],"allowedCallers":["secure-tunnel"],"fullShellEnabled":false}"#
     let grant = try JSONDecoder().decode(ProfileGrant.self, from: Data(json.utf8))
-    #expect(grant.mode == .workspaceOperations)
+    #expect(grant.mode == .projectOperations)
     #expect(grant.capabilityIDs == ["file.write"])
-    #expect(grant.workspaceIDs == ["one"])
+    #expect(grant.projectIDs == ["one"])
     #expect(!grant.supportsFullShell)
     #expect(grant.confirmationPolicy == .riskBased)
     #expect(try JSONDecoder().decode(ProfileGrant.self, from: JSONEncoder().encode(grant)) == grant)

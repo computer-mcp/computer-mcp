@@ -68,7 +68,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
     }
     let ownership = try MCPProcessOwnership.acquire(
       root: hostContext?.processOwnershipRoot ?? MCPProcessOwnership.defaultRoot,
-      workspace: hostContext?.workspaceRoot
+      project: hostContext?.projectRoot
         ?? workingDirectory,
       registration: server.id, artifact: hostContext?.pluginArtifacts[server.id])
     self.ownership = ownership

@@ -40,7 +40,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["image.info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     let result = try provider.callTool(
@@ -54,7 +54,7 @@ final class StructuredMediaToolProviderTests {
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operation"]) == (.string("image.info")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("Images/tile.png")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("Images/tile.png")))
     #expect((payload.objectValue?["mime_type"]) == (.string("image/png")))
     #expect((payload.objectValue?["frame_count"]) == (.number(1)))
     #expect((payload.objectValue?["pixel_width"]) == (.number(2)))
@@ -76,7 +76,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["image.info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     expectThrows(
@@ -119,7 +119,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     let result = try provider.callTool(
@@ -137,7 +137,7 @@ final class StructuredMediaToolProviderTests {
     let media = try #require(boxes["media"]?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("pdf.info")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("Docs/report.pdf")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("Docs/report.pdf")))
     #expect((payload.objectValue?["page_count"]) == (.number(2)))
     #expect((payload.objectValue?["returned_page_count"]) == (.number(1)))
     #expect((payload.objectValue?["pages_truncated"]) == (.bool(true)))
@@ -162,7 +162,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     expectThrows(
@@ -203,7 +203,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     let firstPageResult = try provider.callTool(
@@ -221,7 +221,7 @@ final class StructuredMediaToolProviderTests {
 
     #expect((firstPagePayload.objectValue?["operation"]) == (.string("pdf.text")))
     #expect(
-      (firstPagePayload.objectValue?["workspace_relative_path"]) == (.string("Docs/report.pdf")))
+      (firstPagePayload.objectValue?["project_relative_path"]) == (.string("Docs/report.pdf")))
     #expect((firstPagePayload.objectValue?["page_count"]) == (.number(2)))
     #expect((firstPagePayload.objectValue?["returned_page_count"]) == (.number(1)))
     #expect((firstPagePayload.objectValue?["page_range_truncated"]) == (.bool(true)))
@@ -270,7 +270,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     expectThrows(
@@ -332,7 +332,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["media.info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     let result = try provider.callTool(
@@ -347,7 +347,7 @@ final class StructuredMediaToolProviderTests {
     let track = try #require(payload.objectValue?["tracks"]?.arrayValue?.first?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("media.info")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("Media/tone.wav")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("Media/tone.wav")))
     #expect((payload.objectValue?["extension"]) == (.string("wav")))
     #expect((payload.objectValue?["track_count"]) == (.number(1)))
     #expect((payload.objectValue?["returned_track_count"]) == (.number(1)))
@@ -374,7 +374,7 @@ final class StructuredMediaToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["media.info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), mediaInspector: DarwinMediaInspector()))
 
     expectThrows(

@@ -14,7 +14,7 @@ package struct OAuthApprovalProfile: Equatable, Sendable {
     let authorization: JSONValue = .object([
       "mode": .string(grant.mode.rawValue),
       "capabilities": .array(grant.capabilityIDs.sorted().map(JSONValue.string)),
-      "workspaces": .array(grant.workspaceIDs.sorted().map(JSONValue.string)),
+      "projects": .array(grant.projectIDs.sorted().map(JSONValue.string)),
       "callers": .array(grant.allowedCallers.map(\.rawValue).sorted().map(JSONValue.string)),
       "full_shell_enabled": .bool(grant.fullShellEnabled),
       "mcp_servers": .array(grant.mcpServerIDs.sorted().map(JSONValue.string)),

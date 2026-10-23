@@ -37,7 +37,7 @@ package final class PluginInstallationStorage: Sendable {
       !requestedURL.path.contains("\0"), !requestedURL.pathComponents.contains(".."),
       !requestedURL.lastPathComponent.isEmpty, requestedURL.lastPathComponent != "."
     else { throw PluginStoreError.invalidState }
-    let parentURL = try WorkspacePathResolver.canonicalWorkspace(
+    let parentURL = try ProjectPathResolver.canonicalProject(
       requestedURL.deletingLastPathComponent())
     let parent = open(parentURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard parent >= 0 else { throw PluginArchiveError.fileSystemFailure }

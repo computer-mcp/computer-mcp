@@ -13,7 +13,7 @@ import Testing
 
 final class GatewayRuntimeTests {
   @Test
-  func testRoutesExplicitWorkspaceAndRejectsCrossWorkspaceAccess() throws {
+  func testRoutesExplicitProjectAndRejectsCrossProjectAccess() throws {
     let first = try temporaryDirectory()
     let second = try temporaryDirectory()
     defer {
@@ -32,23 +32,23 @@ final class GatewayRuntimeTests {
     )
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
-      capabilities: ["workspace.list", "workspace.describe", "file.read"],
-      workspaceIDs: ["first"],
+      capabilities: ["project.list", "project.describe", "file.read"],
+      projectIDs: ["first"],
       builtin: ["file.read"],
       database: database,
-      workspaces: [
-        workspace(id: "first", root: first),
-        workspace(id: "second", root: second),
+      projects: [
+        project(id: "first", root: first),
+        project(id: "second", root: second),
       ]
     )
 
     let listedNames = try gateway.listTools(context: .empty).map(\.name)
-    #expect((Set(listedNames)) == (["workspace.list", "workspace.describe", "file.read"]))
+    #expect((Set(listedNames)) == (["project.list", "project.describe", "file.read"]))
     let fileRead = try #require(
       gateway.listTools(context: .empty).first(where: { $0.name == "file.read" })
     )
     #expect(
-      (fileRead.inputSchema.objectValue?["properties"]?.objectValue?["workspace_id"]?
+      (fileRead.inputSchema.objectValue?["properties"]?.objectValue?["project_id"]?
         .objectValue?["type"]) == (.string("string")))
 
     expectThrows(
@@ -57,13 +57,13 @@ final class GatewayRuntimeTests {
         arguments: .object(["path": .string("value.txt")]), context: .empty
       )
     ) { error in
-      #expect(error.localizedDescription.contains("workspace_id"))
+      #expect(error.localizedDescription.contains("project_id"))
     }
 
     let result = try gateway.callTool(
       name: "file.read",
       arguments: .object([
-        "workspace_id": .string("first"),
+        "project_id": .string("first"),
         "path": .string("value.txt"),
       ]), context: .empty
     )
@@ -73,17 +73,17 @@ final class GatewayRuntimeTests {
       try gateway.callTool(
         name: "file.read",
         arguments: .object([
-          "workspace_id": .string("second"),
+          "project_id": .string("second"),
           "path": .string("value.txt"),
         ]), context: .empty
       )
     ) { error in
-      #expect(error.localizedDescription.contains(PolicyDenialCode.workspaceDenied.rawValue))
+      #expect(error.localizedDescription.contains(PolicyDenialCode.projectDenied.rawValue))
     }
 
-    let workspaceList = try gateway.callTool(
-      name: "workspace.list", arguments: .object([:]), context: .empty)
-    let rows = try #require(payload(workspaceList).objectValue?["workspaces"]?.arrayValue)
+    let projectList = try gateway.callTool(
+      name: "project.list", arguments: .object([:]), context: .empty)
+    let rows = try #require(payload(projectList).objectValue?["projects"]?.arrayValue)
     #expect((rows.count) == (1))
     #expect((rows.first?.objectValue?["id"]) == (.string("first")))
   }
@@ -92,14 +92,14 @@ final class GatewayRuntimeTests {
   func testFullShellRequiresBothManifestAndProfileEnablement() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let workspace = workspace(id: "root", root: root)
+    let project = project(id: "root", root: root)
     let database = try GatewayDatabase(inMemory: ())
     let disabled = try makeGateway(
       capabilities: ["shell.run"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: [],
       database: database,
-      workspaces: [workspace],
+      projects: [project],
       shellEnabled: true,
       fullShellEnabled: false,
       caller: .localMCP,
@@ -110,10 +110,10 @@ final class GatewayRuntimeTests {
 
     let enabled = try makeGateway(
       capabilities: ["operations.prepare", "operations.commit", "shell.run"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: [],
       database: database,
-      workspaces: [workspace],
+      projects: [project],
       shellEnabled: true,
       fullShellEnabled: true,
       caller: .localMCP,
@@ -124,7 +124,7 @@ final class GatewayRuntimeTests {
     let result = try await enabled.callToolAsync(
       name: "operations.commit",
       arguments: approvedOperationArguments(
-        gateway: enabled, database: database, workspaceID: "root", tool: "shell.run",
+        gateway: enabled, database: database, projectID: "root", tool: "shell.run",
         arguments: .object(["command": .string("printf gateway-shell")])), context: .empty
     )
     #expect(
@@ -139,10 +139,10 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["operations.prepare", "operations.commit", "shell.run"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: [],
       database: database,
-      workspaces: [workspace(id: "root", root: root)],
+      projects: [project(id: "root", root: root)],
       shellEnabled: true,
       fullShellEnabled: true,
       caller: .secureTunnel,
@@ -154,7 +154,7 @@ final class GatewayRuntimeTests {
     let result = try await gateway.callToolAsync(
       name: "operations.commit",
       arguments: approvedOperationArguments(
-        gateway: gateway, database: database, workspaceID: "root", tool: "shell.run",
+        gateway: gateway, database: database, projectID: "root", tool: "shell.run",
         arguments: .object(["command": .string("printf approved-shell")])), context: .empty
     )
     #expect(
@@ -172,32 +172,32 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["operations.prepare", "operations.commit", "file.trash"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: ["file.trash"],
       database: database,
-      workspaces: [workspace(id: "root", root: root)],
+      projects: [project(id: "root", root: root)],
       allowedCallers: [.secureTunnel, .localApp],
-      mode: .workspaceOperations
+      mode: .projectOperations
     )
     let targetArguments: JSONValue = .object(["path": .string("obsolete.txt")])
     let prepareContext = ExecutionContext(
       requestID: "prepare-request",
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
-      workspaceID: "root"
+      projectID: "root"
     )
     let commitContext = ExecutionContext(
       requestID: "commit-request",
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
-      workspaceID: "root"
+      projectID: "root"
     )
 
     expectThrows(
       try gateway.callTool(
         name: "file.trash",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "path": .string("obsolete.txt"),
         ]), context: .empty
       )
@@ -208,7 +208,7 @@ final class GatewayRuntimeTests {
     let prepared = try gateway.callTool(
       name: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string("root"),
+        "project_id": .string("root"),
         "tool": .string("file.trash"),
         "arguments": targetArguments,
       ]),
@@ -221,7 +221,7 @@ final class GatewayRuntimeTests {
       try gateway.callTool(
         name: "operations.commit",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "ticket_id": .string(ticketID),
           "tool": .string("file.trash"),
           "arguments": targetArguments,
@@ -230,7 +230,7 @@ final class GatewayRuntimeTests {
           requestID: "wrong-principal-request",
           caller: .localApp,
           profileID: .chatGPTOperate,
-          workspaceID: "root"
+          projectID: "root"
         ), invocationContext: .empty
       )
     ) { error in
@@ -243,7 +243,7 @@ final class GatewayRuntimeTests {
       try gateway.callTool(
         name: "operations.commit",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "ticket_id": .string(ticketID),
           "tool": .string("file.trash"),
           "arguments": .object(["path": .string("different.txt")]),
@@ -259,7 +259,7 @@ final class GatewayRuntimeTests {
     let committed = try gateway.callTool(
       name: "operations.commit",
       arguments: .object([
-        "workspace_id": .string("root"),
+        "project_id": .string("root"),
         "ticket_id": .string(ticketID),
         "tool": .string("file.trash"),
         "arguments": targetArguments,
@@ -274,7 +274,7 @@ final class GatewayRuntimeTests {
       try gateway.callTool(
         name: "operations.commit",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "ticket_id": .string(ticketID),
           "tool": .string("file.trash"),
           "arguments": targetArguments,
@@ -283,7 +283,7 @@ final class GatewayRuntimeTests {
           requestID: "second-commit-request",
           caller: .secureTunnel,
           profileID: .chatGPTOperate,
-          workspaceID: "root"
+          projectID: "root"
         ), invocationContext: .empty
       )
     ) { error in
@@ -334,7 +334,7 @@ final class GatewayRuntimeTests {
   func testOperationPreparationRejectsEscapingSymlinkTarget() throws {
     let container = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: container) }
-    let root = container.appendingPathComponent("workspace", isDirectory: true)
+    let root = container.appendingPathComponent("project", isDirectory: true)
     let outside = container.appendingPathComponent("outside", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
@@ -345,20 +345,20 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["operations.prepare", "operations.commit", "file.write"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: ["file.write"],
       database: database,
-      workspaces: [workspace(id: "root", root: root)],
+      projects: [project(id: "root", root: root)],
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
-      mode: .workspaceOperations
+      mode: .projectOperations
     )
 
     expectThrows(
       try gateway.callTool(
         name: "operations.prepare",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "tool": .string("file.write"),
           "arguments": .object([
             "path": .string("escape/written.txt"),
@@ -387,17 +387,17 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["operations.prepare", "operations.commit", "file.trash"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: ["file.trash"],
       database: database,
-      workspaces: [workspace(id: "root", root: root)],
-      mode: .workspaceOperations
+      projects: [project(id: "root", root: root)],
+      mode: .projectOperations
     )
     let targetArguments: JSONValue = .object(["path": .string("drift.txt")])
     let prepared = try gateway.callTool(
       name: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string("root"),
+        "project_id": .string("root"),
         "tool": .string("file.trash"),
         "arguments": targetArguments,
       ]), context: .empty
@@ -410,7 +410,7 @@ final class GatewayRuntimeTests {
       try gateway.callTool(
         name: "operations.commit",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "ticket_id": .string(ticketID),
           "tool": .string("file.trash"),
           "arguments": targetArguments,
@@ -437,11 +437,11 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["operations.prepare", "operations.commit", "file.remove_xattr"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: ["file.remove_xattr"],
       database: database,
-      workspaces: [workspace(id: "root", root: root)],
-      mode: .workspaceOperations
+      projects: [project(id: "root", root: root)],
+      mode: .projectOperations
     )
     let targetArguments: JSONValue = .object([
       "path": .string("plain.txt"),
@@ -450,7 +450,7 @@ final class GatewayRuntimeTests {
     let prepared = try gateway.callTool(
       name: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string("root"),
+        "project_id": .string("root"),
         "tool": .string("file.remove_xattr"),
         "arguments": targetArguments,
       ]),
@@ -458,7 +458,7 @@ final class GatewayRuntimeTests {
         requestID: "failure-prepare",
         caller: .secureTunnel,
         profileID: .chatGPTOperate,
-        workspaceID: "root"
+        projectID: "root"
       ), invocationContext: .empty
     )
     let ticketID = try #require(payload(prepared).objectValue?["ticket_id"]?.stringValue)
@@ -467,14 +467,14 @@ final class GatewayRuntimeTests {
       requestID: "failure-commit",
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
-      workspaceID: "root"
+      projectID: "root"
     )
 
     expectThrows(
       try gateway.callTool(
         name: "operations.commit",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "ticket_id": .string(ticketID),
           "tool": .string("file.remove_xattr"),
           "arguments": targetArguments,
@@ -507,7 +507,7 @@ final class GatewayRuntimeTests {
   }
 
   @Test
-  func testSingleWorkspaceMayBeSelectedImplicitly() throws {
+  func testSingleProjectMayBeSelectedImplicitly() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     try "single".write(
@@ -517,10 +517,10 @@ final class GatewayRuntimeTests {
     )
     let gateway = try makeGateway(
       capabilities: ["file.read"],
-      workspaceIDs: ["only"],
+      projectIDs: ["only"],
       builtin: ["file.read"],
       database: try GatewayDatabase(inMemory: ()),
-      workspaces: [workspace(id: "only", root: root)]
+      projects: [project(id: "only", root: root)]
     )
 
     let result = try gateway.callTool(
@@ -544,10 +544,10 @@ final class GatewayRuntimeTests {
       capabilities: [
         "cli.help", "cli.exec", "policy.probe", "process.list", "process.spawn",
       ],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: [],
       database: database,
-      workspaces: [workspace(id: "root", root: root)],
+      projects: [project(id: "root", root: root)],
       cli: CLISectionConfig(commands: [command])
     )
 
@@ -556,7 +556,7 @@ final class GatewayRuntimeTests {
         == (["cli.help", "policy.probe", "process.list"]))
     let processList = try restricted.callTool(
       name: "process.list",
-      arguments: .object(["workspace_id": .string("root")]), context: .empty
+      arguments: .object(["project_id": .string("root")]), context: .empty
     )
     #expect((try payload(processList).objectValue?["processes"]) == (.array([])))
     expectThrows(
@@ -564,7 +564,7 @@ final class GatewayRuntimeTests {
         name: "policy.probe",
         arguments: .object([
           "capability_id": .string("process.spawn"),
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "arguments": .object([
             "id": .string("echo"),
             "argv": .array([.string("blocked")]),
@@ -588,10 +588,10 @@ final class GatewayRuntimeTests {
 
     let enabled = try makeGateway(
       capabilities: ["cli.exec", "process.spawn"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: [],
       database: try GatewayDatabase(inMemory: ()),
-      workspaces: [workspace(id: "root", root: root)],
+      projects: [project(id: "root", root: root)],
       fullShellEnabled: true,
       cli: CLISectionConfig(commands: [command]),
       caller: .localMCP,
@@ -606,15 +606,15 @@ final class GatewayRuntimeTests {
   func testComputerUseToolsFollowProfileCapabilities() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let workspace = workspace(id: "root", root: root)
+    let project = project(id: "root", root: root)
 
     let gateway = try makeGateway(
       capabilities: ["computer.permissions", "computer.displays", "computer.pointer.click"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: [],
       database: try GatewayDatabase(inMemory: ()),
-      workspaces: [workspace],
-      mode: .workspaceOperations
+      projects: [project],
+      mode: .projectOperations
     )
     #expect(
       (Set(try gateway.listTools(context: .empty).map(\.name)))
@@ -632,10 +632,10 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["computer.permissions"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: [],
       database: database,
-      workspaces: [workspace(id: "root", root: root)]
+      projects: [project(id: "root", root: root)]
     )
 
     _ = try gateway.callTool(name: "computer.permissions", arguments: .object([:]), context: .empty)
@@ -652,15 +652,15 @@ final class GatewayRuntimeTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
-      capabilities: ["workspace.list"],
-      workspaceIDs: ["root"],
+      capabilities: ["project.list"],
+      projectIDs: ["root"],
       builtin: [],
       database: database,
-      workspaces: [workspace(id: "root", root: root)]
+      projects: [project(id: "root", root: root)]
     )
 
     let result = try gateway.callTool(
-      name: "workspace.list", arguments: .object([:]), context: .empty)
+      name: "project.list", arguments: .object([:]), context: .empty)
     let structuredContent = try #require(
       result.objectValue?["structuredContent"]?.objectValue
     )
@@ -673,7 +673,7 @@ final class GatewayRuntimeTests {
     #expect((requestID) == (event.requestID))
     #expect((execution["caller"]) == (.string("secure-tunnel")))
     #expect((execution["profile_id"]) == (.string("chatgpt-operate")))
-    #expect((execution["capability_id"]) == (.string("workspace.list")))
+    #expect((execution["capability_id"]) == (.string("project.list")))
     #expect(
       (result.objectValue?["_meta"]?.objectValue?["computer_mcp"]?.objectValue?[
         "request_id"
@@ -691,12 +691,12 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["file.read"],
-      workspaceIDs: ["first"],
+      projectIDs: ["first"],
       builtin: ["file.read"],
       database: database,
-      workspaces: [
-        workspace(id: "first", root: first),
-        workspace(id: "second", root: second),
+      projects: [
+        project(id: "first", root: first),
+        project(id: "second", root: second),
       ]
     )
 
@@ -707,7 +707,7 @@ final class GatewayRuntimeTests {
       try gateway.callTool(
         name: "file.read",
         arguments: .object([
-          "workspace_id": .string("second"),
+          "project_id": .string("second"),
           "path": .string("value.txt"),
         ]), context: .empty
       )
@@ -717,11 +717,11 @@ final class GatewayRuntimeTests {
     #expect((events.count) == (2))
     #expect((Set(events.map(\.capabilityID))) == (["unknown.tool", "file.read"]))
     let unknownTool = try #require(events.first { $0.capabilityID == "unknown.tool" })
-    let crossWorkspace = try #require(events.first { $0.capabilityID == "file.read" })
+    let crossProject = try #require(events.first { $0.capabilityID == "file.read" })
     #expect((unknownTool.decision) == (.failed))
     #expect((unknownTool.errorCode) == ("gateway.tool_unknown"))
-    #expect((crossWorkspace.decision) == (.denied))
-    #expect((crossWorkspace.errorCode) == (PolicyDenialCode.workspaceDenied.rawValue))
+    #expect((crossProject.decision) == (.denied))
+    #expect((crossProject.errorCode) == (PolicyDenialCode.projectDenied.rawValue))
     #expect(
       events.allSatisfy {
         $0.inputDigest != nil && $0.outputDigest != nil && $0.outputByteCount != nil
@@ -763,24 +763,24 @@ final class GatewayRuntimeTests {
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
       capabilities: ["file.read"],
-      workspaceIDs: ["root"],
+      projectIDs: ["root"],
       builtin: ["file.read"],
       database: database,
-      workspaces: [workspace(id: "root", root: root)]
+      projects: [project(id: "root", root: root)]
     )
 
     expectThrows(
       try gateway.callTool(
         name: "file.read",
         arguments: .object([
-          "workspace_id": .string("root"),
+          "project_id": .string("root"),
           "path": .string("../outside.txt"),
         ]), context: .empty
       )
     )
     let event = try #require(try database.auditEvents().first)
     #expect((event.decision) == (.denied))
-    #expect((event.errorCode) == (PolicyDenialCode.workspaceDenied.rawValue))
+    #expect((event.errorCode) == (PolicyDenialCode.projectDenied.rawValue))
 
     let ticketReuse = GatewayToolError.invalidArguments(
       "[operations.ticket_expired_or_used] The operation ticket has expired or was used."
@@ -803,11 +803,11 @@ final class GatewayRuntimeTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let database = try GatewayDatabase(inMemory: ())
     let gateway = try makeGateway(
-      capabilities: ["workspace.list"],
-      workspaceIDs: ["root"],
+      capabilities: ["project.list"],
+      projectIDs: ["root"],
       builtin: [],
       database: database,
-      workspaces: [workspace(id: "root", root: root)]
+      projects: [project(id: "root", root: root)]
     )
 
     let result = try await gateway.callToolForMCPAsync(
@@ -825,7 +825,7 @@ final class GatewayRuntimeTests {
   }
 
   @Test
-  func testShellSessionsAreIsolatedByWorkspaceRuntime() throws {
+  func testShellSessionsAreIsolatedByProjectRuntime() throws {
     let first = try temporaryDirectory()
     let second = try temporaryDirectory()
     defer {
@@ -837,12 +837,12 @@ final class GatewayRuntimeTests {
       capabilities: [
         "operations.prepare", "operations.commit", "shell.spawn", "shell.read", "shell.cancel",
       ],
-      workspaceIDs: ["first", "second"],
+      projectIDs: ["first", "second"],
       builtin: [],
       database: database,
-      workspaces: [
-        workspace(id: "first", root: first),
-        workspace(id: "second", root: second),
+      projects: [
+        project(id: "first", root: first),
+        project(id: "second", root: second),
       ],
       shellEnabled: true,
       fullShellEnabled: true,
@@ -853,7 +853,7 @@ final class GatewayRuntimeTests {
     let spawned = try gateway.callTool(
       name: "operations.commit",
       arguments: approvedOperationArguments(
-        gateway: gateway, database: database, workspaceID: "first", tool: "shell.spawn",
+        gateway: gateway, database: database, projectID: "first", tool: "shell.spawn",
         arguments: .object([
           "mode": .string("argv"),
           "executable": .string("/bin/sh"),
@@ -864,13 +864,13 @@ final class GatewayRuntimeTests {
     let owner = try #require(gateway.ownedWork.snapshot.first)
     #expect(gateway.ownedWork.snapshot.count == 1)
     #expect(owner.kind == .shell)
-    #expect(owner.workspaceID == "first")
+    #expect(owner.projectID == "first")
     #expect(owner.resourceID == sessionID)
     defer {
       _ = try? gateway.callTool(
         name: "operations.commit",
         arguments: approvedOperationArguments(
-          gateway: gateway, database: database, workspaceID: "first", tool: "shell.cancel",
+          gateway: gateway, database: database, projectID: "first", tool: "shell.cancel",
           arguments: .object(["session_id": .string(sessionID)])), context: .empty
       )
     }
@@ -879,7 +879,7 @@ final class GatewayRuntimeTests {
       try gateway.callTool(
         name: "operations.commit",
         arguments: approvedOperationArguments(
-          gateway: gateway, database: database, workspaceID: "second", tool: "shell.read",
+          gateway: gateway, database: database, projectID: "second", tool: "shell.read",
           arguments: .object(["session_id": .string(sessionID)])), context: .empty
       )
     ) { error in
@@ -889,10 +889,10 @@ final class GatewayRuntimeTests {
 
   private func makeGateway(
     capabilities: [String],
-    workspaceIDs: [String],
+    projectIDs: [String],
     builtin: [String],
     database: GatewayDatabase,
-    workspaces: [RegisteredWorkspace],
+    projects: [RegisteredProject],
     shellEnabled: Bool = false,
     fullShellEnabled: Bool = false,
     cli: CLISectionConfig = CLISectionConfig(),
@@ -912,7 +912,7 @@ final class GatewayRuntimeTests {
         ProfileGrantConfig(
           id: profileID,
           capabilities: capabilities,
-          workspaces: workspaceIDs,
+          projects: projectIDs,
           allowedCallers: allowedCallers ?? [caller],
           fullShellEnabled: fullShellEnabled,
           mode: mode
@@ -924,25 +924,25 @@ final class GatewayRuntimeTests {
     return try GatewayRuntime(
       configuration: configuration,
       database: database,
-      registeredWorkspaces: workspaces, platform: MacOSPlatform.services
+      registeredProjects: projects, platform: MacOSPlatform.services
     )
   }
 
-  private func workspace(id: String, root: URL) -> RegisteredWorkspace {
-    RegisteredWorkspace(id: id, displayName: id, rootPath: root.path)
+  private func project(id: String, root: URL) -> RegisteredProject {
+    RegisteredProject(id: id, displayName: id, rootPath: root.path)
   }
 
   private func approvedOperationArguments(
     gateway: GatewayRuntime,
     database: GatewayDatabase,
-    workspaceID: String,
+    projectID: String,
     tool: String,
     arguments: JSONValue
   ) throws -> JSONValue {
     let prepared = try gateway.callTool(
       name: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string(workspaceID),
+        "project_id": .string(projectID),
         "tool": .string(tool),
         "arguments": arguments,
       ]), context: .empty)
@@ -951,7 +951,7 @@ final class GatewayRuntimeTests {
     try database.resolveOperationApproval(id: ticketID, approved: true, resolver: .localCLI)
     #expect(try database.operationTicket(id: ticketID)?.state == .approved)
     return .object([
-      "workspace_id": .string(workspaceID),
+      "project_id": .string(projectID),
       "ticket_id": .string(ticketID),
       "tool": .string(tool),
       "arguments": arguments,

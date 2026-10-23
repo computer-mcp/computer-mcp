@@ -129,7 +129,7 @@ struct ClientAccessView: View {
               Text("Observe", bundle: AppLocalization.resourceBundle)
             }
             Button {
-              Task { await model.limit(session, to: .workspaceOperations) }
+              Task { await model.limit(session, to: .projectOperations) }
             } label: {
               Text("Control — Restricted Access", bundle: AppLocalization.resourceBundle)
             }
@@ -348,7 +348,7 @@ struct ClientConsentView: View {
           .font(.headline)
         Text(verbatim: clientAccessIdentity(draft.session.principalID))
         Text(
-          "This client can run commands and access files, processes, the network, and credentials available to your macOS user. A workspace does not limit this access. macOS privacy permissions still apply.",
+          "This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply.",
           bundle: AppLocalization.resourceBundle)
         Picker(
           selection: Binding(

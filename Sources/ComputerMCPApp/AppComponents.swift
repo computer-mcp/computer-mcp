@@ -2,7 +2,7 @@ import ComputerMCPControlPlane
 import ComputerMCPCore
 import SwiftUI
 
-struct WorkspaceHeader<Actions: View>: View {
+struct ProjectHeader<Actions: View>: View {
   let title: String
   let subtitle: String
   let actions: Actions
@@ -47,7 +47,7 @@ struct RefreshButton: View {
   }
 }
 
-struct LoadingWorkspaceView: View {
+struct LoadingProjectView: View {
   let title: String
 
   var body: some View {
@@ -61,7 +61,7 @@ struct LoadingWorkspaceView: View {
   }
 }
 
-struct EmptyWorkspaceView: View {
+struct EmptyProjectView: View {
   let title: String
   let detail: String
   let systemImage: String
@@ -75,7 +75,7 @@ struct EmptyWorkspaceView: View {
   }
 }
 
-struct FailedWorkspaceView: View {
+struct FailedProjectView: View {
   let message: String
   let retry: () -> Void
 
@@ -134,7 +134,7 @@ extension ServiceState {
   }
 }
 
-extension WorkspaceHealth {
+extension ProjectHealth {
   var color: Color {
     switch self {
     case .available: .green

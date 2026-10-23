@@ -130,7 +130,7 @@ A parameter defines `name`, `schema`, and optional `description`, `required`,
 false, and omitted relationship arrays to empty. Relationships are between
 explicitly supplied parameter names, including supplied false/null values.
 Required input and an omitted-input default cannot coexist.
-`workspace_id` is reserved for Gateway routing; map a CLI's similarly named
+`project_id` is reserved for Gateway routing; map a CLI's similarly named
 option through a different parameter name.
 
 `default` documents what the CLI does when the parameter is omitted. It is not
@@ -182,7 +182,7 @@ are generated from the same descriptors used during execution.
 Projected tools have stable names derived from the registration identity and
 command ID, with readable titles and source/path/coverage metadata. Obtain names
 from `tools/list`; do not construct them manually. Calls require the host's Full
-Shell permission and a workspace, just like `cli.exec`. A self-reported read-only
+Shell permission and a project, just like `cli.exec`. A self-reported read-only
 hint cannot expose a command to an observe profile. `cli.exec` and
 `process.spawn` cannot bypass a declared tree. For file-backed trees, `cli.help`
 returns declared metadata without executing help argv; executable exporters are
@@ -192,7 +192,7 @@ The executable and interpreters are resolved in the actual cwd/environment.
 The host supplies the base environment; registration `env` values override it.
 Status checks, tree exporters and projected calls use that same merged environment.
 Relative executable paths and relative PATH entries use the configured CLI cwd
-(the selected workspace when no cwd override is supplied), not the App's directory.
+(the selected project when no cwd override is supplied), not the App's directory.
 When executable checks are declared, their interpreter chain must be fully
 resolvable. Each check executes the resolved program with its fixed argv and
 closed stdin in that same cwd/environment. A zero exit, complete captured stdout
@@ -256,7 +256,7 @@ COMPUTER_MCP_FORMATTER_EXECUTABLE=/absolute/path/to/swift-format \
 The test checks the real version, loads the independent package, compares the
 five projected tools with direct registration, formats and lints explicit stdin,
 checks raw-call and observe-profile rejection, and verifies that package and
-executable bytes are unchanged. It uses a private temporary workspace and
+executable bytes are unchanged. It uses a private temporary project and
 in-memory Gateway state; it does not connect to the App or production sockets.
 The generated tree retains explicit partial coverage and its publisher baseline.
 Its version and native-interface checks execute inside the same generic call

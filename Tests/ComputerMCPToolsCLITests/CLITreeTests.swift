@@ -166,7 +166,7 @@ struct CLITreeTests {
       kind: kind, helper: kind == .helper ? "/bin/cat" : nil, args: [fixture.treeURL.path])
     let loaded = try source.load(
       command: .init(id: "cat", executable: "/bin/cat", allowAnyArgs: false),
-      workspace: fixture.root, execution: execution)
+      project: fixture.root, execution: execution)
     #expect(loaded == tree)
     await execution.shutdown()
   }
@@ -259,7 +259,7 @@ struct CLITreeTests {
       cwd: fixture.root, environment: ["CLI_TREE_TEST_VALUE": "not global"],
       timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
     let output = try #require(context.stdout.base64.flatMap { Data(base64Encoded: $0) })
-    let canonical = try WorkspacePathResolver.canonicalWorkspace(fixture.root).path
+    let canonical = try ProjectPathResolver.canonicalProject(fixture.root).path
     #expect(String(decoding: output, as: UTF8.self) == "\(canonical)\nnot global")
     let timeout = try await execution.runAsync(
       executable: "/bin/sleep", invocation: .init(arguments: ["30"], standardInput: Data()),
@@ -319,13 +319,13 @@ struct CLITreeTests {
     let execution = CLIProcessExecution()
     let command = CLICommandConfig(id: "fixture", executable: "/bin/cat", allowAnyArgs: false)
     #expect(throws: (any Error).self) {
-      try source.load(command: command, workspace: fixture.root, execution: execution)
+      try source.load(command: command, project: fixture.root, execution: execution)
     }
     let fifo = fixture.root.appendingPathComponent("fifo")
     #expect(mkfifo(fifo.path, 0o600) == 0)
     source = .init(kind: .file, path: fifo.path)
     #expect(throws: (any Error).self) {
-      try source.load(command: command, workspace: fixture.root, execution: execution)
+      try source.load(command: command, project: fixture.root, execution: execution)
     }
     await execution.shutdown()
   }
@@ -370,7 +370,7 @@ struct CLITreeTests {
     #expect(throws: CLITreeError.self) {
       try CLIArgumentEncoder.encode(.object(["flag": .bool(false)]), command: command)
     }
-    command.parameters = [.init(name: "workspace_id", schema: Self.string)]
+    command.parameters = [.init(name: "project_id", schema: Self.string)]
     #expect(throws: CLITreeError.self) { try command.validate() }
   }
 
@@ -399,7 +399,7 @@ struct CLITreeTests {
   static func provider(_ command: CLICommandDescriptor, executable: String) -> CLITreeToolProvider {
     .init(
       registration: .init(id: "fixture", executable: executable, allowAnyArgs: false),
-      tree: tree(command), workspace: URL(fileURLWithPath: "/tmp"),
+      tree: tree(command), project: URL(fileURLWithPath: "/tmp"),
       execution: CLIProcessExecution(),
       timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
   }

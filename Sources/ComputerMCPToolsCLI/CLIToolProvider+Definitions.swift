@@ -14,7 +14,7 @@ extension CLIToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "cli.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -33,7 +33,7 @@ extension CLIToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "cli.describe", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -51,7 +51,7 @@ extension CLIToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "cli.status", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -74,7 +74,7 @@ extension CLIToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "cli.help", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -97,7 +97,7 @@ extension CLIToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "cli.exec", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),

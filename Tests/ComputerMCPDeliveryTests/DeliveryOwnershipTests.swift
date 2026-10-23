@@ -79,7 +79,7 @@ struct DeliveryOwnershipTests {
       let operationID = UUID().uuidString.lowercased()
       let base = try fixture.git(["rev-parse", "main"])
       let journal = DeliveryJournal(
-        operationID: operationID, workspace: "fixture", scope: "notes",
+        operationID: operationID, project: "fixture", scope: "notes",
         repository: fixture.root.path, defaultBranch: "main", branch: "docs/entry",
         worktree: fixture.root.appendingPathComponent(".claude/worktrees/" + operationID).path,
         base: base)

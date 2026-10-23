@@ -10,7 +10,7 @@ struct GatewayProbeVerify: AsyncParsableCommand {
       "Regenerate deterministic fixtures and exercise core providers through a real Gateway HTTP server."
   )
 
-  @Option(name: .long, help: "Fixture workspace owned by computer-mcp-validate.")
+  @Option(name: .long, help: "Fixture project owned by computer-mcp-validate.")
   var fixtureRoot = ".build/validation/fixtures"
 
   @Option(name: .long, help: "Generated fixture inventory JSON.")
@@ -104,7 +104,7 @@ struct GatewayProbeVerify: AsyncParsableCommand {
         var runner = GatewayVerificationRunner(
           session: session,
           fixtureDigest: fixtureReport.contentDigest,
-          runtimeWorkspacePath: runtimeURL.path,
+          runtimeProjectPath: runtimeURL.path,
           loopbackPort: port,
           toolCatalog: toolCatalog,
           observeToolNames: observeToolNames
@@ -231,13 +231,13 @@ private final class TemporaryGatewayHost {
 private struct GatewayVerificationRunner {
   let session: GatewayClientSession
   let fixtureDigest: String
-  let runtimeWorkspacePath: String
+  let runtimeProjectPath: String
   let loopbackPort: Int
   let toolCatalog: [MCPTool]
   let observeToolNames: [String]
 
-  private let fixtureWorkspace = "fixture"
-  private let repositoryWorkspace = "repository"
+  private let fixtureProject = "fixture"
+  private let repositoryProject = "repository"
   private var requestIDs: [String] = []
   private var completedTools = Set<String>()
   private var denials: [String: String] = [:]
@@ -248,14 +248,14 @@ private struct GatewayVerificationRunner {
   init(
     session: GatewayClientSession,
     fixtureDigest: String,
-    runtimeWorkspacePath: String,
+    runtimeProjectPath: String,
     loopbackPort: Int,
     toolCatalog: [MCPTool],
     observeToolNames: [String]
   ) {
     self.session = session
     self.fixtureDigest = fixtureDigest
-    self.runtimeWorkspacePath = runtimeWorkspacePath
+    self.runtimeProjectPath = runtimeProjectPath
     self.loopbackPort = loopbackPort
     self.toolCatalog = toolCatalog
     self.observeToolNames = observeToolNames
@@ -267,19 +267,19 @@ private struct GatewayVerificationRunner {
     "git",
     "json",
     "plist",
-    "workspace",
+    "project",
   ])
 
   private static let environmentGatedMutationTools = Set([
-    "workspace.open",
-    "workspace.reveal",
+    "project.open",
+    "project.reveal",
   ])
 
   mutating func run() async throws -> JSONValue {
     let names = try await session.listToolNames()
     let requiredTools = Set([
-      "workspace.list",
-      "workspace.describe",
+      "project.list",
+      "project.describe",
       "file.read",
       "skills.read_package",
       "cli.exec",
@@ -294,7 +294,7 @@ private struct GatewayVerificationRunner {
     }
 
     let observeProfile = try await exerciseObserveProfileFixturePlan()
-    let workspace = try await exerciseWorkspaceAndFiles()
+    let project = try await exerciseProjectAndFiles()
     let structured = try await exerciseStructuredFormats()
     let skills = try await exerciseSkills()
     let execution = try await exerciseExecution()
@@ -311,7 +311,7 @@ private struct GatewayVerificationRunner {
       "request_ids": .array(requestIDs.map(JSONValue.string)),
       "denials": .object(denials.mapValues(JSONValue.string)),
       "observe_profile": observeProfile,
-      "workspace_and_files": workspace,
+      "project_and_files": project,
       "structured_formats": structured,
       "skills": skills,
       "execution": execution,
@@ -322,8 +322,8 @@ private struct GatewayVerificationRunner {
 
   private mutating func exerciseObserveProfileFixturePlan() async throws -> JSONValue {
     let plan = CapabilityFixturePlan(
-      workspaceID: fixtureWorkspace,
-      repositoryWorkspaceID: repositoryWorkspace,
+      projectID: fixtureProject,
+      repositoryProjectID: repositoryProject,
       fixturePrefix: ".",
       skillRootID: "fixture-skills",
       skillName: "fixture-skill",
@@ -341,9 +341,9 @@ private struct GatewayVerificationRunner {
       "computer.windows",
     ])
     let orderedTools: [String] =
-      ["workspace.list", "computer.pointer.position"]
+      ["project.list", "computer.pointer.position"]
       + observeToolNames.filter {
-        $0 != "workspace.list"
+        $0 != "project.list"
           && $0 != "computer.pointer.position"
           && $0 != "computer.verify"
       }
@@ -416,27 +416,27 @@ private struct GatewayVerificationRunner {
     ])
   }
 
-  private mutating func exerciseWorkspaceAndFiles() async throws -> JSONValue {
-    let listed = try payload(await call("workspace.list"))
-    guard contains(fixtureWorkspace, in: listed), contains(repositoryWorkspace, in: listed) else {
-      throw ValidationError("workspace.list did not return both granted workspaces.")
+  private mutating func exerciseProjectAndFiles() async throws -> JSONValue {
+    let listed = try payload(await call("project.list"))
+    guard contains(fixtureProject, in: listed), contains(repositoryProject, in: listed) else {
+      throw ValidationError("project.list did not return both granted projects.")
     }
     _ = try payload(
       await call(
-        "workspace.describe",
-        arguments: ["workspace_id": .string(fixtureWorkspace)]
+        "project.describe",
+        arguments: ["project_id": .string(fixtureProject)]
       )
     )
-    let info = try payload(await call("workspace.info", workspaceID: fixtureWorkspace))
-    let status = try payload(await call("workspace.status", workspaceID: fixtureWorkspace))
-    let outline = try payload(await call("workspace.outline", workspaceID: fixtureWorkspace))
-    let dataFiles = try payload(await call("workspace.data_files", workspaceID: fixtureWorkspace))
-    let symlinks = try payload(await call("workspace.symlinks", workspaceID: fixtureWorkspace))
+    let info = try payload(await call("project.info", projectID: fixtureProject))
+    let status = try payload(await call("project.status", projectID: fixtureProject))
+    let outline = try payload(await call("project.outline", projectID: fixtureProject))
+    let dataFiles = try payload(await call("project.data_files", projectID: fixtureProject))
+    let symlinks = try payload(await call("project.symlinks", projectID: fixtureProject))
     guard contains("Data/sample.json", in: dataFiles) else {
-      throw ValidationError("workspace.data_files omitted Data/sample.json.")
+      throw ValidationError("project.data_files omitted Data/sample.json.")
     }
     guard contains("Links/readme.md", in: symlinks) else {
-      throw ValidationError("workspace.symlinks omitted Links/readme.md.")
+      throw ValidationError("project.symlinks omitted Links/readme.md.")
     }
 
     let files = try payload(
@@ -446,14 +446,14 @@ private struct GatewayVerificationRunner {
           "path": .string("Data"),
           "recursive_depth": .number(1),
         ],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let read = try payload(
       await call(
         "file.read",
         arguments: ["path": .string("Docs/guide.md")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let search = try payload(
@@ -463,7 +463,7 @@ private struct GatewayVerificationRunner {
           "path": .string("Docs"),
           "query": .string("CMCP-FIXTURE-ALPHA"),
         ],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let diff = try payload(
@@ -473,21 +473,21 @@ private struct GatewayVerificationRunner {
           "source": .string("Duplicates/first.txt"),
           "target": .string("Text/lines.txt"),
         ],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let duplicates = try payload(
       await call(
         "file.duplicates",
         arguments: ["path": .string("Duplicates")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let link = try payload(
       await call(
         "file.readlink",
         arguments: ["path": .string("Links/readme.md")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let checks = [
@@ -497,40 +497,40 @@ private struct GatewayVerificationRunner {
       "file.diff": contains("duplicate-content", in: diff),
       "file.duplicates": contains("first.txt", in: duplicates),
       "file.readlink": contains("../README.md", in: link),
-      "workspace.info": contains(runtimeWorkspacePath, in: info),
-      "workspace.status": contains("entry", in: status),
-      "workspace.outline": contains("README.md", in: outline),
+      "project.info": contains(runtimeProjectPath, in: info),
+      "project.status": contains("entry", in: status),
+      "project.outline": contains("README.md", in: outline),
     ]
     let failedChecks = checks.compactMap { name, passed in
       passed ? nil : name
     }.sorted()
     guard failedChecks.isEmpty else {
       throw ValidationError(
-        "Core workspace/file fixture checks failed: \(failedChecks.joined(separator: ", "))."
+        "Core project/file fixture checks failed: \(failedChecks.joined(separator: ", "))."
       )
     }
 
-    denials["missing_workspace"] = await expectedFailure(
+    denials["missing_project"] = await expectedFailure(
       "file.read",
       arguments: ["path": .string("README.md")]
     )
     denials["path_traversal"] = await expectedFailure(
       "file.read",
       arguments: ["path": .string("../Package.swift")],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
-    guard denials["missing_workspace"] != "unexpected-success",
+    guard denials["missing_project"] != "unexpected-success",
       denials["path_traversal"] != "unexpected-success"
     else {
-      throw ValidationError("Workspace routing or path traversal was not denied.")
+      throw ValidationError("Project routing or path traversal was not denied.")
     }
 
     return .object([
-      "workspace_count": .number(2),
+      "project_count": .number(2),
       "classification_verified": .bool(true),
       "read_search_diff_duplicates_verified": .bool(true),
       "symlink_metadata_verified": .bool(true),
-      "missing_workspace_denied": .bool(true),
+      "missing_project_denied": .bool(true),
       "path_traversal_denied": .bool(true),
     ])
   }
@@ -582,7 +582,7 @@ private struct GatewayVerificationRunner {
     ]
     for (tool, arguments, marker) in checks {
       let value = try payload(
-        await call(tool, arguments: arguments, workspaceID: fixtureWorkspace)
+        await call(tool, arguments: arguments, projectID: fixtureProject)
       )
       guard contains(marker, in: value) else {
         throw ValidationError("\(tool) did not preserve expected marker '\(marker)'.")
@@ -594,7 +594,7 @@ private struct GatewayVerificationRunner {
         "path": .string("Data/sample.sqlite"),
         "query": .string("DELETE FROM items"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     guard denials["sqlite_write"] != "unexpected-success" else {
       throw ValidationError("sqlite.query accepted a mutating statement.")
@@ -691,7 +691,7 @@ private struct GatewayVerificationRunner {
       await call(
         "cli.help",
         arguments: ["id": .string("git"), "path": .array([])],
-        workspaceID: repositoryWorkspace
+        projectID: repositoryProject
       )
     )
     let cliExec = try await call(
@@ -700,7 +700,7 @@ private struct GatewayVerificationRunner {
         "id": .string("echo"),
         "argv": .array([.string("CMCP_CLI_OK")]),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     guard
       contains("echo", in: cliList),
@@ -717,7 +717,7 @@ private struct GatewayVerificationRunner {
         "id": .string("missing"),
         "argv": .array([]),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     let processSpawn = try await call(
@@ -729,17 +729,17 @@ private struct GatewayVerificationRunner {
           .string("printf CMCP_PROCESS_OK; sleep 30"),
         ]),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let processID = try requiredString("process_id", in: payload(processSpawn))
-    _ = try payload(await call("process.list", workspaceID: fixtureWorkspace))
+    _ = try payload(await call("process.list", projectID: fixtureProject))
     var processRead: JSONValue = .null
     for _ in 0..<50 {
       processRead = try payload(
         await call(
           "process.read",
           arguments: ["process_id": .string(processID)],
-          workspaceID: fixtureWorkspace
+          projectID: fixtureProject
         )
       )
       if contains("CMCP_PROCESS_OK", in: processRead) {
@@ -750,15 +750,15 @@ private struct GatewayVerificationRunner {
     guard contains("CMCP_PROCESS_OK", in: processRead) else {
       throw ValidationError("process.read did not return streamed output.")
     }
-    denials["process_cross_workspace"] = await expectedFailure(
+    denials["process_cross_project"] = await expectedFailure(
       "process.read",
       arguments: ["process_id": .string(processID)],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     _ = try await destructiveCall(
       "process.cancel",
       arguments: ["process_id": .string(processID)],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     let shellRun = try await call(
@@ -768,7 +768,7 @@ private struct GatewayVerificationRunner {
         "executable": .string("/bin/echo"),
         "argv": .array([.string("CMCP_SHELL_RUN_OK")]),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     guard contains("CMCP_SHELL_RUN_OK", in: shellRun.result) else {
       throw ValidationError("shell.run did not preserve argv output.")
@@ -783,17 +783,17 @@ private struct GatewayVerificationRunner {
           .string("read line; printf 'CMCP_SHELL_STDIN:%s\\n' \"$line\"; sleep 30"),
         ]),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let shellID = try requiredString("session_id", in: payload(shellSpawn))
-    _ = try payload(await call("shell.list", workspaceID: fixtureWorkspace))
+    _ = try payload(await call("shell.list", projectID: fixtureProject))
     _ = try await call(
       "shell.write",
       arguments: [
         "session_id": .string(shellID),
         "text": .string("gateway-input\n"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     var shellRead: JSONValue = .null
     for _ in 0..<50 {
@@ -801,7 +801,7 @@ private struct GatewayVerificationRunner {
         await call(
           "shell.read",
           arguments: ["session_id": .string(shellID)],
-          workspaceID: fixtureWorkspace
+          projectID: fixtureProject
         )
       )
       if contains("CMCP_SHELL_STDIN:gateway-input", in: shellRead) {
@@ -812,15 +812,15 @@ private struct GatewayVerificationRunner {
     guard contains("CMCP_SHELL_STDIN:gateway-input", in: shellRead) else {
       throw ValidationError("shell.write/read did not preserve stdin and stdout.")
     }
-    denials["shell_cross_workspace"] = await expectedFailure(
+    denials["shell_cross_project"] = await expectedFailure(
       "shell.read",
       arguments: ["session_id": .string(shellID)],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     _ = try await call(
       "shell.cancel",
       arguments: ["session_id": .string(shellID)],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     guard denials.values.allSatisfy({ $0 != "unexpected-success" }) else {
@@ -830,7 +830,7 @@ private struct GatewayVerificationRunner {
       "cli_discovery_help_and_exec": .bool(true),
       "process_stream_cancel": .bool(true),
       "shell_run_stdin_stream_cancel": .bool(true),
-      "workspace_session_isolation": .bool(true),
+      "project_session_isolation": .bool(true),
       "unknown_cli_denied": .bool(true),
     ])
   }
@@ -886,7 +886,7 @@ private struct GatewayVerificationRunner {
       "invoked_tools": .array(invokedMutationTools.sorted().map(JSONValue.string)),
       "environment_gated_tools": .array(environmentGated.sorted().map(JSONValue.string)),
       "environment_gate_reason": .string(
-        "workspace.open and workspace.reveal require a safe interactive macOS desktop target; core probe classifies them without opening applications or Finder."
+        "project.open and project.reveal require a safe interactive macOS desktop target; core probe classifies them without opening applications or Finder."
       ),
       "omitted_tools": .array([]),
       "unexpected_tools": .array([]),
@@ -894,7 +894,7 @@ private struct GatewayVerificationRunner {
       "assertions": .object(mutationAssertions),
       "complete": .bool(true),
       "runtime_cleanup": .string(
-        "The disposable runtime workspace is removed by the command after the report is written."
+        "The disposable runtime project is removed by the command after the report is written."
       ),
     ])
   }
@@ -906,13 +906,13 @@ private struct GatewayVerificationRunner {
         "path": .string("Mutation/batch"),
         "intermediate_directories": .bool(true),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertExists(
       "Mutation/batch",
       expected: true,
       for: "file.mkdir",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     let writeArguments: [String: JSONValue] = [
@@ -928,7 +928,7 @@ private struct GatewayVerificationRunner {
           "tool": .string("file.write"),
           "arguments": .object(writeArguments),
         ],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let ticketID = try requiredString("ticket_id", in: prepared)
@@ -944,18 +944,18 @@ private struct GatewayVerificationRunner {
           "create_directories": .bool(true),
         ]),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     _ = try await mutationCall(
       "file.write",
       arguments: writeArguments,
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertFileContains(
       "Mutation/text.txt",
       marker: "beta",
       for: "file.write",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -965,13 +965,13 @@ private struct GatewayVerificationRunner {
         "content": .string("delta"),
         "append_newline": .bool(true),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertFileContains(
       "Mutation/text.txt",
       marker: "delta",
       for: "file.append",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -982,13 +982,13 @@ private struct GatewayVerificationRunner {
         "replacement": .string("BETA"),
         "expected_replacements": .number(1),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertFileContains(
       "Mutation/text.txt",
       marker: "BETA",
       for: "file.replace_text",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -1000,13 +1000,13 @@ private struct GatewayVerificationRunner {
         "position": .string("after"),
         "expected_line": .string("BETA"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertFileContains(
       "Mutation/text.txt",
       marker: "CMCP_INSERTED_LINE",
       for: "file.insert_text",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -1017,13 +1017,13 @@ private struct GatewayVerificationRunner {
         "end_line": .number(3),
         "content": .string("CMCP_REPLACED_LINE"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertFileContains(
       "Mutation/text.txt",
       marker: "CMCP_REPLACED_LINE",
       for: "file.replace_lines",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -1044,20 +1044,20 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_write": .bool(true),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let batchA = try payload(
       await call(
         "file.read",
         arguments: ["path": .string("Mutation/batch/a.txt")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let batchB = try payload(
       await call(
         "file.read",
         arguments: ["path": .string("Mutation/batch/b.txt")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
@@ -1072,13 +1072,13 @@ private struct GatewayVerificationRunner {
         "source": .string("Mutation/batch/a.txt"),
         "destination": .string("Mutation/batch/copied.txt"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertFileContains(
       "Mutation/batch/copied.txt",
       marker: "CMCP_BATCH_A",
       for: "file.copy",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -1087,20 +1087,20 @@ private struct GatewayVerificationRunner {
         "source": .string("Mutation/batch/copied.txt"),
         "destination": .string("Mutation/batch/moved.txt"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let sourceExists = try payload(
       await call(
         "file.exists",
         arguments: ["path": .string("Mutation/batch/copied.txt")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     let destination = try payload(
       await call(
         "file.read",
         arguments: ["path": .string("Mutation/batch/moved.txt")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
@@ -1113,13 +1113,13 @@ private struct GatewayVerificationRunner {
     _ = try await mutationCall(
       "file.touch",
       arguments: ["path": .string("Mutation/batch/touched.txt")],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertExists(
       "Mutation/batch/touched.txt",
       expected: true,
       for: "file.touch",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -1128,19 +1128,19 @@ private struct GatewayVerificationRunner {
         "path": .string("Mutation/moved-link.txt"),
         "destination": .string("batch/moved.txt"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let link = try payload(
       await call(
         "file.readlink",
         arguments: ["path": .string("Mutation/moved-link.txt")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
       tool: "file.symlink",
       passed: contains("batch/moved.txt", in: link),
-      postcondition: "The raw in-workspace link destination matches the requested path."
+      postcondition: "The raw in-project link destination matches the requested path."
     )
 
     _ = try await mutationCall(
@@ -1149,13 +1149,13 @@ private struct GatewayVerificationRunner {
         "path": .string("Mutation/batch/moved.txt"),
         "mode": .string("0600"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let permissions = try payload(
       await call(
         "file.permissions",
         arguments: ["path": .string("Mutation/batch/moved.txt")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
@@ -1170,13 +1170,13 @@ private struct GatewayVerificationRunner {
         "path": .string("Xattrs/tagged.txt"),
         "name": .string("com.showxu.computer-mcp.fixture"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let xattrs = try payload(
       await call(
         "file.xattrs",
         arguments: ["path": .string("Xattrs/tagged.txt")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
@@ -1194,13 +1194,13 @@ private struct GatewayVerificationRunner {
         "confirm_write": .bool(true),
         "create_directories": .bool(true),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let generatedJSON = try payload(
       await call(
         "json.read",
         arguments: ["path": .string("Mutation/generated.json")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
@@ -1218,13 +1218,13 @@ private struct GatewayVerificationRunner {
         "confirm_write": .bool(true),
         "create_directories": .bool(true),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let generatedPlist = try payload(
       await call(
         "plist.read",
         arguments: ["path": .string("Mutation/generated.plist")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
@@ -1241,13 +1241,13 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_create": .bool(true),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let createdArchive = try payload(
       await call(
         "archive.list",
         arguments: ["path": .string("Mutation/created.zip")],
-        workspaceID: fixtureWorkspace
+        projectID: fixtureProject
       )
     )
     try recordMutationAssertion(
@@ -1265,13 +1265,13 @@ private struct GatewayVerificationRunner {
         "confirm_extract": .bool(true),
         "create_directories": .bool(true),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertFileContains(
       "Mutation/extracted/ArchiveSource/hello.txt",
       marker: "hello from archive",
       for: "archive.extract",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -1283,13 +1283,13 @@ private struct GatewayVerificationRunner {
         "confirm_download": .bool(true),
         "max_download_bytes": .number(65_536),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertExists(
       "Mutation/downloaded-health.json",
       expected: true,
       for: "file.download",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
 
     _ = try await mutationCall(
@@ -1298,18 +1298,18 @@ private struct GatewayVerificationRunner {
         "path": .string("Mutation/trash-me.txt"),
         "content": .string("CMCP_TRASH_ME"),
       ],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let trashReport = try await mutationCall(
       "file.trash",
       arguments: ["path": .string("Mutation/trash-me.txt")],
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     try await assertExists(
       "Mutation/trash-me.txt",
       expected: false,
       for: "file.trash",
-      workspaceID: fixtureWorkspace
+      projectID: fixtureProject
     )
     let trashResult = try payload(trashReport)
     guard let trashedPath = trashResult.objectValue?["trashed_path"]?.stringValue else {
@@ -1338,8 +1338,8 @@ private struct GatewayVerificationRunner {
   }
 
   private mutating func exerciseGitMutations() async throws {
-    let gitStatus = try payload(await call("git.status", workspaceID: repositoryWorkspace))
-    let gitLog = try payload(await call("git.log", workspaceID: repositoryWorkspace))
+    let gitStatus = try payload(await call("git.status", projectID: repositoryProject))
+    let gitLog = try payload(await call("git.log", projectID: repositoryProject))
     guard contains("untracked.txt", in: gitStatus), contains("Initial fixture", in: gitLog) else {
       throw ValidationError("Git read atomics did not preserve fixture repository state.")
     }
@@ -1350,9 +1350,9 @@ private struct GatewayVerificationRunner {
         "paths": .array([.string("staged.txt")]),
         "dry_run": .bool(false),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
-    let unstaged = try payload(await call("git.status", workspaceID: repositoryWorkspace))
+    let unstaged = try payload(await call("git.status", projectID: repositoryProject))
     try recordMutationAssertion(
       tool: "git.unstage",
       passed: contains("staged.txt", in: unstaged),
@@ -1366,13 +1366,13 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_discard": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     let restored = try payload(
       await call(
         "file.read",
         arguments: ["path": .string("Sources/main.swift")],
-        workspaceID: repositoryWorkspace
+        projectID: repositoryProject
       )
     )
     try recordMutationAssertion(
@@ -1387,13 +1387,13 @@ private struct GatewayVerificationRunner {
       arguments: [
         "paths": .array([.string("staged.txt")])
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     let staged = try payload(
       await call(
         "git.staged_file",
         arguments: ["path": .string("staged.txt")],
-        workspaceID: repositoryWorkspace
+        projectID: repositoryProject
       )
     )
     try recordMutationAssertion(
@@ -1407,13 +1407,13 @@ private struct GatewayVerificationRunner {
       arguments: [
         "message": .string("Validation acceptance commit staged fixture")
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     let commitFiles = try payload(
       await call(
         "git.commit_files",
         arguments: ["revision": .string("HEAD")],
-        workspaceID: repositoryWorkspace
+        projectID: repositoryProject
       )
     )
     try recordMutationAssertion(
@@ -1429,7 +1429,7 @@ private struct GatewayVerificationRunner {
         "content": .string("# Fixture Repository\n\nCMCP_STASH_CHANGE\n"),
         "overwrite": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     _ = try await mutationCall(
       "git.stash_push",
@@ -1437,9 +1437,9 @@ private struct GatewayVerificationRunner {
         "message": .string("CMCP validation stash"),
         "paths": .array([.string("README.md")]),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
-    let stashes = try payload(await call("git.stashes", workspaceID: repositoryWorkspace))
+    let stashes = try payload(await call("git.stashes", projectID: repositoryProject))
     try recordMutationAssertion(
       tool: "git.stash_push",
       passed: contains("CMCP validation stash", in: stashes),
@@ -1453,13 +1453,13 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_delete": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     try await assertExists(
       "untracked.txt",
       expected: false,
       for: "git.clean",
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
 
     _ = try await mutationCall(
@@ -1469,10 +1469,10 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_create": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     let createdBranches = try payload(
-      await call("git.branch", workspaceID: repositoryWorkspace)
+      await call("git.branch", projectID: repositoryProject)
     )
     try recordMutationAssertion(
       tool: "git.branch_create",
@@ -1488,10 +1488,10 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_rename": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     let renamedBranches = try payload(
-      await call("git.branch", workspaceID: repositoryWorkspace)
+      await call("git.branch", projectID: repositoryProject)
     )
     try recordMutationAssertion(
       tool: "git.branch_rename",
@@ -1507,10 +1507,10 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_switch": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     let switched = try payload(
-      await call("git.tracking_status", workspaceID: repositoryWorkspace)
+      await call("git.tracking_status", projectID: repositoryProject)
     )
     try recordMutationAssertion(
       tool: "git.branch_switch",
@@ -1525,7 +1525,7 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_switch": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     _ = try await mutationCall(
       "git.branch_delete",
@@ -1534,10 +1534,10 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_delete": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
     let deletedBranches = try payload(
-      await call("git.branch", workspaceID: repositoryWorkspace)
+      await call("git.branch", projectID: repositoryProject)
     )
     try recordMutationAssertion(
       tool: "git.branch_delete",
@@ -1552,9 +1552,9 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_create": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
-    let createdTags = try payload(await call("git.tags", workspaceID: repositoryWorkspace))
+    let createdTags = try payload(await call("git.tags", projectID: repositoryProject))
     try recordMutationAssertion(
       tool: "git.tag_create",
       passed: contains("cmcp-validation-tag", in: createdTags),
@@ -1568,9 +1568,9 @@ private struct GatewayVerificationRunner {
         "dry_run": .bool(false),
         "confirm_delete": .bool(true),
       ],
-      workspaceID: repositoryWorkspace
+      projectID: repositoryProject
     )
-    let deletedTags = try payload(await call("git.tags", workspaceID: repositoryWorkspace))
+    let deletedTags = try payload(await call("git.tags", projectID: repositoryProject))
     try recordMutationAssertion(
       tool: "git.tag_delete",
       passed: !contains("cmcp-validation-tag", in: deletedTags),
@@ -1640,11 +1640,11 @@ private struct GatewayVerificationRunner {
   private mutating func call(
     _ tool: String,
     arguments: [String: JSONValue] = [:],
-    workspaceID: String? = nil
+    projectID: String? = nil
   ) async throws -> GatewayCallReport {
     var bound = arguments
-    if let workspaceID {
-      bound["workspace_id"] = .string(workspaceID)
+    if let projectID {
+      bound["project_id"] = .string(projectID)
     }
     let report = try await session.call(
       toolName: tool,
@@ -1661,7 +1661,7 @@ private struct GatewayVerificationRunner {
   private mutating func mutationCall(
     _ tool: String,
     arguments: [String: JSONValue],
-    workspaceID: String
+    projectID: String
   ) async throws -> GatewayCallReport {
     try validateMutationArguments(tool: tool, arguments: arguments)
     let definition = try mutationToolDefinition(named: tool)
@@ -1670,13 +1670,13 @@ private struct GatewayVerificationRunner {
       report = try await destructiveCall(
         tool,
         arguments: arguments,
-        workspaceID: workspaceID
+        projectID: projectID
       )
     } else {
       report = try await call(
         tool,
         arguments: arguments,
-        workspaceID: workspaceID
+        projectID: projectID
       )
     }
     invokedMutationTools.insert(tool)
@@ -1687,7 +1687,7 @@ private struct GatewayVerificationRunner {
   private mutating func destructiveCall(
     _ tool: String,
     arguments: [String: JSONValue],
-    workspaceID: String
+    projectID: String
   ) async throws -> GatewayCallReport {
     let prepared = try payload(
       await call(
@@ -1696,7 +1696,7 @@ private struct GatewayVerificationRunner {
           "tool": .string(tool),
           "arguments": .object(arguments),
         ],
-        workspaceID: workspaceID
+        projectID: projectID
       )
     )
     let ticketID = try requiredString("ticket_id", in: prepared)
@@ -1708,7 +1708,7 @@ private struct GatewayVerificationRunner {
         "tool": .string(tool),
         "arguments": .object(arguments),
       ],
-      workspaceID: workspaceID
+      projectID: projectID
     )
     completedTools.insert(tool)
     return report
@@ -1756,13 +1756,13 @@ private struct GatewayVerificationRunner {
     _ path: String,
     marker: String,
     for tool: String,
-    workspaceID: String
+    projectID: String
   ) async throws {
     let value = try payload(
       await call(
         "file.read",
         arguments: ["path": .string(path)],
-        workspaceID: workspaceID
+        projectID: projectID
       )
     )
     try recordMutationAssertion(
@@ -1776,13 +1776,13 @@ private struct GatewayVerificationRunner {
     _ path: String,
     expected: Bool,
     for tool: String,
-    workspaceID: String
+    projectID: String
   ) async throws {
     let value = try payload(
       await call(
         "file.exists",
         arguments: ["path": .string(path)],
-        workspaceID: workspaceID
+        projectID: projectID
       )
     )
     try recordMutationAssertion(
@@ -1809,10 +1809,10 @@ private struct GatewayVerificationRunner {
   private mutating func expectedFailure(
     _ tool: String,
     arguments: [String: JSONValue],
-    workspaceID: String? = nil
+    projectID: String? = nil
   ) async -> String {
     do {
-      _ = try await call(tool, arguments: arguments, workspaceID: workspaceID)
+      _ = try await call(tool, arguments: arguments, projectID: projectID)
       return "unexpected-success"
     } catch {
       return "request-failed"
@@ -1939,12 +1939,12 @@ private func writeCoreGatewayManifest(
     max_output_bytes = 1048576
     shell_enabled = true
 
-    [[workspaces]]
+    [[projects]]
     id = "fixture"
-    display_name = "Capability WorkspaceFixtureGenerate"
+    display_name = "Capability ProjectFixtureGenerate"
     path = \(coreTOMLString(fixtureRoot.path))
 
-    [[workspaces]]
+    [[projects]]
     id = "repository"
     display_name = "Fixture Git Repository"
     path = \(coreTOMLString(fixtureRoot.appendingPathComponent("Repository").path))
@@ -1954,7 +1954,7 @@ private func writeCoreGatewayManifest(
     mode = "local-full-access"
     confirmation_policy = "risk-based"
     capabilities = ["*"]
-    workspaces = ["fixture", "repository"]
+    projects = ["fixture", "repository"]
     allowed_callers = ["local-app", "local-cli", "local-mcp"]
     full_shell_enabled = true
 
@@ -1970,7 +1970,7 @@ private func writeCoreGatewayManifest(
     [[cli.commands]]
     id = "echo"
     executable = "/bin/echo"
-    cwd = "workspace"
+    cwd = "project"
     allow_any_args = true
     risk = "read-only"
     discovery = ["help"]
@@ -1978,17 +1978,17 @@ private func writeCoreGatewayManifest(
     [[cli.commands]]
     id = "sh"
     executable = "/bin/sh"
-    cwd = "workspace"
+    cwd = "project"
     allow_any_args = true
-    risk = "workspace-write-capable"
+    risk = "project-write-capable"
     discovery = ["help"]
 
     [[cli.commands]]
     id = "git"
     executable = "/usr/bin/git"
-    cwd = "workspace"
+    cwd = "project"
     allow_any_args = true
-    risk = "workspace-write-capable"
+    risk = "project-write-capable"
     discovery = ["help"]
 
     [builtin]

@@ -4,30 +4,30 @@ import Foundation
 
 /// Configuration writes discovered by runtime preparation, applied only at publication.
 package struct GatewayConfigurationResolution: Equatable, Sendable {
-  package struct Workspace: Equatable, Sendable {
-    let original: RegisteredWorkspace
-    let resolved: RegisteredWorkspace
+  package struct Project: Equatable, Sendable {
+    let original: RegisteredProject
+    let resolved: RegisteredProject
   }
 
-  var workspaces: [Workspace] = []
+  var projects: [Project] = []
   var profiles: [ProfileGrant] = []
 
-  package init(workspaces: [Workspace] = [], profiles: [ProfileGrant] = []) {
-    self.workspaces = workspaces
+  package init(projects: [Project] = [], profiles: [ProfileGrant] = []) {
+    self.projects = projects
     self.profiles = profiles
   }
 
   package mutating func merge(_ other: Self) throws {
-    for workspace in other.workspaces {
-      if let existing = workspaces.first(where: { $0.original.id == workspace.original.id }) {
-        var comparable = workspace.resolved
+    for project in other.projects {
+      if let existing = projects.first(where: { $0.original.id == project.original.id }) {
+        var comparable = project.resolved
         comparable.bookmarkData = existing.resolved.bookmarkData
         comparable.updatedAt = existing.resolved.updatedAt
-        guard existing.original == workspace.original, existing.resolved == comparable else {
+        guard existing.original == project.original, existing.resolved == comparable else {
           throw GatewayDatabaseError.configurationChanged
         }
       } else {
-        workspaces.append(workspace)
+        projects.append(project)
       }
     }
     for profile in other.profiles {

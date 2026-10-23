@@ -116,9 +116,9 @@ package final class MCPProcessOwnership: @unchecked Sendable {
   }
 
   package static func acquire(
-    root: URL, workspace: URL, registration: String, artifact: PluginDirectoryIdentity? = nil
+    root: URL, project: URL, registration: String, artifact: PluginDirectoryIdentity? = nil
   ) throws -> MCPProcessOwnership {
-    let scope = try scope(workspace: workspace, registration: registration)
+    let scope = try scope(project: project, registration: registration)
     return try withDirectory(root: root, scope: scope) { directory in
       let names = try entries(directory)
       guard names.count < 1_024 else { throw failure("MCP ownership receipt limit reached.") }
@@ -271,10 +271,10 @@ package final class MCPProcessOwnership: @unchecked Sendable {
     }
   }
 
-  package static func inspect(root: URL, workspace: URL, registration: String) throws
+  package static func inspect(root: URL, project: URL, registration: String) throws
     -> [MCPProcessReceiptStatus]
   {
-    let scope = try scope(workspace: workspace, registration: registration)
+    let scope = try scope(project: project, registration: registration)
     return try withDirectory(root: root, scope: scope) { directory in
       try entries(directory).filter { $0 != "scope.lock" }.sorted().map { name in
         guard UUID(uuidString: name)?.uuidString == name else {
@@ -290,12 +290,12 @@ package final class MCPProcessOwnership: @unchecked Sendable {
   /// Removes one reviewed receipt after independently locking it. Never signals a
   /// process, revokes a grant, launches a replacement, or replays a downstream call.
   package static func recover(
-    root: URL, workspace: URL, registration: String, id: String, expectedDigest: String
+    root: URL, project: URL, registration: String, id: String, expectedDigest: String
   ) throws {
     guard UUID(uuidString: id)?.uuidString == id else {
       throw failure("Invalid MCP ownership receipt ID.")
     }
-    let scope = try scope(workspace: workspace, registration: registration)
+    let scope = try scope(project: project, registration: registration)
     try withDirectory(root: root, scope: scope) { directory in
       let descriptor = try openFile(directory, name: id, flags: O_RDWR)
       defer { close(descriptor) }
@@ -341,9 +341,9 @@ package final class MCPProcessOwnership: @unchecked Sendable {
       blocksLaunch: receipt.cleanupFailed || state == "cleanup_pending")
   }
 
-  private static func scope(workspace: URL, registration: String) throws -> String {
+  private static func scope(project: URL, registration: String) throws -> String {
     let identity = try JSONEncoder().encode([
-      workspace.resolvingSymlinksInPath().path, registration,
+      project.resolvingSymlinksInPath().path, registration,
     ])
     return SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
   }

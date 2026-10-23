@@ -1,6 +1,6 @@
 /// Gateway-established provenance attached to private host diagnostics.
 struct MCPHostServiceOwner: Codable, Equatable, Sendable {
-  let workspaceID: String?
+  let projectID: String?
   let profileID: String?
   let caller: String?
   let transport: String?
@@ -10,7 +10,7 @@ struct MCPHostServiceOwner: Codable, Equatable, Sendable {
   var principalID: String? = nil
 
   private enum CodingKeys: String, CodingKey {
-    case workspaceID = "workspace_id"
+    case projectID = "workspace_id"
     case profileID = "profile_id"
     case caller
     case transport

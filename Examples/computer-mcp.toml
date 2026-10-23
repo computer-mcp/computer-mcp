@@ -21,13 +21,13 @@ default_timeout_ms = 30000
 max_output_bytes = 1048576
 shell_enabled = false
 
-[[workspaces]]
+[[projects]]
 id = "example"
 path = ".."
 
 [[delivery.scopes]]
 id = "notes"
-workspace = "example"
+project = "example"
 repository = "."
 paths = ["notes/**/*.md", "exports/*.csv"]
 default_branch = "main"
@@ -40,38 +40,38 @@ enabled = true
 max_bytes_per_skill = 1048576
 
 [[skills.roots]]
-id = "workspace-skills"
+id = "project-skills"
 path = "../Skills"
 description = "Optional repository-local skills directory."
 
 [[cli.commands]]
 id = "git"
 executable = "git"
-cwd = "workspace"
+cwd = "project"
 allow_any_args = true
-risk = "workspace-write-capable"
+risk = "project-write-capable"
 discovery = ["help"]
 
 [[cli.commands]]
 id = "swift"
 executable = "swift"
-cwd = "workspace"
+cwd = "project"
 allow_any_args = true
-risk = "workspace-write-capable"
+risk = "project-write-capable"
 discovery = ["help"]
 
 [[cli.commands]]
 id = "codex"
 executable = "codex"
-cwd = "workspace"
+cwd = "project"
 allow_any_args = true
-risk = "workspace-write-capable"
+risk = "project-write-capable"
 discovery = ["help"]
 
 [[cli.commands]]
 id = "lark"
 executable = "lark-cli"
-cwd = "workspace"
+cwd = "project"
 allow_any_args = true
 risk = "external-write-capable"
 discovery = ["help", "schema", "dry-run"]
@@ -109,4 +109,4 @@ dry_run_flag = "--dry-run"
 # capabilities = ["tools"]
 
 [builtin]
-enabled = ["delivery.scopes.list", "delivery.apply", "workspace.info", "workspace.status", "workspace.manifests", "workspace.recent_files", "workspace.directory_stats", "workspace.artifact_directories", "workspace.empty_directories", "workspace.git_changes", "workspace.file_types", "workspace.large_files", "workspace.symlinks", "workspace.executable_files", "workspace.todos", "workspace.env_files", "workspace.dependency_files", "workspace.project_roots", "workspace.documentation_files", "workspace.agent_files", "workspace.instructions", "workspace.test_files", "workspace.ci_files", "workspace.infra_files", "workspace.config_files", "workspace.ignore_files", "workspace.asset_files", "workspace.archive_files", "workspace.log_files", "workspace.data_files", "workspace.schema_files", "workspace.source_files", "workspace.outline", "workspace.commands", "system.info", "system.kernel", "system.software", "system.locale", "system.memory", "system.load", "system.cpu", "system.thermal", "system.time", "system.uptime", "system.user", "system.groups", "system.power", "system.volumes", "system.processes", "system.which", "system.path", "logs.query", "service.status", "network.interfaces", "network.dns", "network.resolve", "network.proxy", "network.services", "network.hardware_ports", "network.wifi", "network.vpn", "network.locations", "network.routes", "network.connections", "network.arp", "network.ping", "network.tcp_check", "network.http_check", "network.listeners", "macos.user_directories", "macos.default_application", "macos.applications", "macos.screens", "macos.spotlight_search", "macos.running_applications", "macos.frontmost_application", "env.describe", "file.exists", "file.list", "file.tree", "file.stat", "file.permissions", "file.chmod", "file.type", "file.count", "file.disk_usage", "file.volume_info", "file.find", "file.search", "file.timeline", "file.read", "file.read_files", "file.read_window", "file.read_lines", "file.read_context", "file.head", "file.outline", "markdown.links", "markdown.tables", "markdown.section", "markdown.frontmatter", "markdown.link_check", "file.tail", "file.hexdump", "file.xattrs", "file.remove_xattr", "file.metadata", "file.readlink", "file.resolve", "image.info", "pdf.info", "pdf.text", "media.info", "json.read", "jsonl.read", "json.write", "toml.read", "yaml.read", "xml.read", "plist.read", "structured.get", "plist.write", "csv.read", "sqlite.schema", "sqlite.query", "file.hash", "file.diff", "file.compare_trees", "file.duplicates", "archive.list", "archive.read_file", "archive.extract", "archive.create", "file.download", "file.write", "file.write_files", "file.append", "file.replace_text", "file.insert_text", "file.replace_lines", "file.touch", "file.mkdir", "file.copy", "file.move", "file.symlink", "file.trash", "workspace.open", "workspace.reveal", "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes", "git.stash_show", "git.stash_push", "git.tags", "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules", "git.files", "git.grep", "git.blame", "git.file_history", "git.file_at_revision", "git.staged_file", "git.conflicts", "git.status", "git.tracking_status", "git.clean_preview", "git.clean", "git.reflog", "git.refs", "git.resolve_ref", "git.merge_base", "git.compare_refs", "git.is_ancestor", "git.diff", "git.diff_summary", "git.diff_check", "git.branch", "git.branch_create", "git.branch_delete", "git.branch_rename", "git.branch_switch", "git.log", "git.commit_files", "git.show", "git.add", "git.unstage", "git.restore_worktree", "git.commit"]
+enabled = ["delivery.scopes.list", "delivery.apply", "project.info", "project.status", "project.manifests", "project.recent_files", "project.directory_stats", "project.artifact_directories", "project.empty_directories", "project.git_changes", "project.file_types", "project.large_files", "project.symlinks", "project.executable_files", "project.todos", "project.env_files", "project.dependency_files", "project.project_roots", "project.documentation_files", "project.agent_files", "project.instructions", "project.test_files", "project.ci_files", "project.infra_files", "project.config_files", "project.ignore_files", "project.asset_files", "project.archive_files", "project.log_files", "project.data_files", "project.schema_files", "project.source_files", "project.outline", "project.commands", "system.info", "system.kernel", "system.software", "system.locale", "system.memory", "system.load", "system.cpu", "system.thermal", "system.time", "system.uptime", "system.user", "system.groups", "system.power", "system.volumes", "system.processes", "system.which", "system.path", "logs.query", "service.status", "network.interfaces", "network.dns", "network.resolve", "network.proxy", "network.services", "network.hardware_ports", "network.wifi", "network.vpn", "network.locations", "network.routes", "network.connections", "network.arp", "network.ping", "network.tcp_check", "network.http_check", "network.listeners", "macos.user_directories", "macos.default_application", "macos.applications", "macos.screens", "macos.spotlight_search", "macos.running_applications", "macos.frontmost_application", "env.describe", "file.exists", "file.list", "file.tree", "file.stat", "file.permissions", "file.chmod", "file.type", "file.count", "file.disk_usage", "file.volume_info", "file.find", "file.search", "file.timeline", "file.read", "file.read_files", "file.read_window", "file.read_lines", "file.read_context", "file.head", "file.outline", "markdown.links", "markdown.tables", "markdown.section", "markdown.frontmatter", "markdown.link_check", "file.tail", "file.hexdump", "file.xattrs", "file.remove_xattr", "file.metadata", "file.readlink", "file.resolve", "image.info", "pdf.info", "pdf.text", "media.info", "json.read", "jsonl.read", "json.write", "toml.read", "yaml.read", "xml.read", "plist.read", "structured.get", "plist.write", "csv.read", "sqlite.schema", "sqlite.query", "file.hash", "file.diff", "file.compare_trees", "file.duplicates", "archive.list", "archive.read_file", "archive.extract", "archive.create", "file.download", "file.write", "file.write_files", "file.append", "file.replace_text", "file.insert_text", "file.replace_lines", "file.touch", "file.mkdir", "file.copy", "file.move", "file.symlink", "file.trash", "project.open", "project.reveal", "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes", "git.stash_show", "git.stash_push", "git.tags", "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules", "git.files", "git.grep", "git.blame", "git.file_history", "git.file_at_revision", "git.staged_file", "git.conflicts", "git.status", "git.tracking_status", "git.clean_preview", "git.clean", "git.reflog", "git.refs", "git.resolve_ref", "git.merge_base", "git.compare_refs", "git.is_ancestor", "git.diff", "git.diff_summary", "git.diff_check", "git.branch", "git.branch_create", "git.branch_delete", "git.branch_rename", "git.branch_switch", "git.log", "git.commit_files", "git.show", "git.add", "git.unstage", "git.restore_worktree", "git.commit"]

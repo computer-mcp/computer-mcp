@@ -65,7 +65,7 @@ verify_help "$ROOT_CLI" app
 verify_help "$ROOT_CLI" clients
 verify_help "$ROOT_CLI" config
 verify_help "$ROOT_CLI" cli-tree
-verify_help "$ROOT_CLI" workspace
+verify_help "$ROOT_CLI" project
 verify_help "$ROOT_CLI" profile
 verify_help "$ROOT_CLI" permissions
 verify_help "$ROOT_CLI" tunnel
@@ -74,7 +74,6 @@ verify_help "$ROOT_CLI" tunnel cloudflare
 verify_help "$ROOT_CLI" permissions approvals
 verify_help "$ROOT_CLI" tools
 verify_help "$ROOT_CLI" audit
-verify_help "$ROOT_CLI" state
 verify_help "$ROOT_CLI" providers
 verify_help "$ROOT_CLI" plugins
 verify_help "$ROOT_CLI" mcp
@@ -111,12 +110,12 @@ public_leaf_commands=(
   "config import"
   "config history"
   "config rollback"
-  "workspace list"
-  "workspace add"
-  "workspace repair"
-  "workspace remove"
-  "workspace enable"
-  "workspace deduplicate"
+  "project list"
+  "project add"
+  "project repair"
+  "project remove"
+  "project enable"
+  "project deduplicate"
   "profile list"
   "profile show"
   "profile activate"
@@ -149,7 +148,6 @@ public_leaf_commands=(
   "permissions approvals deny"
   "audit list"
   "audit export"
-  "state import"
   "providers list"
   "providers doctor"
   "providers discover"
@@ -239,7 +237,7 @@ verify_help "$VALIDATION_CLI" runbook generate
 verify_help "$VALIDATION_CLI" inventory
 verify_help "$VALIDATION_CLI" inventory generate
 verify_help "$VALIDATION_CLI" fixture
-verify_help "$VALIDATION_CLI" fixture workspace generate
+verify_help "$VALIDATION_CLI" fixture project generate
 verify_help "$VALIDATION_CLI" fixture manifest generate
 verify_help "$VALIDATION_CLI" fixture mcp serve
 verify_help "$VALIDATION_CLI" probe

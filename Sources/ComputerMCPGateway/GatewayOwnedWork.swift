@@ -17,7 +17,7 @@ package final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
   package struct Record: Sendable, Equatable {
     package let id: UUID
     package let kind: Kind
-    package let workspaceID: String?
+    package let projectID: String?
     package let registrationID: String?
     package let connectionID: UUID?
     package let resourceID: String
@@ -36,16 +36,16 @@ package final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
   package var snapshot: [Record] { state.withLockedValue { Array($0.records.values) } }
   package func updates() -> AsyncStream<Void> { changes.stream() }
 
-  package func retainShell(workspaceID: String?, sessionID: String) -> any OwnedWorkLease {
-    retain(.shell, workspaceID: workspaceID, resourceID: sessionID)
+  package func retainShell(projectID: String?, sessionID: String) -> any OwnedWorkLease {
+    retain(.shell, projectID: projectID, resourceID: sessionID)
   }
 
   func retain(
-    _ kind: Kind, workspaceID: String? = nil, registrationID: String? = nil,
+    _ kind: Kind, projectID: String? = nil, registrationID: String? = nil,
     resourceID: String, connectionID: UUID? = nil
   ) -> Lease {
     let record = Record(
-      id: UUID(), kind: kind, workspaceID: workspaceID, registrationID: registrationID,
+      id: UUID(), kind: kind, projectID: projectID, registrationID: registrationID,
       connectionID: connectionID, resourceID: resourceID)
     state.withLockedValue { $0.records[record.id] = record }
     changes.send()
@@ -53,9 +53,9 @@ package final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
   }
 
   /// Call admission and the idle-retirement decision share one linearization point.
-  package func admitInvocation(workspaceID: String?, resourceID: String) throws -> Lease {
+  package func admitInvocation(projectID: String?, resourceID: String) throws -> Lease {
     let record = Record(
-      id: UUID(), kind: .invocation, workspaceID: workspaceID, registrationID: nil,
+      id: UUID(), kind: .invocation, projectID: projectID, registrationID: nil,
       connectionID: nil, resourceID: resourceID)
     try state.withLockedValue { state in
       guard state.admitsInvocations else {

@@ -17,25 +17,25 @@ on macOS 14 or later.
   Skills and Computer Use can participate in the same client-led workflow.
   Skills supply instructions; authorized tools perform execution.
 - **Multi-computer:** connect each computer's gateway to the client and select
-  the intended host connection, then a workspace on that host. Each gateway
+  the intended host connection, then a project on that host. Each gateway
   retains its own registrations, credentials, policy, approvals and audit.
-  Workspace IDs are host-scoped. This is not a shared filesystem or automatic
+  Project IDs are host-scoped. This is not a shared filesystem or automatic
   cross-host task migration; availability depends on the client's connection
   support and each host staying online.
 - **Governed:** the host binds a request to its caller, profile, capability and
-  workspace before dispatch. Authorization, action consent, operating-system
+  project before dispatch. Authorization, action consent, operating-system
   permissions and vendor permissions are distinct boundaries.
 
 ```text
 ChatGPT / compatible MCP client
-    ├── Computer MCP on Mac A → authorized local capabilities / workspaces
-    └── Computer MCP on Mac B → authorized local capabilities / workspaces
+    ├── Computer MCP on Mac A → authorized local capabilities / projects
+    └── Computer MCP on Mac B → authorized local capabilities / projects
 ```
 
 [Gateway](Gateway.md) owns routing and transports;
 [Runtime](Runtime.md) owns lifetime and failure semantics;
 [Security and Privacy](SecurityAndPrivacy.md) owns the trust model. Full Access
-permits execution as the local user; a workspace is context, not an OS sandbox.
+permits execution as the local user; a project is context, not an OS sandbox.
 Unknown write outcomes do not authorize automatic replay.
 
 Computer MCP is not an unrestricted remote shell, a tool collection without

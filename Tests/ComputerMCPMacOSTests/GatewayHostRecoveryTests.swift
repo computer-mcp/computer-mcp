@@ -40,18 +40,18 @@ struct GatewayHostRecoveryTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let workspace = root.appendingPathComponent("workspace")
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    let project = root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     let fixture = try #require(
       Bundle.module.url(
         forResource: "mcp_host_crash", withExtension: "py", subdirectory: "Fixtures"))
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaces: [.init(id: "fixture", path: workspace.path)],
+      projects: [.init(id: "fixture", path: project.path)],
       // This standalone operator fixture tests crash recovery after a permitted write.
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
+          id: .localAdmin, capabilities: ["*"], projects: ["fixture"],
           allowedCallers: [.localCLI], mode: .localFullAccess, confirmationPolicy: .never)
       ],
       mcp: .init(servers: [
@@ -60,7 +60,7 @@ struct GatewayHostRecoveryTests {
           args: [fixture.path, "server", root.path], exposure: .reexport, prefix: "owned",
           allowedTools: ["inspect", "write"], requestTimeoutMs: 15_000,
           toolRisks: ["inspect": .readOnly, "write": .destructive])
-      ]), workspaceDirectory: root)
+      ]), projectDirectory: root)
     let manifest = root.appendingPathComponent("config.toml")
     try Data(configuration.exportedTOML().utf8).write(to: manifest)
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()

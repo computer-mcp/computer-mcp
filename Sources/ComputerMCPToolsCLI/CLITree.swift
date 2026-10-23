@@ -267,9 +267,9 @@ struct CLICommandDescriptor: Codable, Equatable, Sendable {
       else { throw CLITreeError.invalid("A non-executable node cannot define an invocation.") }
     }
     let names = Set(parameters.map(\.name))
-    guard !names.contains("workspace_id") else {
+    guard !names.contains("project_id") else {
       throw CLITreeError.invalid(
-        "workspace_id belongs to Gateway routing; choose another parameter name.")
+        "project_id belongs to Gateway routing; choose another parameter name.")
     }
     guard names.count == parameters.count, names.allSatisfy(cliTreeIdentifier) else {
       throw CLITreeError.invalid("Parameter names must be unique identifiers.")

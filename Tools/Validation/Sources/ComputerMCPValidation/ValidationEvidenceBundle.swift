@@ -226,7 +226,7 @@ public struct ValidationAttempt: Codable, Equatable, Sendable {
   public let toolName: String
   public let capabilityID: String
   public let profileID: GatewayProfileID
-  public let workspaceID: String?
+  public let projectID: String?
   public let inputDigest: String
   public let transportRequestID: String?
   public let consumerResultID: String?
@@ -244,7 +244,7 @@ public struct ValidationAttempt: Codable, Equatable, Sendable {
     toolName: String,
     capabilityID: String,
     profileID: GatewayProfileID,
-    workspaceID: String? = nil,
+    projectID: String? = nil,
     inputDigest: String,
     transportRequestID: String? = nil,
     consumerResultID: String? = nil,
@@ -261,7 +261,7 @@ public struct ValidationAttempt: Codable, Equatable, Sendable {
     self.toolName = toolName
     self.capabilityID = capabilityID
     self.profileID = profileID
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.inputDigest = inputDigest
     self.transportRequestID = transportRequestID
     self.consumerResultID = consumerResultID
@@ -1052,11 +1052,11 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
         "The audit event does not match the attempt profile."
       )
     }
-    if audit.workspaceID != attempt.workspaceID {
+    if audit.projectID != attempt.projectID {
       issue(
-        "audit.workspace_mismatch",
-        "\(path).auditEvent.workspaceID",
-        "The audit event does not match the attempt workspace."
+        "audit.project_mismatch",
+        "\(path).auditEvent.projectID",
+        "The audit event does not match the attempt project."
       )
     }
     let expectedAuditTransport: String =

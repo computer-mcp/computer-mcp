@@ -219,7 +219,7 @@ package struct ProductReadinessInput: Equatable, Sendable {
   package var generatedAt: Date
   package var gateway: AppGatewayServiceSnapshot
   package var cliInstallation: EmbeddedCLIInstallationStatus?
-  package var workspaceCount: Int
+  package var projectCount: Int
   package var openAITunnels: [OpenAITunnelReadinessInput]
   package var cloudflareTunnels: [CloudflareTunnelReadinessInput]
   package var auditEvents: [AuditEvent]
@@ -228,7 +228,7 @@ package struct ProductReadinessInput: Equatable, Sendable {
     generatedAt: Date = Date(),
     gateway: AppGatewayServiceSnapshot,
     cliInstallation: EmbeddedCLIInstallationStatus?,
-    workspaceCount: Int,
+    projectCount: Int,
     openAITunnels: [OpenAITunnelReadinessInput],
     cloudflareTunnels: [CloudflareTunnelReadinessInput],
     auditEvents: [AuditEvent]
@@ -236,7 +236,7 @@ package struct ProductReadinessInput: Equatable, Sendable {
     self.generatedAt = generatedAt
     self.gateway = gateway
     self.cliInstallation = cliInstallation
-    self.workspaceCount = workspaceCount
+    self.projectCount = projectCount
     self.openAITunnels = openAITunnels
     self.cloudflareTunnels = cloudflareTunnels
     self.auditEvents = auditEvents
@@ -267,7 +267,7 @@ package enum ProductReadinessEvaluator {
       let cli = localCLICheck(input.cliInstallation)
       checks.append(cli)
       blocked = cli.status == .fail
-      checks.append(workspaceCheck(count: input.workspaceCount))
+      checks.append(projectCheck(count: input.projectCount))
       verifiedRequest = verifiedLocalRequest(input)
 
     case .chatgpt:
@@ -315,7 +315,7 @@ package enum ProductReadinessEvaluator {
       checks.append(credential)
       blocked = blocked || credential.status == .fail
       checks.append(openAITunnelStateCheck(tunnel.status))
-      checks.append(workspaceCheck(count: input.workspaceCount))
+      checks.append(projectCheck(count: input.projectCount))
       verifiedRequest = verifiedOpenAIRequest(tunnel, input: input)
 
     case .cloudflare:
@@ -365,7 +365,7 @@ package enum ProductReadinessEvaluator {
       checks.append(credentials)
       blocked = blocked || credentials.status == .fail
       checks.append(cloudflareTunnelStateCheck(tunnel.status))
-      checks.append(workspaceCheck(count: input.workspaceCount))
+      checks.append(projectCheck(count: input.projectCount))
       verifiedRequest = verifiedCloudflareRequest(tunnel, input: input)
     }
 
@@ -519,21 +519,21 @@ package enum ProductReadinessEvaluator {
     )
   }
 
-  private static func workspaceCheck(count: Int) -> ProductReadinessCheck {
+  private static func projectCheck(count: Int) -> ProductReadinessCheck {
     ProductReadinessCheck(
-      id: "workspace.registered",
+      id: "project.registered",
       status: count > 0 ? .pass : .warning,
       required: false,
-      summary: count > 0 ? "A workspace is registered" : "No workspace is registered",
+      summary: count > 0 ? "A project is registered" : "No project is registered",
       detail: count > 0
-        ? "Workspace-scoped tools can use the registered folder grants."
-        : "Safe system tools remain available. Add a workspace before using workspace-scoped tools.",
+        ? "Project-scoped tools can use the registered folder grants."
+        : "Safe system tools remain available. Add a project before using project-scoped tools.",
       nextAction: count > 0
         ? nil
         : ProductReadinessNextAction(
           kind: .openApp,
-          label: "Add Workspace",
-          redactedTarget: "workspaces"
+          label: "Add Project",
+          redactedTarget: "projects"
         )
     )
   }
@@ -781,7 +781,7 @@ extension AppControlPlaneService {
       input: ProductReadinessInput(
         gateway: gateway,
         cliInstallation: cliInstallation,
-        workspaceCount: try workspaces().count,
+        projectCount: try projects().count,
         openAITunnels: openAIInputs,
         cloudflareTunnels: cloudflareInputs,
         auditEvents: try auditEvents(limit: 1_000)

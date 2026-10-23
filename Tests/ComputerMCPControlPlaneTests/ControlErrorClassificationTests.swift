@@ -32,6 +32,6 @@ struct ControlErrorClassificationTests {
     #expect(GatewayRuntime.auditErrorCode(for: error) == nil)
     #expect(AppControlPlaneServiceError.fullShellManifestDisabled.controlAuditClassification == nil)
     #expect(
-      AppControlPlaneServiceError.unknownWorkspace("missing").controlAuditClassification == nil)
+      AppControlPlaneServiceError.unknownProject("missing").controlAuditClassification == nil)
   }
 }

@@ -218,7 +218,7 @@ struct GatewayOAuthHTTPTests {
       #expect(scope.profileID == .cloudflareOperate)
       #expect(scope.caller == .cloudflareTunnel)
       #expect(scope.fullAccessConsent == nil)
-      #expect(scope.accessLimit == .workspaceOperations)
+      #expect(scope.accessLimit == .projectOperations)
       try await fixture.server.revokeGrant(id: grant.id, approver: .localApp)
       #expect(try await Self.post(runtimePort: port, token: tokens.accessToken).statusCode == 401)
       await runtime.stop()

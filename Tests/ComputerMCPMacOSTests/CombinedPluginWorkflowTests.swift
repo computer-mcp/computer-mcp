@@ -53,12 +53,12 @@ struct CombinedPluginWorkflowTests {
     let manualTree = fixture.root.appendingPathComponent("manual-tree.json")
     try Data(tree.utf8).write(to: manualTree)
     let starts = fixture.root.appendingPathComponent("plugin-pids")
-    var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
+    var configuration = GatewayConfiguration(projectDirectory: fixture.root)
     configuration.policy.shellEnabled = true
     configuration.profiles = [
       .init(
         id: .chatGPTOperate, capabilities: ["*"],
-        workspaces: ["fixture"], allowedCallers: [.localCLI], mode: .localFullAccess,
+        projects: ["fixture"], allowedCallers: [.localCLI], mode: .localFullAccess,
         confirmationPolicy: .never)
     ]
     configuration.mcp.servers = [
@@ -79,10 +79,10 @@ struct CombinedPluginWorkflowTests {
       ])
     _ = try await fixture.host.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
-    try fixture.database.saveWorkspace(
+    try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let grant = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["*"], workspaceIDs: ["fixture"],
+      id: .chatGPTOperate, capabilityIDs: ["*"], projectIDs: ["fixture"],
       allowedCallers: [.localCLI], fullShellEnabled: true,
       mode: .localFullAccess, confirmationPolicy: .never)
     try fixture.database.saveProfile(grant)

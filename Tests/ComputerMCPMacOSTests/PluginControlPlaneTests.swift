@@ -233,7 +233,7 @@ struct PluginControlPlaneTests {
       #expect(detail.bundled.map(\.manifest.id) == ["test-package"])
       #expect(Set(detail.effectiveSettings.keys) == ["test-package"])
       #expect(try fixture.database.pluginStoreSnapshot() == PluginStoreSnapshot())
-      var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
+      var configuration = GatewayConfiguration(projectDirectory: fixture.root)
       configuration.knownPluginMCPServerIDs = ["plugin-12-test-package-native"]
       configuration.profiles = [
         .init(id: .chatGPTOperate, mcpServers: ["plugin-12-test-package-native"])
@@ -731,7 +731,7 @@ struct PluginControlFixture: Sendable {
         database: database, bundledPlugins: bundled,
         applications: MacOSPlatform.services.applications))
     _ = try manifestStore.activate(
-      manifest: GatewayConfiguration(workspaceDirectory: root).exportedTOML())
+      manifest: GatewayConfiguration(projectDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifestStore,

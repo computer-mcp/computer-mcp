@@ -135,7 +135,7 @@ struct GatewayPermissionLifecycleTests {
         try fixture.gateway.callTool(
           name: "file.write",
           arguments: .object([
-            "workspace_id": .string("fixture"), "path": .string("value.txt"),
+            "project_id": .string("fixture"), "path": .string("value.txt"),
             "content": .string("unauthorized overwrite"), "confirm": .bool(true),
           ]), context: .empty)
       }
@@ -172,7 +172,7 @@ struct GatewayPermissionLifecycleTests {
   }
 
   @Test
-  func resultReadUsesVerifiedPrincipalEvenWhenProfileAndWorkspaceMatch() async throws {
+  func resultReadUsesVerifiedPrincipalEvenWhenProfileAndProjectMatch() async throws {
     let database = try GatewayDatabase(inMemory: ())
     let server = MCPServerConfig(id: "fixture", transport: .stdio, command: "/usr/bin/false")
     func context(principal: String) -> MCPHostContext {
@@ -180,14 +180,14 @@ struct GatewayPermissionLifecycleTests {
         runtimeID: UUID(),
         context: .init(
           caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: principal),
-        workspaceID: "fixture", rootURL: URL(fileURLWithPath: "/private/tmp"), readOnly: true,
+        projectID: "fixture", rootURL: URL(fileURLWithPath: "/private/tmp"), readOnly: true,
         executionDatabase: database)
     }
     let owner = context(principal: "verified-first")
     let scope = MCPExecutionRecord.digest(
       .array([
         .string(owner.launchMetadata.principalID), .string(owner.launchMetadata.profileID.rawValue),
-        .string(owner.launchMetadata.workspace.id),
+        .string(owner.launchMetadata.project.id),
       ]))
     let journal = MCPExecutionJournal(database: database, scope: scope)
     _ = try journal.reserve(
@@ -231,7 +231,7 @@ private struct PermissionFixture {
 
   var target: JSONValue {
     .object([
-      "workspace_id": .string("fixture"), "path": .string("value.txt"),
+      "project_id": .string("fixture"), "path": .string("value.txt"),
       "name": .string(Self.attribute), "dry_run": .bool(false), "confirm": .bool(true),
     ])
   }
@@ -251,18 +251,18 @@ private struct PermissionFixture {
     let profile = ProfileGrantConfig(
       id: .chatGPTOperate,
       capabilities: ["operations.prepare", "operations.commit", "file.remove_xattr", "file.write"],
-      workspaces: ["fixture"], allowedCallers: [.secureTunnel], mode: .workspaceOperations,
+      projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations,
       confirmationPolicy: .riskBased)
     try database.saveProfile(profile.grant)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
-      builtin: .init(enabled: ["file.remove_xattr", "file.write"]), workspaceDirectory: root)
+      builtin: .init(enabled: ["file.remove_xattr", "file.write"]), projectDirectory: root)
     gateway = try GatewayRuntime(
       configuration: configuration,
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-first"),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services)
   }
 
@@ -270,7 +270,7 @@ private struct PermissionFixture {
     let result = try gateway.callTool(
       name: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string("fixture"), "tool": .string("file.remove_xattr"),
+        "project_id": .string("fixture"), "tool": .string("file.remove_xattr"),
         "arguments": target,
       ]), context: .empty)
     return try #require(
@@ -285,7 +285,7 @@ private struct PermissionFixture {
     try gateway.callTool(
       name: "operations.commit",
       arguments: .object([
-        "workspace_id": .string("fixture"), "ticket_id": .string(ticketID),
+        "project_id": .string("fixture"), "ticket_id": .string(ticketID),
         "tool": .string(tool), "arguments": target ?? self.target,
       ]),
       context: .init(

@@ -158,40 +158,40 @@ package enum DefaultGatewayConfiguration {
     system.volumes
     system.which
     toml.read
-    workspace.agent_files
-    workspace.archive_files
-    workspace.artifact_directories
-    workspace.asset_files
-    workspace.ci_files
-    workspace.commands
-    workspace.config_files
-    workspace.data_files
-    workspace.dependency_files
-    workspace.describe
-    workspace.directory_stats
-    workspace.documentation_files
-    workspace.empty_directories
-    workspace.env_files
-    workspace.executable_files
-    workspace.file_types
-    workspace.git_changes
-    workspace.ignore_files
-    workspace.info
-    workspace.infra_files
-    workspace.instructions
-    workspace.large_files
-    workspace.list
-    workspace.log_files
-    workspace.manifests
-    workspace.outline
-    workspace.project_roots
-    workspace.recent_files
-    workspace.schema_files
-    workspace.source_files
-    workspace.status
-    workspace.symlinks
-    workspace.test_files
-    workspace.todos
+    project.agent_files
+    project.archive_files
+    project.artifact_directories
+    project.asset_files
+    project.ci_files
+    project.commands
+    project.config_files
+    project.data_files
+    project.dependency_files
+    project.describe
+    project.directory_stats
+    project.documentation_files
+    project.empty_directories
+    project.env_files
+    project.executable_files
+    project.file_types
+    project.git_changes
+    project.ignore_files
+    project.info
+    project.infra_files
+    project.instructions
+    project.large_files
+    project.list
+    project.log_files
+    project.manifests
+    project.outline
+    project.project_roots
+    project.recent_files
+    project.schema_files
+    project.source_files
+    project.status
+    project.symlinks
+    project.test_files
+    project.todos
     xml.read
     yaml.read
     """
@@ -254,8 +254,8 @@ package enum DefaultGatewayConfiguration {
     operations.prepare
     plist.write
     process.list
-    workspace.open
-    workspace.reveal
+    project.open
+    project.reveal
     """
   )
 
@@ -264,7 +264,7 @@ package enum DefaultGatewayConfiguration {
   ).sorted()
 
   package static let enabledBuiltinCapabilities = operateCapabilities.filter {
-    if $0 == "workspace.list" || $0 == "workspace.describe" {
+    if $0 == "project.list" || $0 == "project.describe" {
       return false
     }
     let domain = $0.split(separator: ".", maxSplits: 1).first.map(String.init) ?? ""
@@ -303,16 +303,16 @@ package enum DefaultGatewayConfiguration {
       mode = "read-only"
       confirmation_policy = "risk-based"
       capabilities = \(tomlArray(observeCapabilities))
-      workspaces = []
+      projects = []
       allowed_callers = ["secure-tunnel"]
       full_shell_enabled = false
 
       [[profiles]]
       id = "chatgpt-operate"
-      mode = "workspace-operations"
+      mode = "project-operations"
       confirmation_policy = "risk-based"
       capabilities = \(tomlArray(operateCapabilities))
-      workspaces = []
+      projects = []
       allowed_callers = ["secure-tunnel"]
 
       [[profiles]]
@@ -320,16 +320,16 @@ package enum DefaultGatewayConfiguration {
       mode = "read-only"
       confirmation_policy = "risk-based"
       capabilities = \(tomlArray(observeCapabilities))
-      workspaces = []
+      projects = []
       allowed_callers = ["cloudflare-tunnel"]
       full_shell_enabled = false
 
       [[profiles]]
       id = "cloudflare-operate"
-      mode = "workspace-operations"
+      mode = "project-operations"
       confirmation_policy = "risk-based"
       capabilities = \(tomlArray(operateCapabilities))
-      workspaces = []
+      projects = []
       allowed_callers = ["cloudflare-tunnel"]
       full_shell_enabled = false
 
@@ -338,7 +338,7 @@ package enum DefaultGatewayConfiguration {
       mode = "local-full-access"
       confirmation_policy = "risk-based"
       capabilities = ["*"]
-      workspaces = ["*"]
+      projects = ["*"]
       allowed_callers = ["local-app", "local-cli", "local-mcp"]
       full_shell_enabled = true
 
@@ -364,25 +364,25 @@ package enum DefaultGatewayConfiguration {
       [[cli.commands]]
       id = "git"
       executable = "git"
-      cwd = "workspace"
+      cwd = "project"
       allow_any_args = true
-      risk = "workspace-write-capable"
+      risk = "project-write-capable"
       discovery = ["help"]
 
       [[cli.commands]]
       id = "swift"
       executable = "swift"
-      cwd = "workspace"
+      cwd = "project"
       allow_any_args = true
-      risk = "workspace-write-capable"
+      risk = "project-write-capable"
       discovery = ["help"]
 
       [[cli.commands]]
       id = "codex"
       executable = \(tomlString(codexExecutable))
-      cwd = "workspace"
+      cwd = "project"
       allow_any_args = true
-      risk = "workspace-write-capable"
+      risk = "project-write-capable"
       discovery = ["help"]
 
       [builtin]

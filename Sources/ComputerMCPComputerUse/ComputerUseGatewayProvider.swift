@@ -562,7 +562,7 @@ extension ComputerUseGatewayProvider {
         )
       ),
       capability: CapabilityDescriptor(
-        id: name, risk: risk, workspaceRequirement: .none, localOnly: false,
+        id: name, risk: risk, projectRequirement: .none, localOnly: false,
         usesNetwork: false, tccServices: tccServices))
   }
 

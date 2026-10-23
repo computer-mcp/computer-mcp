@@ -13,7 +13,7 @@ extension ShellToolProvider {
     return try environment.shellManager.run(
       request: shellLaunchRequest(arguments: object),
       defaultShell: environment.configuration.policy.shellExecutable,
-      defaultWorkingDirectory: environment.configuration.workspaceDirectory,
+      defaultWorkingDirectory: environment.configuration.projectDirectory,
       standardInput: try shellStandardInput(arguments: object),
       timeoutMilliseconds: timeout,
       maxOutputBytes: environment.configuration.policy.maxOutputBytes,
@@ -30,7 +30,7 @@ extension ShellToolProvider {
     let id = try environment.shellManager.spawn(
       request: shellLaunchRequest(arguments: object),
       defaultShell: environment.configuration.policy.shellExecutable,
-      defaultWorkingDirectory: environment.configuration.workspaceDirectory,
+      defaultWorkingDirectory: environment.configuration.projectDirectory,
       timeoutMilliseconds: timeout,
       maxOutputBytes: environment.configuration.policy.maxOutputBytes,
       maxSessions: environment.configuration.policy.maxShellSessions,

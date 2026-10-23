@@ -29,7 +29,7 @@ package enum ControlToolResponse {
       "request_id": .string(requestID),
       "caller": .string(GatewayCallerKind.localCLI.rawValue),
       "profile_id": .string(GatewayProfileID.localAdmin.rawValue),
-      "workspace_id": .null,
+      "project_id": .null,
       "capability_id": .string(capabilityID),
       "transport": .string("control_socket"),
       "socket_connection_id": .string(identity.connectionID),

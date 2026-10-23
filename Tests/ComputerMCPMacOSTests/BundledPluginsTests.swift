@@ -148,7 +148,7 @@ struct BundledPluginsTests {
     let reopened = try GatewayDatabase(path: files.databaseURL.path)
     #expect(try reopened.pluginStoreSnapshot() == restored)
     let runtime = try GatewayRuntime(
-      configuration: GatewayConfiguration(workspaceDirectory: files.root), database: reopened,
+      configuration: GatewayConfiguration(projectDirectory: files.root), database: reopened,
       platform: MacOSPlatform.services, bundledPlugins: bundled)
     #expect(runtime.pluginOrigins.count == 3 && runtime.pluginIssues.isEmpty)
     await runtime.shutdown()

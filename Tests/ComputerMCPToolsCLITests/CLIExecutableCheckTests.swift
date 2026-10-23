@@ -336,7 +336,7 @@ private struct ExecutableCheckFixture: Sendable {
       "cli-check-\(UUID().uuidString)"
     )
     try FileManager.default.createDirectory(at: candidate, withIntermediateDirectories: false)
-    root = try WorkspacePathResolver.canonicalWorkspace(candidate)
+    root = try ProjectPathResolver.canonicalProject(candidate)
   }
   func file(_ name: String) -> URL { root.appendingPathComponent(name) }
   func exists(_ name: String) -> Bool { FileManager.default.fileExists(atPath: file(name).path) }

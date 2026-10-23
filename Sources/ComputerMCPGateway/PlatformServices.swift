@@ -5,7 +5,7 @@ import Foundation
 package struct PlatformServices: Sendable {
   package let pluginDirectories: any PluginArchiveDirectoryFactory
   package let applications: any ApplicationBundleLocating
-  package let workspaceGrants: any WorkspaceBookmarkServicing
+  package let projectGrants: any ProjectBookmarkServicing
   package let toolProviders: any GatewayToolProviderFactory
   /// Reserved even when a generation has no management provider.
   package let managementToolNames: Set<String>
@@ -14,7 +14,7 @@ package struct PlatformServices: Sendable {
   package let fileChanges: @Sendable (URL) throws -> any FileChangeMonitor
 
   package init(
-    workspaceGrants: any WorkspaceBookmarkServicing,
+    projectGrants: any ProjectBookmarkServicing,
     pluginDirectories: any PluginArchiveDirectoryFactory,
     applications: any ApplicationBundleLocating,
     toolProviders: any GatewayToolProviderFactory,
@@ -23,7 +23,7 @@ package struct PlatformServices: Sendable {
     gitExecutable: String,
     fileChanges: @escaping @Sendable (URL) throws -> any FileChangeMonitor
   ) {
-    self.workspaceGrants = workspaceGrants
+    self.projectGrants = projectGrants
     self.pluginDirectories = pluginDirectories
     self.applications = applications
     self.toolProviders = toolProviders

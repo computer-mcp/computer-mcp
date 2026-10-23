@@ -6,48 +6,48 @@ import Testing
 @Suite
 struct ValidationAuditClientTests {
   @Test
-  func workspaceListDecodesCurrentResultContract() throws {
-    let workspace = RegisteredWorkspace(
+  func projectListDecodesCurrentResultContract() throws {
+    let project = RegisteredProject(
       id: "fixture",
       displayName: "Fixture",
       rootPath: "/tmp/fixture"
     )
-    let data = try responseData(key: "result", workspace: workspace)
+    let data = try responseData(key: "result", project: project)
 
-    #expect(try GatewayDatabase.decodeWorkspaceListResponse(data) == [workspace])
+    #expect(try GatewayDatabase.decodeProjectListResponse(data) == [project])
   }
 
   @Test
-  func workspaceListDecodesLegacyWorkspacesContract() throws {
-    let workspace = RegisteredWorkspace(
+  func projectListDecodesLegacyProjectsContract() throws {
+    let project = RegisteredProject(
       id: "fixture",
       displayName: "Fixture",
       rootPath: "/tmp/fixture"
     )
-    let data = try responseData(key: "workspaces", workspace: workspace)
+    let data = try responseData(key: "projects", project: project)
 
-    #expect(try GatewayDatabase.decodeWorkspaceListResponse(data) == [workspace])
+    #expect(try GatewayDatabase.decodeProjectListResponse(data) == [project])
   }
 
   @Test
-  func workspaceListRejectsUnknownContract() throws {
+  func projectListRejectsUnknownContract() throws {
     let data = try ValidationCanonicalJSONCoding.encoder().encode(
       JSONValue.object(["result_count": .number(0)])
     )
 
     #expect(throws: ValidationProcessError.self) {
-      _ = try GatewayDatabase.decodeWorkspaceListResponse(data)
+      _ = try GatewayDatabase.decodeProjectListResponse(data)
     }
   }
 
-  private func responseData(key: String, workspace: RegisteredWorkspace) throws -> Data {
-    let workspaceData = try ValidationCanonicalJSONCoding.encoder().encode(workspace)
-    let workspaceValue = try ValidationCanonicalJSONCoding.decoder().decode(
+  private func responseData(key: String, project: RegisteredProject) throws -> Data {
+    let projectData = try ValidationCanonicalJSONCoding.encoder().encode(project)
+    let projectValue = try ValidationCanonicalJSONCoding.decoder().decode(
       JSONValue.self,
-      from: workspaceData
+      from: projectData
     )
     return try ValidationCanonicalJSONCoding.encoder().encode(
-      JSONValue.object([key: .array([workspaceValue])])
+      JSONValue.object([key: .array([projectValue])])
     )
   }
 }

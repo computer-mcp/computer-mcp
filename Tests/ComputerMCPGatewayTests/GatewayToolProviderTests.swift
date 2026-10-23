@@ -50,7 +50,7 @@ final class GatewayToolProviderTests {
       descriptor: CapabilityDescriptor(
         id: "local.admin",
         risk: .externalWrite,
-        workspaceRequirement: .required,
+        projectRequirement: .required,
         localOnly: true
       )
     )
@@ -59,7 +59,7 @@ final class GatewayToolProviderTests {
     let descriptor = try router.capability(named: "local.admin", context: .empty)
     #expect((descriptor.id) == ("local.admin"))
     #expect((descriptor.risk) == (.externalWrite))
-    #expect((descriptor.workspaceRequirement) == (.required))
+    #expect((descriptor.projectRequirement) == (.required))
     #expect(descriptor.localOnly)
   }
 
@@ -72,7 +72,7 @@ final class GatewayToolProviderTests {
       tool: MCPTool(name: "fixture.inspect", description: "", inputSchema: .object([:])),
       result: .string("original owner"),
       descriptor: CapabilityDescriptor(
-        id: "fixture.inspect", risk: .readOnly, workspaceRequirement: .required,
+        id: "fixture.inspect", risk: .readOnly, projectRequirement: .required,
         mcpReference: reference))
     let router = try GatewayProviderRouter(
       source: { visibility.withLockedValue { $0.visible } ? [provider] : [] },
@@ -88,7 +88,7 @@ final class GatewayToolProviderTests {
     }
     func target(_ reference: MCPToolReference) -> MCPContinuationTarget {
       .init(
-        workspaceID: "ws", reference: reference, connectionID: UUID(), instanceID: UUID(),
+        projectID: "ws", reference: reference, connectionID: UUID(), instanceID: UUID(),
         resources: [:])
     }
     let result = try router.callTool(

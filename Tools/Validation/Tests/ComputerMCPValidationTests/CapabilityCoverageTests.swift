@@ -144,7 +144,7 @@ struct CapabilityCoverageTests {
       hasOutputSchema: true,
       hasAnnotations: true,
       risk: "read_only",
-      workspaceRequirement: "none",
+      projectRequirement: "none",
       localOnly: false,
       usesNetwork: false,
       schemaDigest: digest

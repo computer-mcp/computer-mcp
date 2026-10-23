@@ -8,11 +8,11 @@ import ComputerMCPToolsCLI
 import ComputerMCPToolsFiles
 import ComputerMCPToolsGit
 import ComputerMCPToolsMCP
+import ComputerMCPToolsProject
 import ComputerMCPToolsShell
 import ComputerMCPToolsSkills
 import ComputerMCPToolsStructured
 import ComputerMCPToolsSystem
-import ComputerMCPToolsWorkspace
 import Foundation
 import Testing
 
@@ -35,7 +35,7 @@ struct BuiltinToolCatalogSnapshotTests {
       mcpClient: CatalogDiscoveryStub(),
       hostContext: .init(
         runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
-        workspaceID: "catalog", rootURL: configuration.workspaceDirectory, readOnly: false))
+        projectID: "catalog", rootURL: configuration.projectDirectory, readOnly: false))
     do {
       let snapshot = try GatewayToolCatalogSnapshot(providers: registry.providers())
       for name in ["process.spawn", "process.list", "process.read", "process.cancel"] {
@@ -63,7 +63,7 @@ struct BuiltinToolCatalogSnapshotTests {
         skills: .init(enabled: true)))
     let providers: [any GatewayToolProvider] = [
       DeliveryToolProvider(environment: environment),
-      WorkspaceToolProvider(environment: environment), FilesToolProvider(environment: environment),
+      ProjectToolProvider(environment: environment), FilesToolProvider(environment: environment),
       SkillsToolProvider(environment: environment),
       StructuredToolProvider(environment: environment),
       GitToolProvider(environment: environment), CLIToolProvider(environment: environment),
@@ -130,28 +130,28 @@ struct BuiltinToolCatalogSnapshotTests {
 
   @Test
   func completeHostCatalogMatchesReviewedSnapshot() async throws {
-    let workspace = try ScopedTemporaryDirectory()
+    let project = try ScopedTemporaryDirectory()
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       policy: .init(shellEnabled: true),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], workspaces: ["catalog"],
+          id: .localAdmin, capabilities: ["*"], projects: ["catalog"],
           allowedCallers: [.localMCP], fullShellEnabled: true, mode: .localFullAccess)
       ],
       cli: .init(commands: [.init(id: "fixture", executable: "/unused/catalog-cli")]),
       mcp: .init(servers: [.init(id: "fixture", transport: .stdio, command: "/unused/catalog-mcp")]
       ),
       builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
-      skills: .init(enabled: true, roots: [.init(id: "fixture", path: workspace.url.path)]),
-      workspaceDirectory: workspace.url)
+      skills: .init(enabled: true, roots: [.init(id: "fixture", path: project.url.path)]),
+      projectDirectory: project.url)
     try configuration.validate()
-    // Runtime composition supplies core tools, workspace schemas, Computer Use and management.
+    // Runtime composition supplies core tools, project schemas, Computer Use and management.
     // Discovery has no plugin sources, CLI trees or downstream tool contributions.
     let runtime = try await GatewayRuntime.make(
       configuration: configuration, database: GatewayDatabase(inMemory: ()),
-      registeredWorkspaces: [
-        .init(id: "catalog", displayName: "Catalog", rootPath: workspace.url.path)
+      registeredProjects: [
+        .init(id: "catalog", displayName: "Catalog", rootPath: project.url.path)
       ],
       platform: MacOSPlatform.services, mcpClient: CatalogDiscoveryStub(), plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
@@ -171,7 +171,7 @@ struct BuiltinToolCatalogSnapshotTests {
           }
           fields["capability"] = .object([
             "risk": .string(descriptor.risk.rawValue),
-            "workspaceRequirement": .string(descriptor.workspaceRequirement.rawValue),
+            "projectRequirement": .string(descriptor.projectRequirement.rawValue),
             "localOnly": .bool(descriptor.localOnly), "usesNetwork": .bool(descriptor.usesNetwork),
           ])
           return (tool.name, .object(fields))

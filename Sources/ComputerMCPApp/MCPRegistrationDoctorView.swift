@@ -7,7 +7,7 @@ struct MCPRegistrationDoctorView: View {
   @ObservedObject var model: MCPRegistrationModel
   @EnvironmentObject private var appModel: ComputerMCPAppModel
   @Environment(\.dismiss) private var dismiss
-  @State private var workspaceID = ""
+  @State private var projectID = ""
   @State private var pendingRecovery: MCPProcessReceiptStatus?
   @State private var showsRecovery = false
 
@@ -18,21 +18,21 @@ struct MCPRegistrationDoctorView: View {
       Text(
         "Starts only this enabled MCP to check its connection and catalog. No tools are called, dependencies installed or grants changed.",
         bundle: AppLocalization.resourceBundle)
-      if case .loaded(let workspaces) = appModel.workspaces, !workspaces.isEmpty {
-        Picker(AppLocalization.string("Workspace"), selection: $workspaceID) {
-          Text("Choose a workspace", bundle: AppLocalization.resourceBundle).tag("")
-          ForEach(workspaces) { workspace in
-            Text(verbatim: workspace.displayName).tag(workspace.id)
+      if case .loaded(let projects) = appModel.projects, !projects.isEmpty {
+        Picker(AppLocalization.string("Project"), selection: $projectID) {
+          Text("Choose a project", bundle: AppLocalization.resourceBundle).tag("")
+          ForEach(projects) { project in
+            Text(verbatim: project.displayName).tag(project.id)
           }
         }.disabled(model.isBusy)
       } else {
         Text(
-          "Register a workspace before checking a connection.",
+          "Register a project before checking a connection.",
           bundle: AppLocalization.resourceBundle)
-        Button(AppLocalization.string("Refresh")) { appModel.refresh(.workspaces) }
+        Button(AppLocalization.string("Refresh")) { appModel.refresh(.projects) }
       }
       if let report = model.doctorReport,
-        report.registrationID == registrationID && report.workspaceID == workspaceID
+        report.registrationID == registrationID && report.projectID == projectID
       {
         Divider()
         Text(verbatim: AppLocalization.string(report.message)).textSelection(.enabled)
@@ -87,16 +87,16 @@ struct MCPRegistrationDoctorView: View {
         Button(AppLocalization.string("Done")) { dismiss() }.keyboardShortcut(.cancelAction)
           .disabled(model.isBusy)
         Button(AppLocalization.string("Check connection")) {
-          Task { await model.checkConnection(id: registrationID, workspaceID: workspaceID) }
-        }.disabled(workspaceID.isEmpty || model.isBusy)
+          Task { await model.checkConnection(id: registrationID, projectID: projectID) }
+        }.disabled(projectID.isEmpty || model.isBusy)
       }
     }
     .padding(24).frame(width: 560)
     .task {
       model.clearConnectionReport()
-      appModel.refresh(.workspaces)
+      appModel.refresh(.projects)
     }
-    .onChange(of: workspaceID) { _, _ in model.clearConnectionReport() }
+    .onChange(of: projectID) { _, _ in model.clearConnectionReport() }
     .interactiveDismissDisabled(model.isBusy)
     .alert(
       AppLocalization.string("Recover released record"), isPresented: $showsRecovery,
@@ -104,7 +104,7 @@ struct MCPRegistrationDoctorView: View {
     ) { receipt in
       Button(AppLocalization.string("Recover released record"), role: .destructive) {
         Task {
-          await model.recoverProcess(id: registrationID, workspaceID: workspaceID, receipt: receipt)
+          await model.recoverProcess(id: registrationID, projectID: projectID, receipt: receipt)
         }
       }
       Button(AppLocalization.string("Cancel"), role: .cancel) {}

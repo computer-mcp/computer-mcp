@@ -5,7 +5,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPProcess
-import ComputerMCPToolsWorkspace
+import ComputerMCPToolsProject
 import ComputerMCPTransport
 import ComputerMCPTunnels
 import Foundation
@@ -241,18 +241,18 @@ package actor AppControlPlaneService {
   package func effectiveConfigurationForExport() async throws -> GatewayConfiguration {
     let grants = try await profileGrants()
     var configuration = try activeConfiguration()
-    configuration.workspaces = try workspaces().map { workspace in
-      WorkspaceManifestConfig(
-        id: workspace.id,
-        displayName: workspace.displayName,
-        path: workspace.rootPath
+    configuration.projects = try projects().map { project in
+      ProjectManifestConfig(
+        id: project.id,
+        displayName: project.displayName,
+        path: project.rootPath
       )
     }.sorted { $0.id < $1.id }
     configuration.profiles = grants.map { grant in
       ProfileGrantConfig(
         id: grant.id,
         capabilities: grant.capabilityIDs.sorted(),
-        workspaces: grant.workspaceIDs.sorted(),
+        projects: grant.projectIDs.sorted(),
         allowedCallers: grant.allowedCallers.sorted { $0.rawValue < $1.rawValue },
         fullShellEnabled: grant.fullShellEnabled,
         mcpServers: grant.mcpServerIDs.sorted(),
@@ -264,55 +264,55 @@ package actor AppControlPlaneService {
     return configuration
   }
 
-  package func workspaces() throws -> [RegisteredWorkspace] {
-    try database.workspaces()
+  package func projects() throws -> [RegisteredProject] {
+    try database.projects()
   }
 
-  package func workspaceAccessReports() throws -> [WorkspaceAccessReport] {
-    try database.workspaces().map { try platform.workspaceGrants.inspect($0) }
+  package func projectAccessReports() throws -> [ProjectAccessReport] {
+    try database.projects().map { try platform.projectGrants.inspect($0) }
   }
 
   @discardableResult
-  package func registerWorkspace(
+  package func registerProject(
     at url: URL,
     displayName: String? = nil
-  ) async throws -> RegisteredWorkspace {
+  ) async throws -> RegisteredProject {
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
-    let proposed = try platform.workspaceGrants.registerFolder(at: url, displayName: displayName)
-    let registration = try database.registerWorkspaceIdempotently(proposed)
+    let proposed = try platform.projectGrants.registerFolder(at: url, displayName: displayName)
+    let registration = try database.registerProjectIdempotently(proposed)
     if !registration.created,
       displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
-      registration.workspace.displayName != proposed.displayName
+      registration.project.displayName != proposed.displayName
     {
-      throw AppControlPlaneServiceError.workspaceMetadataConflict(
-        workspaceID: registration.workspace.id,
-        existingDisplayName: registration.workspace.displayName,
+      throw AppControlPlaneServiceError.projectMetadataConflict(
+        projectID: registration.project.id,
+        existingDisplayName: registration.project.displayName,
         requestedDisplayName: proposed.displayName
       )
     }
-    return registration.workspace
+    return registration.project
   }
 
-  package func workspaceDeduplicationPlan() throws -> WorkspaceDeduplicationPlan {
-    try database.workspaceDeduplicationPlan()
+  package func projectDeduplicationPlan() throws -> ProjectDeduplicationPlan {
+    try database.projectDeduplicationPlan()
   }
 
-  package func applyWorkspaceDeduplication(
+  package func applyProjectDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool
-  ) async throws -> WorkspaceDeduplicationResult {
+  ) async throws -> ProjectDeduplicationResult {
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
     let expected = try database.configurationState()
-    let plan = try database.workspaceDeduplicationPlan()
-    let resolved = try await resolveLegacyWorkspaceProfiles(
-      expected, workspaceIDs: Set(plan.groups.flatMap(\.duplicateWorkspaceIDs)))
+    let plan = try database.projectDeduplicationPlan()
+    let resolved = try await resolveLegacyProjectProfiles(
+      expected, projectIDs: Set(plan.groups.flatMap(\.duplicateProjectIDs)))
     try Task.checkCancellation()
     let commit = {
-      try self.database.applyWorkspaceDeduplication(
+      try self.database.applyProjectDeduplication(
         expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
         expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
     }
@@ -322,21 +322,21 @@ package actor AppControlPlaneService {
     return try commit()
   }
 
-  package func removeWorkspace(id: String) async throws {
+  package func removeProject(id: String) async throws {
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
     let expected = try database.configurationState()
-    let canonicalID = expected.workspaceAliases[id] ?? id
-    guard expected.workspaces.contains(where: { $0.id == canonicalID }) else {
-      throw AppControlPlaneServiceError.unknownWorkspace(id)
+    let canonicalID = expected.projectAliases[id] ?? id
+    guard expected.projects.contains(where: { $0.id == canonicalID }) else {
+      throw AppControlPlaneServiceError.unknownProject(id)
     }
     let removedIDs = Set(
-      expected.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [canonicalID])
-    let resolved = try await resolveLegacyWorkspaceProfiles(expected, workspaceIDs: removedIDs)
+      expected.projectAliases.filter { $0.value == canonicalID }.map(\.key) + [canonicalID])
+    let resolved = try await resolveLegacyProjectProfiles(expected, projectIDs: removedIDs)
     try Task.checkCancellation()
     let commit = {
-      try self.database.removeWorkspace(
+      try self.database.removeProject(
         id: canonicalID, expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
     }
     if let configuration = resolved.configuration {
@@ -346,15 +346,15 @@ package actor AppControlPlaneService {
     }
   }
 
-  private func resolveLegacyWorkspaceProfiles(
-    _ expected: GatewayDatabase.ConfigurationState, workspaceIDs: Set<String>,
+  private func resolveLegacyProjectProfiles(
+    _ expected: GatewayDatabase.ConfigurationState, projectIDs: Set<String>,
     includeWildcard: Bool = false
   ) async throws -> (profiles: [ProfileGrant], configuration: GatewayConfiguration?) {
     guard
       expected.profiles.contains(where: {
         $0.authorizationRevision == 0
-          && (!$0.workspaceIDs.isDisjoint(with: workspaceIDs)
-            || (includeWildcard && $0.workspaceIDs.contains("*")))
+          && (!$0.projectIDs.isDisjoint(with: projectIDs)
+            || (includeWildcard && $0.projectIDs.contains("*")))
       })
     else { return ([], nil) }
     let inputs = try gatewayInputs()
@@ -364,13 +364,13 @@ package actor AppControlPlaneService {
     return (profiles, inputs.configuration)
   }
 
-  func applyWorkspaceChange(
-    _ change: WorkspaceHostChange,
+  func applyProjectChange(
+    _ change: ProjectHostChange,
     publish:
-      @Sendable (GatewayInputs, PreparedWorkspaceChange<GatewayDatabase.ConfigurationState>)
+      @Sendable (GatewayInputs, PreparedProjectChange<GatewayDatabase.ConfigurationState>)
       async throws ->
       GatewayDatabase.ConfigurationState
-  ) async throws -> WorkspaceChangeResult {
+  ) async throws -> ProjectChangeResult {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     configurationMutationInProgress = true
     defer { configurationMutationInProgress = false }
@@ -378,84 +378,84 @@ package actor AppControlPlaneService {
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
     let inputs = try gatewayInputs()
-    let mutation: WorkspaceConfigurationMutation
-    let affectedWorkspaceIDs: Set<String>
+    let mutation: ProjectConfigurationMutation
+    let affectedProjectIDs: Set<String>
     var requestedDisplayName: String?
     var includeWildcard = false
     switch change {
     case .register(let url, let displayName):
-      let workspace = try platform.workspaceGrants.registerFolder(at: url, displayName: displayName)
-      mutation = .register(workspace)
-      affectedWorkspaceIDs = []
+      let project = try platform.projectGrants.registerFolder(at: url, displayName: displayName)
+      mutation = .register(project)
+      affectedProjectIDs = []
       if displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-        requestedDisplayName = workspace.displayName
+        requestedDisplayName = project.displayName
       }
     case .repair(let id, let root, let displayName):
-      let canonicalID = inputs.persisted.workspaceAliases[id] ?? id
-      guard let original = inputs.workspaces.first(where: { $0.id == canonicalID }) else {
-        throw AppControlPlaneServiceError.unknownWorkspace(id)
+      let canonicalID = inputs.persisted.projectAliases[id] ?? id
+      guard let original = inputs.projects.first(where: { $0.id == canonicalID }) else {
+        throw AppControlPlaneServiceError.unknownProject(id)
       }
-      let bookmarks = platform.workspaceGrants
+      let bookmarks = platform.projectGrants
       let (selected, identity) = try await gatewayOperations.perform {
         let selected = try bookmarks.registerFolder(
           at: root, displayName: displayName ?? original.displayName)
-        let identity = try WorkspaceRootIdentity(URL(fileURLWithPath: selected.rootPath))
+        let identity = try ProjectRootIdentity(URL(fileURLWithPath: selected.rootPath))
         let access = try bookmarks.resolve(selected)
         defer { access.close() }
         guard access.rootIdentity == identity else {
-          throw WorkspaceBookmarkError.rootChanged(workspaceID: original.id)
+          throw ProjectBookmarkError.rootChanged(projectID: original.id)
         }
-        return (access.workspace, identity)
+        return (access.project, identity)
       }
       var repaired = selected
       repaired.id = original.id
       repaired.createdAt = original.createdAt
       if displayName == nil { repaired.displayName = original.displayName }
       mutation = .repair(repaired, root: identity)
-      affectedWorkspaceIDs = Set(
-        inputs.persisted.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [
+      affectedProjectIDs = Set(
+        inputs.persisted.projectAliases.filter { $0.value == canonicalID }.map(\.key) + [
           canonicalID
         ])
       includeWildcard = true
     case .remove(let id):
-      let canonicalID = inputs.persisted.workspaceAliases[id] ?? id
-      guard inputs.workspaces.contains(where: { $0.id == canonicalID }) else {
-        throw AppControlPlaneServiceError.unknownWorkspace(id)
+      let canonicalID = inputs.persisted.projectAliases[id] ?? id
+      guard inputs.projects.contains(where: { $0.id == canonicalID }) else {
+        throw AppControlPlaneServiceError.unknownProject(id)
       }
       mutation = .remove(canonicalID)
-      affectedWorkspaceIDs = Set(
-        inputs.persisted.workspaceAliases.filter { $0.value == canonicalID }.map(\.key) + [
+      affectedProjectIDs = Set(
+        inputs.persisted.projectAliases.filter { $0.value == canonicalID }.map(\.key) + [
           canonicalID
         ])
     case .deduplicate(let digest, let allowMetadataConflicts):
       mutation = .deduplicate(
         expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts)
-      let plan = try database.workspaceDeduplicationPlan()
+      let plan = try database.projectDeduplicationPlan()
       guard plan.planDigest == digest else {
-        throw WorkspaceDeduplicationError.planChanged(expected: digest, actual: plan.planDigest)
+        throw ProjectDeduplicationError.planChanged(expected: digest, actual: plan.planDigest)
       }
-      affectedWorkspaceIDs = Set(plan.groups.flatMap(\.duplicateWorkspaceIDs))
+      affectedProjectIDs = Set(plan.groups.flatMap(\.duplicateProjectIDs))
     }
-    let resolved = try await resolveLegacyWorkspaceProfiles(
-      inputs.persisted, workspaceIDs: affectedWorkspaceIDs, includeWildcard: includeWildcard)
+    let resolved = try await resolveLegacyProjectProfiles(
+      inputs.persisted, projectIDs: affectedProjectIDs, includeWildcard: includeWildcard)
     try requireCurrentGatewayInputs(inputs)
-    let prepared = try database.prepareWorkspaceChange(
+    let prepared = try database.prepareProjectChange(
       mutation, expected: inputs.persisted, resolvedProfiles: resolved.profiles)
-    if case .registered(let workspace, false) = prepared.result,
-      let requestedDisplayName, workspace.displayName != requestedDisplayName
+    if case .registered(let project, false) = prepared.result,
+      let requestedDisplayName, project.displayName != requestedDisplayName
     {
-      throw AppControlPlaneServiceError.workspaceMetadataConflict(
-        workspaceID: workspace.id, existingDisplayName: workspace.displayName,
+      throw AppControlPlaneServiceError.projectMetadataConflict(
+        projectID: project.id, existingDisplayName: project.displayName,
         requestedDisplayName: requestedDisplayName)
     }
     let committed = try await publish(inputs, prepared)
-    if case .registered(let workspace, let created) = prepared.result,
-      let published = committed.workspaces.first(where: { $0.id == workspace.id })
+    if case .registered(let project, let created) = prepared.result,
+      let published = committed.projects.first(where: { $0.id == project.id })
     {
       return .registered(published, created: created)
     }
-    if case .repaired(let workspace) = prepared.result,
-      let published = committed.workspaces.first(where: { $0.id == workspace.id })
+    if case .repaired(let project) = prepared.result,
+      let published = committed.projects.first(where: { $0.id == project.id })
     {
       return .repaired(published)
     }
@@ -470,7 +470,7 @@ package actor AppControlPlaneService {
       guard let configured = grants[persisted.id] else { continue }
       var effective = configured.applyingPersistedRuntimeState(persisted)
       if persisted.authorizationRevision == 0, effective.capabilityIDs.contains("*") {
-        effective.workspaceIDs.formUnion(inputs.workspaces.map(\.id))
+        effective.projectIDs.formUnion(inputs.projects.map(\.id))
       }
       grants[persisted.id] = effective
     }
@@ -510,7 +510,7 @@ package actor AppControlPlaneService {
       grants[profileID] = ProfileGrant(
         id: profileID,
         capabilityIDs: Set(tools.map(\.name)),
-        workspaceIDs: Set(inputs.workspaces.map(\.id)),
+        projectIDs: Set(inputs.projects.map(\.id)),
         allowedCallers: [caller],
         mode: .readOnly,
         authorizationRevision: 0
@@ -521,14 +521,14 @@ package actor AppControlPlaneService {
   }
 
   @discardableResult
-  package func setWorkspaceEnabled(
+  package func setProjectEnabled(
     _ enabled: Bool,
-    workspaceID: String,
+    projectID: String,
     profileID: GatewayProfileID
   ) async throws -> ProfileGrant {
     let inputs = try gatewayInputs()
-    guard try database.workspaces().contains(where: { $0.id == workspaceID }) else {
-      throw AppControlPlaneServiceError.unknownWorkspace(workspaceID)
+    guard try database.projects().contains(where: { $0.id == projectID }) else {
+      throw AppControlPlaneServiceError.unknownProject(projectID)
     }
     let grants = try await profileGrants()
     await manifestStore.publicationLock.acquire()
@@ -540,12 +540,12 @@ package actor AppControlPlaneService {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
     if enabled {
-      grant.workspaceIDs.insert(workspaceID)
+      grant.projectIDs.insert(projectID)
     } else {
-      if grant.workspaceIDs.remove("*") != nil {
-        grant.workspaceIDs.formUnion(try database.workspaces().map(\.id))
+      if grant.projectIDs.remove("*") != nil {
+        grant.projectIDs.formUnion(try database.projects().map(\.id))
       }
-      grant.workspaceIDs.remove(workspaceID)
+      grant.projectIDs.remove(projectID)
     }
     try grant.validate()
     try manifestStore.withCurrentConfiguration(configuration) {
@@ -653,7 +653,7 @@ package actor AppControlPlaneService {
     confirmationPolicy: GatewayConfirmationPolicy? = nil,
     fullShellEnabled: Bool? = nil,
     capabilityIDs: Set<String>? = nil,
-    workspaceIDs: Set<String>? = nil,
+    projectIDs: Set<String>? = nil,
     mcpServerIDs: Set<String>? = nil,
     allowedCallers: Set<GatewayCallerKind>? = nil,
     expectedRevision: Int64? = nil,
@@ -681,18 +681,18 @@ package actor AppControlPlaneService {
     if let confirmationPolicy { grant.confirmationPolicy = confirmationPolicy }
     if let fullShellEnabled { grant.fullShellEnabled = fullShellEnabled }
     if let capabilityIDs { grant.capabilityIDs = capabilityIDs }
-    if let workspaceIDs { grant.workspaceIDs = workspaceIDs }
+    if let projectIDs { grant.projectIDs = projectIDs }
     if let mcpServerIDs { grant.mcpServerIDs = mcpServerIDs }
     if let allowedCallers { grant.allowedCallers = allowedCallers }
     let configuration = try manifestStore.activeConfiguration()
     if grant.fullShellEnabled && !configuration.policy.shellEnabled {
       throw AppControlPlaneServiceError.fullShellManifestDisabled
     }
-    let knownWorkspaceIDs = Set(try database.workspaces().map(\.id))
-    if let unknown = grant.workspaceIDs.subtracting(knownWorkspaceIDs).subtracting(["*"]).sorted()
+    let knownProjectIDs = Set(try database.projects().map(\.id))
+    if let unknown = grant.projectIDs.subtracting(knownProjectIDs).subtracting(["*"]).sorted()
       .first
     {
-      throw AppControlPlaneServiceError.unknownWorkspace(unknown)
+      throw AppControlPlaneServiceError.unknownProject(unknown)
     }
     let pluginState = try database.pluginStoreSnapshot()
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
@@ -703,11 +703,11 @@ package actor AppControlPlaneService {
       ).plugins)
     try ProfileGrantConfig(
       id: grant.id, capabilities: grant.capabilityIDs.sorted(),
-      workspaces: grant.workspaceIDs.sorted(), allowedCallers: Array(grant.allowedCallers),
+      projects: grant.projectIDs.sorted(), allowedCallers: Array(grant.allowedCallers),
       fullShellEnabled: grant.fullShellEnabled, mcpServers: grant.mcpServerIDs.sorted(),
       mode: grant.mode, confirmationPolicy: grant.confirmationPolicy
     ).validate(
-      knownWorkspaceIDs: knownWorkspaceIDs,
+      knownProjectIDs: knownProjectIDs,
       knownMCPServerIDs: Set(composition.runtimeConfiguration.mcp.servers.map(\.id)))
     if let reviewedOptions {
       try manifestStore.withCurrentConfiguration(configuration) {
@@ -765,7 +765,7 @@ package actor AppControlPlaneService {
     try database.recordAudit(
       AuditEvent(
         requestID: UUID().uuidString, ticketID: ticket.id, caller: resolver,
-        profileID: .localAdmin, workspaceID: ticket.workspaceID,
+        profileID: .localAdmin, projectID: ticket.projectID,
         capabilityID: approved ? "approvals.approve" : "approvals.deny",
         decision: .allowed, inputDigest: ticket.inputDigest))
     return ticket
@@ -833,7 +833,7 @@ package actor AppControlPlaneService {
   struct GatewayInputs: Equatable, Sendable {
     let configuration: GatewayConfiguration
     let persisted: GatewayDatabase.ConfigurationState
-    var workspaces: [RegisteredWorkspace] { persisted.workspaces }
+    var projects: [RegisteredProject] { persisted.projects }
     var profiles: [ProfileGrant] { persisted.profiles }
     var plugins: PluginStoreSnapshot { persisted.plugins }
   }
@@ -876,7 +876,7 @@ package actor AppControlPlaneService {
     let gateway = try await GatewayRuntime.make(
       configuration: inputs.configuration,
       context: context,
-      database: database, registeredWorkspaces: inputs.workspaces,
+      database: database, registeredProjects: inputs.projects,
       platform: platform, mcpClient: MCPProxyClient(secretStore: secretStore),
       plugins: plugins, pluginState: inputs.plugins, bundledPlugins: bundledPlugins,
       terminalSessions: terminalSessions, requiresControlSession: requiresControlSession,
@@ -1287,9 +1287,9 @@ package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedErro
   case directoryOwnedByAnotherUser(String)
   case unknownOpenAITunnelConfiguration(String)
   case unknownGatewayProfile(String)
-  case unknownWorkspace(String)
-  case workspaceMetadataConflict(
-    workspaceID: String,
+  case unknownProject(String)
+  case projectMetadataConflict(
+    projectID: String,
     existingDisplayName: String,
     requestedDisplayName: String
   )
@@ -1316,15 +1316,15 @@ package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedErro
       return "Unknown tunnel profile: \(id)"
     case .unknownGatewayProfile(let id):
       return "Unknown gateway profile: \(id)"
-    case .unknownWorkspace(let id):
-      return "Unknown workspace: \(id)"
-    case .workspaceMetadataConflict(
-      let workspaceID,
+    case .unknownProject(let id):
+      return "Unknown project: \(id)"
+    case .projectMetadataConflict(
+      let projectID,
       let existingDisplayName,
       let requestedDisplayName
     ):
       return
-        "Workspace '\(workspaceID)' already registers this canonical root as '\(existingDisplayName)'; requested display name '\(requestedDisplayName)' conflicts."
+        "Project '\(projectID)' already registers this canonical root as '\(existingDisplayName)'; requested display name '\(requestedDisplayName)' conflicts."
     case .invalidStoredProfile(let id):
       return "The stored active gateway profile is invalid: \(id)"
     case .localAdminCannotBeSocketProfile:
@@ -1335,7 +1335,7 @@ package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedErro
       return "The persisted Tunnel runtime state is invalid."
     case .gatewayInputsChanged:
       return
-        "Gateway configuration, workspaces, profiles, or plugins changed during discovery. Refresh before trying again."
+        "Gateway configuration, projects, profiles, or plugins changed during discovery. Refresh before trying again."
     }
   }
 }

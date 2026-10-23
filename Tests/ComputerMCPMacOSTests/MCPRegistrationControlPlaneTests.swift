@@ -23,7 +23,7 @@ struct MCPRegistrationControlPlaneTests {
   func doctorAndRecoveryShareHostStorageWithoutLaunching(hostConfirmed: Bool) async throws {
     let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }
-    try fixture.database.saveWorkspace(
+    try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let marker = fixture.root.appendingPathComponent("launched")
     let server = MCPServerConfig(
@@ -31,13 +31,13 @@ struct MCPRegistrationControlPlaneTests {
       allowAnyTool: true)
     let storage = try #require(fixture.database.mcpProcessOwnershipRoot)
     let owner = try MCPProcessOwnership.acquire(
-      root: storage, workspace: fixture.root, registration: "owned")
+      root: storage, project: fixture.root, registration: "owned")
     try owner.finish(confirmed: false, hostServicesConfirmed: hostConfirmed)
     try await fixture.socket.start()
     do {
       try await fixture.seedRegistration(server)
       let before = try Data(contentsOf: fixture.directories.manifest)
-      let result = try await fixture.cli(["doctor", "owned", "--workspace-id", "fixture"])
+      let result = try await fixture.cli(["doctor", "owned", "--project-id", "fixture"])
       #expect(result.exitCode == 1)
       let report = try JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8))
       #expect(report.objectValue?["stage"] == .string("cleanup"))
@@ -49,14 +49,14 @@ struct MCPRegistrationControlPlaneTests {
       let digest = try #require(receipt["digest"]?.stringValue)
       let current = try #require(report.objectValue?["current_digest"]?.stringValue)
       let arguments = [
-        "recover-process", "owned", "--workspace-id", "fixture", "--receipt-id", id,
+        "recover-process", "owned", "--project-id", "fixture", "--receipt-id", id,
         "--expected-receipt-digest", digest, "--expected-current-digest",
       ]
       #expect(try await fixture.cli(arguments + ["stale"]).exitCode != 0)
       let recovery = try await fixture.cli(arguments + [current])
       #expect((recovery.exitCode == 0) == hostConfirmed)
       let remaining = try MCPProcessOwnership.inspect(
-        root: storage, workspace: fixture.root, registration: "owned")
+        root: storage, project: fixture.root, registration: "owned")
       #expect(remaining.count == (hostConfirmed ? 0 : 1))
       #expect(!FileManager.default.fileExists(atPath: marker.path))
       #expect(try Data(contentsOf: fixture.directories.manifest) == before)
@@ -125,7 +125,7 @@ struct MCPRegistrationControlPlaneTests {
         try await Task.sleep(for: .milliseconds(10))
       }
       let port = try #require(Int(String(contentsOf: ready, encoding: .utf8)))
-      try fixture.database.saveWorkspace(
+      try fixture.database.saveProject(
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
       let server = MCPServerConfig(
         id: "http", transport: .streamableHTTP,
@@ -133,7 +133,7 @@ struct MCPRegistrationControlPlaneTests {
         startupTimeoutMs: 1000, requestTimeoutMs: 1000)
       try await fixture.socket.start()
       try await fixture.seedRegistration(server)
-      let report = try await fixture.json(["doctor", "http", "--workspace-id", "fixture"])
+      let report = try await fixture.json(["doctor", "http", "--project-id", "fixture"])
       #expect(report.objectValue?["status"] == .string("passed"))
       #expect(report.objectValue?["server_version"] == .string("2.3.4"))
       #expect(report.objectValue?["executable_inspection"] == nil)
@@ -155,7 +155,7 @@ struct MCPRegistrationControlPlaneTests {
   {
     let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }
-    try fixture.database.saveWorkspace(
+    try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let script = fixture.root.appendingPathComponent("failure.py")
     let receipt = fixture.root.appendingPathComponent("pid")
@@ -191,7 +191,7 @@ struct MCPRegistrationControlPlaneTests {
     do {
       try await fixture.seedRegistration(server)
       let before = try Data(contentsOf: fixture.directories.manifest)
-      let result = try await fixture.cli(["doctor", "failure", "--workspace-id", "fixture"])
+      let result = try await fixture.cli(["doctor", "failure", "--project-id", "fixture"])
       #expect(result.exitCode == 1)
       let report = try JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8))
       #expect(report.objectValue?["status"] == .string("failed"))
@@ -274,7 +274,7 @@ struct MCPRegistrationControlPlaneTests {
           print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
       """#.utf8
     ).write(to: script)
-    try fixture.database.saveWorkspace(
+    try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     try await fixture.socket.start()
     do {
@@ -291,7 +291,7 @@ struct MCPRegistrationControlPlaneTests {
         try await fixture.seedRegistration(server)
       }
       let before = try Data(contentsOf: fixture.directories.manifest)
-      let report = try await fixture.json(["doctor", "selected", "--workspace-id", "fixture"])
+      let report = try await fixture.json(["doctor", "selected", "--project-id", "fixture"])
       #expect(report.objectValue?["status"] == .string("passed"))
       #expect(report.objectValue?["catalog_received"] == .bool(true))
       #expect(report.objectValue?["server_version"] == .string("1.2.3"))
@@ -308,7 +308,7 @@ struct MCPRegistrationControlPlaneTests {
       #expect(
         !FileManager.default.fileExists(
           atPath: fixture.root.appendingPathComponent("probe-write").path))
-      let disabled = try await fixture.cli(["doctor", "disabled", "--workspace-id", "fixture"])
+      let disabled = try await fixture.cli(["doctor", "disabled", "--project-id", "fixture"])
       #expect(disabled.exitCode == 1)
       let disabledReport = try JSONDecoder().decode(
         JSONValue.self, from: Data(disabled.stdout.utf8))
@@ -363,7 +363,7 @@ struct MCPRegistrationControlPlaneTests {
           print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
       """#.utf8
     ).write(to: script)
-    try fixture.database.saveWorkspace(
+    try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     let input = fixture.root.appendingPathComponent("registration.json")
     var server = MCPServerConfig(
@@ -378,7 +378,7 @@ struct MCPRegistrationControlPlaneTests {
       try await fixture.apply(["add", "--registration-file", input.path])
       try fixture.database.saveProfile(
         .init(
-          id: .chatGPTObserve, capabilityIDs: ["*"], workspaceIDs: ["fixture"],
+          id: .chatGPTObserve, capabilityIDs: ["*"], projectIDs: ["fixture"],
           allowedCallers: [.localCLI], mcpServerIDs: ["manual"]))
       try await fixture.gateway.start(profile: .chatGPTObserve)
       let first = Client(name: "registration-first", version: "1")
@@ -548,7 +548,7 @@ struct MCPRegistrationControlFixture: Sendable {
       loader: GatewayManifestConfigurationLoader(
         database: database, bundledPlugins: bundled,
         applications: MacOSPlatform.services.applications))
-    _ = try store.activate(manifest: GatewayConfiguration(workspaceDirectory: root).exportedTOML())
+    _ = try store.activate(manifest: GatewayConfiguration(projectDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
       directories: directories, database: database, manifestStore: store,

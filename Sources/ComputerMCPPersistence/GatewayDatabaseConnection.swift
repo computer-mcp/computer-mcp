@@ -1,4 +1,3 @@
-import ComputerMCPPlatformPOSIX
 import Foundation
 import GRDB
 
@@ -7,21 +6,12 @@ import GRDB
 package final class GatewayDatabaseConnection: @unchecked Sendable {
   package let writer: any DatabaseWriter
   package let fileURL: URL?
-  private let fileLock: FileLock?
 
   /// Opens or creates the database at `path`. A database whose migration ledger names
   /// migrations this version does not have, or that holds tables without a ledger, is
-  /// refused unchanged, as is one whose replacement by a state import was interrupted.
+  /// refused unchanged.
   package init(path: String) throws {
     let url = URL(fileURLWithPath: path).standardizedFileURL
-    do {
-      fileLock = try FileLock(path: url.path + ".lock", mode: .shared)
-    } catch FileLockError.held {
-      throw StateImportInProgress(path: url.path)
-    }
-    guard !GatewayStateImport.isReplacing(url) else {
-      throw InterruptedStateImport(path: url.path)
-    }
     fileURL = url
     var configuration = Configuration()
     // Independent management connections must acquire the write lock before checking revisions.
@@ -32,17 +22,7 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
 
   package init(inMemory: Void) throws {
     fileURL = nil
-    fileLock = nil
     writer = try DatabaseQueue()
-    try Self.open(writer)
-  }
-
-  /// Opens an exclusively created staging file. The importer must hold the target's
-  /// exclusive lock until this connection is closed and replacement is complete.
-  package init(stagedPath: String) throws {
-    fileURL = URL(fileURLWithPath: stagedPath).standardizedFileURL
-    fileLock = nil
-    writer = try DatabaseQueue(path: stagedPath)
     try Self.open(writer)
   }
 
@@ -57,6 +37,7 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
     migrator.registerMigration("audit-error-details") { database in
       try database.alter(table: "auditEvents") { $0.add(column: "errorDetailsJSON", .text) }
     }
+    migrator.registerMigration("project-terminology", migrate: ProjectSchemaMigration.migrate)
     return migrator
   }()
 

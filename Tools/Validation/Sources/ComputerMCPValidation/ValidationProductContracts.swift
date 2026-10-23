@@ -3,7 +3,7 @@ import Foundation
 public struct ValidationCapabilityContract: Codable, Equatable, Sendable {
   public let id: String
   public let risk: String
-  public let workspaceRequirement: String
+  public let projectRequirement: String
   public let localOnly: Bool
   public let usesNetwork: Bool
   public let tccServices: [String]

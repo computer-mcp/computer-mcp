@@ -47,20 +47,20 @@ platform `sockaddr_un` limit. A deeply nested temporary home can fail with
 `~/Library/Application Support/Computer MCP/Runtime/gateway.sock` path is
 supported.
 
-## No Workspace Tools
+## No Project Tools
 
-A fresh App intentionally exposes only onboarding-safe tools until a workspace
-is registered. Add a folder in **Workspaces**, verify its bookmark is
-Available, and retry `workspace.list`.
+A fresh App intentionally exposes only onboarding-safe tools until a project
+is registered. Add a folder in **Projects**, verify its bookmark is
+Available, and retry `project.list`.
 
 **Add** opens the native macOS folder panel on every supported release. Select
-the folder itself, choose **Add**, and the existing Workspaces page refreshes
+the folder itself, choose **Add**, and the existing Projects page refreshes
 in place. If the panel is already inside the desired folder, go to its parent
 first so the folder can be selected. A panel that does not appear is an App UI
 presentation problem, not a network, anti-scraping, Shell, or Keychain denial.
 
-When multiple workspaces are granted, include `workspace_id`; Computer MCP does
-not maintain a global current workspace.
+When multiple projects are granted, include `project_id`; Computer MCP does
+not maintain a global current project.
 
 ## Manifest Does Not Validate
 
@@ -70,7 +70,7 @@ Use the Diagnostics manifest editor or:
 swift run computer-mcp config validate --config <path>
 ```
 
-Typical failures include duplicate IDs, invalid workspace grants, a remote
+Typical failures include duplicate IDs, invalid project grants, a remote
 `local-admin` binding, unknown capabilities, missing MCP transport fields,
 and reexport prefix conflicts.
 
@@ -78,7 +78,7 @@ and reexport prefix conflicts.
 
 While the gateway is running, saving its manifest prepares a candidate before
 changing active configuration. Existing connections and task owners remain
-available. If syntax, provider startup, workspace access or persistence fails,
+available. If syntax, provider startup, project access or persistence fails,
 the gateway status reports a configuration reload error and keeps the previously
 admitted configuration active. Your edited file remains unchanged.
 
@@ -112,7 +112,7 @@ ChatGPT Web cannot connect directly to local stdio or `localhost`. Follow the
 
 Verify:
 
-- Developer mode and custom Apps are available for the account/workspace;
+- Developer mode and custom Apps are available for the account/project;
 - the Tunnel is associated with the exact ChatGPT workspace;
 - both runtime key and app creator have `Tunnels Read + Use`;
 - the App Tunnel state is Running;

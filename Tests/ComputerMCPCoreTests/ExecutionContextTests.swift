@@ -6,7 +6,7 @@ struct ExecutionContextTests {
   @Test func equalityComparesEveryFieldAndTheSessionByIdentity() {
     let session = StubSessionAuthority()
     var base = ExecutionContext(
-      requestID: "request", caller: .localApp, profileID: .localAdmin, workspaceID: "alpha",
+      requestID: "request", caller: .localApp, profileID: .localAdmin, projectID: "alpha",
       transportTrace: .init(transport: "socket"), trustedPrincipalID: "principal")
     base.controlSession = session
     var same = base
@@ -24,7 +24,7 @@ struct ExecutionContextTests {
     context.profileID = .chatGPTOperate
     variants.append(context)
     context = base
-    context.workspaceID = nil
+    context.projectID = nil
     variants.append(context)
     context = base
     context.transportTrace = .init(transport: "http")
@@ -49,7 +49,7 @@ struct ExecutionContextTests {
     ).children.compactMap(\.label)
     #expect(
       labels == [
-        "requestID", "caller", "profileID", "workspaceID", "transportTrace",
+        "requestID", "caller", "profileID", "projectID", "transportTrace",
         "trustedPrincipalID", "controlSession",
       ])
   }

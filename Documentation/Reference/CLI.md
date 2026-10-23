@@ -59,18 +59,18 @@ computer-mcp config export [--control-socket <control-socket>] [--output <output
 computer-mcp config import [--control-socket <control-socket>] --input <input> [--apply] [--expected-current-digest <expected-current-digest>]
 computer-mcp config history [--control-socket <control-socket>] [--limit <limit>]
 computer-mcp config rollback [--control-socket <control-socket>] <revision-id>
-computer-mcp workspace list [--control-socket <control-socket>]
-computer-mcp workspace add [--control-socket <control-socket>] <path> [--display-name <display-name>]
-computer-mcp workspace repair [--control-socket <control-socket>] <id> <path> [--display-name <display-name>]
-computer-mcp workspace remove [--control-socket <control-socket>] <id>
-computer-mcp workspace enable [--control-socket <control-socket>] <id> --profile <profile> [--enabled] [--no-enabled]
-computer-mcp workspace deduplicate [--control-socket <control-socket>] [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
+computer-mcp project list [--control-socket <control-socket>]
+computer-mcp project add [--control-socket <control-socket>] <path> [--display-name <display-name>]
+computer-mcp project repair [--control-socket <control-socket>] <id> <path> [--display-name <display-name>]
+computer-mcp project remove [--control-socket <control-socket>] <id>
+computer-mcp project enable [--control-socket <control-socket>] <id> --profile <profile> [--enabled] [--no-enabled]
+computer-mcp project deduplicate [--control-socket <control-socket>] [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
 computer-mcp profile list [--control-socket <control-socket>]
 computer-mcp profile show <id> [--control-socket <control-socket>]
 computer-mcp profile activate <id> [--control-socket <control-socket>]
-computer-mcp profile grant <id> --workspace <workspace> [--enabled] [--no-enabled] [--control-socket <control-socket>]
+computer-mcp profile grant <id> --project <project> [--enabled] [--no-enabled] [--control-socket <control-socket>]
 computer-mcp profile shell <id> [--enabled] [--no-enabled] [--control-socket <control-socket>]
-computer-mcp profile permissions <id> [--control-socket <control-socket>] [--mode <mode>] [--confirmation-policy <confirmation-policy>] [--arbitrary-execution] [--no-arbitrary-execution] [--capabilities <capabilities>] [--workspaces <workspaces>] [--mcp-servers <mcp-servers>] [--allowed-callers <allowed-callers>] [--expected-revision <expected-revision>]
+computer-mcp profile permissions <id> [--control-socket <control-socket>] [--mode <mode>] [--confirmation-policy <confirmation-policy>] [--arbitrary-execution] [--no-arbitrary-execution] [--capabilities <capabilities>] [--projects <projects>] [--mcp-servers <mcp-servers>] [--allowed-callers <allowed-callers>] [--expected-revision <expected-revision>]
 computer-mcp tunnel openai list [--control-socket <control-socket>]
 computer-mcp tunnel openai doctor [--control-socket <control-socket>] <id>
 computer-mcp tunnel openai start [--control-socket <control-socket>] <id>
@@ -87,24 +87,23 @@ computer-mcp tunnel cloudflare stop [--control-socket <control-socket>] <id>
 computer-mcp tunnel cloudflare logs [--control-socket <control-socket>] <id>
 computer-mcp tunnel cloudflare save [<options>] <id> --tunnel-name <tunnel-name> --public-hostname <public-hostname> --gateway-profile <gateway-profile>
 computer-mcp tunnel cloudflare remove [--control-socket <control-socket>] <id>
-computer-mcp tools list [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
-computer-mcp tools inspect <name> [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
-computer-mcp tools call <name> [--arguments-json <arguments-json>] [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
-computer-mcp tools inventory --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>]
+computer-mcp tools list [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--project-id <project-id>]
+computer-mcp tools inspect <name> [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--project-id <project-id>]
+computer-mcp tools call <name> [--arguments-json <arguments-json>] [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--project-id <project-id>]
+computer-mcp tools inventory --config <config> [--caller <caller>] [--profile <profile>] [--project-id <project-id>]
 computer-mcp permissions status [--control-socket <control-socket>]
 computer-mcp permissions approvals list [--limit <limit>] [--control-socket <control-socket>]
 computer-mcp permissions approvals approve <id> [--control-socket <control-socket>]
 computer-mcp permissions approvals deny <id> [--control-socket <control-socket>]
 computer-mcp audit list [--control-socket <control-socket>] [--limit <limit>]
 computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
-computer-mcp state import <file> [--database <database>]
 computer-mcp providers list [--control-socket <control-socket>]
 computer-mcp providers doctor [--control-socket <control-socket>] [<id>]
 computer-mcp providers discover --config <config>
 computer-mcp mcp list [--control-socket <control-socket>]
 computer-mcp mcp show [--control-socket <control-socket>] <id>
-computer-mcp mcp doctor <id> --workspace-id <workspace-id> [--control-socket <control-socket>]
-computer-mcp mcp recover-process <id> --workspace-id <workspace-id> --receipt-id <receipt-id> --expected-receipt-digest <expected-receipt-digest> --expected-current-digest <expected-current-digest> [--control-socket <control-socket>]
+computer-mcp mcp doctor <id> --project-id <project-id> [--control-socket <control-socket>]
+computer-mcp mcp recover-process <id> --project-id <project-id> --receipt-id <receipt-id> --expected-receipt-digest <expected-receipt-digest> --expected-current-digest <expected-current-digest> [--control-socket <control-socket>]
 computer-mcp mcp credential <subcommand>
 computer-mcp mcp credential status <id> [--control-socket <control-socket>]
 computer-mcp mcp credential set <id> --expected-binding-digest <expected-binding-digest> [--control-socket <control-socket>] [--stdin]
@@ -137,8 +136,8 @@ computer-mcp install claude-desktop [--name <name>] [--client-cli <client-cli>] 
 computer-mcp uninstall codex [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>]
 computer-mcp uninstall claude-code [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>]
 computer-mcp uninstall claude-desktop [--name <name>] [--client-cli <client-cli>] [--dry-run] [--expect <expect>]
-computer-mcp serve stdio --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>]
-computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--workspace-id <workspace-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>] [--control-socket <control-socket>]
+computer-mcp serve stdio --config <config> [--caller <caller>] [--profile <profile>] [--project-id <project-id>] [--database <database>]
+computer-mcp serve http --config <config> [--caller <caller>] [--profile <profile>] [--project-id <project-id>] [--database <database>] [--host <host>] [--port <port>] [--public-base-url <public-base-url>] [--control-socket <control-socket>]
 computer-mcp bridge [--socket <socket>] [--tunnel-credential-file <tunnel-credential-file>] [--tunnel-profile-id <tunnel-profile-id>] [--client-identity <client-identity>]
 ```
 
@@ -195,7 +194,7 @@ computer-mcp clients revoke <trust-id>
 
 `allow --full-access` is explicit consent to arbitrary execution as the current
 macOS user, including access to that user's files, processes, network and
-credentials. A workspace provides context, not a sandbox; macOS privacy
+credentials. A project provides context, not a sandbox; macOS privacy
 permissions still apply. The default is **This Session**. Add
 `--always-allow-client` deliberately to save approval for future connections
 with the same authenticated principal, caller and unchanged profile. Changing
@@ -271,9 +270,9 @@ App-owned manifest operations. `list` includes manual and resolved plugin
 contributions; `show <id>` returns one entry and the current manifest digest.
 Plugin-owned contributions are edited through plugin settings.
 
-`mcp doctor <id> --workspace-id <id>` and the App's **Check connection** action
+`mcp doctor <id> --project-id <id>` and the App's **Check connection** action
 actively initialize the selected enabled registration in an explicitly selected
-registered workspace, retrieve its catalog, and close the probe. They use the
+registered project, retrieve its catalog, and close the probe. They use the
 resolved launch configuration and the standard MCP connection path, including
 timeouts and scoped host callbacks. Other registrations are not started. Disabled
 registrations are reported without launching; external dependencies are never
@@ -372,8 +371,8 @@ locally against the specified manifest and emits a JSON report; it does not
 contact the running App or change its provider records.
 
 Configured MCP and CLI probes use the registration's working directory and
-environment overrides. An absent, empty, or `workspace` directory selects the
-configuration workspace; a relative directory is based there. Relative
+environment overrides. An absent, empty, or `project` directory selects the
+configuration project; a relative directory is based there. Relative
 executables and relative or empty PATH entries resolve in the selected launch
 directory. Executable and shebang-interpreter checks precede execution.
 
@@ -544,17 +543,17 @@ Stable error codes are `changed_since_preview`,
 `invalid_server_executable`, `support_directory_missing`, `process_failed`,
 and `uncertain`.
 
-## Workspace registration repair
+## Project registration repair
 
-`workspace add` resolves symlinks and is idempotent for an existing canonical
-root. `workspace repair <id> <path>` renews folder access or binds an existing
-workspace to a selected folder. It preserves the canonical ID, creation time,
+`project add` resolves symlinks and is idempotent for an existing canonical
+root. `project repair <id> <path>` renews folder access or binds an existing
+project to a selected folder. It preserves the canonical ID, creation time,
 aliases and profile grants; the display name stays unchanged unless supplied.
 The selected folder receives those existing permissions. A folder registered to
-another canonical workspace is rejected. The App exposes the same operation
-through each workspace's Repair action and native folder chooser.
+another canonical project is rejected. The App exposes the same operation
+through each project's Repair action and native folder chooser.
 
-Repair invalidates unused approvals for the affected workspace and advances
+Repair invalidates unused approvals for the affected project and advances
 affected profile authorization, including wildcard grants. Executing operations
 retain their state. New calls use the selected folder after candidate validation;
 old-owner calls still require their original folder identity and current access.
@@ -563,31 +562,31 @@ Failure or concurrent configuration changes preserve the previous registration.
 To repair older duplicates, first preview:
 
 ```sh
-computer-mcp workspace deduplicate [--control-socket <control-socket>]
+computer-mcp project deduplicate [--control-socket <control-socket>]
 ```
 
 Review canonical ids, aliases, profile changes, and metadata conflicts, then
 apply the unchanged plan with its digest. `--allow-metadata-conflicts` is an
 explicit choice to keep the oldest registration metadata. The operation never
-deletes the workspace directory; retired ids remain aliases for historical
+deletes the project directory; retired ids remain aliases for historical
 references.
 
-Removal and deduplication commit workspace records, affected profile grants, and
+Removal and deduplication commit project records, affected profile grants, and
 approval invalidation together. A failed commit leaves them unchanged. Each
 affected profile receives one new authorization revision; already executing
 operations and historical audit records retain their original state. Concurrent
-configuration changes invalidate prepared workspace changes and require a retry.
+configuration changes invalidate prepared project changes and require a retry.
 
-The owner commands for adding, repairing, removing and deduplicating workspaces prepare the
+The owner commands for adding, repairing, removing and deduplicating projects prepare the
 new runtime configuration before committing. Connected clients stay connected;
 new calls use the published configuration while existing work keeps its original
 runtime. A failed candidate leaves prior registration and routing intact. Removing
-a workspace denies new calls in its old scope without stopping existing work.
+a project denies new calls in its old scope without stopping existing work.
 
 ## Host permission commands
 
 `profile permissions` updates one profile's host authority. Modes are
-`read-only`, `workspace-operations`, and `local-full-access`; they are independent
+`read-only`, `project-operations`, and `local-full-access`; they are independent
 of the profile's name and connection channel. Unspecified options retain their
 current values. `profile show` returns `authorization_revision`; pass it with
 `--expected-revision` to reject an edit based on stale settings.
@@ -602,8 +601,8 @@ Plugin runtime configuration and execution permissions remain plugin-owned;
 these controls govern Computer MCP-owned tools and access to registered tools.
 
 Advanced lists are comma-separated replacements. An empty value clears the
-list. A capability `*` grants tools, not workspaces; the separate workspace `*`
-explicitly grants all registered and future workspaces. MCP registration grants
+list. A capability `*` grants tools, not projects; the separate project `*`
+explicitly grants all registered and future projects. MCP registration grants
 include that registration's host-selected tools. Caller kinds are `local-app`,
 `local-cli`, `local-mcp`, `secure-tunnel`, and `cloudflare-tunnel`.
 
@@ -618,7 +617,7 @@ active profile selects the profile for subsequent admissions; established
 connections retain their verified binding.
 
 Use `permissions approvals list` to review exact host requests, their client,
-profile, workspace, arguments summary, expiry, and state. Approve or deny an exact
+profile, project, arguments summary, expiry, and state. Approve or deny an exact
 ticket through the local App or management CLI. Approval permits the prepared
 operation to be committed once; it does not execute the operation itself.
 Changing arguments, target, authority, or using an expired ticket requires a new
@@ -683,7 +682,7 @@ Runtime and selection-file failures return JSON errors with a nonzero exit
 status. Metadata, downloads and archive checks have separate bounded deadlines;
 connection loss does not prove rollback. Read list/show before retrying a write.
 
-`app`, `workspace`, `profile`, `tunnel`, and `tools` use the App control plane.
+`app`, `project`, `profile`, `tunnel`, and `tools` use the App control plane.
 If the App is not running, the CLI fails with actionable startup guidance; it
 does not silently create another database or gateway.
 
@@ -695,14 +694,14 @@ resolved state, then publishes routing while keeping current connections and
 old work. Failed candidates or conflicting edits leave the prior admitted state
 active. Manifest rollback uses the same candidate and publication checks.
 
-Workspace, profile, manifest, gateway, and Tunnel lifecycle writes all use the
+Project, profile, manifest, gateway, and Tunnel lifecycle writes all use the
 same lifecycle-aware operations as the App. A local CLI call therefore performs
 the same validation, publication, and lifecycle behavior as the corresponding
 UI action. Explicit gateway restart remains a separate operation.
 
 The owner-only control CLI is deliberately not registered as a remotely
 executable `cli.exec` provider. Doing so would let a remote caller inherit the
-local-admin control-socket identity. Remote callers may inspect only workspaces
+local-admin control-socket identity. Remote callers may inspect only projects
 already granted to their profile; adding an authorization root remains a local
 App or CLI operation. Computer Use rejects Accessibility actions aimed at the
 Computer MCP host process rather than using its UI as an administration path.
@@ -713,53 +712,6 @@ New OpenAI API keys and Cloudflare named-tunnel tokens are accepted only from
 standard input through `--api-key-stdin` or `--tunnel-token-stdin`; the CLI has
 no option that places either credential in argv. Updating a configuration
 without either flag preserves its existing Keychain secret.
-
-## State import
-
-`state import` moves the state of an installation created before 0.1.0 into a
-database with the current schema. Its input is that installation's one-time
-schema 1 JSON export: workspaces with their canonical roots and aliases,
-profiles, client trust, runtime settings, the latest activated configuration
-revision, plugin selections, settings and owned directories, and derived
-workspace registrations. Audit history, approvals, operation tickets and
-execution receipts are not carried over. The configuration file and Keychain
-items stay where they are. `--database` selects a database other than the
-App's.
-
-Quit the App and stop every gateway, bridge and tunnel process first. The
-command refuses a database that any process has open, a database that already
-uses the current schema, and an existing `<database>.before-import`. Database
-connections share `<database>.lock` and the import holds it exclusively, so an
-import and an open connection exclude each other; earlier versions do not take
-this lock and are detected through the process table instead. Keep the lock
-file in place.
-
-The import writes the exported rows into `<database>.import`, checks that every
-row arrived, that this version reads every imported record and that the
-activated configuration parses, and only then installs it. Opening the existing
-database lets SQLite finish rolling back an interrupted transaction; nothing
-else in it changes. The previous database is kept as
-`<database>.before-import`; to return to the earlier version, quit the App and
-move that file back to the database name.
-
-While a replacement is underway, `<database>.import-replacing` records it and
-the database is not opened. Running the same command again rolls an interrupted
-replacement back and then imports.
-
-The import never changes a file it did not create. When it refuses and names a
-file:
-
-- `<database>.import` or `<database>.import-replacing.tmp` without
-  `<database>.import-replacing`: an earlier import stopped before it changed the
-  database. Move the named file out of the directory and run the command again.
-- A file named in a refusal while `<database>.import-replacing` exists: the
-  record identifies the database and its backup, so the named file is not one
-  of them. Move it out of the directory and run the command again.
-- A missing database or `<database>.before-import` named by the record: restore
-  it before running the command again.
-- A `-journal`, `-wal` or `-shm` file: open the database once with the version
-  that created it so SQLite completes its recovery, quit that version, and run
-  the command again.
 
 ## `bridge`
 
@@ -780,7 +732,7 @@ after configuration changes. The owner control service works while the gateway
 listener is stopped; stopping or restarting that listener does not cancel local
 administration work. Stopping the owner control service or exiting the App joins
 its owned processes and clears its retained results. Each continuation still
-requires current workspace access, permissions and any operation approval.
+requires current project access, permissions and any operation approval.
 
 ## Explicit standalone mode
 
@@ -792,7 +744,7 @@ COMPUTER_MCP_HTTP_ACCESS_TOKEN=<development-only-value> \
   computer-mcp serve http --config Examples/computer-mcp.toml
 
 computer-mcp tools list --config Examples/computer-mcp.toml [--control-socket <control-socket>]
-computer-mcp tools inspect workspace.info --config Examples/computer-mcp.toml [--control-socket <control-socket>]
+computer-mcp tools inspect project.info --config Examples/computer-mcp.toml [--control-socket <control-socket>]
 ```
 
 Standalone mode uses in-process state and TOML paths. It does not use App

@@ -38,7 +38,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         MCPExecutionRecord.digest(
           .array([
             .string($0.launchMetadata.principalID), .string($0.launchMetadata.profileID.rawValue),
-            .string($0.launchMetadata.workspace.id),
+            .string($0.launchMetadata.project.id),
           ]))
       } ?? UUID().uuidString
     let journal = MCPExecutionJournal(
@@ -539,7 +539,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
     if let continuation {
       guard continuation.reference.serverID == server.id,
-        continuation.workspaceID == hostContext?.launchMetadata.workspace.id,
+        continuation.projectID == hostContext?.launchMetadata.project.id,
         let entry = entries[server.id], entry.configuration == server,
         entry.connection.connectionID == continuation.connectionID
       else { throw MCPContinuationTarget.unavailable() }
@@ -573,7 +573,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
     if let target = continuation,
       target.connectionID != entry.connection.connectionID || target.reference.serverID != server.id
-        || target.workspaceID != hostContext?.launchMetadata.workspace.id
+        || target.projectID != hostContext?.launchMetadata.project.id
     {
       return nil
     }
@@ -704,7 +704,7 @@ private actor MCPProxyConnection {
   private var nextEventCursor = 1
   private var activeRequests: [String: ActiveRequest] = [:]
   private let ownedWork: GatewayOwnedWork?
-  private let workspaceID: String?
+  private let projectID: String?
   private let hostTools: MCPHostToolDirectory?
   private struct RequestOwnership: Sendable {
     let id = UUID()
@@ -738,7 +738,7 @@ private actor MCPProxyConnection {
     self.toolsChanged = toolsChanged
     self.onTermination = onTermination
     ownedWork = hostContext?.ownedWork
-    workspaceID = hostContext?.launchMetadata.workspace.id
+    projectID = hostContext?.launchMetadata.project.id
     hostTools = hostContext?.tools
     client = MCP.Client(
       name: "computer-mcp-gateway",
@@ -783,7 +783,7 @@ private actor MCPProxyConnection {
       }
       if advertised && providerWork == nil {
         providerWork = MCPProviderWork(
-          work: ownedWork ?? GatewayOwnedWork(), workspaceID: workspaceID,
+          work: ownedWork ?? GatewayOwnedWork(), projectID: projectID,
           registrationID: server.id,
           connectionID: connectionID
         )
@@ -1163,10 +1163,10 @@ private actor MCPProxyConnection {
   func validateSelectedOwner(_ target: MCPContinuationTarget) throws {
     guard let selected = target.selectedOwnershipID else { return }
     guard closeTask == nil, target.connectionID == connectionID,
-      target.reference.serverID == server.id, target.workspaceID == workspaceID,
+      target.reference.serverID == server.id, target.projectID == projectID,
       ownedWork?.snapshot.contains(where: {
         $0.id == selected && $0.connectionID == connectionID
-          && $0.workspaceID == workspaceID && $0.registrationID == server.id
+          && $0.projectID == projectID && $0.registrationID == server.id
       }) == true
     else { throw MCPContinuationTarget.unavailable() }
   }
@@ -1191,16 +1191,16 @@ private actor MCPProxyConnection {
     }
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
-      guard let hostTools, let workspaceID else { throw MCPError.connectionClosed }
+      guard let hostTools, let projectID else { throw MCPError.connectionClosed }
       invocation = try hostTools.retain(
-        id: hostInvocationID, workspaceID: workspaceID, origin: server.id)
+        id: hostInvocationID, projectID: projectID, origin: server.id)
     } else {
       invocation = nil
     }
     let workContext: MCPHostToolDirectory.InvocationLease?
-    if providerWork != nil, let hostInvocationID, let hostTools, let workspaceID {
+    if providerWork != nil, let hostInvocationID, let hostTools, let projectID {
       workContext = try hostTools.retainWork(
-        id: hostInvocationID, workspaceID: workspaceID, origin: server.id)
+        id: hostInvocationID, projectID: projectID, origin: server.id)
     } else {
       workContext = nil
     }
@@ -1209,12 +1209,12 @@ private actor MCPProxyConnection {
     // A response from a provider without lifetime reporting cannot prove background work drained.
     if providerWork == nil, unreportedWork == nil {
       unreportedWork = ownedWork?.retain(
-        .mcpUnreportedWork, workspaceID: workspaceID, registrationID: server.id,
+        .mcpUnreportedWork, projectID: projectID, registrationID: server.id,
         resourceID: connectionID.uuidString, connectionID: connectionID)
       unreportedWork?.markUncertain()
     }
     let work = ownedWork?.retain(
-      .mcpRequest, workspaceID: workspaceID, registrationID: server.id,
+      .mcpRequest, projectID: projectID, registrationID: server.id,
       resourceID: gatewayRequestID, connectionID: connectionID)
     let ownership =
       work != nil || invocation != nil || providerInvocationID != nil

@@ -172,10 +172,10 @@ struct MCPHTTPAuthenticationTests {
       defer { fixture.remove() }
       let binding = MCPHTTPAuthentication(
         endpoint: http.endpoint.absoluteString, keychainAccount: "mcp.fixture")
-      var configuration = GatewayConfiguration(workspaceDirectory: fixture.root)
+      var configuration = GatewayConfiguration(projectDirectory: fixture.root)
       configuration.profiles = [
         .init(
-          id: .chatGPTOperate, capabilities: ["*"], workspaces: ["fixture"],
+          id: .chatGPTOperate, capabilities: ["*"], projects: ["fixture"],
           allowedCallers: [.localCLI])
       ]
       if !plugin {
@@ -188,11 +188,11 @@ struct MCPHTTPAuthenticationTests {
       }
       _ = try await fixture.host.activateManifest(
         configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
-      try fixture.database.saveWorkspace(
+      try fixture.database.saveProject(
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
       try fixture.database.saveProfile(
         .init(
-          id: .chatGPTOperate, capabilityIDs: ["*"], workspaceIDs: ["fixture"],
+          id: .chatGPTOperate, capabilityIDs: ["*"], projectIDs: ["fixture"],
           allowedCallers: [.localCLI]))
       if plugin {
         let root = fixture.root.appendingPathComponent("http-plugin")
@@ -228,7 +228,7 @@ struct MCPHTTPAuthenticationTests {
           #expect(try fixture.database.pluginStoreSnapshot() == pluginBefore)
         } else {
           let missing = try await fixture.host.doctorMCPRegistration(
-            id: "remote", workspaceID: "fixture")
+            id: "remote", projectID: "fixture")
           #expect(missing.status == .failed)
           #expect(missing.stage == "authentication" && missing.errorCode == "mcp.authentication")
         }
@@ -263,7 +263,7 @@ struct MCPHTTPAuthenticationTests {
           #expect(try await fixture.host.mcpCredentialStatus(id: "remote").bindingDigest == digest)
         }
         let ready = try await fixture.host.doctorMCPRegistration(
-          id: "remote", workspaceID: "fixture")
+          id: "remote", projectID: "fixture")
         #expect(ready.status == .passed && ready.catalogReceived)
         try await fixture.gateway.start(profile: .chatGPTOperate)
         _ = try await client.connect(transport: fixture.transport())

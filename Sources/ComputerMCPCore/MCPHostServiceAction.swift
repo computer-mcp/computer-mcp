@@ -2,16 +2,17 @@
 /// A downstream declaration selects validation; it is never a grant.
 package enum MCPHostServiceAction: String, Codable, Sendable {
   case diagnosticsSnapshot = "diagnostics.snapshot"
-  case workspaceProvision = "workspaces.provision"
-  case workspaceRemoval = "workspaces.remove"
+  // Action values are advertised by independently installed plugins.
+  case projectProvision = "workspaces.provision"
+  case projectRemoval = "workspaces.remove"
 
   static let metadataKey = "io.github.computer-mcp/host-action"
 
   var minimumRisk: CapabilityRisk {
     switch self {
     case .diagnosticsSnapshot: .readOnly
-    case .workspaceProvision: .workspaceWrite
-    case .workspaceRemoval: .destructive
+    case .projectProvision: .projectWrite
+    case .projectRemoval: .destructive
     }
   }
 }

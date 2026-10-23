@@ -23,9 +23,9 @@ integration.
   to start coding tasks, follow progress and inspect results.
 - **Connect more with MCP and Skills.** Add MCP services and reusable instructions
   directly or together in a plugin package.
-- **Work across computers.** Connect each host, select its workspace, and use
+- **Work across computers.** Connect each host, select its project, and use
   tools in that computer's environment.
-- **Choose the access.** Configure tools, workspaces and confirmation policy;
+- **Choose the access.** Configure tools, projects and confirmation policy;
   review host actions requiring approval locally.
 
 Computer MCP runs on macOS 14 or later and supports ChatGPT and other compatible
@@ -42,7 +42,7 @@ ChatGPT · Codex · another MCP client
                  ▼
           Computer MCP.app
                  │
- caller → profile → registered workspace → policy → approval when required
+ caller → profile → registered project → policy → approval when required
                  │
                  ▼
  Builtin · Skills · CLI · MCP · AX fallback · Git · Shell
@@ -52,11 +52,11 @@ ChatGPT · Codex · another MCP client
 ```
 
 Every call is tied to a caller, profile, capability, and—when relevant—a
-registered workspace. Unknown tools, ungranted workspaces, unsafe paths, and
+registered project. Unknown tools, ungranted projects, unsafe paths, and
 unsupported ownership claims fail closed.
 
 Each host keeps its own credentials, registrations, approvals and audit.
-Workspace IDs belong to that host; connecting several computers does not share
+Project IDs belong to that host; connecting several computers does not share
 their files or move running processes. See
 [Product Identity](Documentation/Architecture/ProductIdentity.md).
 
@@ -64,7 +64,7 @@ their files or move running processes. See
 
 A plugin is a package combining MCP, CLI and Skills contributions. Native MCP
 servers and local CLI/Skill registrations can also be added directly; both
-paths use the same host policy, workspace scope and audit.
+paths use the same host policy, project scope and audit.
 
 Use the App's plugin management pages, or the owner CLI:
 
@@ -112,13 +112,13 @@ verified command projection and structured-coverage limits.
 Computer MCP makes two separate decisions:
 
 1. **Policy authorization:** Is this caller allowed to use this capability in
-   this registered workspace at all?
+   this registered project at all?
 2. **Action consent:** If host policy requires confirmation, has the local user
    approved this exact operation?
 
 In the App's **Client access** page, review connected clients and explicitly
 grant Full Access, defaulting to **This Session**. Full Access permits arbitrary
-execution as your macOS user; workspaces provide project context, not a sandbox.
+execution as your macOS user; projects provide project context, not a sandbox.
 **Always Allow this Client** is a separate choice. You can downgrade or end a
 connection's access and separately revoke saved client approvals. Access changes
 apply to new requests without cancelling work already started. The local
@@ -126,7 +126,7 @@ apply to new requests without cancelling work already started. The local
 [Client access](Documentation/Reference/CLI.md#client-access) for explicit
 consent and standalone HTTP usage.
 
-On an App-managed connection, approved Full Access also enables typed workspace
+On an App-managed connection, approved Full Access also enables typed project
 management and verified official plugin installation, configuration and updates.
 Clients use these tools directly while existing work continues; see
 [Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management).
@@ -137,7 +137,7 @@ to clients sharing the profile; each session can impose a lower access level.
 Saving a selection invalidates previous Full Access approvals for that profile.
 
 An individual action confirmation never expands the client's current access.
-Restricted Access uses its selected tools and workspaces and prohibits arbitrary
+Restricted Access uses its selected tools and projects and prohibits arbitrary
 execution. Credentials stay in the signed App's macOS Data Protection Keychain;
 examples, diagnostics, logs, and audit rows keep only placeholders or redacted
 summaries.
@@ -154,17 +154,17 @@ vulnerability.
 
 | Status | Capability | Notes |
 | --- | --- | --- |
-| Stable | App-owned local gateway, workspace registration, profiles, policy, operation tickets, and redacted audit | Default product control plane on macOS 14+ |
+| Stable | App-owned local gateway, project registration, profiles, policy, operation tickets, and redacted audit | Default product control plane on macOS 14+ |
 | Stable | Local MCP, ChatGPT through OpenAI Secure MCP Tunnel, and Cloudflare named-tunnel connections | Each remote path has its own caller and profile boundary |
-| Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and native AX fallback | Availability still depends on the selected profile, workspace, dependency, and macOS permission |
-| Stable | Governed workspace and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
+| Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and native AX fallback | Availability still depends on the selected profile, project, dependency, and macOS permission |
+| Stable | Governed project and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
 | Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and Skills | Host grants remain separate; external dependencies are not installed automatically |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
 
 ## ChatGPT orchestrates, Codex executes
 
-ChatGPT can inspect a registered workspace and delegate coding work through the
-[Codex plugin](https://github.com/computer-mcp/plugin-codex). The host governs tool access, workspace grants, approvals and
+ChatGPT can inspect a registered project and delegate coding work through the
+[Codex plugin](https://github.com/computer-mcp/plugin-codex). The host governs tool access, project grants, approvals and
 audit. The plugin owns coding execution and its runtime lifecycle.
 
 ## Computer MCP, Dots and Codex Remote
@@ -206,7 +206,7 @@ Computer MCP requires macOS 14 or later.
 5. Make the first read-only tool call:
 
    ```text
-   workspace.list
+   project.list
    ```
 
 6. Refresh Home. The connection becomes Verified only after a matching,
@@ -231,7 +231,7 @@ use does not require TOML.
 
 ## Architecture
 
-The App owns the gateway, private control socket, registered workspace
+The App owns the gateway, private control socket, registered project
 bookmarks, profiles, provider and tunnel lifecycles, Keychain credentials, and
 audit database. Local clients use an owner-only Unix-domain socket. ChatGPT
 uses OpenAI Secure MCP Tunnel. Reviewed public MCP consumers can use a
@@ -250,7 +250,7 @@ consent boundary. See the
 Verified follows the current Access Token or a live OAuth grant; replacing or
 revoking that credential requires fresh verification for its replacement.
 
-The gateway then resolves the exact tool, binds caller/profile/workspace,
+The gateway then resolves the exact tool, binds caller/profile/project,
 checks policy and any operation ticket, obtains action consent when needed,
 dispatches one bounded adapter, and records the redacted outcome. Standalone
 TOML modes are development and diagnostic surfaces; they do not share the
@@ -268,8 +268,8 @@ commands and schemas belong in [Reference](Documentation/Reference/README.md).
   current account, administrator, network, and availability constraints.
 - Accessibility and Screen Recording must be granted to the installed signed
   App for capabilities that need them; other capabilities remain available.
-- Computer MCP does not silently select a workspace when more than one eligible
-  workspace exists, does not implicitly push Git commits.
+- Computer MCP does not silently select a project when more than one eligible
+  project exists, does not implicitly push Git commits.
 - A development build or ad-hoc-signed App is not an official release and does
   not inherit the installed release's macOS privacy or Keychain identity.
 

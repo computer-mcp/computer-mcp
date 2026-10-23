@@ -6,7 +6,7 @@ import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
 import ComputerMCPProcess
-import ComputerMCPToolsWorkspace
+import ComputerMCPToolsProject
 import ComputerMCPTransport
 import Foundation
 
@@ -606,7 +606,7 @@ package actor AppGatewayService {
     }
     if let pending = pendingRuntimes[key] { return try await pending.task.value }
     if let existing = runtimes[key], existing.inputs.configuration == current.configuration,
-      existing.inputs.workspaces == current.workspaces, existing.inputs.plugins == current.plugins
+      existing.inputs.projects == current.projects, existing.inputs.plugins == current.plugins
     {
       return existing
     }
@@ -730,7 +730,7 @@ package actor AppGatewayService {
     try requireAdmission(key: key, epoch: epoch)
     guard let runtime = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
     let reservation = try runtime.ownedWork.admitInvocation(
-      workspaceID: nil, resourceID: "tools/list")
+      projectID: nil, resourceID: "tools/list")
     defer { reservation.finish() }
     return try await runtime.listToolsAsync(context: context)
   }
@@ -742,7 +742,7 @@ package actor AppGatewayService {
     try requireAdmission(key: key, epoch: epoch)
     guard let runtime = runtimes[key]?.gateway else { throw GatewaySocketError.notConnected }
     let reservation = try runtime.ownedWork.admitInvocation(
-      workspaceID: nil, resourceID: "tools/list")
+      projectID: nil, resourceID: "tools/list")
     defer { reservation.finish() }
     try await runtime.refreshTools(context: context)
   }
@@ -755,7 +755,7 @@ package actor AppGatewayService {
       return InvocationSelection(
         gateway: current, target: nil,
         ownership: try current.ownedWork.admitInvocation(
-          workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue, resourceID: name))
+          projectID: arguments?.objectValue?["project_id"]?.stringValue, resourceID: name))
     }
     if let owned = try retainedInvocation(name: name, arguments: arguments, key: key) {
       return owned
@@ -770,7 +770,7 @@ package actor AppGatewayService {
     return InvocationSelection(
       gateway: current, target: nil,
       ownership: try current.ownedWork.admitInvocation(
-        workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue,
+        projectID: arguments?.objectValue?["project_id"]?.stringValue,
         resourceID: name))
   }
 
@@ -780,13 +780,13 @@ package actor AppGatewayService {
     let generations =
       (runtimes[key].map { [$0.gateway] } ?? [])
       + Array(retiredRuntimes[key]?.values ?? [:].values)
-    let workspaceID =
-      arguments?.objectValue?["workspace_id"]?.stringValue
-      ?? runtimes[key]?.gateway.unambiguousWorkspaceID
+    let projectID =
+      arguments?.objectValue?["project_id"]?.stringValue
+      ?? runtimes[key]?.gateway.unambiguousProjectID
     var lookups: [(GatewayRuntime, GatewayRuntime.ContinuationLookup)] = []
     for runtime in generations {
       for lookup in try runtime.continuationLookups(
-        name: name, arguments: arguments, workspaceID: workspaceID)
+        name: name, arguments: arguments, projectID: projectID)
       {
         lookups.append((runtime, lookup))
       }
@@ -796,13 +796,13 @@ package actor AppGatewayService {
       let (runtime, lookup) = lookups.first(where: { $0.1.observation.matches.contains(match) })
     {
       let target = MCPContinuationTarget(
-        workspaceID: lookup.workspaceID, reference: lookup.reference,
+        projectID: lookup.projectID, reference: lookup.reference,
         connectionID: match.connectionID, instanceID: match.instanceID,
         resources: Dictionary(uniqueKeysWithValues: matches.map { ($0.resource, $0.acquiredBy) }))
       return InvocationSelection(
         gateway: runtime, target: target,
         ownership: try runtime.ownedWork.admitInvocation(
-          workspaceID: lookup.workspaceID, resourceID: name))
+          projectID: lookup.projectID, resourceID: name))
     }
     var tool = name
     var object = arguments?.objectValue ?? [:]
@@ -829,7 +829,7 @@ package actor AppGatewayService {
     }
     let owners = generations.filter { runtime in
       runtime.ownedWork.snapshot.contains {
-        $0.kind == kind && $0.workspaceID == workspaceID && $0.resourceID == id
+        $0.kind == kind && $0.projectID == projectID && $0.resourceID == id
           && (kind != .mcpRequest || $0.registrationID == object["server"]?.stringValue)
       }
     }
@@ -840,7 +840,7 @@ package actor AppGatewayService {
     guard let owner = owners.first else { return nil }
     return InvocationSelection(
       gateway: owner, target: nil,
-      ownership: try owner.ownedWork.admitInvocation(workspaceID: workspaceID, resourceID: name))
+      ownership: try owner.ownedWork.admitInvocation(projectID: projectID, resourceID: name))
   }
 
   private func callTool(
@@ -852,10 +852,10 @@ package actor AppGatewayService {
         name: name, arguments: arguments, key: key, epoch: epoch, trace: trace)
       defer { selection.ownership.finish() }
       var scopedArguments = arguments
-      if let workspaceID = selection.target?.workspaceID {
+      if let projectID = selection.target?.projectID {
         var object = arguments?.objectValue ?? [:]
         // The verified continuation owner supplies the scope for an unscoped request.
-        if object["workspace_id"] == nil { object["workspace_id"] = .string(workspaceID) }
+        if object["project_id"] == nil { object["project_id"] = .string(projectID) }
         scopedArguments = .object(object)
       }
       let owners =
@@ -962,28 +962,28 @@ package actor AppGatewayService {
       let mode: GatewayPermissionMode
       switch string("mode") {
       case "observe": mode = .readOnly
-      case "restricted": mode = .workspaceOperations
+      case "restricted": mode = .projectOperations
       default: throw GatewayToolError.invalidArguments("mode must be observe or restricted.")
       }
       try session.limitAccess(to: mode, expectedRevision: revision(), allowIncrease: false)
       return try ControlToolResponse.encodedPayload(session.snapshot)
-    case "workspace.add", "workspace.remove", "workspace.repair", "workspace.grant":
+    case "project.add", "project.remove", "project.repair", "project.grant":
       let inputs = try await controlPlane.gatewayInputs()
       try requireAdmission(key: key, epoch: epoch)
       try authorization.perform {}
       let id = string("id")
-      if name != "workspace.add" {
-        guard let workspace = inputs.workspaces.first(where: { $0.id == id }) else {
-          throw GatewayRuntimeError.workspaceNotFound(id)
+      if name != "project.add" {
+        guard let project = inputs.projects.first(where: { $0.id == id }) else {
+          throw GatewayRuntimeError.projectNotFound(id)
         }
-        if name != "workspace.grant", workspace.rootPath != string("expected_root_path") {
+        if name != "project.grant", project.rootPath != string("expected_root_path") {
           throw GatewayDatabaseError.configurationChanged
         }
       }
-      if name == "workspace.grant" {
+      if name == "project.grant" {
         guard let profile = snapshot.profile else { throw GatewaySocketError.notConnected }
         let grant = try await withConfigurationChange {
-          try await controlPlane.applyRemoteWorkspaceGrant(
+          try await controlPlane.applyRemoteProjectGrant(
             id: id, enabled: args["enabled"]?.boolValue == true, profile: profile,
             expectedRevision: revision("expected_profile_revision"), inputs: inputs,
             authorization: authorization)
@@ -991,30 +991,30 @@ package actor AppGatewayService {
         changes(for: key).send()
         return try ControlToolResponse.encodedPayload(grant)
       }
-      let change: WorkspaceHostChange
+      let change: ProjectHostChange
       switch name {
-      case "workspace.add":
+      case "project.add":
         change = .register(
           try GatewayRemoteManagement.path(string("path")),
           displayName: args["display_name"]?.stringValue)
-      case "workspace.repair":
+      case "project.repair":
         change = .repair(
           id: id, root: try GatewayRemoteManagement.path(string("path")),
           displayName: args["display_name"]?.stringValue)
       default: change = .remove(id)
       }
-      let changed = try await changeWorkspaces(
+      let changed = try await changeProjects(
         change, authorization: authorization, expectedInputs: inputs)
       switch changed {
-      case .registered(let workspace, let created):
+      case .registered(let project, let created):
         return .object([
-          "workspace": GatewayRemoteManagement.workspace(workspace), "created": .bool(created),
+          "project": GatewayRemoteManagement.project(project), "created": .bool(created),
         ])
-      case .repaired(let workspace):
-        return .object(["workspace": GatewayRemoteManagement.workspace(workspace)])
+      case .repaired(let project):
+        return .object(["project": GatewayRemoteManagement.project(project)])
       case .removed: return .object(["id": .string(id), "removed": .bool(true)])
       case .deduplicated:
-        throw GatewayToolError.executionFailed("Unexpected workspace mutation result.")
+        throw GatewayToolError.executionFailed("Unexpected project mutation result.")
       }
     case "plugin.search":
       let kind: IntegrationKind?
@@ -1118,7 +1118,7 @@ package actor AppGatewayService {
       try await controlPlane.applyPluginChange(change, expectedRevision: expectedRevision) {
         [self] expected, proposed, storage in
         let state = GatewayDatabase.ConfigurationState(
-          workspaces: expected.workspaces, workspaceAliases: expected.persisted.workspaceAliases,
+          projects: expected.projects, projectAliases: expected.persisted.projectAliases,
           profiles: expected.profiles, plugins: proposed)
         _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
           resolution in
@@ -1134,27 +1134,27 @@ package actor AppGatewayService {
     }
   }
 
-  func changeWorkspaces(
-    _ change: WorkspaceHostChange, authorization: GatewayManagementAuthorization? = nil,
+  func changeProjects(
+    _ change: ProjectHostChange, authorization: GatewayManagementAuthorization? = nil,
     expectedInputs: AppControlPlaneService.GatewayInputs? = nil
-  ) async throws -> WorkspaceChangeResult {
+  ) async throws -> ProjectChangeResult {
     try await withConfigurationChange {
-      try await controlPlane.applyWorkspaceChange(change) { [self] expected, prepared in
+      try await controlPlane.applyProjectChange(change) { [self] expected, prepared in
         guard expectedInputs == nil || expectedInputs == expected else {
           throw GatewayDatabaseError.configurationChanged
         }
-        let selected: (id: String, root: WorkspaceRootIdentity)?
-        if case .repair(let workspace, let root) = prepared.mutation {
-          selected = (workspace.id, root)
+        let selected: (id: String, root: ProjectRootIdentity)?
+        if case .repair(let project, let root) = prepared.mutation {
+          selected = (project.id, root)
         } else {
           selected = nil
         }
         return try await preparePublication(
-          expected: expected, proposed: prepared.proposed, storage: nil, requiredWorkspace: selected
+          expected: expected, proposed: prepared.proposed, storage: nil, requiredProject: selected
         ) {
           resolution in
           let commit = {
-            try self.controlPlane.database.saveWorkspaceChange(
+            try self.controlPlane.database.saveProjectChange(
               prepared, resolution: resolution, authorization: authorization)
           }
           return try authorization.map { try $0.perform(commit) } ?? commit()
@@ -1353,12 +1353,12 @@ package actor AppGatewayService {
   private func preparePublication(
     expected: AppControlPlaneService.GatewayInputs, proposed: GatewayDatabase.ConfigurationState,
     storage: PluginInstallationStorage?,
-    requiredWorkspace: (id: String, root: WorkspaceRootIdentity)? = nil,
+    requiredProject: (id: String, root: ProjectRootIdentity)? = nil,
     commit: @Sendable (GatewayConfigurationResolution) throws -> GatewayDatabase.ConfigurationState
   ) async throws -> GatewayDatabase.ConfigurationState {
     try await preparePublication(
       inputs: .init(configuration: expected.configuration, persisted: proposed), storage: storage,
-      requiredWorkspace: requiredWorkspace
+      requiredProject: requiredProject
     ) { resolution, install in
       try self.controlPlane.manifestStore.withCurrentConfiguration(expected.configuration) {
         let persisted = try commit(resolution)
@@ -1370,7 +1370,7 @@ package actor AppGatewayService {
 
   private func preparePublication<Result: Sendable>(
     inputs: AppControlPlaneService.GatewayInputs, storage: PluginInstallationStorage?,
-    requiredWorkspace: (id: String, root: WorkspaceRootIdentity)? = nil,
+    requiredProject: (id: String, root: ProjectRootIdentity)? = nil,
     publish: (GatewayConfigurationResolution, (GatewayDatabase.ConfigurationState) -> Void) throws
       -> Result
   ) async throws -> Result {
@@ -1418,9 +1418,9 @@ package actor AppGatewayService {
       }
       for candidate in candidates.values.map(\.preparation) + [validation].compactMap({ $0 }) {
         try candidate.runtime.requirePreparedPublication()
-        if let requiredWorkspace {
-          try candidate.runtime.requirePreparedWorkspace(
-            id: requiredWorkspace.id, root: requiredWorkspace.root)
+        if let requiredProject {
+          try candidate.runtime.requirePreparedProject(
+            id: requiredProject.id, root: requiredProject.root)
         }
         try resolution.merge(candidate.resolution)
       }

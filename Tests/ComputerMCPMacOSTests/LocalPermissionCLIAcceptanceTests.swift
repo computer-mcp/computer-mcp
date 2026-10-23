@@ -34,11 +34,11 @@ struct LocalPermissionCLIAcceptanceTests {
       try await fixture.gatewayService.start(profile: .chatGPTOperate)
       let connected = try await GatewayClientSession.connectSocket(socketURL: fixture.gatewaySocket)
       client = connected
-      let original = try #require(try fixture.database.workspace(id: "fixture"))
+      let original = try #require(try fixture.database.project(id: "fixture"))
       let before = await fixture.gatewayService.snapshot()
-      let repaired = try await fixture.json(["workspace", "repair", original.id, destination.path])
+      let repaired = try await fixture.json(["project", "repair", original.id, destination.path])
       #expect(repaired.objectValue?["id"] == .string(original.id))
-      let stored = try #require(try fixture.database.workspace(id: original.id))
+      let stored = try #require(try fixture.database.project(id: original.id))
       #expect(stored.createdAt == original.createdAt && stored.displayName == original.displayName)
       #expect(
         stored.rootPath == destination.resolvingSymlinksInPath().path && stored.bookmarkData != nil)
@@ -47,9 +47,9 @@ struct LocalPermissionCLIAcceptanceTests {
       #expect(
         read.result.objectValue?["structuredContent"]?.objectValue?["result"]?
           .objectValue?["content"] == .string("new folder"))
-      let failed = try await fixture.run(["workspace", "repair", original.id, "/missing-\(UUID())"])
+      let failed = try await fixture.run(["project", "repair", original.id, "/missing-\(UUID())"])
       #expect(failed.exitCode != 0)
-      #expect(try fixture.database.workspace(id: original.id) == stored)
+      #expect(try fixture.database.project(id: original.id) == stored)
       #expect(await fixture.gatewayService.snapshot().startedAt == before.startedAt)
       #expect(await fixture.gatewayService.snapshot().connectionCount == 1)
       await connected.disconnect()
@@ -76,16 +76,16 @@ struct LocalPermissionCLIAcceptanceTests {
         #expect(path.exitCode == 0)
         #expect(path.stdout.contains(fixture.root.path))
         for arguments in [
-          ["app", "status"], ["workspace", "list"], ["config", "validate"],
+          ["app", "status"], ["project", "list"], ["config", "validate"],
           ["config", "history"], ["providers", "list"], ["audit", "list"],
           ["tunnel", "openai", "list"], ["tunnel", "cloudflare", "list"],
         ] {
           _ = try await fixture.json(arguments)
         }
       }
-      _ = try await first.json(["workspace", "remove", "fixture"])
-      #expect(try first.database.workspaces().isEmpty)
-      #expect(try second.database.workspaces().count == 1)
+      _ = try await first.json(["project", "remove", "fixture"])
+      #expect(try first.database.projects().isEmpty)
+      #expect(try second.database.projects().count == 1)
       _ = try await second.json(["app", "start"])
       #expect(await second.gatewayService.snapshot().state == .running)
       #expect(await first.gatewayService.snapshot().state != .running)
@@ -133,7 +133,7 @@ struct LocalPermissionCLIAcceptanceTests {
       #expect(doctor.objectValue?["schema_version"] == .number(1))
       #expect(doctor.objectValue?["journey"] == .string("local"))
       let checks = try #require(doctor.objectValue?["checks"]?.arrayValue)
-      for id in ["app.control_socket", "gateway.running", "workspace.registered"] {
+      for id in ["app.control_socket", "gateway.running", "project.registered"] {
         #expect(
           checks.first { $0.objectValue?["id"] == .string(id) }?.objectValue?["status"]
             == .string("pass"), "Doctor check: \(id)")
@@ -149,17 +149,17 @@ struct LocalPermissionCLIAcceptanceTests {
       #expect(!fixture.exists("approved.txt"))
 
       let edited = try await fixture.json([
-        "profile", "permissions", "chatgpt-operate", "--mode", "workspace-operations",
+        "profile", "permissions", "chatgpt-operate", "--mode", "project-operations",
         "--confirmation-policy", "all-writes", "--no-arbitrary-execution",
         "--capabilities",
-        "operations.prepare,operations.commit,workspace.list,file.read,file.write",
-        "--workspaces", "fixture", "--allowed-callers", "local-mcp",
+        "operations.prepare,operations.commit,project.list,file.read,file.write",
+        "--projects", "fixture", "--allowed-callers", "local-mcp",
         "--expected-revision", String(initialRevision),
       ])
-      #expect(edited.objectValue?["mode"] == .string("workspace-operations"))
+      #expect(edited.objectValue?["mode"] == .string("project-operations"))
       #expect(edited.objectValue?["confirmation_policy"] == .string("all-writes"))
       #expect(edited.objectValue?["full_shell_enabled"] == .bool(false))
-      #expect(edited.objectValue?["workspace_ids"] == .array([.string("fixture")]))
+      #expect(edited.objectValue?["project_ids"] == .array([.string("fixture")]))
       #expect(edited.objectValue?["allowed_callers"] == .array([.string("local-mcp")]))
       let revision = try #require(edited.objectValue?["authorization_revision"]?.intValue)
       #expect(revision > initialRevision)
@@ -236,10 +236,10 @@ struct LocalPermissionCLIAcceptanceTests {
       let revokedID = try await fixture.prepare(revokedTarget, session: connected)
       _ = try await fixture.json(["permissions", "approvals", "approve", revokedID])
       let revoked = try await fixture.json([
-        "profile", "permissions", "chatgpt-operate", "--workspaces", "",
+        "profile", "permissions", "chatgpt-operate", "--projects", "",
         "--expected-revision", String(revision),
       ])
-      #expect(revoked.objectValue?["workspace_ids"] == .array([]))
+      #expect(revoked.objectValue?["project_ids"] == .array([]))
       #expect(try fixture.database.operationTicket(id: revokedID)?.state == .denied)
       #expect(
         try await fixture.commit(revokedID, target: revokedTarget, session: connected).objectValue?[
@@ -256,7 +256,7 @@ struct LocalPermissionCLIAcceptanceTests {
       ])
       #expect(fullAccess.objectValue?["mode"] == .string("local-full-access"))
       #expect(fullAccess.objectValue?["full_shell_enabled"] == .bool(false))
-      #expect(fullAccess.objectValue?["workspace_ids"] == .array([]))
+      #expect(fullAccess.objectValue?["project_ids"] == .array([]))
       let gatewayAfter = await fixture.gatewayService.snapshot()
       let controlAfter = await fixture.controlSocket.snapshot()
       #expect(gatewayAfter.state == .running && gatewayAfter.startedAt == gatewayBefore.startedAt)
@@ -287,7 +287,7 @@ struct LocalPermissionCLIAcceptanceTests {
 
 private struct PermissionCLIFixture: Sendable {
   let root: URL
-  let workspace: URL
+  let project: URL
   let executable: String
   let database: GatewayDatabase
   let gatewayService: AppGatewayService
@@ -304,8 +304,8 @@ private struct PermissionCLIFixture: Sendable {
     defer {
       if !initialized { try? FileManager.default.removeItem(at: root) }
     }
-    workspace = root.appendingPathComponent("workspace")
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    project = root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     let directories = AppControlPlaneServiceDirectories(
       applicationSupport: root.appendingPathComponent("state"),
       logs: root.appendingPathComponent("logs"))
@@ -314,9 +314,9 @@ private struct PermissionCLIFixture: Sendable {
     let profile = ProfileGrantConfig(
       id: .chatGPTOperate,
       capabilities: [
-        "operations.prepare", "operations.commit", "workspace.list", "file.read", "file.write",
+        "operations.prepare", "operations.commit", "project.list", "file.read", "file.write",
       ],
-      workspaces: ["fixture"], allowedCallers: [.localMCP], mode: .readOnly)
+      projects: ["fixture"], allowedCallers: [.localMCP], mode: .readOnly)
     let manifest = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
@@ -324,11 +324,11 @@ private struct PermissionCLIFixture: Sendable {
     _ = try manifest.activate(
       manifest: GatewayConfiguration(
         runtime: .init(caller: .localMCP, profileID: .chatGPTOperate), profiles: [profile],
-        builtin: .init(enabled: ["file.read", "file.write"]), workspaceDirectory: workspace
+        builtin: .init(enabled: ["file.read", "file.write"]), projectDirectory: project
       ).exportedTOML())
     try database.saveProfile(profile.grant)
-    try database.saveWorkspace(
-      .init(id: "fixture", displayName: "CLI fixture", rootPath: workspace.path))
+    try database.saveProject(
+      .init(id: "fixture", displayName: "CLI fixture", rootPath: project.path))
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let control = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifest,
@@ -381,7 +381,7 @@ private struct PermissionCLIFixture: Sendable {
 
   func target(path: String, content: String) -> JSONValue {
     .object([
-      "workspace_id": .string("fixture"), "path": .string(path), "content": .string(content),
+      "project_id": .string("fixture"), "path": .string(path), "content": .string(content),
     ])
   }
 
@@ -389,7 +389,7 @@ private struct PermissionCLIFixture: Sendable {
     let report = try await session.call(
       toolName: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
+        "project_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
         "ttl_ms": .number(300_000),
       ]))
     try #require(report.result.objectValue?["isError"] != .bool(true), "\(report.result)")
@@ -404,17 +404,17 @@ private struct PermissionCLIFixture: Sendable {
     try await session.call(
       toolName: "operations.commit",
       arguments: .object([
-        "workspace_id": .string("fixture"), "ticket_id": .string(id), "tool": .string("file.write"),
+        "project_id": .string("fixture"), "ticket_id": .string(id), "tool": .string("file.write"),
         "arguments": target,
       ])
     ).result
   }
 
   func exists(_ name: String) -> Bool {
-    FileManager.default.fileExists(atPath: workspace.appendingPathComponent(name).path)
+    FileManager.default.fileExists(atPath: project.appendingPathComponent(name).path)
   }
   func contents(_ name: String) throws -> String {
-    try String(contentsOf: workspace.appendingPathComponent(name), encoding: .utf8)
+    try String(contentsOf: project.appendingPathComponent(name), encoding: .utf8)
   }
   func stopAndRemove() async {
     await controlSocket.stop()

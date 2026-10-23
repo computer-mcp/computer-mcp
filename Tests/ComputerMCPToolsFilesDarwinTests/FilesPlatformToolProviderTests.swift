@@ -31,7 +31,7 @@ final class FilesPlatformToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.xattrs"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
     let listResult = try provider.callTool(
@@ -45,7 +45,7 @@ final class FilesPlatformToolProviderTests {
       listedAttributes.first { $0.objectValue?["name"] == .string("com.showxu.alpha") }
     )
 
-    #expect((listPayload.objectValue?["workspace_relative_path"]) == (.string("download.txt")))
+    #expect((listPayload.objectValue?["project_relative_path"]) == (.string("download.txt")))
     #expect((listPayload.objectValue?["include_values"]) == (.bool(false)))
     #expect((listedAlpha.objectValue?["size_bytes"]) == (.number(11)))
     #expect((listedAlpha.objectValue?["value_base64"]) == nil)
@@ -106,7 +106,7 @@ final class FilesPlatformToolProviderTests {
   }
 
   @Test
-  func testFileXattrsRejectsWorkspaceEscapeMissingPathAndBadBounds() throws {
+  func testFileXattrsRejectsProjectEscapeMissingPathAndBadBounds() throws {
     let directory = try temporaryDirectory()
     try "download".write(
       to: directory.appendingPathComponent("download.txt"),
@@ -117,7 +117,7 @@ final class FilesPlatformToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.xattrs"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
     expectThrows(
@@ -127,7 +127,7 @@ final class FilesPlatformToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -173,7 +173,7 @@ final class FilesPlatformToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr", "file.xattrs"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
     let result = try provider.callTool(
@@ -187,7 +187,7 @@ final class FilesPlatformToolProviderTests {
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operation"]) == (.string("file.remove_xattr")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("download.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("download.txt")))
     #expect((payload.objectValue?["name"]) == (.string("com.showxu.metadata:test")))
     #expect((payload.objectValue?["removed"]) == (.bool(true)))
     #expect(
@@ -223,7 +223,7 @@ final class FilesPlatformToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr", "file.xattrs"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
     let result = try provider.callTool(
@@ -267,7 +267,7 @@ final class FilesPlatformToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
     expectThrows(
@@ -306,12 +306,12 @@ final class FilesPlatformToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 
   @Test
-  func testFileTrashMovesWorkspacePathToMacOSTrash() throws {
+  func testFileTrashMovesProjectPathToMacOSTrash() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("obsolete.txt")
     try "obsolete".write(to: file, atomically: true, encoding: .utf8)
@@ -319,7 +319,7 @@ final class FilesPlatformToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.trash"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
     let result = try provider.callTool(
@@ -335,7 +335,7 @@ final class FilesPlatformToolProviderTests {
       }
     }
     #expect((payload.objectValue?["operation"]) == (.string("file.trash")))
-    #expect((payload.objectValue?["source_workspace_relative_path"]) == (.string("obsolete.txt")))
+    #expect((payload.objectValue?["source_project_relative_path"]) == (.string("obsolete.txt")))
     #expect(!(FileManager.default.fileExists(atPath: file.path)))
     #expect((payload.objectValue?["trashed_path"]) != (.null))
   }

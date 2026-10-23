@@ -10,7 +10,7 @@ open "dist/Computer MCP.app"
 ```
 
 The App owns the manifest, database, bookmarks, Keychain secrets,
-gateway socket, providers, transports, and audit stream. Add workspaces and
+gateway socket, providers, transports, and audit stream. Add projects and
 review profile grants before enabling a transport.
 
 Normal App use does not require a TOML file. On first launch, choose the local
@@ -23,7 +23,7 @@ Install the signed embedded CLI from the App. It links to
 
 ```sh
 computer-mcp app status
-computer-mcp workspace list
+computer-mcp project list
 computer-mcp profile list
 computer-mcp tools list
 computer-mcp doctor --journey local
@@ -50,7 +50,7 @@ computer-mcp doctor --journey cloudflare --json
 and exits successfully only when the selected path is `ready` or `verified`.
 
 Schema 1 manifests declare static providers, policy, and profile
-`allowed_callers`. Runtime workspace grants live in GRDB and secrets remain in
+`allowed_callers`. Runtime project grants live in GRDB and secrets remain in
 Keychain.
 
 ## Standalone development

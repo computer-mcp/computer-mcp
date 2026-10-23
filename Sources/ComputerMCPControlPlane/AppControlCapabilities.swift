@@ -70,7 +70,7 @@ package enum AppControlCapabilityCatalog {
       destructive: true, idempotent: false),
     item(
       "mcp.doctor", "computer-mcp mcp doctor",
-      "Probe one MCP connection and catalog in a registered workspace.", readOnly: true),
+      "Probe one MCP connection and catalog in a registered project.", readOnly: true),
     item(
       "mcp.list", "computer-mcp mcp list", "List manual and resolved plugin MCP registrations.",
       readOnly: true),
@@ -133,20 +133,20 @@ package enum AppControlCapabilityCatalog {
       "config.import", "computer-mcp config import",
       "Preview or digest-guard an App manifest activation."),
     item(
-      "workspace.list", "computer-mcp workspace list", "List registered workspace roots.",
+      "project.list", "computer-mcp project list", "List registered project roots.",
       readOnly: true),
     item(
-      "workspace.add", "computer-mcp workspace add", "Register one canonical local workspace root."),
+      "project.add", "computer-mcp project add", "Register one canonical local project root."),
     item(
-      "workspace.deduplicate", "computer-mcp workspace deduplicate",
+      "project.deduplicate", "computer-mcp project deduplicate",
       "Preview or digest-guard duplicate registration repair.", destructive: true),
     item(
-      "workspace.remove", "computer-mcp workspace remove",
+      "project.remove", "computer-mcp project remove",
       "Remove a registration and its profile grants without deleting user files.", destructive: true
     ),
     item(
-      "workspace.enable", "computer-mcp workspace enable",
-      "Enable or disable one workspace for one profile."),
+      "project.enable", "computer-mcp project enable",
+      "Enable or disable one project for one profile."),
     item(
       "profile.list", "computer-mcp profile list", "List profile grants and runtime state.",
       readOnly: true),
@@ -156,7 +156,7 @@ package enum AppControlCapabilityCatalog {
       "Activate a compatible gateway profile with rollback on failure."),
     item(
       "profile.grant", "computer-mcp profile grant",
-      "Grant or revoke one workspace for one profile."),
+      "Grant or revoke one project for one profile."),
     item(
       "profile.shell", "computer-mcp profile shell",
       "Separately allow or revoke arbitrary execution in local-full-access mode."),

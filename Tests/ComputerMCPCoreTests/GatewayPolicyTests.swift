@@ -41,14 +41,14 @@ final class GatewayPolicyTests {
     let manifest = ProfileGrant(
       id: .chatGPTOperate,
       capabilityIDs: ["file.write"],
-      workspaceIDs: [],
+      projectIDs: [],
       allowedCallers: [.secureTunnel],
-      mode: .workspaceOperations
+      mode: .projectOperations
     )
     let persisted = ProfileGrant(
       id: .chatGPTOperate,
       capabilityIDs: ["shell.run"],
-      workspaceIDs: ["primary"],
+      projectIDs: ["primary"],
       allowedCallers: [.secureTunnel],
       fullShellEnabled: true,
       mode: .localFullAccess,
@@ -62,7 +62,7 @@ final class GatewayPolicyTests {
       effective.capabilityIDs
         == Set(["file.write"]).union(ProfileGrant.fullShellCapabilities)
     )
-    #expect((effective.workspaceIDs) == (["primary"]))
+    #expect((effective.projectIDs) == (["primary"]))
     #expect(effective.fullShellEnabled)
     #expect(effective.mode == .localFullAccess)
     #expect(effective.confirmationPolicy == .allWrites)
@@ -73,10 +73,10 @@ final class GatewayPolicyTests {
   func testSavedAuthorizationReplacesAllPermissionFields() {
     let id = GatewayProfileID(rawValue: "custom-client")!
     let manifest = ProfileGrant(
-      id: id, capabilityIDs: ["file.write"], workspaceIDs: ["one"],
-      allowedCallers: [.secureTunnel], mcpServerIDs: ["first"], mode: .workspaceOperations)
+      id: id, capabilityIDs: ["file.write"], projectIDs: ["one"],
+      allowedCallers: [.secureTunnel], mcpServerIDs: ["first"], mode: .projectOperations)
     let saved = ProfileGrant(
-      id: id, capabilityIDs: ["file.read"], workspaceIDs: ["two"],
+      id: id, capabilityIDs: ["file.read"], projectIDs: ["two"],
       allowedCallers: [.cloudflareTunnel], mcpServerIDs: ["second"],
       mode: .readOnly, confirmationPolicy: .allWrites, authorizationRevision: 3)
     #expect(manifest.applyingPersistedRuntimeState(saved) == saved)
@@ -92,7 +92,7 @@ final class GatewayPolicyTests {
         capability: capability,
         context: context,
         grant: .localAdmin,
-        registeredWorkspaceIDs: []
+        registeredProjectIDs: []
       ))
         == (.deny(
           code: .localAdminRemote,
@@ -101,39 +101,39 @@ final class GatewayPolicyTests {
   }
 
   @Test
-  func testRequiredWorkspaceMustBeExplicitAndGranted() {
+  func testRequiredProjectMustBeExplicitAndGranted() {
     let capability = CapabilityDescriptor(
       id: "file.write",
-      risk: .workspaceWrite,
-      workspaceRequirement: .required
+      risk: .projectWrite,
+      projectRequirement: .required
     )
     let grant = ProfileGrant(
       id: .chatGPTOperate,
       capabilityIDs: ["file.write"],
-      workspaceIDs: ["alpha"],
+      projectIDs: ["alpha"],
       allowedCallers: [.secureTunnel],
-      mode: .workspaceOperations
+      mode: .projectOperations
     )
 
     let missing = evaluator.evaluate(
       capability: capability,
       context: ExecutionContext(caller: .secureTunnel, profileID: .chatGPTOperate),
       grant: grant,
-      registeredWorkspaceIDs: ["alpha", "beta"]
+      registeredProjectIDs: ["alpha", "beta"]
     )
     #expect(
       (missing)
-        == (.deny(code: .workspaceRequired, message: "An explicit workspace_id is required.")))
+        == (.deny(code: .projectRequired, message: "An explicit project_id is required.")))
 
     let allowed = evaluator.evaluate(
       capability: capability,
       context: ExecutionContext(
         caller: .secureTunnel,
         profileID: .chatGPTOperate,
-        workspaceID: "alpha"
+        projectID: "alpha"
       ),
       grant: grant,
-      registeredWorkspaceIDs: ["alpha", "beta"]
+      registeredProjectIDs: ["alpha", "beta"]
     )
     #expect((allowed) == (.allow))
   }
@@ -154,7 +154,7 @@ final class GatewayPolicyTests {
         capability: capability,
         context: context,
         grant: disabled,
-        registeredWorkspaceIDs: []
+        registeredProjectIDs: []
       ))
         == (.deny(
           code: .fullShellDisabled,
@@ -169,7 +169,7 @@ final class GatewayPolicyTests {
         capability: capability,
         context: context,
         grant: enabled,
-        registeredWorkspaceIDs: []
+        registeredProjectIDs: []
       )) == (.allow))
   }
 
@@ -180,7 +180,7 @@ final class GatewayPolicyTests {
     #expect(grant.mode == .readOnly)
     #expect(grant.confirmationPolicy == .riskBased)
     #expect(!grant.fullShellEnabled)
-    #expect(!grant.permitsRisk(.workspaceWrite))
+    #expect(!grant.permitsRisk(.projectWrite))
     #expect(!grant.permitsRisk(.externalWrite))
     #expect(!grant.permitsRisk(.destructive))
     #expect(!grant.permitsRisk(.fullShell))
@@ -198,23 +198,23 @@ final class GatewayPolicyTests {
       try grant.validate()
       let context = ExecutionContext(caller: caller, profileID: profileID)
       for capability in [
-        CapabilityDescriptor(id: "file.write", risk: .workspaceWrite),
+        CapabilityDescriptor(id: "file.write", risk: .projectWrite),
         CapabilityDescriptor(id: "shell.run", risk: .fullShell),
       ] {
         #expect(
           evaluator.evaluate(
-            capability: capability, context: context, grant: grant, registeredWorkspaceIDs: [])
+            capability: capability, context: context, grant: grant, registeredProjectIDs: [])
             == .allow)
       }
     }
   }
 
   @Test
-  func testWorkspaceModeDoesNotAuthorizeArbitraryExecution() {
-    let profileID = GatewayProfileID(rawValue: "workspace-client")!
+  func testProjectModeDoesNotAuthorizeArbitraryExecution() {
+    let profileID = GatewayProfileID(rawValue: "project-client")!
     let grant = ProfileGrant(
       id: profileID, capabilityIDs: ["shell.run"], allowedCallers: [.localMCP],
-      fullShellEnabled: true, mode: .workspaceOperations)
+      fullShellEnabled: true, mode: .projectOperations)
     #expect(throws: GatewayPolicyConfigurationError.fullShellRequiresFullAccess) {
       try grant.validate()
     }
@@ -222,7 +222,7 @@ final class GatewayPolicyTests {
       !evaluator.evaluate(
         capability: .init(id: "shell.run", risk: .fullShell),
         context: .init(caller: .localMCP, profileID: profileID), grant: grant,
-        registeredWorkspaceIDs: []
+        registeredProjectIDs: []
       ).isAllowed)
   }
 
@@ -233,16 +233,16 @@ final class GatewayPolicyTests {
       mode: .readOnly)
     #expect(
       !evaluator.evaluate(
-        capability: .init(id: "file.write", risk: .workspaceWrite),
+        capability: .init(id: "file.write", risk: .projectWrite),
         context: .init(caller: .secureTunnel, profileID: .chatGPTOperate), grant: grant,
-        registeredWorkspaceIDs: []
+        registeredProjectIDs: []
       ).isAllowed)
   }
 
   @Test
   func testConfirmationPoliciesDoNotGrantCapabilities() {
     let risks: [CapabilityRisk] = [
-      .readOnly, .workspaceWrite, .externalWrite, .destructive, .fullShell,
+      .readOnly, .projectWrite, .externalWrite, .destructive, .fullShell,
     ]
     #expect(
       risks.map(GatewayConfirmationPolicy.riskBased.requiresConfirmation) == [
@@ -259,32 +259,32 @@ final class GatewayPolicyTests {
       mode: .localFullAccess, confirmationPolicy: .never)
     #expect(
       !evaluator.evaluate(
-        capability: .init(id: "file.write", risk: .workspaceWrite),
+        capability: .init(id: "file.write", risk: .projectWrite),
         context: .init(caller: .localMCP, profileID: profileID), grant: grant,
-        registeredWorkspaceIDs: []
+        registeredProjectIDs: []
       ).isAllowed)
   }
 
   @Test
-  func testToolWildcardDoesNotGrantWorkspaces() {
+  func testToolWildcardDoesNotGrantProjects() {
     let id = GatewayProfileID(rawValue: "client")!
     var grant = ProfileGrant(
-      id: id, capabilityIDs: ["*"], allowedCallers: [.localMCP], mode: .workspaceOperations)
+      id: id, capabilityIDs: ["*"], allowedCallers: [.localMCP], mode: .projectOperations)
     let capability = CapabilityDescriptor(
-      id: "file.write", risk: .workspaceWrite, workspaceRequirement: .required)
-    let context = ExecutionContext(caller: .localMCP, profileID: id, workspaceID: "one")
+      id: "file.write", risk: .projectWrite, projectRequirement: .required)
+    let context = ExecutionContext(caller: .localMCP, profileID: id, projectID: "one")
     #expect(
       !evaluator.evaluate(
-        capability: capability, context: context, grant: grant, registeredWorkspaceIDs: ["one"]
+        capability: capability, context: context, grant: grant, registeredProjectIDs: ["one"]
       ).isAllowed)
-    grant.workspaceIDs = ["*"]
+    grant.projectIDs = ["*"]
     #expect(
       evaluator.evaluate(
-        capability: capability, context: context, grant: grant, registeredWorkspaceIDs: ["one"]
+        capability: capability, context: context, grant: grant, registeredProjectIDs: ["one"]
       ).isAllowed)
     #expect(
       !evaluator.evaluate(
-        capability: capability, context: context, grant: grant, registeredWorkspaceIDs: []
+        capability: capability, context: context, grant: grant, registeredProjectIDs: []
       ).isAllowed)
   }
 

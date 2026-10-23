@@ -21,7 +21,7 @@ struct MCPProcessOwnershipTests {
     let storage = root.appendingPathComponent("ownership")
     let artifact = try directoryIdentity(root)
     let owner = try MCPProcessOwnership.acquire(
-      root: storage, workspace: root, registration: "mcp", artifact: artifact)
+      root: storage, project: root, registration: "mcp", artifact: artifact)
     try owner.finish(confirmed: false, hostServicesConfirmed: true)
     let file = try #require(try receipts(storage).first)
     var receipt = try #require(
@@ -41,7 +41,7 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let owner = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let owner = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     try owner.finish(confirmed: false, hostServicesConfirmed: true)
     let file = try #require(try receipts(storage).first)
     var receipt = try #require(
@@ -69,7 +69,7 @@ struct MCPProcessOwnershipTests {
     let artifact = try directoryIdentity(root)
     try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
     let owner = try MCPProcessOwnership.acquire(
-      root: storage, workspace: root, registration: "live", artifact: artifact)
+      root: storage, project: root, registration: "live", artifact: artifact)
     defer { try? owner.finish(confirmed: true) }
     #expect(throws: MCPProcessOwnershipError.artifactInUse) {
       try MCPProcessOwnership.requireArtifactUnused(root: storage, artifact: artifact)
@@ -81,32 +81,32 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let owner = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let owner = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     let live = try #require(
-      try MCPProcessOwnership.inspect(root: storage, workspace: root, registration: "mcp").first)
+      try MCPProcessOwnership.inspect(root: storage, project: root, registration: "mcp").first)
     #expect(live.state == "running" && !live.recoverable && !live.blocksLaunch)
     try owner.finish(confirmed: false, hostServicesConfirmed: hostConfirmed)
     let status = try #require(
-      try MCPProcessOwnership.inspect(root: storage, workspace: root, registration: "mcp").first)
+      try MCPProcessOwnership.inspect(root: storage, project: root, registration: "mcp").first)
     #expect(status.recoverable == hostConfirmed && status.blocksLaunch)
     #expect(status.state == (hostConfirmed ? "cleanup_failed" : "host_cleanup_unconfirmed"))
     #expect(throws: GatewayToolError.self) {
       try MCPProcessOwnership.recover(
-        root: storage, workspace: root, registration: "mcp", id: status.id,
+        root: storage, project: root, registration: "mcp", id: status.id,
         expectedDigest: live.digest)
     }
     if hostConfirmed {
       try MCPProcessOwnership.recover(
-        root: storage, workspace: root, registration: "mcp", id: status.id,
+        root: storage, project: root, registration: "mcp", id: status.id,
         expectedDigest: status.digest)
       #expect(try receipts(storage).isEmpty)
       let next = try MCPProcessOwnership.acquire(
-        root: storage, workspace: root, registration: "mcp")
+        root: storage, project: root, registration: "mcp")
       try next.finish(confirmed: true)
     } else {
       #expect(throws: GatewayToolError.self) {
         try MCPProcessOwnership.recover(
-          root: storage, workspace: root, registration: "mcp", id: status.id,
+          root: storage, project: root, registration: "mcp", id: status.id,
           expectedDigest: status.digest)
       }
       #expect(try receipts(storage).count == 1)
@@ -118,36 +118,36 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let owner = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let owner = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     let inherited = try fcntl(owner.supervisorHandle().fileDescriptor, F_DUPFD_CLOEXEC, 10)
     try #require(inherited >= 0)
     let handle = FileHandle(fileDescriptor: inherited, closeOnDealloc: true)
     try owner.finish(confirmed: false, hostServicesConfirmed: true)
     let locked = try #require(
-      try MCPProcessOwnership.inspect(root: storage, workspace: root, registration: "mcp").first)
+      try MCPProcessOwnership.inspect(root: storage, project: root, registration: "mcp").first)
     #expect(!locked.recoverable)
     #expect(throws: GatewayToolError.self) {
       try MCPProcessOwnership.recover(
-        root: storage, workspace: root, registration: "mcp", id: locked.id,
+        root: storage, project: root, registration: "mcp", id: locked.id,
         expectedDigest: locked.digest)
     }
     try handle.close()
     var ready = try #require(
-      try MCPProcessOwnership.inspect(root: storage, workspace: root, registration: "mcp").first)
+      try MCPProcessOwnership.inspect(root: storage, project: root, registration: "mcp").first)
     let deadline = ContinuousClock.now + .seconds(1)
     while !ready.recoverable, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
       ready = try #require(
-        try MCPProcessOwnership.inspect(root: storage, workspace: root, registration: "mcp").first)
+        try MCPProcessOwnership.inspect(root: storage, project: root, registration: "mcp").first)
     }
     try #require(ready.recoverable)
     #expect(throws: GatewayToolError.self) {
       try MCPProcessOwnership.recover(
-        root: storage, workspace: root, registration: "other", id: ready.id,
+        root: storage, project: root, registration: "other", id: ready.id,
         expectedDigest: ready.digest)
     }
     try MCPProcessOwnership.recover(
-      root: storage, workspace: root, registration: "mcp", id: ready.id,
+      root: storage, project: root, registration: "mcp", id: ready.id,
       expectedDigest: ready.digest)
   }
 
@@ -158,16 +158,16 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let owner = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let owner = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     try owner.finish(confirmed: false)
     let file = try #require(try receipts(storage).first)
     try Data(contents.utf8).write(to: file)
     let status = try #require(
-      try MCPProcessOwnership.inspect(root: storage, workspace: root, registration: "mcp").first)
+      try MCPProcessOwnership.inspect(root: storage, project: root, registration: "mcp").first)
     #expect(status.blocksLaunch && !status.recoverable)
     #expect(throws: GatewayToolError.self) {
       try MCPProcessOwnership.recover(
-        root: storage, workspace: root, registration: "mcp", id: status.id,
+        root: storage, project: root, registration: "mcp", id: status.id,
         expectedDigest: status.digest)
     }
     #expect(try Data(contentsOf: file) == Data(contents.utf8))
@@ -184,7 +184,7 @@ struct MCPProcessOwnershipTests {
       for _ in 0..<clientCount {
         group.addTask {
           try await executor.perform {
-            try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+            try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
           }
         }
       }
@@ -207,9 +207,9 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let first = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let first = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     let second = try MCPProcessOwnership.acquire(
-      root: storage, workspace: root, registration: "mcp")
+      root: storage, project: root, registration: "mcp")
     #expect(try receipts(storage).count == 2)
     try first.finish(confirmed: true)
     #expect(try receipts(storage).count == 1)
@@ -222,17 +222,17 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let first = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let first = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     try first.finish(confirmed: false)
     #expect(throws: GatewayToolError.self) {
-      try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+      try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     }
     let otherRegistration = try MCPProcessOwnership.acquire(
-      root: storage, workspace: root, registration: "other")
-    let otherWorkspace = try MCPProcessOwnership.acquire(
-      root: storage, workspace: root.appendingPathComponent("other"), registration: "mcp")
+      root: storage, project: root, registration: "other")
+    let otherProject = try MCPProcessOwnership.acquire(
+      root: storage, project: root.appendingPathComponent("other"), registration: "mcp")
     try otherRegistration.finish(confirmed: true)
-    try otherWorkspace.finish(confirmed: true)
+    try otherProject.finish(confirmed: true)
     #expect(try receipts(storage).count == 1)
   }
 
@@ -243,11 +243,11 @@ struct MCPProcessOwnershipTests {
     let storage = root.appendingPathComponent("ownership")
     do {
       let first = try MCPProcessOwnership.acquire(
-        root: storage, workspace: root, registration: "mcp")
+        root: storage, project: root, registration: "mcp")
       #expect(try first.supervisorHandle().fileDescriptor >= 0)
     }
     #expect(try receipts(storage).count == 1)
-    let next = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let next = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     #expect(try receipts(storage).count == 1)
     try next.finish(confirmed: true)
   }
@@ -257,7 +257,7 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let first = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let first = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     let descriptor = try first.supervisorHandle().fileDescriptor
     let inherited = fcntl(descriptor, F_DUPFD_CLOEXEC, 10)
     try #require(inherited >= 0)
@@ -265,7 +265,7 @@ struct MCPProcessOwnershipTests {
     #expect(throws: GatewayToolError.self) { try first.finish(confirmed: true) }
     #expect(try receipts(storage).count == 1)
     #expect(throws: GatewayToolError.self) {
-      try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+      try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     }
   }
 
@@ -274,14 +274,14 @@ struct MCPProcessOwnershipTests {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
-    let first = try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+    let first = try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     let receipt = try #require(try receipts(storage).first)
     let staleIdentity: [String: Any] = [
       "owner": ["pid": getpid(), "seconds": 0, "microseconds": 0], "cleanupFailed": false,
     ]
     try JSONSerialization.data(withJSONObject: staleIdentity).write(to: receipt)
     #expect(throws: GatewayToolError.self) {
-      try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+      try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     }
     try first.finish(confirmed: true)
   }
@@ -293,13 +293,13 @@ struct MCPProcessOwnershipTests {
     let storage = root.appendingPathComponent("ownership")
     do {
       let first = try MCPProcessOwnership.acquire(
-        root: storage, workspace: root, registration: "mcp")
+        root: storage, project: root, registration: "mcp")
       try first.finish(confirmed: false)
     }
     let receipt = try #require(try receipts(storage).first)
     try Data("partial".utf8).write(to: receipt)
     #expect(throws: (any Error).self) {
-      try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+      try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     }
     #expect(try Data(contentsOf: receipt) == Data("partial".utf8))
   }
@@ -315,7 +315,7 @@ struct MCPProcessOwnershipTests {
     let storage = root.appendingPathComponent("ownership")
     try FileManager.default.createSymbolicLink(at: storage, withDestinationURL: outside)
     #expect(throws: GatewayToolError.self) {
-      try MCPProcessOwnership.acquire(root: storage, workspace: root, registration: "mcp")
+      try MCPProcessOwnership.acquire(root: storage, project: root, registration: "mcp")
     }
     #expect(try FileManager.default.contentsOfDirectory(atPath: outside.path) == ["sentinel"])
     #expect(try Data(contentsOf: sentinel) == Data("user content".utf8))

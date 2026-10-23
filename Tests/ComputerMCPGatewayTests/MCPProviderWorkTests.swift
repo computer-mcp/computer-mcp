@@ -57,7 +57,7 @@ struct MCPProviderWorkTests {
   @Test
   func completeReportsTransferOwnershipAndKeepExactResourceIdentities() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     let invocation = try work.beginInvocation(tool: "start")
     work.finishInvocation(invocation, confirmed: true)
     let instance = UUID()
@@ -72,7 +72,7 @@ struct MCPProviderWorkTests {
     #expect(ledger.snapshot.count == 2)
     #expect(
       ledger.snapshot.allSatisfy {
-        $0.kind == .mcpResource && $0.workspaceID == "ws" && $0.registrationID == "provider"
+        $0.kind == .mcpResource && $0.projectID == "ws" && $0.registrationID == "provider"
           && !$0.uncertain
       })
     let identities = try ledger.snapshot.map {
@@ -88,7 +88,7 @@ struct MCPProviderWorkTests {
   @Test
   func liveResourcesRetainAcquisitionForDerivedWorkUntilFinalRelease() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     let invocation = try work.beginInvocation(tool: "start")
     work.finishInvocation(invocation, confirmed: true)
     let instance = UUID()
@@ -108,7 +108,7 @@ struct MCPProviderWorkTests {
   @Test
   func aReadStartedBeforeCompletionCannotDischargeThatInvocation() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     let invocation = try work.beginInvocation(tool: "start")
     let covered = work.completedInvocations
     work.finishInvocation(invocation, confirmed: true)
@@ -125,7 +125,7 @@ struct MCPProviderWorkTests {
   @Test
   func observationLossRequiresValidSameInstanceEvidenceToReleaseOwners() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     let invocation = try work.beginInvocation(tool: "start")
     work.finishInvocation(invocation, confirmed: true)
     let instance = UUID()
@@ -149,7 +149,7 @@ struct MCPProviderWorkTests {
   @Test
   func foreignAcquisitionsAndChangedCreatorsCannotReleaseKnownWork() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     let invocation = try work.beginInvocation(tool: "start")
     work.finishInvocation(invocation, confirmed: true)
     let instance = UUID()
@@ -171,7 +171,7 @@ struct MCPProviderWorkTests {
   @Test
   func cancelledRequestWithoutResponseStaysUncertainDespiteEmptyReports() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     let invocation = try work.beginInvocation(tool: "start")
     work.finishInvocation(invocation, confirmed: false)
     let instance = UUID()
@@ -188,7 +188,7 @@ struct MCPProviderWorkTests {
   @Test
   func rejectedWholeReportCannotPartiallyCreateOrReleaseWork() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     let invocation = try work.beginInvocation(tool: "start")
     let before = ledger.snapshot
     let invalid = try report(
@@ -200,7 +200,7 @@ struct MCPProviderWorkTests {
   @Test
   func capacityRejectsBeforeNewAdmissionAndRecoversAfterObservation() throws {
     let ledger = GatewayOwnedWork()
-    var work = MCPProviderWork(work: ledger, workspaceID: "ws", registrationID: "provider")
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
     var ids: [UUID] = []
     for _ in 0..<MCPProviderWork.maximumResources {
       ids.append(try work.beginInvocation(tool: "run"))

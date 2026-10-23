@@ -11,7 +11,7 @@ package enum ComputerMCPProductContracts {
     -> JSONValue
   {
     try Task.checkCancellation()
-    let client = MCPProxyClient(workingDirectory: configuration.workspaceDirectory)
+    let client = MCPProxyClient(workingDirectory: configuration.projectDirectory)
     do {
       let result = try await BlockingOperationExecutor(label: "computer-mcp.config-connect").perform
       {

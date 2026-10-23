@@ -14,5 +14,6 @@ This directory contains accepted decision records.
 - [Remote OAuth Authorization](RemoteOAuth.md)
 - [Local Client Registration](ClientRegistration.md)
 - [Plugin API Version](PluginAPI.md)
+- [Coding Harness](CodingHarness.md)
 
 Current architecture truth remains in `Documentation/Architecture/`.

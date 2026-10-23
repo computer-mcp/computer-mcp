@@ -19,7 +19,7 @@ and audit. Proxy authentication uses the injected `SecretStore` with noninteract
 MCP HTTP reads, and bound host services use the injected Git executable.
 
 `ComputerMCPDelivery` supplies the `delivery` provider for host-declared isolated
-repository edits. Workspace composition filters `delivery.scopes` by workspace ID.
+repository edits. Project composition filters `delivery.scopes` by project ID.
 The provider owns the shared Git-directory lock, atomic file journals, execution
 and recovery; ordinary gateway policy owns grants and confirmation. See
 [Isolated delivery](../Reference/Delivery.md).
@@ -37,7 +37,7 @@ Remote MCP client
   -> App loopback authenticated Streamable HTTP
 
 Both -> Computer MCP.app -> AppGatewayService
-     -> caller/profile policy + workspace resolution + audit
+     -> caller/profile policy + project resolution + audit
      -> domain provider
 ```
 
@@ -56,14 +56,14 @@ bookmarks or Keychain state.
 `GatewayRuntime` composes `GatewayToolProvider` instances through
 `GatewayProviderRouter`. Providers return `ToolDefinition` values through
 `definitions()`, pairing MCP metadata with an explicit `CapabilityDescriptor`
-for risk, workspace requirements, network use, local-only access and TCC services.
+for risk, project requirements, network use, local-only access and TCC services.
 Configured and reexported MCP tools declare their descriptors during discovery
 using configuration risk and downstream declarations.
 
 The execution sequence is:
 
 1. Resolve the exact tool name and host-owned provider identity.
-2. Bind the verified principal, configured caller, profile and `workspace_id`.
+2. Bind the verified principal, configured caller, profile and `project_id`.
 3. Read the current grant revision and check mode, capability, caller, Full Shell, path/network
    policy, and TCC requirements.
 4. Apply the confirmation policy and validate/consume an approved operation
@@ -72,7 +72,7 @@ The execution sequence is:
 6. Bound output and return structured content or a stable error.
 7. Persist a redacted audit decision.
 
-Unknown tools, workspaces and providers fail closed. Domain adapters validate
+Unknown tools, projects and providers fail closed. Domain adapters validate
 their own protocol methods inside the scope delegated by the host.
 
 Each provider call receives a `ToolInvocation` with an explicit
@@ -109,18 +109,18 @@ does not authorize replay. Cancellation delivery, execution outcome and
 process cleanup are separate facts. This is a receipt layer, not a scheduler
 or a promise that arbitrary downstream work survives a host restart.
 
-## Workspace Model
+## Project Model
 
 The App registers folders with persistent security bookmarks and stable ids.
 The symlink-resolved canonical root is the registration identity, so adding the
-same directory through another path spelling returns the existing workspace.
+same directory through another path spelling returns the existing project.
 Historical duplicate ids can be repaired through a reviewed, digest-bound
 deduplication plan; aliases preserve prior audit and ownership references.
-`workspace.list` and `workspace.describe` are always the discovery path. When
-multiple workspaces are granted, a scoped call must include `workspace_id`;
+`project.list` and `project.describe` are always the discovery path. When
+multiple projects are granted, a scoped call must include `project_id`;
 there is no mutable global current directory.
 
-Manifest `[[workspaces]]` entries support standalone development. App bookmarks
+Manifest `[[projects]]` entries support standalone development. App bookmarks
 are persisted separately and are not copied into TOML.
 
 ## Source Types
@@ -164,4 +164,4 @@ Codex has two distinct relationships:
   applying it. Client registration grants no gateway authority.
 
 These relationships share no implicit authority. Both are evaluated by the
-same explicit gateway profile and workspace policy.
+same explicit gateway profile and project policy.

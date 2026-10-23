@@ -5,17 +5,17 @@ struct AppShellView: View {
 
   var body: some View {
     NavigationSplitView {
-      List(selection: $model.selectedWorkspace) {
-        ForEach(AppWorkspaceGroup.allCases) { group in
+      List(selection: $model.selectedSection) {
+        ForEach(AppSectionGroup.allCases) { group in
           Section(AppLocalization.string(group.title)) {
-            ForEach(AppWorkspace.allCases.filter { $0.group == group }) { workspace in
+            ForEach(AppSection.allCases.filter { $0.group == group }) { section in
               Label {
-                Text(verbatim: AppLocalization.string(workspace.title))
+                Text(verbatim: AppLocalization.string(section.title))
               } icon: {
-                Image(systemName: workspace.systemImage)
+                Image(systemName: section.systemImage)
               }
-              .tag(workspace)
-              .accessibilityIdentifier("navigation.\(workspace.rawValue)")
+              .tag(section)
+              .accessibilityIdentifier("navigation.\(section.rawValue)")
             }
           }
         }
@@ -36,7 +36,7 @@ struct AppShellView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("page.\((model.selectedWorkspace ?? .home).rawValue)")
+        .accessibilityIdentifier("page.\((model.selectedSection ?? .home).rawValue)")
     }
     .sheet(
       isPresented: Binding(
@@ -58,15 +58,15 @@ struct AppShellView: View {
 
   @ViewBuilder
   private var detail: some View {
-    switch model.selectedWorkspace ?? .home {
+    switch model.selectedSection ?? .home {
     case .home:
       HomeView(localClients: model.localClients)
     case .chatgpt:
       JourneyView(journey: .chatgpt)
     case .cloudflare:
       JourneyView(journey: .cloudflare)
-    case .workspaces:
-      WorkspacesView()
+    case .projects:
+      ProjectsView()
     case .profiles:
       ProfilesView()
     case .providers:

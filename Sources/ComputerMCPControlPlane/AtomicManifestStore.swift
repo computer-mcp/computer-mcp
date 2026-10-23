@@ -8,6 +8,7 @@ import Foundation
 
 internal enum ManifestChangeReason: String, Codable, Equatable, Sendable {
   case activated
+  case projectTerminology = "project-terminology"
   case rolledBack = "rolled-back"
   case externalReload = "external-reload"
 }
@@ -94,6 +95,17 @@ package final class AtomicManifestStore: @unchecked Sendable {
     try files.withExclusiveAccess {
       try files.recover()
       if let data = try files.currentData() { knownDigest = try Self.digest(of: data) }
+    }
+    // Database migrations finish before the store opens. Failed file admission leaves
+    // the original bytes intact; a subsequent startup retries against the migrated database.
+    if let data = try files.currentData() {
+      guard let text = String(data: data, encoding: .utf8) else {
+        throw AtomicManifestStoreError.invalidManifestEncoding
+      }
+      if let upgraded = try ProjectManifestUpgrade.upgraded(text) {
+        _ = try write(
+          manifest: upgraded, reason: .projectTerminology, expectedDigest: Self.digest(of: data))
+      }
     }
   }
 
@@ -189,8 +201,9 @@ package final class AtomicManifestStore: @unchecked Sendable {
     else {
       throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
+    let manifest = try ProjectManifestUpgrade.upgraded(revision.manifest) ?? revision.manifest
     return try write(
-      manifest: revision.manifest, reason: .rolledBack, expectedDigest: expectedDigest)
+      manifest: manifest, reason: .rolledBack, expectedDigest: expectedDigest)
   }
 
   private func write(manifest: String, reason: ManifestChangeReason, expectedDigest: String? = nil)

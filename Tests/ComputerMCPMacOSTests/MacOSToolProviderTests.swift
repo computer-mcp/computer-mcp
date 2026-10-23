@@ -109,7 +109,7 @@ final class MacOSToolProviderTests {
     var config = GatewayConfiguration.fixture(
       builtin: BuiltinConfig(enabled: ["macos.default_application"])
     )
-    config.workspaceDirectory = directory
+    config.projectDirectory = directory
     let provider = MacOSToolProvider(environment: ToolEnvironment(configuration: config))
 
     let result = try provider.callTool(
@@ -126,7 +126,7 @@ final class MacOSToolProviderTests {
 
     #expect((payload.objectValue?["operation"]) == (.string("macos.default_application")))
     #expect((target["type"]) == (.string("path")))
-    #expect((target["workspace_relative_path"]) == (.string("note.txt")))
+    #expect((target["project_relative_path"]) == (.string("note.txt")))
     #expect((payload.objectValue?["include_candidates"]) == (.bool(true)))
     #expect((payload.objectValue?["max_candidates"]) == (.number(2)))
     #expect((payload.objectValue?["default_application_available"]) != nil)
@@ -186,7 +186,7 @@ final class MacOSToolProviderTests {
   }
 
   @Test
-  func testMacOSSpotlightSearchUsesMDFindWithinWorkspace() throws {
+  func testMacOSSpotlightSearchUsesMDFindWithinProject() throws {
     let directory = try temporaryDirectory()
     let notes = directory.appendingPathComponent("notes", isDirectory: true)
     try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
@@ -200,7 +200,7 @@ final class MacOSToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["macos.spotlight_search"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner
       ))
@@ -221,24 +221,24 @@ final class MacOSToolProviderTests {
     #expect((runner.calls.first?.executable) == ("/usr/bin/mdfind"))
     #expect((runner.calls.first?.arguments) == (["-onlyin", notes.path, "alpha"]))
     #expect((payload.objectValue?["operation"]) == (.string("macos.spotlight_search")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes")))
     #expect((payload.objectValue?["returned_path_count"]) == (.number(3)))
     #expect((payload.objectValue?["result_count"]) == (.number(1)))
     #expect((payload.objectValue?["truncated"]) == (.bool(false)))
     #expect((payload.objectValue?["skipped_escaped_results"]) == (.number(1)))
     #expect((payload.objectValue?["skipped_missing_results"]) == (.number(1)))
     #expect(
-      (results.first?.objectValue?["workspace_relative_path"]) == (.string("notes/alpha.txt")))
+      (results.first?.objectValue?["project_relative_path"]) == (.string("notes/alpha.txt")))
   }
 
   @Test
-  func testMacOSSpotlightSearchRejectsWorkspaceEscapeAndBadBounds() throws {
+  func testMacOSSpotlightSearchRejectsProjectEscapeAndBadBounds() throws {
     let directory = try temporaryDirectory()
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["macos.spotlight_search"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         )
       ))
 
@@ -252,7 +252,7 @@ final class MacOSToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(

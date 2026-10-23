@@ -15,7 +15,7 @@ struct GatewayControlSessionTests {
       ExecutionContext.self, from: JSONEncoder().encode(context))
     #expect(decoded.controlSession == nil)
     #expect(decoded.trustedPrincipalID == context.trustedPrincipalID)
-    #expect(try session.apply(to: grant, context: context).mode == .workspaceOperations)
+    #expect(try session.apply(to: grant, context: context).mode == .projectOperations)
     #expect(try session.apply(to: grant, context: context).fullShellEnabled == false)
     var foreign = context
     foreign.trustedPrincipalID = "another-client"
@@ -95,9 +95,9 @@ struct GatewayControlSessionTests {
       #expect(try fixture.database.operationTicket(id: ticket.id)?.state == .approved)
       try first.limitAccess(to: .readOnly, expectedRevision: 0)
       #expect(throws: (any Error).self) {
-        try first.limitAccess(to: .workspaceOperations, expectedRevision: 0)
+        try first.limitAccess(to: .projectOperations, expectedRevision: 0)
       }
-      try first.limitAccess(to: .workspaceOperations, expectedRevision: 1)
+      try first.limitAccess(to: .projectOperations, expectedRevision: 1)
       #expect(throws: (any Error).self) {
         try fixture.commit(ticket.id, context: context(first))
       }
@@ -117,7 +117,7 @@ struct GatewayControlSessionTests {
 
   private var grant: ProfileGrant {
     .init(
-      id: .chatGPTOperate, capabilityIDs: ["*"], workspaceIDs: ["fixture"],
+      id: .chatGPTOperate, capabilityIDs: ["*"], projectIDs: ["fixture"],
       allowedCallers: [.secureTunnel], fullShellEnabled: true, mode: .localFullAccess)
   }
 
@@ -138,11 +138,11 @@ private struct Fixture {
   let database: GatewayDatabase
   let gateway: GatewayRuntime
   var read: JSONValue {
-    .object(["workspace_id": .string("fixture"), "path": .string("value.txt")])
+    .object(["project_id": .string("fixture"), "path": .string("value.txt")])
   }
   var write: JSONValue {
     .object([
-      "workspace_id": .string("fixture"), "path": .string("value.txt"),
+      "project_id": .string("fixture"), "path": .string("value.txt"),
       "content": .string("authorized"), "confirm": .bool(true),
     ])
   }
@@ -153,18 +153,18 @@ private struct Fixture {
     try Data("original".utf8).write(to: root.appendingPathComponent("value.txt"))
     database = try GatewayDatabase(inMemory: ())
     let profile = ProfileGrantConfig(
-      id: .chatGPTOperate, capabilities: ["*"], workspaces: ["fixture"],
+      id: .chatGPTOperate, capabilities: ["*"], projects: ["fixture"],
       allowedCallers: [.secureTunnel], fullShellEnabled: true, mode: .localFullAccess,
       confirmationPolicy: confirmation)
     try database.saveProfile(profile.grant)
     gateway = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
-        builtin: .init(enabled: ["file.read", "file.write"]), workspaceDirectory: root),
+        builtin: .init(enabled: ["file.read", "file.write"]), projectDirectory: root),
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-client"),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, requiresControlSession: true)
   }
 
@@ -176,7 +176,7 @@ private struct Fixture {
     let result = try gateway.callTool(
       name: "operations.prepare",
       arguments: .object([
-        "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": write,
+        "project_id": .string("fixture"), "tool": .string("file.write"), "arguments": write,
       ]), context: context, invocationContext: .empty)
     let id = try #require(
       result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
@@ -188,7 +188,7 @@ private struct Fixture {
     try gateway.callTool(
       name: "operations.commit",
       arguments: .object([
-        "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": write,
+        "project_id": .string("fixture"), "tool": .string("file.write"), "arguments": write,
         "ticket_id": .string(id),
       ]), context: context, invocationContext: .empty)
   }

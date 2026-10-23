@@ -23,7 +23,7 @@ struct ProfilePermissionsEditor: View {
               Text("Observe", bundle: AppLocalization.resourceBundle).tag(
                 GatewayPermissionMode.readOnly)
               Text("Control — Restricted Access", bundle: AppLocalization.resourceBundle)
-                .tag(GatewayPermissionMode.workspaceOperations)
+                .tag(GatewayPermissionMode.projectOperations)
             } label: {
               Text("Access", bundle: AppLocalization.resourceBundle)
             }
@@ -73,17 +73,17 @@ struct ProfilePermissionsEditor: View {
             Text("Allow connections from", bundle: AppLocalization.resourceBundle)
           }
           Section {
-            if draft.options.workspaces.isEmpty {
+            if draft.options.projects.isEmpty {
               Text(
-                "Register a workspace to select it here.", bundle: AppLocalization.resourceBundle)
+                "Register a project to select it here.", bundle: AppLocalization.resourceBundle)
             }
-            ForEach(draft.options.workspaces, id: \.id) { workspace in
-              Toggle(isOn: selection(workspace.id, in: \.workspaceIDs)) {
+            ForEach(draft.options.projects, id: \.id) { project in
+              Toggle(isOn: selection(project.id, in: \.projectIDs)) {
                 VStack(alignment: .leading, spacing: 3) {
-                  Text(verbatim: workspace.displayName)
-                  Text(verbatim: workspace.rootPath).font(.caption).foregroundStyle(.secondary)
+                  Text(verbatim: project.displayName)
+                  Text(verbatim: project.rootPath).font(.caption).foregroundStyle(.secondary)
                 }
-              }.accessibilityIdentifier("profile.permissions.workspace.\(workspace.id)")
+              }.accessibilityIdentifier("profile.permissions.project.\(project.id)")
             }
           } header: {
             Text("Projects", bundle: AppLocalization.resourceBundle)
@@ -143,10 +143,10 @@ struct ProfilePermissionsEditor: View {
               Toggle(isOn: selection(id, in: \.mcpServerIDs)) { Text(verbatim: id) }
             }
             ForEach(
-              draft.grant.workspaceIDs.subtracting(draft.options.workspaces.map(\.id)).sorted(),
+              draft.grant.projectIDs.subtracting(draft.options.projects.map(\.id)).sorted(),
               id: \.self
             ) { id in
-              Toggle(isOn: selection(id, in: \.workspaceIDs)) { Text(verbatim: id) }
+              Toggle(isOn: selection(id, in: \.projectIDs)) { Text(verbatim: id) }
             }
           } label: {
             Text("Advanced permissions", bundle: AppLocalization.resourceBundle)
@@ -307,7 +307,7 @@ extension CapabilityRisk {
   var permissionLabel: String {
     switch self {
     case .readOnly: "Read only"
-    case .workspaceWrite: "Changes project files"
+    case .projectWrite: "Changes project files"
     case .externalWrite: "Affects other apps or services"
     case .destructive: "May delete data"
     case .fullShell: "Arbitrary execution"

@@ -20,7 +20,7 @@ struct GatewayTerminalSessionsTests {
     let scope = GatewayTerminalSessions.Scope.isolated(UUID())
     let owners = GatewayOwnedWork()
     var old: SubprocessShellRuntime? = SubprocessShellRuntime(
-      ownedWork: owners, workspaceID: "test", sessions: storage, scope: scope)
+      ownedWork: owners, projectID: "test", sessions: storage, scope: scope)
     weak let previous = old
     let id = try spawnCat(try #require(old))
     let current = SubprocessShellRuntime(sessions: storage, scope: scope)
@@ -143,22 +143,22 @@ struct GatewayTerminalSessionsTests {
   }
 
   @Test
-  func workspaceScopeRequiresSameCallerPrincipalProfileRegistrationAndRoot() throws {
+  func projectScopeRequiresSameCallerPrincipalProfileRegistrationAndRoot() throws {
     let root = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let context = ExecutionContext(
       caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "one")
-    let workspace = RegisteredWorkspace(id: "folder", displayName: "Folder", rootPath: root.path)
-    let scope = try GatewayTerminalSessions.Scope.workspace(
-      context: context, workspace: workspace, root: WorkspaceRootIdentity(root))
+    let project = RegisteredProject(id: "folder", displayName: "Folder", rootPath: root.path)
+    let scope = try GatewayTerminalSessions.Scope.project(
+      context: context, project: project, root: ProjectRootIdentity(root))
     let storage = GatewayTerminalSessions()
     let shell = SubprocessShellRuntime(sessions: storage, scope: scope)
     let result = try run(shell, "printf private-result")
     let same = SubprocessShellRuntime(
       sessions: storage,
-      scope: try .workspace(
-        context: context, workspace: workspace, root: WorkspaceRootIdentity(root)))
+      scope: try .project(
+        context: context, project: project, root: ProjectRootIdentity(root)))
     #expect(try read(same, result.sessionID).stdout.text == "private-result")
     var foreignPrincipal = context
     foreignPrincipal.trustedPrincipalID = "two"
@@ -166,17 +166,17 @@ struct GatewayTerminalSessionsTests {
     foreignProfile.profileID = .chatGPTOperate
     var foreignCaller = context
     foreignCaller.caller = .secureTunnel
-    var reregistered = workspace
-    reregistered.createdAt = workspace.createdAt.addingTimeInterval(1)
-    var otherID = workspace
+    var reregistered = project
+    reregistered.createdAt = project.createdAt.addingTimeInterval(1)
+    var otherID = project
     otherID.id = "another-folder"
     let scopes = try [
-      GatewayTerminalSessions.Scope.workspace(
-        context: foreignPrincipal, workspace: workspace, root: WorkspaceRootIdentity(root)),
-      .workspace(context: foreignProfile, workspace: workspace, root: WorkspaceRootIdentity(root)),
-      .workspace(context: foreignCaller, workspace: workspace, root: WorkspaceRootIdentity(root)),
-      .workspace(context: context, workspace: reregistered, root: WorkspaceRootIdentity(root)),
-      .workspace(context: context, workspace: otherID, root: WorkspaceRootIdentity(root)),
+      GatewayTerminalSessions.Scope.project(
+        context: foreignPrincipal, project: project, root: ProjectRootIdentity(root)),
+      .project(context: foreignProfile, project: project, root: ProjectRootIdentity(root)),
+      .project(context: foreignCaller, project: project, root: ProjectRootIdentity(root)),
+      .project(context: context, project: reregistered, root: ProjectRootIdentity(root)),
+      .project(context: context, project: otherID, root: ProjectRootIdentity(root)),
     ]
     for foreign in scopes {
       let isolated = SubprocessShellRuntime(sessions: storage, scope: foreign)
@@ -191,8 +191,8 @@ struct GatewayTerminalSessionsTests {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let replaced = SubprocessShellRuntime(
       sessions: storage,
-      scope: try .workspace(
-        context: context, workspace: workspace, root: WorkspaceRootIdentity(root)))
+      scope: try .project(
+        context: context, project: project, root: ProjectRootIdentity(root)))
     #expect(try replaced.list().isEmpty)
     #expect(throws: ShellRuntimeError.unknownSession(result.sessionID)) {
       try read(replaced, result.sessionID)
@@ -204,12 +204,12 @@ struct GatewayTerminalSessionsTests {
     let root = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let workspace = RegisteredWorkspace(id: "root", displayName: "Root", rootPath: root.path)
+    let project = RegisteredProject(id: "root", displayName: "Root", rootPath: root.path)
     let database = try GatewayDatabase(inMemory: ())
-    try database.saveWorkspace(workspace)
+    try database.saveProject(project)
     let storage = GatewayTerminalSessions()
     let context = ExecutionContext(
-      caller: .localMCP, profileID: .localAdmin, workspaceID: "root", trustedPrincipalID: "owner")
+      caller: .localMCP, profileID: .localAdmin, projectID: "root", trustedPrincipalID: "owner")
     var configuration = GatewayConfiguration(
       schemaVersion: 1,
       policy: PolicyConfig(shellEnabled: true),
@@ -217,13 +217,13 @@ struct GatewayTerminalSessionsTests {
         ProfileGrantConfig(
           id: .localAdmin,
           capabilities: ["shell.spawn", "shell.read", "shell.write", "shell.cancel"],
-          workspaces: ["root"], allowedCallers: [.localMCP], fullShellEnabled: true,
+          projects: ["root"], allowedCallers: [.localMCP], fullShellEnabled: true,
           mode: .localFullAccess, confirmationPolicy: .never)
       ])
     try database.saveProfile(configuration.profiles[0].grant)
     let old = try await GatewayRuntime.make(
       configuration: configuration, context: context, database: database,
-      registeredWorkspaces: [workspace], platform: MacOSPlatform.services,
+      registeredProjects: [project], platform: MacOSPlatform.services,
       bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     let spawned = try await old.callToolAsync(
@@ -237,7 +237,7 @@ struct GatewayTerminalSessionsTests {
     configuration.policy.maxOutputBytes = 128
     let current = try await GatewayRuntime.make(
       configuration: configuration, context: context, database: database,
-      registeredWorkspaces: [workspace], platform: MacOSPlatform.services,
+      registeredProjects: [project], platform: MacOSPlatform.services,
       bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     do {
@@ -272,7 +272,7 @@ struct GatewayTerminalSessionsTests {
   }
 
   @Test
-  func manifestWorkspaceHasStableResultScopeAcrossRuntimeConstruction() async throws {
+  func manifestProjectHasStableResultScopeAcrossRuntimeConstruction() async throws {
     let root = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -281,10 +281,10 @@ struct GatewayTerminalSessionsTests {
       schemaVersion: 1, policy: PolicyConfig(shellEnabled: true),
       profiles: [
         ProfileGrantConfig(
-          id: .localAdmin, capabilities: ["shell.run", "shell.read"], workspaces: ["default"],
+          id: .localAdmin, capabilities: ["shell.run", "shell.read"], projects: ["default"],
           allowedCallers: [.localMCP], fullShellEnabled: true, mode: .localFullAccess,
           confirmationPolicy: .never)
-      ], workspaceDirectory: root)
+      ], projectDirectory: root)
     let first = try await GatewayRuntime.make(
       configuration: configuration, platform: MacOSPlatform.services,
       bundledPlugins: BundledPlugins(packages: [], issues: []),
@@ -324,9 +324,9 @@ struct GatewayTerminalSessionsTests {
       profiles: [
         ProfileGrantConfig(
           id: .localAdmin, capabilities: ["shell.spawn", "shell.read", "shell.cancel"],
-          workspaces: ["default"], allowedCallers: [.localMCP], fullShellEnabled: true,
+          projects: ["default"], allowedCallers: [.localMCP], fullShellEnabled: true,
           mode: .localFullAccess, confirmationPolicy: .never)
-      ], workspaceDirectory: root)
+      ], projectDirectory: root)
     func make() async throws -> GatewayRuntime {
       try await GatewayRuntime.make(
         configuration: configuration, platform: MacOSPlatform.services,

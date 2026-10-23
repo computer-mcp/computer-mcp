@@ -69,7 +69,7 @@ extension SystemToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("sw_vers"),
       arguments: [],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: configuration.policy.maxOutputBytes
@@ -405,7 +405,7 @@ extension SystemToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("pmset"),
       arguments: ["-g", "batt"],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: configuration.policy.maxOutputBytes
@@ -458,7 +458,7 @@ extension SystemToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("ps"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -626,7 +626,7 @@ extension SystemToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("log"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -714,7 +714,7 @@ extension SystemToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("launchctl"),
       arguments: ["print", target],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes

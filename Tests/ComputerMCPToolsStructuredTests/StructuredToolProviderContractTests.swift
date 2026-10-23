@@ -32,7 +32,7 @@ struct StructuredToolProviderContractTests {
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
-          builtin: .init(enabled: ["json.read"]), workspaceDirectory: directory.url)))
+          builtin: .init(enabled: ["json.read"]), projectDirectory: directory.url)))
     let invocation = ToolInvocation(
       name: "json.read", arguments: .object(["path": .string("value.json")]), context: .empty)
     #expect(try await provider.callToolAsync(invocation) == provider.callTool(invocation))
@@ -46,7 +46,7 @@ struct StructuredToolProviderContractTests {
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
-          builtin: .init(enabled: [name]), workspaceDirectory: directory.url),
+          builtin: .init(enabled: [name]), projectDirectory: directory.url),
         mediaInspector: InspectionStub(expectedURL: file)))
     let options: [String: JSONValue]
     switch name {
@@ -73,7 +73,7 @@ struct StructuredToolProviderContractTests {
     let payload = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
     #expect(payload.objectValue?["operation"] == .string(name))
     #expect(payload.objectValue?["path"] == .string(file.path))
-    #expect(payload.objectValue?["workspace_relative_path"] == .string("asset.dat"))
+    #expect(payload.objectValue?["project_relative_path"] == .string("asset.dat"))
     #expect(payload.objectValue?["size_bytes"] == .integer(3))
     #expect(payload.objectValue?["inspected"] == .string(name))
     if name == "media.info" {
@@ -83,7 +83,7 @@ struct StructuredToolProviderContractTests {
       try provider.callTool(
         .init(name: name, arguments: .object(["path": .string("../outside")]), context: .empty))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 }

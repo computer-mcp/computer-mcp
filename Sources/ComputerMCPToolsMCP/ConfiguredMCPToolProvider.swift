@@ -4,7 +4,7 @@ import ComputerMCPDownstream
 import ComputerMCPToolKit
 import Foundation
 
-/// Holds a validated workspace catalog. The lock serializes discovery and protects the last success.
+/// Holds a validated project catalog. The lock serializes discovery and protects the last success.
 package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked Sendable {
   package let id = "configured"
   private let mcp: MCPToolProvider
@@ -187,7 +187,7 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
       capability: CapabilityDescriptor(
         id: tool.name,
         risk: try mcp.configuration.mcpRisk(for: reference, declaredBy: tool),
-        workspaceRequirement: .optional,
+        projectRequirement: .optional,
         usesNetwork: true,
         mcpReference: reference,
         equivalentCapabilityIDs: mcp.configuration.mcpCapabilityIDs(for: reference),

@@ -94,7 +94,7 @@ class Client:
         self.error = (root / ("host-%d.stderr" % generation)).open("wb")
         self.process = subprocess.Popen(
             [executable, "serve", "stdio", "--config", manifest,
-             "--database", str(root / "gateway.sqlite"), "--workspace-id", "fixture"],
+             "--database", str(root / "gateway.sqlite"), "--project-id", "fixture"],
             cwd=root, env={**os.environ, "TMPDIR": str(root)},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.error,
             start_new_session=True)
@@ -180,7 +180,7 @@ def driver(root, executable, manifest, pause_cleanup=False):
         watched.append(old)
         assert old["group"] == old["server"]
         assert all(alive(old[key]) for key in ("server", "supervisor", "worker", "watchdog"))
-        arguments = {"workspace_id": "fixture"}
+        arguments = {"project_id": "fixture"}
         prepared = first.call("tools/call", {"name": "operations.prepare", "arguments": {
             "tool": "owned.write", "arguments": arguments}})
         assert not prepared.get("isError", False), prepared
@@ -295,7 +295,7 @@ def startup_driver(root, executable, manifest, stage, failure):
         assert len(records(root / "starts")) == 2
         watched.append(with_watchdog(records(root / "starts")[1]))
         observed = second.call("tools/call", {"name": "owned.inspect", "arguments": {
-            "workspace_id": "fixture"}})
+            "project_id": "fixture"}})
         assert not observed.get("isError", False), observed
         assert not records(root / "writes")
         second.process.stdin.close()

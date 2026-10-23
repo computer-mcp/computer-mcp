@@ -1,6 +1,6 @@
 import ComputerMCPCore
 
-/// Workspace provider assembly. The host shares these runtime owners across catalog generations.
+/// Project provider assembly. The host shares these runtime owners across catalog generations.
 package struct GatewayToolRegistry: Sendable {
   package let providers: @Sendable () throws -> [any GatewayToolProvider]
   let invalidations: AsyncStream<Void>?

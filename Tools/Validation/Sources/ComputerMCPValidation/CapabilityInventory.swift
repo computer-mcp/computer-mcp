@@ -185,7 +185,7 @@ public struct CapabilityInventoryTool: Codable, Equatable, Sendable {
   public let hasOutputSchema: Bool
   public let hasAnnotations: Bool
   public let risk: String
-  public let workspaceRequirement: String
+  public let projectRequirement: String
   public let localOnly: Bool
   public let usesNetwork: Bool
   public let hasDescription: Bool
@@ -199,7 +199,7 @@ public struct CapabilityInventoryTool: Codable, Equatable, Sendable {
     hasOutputSchema: Bool,
     hasAnnotations: Bool,
     risk: String,
-    workspaceRequirement: String,
+    projectRequirement: String,
     localOnly: Bool,
     usesNetwork: Bool,
     hasDescription: Bool = true,
@@ -212,7 +212,7 @@ public struct CapabilityInventoryTool: Codable, Equatable, Sendable {
     self.hasOutputSchema = hasOutputSchema
     self.hasAnnotations = hasAnnotations
     self.risk = risk
-    self.workspaceRequirement = workspaceRequirement
+    self.projectRequirement = projectRequirement
     self.localOnly = localOnly
     self.usesNetwork = usesNetwork
     self.hasDescription = hasDescription
@@ -470,7 +470,7 @@ public struct CapabilityInventoryBuilder: Sendable {
         hasOutputSchema: tool.outputSchema != nil,
         hasAnnotations: tool.annotations != nil,
         risk: tool.capability.risk,
-        workspaceRequirement: tool.capability.workspaceRequirement,
+        projectRequirement: tool.capability.projectRequirement,
         localOnly: tool.capability.localOnly,
         usesNetwork: tool.capability.usesNetwork,
         hasDescription: !tool.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -654,7 +654,7 @@ public struct CapabilityInventoryBuilder: Sendable {
   private struct ProductCapability: Decodable {
     let id: String
     let risk: String
-    let workspaceRequirement: String
+    let projectRequirement: String
     let localOnly: Bool
     let usesNetwork: Bool
     let tccServices: [String]

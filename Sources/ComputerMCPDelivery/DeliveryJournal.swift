@@ -47,7 +47,7 @@ internal struct DeliveryJournal: Codable, Sendable {
   }
   var schemaVersion = 1
   var operationID: String
-  var workspace: String
+  var project: String
   var scope: String
   var repository: String
   var defaultBranch: String
@@ -71,8 +71,24 @@ internal struct DeliveryJournal: Codable, Sendable {
     case schemaVersion = "schema_version"
     case operationID = "operation_id"
     case defaultBranch = "default_branch"
-    case workspace, scope, repository, branch, worktree, base, phase, commit, merged, state, reason,
+    case project, scope, repository, branch, worktree, base, phase, commit, merged, state, reason,
       files, changes, staged, rebase, message, creation
+  }
+
+  /// Finished receipts are read without rewriting; unfinished receipts are upgraded on their next durable write.
+  static func read(from url: URL) throws -> Self {
+    var data = try Data(contentsOf: url)
+    if var object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let project = object.removeValue(forKey: "workspace")
+    {
+      guard object["project"] == nil else {
+        throw DeliveryFailure(
+          reason: .journalFailed, detail: "Conflicting project identity in delivery journal.")
+      }
+      object["project"] = project
+      data = try JSONSerialization.data(withJSONObject: object)
+    }
+    return try JSONDecoder().decode(Self.self, from: data)
   }
 
   var result: DeliveryResult {
@@ -257,8 +273,8 @@ internal struct DeliveryIO: Sendable {
         throw DeliveryFailure(
           reason: .journalFailed, detail: "Journal target is not a regular file: \(target.path)")
       }
-      let existing = try JSONDecoder().decode(DeliveryJournal.self, from: Data(contentsOf: target))
-      guard existing.operationID == journal.operationID, existing.workspace == journal.workspace,
+      let existing = try DeliveryJournal.read(from: target)
+      guard existing.operationID == journal.operationID, existing.project == journal.project,
         existing.scope == journal.scope, existing.repository == journal.repository,
         existing.defaultBranch == journal.defaultBranch, existing.branch == journal.branch,
         existing.worktree == journal.worktree, existing.base == journal.base

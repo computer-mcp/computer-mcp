@@ -159,7 +159,7 @@ public struct ValidationObservationCollector: Sendable {
           toolName: observation.toolName,
           capabilityID: audit.capabilityID,
           profileID: audit.profileID,
-          workspaceID: audit.workspaceID,
+          projectID: audit.projectID,
           inputDigest: audit.inputDigest ?? "",
           transportRequestID: observation.transportRequestID,
           consumerResultID: observation.consumerResultID,

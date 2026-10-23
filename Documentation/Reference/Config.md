@@ -8,7 +8,7 @@ version are rejected.
 | --- | --- |
 | Static policy, provider, and transport definitions | TOML manifest |
 | App-managed permission grants/revisions, enabled state, and desired transport state | GRDB |
-| Workspace filesystem access | security-scoped bookmarks |
+| Project filesystem access | security-scoped bookmarks |
 | Tunnel tokens, Computer MCP Access Tokens, and provider secrets | Keychain |
 
 Secrets are never rendered by `config show` or included in `config export`.
@@ -34,19 +34,19 @@ shell_enabled = false
 id = "chatgpt-observe"
 mode = "read-only"
 confirmation_policy = "risk-based"
-capabilities = ["workspace.list", "workspace.describe", "file.read"]
-workspaces = ["primary"]
+capabilities = ["project.list", "project.describe", "file.read"]
+projects = ["primary"]
 allowed_callers = ["secure-tunnel"]
 
-[[workspaces]]
+[[projects]]
 id = "primary"
-display_name = "Primary Workspace"
+display_name = "Primary Project"
 
 [builtin]
-enabled = ["workspace.info", "system.time", "file.list", "file.read"]
+enabled = ["project.info", "system.time", "file.list", "file.read"]
 ```
 
-An App-managed workspace omits `path`; the App resolves its bookmark. In an
+An App-managed project omits `path`; the App resolves its bookmark. In an
 explicit standalone manifest, a relative path resolves from the directory
 containing the TOML file.
 
@@ -62,32 +62,32 @@ Caller kinds are `secure-tunnel`, `cloudflare-tunnel`, `local-app`,
 - `local-admin`
 
 Third parties may define another validated ID with explicit capabilities,
-workspaces, and callers:
+projects, and callers:
 
 ```toml
 [[profiles]]
 id = "partner-observe"
 mode = "read-only"
 confirmation_policy = "risk-based"
-capabilities = ["workspace.list", "system.time"]
-workspaces = ["primary"]
+capabilities = ["project.list", "system.time"]
+projects = ["primary"]
 allowed_callers = ["cloudflare-tunnel"]
 full_shell_enabled = false
 ```
 
 Profile names do not select permission modes. `local-admin` remains a reserved
-local-only admission identity. Modes are `read-only`, `workspace-operations`
+local-only admission identity. Modes are `read-only`, `project-operations`
 and `local-full-access`. The first permits only host-classified reads; the
 second permits explicitly granted typed writes; the third also permits
 separately enabled arbitrary execution. Full Shell requires
 `full_shell_enabled = true` and static `policy.shell_enabled = true` in addition
-to `local-full-access`. Mode alone never grants a tool, workspace or caller.
+to `local-full-access`. Mode alone never grants a tool, project or caller.
 
 Confirmation policies are `risk-based` (destructive, external-write and
 arbitrary-execution risks), `all-writes`, and `never`. The default for new
 grants is read-only with risk-based confirmation and no implicit caller or
-workspace access. `capabilities = ["*"]` does not grant workspaces;
-`workspaces = ["*"]` explicitly grants all registered workspaces.
+project access. `capabilities = ["*"]` does not grant projects;
+`projects = ["*"]` explicitly grants all registered projects.
 
 Manifests without a mode decode their former risk ceiling and built-in caller
 defaults to preserve existing authorization. Existing database grants at
@@ -99,16 +99,16 @@ without restarting unrelated transports. Export writes explicit mode and
 confirmation policy fields.
 
 `mcp_servers` grants the named registrations' MCP surface, intersected with each
-registration's host tool selection and the profile's risk/workspace boundaries:
+registration's host tool selection and the profile's risk/project boundaries:
 
 ```toml
 [[profiles]]
 id = "chatgpt-operate"
-mode = "workspace-operations"
+mode = "project-operations"
 confirmation_policy = "risk-based"
 allowed_callers = ["secure-tunnel"]
 mcp_servers = ["design"]
-workspaces = ["primary"]
+projects = ["primary"]
 ```
 
 The IDs must reference configured MCP registrations and must be unique. This
@@ -189,7 +189,7 @@ Export is secret-free. Import accepts only the current schema, validates the
 candidate, and returns a structural diff before applying. Apply uses the
 current digest to prevent races and never changes the desired state of a
 transport. `config show` preserves the active static manifest. `config export`
-constructs its workspace and profile sections from the current App-managed
+constructs its project and profile sections from the current App-managed
 registrations and grants.
 
 ## Provider examples
@@ -207,9 +207,9 @@ CLI providers support a mechanical argv contract:
 [[cli.commands]]
 id = "git"
 executable = "git"
-cwd = "workspace"
+cwd = "project"
 allow_any_args = true
-risk = "workspace-write-capable"
+risk = "project-write-capable"
 discovery = ["help"]
 
 [cli.commands.interface]
@@ -254,7 +254,7 @@ server's explicit whitelist when decoded, and export retains that selection.
 Explicit selection fields take precedence over mappings.
 
 `tool_risks` contains host classifications, independent of tool selection.
-Values are `read-only`, `workspace-write`, `external-write`, `destructive`, or
+Values are `read-only`, `project-write`, `external-write`, `destructive`, or
 `full-shell`. Unclassified downstream tools have `external-write` risk even
 when their MCP annotations claim read-only behavior. A configured MCP mapping's
 `risk` applies to the same underlying tool across aliases and reexports;
@@ -344,8 +344,32 @@ access_token_env = "COMPUTER_MCP_HTTP_ACCESS_TOKEN"
 
 ## Delivery scopes
 
-`[[delivery.scopes]]` declares isolated repository edits for one registered workspace.
+`[[delivery.scopes]]` declares isolated repository edits for one registered project.
 It is part of both the App-managed and standalone manifests, with unique IDs,
 relative repository/worktree paths, path globs, a default branch, optional sparse
 checkout and `land` or `commit-only` mode. See [Isolated delivery](Delivery.md#configuration)
 for the complete shape, defaults and validation.
+
+## Project terminology upgrade
+
+The App opens and migrates its database before opening its managed TOML manifest.
+The database migration renames project tables, columns and indexes in one
+transaction, translates live profile tool IDs and permission modes, and updates
+both grants in saved client trust snapshots and host-owned plugin tool risks. Project IDs and authorization
+revisions stay stable. Unfinished operation tickets keep their input digests; a
+changed descriptor fails the existing digest check and requires a fresh preparation.
+Audit values, configuration revision contents, completed
+operation tickets, execution receipts and deduplication receipt payloads retain
+their recorded values. Plugin ownership payloads and receipt digests are stable.
+
+On opening an App-managed manifest, the App translates schema-owned project
+names and values, validates the staged candidate, then uses the manifest file
+transaction to activate a new configuration revision. IDs, paths, command
+arguments and plugin parameters are opaque. Unchanged manifests produce no
+revision. Validation or commit failure preserves the original file; the journal
+recovers interrupted file publication. Database and manifest upgrades are separate
+atomic operations: if the database succeeds and the manifest fails, startup
+reports the failure and the next startup retries the manifest upgrade.
+
+Standalone `--config` files remain user-owned. Old names fail validation with
+the corresponding new names; the host never rewrites these files.

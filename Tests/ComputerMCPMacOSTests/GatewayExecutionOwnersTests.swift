@@ -9,15 +9,15 @@ import Testing
 @Suite
 struct GatewayExecutionOwnersTests {
   @Test
-  func locatorRejectsUnknownFieldsInvalidIdentifiersAndUnboundedWorkspace() throws {
+  func locatorRejectsUnknownFieldsInvalidIdentifiersAndUnboundedProject() throws {
     let owner = GatewayOwnerSelection(
-      runtimeID: UUID(), workspaceID: "workspace", ownershipID: UUID())
+      runtimeID: UUID(), projectID: "project", ownershipID: UUID())
     #expect(try GatewayOwnerSelection(owner.json) == owner)
     let object = try #require(owner.json.objectValue)
     for (key, value): (String, JSONValue) in [
       ("runtime_id", .string("invalid")), ("ownership_id", .integer(1)),
-      ("workspace_id", .string("")), ("workspace_id", .string("line\nbreak")),
-      ("workspace_id", .string(String(repeating: "x", count: 1_025))),
+      ("project_id", .string("")), ("project_id", .string("line\nbreak")),
+      ("project_id", .string(String(repeating: "x", count: 1_025))),
       ("permission", .string("full-access")),
     ] {
       var invalid = object
@@ -31,15 +31,15 @@ struct GatewayExecutionOwnersTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let workspace = RegisteredWorkspace(id: "root", displayName: "Root", rootPath: root.path)
+    let project = RegisteredProject(id: "root", displayName: "Root", rootPath: root.path)
     let database = try GatewayDatabase(inMemory: ())
-    try database.saveWorkspace(workspace)
+    try database.saveProject(project)
     let configuration = GatewayConfiguration(
       policy: .init(shellEnabled: true),
       profiles: [GatewayProfileID.localAdmin, .chatGPTOperate].map {
         ProfileGrantConfig(
           id: $0, capabilities: ["runtime.owners.list", "runtime.owners.call"],
-          workspaces: ["root"], allowedCallers: [.localMCP, .localCLI],
+          projects: ["root"], allowedCallers: [.localMCP, .localCLI],
           fullShellEnabled: true, mode: .localFullAccess, confirmationPolicy: .never)
       })
     for profile in configuration.profiles { try database.saveProfile(profile.grant) }
@@ -59,7 +59,7 @@ struct GatewayExecutionOwnersTests {
         runtimes.append(
           try await GatewayRuntime.make(
             configuration: configuration, context: context, database: database,
-            registeredWorkspaces: [workspace], platform: MacOSPlatform.services,
+            registeredProjects: [project], platform: MacOSPlatform.services,
             bundledPlugins: .init(packages: [], issues: [])))
       }
       let current = try #require(runtimes.first)
@@ -67,18 +67,18 @@ struct GatewayExecutionOwnersTests {
       for (index, runtime) in runtimes.enumerated() {
         for _ in 0..<(index < 2 ? 60 : 1) {
           let lease = runtime.ownedWork.retain(
-            .shell, workspaceID: "root",
+            .shell, projectID: "root",
             resourceID: String(repeating: "x", count: 4_096))
           leases.append(lease)
           if index < 2 { expected.insert(lease.id) }
         }
         leases.append(
-          runtime.ownedWork.retain(.invocation, workspaceID: "root", resourceID: "private"))
+          runtime.ownedWork.retain(.invocation, projectID: "root", resourceID: "private"))
         leases.append(
-          runtime.ownedWork.retain(.shell, workspaceID: "foreign", resourceID: "private"))
+          runtime.ownedWork.retain(.shell, projectID: "foreign", resourceID: "private"))
         leases.append(
           runtime.ownedWork.retain(
-            .mcpResource, workspaceID: "root",
+            .mcpResource, projectID: "root",
             registrationID: "ungranted", resourceID: "private"))
       }
       try await GatewayOwnerRouting.$runtimes.withValue(runtimes) {
@@ -86,13 +86,13 @@ struct GatewayExecutionOwnersTests {
           #expect(throws: GatewayToolError.self) {
             try current.callTool(
               name: "runtime.owners.list",
-              arguments: .object(["workspace_id": .string("root")]), context: foreign,
+              arguments: .object(["project_id": .string("root")]), context: foreign,
               invocationContext: .empty)
           }
         }
         func page(_ extra: [String: JSONValue] = [:]) throws -> [String: JSONValue] {
           var arguments = extra
-          arguments["workspace_id"] = .string("root")
+          arguments["project_id"] = .string("root")
           let result = try current.callTool(
             name: "runtime.owners.list", arguments: .object(arguments), context: .empty)
           return try #require(
@@ -133,12 +133,12 @@ struct GatewayExecutionOwnersTests {
         try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
         #expect(try page()["owners"] == .array([]))
         let foreignOwner = GatewayOwnerSelection(
-          runtimeID: runtimes[2].generationID, workspaceID: "root",
+          runtimeID: runtimes[2].generationID, projectID: "root",
           ownershipID: try #require(leases.last).id)
         let rejected = try await current.callToolForMCPAsync(
           name: "runtime.owners.call",
           arguments: .object([
-            "workspace_id": .string("root"), "owner": foreignOwner.json,
+            "project_id": .string("root"), "owner": foreignOwner.json,
             "tool": .string("shell.read"),
             "arguments": .object(["session_id": .string("private")]),
           ]), context: .empty)

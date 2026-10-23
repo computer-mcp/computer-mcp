@@ -17,7 +17,7 @@ struct CLITreeGatewayTests {
     defer { fixture.cleanup() }
     try fixture.write(Self.tree(Self.printCommand()))
     var configuration = GatewayConfiguration()
-    configuration.workspaceDirectory = fixture.root
+    configuration.projectDirectory = fixture.root
     configuration.cli.commands = [
       .init(
         id: "printf", executable: "/usr/bin/printf", allowAnyArgs: false,
@@ -102,20 +102,20 @@ struct CLITreeGatewayTests {
       dependencyExecutables: ["printf": URL(fileURLWithPath: "/usr/bin/printf")],
       hostVersion: PluginVersion("1.0.29"), architecture: "arm64")
     #expect(plugin.cliCommands.first?.tree?.packageRoot == package.root)
-    let workspaces = [
-      RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
+    let projects = [
+      RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
     ]
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin),
       // This fixture compares registration routes without a persistence or approval service.
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
+          id: .localAdmin, capabilities: ["*"], projects: ["fixture"],
           allowedCallers: [.localCLI], fullShellEnabled: true,
           mode: .localFullAccess, confirmationPolicy: .never)
       ])
     let runtime = try GatewayRuntime(
-      configuration: configuration, registeredWorkspaces: workspaces,
+      configuration: configuration, registeredProjects: projects,
       platform: MacOSPlatform.services, plugins: [plugin])
     let tool = try #require(runtime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
     let result = try await runtime.callToolAsync(
@@ -131,7 +131,7 @@ struct CLITreeGatewayTests {
         tree: .init(kind: .file, path: fixture.treeURL.path))
     ]
     let directRuntime = try GatewayRuntime(
-      configuration: direct, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
+      configuration: direct, registeredProjects: projects, platform: MacOSPlatform.services,
       plugins: [])
     let directTool = try #require(
       directRuntime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
@@ -139,7 +139,7 @@ struct CLITreeGatewayTests {
     await directRuntime.shutdown()
     let observeContext = ExecutionContext(caller: .secureTunnel, profileID: .chatGPTObserve)
     let observe = try GatewayRuntime(
-      configuration: direct, context: observeContext, registeredWorkspaces: workspaces,
+      configuration: direct, context: observeContext, registeredProjects: projects,
       platform: MacOSPlatform.services, plugins: [])
     #expect(try !observe.listTools(context: .empty).contains { $0.name == tool.name })
     await #expect(throws: (any Error).self) {

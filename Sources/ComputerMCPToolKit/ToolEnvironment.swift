@@ -4,10 +4,10 @@ import ComputerMCPPlatform
 import ComputerMCPProcess
 import Foundation
 
-/// Workspace-owned inputs shared by tool providers. The host owns runtime shutdown.
+/// Project-owned inputs shared by tool providers. The host owns runtime shutdown.
 package struct ToolEnvironment: Sendable {
   package let configuration: GatewayConfiguration
-  package let workspaceScope: WorkspaceScope
+  package let projectScope: ProjectScope
   package let registeredCommands: RegisteredCommands
   package let commandRunner: any CommandRunning
   package let environment: [String: String]
@@ -15,7 +15,7 @@ package struct ToolEnvironment: Sendable {
   package let shellManager: any ShellManaging
   package let extendedAttributes: (any ExtendedAttributes)?
   package let fileTrasher: (any FileTrashing)?
-  package let workspaceOpener: (any WorkspaceOpener)?
+  package let projectOpener: (any ProjectOpener)?
   package let systemProbe: (any SystemProbe)?
   package let mediaInspector: (any MediaInspector)?
 
@@ -30,14 +30,14 @@ package struct ToolEnvironment: Sendable {
     builtinExecutables: [String: String] = [:],
     extendedAttributes: (any ExtendedAttributes)? = nil,
     fileTrasher: (any FileTrashing)? = nil,
-    workspaceOpener: (any WorkspaceOpener)? = nil,
+    projectOpener: (any ProjectOpener)? = nil,
     systemProbe: (any SystemProbe)? = nil
   ) {
     self.configuration = configuration
     let toolMeta: JSONValue? =
       configuration.server.http.accessTokenEnv == nil
       ? .object(["securitySchemes": .array([.object(["type": .string("noauth")])])]) : nil
-    self.workspaceScope = WorkspaceScope(configuration: configuration, toolMeta: toolMeta)
+    self.projectScope = ProjectScope(configuration: configuration, toolMeta: toolMeta)
     let commandRunner = commandRunner ?? ProcessCommandRunner(environment: environment)
     self.commandRunner = commandRunner
     self.registeredCommands = RegisteredCommands(
@@ -50,6 +50,6 @@ package struct ToolEnvironment: Sendable {
     self.mediaInspector = mediaInspector
     self.extendedAttributes = extendedAttributes
     self.fileTrasher = fileTrasher
-    self.workspaceOpener = workspaceOpener
+    self.projectOpener = projectOpener
   }
 }

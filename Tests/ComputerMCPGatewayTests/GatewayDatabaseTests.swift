@@ -20,7 +20,7 @@ import Testing
 
 final class GatewayDatabaseTests {
   @Test(arguments: [false, true], [false, true])
-  func workspaceMutationsPublishOnlyCommittedAuthorization(rollback: Bool, removing: Bool)
+  func projectMutationsPublishOnlyCommittedAuthorization(rollback: Bool, removing: Bool)
     async throws
   {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -30,21 +30,21 @@ final class GatewayDatabaseTests {
     let stream = try { () -> AsyncStream<Void> in
       let database = try GatewayDatabase(path: path)
       for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
-        try database.saveWorkspace(
-          RegisteredWorkspace(
+        try database.saveProject(
+          RegisteredProject(
             id: id, displayName: "Shared", rootPath: root.path,
             createdAt: Date(timeIntervalSince1970: date)))
       }
       if removing {
-        let plan = try database.workspaceDeduplicationPlan()
-        _ = try database.applyWorkspaceDeduplication(
+        let plan = try database.projectDeduplicationPlan()
+        _ = try database.applyProjectDeduplication(
           expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
       }
       var profile = ProfileGrant.operate
-      profile.workspaceIDs = ["duplicate"]
+      profile.projectIDs = ["duplicate"]
       try database.saveProfile(profile)
       let before = try database.configurationState()
-      let plan = try database.workspaceDeduplicationPlan()
+      let plan = try database.projectDeduplicationPlan()
       let pending = OperationTicket(
         id: "pending", capabilityID: "file.trash", caller: .secureTunnel,
         profileID: profile.id, inputDigest: "fixture", state: .approved,
@@ -56,7 +56,7 @@ final class GatewayDatabaseTests {
       if rollback {
         try connection.write {
           let operation =
-            removing ? "DELETE ON workspaces" : "INSERT ON workspaceDeduplicationReceipts"
+            removing ? "DELETE ON projects" : "INSERT ON projectDeduplicationReceipts"
           try $0.execute(
             sql: """
               CREATE TRIGGER refuse_mutation BEFORE \(operation)
@@ -67,9 +67,9 @@ final class GatewayDatabaseTests {
       let stream = database.profileChanges(for: profile.id)
       do {
         if removing {
-          try database.removeWorkspace(id: "duplicate", expectedConfiguration: before)
+          try database.removeProject(id: "duplicate", expectedConfiguration: before)
         } else {
-          _ = try database.applyWorkspaceDeduplication(
+          _ = try database.applyProjectDeduplication(
             expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
         }
         #expect(!rollback)
@@ -80,12 +80,12 @@ final class GatewayDatabaseTests {
         #expect(try database.configurationState() == before)
         #expect(try database.operationTicket(id: "pending") == ticket)
       } else {
-        #expect(try database.profiles().first?.workspaceIDs == (removing ? [] : ["canonical"]))
+        #expect(try database.profiles().first?.projectIDs == (removing ? [] : ["canonical"]))
         #expect(try database.operationTicket(id: "pending")?.state == .denied)
-        #expect(try database.workspaces().map(\.id) == (removing ? [] : ["canonical"]))
+        #expect(try database.projects().map(\.id) == (removing ? [] : ["canonical"]))
       }
       let receipts = try connection.read {
-        try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM workspaceDeduplicationReceipts")
+        try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM projectDeduplicationReceipts")
       }
       #expect(receipts == (rollback && !removing ? 0 : 1))
       return stream
@@ -97,27 +97,27 @@ final class GatewayDatabaseTests {
   }
 
   @Test(arguments: [false, true], ["profile", "bookmark", "plugin"])
-  func workspaceTransactionsRejectChangedPreparationInputs(removing: Bool, change: String) throws {
+  func projectTransactionsRejectChangedPreparationInputs(removing: Bool, change: String) throws {
     let database = try GatewayDatabase(inMemory: ())
     for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
-      try database.saveWorkspace(
-        RegisteredWorkspace(
-          id: id, displayName: "Shared", rootPath: "/tmp/shared-workspace",
+      try database.saveProject(
+        RegisteredProject(
+          id: id, displayName: "Shared", rootPath: "/tmp/shared-project",
           createdAt: Date(timeIntervalSince1970: date)))
     }
     var profile = ProfileGrant.operate
-    profile.workspaceIDs = ["duplicate"]
+    profile.projectIDs = ["duplicate"]
     try database.saveProfile(profile)
     let expected = try database.configurationState()
-    let plan = try database.workspaceDeduplicationPlan()
+    let plan = try database.projectDeduplicationPlan()
     switch change {
     case "profile":
-      profile.capabilityIDs = ["workspace.list"]
+      profile.capabilityIDs = ["project.list"]
       try database.saveProfile(profile)
     case "bookmark":
-      var workspace = try #require(try database.workspace(id: "canonical"))
-      workspace.bookmarkData = Data([1, 2, 3])
-      try database.saveWorkspace(workspace)
+      var project = try #require(try database.project(id: "canonical"))
+      project.bookmarkData = Data([1, 2, 3])
+      try database.saveProject(project)
     default:
       var plugins = expected.plugins
       plugins.revision += 1
@@ -126,9 +126,9 @@ final class GatewayDatabaseTests {
     let changed = try database.configurationState()
     #expect(throws: GatewayDatabaseError.configurationChanged) {
       if removing {
-        try database.removeWorkspace(id: "duplicate", expectedConfiguration: expected)
+        try database.removeProject(id: "duplicate", expectedConfiguration: expected)
       } else {
-        _ = try database.applyWorkspaceDeduplication(
+        _ = try database.applyProjectDeduplication(
           expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false,
           expectedConfiguration: expected)
       }
@@ -144,46 +144,46 @@ final class GatewayDatabaseTests {
     let path = root.appendingPathComponent("state.sqlite").path
     let database = try GatewayDatabase(path: path)
     for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
-      try database.saveWorkspace(
-        RegisteredWorkspace(
+      try database.saveProject(
+        RegisteredProject(
           id: id, displayName: "Shared", rootPath: root.path,
           createdAt: Date(timeIntervalSince1970: date)))
     }
-    let plan = try database.workspaceDeduplicationPlan()
-    _ = try database.applyWorkspaceDeduplication(
+    let plan = try database.projectDeduplicationPlan()
+    _ = try database.applyProjectDeduplication(
       expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
     let connection = try DatabaseQueue(path: path)
     defer { try? connection.close() }
     try connection.write {
-      try $0.execute(sql: "UPDATE workspaceCanonicalRoots SET workspaceID = 'duplicate'")
+      try $0.execute(sql: "UPDATE projectCanonicalRoots SET projectID = 'duplicate'")
     }
-    let existing = try database.registerWorkspaceIdempotently(
-      RegisteredWorkspace(displayName: "Shared", rootPath: root.path))
+    let existing = try database.registerProjectIdempotently(
+      RegisteredProject(displayName: "Shared", rootPath: root.path))
     #expect(!existing.created)
-    #expect(existing.workspace.id == "canonical")
-    var moved = existing.workspace
+    #expect(existing.project.id == "canonical")
+    var moved = existing.project
     moved.rootPath = root.appendingPathComponent("moved").path
-    try database.saveWorkspace(moved)
-    let replacement = try database.registerWorkspaceIdempotently(
-      RegisteredWorkspace(id: "replacement", displayName: "New", rootPath: root.path))
+    try database.saveProject(moved)
+    let replacement = try database.registerProjectIdempotently(
+      RegisteredProject(id: "replacement", displayName: "New", rootPath: root.path))
     #expect(replacement.created)
-    #expect(replacement.workspace.id == "replacement")
-    #expect(try database.workspace(id: "duplicate")?.rootPath == moved.rootPath)
+    #expect(replacement.project.id == "replacement")
+    #expect(try database.project(id: "duplicate")?.rootPath == moved.rootPath)
   }
 
   @Test
-  func workspaceDeduplicationRevokesTicketsOnceAndPreservesCanonicalRegistration() throws {
+  func projectDeduplicationRevokesTicketsOnceAndPreservesCanonicalRegistration() throws {
     let database = try GatewayDatabase(inMemory: ())
     for id in ["a", "b"] {
       for (suffix, date) in [("duplicate", 2.0), ("canonical", 1.0)] {
-        try database.saveWorkspace(
-          RegisteredWorkspace(
+        try database.saveProject(
+          RegisteredProject(
             id: "\(id)-\(suffix)", displayName: id, rootPath: "/tmp/dedup-\(id)",
             createdAt: Date(timeIntervalSince1970: date)))
       }
     }
     var profile = ProfileGrant.operate
-    profile.workspaceIDs = ["a-duplicate", "b-duplicate", "unrelated"]
+    profile.projectIDs = ["a-duplicate", "b-duplicate", "unrelated"]
     try database.saveProfile(profile)
     let before = try #require(try database.profiles().first)
     let states: [OperationTicketState] = [
@@ -193,7 +193,7 @@ final class GatewayDatabaseTests {
       try database.saveOperationTicket(
         OperationTicket(
           id: state.rawValue, capabilityID: "file.trash", caller: .secureTunnel,
-          profileID: profile.id, workspaceID: "a-duplicate", inputDigest: "fixture",
+          profileID: profile.id, projectID: "a-duplicate", inputDigest: "fixture",
           state: state, expiresAt: Date().addingTimeInterval(60),
           authorizationRevision: before.authorizationRevision))
     }
@@ -202,12 +202,12 @@ final class GatewayDatabaseTests {
         id: "other-profile", capabilityID: "file.trash", caller: .secureTunnel,
         profileID: .chatGPTObserve, inputDigest: "fixture", state: .approved,
         expiresAt: Date().addingTimeInterval(60)))
-    let plan = try database.workspaceDeduplicationPlan()
-    let result = try database.applyWorkspaceDeduplication(
+    let plan = try database.projectDeduplicationPlan()
+    let result = try database.applyProjectDeduplication(
       expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
     let saved = try #require(try database.profiles().first)
     #expect(saved.authorizationRevision == before.authorizationRevision + 1)
-    #expect(saved.workspaceIDs == ["a-canonical", "b-canonical", "unrelated"])
+    #expect(saved.projectIDs == ["a-canonical", "b-canonical", "unrelated"])
     #expect(result.updatedProfileIDs == [profile.id.rawValue])
     for state in states {
       let ticket = try #require(try database.operationTicket(id: state.rawValue))
@@ -220,24 +220,24 @@ final class GatewayDatabaseTests {
     }
     #expect(try database.operationTicket(id: "other-profile")?.state == .approved)
     for id in ["a", "b"] {
-      let registration = try database.registerWorkspaceIdempotently(
-        RegisteredWorkspace(displayName: id, rootPath: "/tmp/dedup-\(id)"))
+      let registration = try database.registerProjectIdempotently(
+        RegisteredProject(displayName: id, rootPath: "/tmp/dedup-\(id)"))
       #expect(!registration.created)
-      #expect(registration.workspace.id == "\(id)-canonical")
+      #expect(registration.project.id == "\(id)-canonical")
     }
   }
 
   @Test
   func configurationSnapshotAllowsUnrelatedRuntimeEvidenceDuringCommit() throws {
     let database = try GatewayDatabase(inMemory: ())
-    try database.saveWorkspace(
-      RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: "/tmp/fixture"))
+    try database.saveProject(
+      RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: "/tmp/fixture"))
     try database.saveProfile(
       ProfileGrant(
-        id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: ["fixture"],
+        id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: ["fixture"],
         allowedCallers: [.localCLI]))
     let expected = try database.configurationState()
-    #expect(try expected.workspaces == database.workspaces())
+    #expect(try expected.projects == database.projects())
     #expect(try expected.profiles == database.profiles())
     #expect(try expected.plugins == database.pluginStoreSnapshot())
     try database.saveProviderState(
@@ -248,7 +248,7 @@ final class GatewayDatabaseTests {
     try database.savePluginStoreSnapshot(
       next, expectedRevision: expected.plugins.revision, expectedConfiguration: expected)
     #expect(try database.pluginStoreSnapshot() == next)
-    #expect(try database.workspaces() == expected.workspaces)
+    #expect(try database.projects() == expected.projects)
     #expect(try database.profiles() == expected.profiles)
     #expect(try database.providerStates().count == 1)
   }
@@ -256,11 +256,11 @@ final class GatewayDatabaseTests {
   @Test(arguments: ["unchanged", "edited", "deleted"])
   func bookmarkRefreshPreservesConcurrentRegistrationChanges(change: String) throws {
     let database = try GatewayDatabase(inMemory: ())
-    try database.saveWorkspace(
-      RegisteredWorkspace(
+    try database.saveProject(
+      RegisteredProject(
         id: "fixture", displayName: "Fixture", rootPath: "/tmp/bookmark-original",
         bookmarkData: Data([1]), bookmarkIsStale: true))
-    let original = try #require(try database.workspace(id: "fixture"))
+    let original = try #require(try database.project(id: "fixture"))
     var refreshed = original
     refreshed.bookmarkData = Data([2])
     refreshed.bookmarkIsStale = false
@@ -268,18 +268,18 @@ final class GatewayDatabaseTests {
     if change == "edited" {
       var edited = original
       edited.displayName = "Owner edit"
-      try database.saveWorkspace(edited)
+      try database.saveProject(edited)
     } else if change == "deleted" {
-      try database.deleteWorkspace(id: original.id)
+      try database.deleteProject(id: original.id)
     }
-    let before = try database.workspace(id: original.id)
-    #expect(try database.saveWorkspace(refreshed, replacing: original) == (change == "unchanged"))
-    #expect(try database.workspace(id: original.id) == (change == "unchanged" ? refreshed : before))
+    let before = try database.project(id: original.id)
+    #expect(try database.saveProject(refreshed, replacing: original) == (change == "unchanged"))
+    #expect(try database.project(id: original.id) == (change == "unchanged" ? refreshed : before))
     if change == "unchanged" {
-      let registration = try database.registerWorkspaceIdempotently(
-        RegisteredWorkspace(displayName: "Alias", rootPath: refreshed.rootPath))
+      let registration = try database.registerProjectIdempotently(
+        RegisteredProject(displayName: "Alias", rootPath: refreshed.rootPath))
       #expect(!registration.created)
-      #expect(registration.workspace.id == original.id)
+      #expect(registration.project.id == original.id)
     }
   }
 
@@ -290,23 +290,23 @@ final class GatewayDatabaseTests {
   }
 
   @Test
-  func testPersistsWorkspacesProfilesProvidersAndAuditWithoutPayloadContent() throws {
+  func testPersistsProjectsProfilesProvidersAndAuditWithoutPayloadContent() throws {
     let database = try GatewayDatabase(inMemory: ())
     let timestamp = Date(timeIntervalSince1970: 1_000)
-    let workspace = RegisteredWorkspace(
-      id: "workspace-1",
+    let project = RegisteredProject(
+      id: "project-1",
       displayName: "Example",
       rootPath: "/tmp/example",
       bookmarkData: Data([1, 2, 3]),
       createdAt: timestamp,
       updatedAt: timestamp
     )
-    try database.saveWorkspace(workspace)
+    try database.saveProject(project)
 
     let profile = ProfileGrant(
       id: .localAdmin,
       capabilityIDs: ["file.write", "shell.run"],
-      workspaceIDs: [workspace.id],
+      projectIDs: [project.id],
       allowedCallers: [],
       fullShellEnabled: true,
       mcpServerIDs: ["sample-mcp"],
@@ -334,7 +334,7 @@ final class GatewayDatabaseTests {
       tunnelInstanceID: "tunnel-instance-1",
       tunnelProfileID: "computer-mcp",
       profileID: .chatGPTOperate,
-      workspaceID: workspace.id,
+      projectID: project.id,
       capabilityID: "file.write",
       decision: .allowed,
       inputDigest: "sha256:input",
@@ -343,125 +343,125 @@ final class GatewayDatabaseTests {
     )
     try database.recordAudit(audit)
 
-    #expect((try database.workspaces()) == ([workspace]))
+    #expect((try database.projects()) == ([project]))
     #expect((try database.profiles()) == ([profile]))
     #expect((try database.providerStates()) == ([provider]))
     #expect((try database.auditEvents()) == ([audit]))
   }
 
   @Test
-  func testWorkspaceDeduplicationPreviewIsNonMutating() throws {
+  func testProjectDeduplicationPreviewIsNonMutating() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let canonical = RegisteredWorkspace(
-      id: "workspace-canonical",
-      displayName: "Shared Workspace",
-      rootPath: "/tmp/shared-workspace",
+    let canonical = RegisteredProject(
+      id: "project-canonical",
+      displayName: "Shared Project",
+      rootPath: "/tmp/shared-project",
       createdAt: Date(timeIntervalSince1970: 1),
       updatedAt: Date(timeIntervalSince1970: 1)
     )
-    let duplicate = RegisteredWorkspace(
-      id: "workspace-duplicate",
-      displayName: "Shared Workspace",
+    let duplicate = RegisteredProject(
+      id: "project-duplicate",
+      displayName: "Shared Project",
       rootPath: canonical.rootPath,
       createdAt: Date(timeIntervalSince1970: 2),
       updatedAt: Date(timeIntervalSince1970: 2)
     )
-    try database.saveWorkspace(canonical)
-    try database.saveWorkspace(duplicate)
+    try database.saveProject(canonical)
+    try database.saveProject(duplicate)
 
-    let before = try database.workspaces()
-    let first = try database.workspaceDeduplicationPlan()
-    let second = try database.workspaceDeduplicationPlan()
+    let before = try database.projects()
+    let first = try database.projectDeduplicationPlan()
+    let second = try database.projectDeduplicationPlan()
 
     #expect(first == second)
     #expect(first.groups.count == 1)
     #expect(first.duplicateCount == 1)
-    #expect(first.groups.first?.canonicalWorkspaceID == canonical.id)
-    #expect(first.groups.first?.duplicateWorkspaceIDs == [duplicate.id])
-    #expect(try database.workspaces() == before)
-    #expect(try database.workspace(id: duplicate.id)?.id == duplicate.id)
+    #expect(first.groups.first?.canonicalProjectID == canonical.id)
+    #expect(first.groups.first?.duplicateProjectIDs == [duplicate.id])
+    #expect(try database.projects() == before)
+    #expect(try database.project(id: duplicate.id)?.id == duplicate.id)
   }
 
   @Test
-  func testWorkspaceDeduplicationMigrationPreservesReferencesAndHistory() throws {
+  func testProjectDeduplicationMigrationPreservesReferencesAndHistory() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let canonical = RegisteredWorkspace(
-      id: "workspace-canonical",
-      displayName: "Shared Workspace",
-      rootPath: "/tmp/shared-workspace",
+    let canonical = RegisteredProject(
+      id: "project-canonical",
+      displayName: "Shared Project",
+      rootPath: "/tmp/shared-project",
       createdAt: Date(timeIntervalSince1970: 1),
       updatedAt: Date(timeIntervalSince1970: 1)
     )
-    let duplicate = RegisteredWorkspace(
-      id: "workspace-duplicate",
-      displayName: "Shared Workspace",
+    let duplicate = RegisteredProject(
+      id: "project-duplicate",
+      displayName: "Shared Project",
       rootPath: canonical.rootPath,
       createdAt: Date(timeIntervalSince1970: 2),
       updatedAt: Date(timeIntervalSince1970: 2)
     )
-    try database.saveWorkspace(canonical)
-    try database.saveWorkspace(duplicate)
+    try database.saveProject(canonical)
+    try database.saveProject(duplicate)
     var profile = ProfileGrant.operate
-    profile.workspaceIDs = [duplicate.id]
+    profile.projectIDs = [duplicate.id]
     try database.saveProfile(profile)
     let historicalAudit = AuditEvent(
-      id: "workspace-history",
+      id: "project-history",
       occurredAt: Date(timeIntervalSince1970: 3),
-      requestID: "workspace-history",
+      requestID: "project-history",
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
-      workspaceID: duplicate.id,
+      projectID: duplicate.id,
       capabilityID: "file.read",
       decision: .allowed
     )
     try database.recordAudit(historicalAudit)
-    let plan = try database.workspaceDeduplicationPlan()
+    let plan = try database.projectDeduplicationPlan()
 
-    let result = try database.applyWorkspaceDeduplication(
+    let result = try database.applyProjectDeduplication(
       expectedPlanDigest: plan.planDigest,
       allowMetadataConflicts: false,
       now: Date(timeIntervalSince1970: 4)
     )
 
-    #expect(result.canonicalWorkspaceIDs == [canonical.id])
-    #expect(result.aliasedWorkspaceIDs == [duplicate.id])
+    #expect(result.canonicalProjectIDs == [canonical.id])
+    #expect(result.aliasedProjectIDs == [duplicate.id])
     #expect(result.updatedProfileIDs == [GatewayProfileID.chatGPTOperate.rawValue])
-    let workspaceIDs = try database.workspaces().map(\.id)
-    let resolvedDuplicate = try database.workspace(id: duplicate.id)
+    let projectIDs = try database.projects().map(\.id)
+    let resolvedDuplicate = try database.project(id: duplicate.id)
     let storedProfile = try database.profiles().first
     let storedAudit = try database.auditEvent(requestID: historicalAudit.requestID)
-    let postApplyPlan = try database.workspaceDeduplicationPlan()
-    #expect(workspaceIDs == [canonical.id])
+    let postApplyPlan = try database.projectDeduplicationPlan()
+    #expect(projectIDs == [canonical.id])
     #expect(resolvedDuplicate?.id == canonical.id)
-    #expect(storedProfile?.workspaceIDs == [canonical.id])
+    #expect(storedProfile?.projectIDs == [canonical.id])
     #expect(storedAudit == historicalAudit)
     #expect(postApplyPlan.groups.isEmpty)
   }
 
   @Test
-  func testWorkspaceCanonicalRootBindingTracksAnUpdatedRegistration() throws {
+  func testProjectCanonicalRootBindingTracksAnUpdatedRegistration() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let original = RegisteredWorkspace(
-      id: "workspace-moving",
-      displayName: "Moving Workspace",
-      rootPath: "/tmp/workspace-original"
+    let original = RegisteredProject(
+      id: "project-moving",
+      displayName: "Moving Project",
+      rootPath: "/tmp/project-original"
     )
-    try database.saveWorkspace(original)
+    try database.saveProject(original)
     var moved = original
-    moved.rootPath = "/tmp/workspace-moved"
+    moved.rootPath = "/tmp/project-moved"
     moved.updatedAt = moved.updatedAt.addingTimeInterval(1)
-    try database.saveWorkspace(moved)
+    try database.saveProject(moved)
 
-    let replacement = RegisteredWorkspace(
-      id: "workspace-replacement",
-      displayName: "Replacement Workspace",
+    let replacement = RegisteredProject(
+      id: "project-replacement",
+      displayName: "Replacement Project",
       rootPath: original.rootPath
     )
-    let registration = try database.registerWorkspaceIdempotently(replacement)
+    let registration = try database.registerProjectIdempotently(replacement)
 
     #expect(registration.created)
-    #expect(registration.workspace.id == replacement.id)
-    #expect(try database.workspace(id: original.id)?.rootPath == moved.rootPath)
+    #expect(registration.project.id == replacement.id)
+    #expect(try database.project(id: original.id)?.rootPath == moved.rootPath)
   }
 
   @Test
@@ -473,7 +473,7 @@ final class GatewayDatabaseTests {
       capabilityID: "file.trash",
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
-      workspaceID: "workspace-1",
+      projectID: "project-1",
       inputDigest: "sha256:input",
       expiresAt: now.addingTimeInterval(30)
     )

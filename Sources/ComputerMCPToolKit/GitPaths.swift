@@ -7,14 +7,14 @@ package func optionalGitPaths(in object: [String: JSONValue]) throws -> [String]
       throw GatewayToolError.invalidArguments("paths must not contain empty strings.")
     }
     guard !path.hasPrefix("/") else {
-      throw GatewayToolError.invalidArguments("paths must be workspace-relative: \(path)")
+      throw GatewayToolError.invalidArguments("paths must be project-relative: \(path)")
     }
     guard !path.hasPrefix(":("), !path.hasPrefix(":/") else {
       throw GatewayToolError.invalidArguments("git pathspec magic is not supported: \(path)")
     }
     let components = path.split(separator: "/", omittingEmptySubsequences: false)
     guard !components.contains("..") else {
-      throw GatewayToolError.invalidArguments("paths must not escape workspace: \(path)")
+      throw GatewayToolError.invalidArguments("paths must not escape project: \(path)")
     }
   }
   return paths

@@ -26,7 +26,7 @@ struct MCPAuthorizationTests {
       configuration: GatewayConfiguration(
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
         mcp: .init(servers: [server])), database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, mcpClient: client)
     let arguments: JSONValue = .object([
       "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
@@ -87,7 +87,7 @@ struct MCPAuthorizationTests {
       configuration: GatewayConfiguration(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         mcp: .init(servers: [server])),
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, mcpClient: CatalogClient())
     #expect(
       try runtime.listTools(context: .empty).contains { $0.name == "remote.inspect" }
@@ -199,7 +199,7 @@ struct MCPAuthorizationTests {
     let decision = GatewayPolicyEvaluator().evaluate(
       capability: .init(id: "remote.inspect", risk: .externalWrite),
       context: .init(caller: caller, profileID: profileID), grant: grant,
-      registeredWorkspaceIDs: [])
+      registeredProjectIDs: [])
     #expect(
       decision
         == .deny(

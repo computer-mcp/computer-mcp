@@ -12,14 +12,14 @@ plugin's host-owned MCP settings use `"hostServices": true`; the App presents
 **Allow scoped host services**. Both default to false. HTTP registrations reject
 this option. Changing a package's manifest cannot enable it.
 
-Calls to these registrations require a workspace. With one registered workspace,
+Calls to these registrations require a project. With one registered project,
 the Gateway selects it automatically and still checks the caller's grant. With
-multiple workspaces, provide `workspace_id` or use a workspace-bound connection.
-For `mcp.tools.call`, `workspace_id` belongs in the outer Gateway arguments beside
+multiple projects, provide `project_id` or use a project-bound connection.
+For `mcp.tools.call`, `project_id` belongs in the outer Gateway arguments beside
 `server`, `tool` and `arguments`, not inside the downstream `arguments` object.
 
-Standalone manifest workspaces retain their configuration-owned scope even when
-the Gateway uses a database for audit or plugin state. Database-owned workspaces
+Standalone manifest projects retain their configuration-owned scope even when
+the Gateway uses a database for audit or plugin state. Database-owned projects
 are checked against their current registration on every callback; deleting or
 changing that registration revokes the original scope.
 The host supplies an authenticated authorization subject independently of
@@ -46,10 +46,10 @@ channel is not an OS sandbox for malicious plugin code.
 ## Tool execution and private services
 
 Ordinary callbacks use the Gateway's authenticated subject, current profile,
-caller and workspace. Connection IDs correlate requests, not authority. The
+caller and project. Connection IDs correlate requests, not authority. The
 host filters discovery against the live grant and reauthorizes
 execution. Aliases, nested policy/ticket targets and other callback-enabled MCP
-registrations cannot create a recursive route or widen the workspace.
+registrations cannot create a recursive route or widen the project.
 Risky tools keep the ordinary `operations.prepare` / local approval /
 `operations.commit` contract. The adapter cannot approve its own pending ticket.
 
@@ -74,7 +74,7 @@ cancellation delivery alone does not.
 | `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source profile grant atomically |
 | `host.workspaces.authorize_removal` | `worktree` | Check the live destructive operation ticket before removal |
 | `host.workspaces.unregister` | `worktree` | Remove the unchanged owned registration, or confirm an ownership-free no-op |
-| `host.diagnostics.snapshot` | `limit` | Read bounded host receipts for the verified subject/profile/workspace |
+| `host.diagnostics.snapshot` | `limit` | Read bounded host receipts for the verified subject/profile/project |
 
 These tools return `structuredContent.result`; rejected calls return `isError`
 and a bounded error. They do not accept caller-supplied identity, local approval authority
@@ -116,25 +116,25 @@ arguments match. This inspection contract carries no authority to start new
 work, approve operations or retain a background job after its downstream
 request has completed.
 
-## Derived workspaces and recovery
+## Derived projects and recovery
 
 The plugin owns Git and domain lease/plan records. The host independently
 checks the source repository, exact derived path, directory ownership, and Git
 common directory before adding registration authority. Its
-`pluginDerivedWorkspaces` ledger binds the receipt, source, publisher registration,
-verified principal, profile and workspace snapshot. Caller records remain
+`pluginDerivedProjects` ledger binds the receipt, source, publisher registration,
+verified principal, profile and project snapshot. Caller records remain
 provenance: the same principal can reconnect through another authorized channel.
 Receipts without a verified principal remain historical records and cannot be
-adopted or removed through a new caller. Workspace registration, canonical-path ownership
+adopted or removed through a new caller. Project registration, canonical-path ownership
 and the added profile grant commit in one transaction. Existing identities,
 pre-existing grants or independent path registrations are not adopted.
 
 Removal requires the exact executing outer operation ticket. The host refuses
 independent edits, aliases or grants held by another profile. It removes only
 its own unchanged registration and grant; filesystem removal remains with the
-plugin. A child lease is released through a child-workspace connection after
+plugin. A child lease is released through a child-project connection after
 that registration is available; an existing immutable Gateway runtime does not
-silently acquire a new workspace router.
+silently acquire a new project router.
 
 If Git removal succeeds but host metadata cleanup fails, the domain receipt
 remains `removing`, not `active`. Review it again with `remove.plan`, then use
@@ -152,7 +152,7 @@ advanced independently is not removed by the rollback's compare-and-delete.
 ## Diagnostic bounds
 
 Diagnostics report the immutable host subject and filter its verified digest,
-workspace and profile before applying `limit` (1–1000). The same subject can
+project and profile before applying `limit` (1–1000). The same subject can
 query its records after reconnecting; connection IDs only correlate individual
 calls. Historical records without a verified subject remain stored but are not
 exposed through this service. They return receipt identities and digests, not command bodies
@@ -174,10 +174,10 @@ The host recognizes these actions and imposes the corresponding minimum risk:
 | Action | Minimum risk | Arguments bound to the forwarded invocation |
 | --- | --- | --- |
 | `diagnostics.snapshot` | `read-only` | `limit` bounds the callback's requested count; omission means 100 |
-| `workspaces.provision` | `workspace-write` | `plan_id` equals the receipt ID, `expected_revision` is one below its provisioning revision, `confirm_provision` is true |
+| `workspaces.provision` | `project-write` | `plan_id` equals the receipt ID, `expected_revision` is one below its provisioning revision, `confirm_provision` is true |
 | `workspaces.remove` | `destructive` | `managed_worktree_id` and `expected_revision` match the reviewed receipt, `confirm_remove` is true; an executing host ticket is required |
 
-The declaration selects host validation; it grants no workspace or capability.
+The declaration selects host validation; it grants no project or capability.
 Unknown or malformed declarations fail closed. The host records the recognized
 action in its admitted capability before policy and consent, and exposes it as
 `host_action` in invocation inspection. Operation tickets bind that capability,
@@ -185,7 +185,7 @@ the exact arguments and provider identity. A changed action invalidates the
 binding even if its risk is unchanged, including during target admission after
 ticket consumption. Dispatch checks the current provider declaration again.
 Callbacks use the captured action without rediscovering a provider that may be
-waiting for the callback; current subject, profile and workspace access are
+waiting for the callback; current subject, profile and project access are
 still rechecked.
 
 Private callbacks require one matching active invocation on their inherited
@@ -195,7 +195,7 @@ but does not extend the active mutation window. Callback arguments cannot
 declare an action, impersonate another principal or supply an approval.
 
 Generic derived receipts use `derived-workspace-<lowercase-UUID>` as their
-workspace ID. The host also accepts the exact `codex-worktree-<lowercase-UUID>`
+project ID. The host also accepts the exact `codex-worktree-<lowercase-UUID>`
 format for compatible Codex receipts. Neither prefix conveys authority:
 registration origin, principal, source, exact receipt digest and Git identity
 remain mandatory. Persisted identities are never renamed during registration
@@ -210,3 +210,10 @@ smaller limit. The client bounds host calls to 30 seconds and joins shutdown
 on timeout or cancellation; uncertain mutations are not automatically replayed.
 The descriptor is closed on EOF/retirement, and ownership cleanup participates
 in the same retirement barrier as the managed process.
+
+Plugin launch metadata and private host services use stable wire names:
+`workspace`, `managedWorkspaceRoot`, `workspace_id` and `source_workspace_id`.
+The derived ownership payload uses `workspace` and `sourceWorkspaceID`; receipt
+hashes include `workspaceID` and `sourceWorkspaceID`. These names are part of the
+persistent plugin contract. Invocation inspection reports `workspace-write` for
+project write risk on this private interface.

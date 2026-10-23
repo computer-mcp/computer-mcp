@@ -557,7 +557,7 @@ final class MCPToolProviderTests {
         "arguments": .array([
           .object([
             "name": .string("path"),
-            "description": .string("Workspace path."),
+            "description": .string("Project path."),
             "required": .bool(true),
           ])
         ]),
@@ -769,7 +769,7 @@ final class MCPToolProviderTests {
           command: executable.path,
           args: ["--stdio"],
           env: ["LOCAL_MCP_TOKEN": "super-secret-local"],
-          cwd: "workspace"
+          cwd: "project"
         ),
         MCPServerConfig(
           id: "remote",

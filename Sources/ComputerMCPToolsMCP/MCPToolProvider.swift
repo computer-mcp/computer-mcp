@@ -10,7 +10,7 @@ package struct MCPToolProvider: GatewayToolProvider {
   let configuration: GatewayConfiguration
   let mcpClient: any DownstreamMCPClient
 
-  /// The composition root supplies a client scoped to this workspace and owns its shutdown.
+  /// The composition root supplies a client scoped to this project and owns its shutdown.
   package init(environment: ToolEnvironment, mcpClient: any DownstreamMCPClient) {
     self.environment = environment
     self.mcpClient = mcpClient
@@ -25,7 +25,7 @@ package struct MCPToolProvider: GatewayToolProvider {
 
   package func definitions() throws -> [ToolDefinition] {
     configuration.mcp.servers.isEmpty
-      ? [] : Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta)
+      ? [] : Self.toolDefinitions(toolMeta: environment.projectScope.toolMeta)
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {

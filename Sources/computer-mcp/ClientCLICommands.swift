@@ -112,7 +112,7 @@ struct Clients: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
       commandName: "allow", abstract: "Explicitly approve Full Access for one connection.",
       discussion:
-        "Full Access permits commands and access to files, processes, network and credentials available to your macOS user. A workspace is not a sandbox; macOS privacy permissions still apply. Standalone HTTP requires shell_enabled in its fixed configuration. The App safely enables the Shell facility when needed. Revisions are captured once when omitted; a stale request fails without retry."
+        "Full Access permits commands and access to files, processes, network and credentials available to your macOS user. A project is not a sandbox; macOS privacy permissions still apply. Standalone HTTP requires shell_enabled in its fixed configuration. The App safely enables the Shell facility when needed. Revisions are captured once when omitted; a stale request fails without retry."
     )
     @OptionGroup var selection: ClientSelectionOptions
     @Flag(name: .long, help: "Explicit consent to arbitrary execution as your macOS user.")

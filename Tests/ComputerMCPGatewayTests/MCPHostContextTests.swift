@@ -20,8 +20,8 @@ struct MCPHostContextTests {
     let hostContext = NonGatewayHostEnvironment(
       launchMetadata: .init(
         runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .chatGPTObserve),
-        workspaceID: "fixture", rootURL: root, readOnly: true),
-      workspaceRoot: root, processOwnershipRoot: storage)
+        projectID: "fixture", rootURL: root, readOnly: true),
+      projectRoot: root, processOwnershipRoot: storage)
     let client = MCPProxyClient()
     let scoped = client.makeScopedClient(
       workingDirectory: root, environment: [:], hostContext: hostContext)
@@ -54,11 +54,11 @@ struct MCPHostContextTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let storage = root.appendingPathComponent("ownership")
     let owner = try MCPProcessOwnership.acquire(
-      root: storage, workspace: root, registration: "owned")
+      root: storage, project: root, registration: "owned")
     try owner.finish(confirmed: false)
     let context = MCPHostContext(
       runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .chatGPTObserve),
-      workspaceID: "fixture", rootURL: root, readOnly: true)
+      projectID: "fixture", rootURL: root, readOnly: true)
     let client = MCPProxyClient(processOwnershipRoot: storage)
     let scoped = client.makeScopedClient(
       workingDirectory: root, environment: [:], hostContext: context)
@@ -91,7 +91,7 @@ struct MCPHostContextTests {
 
 private struct NonGatewayHostEnvironment: MCPHostEnvironment {
   let launchMetadata: MCPHostLaunchMetadata
-  let workspaceRoot: URL
+  let projectRoot: URL
   let processOwnershipRoot: URL?
   let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
   let providesHostServices = false

@@ -15,12 +15,12 @@ owner-only CLI ──┘                              └─ AppGatewayService
 ```
 
 `AppControlPlaneOperations` owns lifecycle-aware use cases: gateway start,
-stop, and restart; workspace registration/grants; profile activation and Full
+stop, and restart; project registration/grants; profile activation and Full
 Shell state; manifest activation/rollback; provider refresh; and Tunnel
 configuration/lifecycle. It preserves desired state, validates compatible
 Tunnel profiles, restarts an already-running gateway when required, reconnects
 desired Tunnels, and rolls profile changes back when activation fails. Managed
-manifest activation/rollback, manual MCP, plugin and workspace changes prepare
+manifest activation/rollback, manual MCP, plugin and project changes prepare
 candidate runtimes before committing their state and synchronously publishing
 routes. They preserve current connections and existing task owners; failed
 candidates leave the admitted configuration active.
@@ -72,7 +72,7 @@ The `computer-mcp` control CLI is not a registered remote `cli.exec` provider.
 Executing it from a Tunnel-originated gateway process would convert a remote
 profile into the owner-only `local-admin` identity. Restricted MCP clients use
 only their granted projects and capabilities. An explicitly approved Full Access
-session can manage workspaces and verified official plugins through typed tools.
+session can manage projects and verified official plugins through typed tools.
 It retains its remote identity and never acquires the local-admin control socket.
 
 `GatewayRuntime` owns discovery, capability classification, approval and audit for
@@ -86,7 +86,7 @@ writes have a host-owned Full Access risk floor.
 An asynchronous management operation captures the session revision and input
 state. Its final non-suspending durable commit rechecks current consent under the
 session lock. Revocation during download or preparation prevents publication and
-joins candidate cleanup. Current-profile workspace grants also compare the full
+joins candidate cleanup. Current-profile project grants also compare the full
 SQLite input snapshot; changing profile authority invalidates earlier consent.
 Persistent client trust is checked again inside the same SQLite transaction as
 the configuration write, including revocations from another owner connection.
@@ -125,7 +125,7 @@ can further restrict a profile, and Full Access remains a separate session conse
 The editor retains its reviewed profile and gateway inputs. After async discovery,
 the service checks that snapshot again before saving the profile under the
 manifest admission lock and exact authorization revision. A stale editor cannot
-overwrite an external manifest edit or silently approve changed profile, workspace
+overwrite an external manifest edit or silently approve changed profile, project
 or plugin state. Catalog discovery uses temporary non-persisting runtimes and
 joins their shutdown. Saving changes affects subsequent requests for connections
 sharing the profile and invalidates earlier approvals without stopping owned work.
@@ -167,7 +167,7 @@ without publishing it to remote gateway profiles.
 `OAuthApprovalProfile` pairs each resolved remote grant with its
 `authorization_digest`. The digest is the lowercase SHA-256 hex of compact UTF-8
 JSON, with keys sorted and slashes unescaped. Its keys are `mode`, `capabilities`,
-`workspaces`, `callers`, `full_shell_enabled`, `mcp_servers` and
+`projects`, `callers`, `full_shell_enabled`, `mcp_servers` and
 `confirmation_policy`. Set-valued fields are arrays sorted by their string
 values; the other values are the grant's enum raw values or Boolean. Profile
 identity and persistence revision are excluded. `profile.list` and
@@ -182,7 +182,7 @@ Permission writers may prepare catalogs before acquiring the lock, then reread
 and compare all configuration inputs under it before publishing.
 The lock covers manifest activation, import, rollback, external reload,
 OpenAI and Cloudflare tunnel saves and deletion, profile permission edits,
-workspace changes and plugin publication. Secret I/O before a Cloudflare save
+project changes and plugin publication. Secret I/O before a Cloudflare save
 can suspend independently; omitted OAuth fields are resolved again from the
 current configuration under the publication lock.
 

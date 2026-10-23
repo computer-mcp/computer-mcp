@@ -5,7 +5,7 @@ import ComputerMCPPlatform
 import ComputerMCPProcess
 
 package protocol GatewayToolProviderFactory: Sendable {
-  /// Creates workspace-owned providers whose routing and shutdown belong to the runtime.
+  /// Creates project-owned providers whose routing and shutdown belong to the runtime.
   /// The provider source is reevaluated for each catalog generation and may fail discovery.
   func makeProviders(
     configuration: GatewayConfiguration,

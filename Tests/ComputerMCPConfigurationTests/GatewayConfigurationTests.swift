@@ -196,7 +196,7 @@ final class GatewayConfigurationTests {
     #expect(
       (try config.tools.first?.inputSchemaValue().objectValue?["type"]) == (.string("object")))
     #expect(
-      (config.workspaceDirectory.standardizedFileURL.path)
+      (config.projectDirectory.standardizedFileURL.path)
         == (URL(fileURLWithPath: path).deletingLastPathComponent().standardizedFileURL.path))
   }
 
@@ -218,7 +218,7 @@ final class GatewayConfigurationTests {
     )
 
     #expect(
-      (configuration.workspaceDirectory) == (base.standardizedFileURL))
+      (configuration.projectDirectory) == (base.standardizedFileURL))
     #expect(
       (configuration.skills.roots.first?.path)
         == (base.appendingPathComponent("Skills").standardizedFileURL.path))
@@ -260,18 +260,18 @@ final class GatewayConfigurationTests {
   }
 
   @Test
-  func testUsesConfigDirectoryAsStandaloneWorkspaceDirectory() throws {
+  func testUsesConfigDirectoryAsStandaloneProjectDirectory() throws {
     let path = try writeConfig(
       """
       [server]
-      name = "workspace-base"
+      name = "project-base"
       """
     )
 
     let config = try GatewayConfiguration.load(path: path)
 
     #expect(
-      (config.workspaceDirectory.standardizedFileURL.path)
+      (config.projectDirectory.standardizedFileURL.path)
         == (URL(fileURLWithPath: path).deletingLastPathComponent().standardizedFileURL.path))
   }
 
@@ -537,7 +537,7 @@ final class GatewayConfigurationTests {
 
   @Test
   func testRejectsNoncanonicalProfileCapabilityIDs() throws {
-    for capability in ["workspace", "Workspace.info", "workspace.bad-name", "workspace.bad__name"] {
+    for capability in ["project", "Project.info", "project.bad-name", "project.bad__name"] {
       let path = try writeConfig(
         """
         [[profiles]]
@@ -727,16 +727,16 @@ final class GatewayConfigurationTests {
 
         [[profiles]]
         id = "chatgpt-observe"
-        capabilities = ["workspace.info", "workspace.governance_files"]
+        capabilities = ["project.info", "project.governance_files"]
 
         [builtin]
-        enabled = ["workspace.info", "workspace.governance_files"]
+        enabled = ["project.info", "project.governance_files"]
         """,
       baseURL: URL(fileURLWithPath: "/tmp/computer-mcp-schema-1")
     )
 
-    #expect(configuration.builtin.enabled == ["workspace.info"])
-    #expect(configuration.profiles.first?.capabilities == ["workspace.info"])
+    #expect(configuration.builtin.enabled == ["project.info"])
+    #expect(configuration.profiles.first?.capabilities == ["project.info"])
   }
 
   @Test
@@ -744,7 +744,7 @@ final class GatewayConfigurationTests {
     let path = try writeConfig(
       """
       [builtin]
-      enabled = ["workspace.info", "workspace.status", "workspace.manifests", "workspace.recent_files", "workspace.directory_stats", "workspace.artifact_directories", "workspace.empty_directories", "workspace.git_changes", "workspace.file_types", "workspace.large_files", "workspace.symlinks", "workspace.executable_files", "workspace.todos", "workspace.env_files", "workspace.dependency_files", "workspace.project_roots", "workspace.documentation_files", "workspace.agent_files", "workspace.instructions", "workspace.test_files", "workspace.ci_files", "workspace.infra_files", "workspace.config_files", "workspace.ignore_files", "workspace.asset_files", "workspace.archive_files", "workspace.log_files", "workspace.data_files", "workspace.schema_files", "workspace.source_files", "workspace.outline", "workspace.commands", "system.info", "system.kernel", "system.software", "system.locale", "system.memory", "system.load", "system.cpu", "system.thermal", "system.time", "system.uptime", "system.user", "system.groups", "system.power", "system.volumes", "system.processes", "system.which", "system.path", "logs.query", "service.status", "network.interfaces", "network.dns", "network.resolve", "network.proxy", "network.services", "network.hardware_ports", "network.wifi", "network.vpn", "network.locations", "network.routes", "network.connections", "network.arp", "network.ping", "network.tcp_check", "network.http_check", "network.listeners", "macos.user_directories", "macos.default_application", "macos.applications", "macos.screens", "macos.spotlight_search", "macos.running_applications", "macos.frontmost_application", "env.describe", "file.exists", "file.list", "file.tree", "file.stat", "file.permissions", "file.chmod", "file.type", "file.count", "file.disk_usage", "file.volume_info", "file.find", "file.search", "file.timeline", "file.read", "file.read_files", "file.read_window", "file.read_lines", "file.read_context", "file.head", "file.outline", "markdown.links", "markdown.tables", "markdown.section", "markdown.frontmatter", "markdown.link_check", "file.tail", "file.hexdump", "file.xattrs", "file.remove_xattr", "file.metadata", "file.readlink", "file.resolve", "image.info", "pdf.info", "pdf.text", "media.info", "json.read", "jsonl.read", "json.write", "toml.read", "yaml.read", "xml.read", "plist.read", "structured.get", "plist.write", "csv.read", "sqlite.schema", "sqlite.query", "file.hash", "file.diff", "file.compare_trees", "file.duplicates", "archive.list", "archive.extract", "archive.create", "file.download", "file.write", "file.write_files", "file.append", "file.replace_text", "file.insert_text", "file.replace_lines", "file.touch", "file.mkdir", "file.copy", "file.move", "file.symlink", "file.trash", "workspace.open", "workspace.reveal", "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes", "git.stash_show", "git.stash_push", "git.tags", "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules", "git.files", "git.grep", "git.blame", "git.file_history", "git.file_at_revision", "git.staged_file", "git.conflicts", "git.status", "git.tracking_status", "git.clean_preview", "git.clean", "git.reflog", "git.refs", "git.resolve_ref", "git.merge_base", "git.compare_refs", "git.is_ancestor", "git.diff", "git.diff_summary", "git.diff_check", "git.branch", "git.branch_create", "git.branch_delete", "git.branch_rename", "git.branch_switch", "git.log", "git.commit_files", "git.show", "git.add", "git.unstage", "git.restore_worktree", "git.commit"]
+      enabled = ["project.info", "project.status", "project.manifests", "project.recent_files", "project.directory_stats", "project.artifact_directories", "project.empty_directories", "project.git_changes", "project.file_types", "project.large_files", "project.symlinks", "project.executable_files", "project.todos", "project.env_files", "project.dependency_files", "project.project_roots", "project.documentation_files", "project.agent_files", "project.instructions", "project.test_files", "project.ci_files", "project.infra_files", "project.config_files", "project.ignore_files", "project.asset_files", "project.archive_files", "project.log_files", "project.data_files", "project.schema_files", "project.source_files", "project.outline", "project.commands", "system.info", "system.kernel", "system.software", "system.locale", "system.memory", "system.load", "system.cpu", "system.thermal", "system.time", "system.uptime", "system.user", "system.groups", "system.power", "system.volumes", "system.processes", "system.which", "system.path", "logs.query", "service.status", "network.interfaces", "network.dns", "network.resolve", "network.proxy", "network.services", "network.hardware_ports", "network.wifi", "network.vpn", "network.locations", "network.routes", "network.connections", "network.arp", "network.ping", "network.tcp_check", "network.http_check", "network.listeners", "macos.user_directories", "macos.default_application", "macos.applications", "macos.screens", "macos.spotlight_search", "macos.running_applications", "macos.frontmost_application", "env.describe", "file.exists", "file.list", "file.tree", "file.stat", "file.permissions", "file.chmod", "file.type", "file.count", "file.disk_usage", "file.volume_info", "file.find", "file.search", "file.timeline", "file.read", "file.read_files", "file.read_window", "file.read_lines", "file.read_context", "file.head", "file.outline", "markdown.links", "markdown.tables", "markdown.section", "markdown.frontmatter", "markdown.link_check", "file.tail", "file.hexdump", "file.xattrs", "file.remove_xattr", "file.metadata", "file.readlink", "file.resolve", "image.info", "pdf.info", "pdf.text", "media.info", "json.read", "jsonl.read", "json.write", "toml.read", "yaml.read", "xml.read", "plist.read", "structured.get", "plist.write", "csv.read", "sqlite.schema", "sqlite.query", "file.hash", "file.diff", "file.compare_trees", "file.duplicates", "archive.list", "archive.extract", "archive.create", "file.download", "file.write", "file.write_files", "file.append", "file.replace_text", "file.insert_text", "file.replace_lines", "file.touch", "file.mkdir", "file.copy", "file.move", "file.symlink", "file.trash", "project.open", "project.reveal", "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes", "git.stash_show", "git.stash_push", "git.tags", "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules", "git.files", "git.grep", "git.blame", "git.file_history", "git.file_at_revision", "git.staged_file", "git.conflicts", "git.status", "git.tracking_status", "git.clean_preview", "git.clean", "git.reflog", "git.refs", "git.resolve_ref", "git.merge_base", "git.compare_refs", "git.is_ancestor", "git.diff", "git.diff_summary", "git.diff_check", "git.branch", "git.branch_create", "git.branch_delete", "git.branch_rename", "git.branch_switch", "git.log", "git.commit_files", "git.show", "git.add", "git.unstage", "git.restore_worktree", "git.commit"]
       """
     )
 
@@ -753,24 +753,24 @@ final class GatewayConfigurationTests {
     #expect(
       (config.builtin.enabled)
         == ([
-          "workspace.info", "workspace.status", "workspace.manifests", "workspace.recent_files",
-          "workspace.directory_stats", "workspace.artifact_directories",
-          "workspace.empty_directories", "workspace.git_changes",
-          "workspace.file_types",
-          "workspace.large_files",
-          "workspace.symlinks",
-          "workspace.executable_files", "workspace.todos", "workspace.env_files",
-          "workspace.dependency_files", "workspace.project_roots",
-          "workspace.documentation_files", "workspace.agent_files", "workspace.instructions",
-          "workspace.test_files",
-          "workspace.ci_files", "workspace.infra_files", "workspace.config_files",
-          "workspace.ignore_files",
-          "workspace.asset_files", "workspace.archive_files", "workspace.log_files",
-          "workspace.data_files",
-          "workspace.schema_files",
-          "workspace.source_files",
-          "workspace.outline",
-          "workspace.commands", "system.info", "system.kernel",
+          "project.info", "project.status", "project.manifests", "project.recent_files",
+          "project.directory_stats", "project.artifact_directories",
+          "project.empty_directories", "project.git_changes",
+          "project.file_types",
+          "project.large_files",
+          "project.symlinks",
+          "project.executable_files", "project.todos", "project.env_files",
+          "project.dependency_files", "project.project_roots",
+          "project.documentation_files", "project.agent_files", "project.instructions",
+          "project.test_files",
+          "project.ci_files", "project.infra_files", "project.config_files",
+          "project.ignore_files",
+          "project.asset_files", "project.archive_files", "project.log_files",
+          "project.data_files",
+          "project.schema_files",
+          "project.source_files",
+          "project.outline",
+          "project.commands", "system.info", "system.kernel",
           "system.software", "system.locale",
           "system.memory", "system.load", "system.cpu", "system.thermal", "system.time",
           "system.uptime",
@@ -824,7 +824,7 @@ final class GatewayConfigurationTests {
           "file.replace_text",
           "file.insert_text", "file.replace_lines", "file.touch", "file.mkdir", "file.copy",
           "file.move", "file.symlink",
-          "file.trash", "workspace.open", "workspace.reveal", "git.root", "git.config",
+          "file.trash", "project.open", "project.reveal", "git.root", "git.config",
           "git.remotes",
           "git.worktrees", "git.stashes", "git.stash_show", "git.stash_push", "git.tags",
           "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored",
@@ -855,7 +855,7 @@ final class GatewayConfigurationTests {
   }
 
   @Test
-  func testLoadsSchemaV1WorkspacesProfilesAndRuntimeBinding() throws {
+  func testLoadsSchemaV1ProjectsProfilesAndRuntimeBinding() throws {
     let path = try writeConfig(
       """
       schema_version = 1
@@ -863,27 +863,27 @@ final class GatewayConfigurationTests {
       [runtime]
       caller = "secure-tunnel"
       profile = "chatgpt-operate"
-      workspace_id = "primary"
+      project_id = "primary"
 
-      [[workspaces]]
+      [[projects]]
       id = "primary"
       display_name = "Primary Repository"
       path = "repo"
 
-      [[workspaces]]
+      [[projects]]
       id = "bookmarked"
       display_name = "App Bookmark"
 
       [[profiles]]
       id = "chatgpt-observe"
-      capabilities = ["workspace.list", "file.read"]
-      workspaces = ["primary"]
+      capabilities = ["project.list", "file.read"]
+      projects = ["primary"]
       allowed_callers = ["secure-tunnel"]
 
       [[profiles]]
       id = "chatgpt-operate"
       capabilities = ["file.read", "file.write"]
-      workspaces = ["primary"]
+      projects = ["primary"]
       allowed_callers = ["secure-tunnel"]
       """
     )
@@ -894,53 +894,53 @@ final class GatewayConfigurationTests {
     #expect((config.schemaVersion) == (1))
     #expect((config.runtime.caller) == (.secureTunnel))
     #expect((config.runtime.profileID) == (.chatGPTOperate))
-    #expect((config.runtime.defaultWorkspaceID) == ("primary"))
-    #expect((config.workspaces.map(\.id)) == (["primary", "bookmarked"]))
+    #expect((config.runtime.defaultProjectID) == ("primary"))
+    #expect((config.projects.map(\.id)) == (["primary", "bookmarked"]))
     #expect(
-      (config.workspaces.first?.path)
+      (config.projects.first?.path)
         == (base.appendingPathComponent("repo").standardizedFileURL.path))
-    #expect((config.workspaces.last?.path) == nil)
-    #expect((config.manifestWorkspaces.map(\.id)) == (["primary"]))
+    #expect((config.projects.last?.path) == nil)
+    #expect((config.manifestProjects.map(\.id)) == (["primary"]))
     #expect(
       (config.profileGrant(for: .chatGPTOperate).capabilityIDs) == (["file.read", "file.write"]))
     #expect(!(config.profileGrant(for: .chatGPTOperate).fullShellEnabled))
   }
 
   @Test
-  func testSchemaV1RejectsInvalidWorkspaceAndProfileBindings() throws {
-    let duplicateWorkspaces = try writeConfig(
+  func testSchemaV1RejectsInvalidProjectAndProfileBindings() throws {
+    let duplicateProjects = try writeConfig(
       """
       schema_version = 1
 
-      [[workspaces]]
+      [[projects]]
       id = "same"
       path = "."
 
-      [[workspaces]]
+      [[projects]]
       id = "same"
       path = ".."
       """
     )
-    expectThrows(try GatewayConfiguration.load(path: duplicateWorkspaces)) { error in
-      #expect(error.localizedDescription.contains("Duplicate workspace id"))
+    expectThrows(try GatewayConfiguration.load(path: duplicateProjects)) { error in
+      #expect(error.localizedDescription.contains("Duplicate project id"))
     }
 
-    let unknownWorkspace = try writeConfig(
+    let unknownProject = try writeConfig(
       """
       schema_version = 1
 
-      [[workspaces]]
+      [[projects]]
       id = "known"
       path = "."
 
       [[profiles]]
       id = "chatgpt-operate"
       capabilities = ["file.read"]
-      workspaces = ["unknown"]
+      projects = ["unknown"]
       """
     )
-    expectThrows(try GatewayConfiguration.load(path: unknownWorkspace)) { error in
-      #expect(error.localizedDescription.contains("unknown workspace"))
+    expectThrows(try GatewayConfiguration.load(path: unknownProject)) { error in
+      #expect(error.localizedDescription.contains("unknown project"))
     }
 
     let remoteAdmin = try writeConfig(
@@ -956,15 +956,15 @@ final class GatewayConfigurationTests {
       #expect(error.localizedDescription.contains("local-admin"))
     }
 
-    let removedWorkspaceSection = try writeConfig(
+    let removedProjectSection = try writeConfig(
       """
-      [workspace]
+      [project]
       root = "."
       """
     )
-    expectThrows(try GatewayConfiguration.load(path: removedWorkspaceSection)) { error in
+    expectThrows(try GatewayConfiguration.load(path: removedProjectSection)) { error in
       #expect(error.localizedDescription.contains("Unknown configuration field"))
-      #expect(error.localizedDescription.contains("workspace"))
+      #expect(error.localizedDescription.contains("project"))
     }
   }
 

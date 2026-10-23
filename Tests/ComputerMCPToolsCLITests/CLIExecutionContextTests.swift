@@ -12,7 +12,7 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIExecutionContextTests {
   @Test(arguments: ["probe", "./probe"], [String?.none, "nested"])
-  func rawHelpAndExecUseTheInspectedWorkspaceAndEnvironment(executable: String, cwd: String?)
+  func rawHelpAndExecUseTheInspectedProjectAndEnvironment(executable: String, cwd: String?)
     async throws
   {
     let fixture = try ContextFixture(cwd: cwd)
@@ -162,7 +162,7 @@ private struct ContextFixture {
 
   func configuration(executable: String, cwd: String?) -> GatewayConfiguration {
     var configuration = GatewayConfiguration()
-    configuration.workspaceDirectory = root
+    configuration.projectDirectory = root
     configuration.cli.commands = [
       .init(
         id: "probe", executable: executable, cwd: cwd, env: ["CLI_CONTEXT_OVERRIDE": "override"])

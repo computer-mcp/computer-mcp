@@ -151,7 +151,7 @@ enum GatewayClientControl: Sendable {
       let mode: GatewayPermissionMode
       switch try string("mode", arguments) {
       case "observe": mode = .readOnly
-      case "restricted": mode = .workspaceOperations
+      case "restricted": mode = .projectOperations
       default: throw GatewayToolError.invalidArguments("mode must be observe or restricted.")
       }
       let snapshot: GatewayControlSessionSnapshot

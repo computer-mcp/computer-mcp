@@ -22,8 +22,8 @@ public struct CapabilityFixtureInvocation: Equatable, Sendable {
 }
 
 public struct CapabilityFixturePlan: Sendable {
-  public var workspaceID: String
-  public var repositoryWorkspaceID: String?
+  public var projectID: String
+  public var repositoryProjectID: String?
   public var fixturePrefix: String
   public var skillRootID: String
   public var skillName: String
@@ -36,8 +36,8 @@ public struct CapabilityFixturePlan: Sendable {
   public var loopbackHTTPURL: URL?
 
   public init(
-    workspaceID: String,
-    repositoryWorkspaceID: String? = nil,
+    projectID: String,
+    repositoryProjectID: String? = nil,
     fixturePrefix: String = ".build/validation/fixtures",
     skillRootID: String = "codex-user",
     skillName: String = "github-swift-package-issue-workflow",
@@ -49,8 +49,8 @@ public struct CapabilityFixturePlan: Sendable {
     accessibilityProcessID: Int32,
     loopbackHTTPURL: URL? = nil
   ) {
-    self.workspaceID = workspaceID
-    self.repositoryWorkspaceID = repositoryWorkspaceID
+    self.projectID = projectID
+    self.repositoryProjectID = repositoryProjectID
     self.fixturePrefix = fixturePrefix
     self.skillRootID = skillRootID
     self.skillName = skillName
@@ -68,15 +68,15 @@ public struct CapabilityFixturePlan: Sendable {
     pointerPosition: (x: Double, y: Double)? = nil
   ) -> CapabilityFixtureInvocation? {
     switch tool {
-    case "workspace.list":
-      return invocation([:], marker: workspaceID)
-    case "workspace.describe":
-      return primary([:], marker: workspaceID)
+    case "project.list":
+      return invocation([:], marker: projectID)
+    case "project.describe":
+      return primary([:], marker: projectID)
     case "delivery.scopes.list":
       return primary([:], marker: "scopes")
     case "policy.probe":
       return invocation(
-        ["capability_id": .string("workspace.list")],
+        ["capability_id": .string("project.list")],
         marker: "allowed"
       )
     case "process.list":
@@ -231,25 +231,25 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "SKILL.md"
       )
 
-    case "workspace.git_changes":
-      return repository([:], marker: "workspace.git_changes")
-    case "workspace.info":
-      return primary([:], marker: "workspace")
-    case "workspace.status":
-      return primary(["max_entries": .number(100)], marker: "workspace.status")
-    case "workspace.manifests":
+    case "project.git_changes":
+      return repository([:], marker: "project.git_changes")
+    case "project.info":
+      return primary([:], marker: "project")
+    case "project.status":
+      return primary(["max_entries": .number(100)], marker: "project.status")
+    case "project.manifests":
       return primary([:], marker: "Package.swift")
-    case "workspace.executable_files":
+    case "project.executable_files":
       return primary(["include_hidden": .bool(true)], marker: "fixture.sh")
-    case "workspace.file_types":
-      return primary([:], marker: "workspace.file_types")
-    case "workspace.large_files":
-      return primary([:], marker: "workspace.large_files")
-    case "workspace.recent_files":
-      return primary([:], marker: "workspace.recent_files")
-    case "workspace.symlinks":
+    case "project.file_types":
+      return primary([:], marker: "project.file_types")
+    case "project.large_files":
+      return primary([:], marker: "project.large_files")
+    case "project.recent_files":
+      return primary([:], marker: "project.recent_files")
+    case "project.symlinks":
       return primary(["include_hidden": .bool(true)], marker: "Links/readme.md")
-    case "workspace.instructions":
+    case "project.instructions":
       return primary(
         [
           "path": .string(path("AGENTS.md")),
@@ -258,7 +258,7 @@ public struct CapabilityFixturePlan: Sendable {
         ],
         marker: "deterministic and bounded"
       )
-    case "workspace.commands":
+    case "project.commands":
       return primary(
         [
           "path": .string(path(".")),
@@ -266,7 +266,7 @@ public struct CapabilityFixturePlan: Sendable {
         ],
         marker: "Package.swift"
       )
-    case "workspace.todos":
+    case "project.todos":
       return primary(
         [
           "path": .string(path("Sources")),
@@ -274,7 +274,7 @@ public struct CapabilityFixturePlan: Sendable {
         ],
         marker: "TODO"
       )
-    case "workspace.open":
+    case "project.open":
       return primary(
         [
           "path": .string(path("README.md")),
@@ -282,7 +282,7 @@ public struct CapabilityFixturePlan: Sendable {
         ],
         marker: "README.md"
       )
-    case "workspace.reveal":
+    case "project.reveal":
       return primary(
         [
           "path": .string(path("README.md")),
@@ -290,46 +290,46 @@ public struct CapabilityFixturePlan: Sendable {
         ],
         marker: "README.md"
       )
-    case "workspace.agent_files":
-      return workspaceScan(tool, path: path("."), marker: "AGENTS.md")
-    case "workspace.archive_files":
-      return workspaceScan(tool, path: path("."), marker: "sample.zip")
-    case "workspace.artifact_directories":
-      return workspaceScan(tool, path: path("."), marker: "build")
-    case "workspace.asset_files":
-      return workspaceScan(tool, path: path("."), marker: "pixel.png")
-    case "workspace.ci_files":
-      return workspaceScan(tool, path: path("."), marker: "ci.yml")
-    case "workspace.config_files":
-      return workspaceScan(tool, path: path("."), marker: ".swift-format")
-    case "workspace.data_files":
-      return workspaceScan(tool, path: path("."), marker: "sample.json")
-    case "workspace.dependency_files":
-      return workspaceScan(tool, path: path("."), marker: "Package.swift")
-    case "workspace.directory_stats":
-      return workspaceScan(tool, path: path("."), marker: "directory")
-    case "workspace.documentation_files":
-      return workspaceScan(tool, path: path("."), marker: "README.md")
-    case "workspace.empty_directories":
-      return workspaceScan(tool, path: path("."), marker: "Empty")
-    case "workspace.env_files":
-      return workspaceScan(tool, path: path("."), marker: ".env.example")
-    case "workspace.ignore_files":
-      return workspaceScan(tool, path: path("."), marker: ".gitignore")
-    case "workspace.infra_files":
-      return workspaceScan(tool, path: path("."), marker: "Dockerfile")
-    case "workspace.log_files":
-      return workspaceScan(tool, path: path("."), marker: "sample.log")
-    case "workspace.outline":
-      return workspaceScan(tool, path: path("."), marker: "struct")
-    case "workspace.project_roots":
-      return workspaceScan(tool, path: path("."), marker: "Package.swift")
-    case "workspace.schema_files":
-      return workspaceScan(tool, path: path("."), marker: "fixture.schema.json")
-    case "workspace.source_files":
-      return workspaceScan(tool, path: path("."), marker: "main.swift")
-    case "workspace.test_files":
-      return workspaceScan(tool, path: path("."), marker: "FixtureTests.swift")
+    case "project.agent_files":
+      return projectScan(tool, path: path("."), marker: "AGENTS.md")
+    case "project.archive_files":
+      return projectScan(tool, path: path("."), marker: "sample.zip")
+    case "project.artifact_directories":
+      return projectScan(tool, path: path("."), marker: "build")
+    case "project.asset_files":
+      return projectScan(tool, path: path("."), marker: "pixel.png")
+    case "project.ci_files":
+      return projectScan(tool, path: path("."), marker: "ci.yml")
+    case "project.config_files":
+      return projectScan(tool, path: path("."), marker: ".swift-format")
+    case "project.data_files":
+      return projectScan(tool, path: path("."), marker: "sample.json")
+    case "project.dependency_files":
+      return projectScan(tool, path: path("."), marker: "Package.swift")
+    case "project.directory_stats":
+      return projectScan(tool, path: path("."), marker: "directory")
+    case "project.documentation_files":
+      return projectScan(tool, path: path("."), marker: "README.md")
+    case "project.empty_directories":
+      return projectScan(tool, path: path("."), marker: "Empty")
+    case "project.env_files":
+      return projectScan(tool, path: path("."), marker: ".env.example")
+    case "project.ignore_files":
+      return projectScan(tool, path: path("."), marker: ".gitignore")
+    case "project.infra_files":
+      return projectScan(tool, path: path("."), marker: "Dockerfile")
+    case "project.log_files":
+      return projectScan(tool, path: path("."), marker: "sample.log")
+    case "project.outline":
+      return projectScan(tool, path: path("."), marker: "struct")
+    case "project.project_roots":
+      return projectScan(tool, path: path("."), marker: "Package.swift")
+    case "project.schema_files":
+      return projectScan(tool, path: path("."), marker: "fixture.schema.json")
+    case "project.source_files":
+      return projectScan(tool, path: path("."), marker: "main.swift")
+    case "project.test_files":
+      return projectScan(tool, path: path("."), marker: "FixtureTests.swift")
 
     case "archive.list":
       return primary(
@@ -1142,7 +1142,7 @@ public struct CapabilityFixturePlan: Sendable {
     }
   }
 
-  private func workspaceScan(
+  private func projectScan(
     _ tool: String,
     path: String,
     marker: String
@@ -1163,7 +1163,7 @@ public struct CapabilityFixturePlan: Sendable {
     marker: String? = nil
   ) -> CapabilityFixtureInvocation {
     invocation(
-      arguments.merging(["workspace_id": .string(workspaceID)]) { current, _ in current },
+      arguments.merging(["project_id": .string(projectID)]) { current, _ in current },
       marker: marker
     )
   }
@@ -1172,11 +1172,11 @@ public struct CapabilityFixturePlan: Sendable {
     _ arguments: [String: JSONValue],
     marker: String? = nil
   ) -> CapabilityFixtureInvocation? {
-    guard let repositoryWorkspaceID else {
+    guard let repositoryProjectID else {
       return nil
     }
     return invocation(
-      arguments.merging(["workspace_id": .string(repositoryWorkspaceID)]) { current, _ in current },
+      arguments.merging(["project_id": .string(repositoryProjectID)]) { current, _ in current },
       marker: marker
     )
   }
@@ -1185,11 +1185,11 @@ public struct CapabilityFixturePlan: Sendable {
     _ arguments: [String: JSONValue],
     marker: String? = nil
   ) -> CapabilityFixtureInvocation? {
-    guard let repositoryWorkspaceID else {
+    guard let repositoryProjectID else {
       return nil
     }
     return CapabilityFixtureInvocation(
-      arguments: arguments.merging(["workspace_id": .string(repositoryWorkspaceID)]) {
+      arguments: arguments.merging(["project_id": .string(repositoryProjectID)]) {
         current, _ in current
       },
       expectedMarker: marker,
@@ -1202,7 +1202,7 @@ public struct CapabilityFixturePlan: Sendable {
     marker: String? = nil
   ) -> CapabilityFixtureInvocation {
     CapabilityFixtureInvocation(
-      arguments: arguments.merging(["workspace_id": .string(workspaceID)]) { current, _ in
+      arguments: arguments.merging(["project_id": .string(projectID)]) { current, _ in
         current
       },
       expectedMarker: marker,

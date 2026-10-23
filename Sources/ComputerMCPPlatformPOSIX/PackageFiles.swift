@@ -19,7 +19,7 @@ package enum PackageFileError: Error, Equatable, LocalizedError, Sendable {
   }
 }
 
-/// Reuses workspace canonicalization, then opens each component without following new symlinks.
+/// Reuses project canonicalization, then opens each component without following new symlinks.
 /// The descriptors anchor reads if a mutable development checkout is renamed during inspection.
 package struct PackageFiles {
   package enum Kind { case file, executable, directory }
@@ -29,7 +29,7 @@ package struct PackageFiles {
     guard root.isFileURL else {
       throw PackageFileError.invalid("Package root must be a file URL.")
     }
-    self.root = try WorkspacePathResolver.canonicalWorkspace(root)
+    self.root = try ProjectPathResolver.canonicalProject(root)
   }
 
   package func read(_ path: String, maximumBytes: Int) throws -> Data {
@@ -76,9 +76,9 @@ package struct PackageFiles {
     guard PluginExecutablePaths.isNormalizedRelativePath(path) else {
       throw PackageFileError.invalid("Package paths must be normalized relative paths.")
     }
-    let target = try WorkspacePathResolver.resolve(path, relativeTo: root)
-    let canonicalTarget = try WorkspacePathResolver.canonicalWorkspace(target)
-    guard WorkspacePathResolver.contains(canonicalTarget, in: root), canonicalTarget != root else {
+    let target = try ProjectPathResolver.resolve(path, relativeTo: root)
+    let canonicalTarget = try ProjectPathResolver.canonicalProject(target)
+    guard ProjectPathResolver.contains(canonicalTarget, in: root), canonicalTarget != root else {
       throw PackageFileError.invalid("Package path escapes its root: \(path).")
     }
     let parts = canonicalTarget.pathComponents.dropFirst(root.pathComponents.count)

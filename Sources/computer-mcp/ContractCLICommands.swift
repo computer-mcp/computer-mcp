@@ -50,8 +50,8 @@ struct ToolsInventory: AsyncParsableCommand {
   @Option(name: .long, help: "Bound gateway profile for policy evaluation.")
   var profile: GatewayProfileID?
 
-  @Option(name: .long, help: "Optional default stable workspace id.")
-  var workspaceID: String?
+  @Option(name: .long, help: "Optional default stable project id.")
+  var projectID: String?
 
   func run() async throws {
     let configurationURL = URL(fileURLWithPath: config).standardizedFileURL
@@ -63,7 +63,7 @@ struct ToolsInventory: AsyncParsableCommand {
     let context = gateway.executionContext(
       caller: caller,
       profileID: profile,
-      workspaceID: workspaceID,
+      projectID: projectID,
       transportTrace: GatewayTransportTrace(transport: "cli-inventory")
     )
     let runtime = try await GatewayRuntime.make(
@@ -96,7 +96,7 @@ struct ToolsInventory: AsyncParsableCommand {
                 "capability": .object([
                   "id": .string(descriptor.id),
                   "risk": .string(descriptor.risk.rawValue),
-                  "workspace_requirement": .string(descriptor.workspaceRequirement.rawValue),
+                  "project_requirement": .string(descriptor.projectRequirement.rawValue),
                   "local_only": .bool(descriptor.localOnly),
                   "uses_network": .bool(descriptor.usesNetwork),
                   "tcc_services": .array(descriptor.tccServices.sorted().map(JSONValue.string)),

@@ -18,8 +18,8 @@ final class CapabilityFixturePlanTests {
       profileID: profile
     ).tools.map(\.name)
     let plan = CapabilityFixturePlan(
-      workspaceID: "fixture",
-      repositoryWorkspaceID: "repository",
+      projectID: "fixture",
+      repositoryProjectID: "repository",
       fixturePrefix: ".",
       skillRootID: "codex-user",
       skillName: "github-swift-package-issue-workflow",
@@ -36,18 +36,18 @@ final class CapabilityFixturePlanTests {
     #expect(!observeCapabilities.contains("delivery.apply"))
     #expect((unsupported) == ([]))
     #expect(
-      plan.invocation(for: "workspace.executable_files")?.arguments["include_hidden"]
+      plan.invocation(for: "project.executable_files")?.arguments["include_hidden"]
         == .bool(true)
     )
     #expect(
-      plan.invocation(for: "workspace.symlinks")?.arguments["include_hidden"] == .bool(true)
+      plan.invocation(for: "project.symlinks")?.arguments["include_hidden"] == .bool(true)
     )
   }
 
   @Test
   func testExternalFixtureBindingsFailClosedWhenUnavailable() {
     let plan = CapabilityFixturePlan(
-      workspaceID: "fixture",
+      projectID: "fixture",
       accessibilityProcessID: 123
     )
 
@@ -59,8 +59,8 @@ final class CapabilityFixturePlanTests {
     #expect((plan.invocation(for: "archive.create")?.execution) == (.committed))
 
     let repositoryPlan = CapabilityFixturePlan(
-      workspaceID: "fixture",
-      repositoryWorkspaceID: "repository",
+      projectID: "fixture",
+      repositoryProjectID: "repository",
       accessibilityProcessID: 123
     )
     #expect((repositoryPlan.invocation(for: "git.add")?.execution) == (.committed))
@@ -70,7 +70,7 @@ final class CapabilityFixturePlanTests {
   @Test
   func testOperateProviderReadsAndProcessListHaveBoundedFixtures() {
     let plan = CapabilityFixturePlan(
-      workspaceID: "fixture",
+      projectID: "fixture",
       accessibilityProcessID: 123
     )
     let supported = [

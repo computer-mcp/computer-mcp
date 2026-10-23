@@ -463,7 +463,7 @@ tool names**. This choice survives editing and does not modify the package.
 Names that collide with another provider or a host management tool are rejected,
 including during catalog refresh, rather than renamed or silently overwritten. All combined with a
 nonempty allowlist is invalid. An empty allowlist grants no downstream tools.
-Profile and workspace policy still apply to both generic calls and reexported
+Profile and project policy still apply to both generic calls and reexported
 tools. A CLI with a declared command tree cannot also grant unrestricted raw
 arguments. Skill roots retain their bounded read policy and do not grant the
 tools described in their content.
@@ -498,10 +498,10 @@ it read. The database atomically compares that revision and saves the next
 snapshot; a stale update must reload before retrying. Invalid or oversized state
 leaves the previous snapshot intact. Serialized state is limited to 4 MiB.
 
-App-managed changes also capture the registered workspaces, workspace aliases,
+App-managed changes also capture the registered projects, project aliases,
 profile authorization and plugin settings before preparation. The commit compares
 these inputs in the same database transaction as the plugin revision check.
-A concurrent workspace or authorization edit rejects the plugin change and
+A concurrent project or authorization edit rejects the plugin change and
 preserves that edit; reload before retrying. Provider health and execution
 receipts do not invalidate this configuration snapshot.
 
@@ -872,3 +872,7 @@ declaration and host binding before activation. Configure the endpoint binding,
 set the credential, then enable the plugin. Ambiguous registration IDs, changed
 source declarations and mismatched endpoints cannot select a credential target.
 See [HTTP credentials](Config.md#http-credentials).
+
+Publisher risk metadata accepts the version-1 `workspace-write` value as project
+write risk. This wire compatibility does not apply to host TOML configuration,
+which uses `project-write`.

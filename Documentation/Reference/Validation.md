@@ -60,12 +60,12 @@ path.
 with `Tests/ComputerMCPMacOSTests/Fixtures/builtin-tool-catalog.json`. It enables every
 default builtin, skills, CLI/MCP gateway surfaces, processes and Full Shell,
 and includes runtime discovery, execution owners, operations, Computer Use and
-remote management. An isolated workspace, an in-memory database, empty plugin
+remote management. An isolated project, an in-memory database, empty plugin
 sources and a downstream stub keep discovery independent of installed tools,
 user directories and network access. No tool is executed.
 
 The snapshot records exported names, titles, descriptions, schemas, annotations,
-metadata and capability risk, workspace requirement, local-only and network
+metadata and capability risk, project requirement, local-only and network
 flags. JSON keys are sorted; failures identify added, removed and changed tools
 and fields. Update it **only for intentional changes that receive review**:
 
@@ -89,7 +89,7 @@ imports and system paths. Tests live with their owning targets under
 computer-mcp-validate test-case list|validate
 computer-mcp-validate runbook generate
 computer-mcp-validate inventory generate
-computer-mcp-validate fixture workspace generate
+computer-mcp-validate fixture project generate
 computer-mcp-validate fixture manifest generate
 computer-mcp-validate fixture mcp serve
 computer-mcp-validate probe app catalog|call|full-catalog
@@ -172,7 +172,7 @@ cp Tests/ComputerMCPMacOSTests/Fixtures/gui_acceptance.plist "$GUI_APP/Contents/
 
 The final command waits for this target to exit. Drive it from a separate
 terminal or authorized MCP client using a disposable Gateway configuration and
-workspace rooted at `GUI_RUN`. Do not point acceptance commands at the normal
+project rooted at `GUI_RUN`. Do not point acceptance commands at the normal
 App control socket. Keep the receipt and raw results in the Validation Run.
 
 For CUA, first discover the actual authorized catalog and observe this target

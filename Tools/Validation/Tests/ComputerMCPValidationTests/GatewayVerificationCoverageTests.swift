@@ -9,7 +9,7 @@ final class GatewayProbeVerifyCoverageTests {
   @Test
   func testGeneratedLocalAdminMutableBuiltinCatalogMatchesValidationDomains() throws {
     let tools = try defaultLocalAdminTools()
-    let domains = Set(["archive", "file", "git", "json", "plist", "workspace"])
+    let domains = Set(["archive", "file", "git", "json", "plist", "project"])
     let mutableTools = tools.filter { tool in
       guard tool.annotations?.readOnlyHint == false,
         let domain = tool.name.split(separator: ".", maxSplits: 1).first.map(String.init)
@@ -53,8 +53,8 @@ final class GatewayProbeVerifyCoverageTests {
           "git.unstage",
           "json.write",
           "plist.write",
-          "workspace.open",
-          "workspace.reveal",
+          "project.open",
+          "project.reveal",
         ])))
     #expect((mutableTools.count) == (33))
   }
@@ -62,7 +62,7 @@ final class GatewayProbeVerifyCoverageTests {
   @Test
   func testEveryMutableBuiltinHasMachineReadableObjectSchemaAndRiskAnnotations() throws {
     let tools = try defaultLocalAdminTools()
-    let domains = Set(["archive", "file", "git", "json", "plist", "workspace"])
+    let domains = Set(["archive", "file", "git", "json", "plist", "project"])
     let mutableTools = tools.filter { tool in
       guard tool.annotations?.readOnlyHint == false,
         let domain = tool.name.split(separator: ".", maxSplits: 1).first.map(String.init)

@@ -42,28 +42,6 @@ package struct UnsupportedDatabaseSchema: Error, LocalizedError, Equatable {
       ? "tables without a migration ledger"
       : "migrations: \(identifiers.joined(separator: ", "))"
     return "This database's schema (\(schema)) is not one this version of Computer MCP uses, "
-      + "so it was left unchanged. Move the state of an installation created before 0.1.0 "
-      + "with `computer-mcp state import <export-file>`."
-  }
-}
-
-/// A state import was replacing the database at `path` and did not finish. The database is
-/// not opened until the next import rolls the interrupted replacement back.
-package struct InterruptedStateImport: Error, LocalizedError, Equatable {
-  package let path: String
-
-  package var errorDescription: String? {
-    "A state import replacing the database at \(path) did not finish, so it was not opened. "
-      + "Run the same `computer-mcp state import` command again, with the same `--database` "
-      + "option if it had one: it first rolls back the interrupted replacement."
-  }
-}
-
-/// An importer holds the exclusive lock for the database at `path`.
-package struct StateImportInProgress: Error, LocalizedError, Equatable {
-  package let path: String
-
-  package var errorDescription: String? {
-    "A state import is in progress at \(path), so the database was not opened. Try again after it finishes."
+      + "so it was left unchanged."
   }
 }

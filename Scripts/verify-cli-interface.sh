@@ -74,7 +74,6 @@ verify_help "$ROOT_CLI" tunnel cloudflare
 verify_help "$ROOT_CLI" permissions approvals
 verify_help "$ROOT_CLI" tools
 verify_help "$ROOT_CLI" audit
-verify_help "$ROOT_CLI" state
 verify_help "$ROOT_CLI" providers
 verify_help "$ROOT_CLI" plugins
 verify_help "$ROOT_CLI" mcp
@@ -149,7 +148,6 @@ public_leaf_commands=(
   "permissions approvals deny"
   "audit list"
   "audit export"
-  "state import"
   "providers list"
   "providers doctor"
   "providers discover"

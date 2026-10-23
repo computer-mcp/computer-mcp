@@ -77,7 +77,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, workspace path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and workspace-owned tool environments |
 | `Sources/ComputerMCPPlugins/` | Platform-neutral plugin manifests, bundled inventory and distribution, catalogs, installation/recovery, contribution resolution, archive preparation and the injected plugin state store contract |
 | `Sources/ComputerMCPComputerUse/` | macOS Computer Use provider, observation and action service, native Accessibility and screen capture adapter, and permission readings |
-| `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with lifetime shared locks, initial schema, migration-ledger check, stored records and the exclusively locked, identity-based state import from installations created before 0.1.0 |
+| `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with initial schema, migration-ledger check, stored records and transactions |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, workspace opening and native system readings |
 | `Sources/ComputerMCPGateway/` | Platform-neutral runtime, provider routing, admission, approvals, receipts, continuations, host services, HTTP adapter, domain stores, owned work and audit; injected management and client-control contracts |
 | `Sources/ComputerMCPControlPlane/` | Platform-neutral App and CLI administration, client control, remote management, manifest transactions, plugin and tunnel administration, product readiness and client registration |
@@ -109,8 +109,7 @@ The control plane implements these with `GatewayRemoteManagement` and
 OAuth administration is exposed by the App control socket. Gateway implements
 Authorization's store on GRDB; the `remote-oauth` migration follows
 `gateway-initial` and creates `oauthAuthorizationRequests`, `oauthGrants`,
-`oauthAuthorizationCodes` and `oauthTokens`. State import restores only the
-original exported tables and leaves OAuth state empty. The existing Crypto
+`oauthAuthorizationCodes` and `oauthTokens`. The existing Crypto
 dependency supplies SHA-256; the existing NIO dependency pins public CIMD
 destinations for URLSession through a bounded per-request CONNECT transport.
 Proxy clients accept Platform's `SecretStore`; MCP HTTP authentication keeps its

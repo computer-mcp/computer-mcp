@@ -97,7 +97,6 @@ computer-mcp permissions approvals approve <id> [--control-socket <control-socke
 computer-mcp permissions approvals deny <id> [--control-socket <control-socket>]
 computer-mcp audit list [--control-socket <control-socket>] [--limit <limit>]
 computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
-computer-mcp state import <file> [--database <database>]
 computer-mcp providers list [--control-socket <control-socket>]
 computer-mcp providers doctor [--control-socket <control-socket>] [<id>]
 computer-mcp providers discover --config <config>
@@ -713,53 +712,6 @@ New OpenAI API keys and Cloudflare named-tunnel tokens are accepted only from
 standard input through `--api-key-stdin` or `--tunnel-token-stdin`; the CLI has
 no option that places either credential in argv. Updating a configuration
 without either flag preserves its existing Keychain secret.
-
-## State import
-
-`state import` moves the state of an installation created before 0.1.0 into a
-database with the current schema. Its input is that installation's one-time
-schema 1 JSON export: workspaces with their canonical roots and aliases,
-profiles, client trust, runtime settings, the latest activated configuration
-revision, plugin selections, settings and owned directories, and derived
-workspace registrations. Audit history, approvals, operation tickets and
-execution receipts are not carried over. The configuration file and Keychain
-items stay where they are. `--database` selects a database other than the
-App's.
-
-Quit the App and stop every gateway, bridge and tunnel process first. The
-command refuses a database that any process has open, a database that already
-uses the current schema, and an existing `<database>.before-import`. Database
-connections share `<database>.lock` and the import holds it exclusively, so an
-import and an open connection exclude each other; earlier versions do not take
-this lock and are detected through the process table instead. Keep the lock
-file in place.
-
-The import writes the exported rows into `<database>.import`, checks that every
-row arrived, that this version reads every imported record and that the
-activated configuration parses, and only then installs it. Opening the existing
-database lets SQLite finish rolling back an interrupted transaction; nothing
-else in it changes. The previous database is kept as
-`<database>.before-import`; to return to the earlier version, quit the App and
-move that file back to the database name.
-
-While a replacement is underway, `<database>.import-replacing` records it and
-the database is not opened. Running the same command again rolls an interrupted
-replacement back and then imports.
-
-The import never changes a file it did not create. When it refuses and names a
-file:
-
-- `<database>.import` or `<database>.import-replacing.tmp` without
-  `<database>.import-replacing`: an earlier import stopped before it changed the
-  database. Move the named file out of the directory and run the command again.
-- A file named in a refusal while `<database>.import-replacing` exists: the
-  record identifies the database and its backup, so the named file is not one
-  of them. Move it out of the directory and run the command again.
-- A missing database or `<database>.before-import` named by the record: restore
-  it before running the command again.
-- A `-journal`, `-wal` or `-shm` file: open the database once with the version
-  that created it so SQLite completes its recovery, quit that version, and run
-  the command again.
 
 ## `bridge`
 

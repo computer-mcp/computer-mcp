@@ -125,6 +125,16 @@ import Testing
 }
 
 struct SeatbeltFixture {
+  static var executionBootstrap: URL {
+    get throws {
+      let directory = Bundle.module.bundleURL.deletingLastPathComponent()
+      return try #require(
+        Array(sequence(first: directory) { $0.deletingLastPathComponent() }.prefix(6))
+          .map { $0.appendingPathComponent("computer-mcp-execution-bootstrap") }
+          .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }))
+    }
+  }
+
   let root: URL
 
   init() throws {
